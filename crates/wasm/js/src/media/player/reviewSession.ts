@@ -81,10 +81,7 @@ export class ReviewSession {
       const upcoming = this.fetchWindow(pending.nextGroup)
       this.behindSeconds = this.timeline.groups.secondsBehindLive(pending.start)
       this.host.windowStarted()
-      const played = await this.host.playWindow(
-        { ...pending, frames: sortReviewFrames(pending.frames), audio: this.unplayedAudio(pending.audio) },
-        this
-      )
+      const played = await this.host.playWindow({ ...pending, audio: this.unplayedAudio(pending.audio) }, this)
       pending = played ? await upcoming : undefined
     }
   }
@@ -165,13 +162,20 @@ export class ReviewSession {
     if (frames.length === 0) {
       return { start, evicted: true, description: 'no cached objects' }
     }
+    const sorted = sortReviewFrames(frames)
+    const [first] = sorted
+    // The caches evict object by object, so the oldest group the media timeline
+    // lists can have lost its keyframe while its later objects remain.
+    if (first.objectId !== 0n) {
+      return { start, evicted: true, description: `group ${first.groupId} starts at object ${first.objectId}` }
+    }
     if (isFetchFailure(audio)) {
       this.context.log('error', `fetch ${audioName}: ${audio.description}`)
     }
     const audioFrames = isFetchFailure(audio) ? [] : audio
     this.context.log('info', `fetched ${frames.length} objects from group ${start}`)
     this.fetchWindows.push({ video: frames[0]?.requestId, audio: audioFrames[0]?.requestId })
-    return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audioFrames) }
+    return { start, nextGroup: end + 1n, frames: sorted, audio: sortReviewFrames(audioFrames) }
   }
 
   private async fetchAudio(
@@ -179,7 +183,7 @@ export class ReviewSession {
     start: bigint,
     end: bigint
   ): Promise<ReviewFrame[] | FetchFailure | undefined> {
-    const range = await this.awaitAudioRange(start, end)
+    const range = await this.awaitAudioRange(trackName, start, end)
     if (!this.isCurrent()) {
       return undefined
     }
@@ -197,14 +201,14 @@ export class ReviewSession {
   /// the audio groups share the ids of the video groups the window's audio is
   /// the same group range; otherwise it is the range of audio groups whose
   /// capture times cover the window's.
-  private async awaitAudioRange(start: bigint, end: bigint): Promise<GroupRange | undefined> {
+  private async awaitAudioRange(trackName: string, start: bigint, end: bigint): Promise<GroupRange | undefined> {
     const { audio, groups } = this.timeline
     const fromMicros = groups.startOf(start)
     const untilMicros = groups.startAfter(end)
     const byCapture =
       fromMicros !== undefined &&
       untilMicros !== undefined &&
-      !audio.sharesVideoIds((groupId) => groups.startOf(groupId))
+      !this.timeline.audioSharesVideoIds(this.subscriptions.get('video')?.name, trackName)
     const movedOn = () =>
       byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end
     const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS

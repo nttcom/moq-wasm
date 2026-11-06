@@ -12,12 +12,22 @@ export type GroupMark = {
 type ObservedMark = GroupMark & { observedAtMicros: number }
 
 /// Group ids are seeded from a wall clock by the live-ingest bridge and groups
-/// last as long as the encoder's GOP, so seconds are resolved from the capture
-/// timestamps observed while playing live instead of from group arithmetic.
-/// The relay evicts objects by the time it received them, so a group is kept
-/// for as long as the relay caches it after the viewer first observed it.
+/// last as long as the encoder's GOP, so seconds are resolved from capture
+/// timestamps instead of from group arithmetic. The capture timestamps come
+/// from the groups observed while playing live and from the groups a followed
+/// media timeline lists. The relay evicts objects by the time it received them, so an
+/// observed group is kept for as long as the relay caches it after the viewer
+/// first observed it.
 export class GroupTimeline {
   private marks: ObservedMark[] = []
+  /// The newest media timeline object lists every group the publisher still
+  /// keeps (draft-ietf-moq-msf-01 §7.3). The join group and the groups from
+  /// before the viewer joined are seek targets too: the relay forwards a FETCH
+  /// for what it has not cached to the publisher.
+  private listed: GroupMark[] = []
+  /// A FETCH found the groups up to this one evicted; the media timeline can
+  /// list them for a while longer.
+  private forgottenThrough: bigint | undefined
   /// A SUBSCRIBE lands in the middle of the group the publisher is writing, and
   /// the relay starts caching a track only once it has a subscriber, so this
   /// group holds no keyframe for a FETCH replay to start from.
@@ -40,18 +50,23 @@ export class GroupTimeline {
     }
   }
 
-  recordCapture(groupId: bigint, captureMicros: number): void {
+  private recordCapture(groupId: bigint, captureMicros: number): void {
     this.joinGroupId ??= groupId
     if (groupId === this.joinGroupId || this.marks.some((mark) => mark.groupId === groupId)) {
       return
     }
 
     this.marks.push({ groupId, captureMicros, observedAtMicros: monotonicUnixMicros() })
-    this.marks.sort((left, right) => left.captureMicros - right.captureMicros)
+  }
+
+  replaceListed(marks: GroupMark[]): void {
+    this.listed = marks
   }
 
   reset(): void {
     this.marks = []
+    this.listed = []
+    this.forgottenThrough = undefined
     this.joinGroupId = undefined
     this.arrivalLag.reset()
   }
@@ -68,7 +83,7 @@ export class GroupTimeline {
   }
 
   forgetThrough(groupId: bigint): void {
-    this.marks = this.marks.filter((mark) => mark.groupId > groupId)
+    this.forgottenThrough = groupId
   }
 
   get span(): number {
@@ -111,10 +126,13 @@ export class GroupTimeline {
     return (latest.captureMicros - mark.captureMicros) / MICROS_PER_SECOND
   }
 
-  private cached(): ObservedMark[] {
+  private cached(): GroupMark[] {
     const evictedBeforeMicros = monotonicUnixMicros() - this.retentionMicros
     this.marks = this.marks.filter((mark) => mark.observedAtMicros >= evictedBeforeMicros)
-    return this.marks
+    const observed = new Set(this.marks.map(({ groupId }) => groupId))
+    return [...this.marks, ...this.listed.filter(({ groupId }) => !observed.has(groupId))]
+      .filter(({ groupId }) => this.forgottenThrough === undefined || groupId > this.forgottenThrough)
+      .sort((left, right) => left.captureMicros - right.captureMicros)
   }
 }
 

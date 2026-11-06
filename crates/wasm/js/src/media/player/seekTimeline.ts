@@ -18,7 +18,6 @@ export class SeekTimeline {
   readonly groups = new GroupTimeline(RELAY_CACHE_TTL_MICROS)
   readonly media = new MediaTimeline()
   readonly audio = new AudioGroups()
-  private readonly unstampedGroups = new Set<bigint>()
   private mediaTrack: { name: string; depends: string[] } | undefined
 
   get mediaTimelineTrackName(): string | undefined {
@@ -39,32 +38,30 @@ export class SeekTimeline {
     return true
   }
 
-  replaceMediaTimeline(document: string): void {
+  /// The groups the timeline lists become seek targets only while it depends
+  /// on `videoTrackName`, the video track played: another source numbers its
+  /// groups on its own.
+  replaceMediaTimeline(document: string, videoTrackName: string | undefined): void {
     this.media.replace(document)
-    this.stampObservedGroups()
+    this.groups.replaceListed(this.stampedByMediaTimeline(videoTrackName) ? this.media.groupMarks() : [])
   }
 
   stampedByMediaTimeline(trackName: string | undefined): boolean {
     return trackName !== undefined && (this.mediaTrack?.depends.includes(trackName) ?? false)
   }
 
-  /// A group observed on a CMAF track, whose objects carry no LOC header, or
-  /// reported by TRACK_STATUS is stamped with the encode wallclock the media
-  /// timeline records for it. Only observed groups enter the timeline: the relay
-  /// caches a track from its first subscriber on, so earlier groups the media
-  /// timeline lists cannot be fetched.
-  observeTimelineGroup(groupId: bigint): void {
-    this.unstampedGroups.add(groupId)
-    this.stampObservedGroups()
-  }
-
-  resetGroups(): void {
-    this.groups.reset()
-    this.unstampedGroups.clear()
+  /// A media timeline that depends on both tracks says they share the ids; it
+  /// also lists groups whose audio starts were never observed. Otherwise the
+  /// groups observed on both tracks tell.
+  audioSharesVideoIds(videoTrackName: string | undefined, audioTrackName: string): boolean {
+    if (this.stampedByMediaTimeline(videoTrackName) && this.stampedByMediaTimeline(audioTrackName)) {
+      return true
+    }
+    return this.audio.sharesVideoIds((groupId) => this.groups.startOf(groupId))
   }
 
   reset(): void {
-    this.resetGroups()
+    this.groups.reset()
     this.media.reset()
     this.mediaTrack = undefined
     this.audio.reset()
@@ -83,16 +80,6 @@ export class SeekTimeline {
       broadcastStartSeconds: broadcastStart === undefined ? undefined : broadcastStart / MICROS_PER_SECOND,
       replayableSeconds,
       seekable: this.groups.newestClosed !== undefined && replayableSeconds > 0
-    }
-  }
-
-  private stampObservedGroups(): void {
-    for (const groupId of this.unstampedGroups) {
-      const encodedAtMs = this.media.encodedAtMsFor(groupId)
-      if (encodedAtMs !== undefined) {
-        this.groups.recordCapture(groupId, encodedAtMs * 1_000)
-        this.unstampedGroups.delete(groupId)
-      }
     }
   }
 }

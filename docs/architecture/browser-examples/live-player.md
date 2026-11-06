@@ -188,7 +188,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
-| `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, stamping groups from the media timeline, the seek axis |
+| `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, the groups the media timeline lists as seek targets, the seek axis |
 | `audioGroups` | Where the audio groups start, whether they share the video group ids, which of them cover a window |
 | `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
@@ -219,12 +219,13 @@ where they are used, not as options, until a publisher differs:
 The audio row is the one difference that changes behavior. `AudioGroups`
 records where each audio group starts on the capture axis, from live audio
 objects and, for groups known only from TRACK_STATUS during a review, from the
-arrival lag of the last live object. When every group seen on both tracks
-starts within 500 ms of the video group with the same id, review fetches a
-window's audio by the video's group range, as before; otherwise it fetches the
-closed audio groups whose starts cover the window's capture span, waiting until
-an audio group has started past the window. Audio chunks an earlier window
-already played are left out, since a 2 s audio group can span two windows.
+arrival lag of the last live object. When the media timeline depends on both
+tracks, or every group seen on both tracks starts within 500 ms of the video
+group with the same id, review fetches a window's audio by the video's group
+range; otherwise it fetches the closed audio groups whose starts cover the
+window's capture span, waiting until an audio group has started past the window.
+Audio chunks an earlier window already played are left out, since a 2 s audio
+group can span two windows.
 
 ## Invariants
 
@@ -257,9 +258,14 @@ The skip buttons, the arrow keys and the seek bar all FETCH groups the relay
 still caches and play them paced by their capture timestamps: video on the
 review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
 
-- A position is derived from the capture timestamps observed during live
-  playback. The publishers number groups from the wall clock and switch groups
-  at encoder keyframes, so a difference of group ids is not a number of seconds.
+- A position is derived from the encode wallclock the media timeline records
+  at the start of every group, or, for a track the timeline does not depend
+  on, from the capture timestamps observed during live playback. The
+  publishers number groups from the wall clock and switch groups at encoder
+  keyframes, so a difference of group ids is not a number of seconds.
+- The media timeline lists every group the publisher still keeps, so a review
+  reaches groups from before the viewer joined. The relay forwards a FETCH for
+  a range it has not cached to the publisher, which keeps 60 s for it.
 - A review FETCHes from the closed keyframe group that contains the target,
   decodes the frames before the target without pacing and draws from the target
   on; in MSE the same amount is added to `currentTime` before playing.
@@ -272,9 +278,9 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
   SUBSCRIBE_UPDATE so no live objects arrive. Groups the publisher opens in the
   meantime are learned from the Largest Location of a TRACK_STATUS every
   500 ms, which advances the next FETCH range and the right end of the seek bar.
-  Their positions come from the encode time the media timeline records; for a
-  rendition the timeline does not cover they are estimated from the arrival
-  lag of the last live object and drift ahead while the main thread is busy.
+  The media timeline keeps arriving and places them; for a rendition the
+  timeline does not cover they are estimated from the arrival lag of the last
+  live object and drift ahead while the main thread is busy.
   `LIVE` restores Forward 1; the relay resumes from the next group it opens,
   so the live picture takes up to one GOP to move. Against a relay that does
   not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
@@ -617,10 +623,12 @@ The slider below the video spans the whole broadcast: its left end is the start,
 placed by the MSF media timeline, and its right end is the live edge. The thin bar
 underneath marks the part of that range the relay still caches and can therefore
 replay, which is the only part a seek resolves. The relay cannot be asked which
-groups it still holds, so the bar covers the groups the viewer observed within the
-relay's default cache TTL (60 s) and shrinks as they age out. Home jumps to the oldest
-replayable position rather than to the start of the broadcast, and End returns to
-live.
+groups it still holds, so the bar covers the groups the media timeline lists, which
+the publisher keeps for the relay's default cache TTL (60 s), from the first
+timeline object on. For a track the timeline does not depend on it covers the
+groups the viewer observed within that TTL and shrinks as they age out. Home jumps
+to the oldest replayable position rather than to the start of the broadcast, and
+End returns to live.
 
 While review playback runs, the thumb stays on the position that was seeked to
 and a fill from it carries the movement, because the decoder emits frames in
@@ -639,14 +647,17 @@ by capture timestamps it never catches up on its own, and when it reaches the
 newest closed group it waits for the publisher to close another one.
 
 The slider is disabled until a closed group is available. Stop and video quality
-changes that resubscribe (see *Rendition switch*) clear the timeline and cancel pending review playback. The observed
-range is not a guarantee of relay cache retention: an evicted group can no longer
+changes that resubscribe (see *Rendition switch*) clear the timeline and cancel pending review playback. The
+range is not a guarantee of cache retention: an evicted group can no longer
 be replayed. A FETCH that fails with INTERNAL_ERROR, TIMEOUT, INVALID_RANGE,
 NO_OBJECTS or UNKNOWN_STATUS_IN_RANGE, whose stream is reset with INTERNAL_ERROR,
-or that returns no objects, is taken as eviction: the groups up to the failed one leave the
-timeline and review resumes from the oldest group left, or goes live when none
-is. Any other failure reports the FETCH error and holds the requested position,
-so pick another position or press Live to resume.
+that returns no objects, or whose first group starts past its first object, is
+taken as eviction: the groups up to the failed one leave the timeline, even while
+the media timeline still lists them, and review resumes from the oldest group
+left, or goes live when none is. The caches evict object by object, so the
+oldest group the timeline lists can arrive without its keyframe. Any other
+failure reports the FETCH error and holds the requested position, so pick
+another position or press Live to resume.
 
 ### Broadcast elapsed time
 
