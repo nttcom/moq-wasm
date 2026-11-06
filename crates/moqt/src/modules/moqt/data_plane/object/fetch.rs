@@ -2,6 +2,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
+use crate::modules::moqt::data_plane::object::declared_length;
 use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
 use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 use crate::modules::moqt::data_plane::object::object_status::ObjectStatus;
@@ -144,9 +145,8 @@ impl FetchObjectField {
         let subgroup_id = cursor.try_get_varint()?;
         let object_id = cursor.try_get_varint()?;
         let publisher_priority = cursor.try_get_u8()?;
-        let extension_headers =
-            ExtensionHeaders::decode(&mut cursor).ok_or(DecodeError::NeedMoreData)?;
-        let payload_length = cursor.try_get_varint()?;
+        let extension_headers = ExtensionHeaders::decode(&mut cursor)?;
+        let payload_length = declared_length(cursor.try_get_varint()?)?;
         let fetch_object = if payload_length == 0 {
             let status_value = cursor.try_get_varint()?;
             let status = u8::try_from(status_value)
@@ -158,12 +158,12 @@ impl FetchObjectField {
             let _ = buf.split_to(cursor.position() as usize);
             FetchObject::Status(status)
         } else {
-            if cursor.remaining() < payload_length as usize {
+            if cursor.remaining() < payload_length {
                 return Err(DecodeError::NeedMoreData);
             }
             let _ = buf.split_to(cursor.position() as usize);
-            let payload = Bytes::copy_from_slice(&buf[..payload_length as usize]);
-            buf.advance(payload_length as usize);
+            let payload = Bytes::copy_from_slice(&buf[..payload_length]);
+            buf.advance(payload_length);
             FetchObject::Payload(payload)
         };
         Ok(Self {
@@ -289,6 +289,7 @@ mod tests {
 
     mod failure {
         use super::super::*;
+        use crate::modules::moqt::data_plane::object::MAX_WIRE_DECLARED_LENGTH;
 
         #[test]
         fn depacketize_split_payload_length_varint_needs_more_data() {
@@ -301,6 +302,19 @@ mod tests {
 
             // Assert
             assert_eq!(result, Err(DecodeError::NeedMoreData));
+        }
+
+        #[test]
+        fn depacketize_payload_length_over_limit_is_fatal() {
+            // Arrange: no payload bytes follow, so without the limit this is NeedMoreData
+            let mut buf = BytesMut::from(&[1u8, 2, 3, 128, 0][..]);
+            buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1);
+
+            // Act
+            let result = FetchObjectField::decode(&mut buf);
+
+            // Assert
+            assert!(matches!(result, Err(DecodeError::Fatal(_))));
         }
 
         #[test]
