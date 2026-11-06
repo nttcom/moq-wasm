@@ -529,14 +529,16 @@ answer keeps CPU on the instance that serves the replay, and a replay whose last
 answer closed ends instead of keeping its namespaces announced on an instance
 whose CPU is throttled. Cloud Run ends a request at its timeout (at most 60
 minutes; the deployment must set 60), so the answer's `renew_after_seconds` (45
-minutes) tells the player when to open the next one. The player keeps the
-previous answer until no FETCH request is in flight: the relay sends a FETCH to
-the newest publisher of a namespace first, so the new replay takes the later
-ones even when it runs on another instance. Several instances may each run a
-replay of the same recording; they serve the same objects. The player also opens
-a new answer when the current one ends without the player closing it. The number
-of active publications per instance is capped by `--max-recordings`; recording
-jobs remain independent and their stored state stays shared.
+minutes) tells the player when to open the next one. The player
+(`openRecording` in `moq-wasm/recording`) keeps the previous answer for 60 s:
+the relay sends a FETCH to the newest publisher of a namespace first, so the new
+replay takes the later ones even when it runs on another instance, and gives up
+on a FETCH to the old one within 30 s (10 s for its FETCH_OK, 20 s to fill it).
+Several instances may each run a replay of the same recording; they serve the
+same objects. The player also opens a new answer when the current one ends
+without the player closing it. The number of active publications per instance
+is capped by `--max-recordings`; recording jobs remain independent and their
+stored state stays shared.
 
 `examples/recording-player` read the track list and chunk ranges from the
 answer this replaced, and cannot play a replay until it moves to `LivePlayer`

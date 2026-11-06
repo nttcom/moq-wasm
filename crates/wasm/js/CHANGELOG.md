@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `moq-wasm/recording`: `openRecording(session, recorderUrl, id, { token })`
+  asks the recorder to replay a finished recording and holds the answer of
+  `POST /recordings/{id}/publish`, which keeps the replay running, until
+  `close()` or until the session closes. `Recording.prefix` is the namespace
+  prefix of the replay's broadcasts. Every `renew_after_seconds` it opens a new
+  answer and closes the previous one a minute later, and it replaces an answer
+  that ends on its own; `Recording.closed` gives the error when it could not.
+  A refused request rejects with a `RecorderError` carrying the HTTP `status`.
+  `token` is a string or an async function called before each request.
 - `PlaybackGroup` plays several `LivePlayer`s at one position, a LOC capture
   timestamp, on one clock and one AudioContext: `add`, `remove`, `play`,
   `pause`, `seek`, `skip`, `goLive` and `state` (`mode`, `positionMicros`,
