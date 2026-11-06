@@ -209,8 +209,8 @@ impl Recordings {
         if !self.lock_room(namespace_prefix, &id).await? {
             return Err(StartRejection::AlreadyRecording);
         }
-        // Counted after taking the room, and not atomically: concurrent
-        // requests can all pass and exceed the limit by their number.
+        // Counted after taking the room, so that of concurrent requests the one
+        // that locks last counts all the others.
         if self.other_active_rooms(&id).await? >= self.config.max_recordings {
             self.store.unlock_room(namespace_prefix, &id).await?;
             return Err(StartRejection::TooManyRecordings);
@@ -319,7 +319,8 @@ impl Recordings {
 
     async fn holds_active_recording(&self, holder: &str) -> Result<bool> {
         let Some(record) = self.store.read_state(holder).await? else {
-            return Ok(false);
+            // A request between taking its lock and writing its state.
+            return Ok(minted_within_stale_window(holder, now_ms()));
         };
         if effective_state(&record, now_ms()).is_active() {
             return Ok(true);
@@ -419,6 +420,11 @@ fn effective_state(record: &RoomRecord, now_ms: u64) -> RoomState {
 fn recording_id() -> String {
     let random = RandomState::new().hash_one(now_ms()) & 0xff_ffff;
     format!("{}-{random:06x}", now_ms())
+}
+
+fn minted_within_stale_window(id: &str, now_ms: u64) -> bool {
+    let minted_ms = id.split('-').next().and_then(|ms| ms.parse::<u64>().ok());
+    minted_ms.is_some_and(|ms| now_ms.saturating_sub(ms) < STALE_AFTER.as_millis() as u64)
 }
 
 /// `<root>/<room>[/...]` with no empty element.
@@ -549,6 +555,43 @@ mod tests {
         // Assert
         assert!(matches!(second, Err(StartRejection::TooManyRecordings)));
         assert_eq!(recordings.store.lock_holders().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_room_locked_but_not_yet_written_counts_toward_the_limit() {
+        // Arrange
+        let recordings = recordings(1, false);
+        recordings
+            .store
+            .lock_room("anon/first", &recording_id())
+            .await
+            .unwrap();
+
+        // Act
+        let second = recordings
+            .start(
+                "anon/second",
+                Layout::Combined,
+                false,
+                RecordingFormat::Mp4,
+                None,
+            )
+            .await;
+
+        // Assert
+        assert!(matches!(second, Err(StartRejection::TooManyRecordings)));
+        assert_eq!(recordings.store.lock_holders().await.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_an_id_minted_within_the_stale_window_is_fresh() {
+        // Arrange
+        let now = 1_700_000_100_000;
+
+        // Act / Assert
+        assert!(minted_within_stale_window("1700000050000-00abcd", now));
+        assert!(!minted_within_stale_window("1700000000000-00abcd", now));
+        assert!(!minted_within_stale_window("not-an-id", now));
     }
 
     #[test]

@@ -289,9 +289,12 @@ A namespace prefix is one path element (its `/` percent-encoded), so the rooms
 `POST /recordings` with `{"namespace_prefix", "layout", "composite"}`:
 1. Takes the room's lock. A lock whose recording is no longer active (see
    below) is released first; a held one answers `409`.
-2. Counts the other active recordings against `--max-recordings`. Two
-   requests at once can both pass the count, which only exceeds the limit by
-   as many.
+2. Counts the other active recordings against `--max-recordings`; at the
+   limit it releases its lock and answers `503`. A lock with no state whose
+   id was made less than 90 s ago counts as active: it belongs to a request
+   between steps 1 and 3. Of concurrent requests, the one that locks last
+   counts all the others, so they cannot all pass; requests that count each
+   other can all be refused even when one would fit.
 3. Writes the recording as `starting` (id `<Unix ms>-<6 hex digits>`, which
    does not collide between instances), adds it to the room and launches
    `recorder record --id <id>` with every flag the job needs: the store, the
@@ -538,8 +541,10 @@ the recorder started with.
   composited (`skipped`).
 - A composite job that dies stays `composing`: unlike the recording job it
   writes no heartbeat.
-- `--max-recordings` is checked without a lock, so requests that arrive at
-  the same moment can exceed it by as many.
+- A lock left by an API that died between taking it and writing the state
+  counts toward `--max-recordings` for 90 s after its id was made, and is
+  never released: with no state, nothing tells that its recording ended,
+  so its room answers `409` until someone deletes `locks/<prefix>`.
 - A single recording (`recorder --upload`) writes no manifest; the capture
   origin of its files is only logged.
 - Clocks of the participants' devices are trusted as they are; a skewed
