@@ -44,6 +44,9 @@ pub struct RenditionTrack {
     config: RenditionConfig,
     /// The source's, whose alternate the rendition is.
     switching_set: String,
+    /// `SourceTracks::video` of the source, whose media timeline lists the
+    /// rendition's groups.
+    source: String,
     video_codec: VideoCodec,
     cmaf: Option<Fmp4TrackMuxer>,
 }
@@ -54,6 +57,7 @@ impl RenditionTrack {
             broadcast: writer.broadcast().clone(),
             timing: writer.shared_timing(),
             switching_set: writer.source_tracks().switching_set.clone(),
+            source: writer.source_tracks().video.clone(),
             config,
             video_codec: VideoCodec::H264,
             cmaf: None,
@@ -74,6 +78,7 @@ impl RenditionTrack {
                 let info = VideoTrackInfo {
                     bitrate: self.config.bitrate,
                     switching_set: self.switching_set.clone(),
+                    source: self.source.clone(),
                     cmaf: self.config.cmaf,
                     ..VideoTrackInfo::from_config(&config, self.config.label.clone())?
                 };

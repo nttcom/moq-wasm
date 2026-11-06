@@ -917,6 +917,7 @@ mod tests {
             bitrate: None,
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
+            source: VIDEO_TRACK_NAME.to_string(),
         }
     }
 
@@ -1282,7 +1283,8 @@ mod tests {
     #[tokio::test]
     async fn remove_track_ends_it_with_the_tracks_listed_only_with_it_and_an_update_publishes_it_again()
      {
-        // Arrange: the audio placeholder, timeline and chat are listed only because of `video`
+        // Arrange: the audio placeholder and the chat are listed only because of `video`, and
+        // the rendition keeps the source's timeline
         let mut relay = FakeRelay::spawn("remove-track");
         let (_connection, broadcast) = connected_broadcast(&relay).await;
         broadcast
@@ -1296,7 +1298,7 @@ mod tests {
         broadcast.remove_track(VIDEO_TRACK_NAME).await.unwrap();
         let ended = tokio::time::timeout(TEST_TIMEOUT, async {
             let mut ended = BTreeSet::new();
-            while ended.len() < 4 {
+            while ended.len() < 3 {
                 let request = relay.requests.recv().await.unwrap();
                 if let Some(track) = request.strip_prefix("PUBLISH_DONE ") {
                     ended.insert(track.to_string());
@@ -1317,8 +1319,7 @@ mod tests {
         assert_eq!(
             ended,
             BTreeSet::from(
-                ["audio", "chat", "timeline", VIDEO_TRACK_NAME]
-                    .map(|name| format!("live/cam/{name}"))
+                ["audio", "chat", VIDEO_TRACK_NAME].map(|name| format!("live/cam/{name}"))
             )
         );
         assert!(
@@ -1336,7 +1337,7 @@ mod tests {
             .flatten()
             .map(|track| track.name.as_str())
             .collect();
-        assert_eq!(names, ["video_480p", "video_480p_cmaf"]);
+        assert_eq!(names, ["video_480p", "video_480p_cmaf", "video_timeline"]);
         relay
             .wait_for_request(&format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"))
             .await;
@@ -1358,6 +1359,7 @@ mod tests {
                     },
                     cmaf: false,
                     switching_set: VIDEO_TRACK_NAME.to_string(),
+                    source: VIDEO_TRACK_NAME.to_string(),
                 },
             )
             .await

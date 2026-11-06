@@ -315,7 +315,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順はまだ実装していない。
+ステータス: 承認済み。移行の手順 1 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -362,7 +362,7 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 
 | 項目 | 今 | 変更後 |
 | --- | --- | --- |
-| timeline を出すソース | 名前が `video` の track（カメラ）だけ | すべてのソース。ソースごとに timeline track を1本出し、`depends` にそのソースの映像、rendition、音声を並べる。track 名の付け方は手順 1 で決める |
+| timeline を出すソース | 名前が `video` の track（カメラ）だけ | すべてのソース。ソースごとに timeline track を1本出し、`depends` にそのソースの映像、rendition、音声を並べる。track 名は `<ソースの映像の track 名>_timeline`（既定のソースは `video_timeline`） |
 | entry を書く時 | `video` のキーフレームごと | ソースの group が始まるごと。映像があるときはキーフレームで、無いとき（ミュート中、音声だけのソース）は音声が始める group で書く。1つのソースの映像と音声は同じ Group ID の列を使うので、1本で両方の位置を表せる |
 | group ID が飛んだとき | 一覧を空にする（映像をミュートすると起きる） | 音声の group でも entry を書くので、ID は飛ばない。一覧を空にするのは publisher が配信をやり直したときだけにする |
 

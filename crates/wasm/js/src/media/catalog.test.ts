@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test'
-import { type MediaCatalogTrack, buildMsfCatalogJson, extractCatalogTracks, sourceTracks } from './catalog'
+import {
+  type MediaCatalogTrack,
+  buildMsfCatalogJson,
+  extractCatalogTracks,
+  mediaTimelineOf,
+  sourceTracks
+} from './catalog'
 
 const AUDIO_SPECIFIC_CONFIG = 'ERA='
 
@@ -135,4 +141,29 @@ test('a source whose video is absent keeps its audio', () => {
 
   // Assert
   expect(camera.map(({ name }) => name)).toEqual(['audio'])
+})
+
+test('a player finds the media timeline of its own source', () => {
+  // Arrange
+  const catalog = {
+    tracks: [
+      { name: 'screenshare', packaging: 'loc', role: 'video', isLive: true },
+      { name: 'video', packaging: 'loc', role: 'video', isLive: true },
+      { name: 'audio', packaging: 'loc', role: 'audio', isLive: true },
+      { name: 'screenshare_timeline', packaging: 'mediatimeline', isLive: true, depends: ['screenshare'] },
+      { name: 'video_timeline', packaging: 'mediatimeline', isLive: true, depends: ['video', 'audio'] }
+    ]
+  }
+
+  // Act
+  const camera = mediaTimelineOf(catalog, ['video', 'audio'])
+  const cameraWithoutVideo = mediaTimelineOf(catalog, ['audio'])
+  const screen = mediaTimelineOf(catalog, ['screenshare'])
+
+  // Assert
+  expect([camera?.name, cameraWithoutVideo?.name, screen?.name]).toEqual([
+    'video_timeline',
+    'video_timeline',
+    'screenshare_timeline'
+  ])
 })

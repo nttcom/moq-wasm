@@ -25,8 +25,14 @@ export class SeekTimeline {
     return this.mediaTrack?.name
   }
 
+  /// `true` for the first timeline, which the player then subscribes to. A
+  /// later call for that timeline replaces its `depends`, which change as the
+  /// source's tracks are added and removed; any other timeline is ignored.
   followMediaTimeline(track: MediaCatalogTrack): boolean {
     if (this.mediaTrack) {
+      if (this.mediaTrack.name === track.name) {
+        this.mediaTrack.depends = track.depends ?? []
+      }
       return false
     }
     this.mediaTrack = { name: track.name, depends: track.depends ?? [] }
