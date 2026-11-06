@@ -16,7 +16,7 @@ use crate::modules::transport::{
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::bind_dual_stack,
     server_transport_config::load_cert_and_key,
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
 };
 
 enum WtEndpoint {
@@ -146,7 +146,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         Ok(Box::new(WtConnection::new(session)))
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         let server = match &self.endpoint {
             WtEndpoint::Server(s) => s,
             WtEndpoint::Client(_) => Err(anyhow::anyhow!(
@@ -164,8 +164,11 @@ impl TransportConnectionCreator for WtConnectionCreator {
                     .await;
                 continue;
             }
-            let session = accept_session(request, self.protocols).await?;
-            return Ok(Box::new(WtConnection::new(session)));
+            let protocols = self.protocols;
+            return Ok(Box::pin(async move {
+                let session = accept_session(request, protocols).await?;
+                Ok(Box::new(WtConnection::new(session)) as BoxedConnection)
+            }));
         }
     }
 

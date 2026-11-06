@@ -11,7 +11,7 @@ use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     connect_target::{ClientTransport, ConnectTarget},
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
 };
 
 /// Both the delay before a second WebTransport is dialed and WebTransport's
@@ -97,7 +97,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
         Ok(Box::new(BrowserConnection::new(transport)?))
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         Err(anyhow::anyhow!("the browser cannot accept connections").into())
     }
 

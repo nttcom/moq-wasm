@@ -22,6 +22,9 @@ use std::time::Duration;
 use crate::{Connecting, WebSocketFallback, server::Accepting, server::Handshake};
 
 const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
+/// QUIC's idle timeout does not end the handshake of a peer that answers
+/// keep-alives but withholds the WebTransport CONNECT.
+const TRANSPORT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 #[error("peer closed the connection before SERVER_SETUP (code {code}: {reason})")]
@@ -355,8 +358,12 @@ impl<T: TransportProtocol> SessionCreator<T> {
     }
 
     pub(crate) async fn accept_new_connection(&self) -> Result<Accepting, AcceptError> {
-        let transport_conn = self.transport_creator.accept_new_transport().await?;
+        let transport_accepting = self.transport_creator.accept_new_transport().await?;
         let handshake = async move {
+            let transport_conn =
+                executor::timeout(TRANSPORT_HANDSHAKE_TIMEOUT, transport_accepting)
+                    .await
+                    .map_err(|()| anyhow::anyhow!("the transport handshake timed out"))??;
             let setup = version::accept(&transport_conn).await?;
             Ok(Handshake {
                 transport_connection: transport_conn,
@@ -387,8 +394,26 @@ mod tests {
                 spawn_connected_native_sessions, spawn_native_server,
                 spawn_native_server_handshake, udp_blocked_server, within,
             },
+            transport::client_crypto::{client_crypto, client_endpoint, quic_client_config},
         },
     };
+
+    /// Completes a QUIC handshake offering `h3`, then never sends the HTTP/3
+    /// SETTINGS or the WebTransport CONNECT.
+    async fn stalled_web_transport_peer(port: u16) -> quinn::Connection {
+        let endpoint = client_endpoint(0).unwrap();
+        let config = quic_client_config(
+            client_crypto(false).unwrap(),
+            vec![web_transport_quinn::ALPN.as_bytes().to_vec()],
+        )
+        .unwrap();
+        let address = (std::net::Ipv4Addr::LOCALHOST, port).into();
+        endpoint
+            .connect_with(config, address, "localhost")
+            .unwrap()
+            .await
+            .unwrap()
+    }
 
     fn falling_back_client(fallback: WebSocketFallback) -> Endpoint<NATIVE> {
         native_client_with_config(ClientConfig {
@@ -782,5 +807,41 @@ mod tests {
         let spans = telemetry.closed_spans("moqt.session.connect");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].field("outcome"), Some("rejected"));
+    }
+
+    #[tokio::test]
+    async fn a_peer_stalling_its_web_transport_handshake_does_not_hold_back_the_next_connection() {
+        // Arrange: the server spawns every `Accepting`, as the relay does
+        let server =
+            Endpoint::<NATIVE>::create_server(&self_signed_server_config("accept-stalled-peer"))
+                .unwrap();
+        let port = server.local_port().unwrap();
+        let (session_sender, mut session_receiver) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Ok(accepting) = server.accept().await {
+                let session_sender = session_sender.clone();
+                tokio::spawn(async move {
+                    let Ok(handshake) = accepting.await else {
+                        return;
+                    };
+                    let session = handshake.accept(&tracing::Span::current()).await;
+                    let _ = session_sender.send(session);
+                });
+            }
+        });
+        let _stalled = within(stalled_web_transport_peer(port)).await;
+
+        // Act
+        let session = within(async {
+            native_client()
+                .connect(&format!("moqt://127.0.0.1:{port}"))
+                .await?
+                .await
+        })
+        .await;
+
+        // Assert
+        session.unwrap();
+        within(session_receiver.recv()).await.unwrap().unwrap();
     }
 }

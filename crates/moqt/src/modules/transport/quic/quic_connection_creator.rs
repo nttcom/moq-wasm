@@ -14,7 +14,7 @@ use crate::modules::transport::{
     dual_stack_bind::bind_dual_stack,
     quic::quic_connection::QUICConnection,
     server_transport_config::quic_server_config,
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
 };
 
 pub struct QUICConnectionCreator {
@@ -100,7 +100,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         Ok(Box::new(QUICConnection::new(connection)))
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         loop {
             let incoming = self
                 .endpoint
@@ -111,8 +111,9 @@ impl TransportConnectionCreator for QUICConnectionCreator {
                 incoming.refuse();
                 continue;
             }
-            let connection = incoming.await.map_err(anyhow::Error::from)?;
-            return Ok(Box::new(QUICConnection::new(connection)));
+            return Ok(Box::pin(async move {
+                Ok(Box::new(QUICConnection::new(incoming.await?)) as BoxedConnection)
+            }));
         }
     }
 

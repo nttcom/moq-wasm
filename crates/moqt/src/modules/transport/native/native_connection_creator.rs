@@ -20,7 +20,7 @@ use crate::modules::transport::{
     dual_stack_bind::{EPHEMERAL_PORT_ATTEMPTS, bind_dual_stack},
     quic::quic_connection::{QUICConnection, negotiated_alpn},
     server_transport_config::quic_server_config,
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
     websocket::{
         HTTP11_ALPN, LiveConnections, websocket_client, websocket_listener::WebSocketListener,
     },
@@ -203,14 +203,14 @@ impl TransportConnectionCreator for NativeConnectionCreator {
         }
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         let server = match &self.endpoint {
             NativeEndpoint::Server(server) => server,
             NativeEndpoint::Client(_) => Err(anyhow::anyhow!(
                 "Cannot accept_new_transport on a client endpoint"
             ))?,
         };
-        let connection = loop {
+        loop {
             tokio::select! {
                 incoming = server.quic.accept() => {
                     let incoming = incoming.ok_or(AcceptError::EndpointClosing)?;
@@ -218,29 +218,15 @@ impl TransportConnectionCreator for NativeConnectionCreator {
                         incoming.refuse();
                         continue;
                     }
-                    break incoming.await.map_err(anyhow::Error::from)?;
+                    return Ok(Box::pin(accept_quic(incoming, self.protocols)));
                 }
                 accepted = server.web_socket.accept() => {
                     let connection = accepted?;
                     self.web_socket_sessions.track(connection.transport_ended());
-                    return Ok(Box::new(connection));
+                    let connection: BoxedConnection = Box::new(connection);
+                    return Ok(Box::pin(std::future::ready(Ok(connection))));
                 }
             }
-        };
-
-        let alpn = negotiated_alpn(&connection)
-            .ok_or_else(|| anyhow::anyhow!("No ALPN protocol negotiated"))?;
-
-        if alpn == web_transport_quinn::ALPN {
-            let request = web_transport_quinn::Request::accept(connection)
-                .await
-                .map_err(anyhow::Error::from)?;
-            let session = accept_session(request, self.protocols).await?;
-            Ok(Box::new(WtConnection::new(session)))
-        } else if self.protocols.quic_alpns.contains(&alpn.as_str()) {
-            Ok(Box::new(QUICConnection::new(connection)))
-        } else {
-            Err(anyhow::anyhow!("Unsupported ALPN: {alpn:?}"))?
         }
     }
 
@@ -255,6 +241,25 @@ impl TransportConnectionCreator for NativeConnectionCreator {
 
     fn local_port(&self) -> anyhow::Result<u16> {
         Ok(self.endpoint.quinn_endpoint().local_addr()?.port())
+    }
+}
+
+async fn accept_quic(
+    incoming: quinn::Incoming,
+    protocols: ApplicationProtocols,
+) -> anyhow::Result<BoxedConnection> {
+    let connection = incoming.await?;
+    let alpn = negotiated_alpn(&connection)
+        .ok_or_else(|| anyhow::anyhow!("No ALPN protocol negotiated"))?;
+
+    if alpn == web_transport_quinn::ALPN {
+        let request = web_transport_quinn::Request::accept(connection).await?;
+        let session = accept_session(request, protocols).await?;
+        Ok(Box::new(WtConnection::new(session)))
+    } else if protocols.quic_alpns.contains(&alpn.as_str()) {
+        Ok(Box::new(QUICConnection::new(connection)))
+    } else {
+        anyhow::bail!("Unsupported ALPN: {alpn:?}")
     }
 }
 
@@ -300,10 +305,9 @@ mod tests {
         let client = NativeConnectionCreator::client(0, false, client).unwrap();
         let target = ConnectTarget::parse(&url).unwrap();
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            let (client, server) = tokio::join!(
-                client.create_new_transport(&target),
-                server.accept_new_transport()
-            );
+            let (client, server) = tokio::join!(client.create_new_transport(&target), async {
+                server.accept_new_transport().await.unwrap().await
+            });
             (client.unwrap(), server.unwrap())
         })
         .await

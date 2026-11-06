@@ -311,10 +311,16 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   A closing server uses it so that clients learn at once instead of waiting
   for their handshake to time out.
 - `accept()` returns `Accepting`, or `AcceptError::EndpointClosing` once the
-  endpoint is closed, which every transport reports the same way. The future
-  of `Accepting` performs the transport handshake and `version::accept`,
-  which for draft-14 accepts the control stream and stops after CLIENT_SETUP
-  is received. It resolves to a
+  endpoint is closed, which every transport reports the same way. `accept()`
+  does not wait on the peer: `TransportConnectionCreator::accept_new_transport`
+  returns the rest of the transport handshake (on `NATIVE`: QUIC, then the
+  WebTransport CONNECT on `h3`) as a `TransportAccepting` future, so a server
+  that spawns each `Accepting` keeps accepting while one peer stalls. A
+  transport handshake that fails therefore fails `Accepting`, not `accept()`.
+  The future of `Accepting` runs that handshake, failing it after 10 s
+  (`TRANSPORT_HANDSHAKE_TIMEOUT`), then `version::accept`, which for draft-14
+  accepts the control stream and stops after CLIENT_SETUP is received. It
+  resolves to a
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:
