@@ -7,6 +7,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{WebTransport, WebTransportOptions};
 
 use super::{browser_connection::BrowserConnection, browser_web_socket, js_value::js_error};
+use crate::modules::moqt::domains::endpoint::CertificateVerification;
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
@@ -30,24 +31,18 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
 
     fn client(
         _port_num: u16,
-        verify_certificate: bool,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        anyhow::ensure!(
-            verify_certificate,
-            "the browser always verifies the server certificate"
-        );
-        Ok(Self { protocols })
-    }
-
-    fn client_with_custom_cert(
-        _port_num: u16,
-        _custom_cert_path: &str,
-        _protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        anyhow::bail!(
-            "the browser cannot load a certificate file; trust the certificate in the browser instead"
-        )
+        match verification {
+            CertificateVerification::NativeRoots => Ok(Self { protocols }),
+            CertificateVerification::TrustedCertificates(_) => anyhow::bail!(
+                "the browser cannot load a certificate file; trust the certificate in the browser instead"
+            ),
+            CertificateVerification::Disabled => {
+                anyhow::bail!("the browser always verifies the server certificate")
+            }
+        }
     }
 
     fn server(

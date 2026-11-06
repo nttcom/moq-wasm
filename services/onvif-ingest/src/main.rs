@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
 use clap::Parser;
 use mediapack::MediaEvent;
-use moqt::ClientConfig;
+use moqt::{CertificateVerification, ClientConfig};
 use onvif_ingest::{
     app_config,
     arrival_clamp::ArrivalClamp,
@@ -118,7 +118,9 @@ async fn main() -> Result<()> {
     };
 
     let client_config = ClientConfig {
-        verify_certificate: !args.insecure_skip_tls_verify,
+        certificate_verification: CertificateVerification::native_roots_or_disabled(
+            !args.insecure_skip_tls_verify,
+        ),
         authorization_token: args.auth_token.clone().map(Into::into),
         ..ClientConfig::default()
     };
@@ -136,7 +138,7 @@ async fn main() -> Result<()> {
     let connection = RelayConnection::new(Some(MoqtTarget {
         url: args.moqt_url.clone(),
         auth_token: args.auth_token.clone(),
-        verify_certificate: client_config.verify_certificate,
+        verify_certificate: !args.insecure_skip_tls_verify,
     }));
     let broadcast = Broadcast::new(connection.clone(), publish_namespace);
 

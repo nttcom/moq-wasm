@@ -1,3 +1,4 @@
+use crate::modules::moqt::domains::endpoint::CertificateVerification;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,9 +8,7 @@ use quinn::rustls::{self};
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
-    client_crypto::{
-        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
-    },
+    client_crypto::{client_crypto, client_endpoint, quic_client_config},
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::bind_dual_stack,
     quic::quic_connection::QUICConnection,
@@ -42,22 +41,10 @@ impl QUICConnectionCreator {
 impl TransportConnectionCreator for QUICConnectionCreator {
     fn client(
         port_num: u16,
-        verify_certificate: bool,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
-    }
-
-    fn client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        Self::create_client(
-            port_num,
-            client_crypto_with_custom_cert(custom_cert_path)?,
-            protocols,
-        )
+        Self::create_client(port_num, client_crypto(verification)?, protocols)
     }
 
     fn server(

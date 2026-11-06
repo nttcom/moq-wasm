@@ -7,8 +7,8 @@ use gstreamer::prelude::*;
 use gstreamer_app::{AppSink, AppSinkCallbacks};
 use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestErrorCode, Session, SessionEvent, TrackWriter,
-    object::ContentExists, subscribe::SubscribeHandler,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode, Session, SessionEvent,
+    TrackWriter, object::ContentExists, subscribe::SubscribeHandler,
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -24,7 +24,7 @@ pub(crate) struct SourceStreamer {
 impl SourceStreamer {
     pub(crate) async fn run(relay_url: &str, namespace: &str) -> Result<Self> {
         let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             ..ClientConfig::default()
         })?;
         let session = Arc::new(endpoint.connect(relay_url).await?.await?);

@@ -68,7 +68,7 @@ impl InterRelayConnectionManager {
         // would hold the dialing request's span open for the endpoint's lifetime.
         let endpoint = session_span.in_scope(|| {
             moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
-                verify_certificate: false,
+                certificate_verification: moqt::CertificateVerification::Disabled,
                 authorization_token: Some(self.relay_token.clone().into()),
                 follow_go_away: false,
                 ..moqt::ClientConfig::default()

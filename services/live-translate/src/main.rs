@@ -23,8 +23,8 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use metadata_token::MetadataToken;
 use moqt::{
-    AuthorizationTokenSource, ClientConfig, Endpoint, QUIC, RequestErrorCode, Session,
-    SessionEvent, subscribe::SubscribeHandler,
+    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, QUIC,
+    RequestErrorCode, Session, SessionEvent, subscribe::SubscribeHandler,
 };
 use static_files::StaticFiles;
 use tokio::{net::TcpListener, sync::Semaphore};
@@ -208,7 +208,7 @@ async fn main() -> Result<()> {
     };
     let config = ClientConfig {
         port: 0,
-        verify_certificate: !args.insecure,
+        certificate_verification: CertificateVerification::native_roots_or_disabled(!args.insecure),
         authorization_token: app.as_ref().map(|app| {
             let app = app.clone();
             AuthorizationTokenSource::provider(move || {

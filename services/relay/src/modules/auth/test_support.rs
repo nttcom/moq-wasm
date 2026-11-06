@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestFailure, Session,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, RequestFailure, Session,
     server::{CertificateFiles, write_self_signed_cert},
 };
 
@@ -126,7 +126,7 @@ pub(crate) async fn spawn_relay(
 
 pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<QUIC> {
     Endpoint::<QUIC>::create_client(&ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         authorization_token: authorization_token.map(Into::into),
         follow_go_away: false,
         ..ClientConfig::default()

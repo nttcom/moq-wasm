@@ -206,7 +206,7 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ClientConfig, SessionEvent, TerminationErrorCode,
+        CertificateVerification, ClientConfig, SessionEvent, TerminationErrorCode,
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, connect_sessions, native_client_with_config,
             receive_disconnected, spawn_connected_native_sessions, spawn_native_server,
@@ -228,7 +228,7 @@ mod tests {
                 .unwrap();
             runtime.block_on(async {
                 let endpoint = native_client_with_config(ClientConfig {
-                    verify_certificate: false,
+                    certificate_verification: CertificateVerification::Disabled,
                     ..ClientConfig::default()
                 });
                 let connecting = endpoint

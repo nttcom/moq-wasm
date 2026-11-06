@@ -1,3 +1,4 @@
+use crate::modules::moqt::domains::endpoint::CertificateVerification;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use std::{
     sync::{
@@ -13,9 +14,7 @@ use quinn::rustls::{self};
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
-    client_crypto::{
-        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
-    },
+    client_crypto::{client_crypto, client_endpoint, quic_client_config},
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::{EPHEMERAL_PORT_ATTEMPTS, bind_dual_stack},
     quic::quic_connection::{QUICConnection, negotiated_alpn},
@@ -100,22 +99,10 @@ impl TransportConnectionCreator for NativeConnectionCreator {
 
     fn client(
         port_num: u16,
-        verify_certificate: bool,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
-    }
-
-    fn client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        Self::create_client(
-            port_num,
-            client_crypto_with_custom_cert(custom_cert_path)?,
-            protocols,
-        )
+        Self::create_client(port_num, client_crypto(verification)?, protocols)
     }
 
     fn server(
@@ -266,6 +253,7 @@ async fn accept_quic(
 #[cfg(test)]
 mod tests {
     use super::NativeConnectionCreator;
+    use crate::CertificateVerification;
     use crate::modules::{
         moqt::version::APPLICATION_PROTOCOLS,
         test_support::{
@@ -302,7 +290,8 @@ mod tests {
             "{scheme}://127.0.0.1:{}{path}",
             server.local_port().unwrap()
         );
-        let client = NativeConnectionCreator::client(0, false, client).unwrap();
+        let client =
+            NativeConnectionCreator::client(0, &CertificateVerification::Disabled, client).unwrap();
         let target = ConnectTarget::parse(&url).unwrap();
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             let (client, server) = tokio::join!(client.create_new_transport(&target), async {
@@ -500,7 +489,12 @@ mod tests {
         let server: NativeConnectionCreator = server_transport_creator("native-ws-refuse");
         let port = server.local_port().unwrap();
         server.refuse_new_connections();
-        let client = NativeConnectionCreator::client(0, false, APPLICATION_PROTOCOLS).unwrap();
+        let client = NativeConnectionCreator::client(
+            0,
+            &CertificateVerification::Disabled,
+            APPLICATION_PROTOCOLS,
+        )
+        .unwrap();
         let target = ConnectTarget::parse(&format!("wss://127.0.0.1:{port}/moq")).unwrap();
 
         // Act

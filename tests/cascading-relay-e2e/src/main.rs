@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
     fetch::{Fetch, FetchOption},
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
@@ -997,7 +997,7 @@ fn ordered_object_payload(index: usize) -> Vec<u8> {
 
 async fn connect(url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         ..ClientConfig::default()
     })?;
     tracing::info!(url, "connecting to relay");

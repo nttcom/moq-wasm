@@ -12,7 +12,7 @@ use mediapack::rtp::{
     Destination, MuxerOptions,
     muxer::{AUDIO_PAYLOAD_TYPE, VIDEO_PAYLOAD_TYPE},
 };
-use moqt::{ClientConfig, Session};
+use moqt::{CertificateVerification, ClientConfig, Session};
 
 use crate::{broadcast_reader::BroadcastReader, rtp::RtpOutput};
 
@@ -97,7 +97,9 @@ async fn main() -> Result<()> {
     let session = relay_session::connect(
         &args.moqt_url,
         &ClientConfig {
-            verify_certificate: !args.insecure_skip_tls_verify,
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                !args.insecure_skip_tls_verify,
+            ),
             authorization_token: args.auth_token.map(Into::into),
             ..ClientConfig::default()
         },

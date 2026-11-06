@@ -4,8 +4,8 @@ use std::{
 };
 
 use moqt::{
-    AuthorizationToken, AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, RequestErrorCode,
-    SessionEvent,
+    AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
+    NATIVE, RequestErrorCode, SessionEvent,
     executor::{self, JoinHandle},
     namespace::NamespaceWatchers,
     publish::{Origin, Retention},
@@ -39,7 +39,9 @@ pub fn connect(
         });
         // quinn binds the endpoint's socket through the ambient runtime, which this future runs on.
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
-            verify_certificate,
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                verify_certificate,
+            ),
             authorization_token,
             ..ClientConfig::default()
         })?;

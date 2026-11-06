@@ -34,8 +34,8 @@ use crate::modules::transport::{
 };
 
 use crate::{
-    ClientConfig, Endpoint, NATIVE, RequestFailure, Session, SessionEvent, Subscription,
-    TrackReader, TransportProtocol,
+    CertificateVerification, ClientConfig, Endpoint, NATIVE, RequestFailure, Session, SessionEvent,
+    Subscription, TrackReader, TransportProtocol,
     fetch::{Fetch, FetchDataReceiver, FetchDataSender, FetchOption},
     modules::moqt::{
         data_plane::object::{
@@ -150,11 +150,11 @@ pub(crate) struct WebSocketOnlyCreator {
 
 #[async_trait::async_trait]
 impl TransportConnectionCreator for WebSocketOnlyCreator {
-    fn client(_: u16, _: bool, _: ApplicationProtocols) -> anyhow::Result<Self> {
-        anyhow::bail!("a WebSocket-only endpoint is a server")
-    }
-
-    fn client_with_custom_cert(_: u16, _: &str, _: ApplicationProtocols) -> anyhow::Result<Self> {
+    fn client(
+        _: u16,
+        _: &CertificateVerification,
+        _: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
         anyhow::bail!("a WebSocket-only endpoint is a server")
     }
 
@@ -301,7 +301,7 @@ pub(crate) fn native_client_with_config(config: ClientConfig) -> Endpoint<NATIVE
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
     ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         follow_go_away: false,
         ..ClientConfig::default()
     }
@@ -385,7 +385,7 @@ pub(crate) async fn spawn_connected_native_sessions_following_go_away(
 ) -> (Session, Session) {
     let (port, accept) = spawn_native_server(name);
     let endpoint = native_client_with_config(ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         follow_go_away: true,
         ..ClientConfig::default()
     });

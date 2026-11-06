@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use moqt::{
-    ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
+    CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
     fetch::{FetchDataReceiver, FetchOption},
     object::{ContentExists, Location},
     subscribe::{FilterType, SubscribeOption},
@@ -42,7 +42,9 @@ impl RelayConnection {
         authorization_token: Option<String>,
     ) -> Result<Self> {
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
-            verify_certificate,
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                verify_certificate,
+            ),
             authorization_token: authorization_token.map(Into::into),
             ..ClientConfig::default()
         })?;
