@@ -318,8 +318,9 @@ impl ControlChannel {
         payload: BytesMut,
     ) -> Result<(), TransportSendError> {
         let RequestIdReservation(mut next_request_id) = reservation;
+        self.send_stream.send(message_type, payload).await?;
         *next_request_id += 2;
-        self.send_stream.send(message_type, payload).await
+        Ok(())
     }
 
     pub(super) async fn respond(
@@ -717,9 +718,11 @@ mod tests {
 
     use tokio::sync::mpsc::error::TryRecvError;
 
+    use futures::FutureExt;
+
     use super::{
-        ControlChannel, LateResponseAction, Notification, REQUEST_ID_WINDOW, RequestIdReservation,
-        handle_late_response,
+        ControlChannel, LateResponseAction, Notification, OutgoingRequest, REQUEST_ID_WINDOW,
+        RequestIdReservation, handle_late_response,
     };
     use crate::{
         RequestFailure, Session, SessionEvent,
@@ -984,9 +987,8 @@ mod tests {
         );
     }
 
-    /// Bypasses the Request ID reservation.
-    async fn send_track_status(session: &Session, request_id: u64) {
-        let track_status = Subscribe {
+    fn track_status(request_id: u64) -> Subscribe {
+        Subscribe {
             request_id,
             track_namespace: vec!["ns".to_string()],
             track_name: "track".to_string(),
@@ -997,11 +999,18 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: None,
             trace_context: None,
-        };
+        }
+    }
+
+    /// Bypasses the Request ID reservation.
+    async fn send_track_status(session: &Session, request_id: u64) {
         let connection = session.publisher().session.connection();
         ControlChannel::of(&connection)
             .send_stream
-            .send(ControlMessageType::TrackStatus, track_status.encode())
+            .send(
+                ControlMessageType::TrackStatus,
+                track_status(request_id).encode(),
+            )
             .await
             .unwrap();
     }
@@ -1059,6 +1068,25 @@ mod tests {
             panic!("expected TRACK_STATUS, got {event:?}");
         };
         handler
+    }
+
+    #[tokio::test]
+    async fn request_dropped_before_it_is_written_leaves_its_request_id_unused() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-id-dropped-send").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let _held_stream = channel.send_stream.hold().await;
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::TrackStatus(track_status(reservation.request_id()));
+
+        // Act
+        let send = channel.send_request(reservation, request).now_or_never();
+
+        // Assert
+        assert!(send.is_none(), "wrote past the held control stream");
+        let next = channel.reserve_request_id().await.unwrap();
+        assert_eq!(next.request_id(), 0);
     }
 
     #[tokio::test]

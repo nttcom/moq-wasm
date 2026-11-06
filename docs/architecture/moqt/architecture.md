@@ -844,7 +844,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Request IDs reach the peer in increasing order** (draft-14 §9.1). A
   `RequestIdReservation` holds the next Request ID's lock until the request
   is written, so concurrent requests cannot overtake each other on the
-  control stream. A dropped reservation leaves the ID unused.
+  control stream. The next Request ID advances only once the request is
+  written, so dropping the reservation or the request future before then
+  leaves the ID for the next request.
   `ControlMessageReceiveTask` closes the session with INVALID_REQUEST_ID when
   a peer's new request has this side's parity or is not larger than the
   peer's previous one. Skipped IDs are accepted.
