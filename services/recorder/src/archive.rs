@@ -363,7 +363,7 @@ mod tests {
         let encoded = STANDARD
             .decode(lines[1]["extensions"].as_str().unwrap())
             .unwrap();
-        assert_eq!(ExtensionHeaders::decode(&mut &encoded[..]), Some(headers));
+        assert_eq!(ExtensionHeaders::decode(&mut &encoded[..]), Ok(headers));
         assert_eq!(lines[2]["complete"], true);
         assert!(Archive::create(Some(path), "other", None).await.is_err());
         tokio::fs::remove_dir_all(dir).await.unwrap();

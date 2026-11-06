@@ -861,6 +861,13 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   concurrent requests is not capped. MAX_REQUEST_ID and REQUESTS_BLOCKED never
   reach the application.
 
+- **A peer cannot declare an object payload or an extension header block
+  above 16 MiB** (`MAX_WIRE_DECLARED_LENGTH`). A larger Object Payload
+  Length or Extension Headers Length on a subgroup or FETCH stream is a
+  decode error that ends the stream (draft-14 §12.1). The draft sets no
+  limit, and a receiver can hold a declared length in memory until all of
+  it arrives.
+
 - **A carried subscription cuts over at a group boundary.** The first object
   the new connection delivers fixes the cutover group: the group after the
   newest one the previous connection handed out, or that object's group when
