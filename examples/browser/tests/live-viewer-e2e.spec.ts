@@ -31,20 +31,14 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert: 映像と音声は同じ clock で提示され、ずれは 1 フレーム未満
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
-    // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
+    // Act: 10 秒分の group が FETCH できるようになるのを待って巻き戻す
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
 
-    // Assert: 軸は配信開始から始まり、FETCH できる区間はその一部として示される
+    // Assert: 軸は配信開始から始まる
     await expect(viewer.seekStart).toHaveText(/^0:0\d$/)
-    const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
-      offset: Number.parseFloat((element as HTMLElement).style.left),
-      width: Number.parseFloat((element as HTMLElement).style.width)
-    }))
-    expect(replayable.offset).toBeGreaterThan(0)
-    expect(replayable.width).toBeLessThan(100)
 
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
@@ -316,6 +310,67 @@ test('a second viewer joining a subscription the relay already holds gets the ca
   }
 })
 
+test('live viewer rewinds to groups from before it started watching, placed by the media timeline', async ({
+  browser
+}) => {
+  test.setTimeout(180_000)
+  // Arrange: the bridge has published for longer than the 60 s its media timeline lists
+  const session = await arrangeLiveViewerE2ESession(browser)
+  const { viewer } = session
+
+  try {
+    await viewer.watchButton.click()
+    await expect
+      .poll(async () => parseClock((await viewer.seekElapsed.innerText()).split(' / ')[1]), { timeout: 90_000 })
+      .toBeGreaterThan(70)
+    await viewer.stopButton.click()
+    await expect(viewer.seekbar).toBeDisabled()
+
+    // Act
+    await viewer.watchButton.click()
+    await expect(viewer.playbackStatus).toContainText('Playing')
+    const watchedAt = Date.now()
+
+    // Assert: the timeline lists at once what live playback alone would take 40 s to observe
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 10_000 }).toBeGreaterThan(40)
+
+    // Assert: FETCH できる区間は配信開始から始まる軸の一部として示される
+    const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
+      offset: Number.parseFloat((element as HTMLElement).style.left),
+      width: Number.parseFloat((element as HTMLElement).style.width)
+    }))
+    expect(replayable.offset).toBeGreaterThan(0)
+    expect(replayable.width).toBeLessThan(100)
+
+    // Act: 40 秒前へシークする（range input が書き直さない整数で渡す）
+    await viewer.seekbar.fill(String(Math.round(Number(await viewer.seekbar.getAttribute('max')) - 40)))
+
+    // Assert: 視聴を始める前の group から再生が続く
+    await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    expect(rewoundSeconds(await viewer.rewindStatus.innerText())).toBeGreaterThan((Date.now() - watchedAt) / 1_000 + 20)
+    await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
+    const [atPosition] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
+    await expect
+      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 20_000 })
+      .toBeGreaterThan(atPosition + 3)
+
+    // Act: Home は timeline が載せる最古の group へ戻る
+    await viewer.seekbar.focus()
+    await viewer.seekbar.press('Home')
+
+    // Assert: その group から再生が続く
+    await expect
+      .poll(async () => rewoundSeconds(await viewer.rewindStatus.innerText()), { timeout: 20_000 })
+      .toBeGreaterThan(45)
+    const [atOldest] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
+    await expect
+      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 20_000 })
+      .toBeGreaterThan(atOldest + 3)
+  } finally {
+    await closeLiveViewerE2ESession(session)
+  }
+})
+
 async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'paused' | 'volume'>(
   media: Locator,
   key: K
@@ -329,6 +384,11 @@ function parseClock(text: string): number {
 
 function elapsedAtPosition(seekElapsed: string): number {
   return parseClock(seekElapsed.split(' / ')[0])
+}
+
+function rewoundSeconds(rewindStatus: string): number {
+  const match = rewindStatus.match(/Rewound (\d+\.\d)s/)
+  return match ? Number(match[1]) : 0
 }
 
 async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {

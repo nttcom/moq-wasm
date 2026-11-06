@@ -648,7 +648,7 @@ export class LivePlayer {
     }
     await this.textTracks.subscribe(track.name, (text) => {
       try {
-        this.timeline.replaceMediaTimeline(text)
+        this.timeline.replaceMediaTimeline(text, this.subscriptions.get('video')?.name)
       } catch (error) {
         this.context.log('error', `media timeline: ${getErrorMessage(error)}`)
         return
@@ -673,7 +673,7 @@ export class LivePlayer {
       this.abandonVideoSwitch()
       this.newestVideoGroup = undefined
       this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
-      this.timeline.resetGroups()
+      this.timeline.groups.reset()
       this.goLive()
     } else {
       this.timeline.audio.reset()
@@ -781,7 +781,7 @@ export class LivePlayer {
     this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
     this.locLive.configureTrack('video', next.track)
     if (!start.aligned) {
-      this.timeline.resetGroups()
+      this.timeline.groups.reset()
       return
     }
     this.subscriptions.endBeforeGroup(pending.outgoing, start.groupId).catch((error) => {
@@ -858,9 +858,6 @@ export class LivePlayer {
     }
     if (kind === 'video') {
       this.videoObjectCount += 1
-      if (object.objectId === 0n) {
-        this.timeline.observeTimelineGroup(groupId)
-      }
       this.notePlaying(trackName)
     } else {
       this.timeline.audio.record(groupId, undefined)
@@ -1016,15 +1013,12 @@ export class LivePlayer {
     }
   }
 
-  /// The media timeline records the groups of the tracks it depends on. A group
-  /// of any other rendition is placed from the arrival lag of the last live
+  /// The media timeline lists the groups of the tracks it depends on. A group
+  /// of any other track is placed from the arrival lag of the last live
   /// object, which runs late by however long the main thread took to handle the
   /// TRACK_STATUS answer.
   private observeLiveVideoGroup(groupId: bigint): void {
-    const name = this.subscriptions.get('video')?.name
-    if (this.packaging === 'cmaf' || this.timeline.stampedByMediaTimeline(name)) {
-      this.timeline.observeTimelineGroup(groupId)
-    } else {
+    if (!this.timeline.stampedByMediaTimeline(this.subscriptions.get('video')?.name)) {
       this.timeline.groups.recordLiveGroup(groupId)
     }
     this.changed()

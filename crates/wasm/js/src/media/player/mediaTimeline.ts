@@ -1,3 +1,5 @@
+import type { GroupMark } from './rewind'
+
 const MICROS_PER_MILLI = 1_000
 const MILLIS_PER_SECOND = 1_000
 const SECONDS_PER_MINUTE = 60
@@ -33,8 +35,8 @@ export class MediaTimeline {
     this.records = []
   }
 
-  encodedAtMsFor(groupId: bigint): number | undefined {
-    return this.records.find((record) => record.groupId === groupId)?.encodedAtMs
+  groupMarks(): GroupMark[] {
+    return this.records.map(({ groupId, encodedAtMs }) => ({ groupId, captureMicros: encodedAtMs * MICROS_PER_MILLI }))
   }
 
   /// Presentation times are measured from the start of the broadcast, so any

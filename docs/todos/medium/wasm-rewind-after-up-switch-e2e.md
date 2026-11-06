@@ -1,6 +1,6 @@
 # [S] Keep the live-viewer rewind E2E from failing right after an up-switch
 
-Next: in `examples/browser/tests/live-viewer-e2e.spec.ts:58`, read what the expected width depends on: the live `<video>`'s `videoWidth`, taken once before the poll.
+Next: in `examples/browser/tests/live-viewer-e2e.spec.ts:52`, read what the expected width depends on: the live `<video>`'s `videoWidth`, taken once before the poll.
 
 ## Goal
 
