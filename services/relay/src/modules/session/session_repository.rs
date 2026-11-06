@@ -8,7 +8,7 @@ use tracing::Span;
 
 use crate::modules::{
     auth::{session_expiry_task::SessionExpiryTask, verified_token::VerifiedToken},
-    domain::{session_id::SessionId, session_peer::SessionPeer},
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::namespace_has_prefix},
     session::{
         Session, publisher::Publisher, remote_address_watch_task::RemoteAddressWatchTask,
         session_event::SessionEvent, subscriber::Subscriber,
@@ -254,9 +254,9 @@ impl SessionRepository {
         track_namespace_prefix: &str,
     ) {
         if let Some(entry) = self.sessions.get_mut(&session_id) {
-            entry
-                .announced_namespaces
-                .retain(|track_namespace| !track_namespace.starts_with(track_namespace_prefix));
+            entry.announced_namespaces.retain(|track_namespace| {
+                !namespace_has_prefix(track_namespace, track_namespace_prefix)
+            });
         }
     }
 
@@ -465,12 +465,14 @@ mod tests {
         let mut repository = repository.lock().await;
         repository.record_namespace_announced(7, "room/alice");
         repository.record_namespace_announced(7, "lobby/bob");
+        repository.record_namespace_announced(7, "rooms/carol");
 
         // Act
         repository.forget_announced_namespaces(7, "room");
 
-        // Assert
+        // Assert: `rooms` is another field, not under `room`
         assert!(repository.record_namespace_announced(7, "room/alice"));
         assert!(!repository.record_namespace_announced(7, "lobby/bob"));
+        assert!(!repository.record_namespace_announced(7, "rooms/carol"));
     }
 }

@@ -8,7 +8,7 @@ use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
-    directory::InMemoryLocalPubSubDirectory,
+    directory::{InMemoryLocalPubSubDirectory, PeerRemoval},
     domain::session_id::SessionId,
 };
 
@@ -30,11 +30,22 @@ impl PublishNamespaceDone {
             "PUBLISH_NAMESPACE_DONE received"
         );
 
-        let no_clients_remain = table.unregister_publish_namespace(session_id, track_namespace);
+        let removal = table.unregister_publish_namespace(session_id, track_namespace);
+        let is_origin_client = super::is_origin_client(session_id, forwarder).await;
+        // A relay session may withdraw a namespace this relay never registered
+        // for it, so only a client's DONE requires its own registration.
+        if is_origin_client && removal == PeerRemoval::NotRegistered {
+            tracing::warn!(
+                session_id = %session_id,
+                track_namespace = %track_namespace,
+                "PUBLISH_NAMESPACE_DONE for a namespace the session does not publish; ignored"
+            );
+            return;
+        }
 
         Self::notify_local_subscribers(session_id, track_namespace, table, forwarder).await;
 
-        if super::is_origin_client(session_id, forwarder).await && no_clients_remain {
+        if is_origin_client && removal == PeerRemoval::NoClientsRemain {
             Self::withdraw_namespace_publication(
                 track_namespace,
                 forwarder,
@@ -146,6 +157,7 @@ mod tests {
         auth::verified_token::VerifiedToken,
         cascading::route_registry::NoopRelayRouteRegistry,
         domain::session_peer::SessionPeer,
+        session::session_repository::NewSession,
         test_support::mock_session::{
             RecordedControlMessages, detached_session_repository,
             mock_session_with_transport_stats, recorded_session_answering_subscribe,
@@ -160,21 +172,22 @@ mod tests {
 
     async fn withdraw(
         table: &InMemoryLocalPubSubDirectory,
-        publisher_session_id: SessionId,
+        publisher_peer: SessionPeer,
     ) -> RecordedControlMessages {
         let (subscriber_session, recorded) =
             recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
         let repository = session_repository_with_sessions(
-            vec![
-                (
-                    LEAVING_PUBLISHER,
-                    mock_session_with_transport_stats(Default::default()),
-                ),
-                (NAMESPACE_SUBSCRIBER, subscriber_session),
-            ],
+            vec![(NAMESPACE_SUBSCRIBER, subscriber_session)],
             VerifiedToken::full_access(),
         )
         .await;
+        repository.lock().await.add(NewSession {
+            session_id: LEAVING_PUBLISHER,
+            session: mock_session_with_transport_stats(Default::default()),
+            session_span: tracing::Span::none(),
+            peer: publisher_peer,
+            verified_token: VerifiedToken::full_access(),
+        });
         let inter_relay_connection_manager = InterRelayConnectionManager::new(
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             unused_inter_relay_client_config(),
@@ -185,7 +198,7 @@ mod tests {
             .await;
         PublishNamespaceDone
             .handle(
-                publisher_session_id,
+                LEAVING_PUBLISHER,
                 table,
                 &forwarder,
                 CascadingRelayContext {
@@ -225,7 +238,7 @@ mod tests {
         ]);
 
         // Act
-        let recorded = withdraw(&table, LEAVING_PUBLISHER).await;
+        let recorded = withdraw(&table, SessionPeer::Client).await;
 
         // Assert
         assert!(recorded.publish_namespace_dones().is_empty());
@@ -240,7 +253,7 @@ mod tests {
         ]);
 
         // Act
-        let recorded = withdraw(&table, LEAVING_PUBLISHER).await;
+        let recorded = withdraw(&table, SessionPeer::Client).await;
 
         // Assert
         assert!(recorded.publish_namespace_dones().is_empty());
@@ -252,7 +265,34 @@ mod tests {
         let table = table_with_namespace_publishers(&[(LEAVING_PUBLISHER, SessionPeer::Client)]);
 
         // Act
-        let recorded = withdraw(&table, LEAVING_PUBLISHER).await;
+        let recorded = withdraw(&table, SessionPeer::Client).await;
+
+        // Assert
+        assert_eq!(
+            recorded.publish_namespace_dones(),
+            vec![NAMESPACE.to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribers_are_not_told_done_by_a_client_that_never_published_the_namespace() {
+        // Arrange: the namespace is known only from another relay
+        let table = table_with_namespace_publishers(&[]);
+
+        // Act
+        let recorded = withdraw(&table, SessionPeer::Client).await;
+
+        // Assert
+        assert!(recorded.publish_namespace_dones().is_empty());
+    }
+
+    #[tokio::test]
+    async fn subscribers_are_told_done_by_a_relay_without_a_local_registration() {
+        // Arrange
+        let table = table_with_namespace_publishers(&[]);
+
+        // Act
+        let recorded = withdraw(&table, SessionPeer::Relay).await;
 
         // Assert
         assert_eq!(

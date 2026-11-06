@@ -248,13 +248,17 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   lives. The task behind such a span only borrows the request span to link
   it; keeping a `Span` handle would hold the request span open the same way. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
-  TRACK_STATUS token refresh succeeds). PUBLISH and
-  PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
+  TRACK_STATUS token refresh succeeds). PUBLISH, PUBLISH_NAMESPACE and
+  PUBLISH_NAMESPACE_DONE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
   standalone FETCH and a TRACK_STATUS status query (no AUTHORIZATION TOKEN)
   need `subscribe`; a token-refresh TRACK_STATUS, joining FETCH and every other
-  message pass through (they reference an already authorized request). A
-  denied request is answered with the message's `*_ERROR` carrying
-  `UNAUTHORIZED (0x1)` and the sequence is never invoked.
+  message pass through (they reference an already authorized request).
+  PUBLISH_NAMESPACE_DONE is gated although it ends a PUBLISH_NAMESPACE because
+  it carries a namespace rather than a Request ID, so nothing ties it to an
+  authorized request. A denied request is answered with the message's
+  `*_ERROR` carrying `UNAUTHORIZED (0x1)` and the sequence is never invoked; a
+  denied PUBLISH_NAMESPACE_DONE, which has no error response, is logged and
+  dropped.
 - `SessionWorkers` (`session_workers.rs` spawns and reaps,
   `session_workers/session_worker.rs` is the per-session worker,
   `session_workers/session_cleanup.rs` the terminal cleanup): each worker
@@ -328,11 +332,22 @@ Each sequence owns the relay-side protocol logic for one message
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
   to its sender).
 - `InMemoryLocalPubSubDirectory` (`directory.rs`) — the relay's in-memory
-  registry of publish/subscribe namespaces and tracks. Each namespace entry
+  registry of publish/subscribe namespaces and tracks. Namespaces and
+  prefixes are kept `/`-joined, and a prefix matches a namespace field by
+  field (`domain::track_key::namespace_has_prefix`, draft-14 §9.28), the way
+  `authorize` matches the granted path: `a/b` covers `a/b/c`, not `a/bc`. The
+  join keeps field boundaries because `authorize` rejects a field containing
+  `/`. Each namespace entry
   carries its sessions' `SessionPeer`: client-owned Redis routes are cleaned
   up when the last *client* leaves, while local namespace subscribers get
   PUBLISH_NAMESPACE_DONE only once no client or relay session publishes the
-  namespace. A `Track` (`directory/track.rs`) holds one `Producer` per
+  namespace. `unregister_publish_namespace` returns a `PeerRemoval`
+  (`NotRegistered`, `ClientsRemain`, `NoClientsRemain`): a
+  PUBLISH_NAMESPACE_DONE from a client that did not publish the namespace is
+  ignored, so it neither reaches the subscribers nor withdraws the Redis
+  route. One from a relay session is applied without a registration, because
+  a relay withdraws over its inter-relay session namespaces this relay never
+  registered for it. A `Track` (`directory/track.rs`) holds one `Producer` per
   publisher session feeding it (draft-14 §8.2) and one `Consumer` per
   downstream subscription, keyed by (session, request id) and indexed in
   `consumer_tracks`; consumers refer to the track, not to a publisher. A
@@ -938,7 +953,10 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
 - `RelayRouteRegistry` trait: `NoopRelayRouteRegistry` (single-relay, no
   `REDIS_URL`) or `RedisRelayRouteRegistry` (relay info hash and
   namespace-publisher / track-publisher / namespace-subscriber routes with a
-  15 s TTL). The
+  15 s TTL). `find_namespace_publishers_by_prefix` lists the
+  namespace-publisher keys with a `KEYS` pattern built from the escaped
+  prefix, which matches characters, and keeps only the keys under the prefix
+  field by field (`namespace_has_prefix`). The
   registry keeps the routes it registered in memory, and its 5 s heartbeat
   rewrites the relay info hash and re-registers any owned route whose entry is
   missing, so state that expired while the relay, its host or Redis was
