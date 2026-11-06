@@ -104,7 +104,7 @@ export class PlayerControls {
     })
     seekbar.addEventListener('input', () => {
       this.seeking = true
-      this.renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max), true)
+      this.renderSeekPosition(seekbar.valueAsNumber, seekbar.valueAsNumber, Number(seekbar.max), player.state.isLive)
     })
     seekbar.addEventListener('change', () => {
       this.seeking = false
@@ -112,12 +112,13 @@ export class PlayerControls {
     })
     /// The axis spans the whole broadcast but only the replayable window can be
     /// fetched, so Home lands on that window instead of on a position the relay no
-    /// longer holds. End goes live here rather than through the browser, whose End
-    /// only fires `change` when it actually moves the thumb.
+    /// longer holds. End goes to the end of the axis here rather than through the
+    /// browser, whose End fires `change` only when it moves the thumb.
     seekbar.addEventListener('keydown', (event) => {
       if (event.key === 'End') {
         event.preventDefault()
-        this.goLive()
+        this.seeking = false
+        this.seekTo(Number(seekbar.max))
         return
       }
       if (event.key !== 'Home') {
@@ -230,6 +231,7 @@ export class PlayerControls {
     const { seekbar } = this
     const reviewing = state.mode === 'review'
     this.part('seek-available-window').dataset.seconds = seek.replayableSeconds.toFixed(1)
+    this.part('live').hidden = !state.isLive
     this.part('live').classList.toggle('reviewing', reviewing)
     this.renderSpeed(state)
     if (this.seeking) {
@@ -244,7 +246,7 @@ export class PlayerControls {
     seekbar.valueAsNumber = anchor
     this.renderReplayableWindow(seek.replayableStartSeconds, latest)
     this.renderReviewProgress(reviewing, anchor, playhead, latest)
-    this.renderSeekPosition(anchor, playhead, latest, !reviewing)
+    this.renderSeekPosition(anchor, playhead, latest, state.isLive && !reviewing)
   }
 
   private renderReviewProgress(reviewing: boolean, anchor: number, playhead: number, latest: number): void {
@@ -272,9 +274,10 @@ export class PlayerControls {
 
   /// `seekbar.max` is frozen while a drag is in progress, so comparing against it
   /// rather than against the live edge keeps the right end meaning "go live" even
-  /// when a group arrives mid-gesture.
+  /// when a group arrives mid-gesture. In a broadcast that is not live the right
+  /// end is an ordinary seek position.
   private seekTo(captureSeconds: number): void {
-    if (captureSeconds >= Number(this.seekbar.max)) {
+    if (this.player.state.isLive && captureSeconds >= Number(this.seekbar.max)) {
       this.goLive()
       return
     }

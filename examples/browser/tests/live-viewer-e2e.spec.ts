@@ -2,8 +2,10 @@ import { expect, test, type Locator } from '@playwright/test'
 import {
   arrangeLiveViewerE2ESession,
   closeLiveViewerE2ESession,
+  elapsedAtPosition,
   expectVideoDecoded,
   type LiveViewerPageModel,
+  parseClock,
   rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
@@ -376,14 +378,6 @@ async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'pau
   key: K
 ): Promise<HTMLMediaElement[K]> {
   return media.evaluate((element, property) => (element as HTMLMediaElement)[property], key)
-}
-
-function parseClock(text: string): number {
-  return text.split(':').reduce((total, part) => total * 60 + Number(part), 0)
-}
-
-function elapsedAtPosition(seekElapsed: string): number {
-  return parseClock(seekElapsed.split(' / ')[0])
 }
 
 function rewoundSeconds(rewindStatus: string): number {
