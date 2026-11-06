@@ -20,7 +20,10 @@ use crate::modules::{
         runner_signals::DownstreamRunnerSignals,
         session_id::SessionId,
         session_peer::SessionPeer,
-        track_key::{TrackKey, TrackNamespace, TrackNamespacePrefix},
+        track_key::{
+            TrackKey, TrackNamespace, TrackNamespacePrefix, namespace_has_prefix,
+            namespace_prefixes_overlap,
+        },
     },
     session::handler::publish::PublishHandler,
 };
@@ -87,21 +90,6 @@ pub(crate) struct RegisteredPublish {
 // Client subscriptions own the Redis route for their prefix, so the
 // directory tracks the peer to detect when the last client leaves.
 type PeersByNamespace = DashMap<String, DashMap<SessionId, SessionPeer>>;
-
-/// Whether one of two `/`-joined namespace prefixes is the other's leading
-/// fields: `a/b` overlaps `a` and `a/b/c`, not `a/bc`.
-fn namespace_prefixes_overlap(a: &str, b: &str) -> bool {
-    let (a, b) = (namespace_fields(a), namespace_fields(b));
-    let shared = a.len().min(b.len());
-    a[..shared] == b[..shared]
-}
-
-fn namespace_fields(prefix: &str) -> Vec<&str> {
-    prefix
-        .split('/')
-        .filter(|field| !field.is_empty())
-        .collect()
-}
 
 fn has_client(peers: &DashMap<SessionId, SessionPeer>) -> bool {
     peers
@@ -355,12 +343,13 @@ impl InMemoryLocalPubSubDirectory {
     pub(crate) fn purge_relay_publish_namespaces(&self, track_namespace_prefix: &str) {
         let mut empty_namespaces = Vec::new();
         for entry in self.publisher_namespaces.iter() {
-            if !entry.key().starts_with(track_namespace_prefix) {
+            if !namespace_has_prefix(entry.key(), track_namespace_prefix) {
                 continue;
             }
             // Keep namespaces that another client-subscribed prefix still covers.
             let covered = self.subscriber_namespaces.iter().any(|prefix_entry| {
-                entry.key().starts_with(prefix_entry.key()) && has_client(prefix_entry.value())
+                namespace_has_prefix(entry.key(), prefix_entry.key())
+                    && has_client(prefix_entry.value())
             });
             if covered {
                 continue;
@@ -492,7 +481,7 @@ impl InMemoryLocalPubSubDirectory {
         let combined = DashSet::new();
         self.subscriber_namespaces
             .iter()
-            .filter(|entry| track_namespace.starts_with(entry.key()))
+            .filter(|entry| namespace_has_prefix(track_namespace, entry.key()))
             .for_each(|entry| {
                 entry.value().iter().for_each(|session| {
                     combined.insert(*session.key());
@@ -513,7 +502,7 @@ impl InMemoryLocalPubSubDirectory {
     ) -> HashSet<MatchingPublication> {
         let mut matching = HashSet::new();
         for entry in self.publisher_namespaces.iter() {
-            if entry.key().starts_with(track_namespace_prefix) {
+            if namespace_has_prefix(entry.key(), track_namespace_prefix) {
                 matching.insert(MatchingPublication::Namespace(entry.key().clone()));
             }
         }
@@ -524,10 +513,7 @@ impl InMemoryLocalPubSubDirectory {
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
         {
-            if handler
-                .track_namespace()
-                .starts_with(track_namespace_prefix)
-            {
+            if namespace_has_prefix(handler.track_namespace(), track_namespace_prefix) {
                 matching.insert(MatchingPublication::Track(TrackKey::new(
                     handler.track_namespace(),
                     handler.track_name(),
@@ -1108,9 +1094,9 @@ mod tests {
 
         table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
         table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(1, "room/".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(2, "room/".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(1, "solo/".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(1, "solo".to_string(), SessionPeer::Client);
         table.register_publish(
             1,
             SessionPeer::Client,
@@ -1130,10 +1116,10 @@ mod tests {
         assert!(room_subscribers.contains(&2));
         assert!(!room_subscribers.contains(&1));
 
-        assert!(table.subscriber_namespaces.get("solo/").is_none());
+        assert!(table.subscriber_namespaces.get("solo").is_none());
         assert_eq!(
             removed.subscribe_namespace_prefixes,
-            vec!["solo/".to_string()]
+            vec!["solo".to_string()]
         );
         // Client publisher 2 still holds "room/member", so no Redis cleanup is requested.
         assert!(removed.publish_namespace_track_namespaces.is_empty());
@@ -1162,11 +1148,11 @@ mod tests {
 
         // Act: Register a relay subscriber and then two client subscribers.
         let relay_is_first =
-            table.register_subscribe_namespace(1, "room/".to_string(), SessionPeer::Relay);
+            table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Relay);
         let first_client =
-            table.register_subscribe_namespace(2, "room/".to_string(), SessionPeer::Client);
+            table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Client);
         let second_client =
-            table.register_subscribe_namespace(3, "room/".to_string(), SessionPeer::Client);
+            table.register_subscribe_namespace(3, "room".to_string(), SessionPeer::Client);
 
         // Assert: Only the first client registration requests route registration.
         assert!(!relay_is_first);
@@ -1178,28 +1164,28 @@ mod tests {
     fn unregister_subscribe_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client subscribers for the same namespace prefix.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room/".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(2, "room/".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Client);
 
         // Act: Remove subscribers one by one.
-        let still_has_clients = table.unregister_subscribe_namespace(1, "room/");
-        let clients_became_empty = table.unregister_subscribe_namespace(2, "room/");
+        let still_has_clients = table.unregister_subscribe_namespace(1, "room");
+        let clients_became_empty = table.unregister_subscribe_namespace(2, "room");
 
         // Assert: Only the final unsubscribe reports that no client remains.
         assert!(!still_has_clients);
         assert!(clients_became_empty);
-        assert!(table.subscriber_namespaces.get("room/").is_none());
+        assert!(table.subscriber_namespaces.get("room").is_none());
     }
 
     #[test]
     fn unregister_subscribe_namespace_ignores_remaining_relay_subscribers() {
         // Arrange: Register a client subscriber alongside a relay subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room/".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(2, "room/".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
 
         // Act: Remove the final client subscriber while the relay subscriber remains.
-        let clients_became_empty = table.unregister_subscribe_namespace(1, "room/");
+        let clients_became_empty = table.unregister_subscribe_namespace(1, "room");
 
         // Assert: The client-origin route can be cleaned up independently of relay subscribers.
         assert!(clients_became_empty);
@@ -1209,11 +1195,54 @@ mod tests {
     }
 
     #[test]
+    fn namespace_subscribers_match_the_prefix_field_by_field() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(1, "APP/site1".to_string(), SessionPeer::Client);
+
+        // Act
+        let same_field = table.get_namespace_subscribers("APP/site1/cam1");
+        let longer_field = table.get_namespace_subscribers("APP/site10");
+        let under_longer_field = table.get_namespace_subscribers("APP/site10/cam1");
+
+        // Assert
+        assert!(same_field.contains(&1));
+        assert!(longer_field.is_empty());
+        assert!(under_longer_field.is_empty());
+    }
+
+    #[test]
+    fn matching_publications_match_the_prefix_field_by_field() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        for track_namespace in ["APP/site1/cam1", "APP/site10", "APP/site10/cam1"] {
+            table.register_publish_namespace(1, track_namespace.to_string(), SessionPeer::Client);
+            table.register_publish(
+                1,
+                SessionPeer::Client,
+                Arc::new(MockPublishHandler::new(track_namespace, "video", 10)),
+            );
+        }
+
+        // Act
+        let matching = table.matching_publications("APP/site1");
+
+        // Assert
+        assert_eq!(
+            matching,
+            HashSet::from([
+                MatchingPublication::Namespace("APP/site1/cam1".to_string()),
+                MatchingPublication::Track(TrackKey::new("APP/site1/cam1", "video")),
+            ])
+        );
+    }
+
+    #[test]
     fn remove_session_reports_empty_client_prefix_even_when_relay_subscriber_remains() {
         // Arrange: Register one client-origin subscriber and one relay-origin subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room/".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(2, "room/".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
 
         // Act: Disconnect the client-origin subscriber.
         let removed = table.remove_session(1);
@@ -1221,7 +1250,7 @@ mod tests {
         // Assert: Redis cleanup is requested while the relay subscriber stays registered locally.
         assert_eq!(
             removed.subscribe_namespace_prefixes,
-            vec!["room/".to_string()]
+            vec!["room".to_string()]
         );
         let room_subscribers = table.get_namespace_subscribers("room/member");
         assert!(room_subscribers.contains(&2));
@@ -1232,8 +1261,8 @@ mod tests {
     fn remove_session_does_not_report_relay_only_prefixes() {
         // Arrange: Register only relay-origin subscribers for the prefix.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room/".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(2, "room/".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
 
         // Act: Disconnect one relay subscriber.
         let removed = table.remove_session(1);

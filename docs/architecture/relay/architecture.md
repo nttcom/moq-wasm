@@ -330,7 +330,12 @@ Each sequence owns the relay-side protocol logic for one message
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
   to its sender).
 - `InMemoryLocalPubSubDirectory` (`directory.rs`) — the relay's in-memory
-  registry of publish/subscribe namespaces and tracks. Each namespace entry
+  registry of publish/subscribe namespaces and tracks. Namespaces and
+  prefixes are kept `/`-joined, and a prefix matches a namespace field by
+  field (`domain::track_key::namespace_has_prefix`, draft-14 §9.28), the way
+  `authorize` matches the granted path: `a/b` covers `a/b/c`, not `a/bc`. The
+  join keeps field boundaries because `authorize` rejects a field containing
+  `/`. Each namespace entry
   carries its sessions' `SessionPeer`: client-owned Redis routes are cleaned
   up when the last *client* leaves, while local namespace subscribers get
   PUBLISH_NAMESPACE_DONE only once no client or relay session publishes the
