@@ -12,8 +12,13 @@ use moqt::{
 };
 use tokio::sync::mpsc;
 
+use object_store::{ObjectStoreExt, PutPayload};
+
 use crate::{
     LauncherArgs, RoomArgs, ServeArgs,
+    archive_chunks::ChunkWriter,
+    archive_reader::StoredRecording,
+    archive_receiver::Event,
     launcher::{Launcher, LauncherKind},
     pipeline::capture_timestamp,
     recordings::Recordings,
@@ -161,6 +166,64 @@ pub(crate) fn write_fixture_fmp4(path: &std::path::Path) {
     )
     .unwrap();
     std::fs::write(path, output).unwrap();
+}
+
+/// A MoQ room recording `id` of `anon/room` in an in-memory store whose one
+/// member, `anon/room/alice`, has a camera archive holding each track's
+/// objects, written in the order given.
+pub(crate) async fn stored_recording(
+    tracks: Vec<(&str, Vec<moqt::object::Object>)>,
+) -> (RecordingStore, StoredRecording) {
+    let store = RecordingStore::open(&url::Url::parse("memory:///").unwrap()).unwrap();
+    let prefix = store.recording_prefix("id");
+    let mut writer = ChunkWriter::new(
+        store.object_store(),
+        prefix.clone().join("archive"),
+        "anon/room/alice".into(),
+    );
+    for (name, objects) in tracks {
+        for object in objects {
+            writer.push(name, &Event::Object(object)).await.unwrap();
+        }
+    }
+    let key = writer.finish().await.unwrap();
+    let manifest = serde_json::json!({
+        "version": 1,
+        "format": "moq",
+        "members": [{ "namespace": "anon/room/alice", "camera": [key.as_ref()], "screen_share": [] }],
+    });
+    store
+        .object_store()
+        .put(
+            &prefix.join("manifest.json"),
+            PutPayload::from(manifest.to_string()),
+        )
+        .await
+        .unwrap();
+    let recording = StoredRecording::open(&store, "id", "anon/room")
+        .await
+        .unwrap();
+    (store, recording)
+}
+
+/// A Normal object on subgroup 0.
+pub(crate) fn stored_object(
+    group_id: u64,
+    object_id: u64,
+    payload: impl Into<bytes::Bytes>,
+) -> moqt::object::Object {
+    moqt::object::Object {
+        location: moqt::object::Location {
+            group_id,
+            object_id,
+        },
+        forwarding: moqt::object::ForwardingPreference::Subgroup { subgroup_id: 0 },
+        publisher_priority: 0,
+        status: moqt::object::ObjectStatus::Normal,
+        extension_headers: moqt::object::ExtensionHeaders::default(),
+        payload: payload.into(),
+        ends_group: false,
+    }
 }
 
 pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";

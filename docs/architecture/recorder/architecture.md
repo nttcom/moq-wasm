@@ -448,6 +448,13 @@ control response rather than an unreadable stream reset. This reads selected
 payload chunks twice, once for validation and once for sending. Four FETCH
 requests can run at once per replay.
 
+A SUBSCRIBE with the Largest Object filter is answered with the track's last
+object and delivers nothing; other filters are refused. A Joining Fetch of such
+a subscription resolves against that object as a live publisher's would
+(draft-14 §9.16.2), so the relative one with offset 0 returns the track's last
+group. The relay itself turns a subscriber's Joining Fetch into a Standalone
+Fetch of the same range, so both reach the replay alike.
+
 A replay runs while an answer to `publish` is open: each open answer holds a
 `ReplayLease`, and the replay closes its relay session as soon as the last one
 is dropped, or at once on server shutdown. Hyper drops an answer when its

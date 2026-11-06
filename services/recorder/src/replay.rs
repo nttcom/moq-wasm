@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result};
 use moqt::{
     RequestErrorCode, Session, SessionEvent,
-    fetch::{FetchHandler, FetchParams, resolve_fetch_range},
+    fetch::{FetchHandler, FetchParams, JoinPoint, resolve_fetch_range, resolve_joining_fetch},
     object::{ContentExists, GroupOrder, Location},
     subscribe::FilterType,
 };
@@ -129,6 +129,8 @@ async fn serve(
 ) -> Result<()> {
     let mut fetches = JoinSet::new();
     let mut active: HashMap<u64, AbortHandle> = HashMap::new();
+    // The track of each SUBSCRIBE a Joining Fetch may join, by request id.
+    let mut subscriptions: HashMap<u64, Arc<StoredTrack>> = HashMap::new();
     loop {
         let event = tokio::select! {
             None = lease_receiver.recv() => break,
@@ -150,45 +152,12 @@ async fn serve(
                         .await?;
                     continue;
                 }
-                let FetchParams::Standalone {
-                    track_namespace,
-                    track_name,
-                    start_location,
-                    end_location,
-                } = &handler.fetch.fetch_params
-                else {
-                    handler
-                        .error(
-                            RequestErrorCode::NotSupported,
-                            "recordings use standalone FETCH".into(),
-                        )
-                        .await?;
-                    continue;
-                };
-                let namespace = track_namespace.join("/");
-                let Some(track) = recording
-                    .tracks
-                    .iter()
-                    .find(|track| track.namespace == namespace && track.name == *track_name)
-                    .cloned()
-                else {
-                    handler
-                        .error(
-                            RequestErrorCode::TrackDoesNotExist,
-                            "no such recorded track".into(),
-                        )
-                        .await?;
-                    continue;
-                };
-                let start = *start_location;
-                let Ok(end) = resolve_fetch_range(start, *end_location, Some(track.last)) else {
-                    handler
-                        .error(
-                            RequestErrorCode::InvalidRange,
-                            "invalid recording range".into(),
-                        )
-                        .await?;
-                    continue;
+                let (track, start, end) = match fetch_target(&recording, &subscriptions, &handler) {
+                    Ok(target) => target,
+                    Err((code, reason)) => {
+                        handler.error(code, reason).await?;
+                        continue;
+                    }
                 };
                 let request_id = handler.request_id;
                 let session = session.clone();
@@ -219,6 +188,7 @@ async fn serve(
                                 },
                             )
                             .await?;
+                        subscriptions.insert(handler.request_id(), track.clone());
                     }
                     Some(_) => {
                         handler
@@ -237,6 +207,9 @@ async fn serve(
                             .await?
                     }
                 }
+            }
+            SessionEvent::Unsubscribe(handler) => {
+                subscriptions.remove(&handler.subscribe_id());
             }
             SessionEvent::TrackStatus(handler) => {
                 match recording.tracks.iter().find(|track| {
@@ -268,6 +241,62 @@ async fn serve(
         }
     }
     Ok(())
+}
+
+/// The track and the `[start, end)` range a FETCH asks for, as a live
+/// publisher resolves them: a Joining Fetch against the Largest Location its
+/// SUBSCRIBE was answered with (draft-14 §9.16.2), a Standalone Fetch against
+/// the track's last object (§9.16.1). `Err` holds the FETCH_ERROR.
+fn fetch_target(
+    recording: &StoredRecording,
+    subscriptions: &HashMap<u64, Arc<StoredTrack>>,
+    handler: &FetchHandler,
+) -> Result<(Arc<StoredTrack>, Location, Location), (RequestErrorCode, String)> {
+    if let Some((request_id, joining_start)) = handler.joining() {
+        let track = subscriptions.get(&request_id).ok_or((
+            RequestErrorCode::InvalidJoiningRequestId,
+            "no subscription has the joining request id".to_string(),
+        ))?;
+        // Every subscription kept here was answered with the track's last object.
+        let (start, end) =
+            resolve_joining_fetch(joining_start, JoinPoint::Largest(Some(track.last))).map_err(
+                |error| {
+                    (
+                        error
+                            .request_error_code()
+                            .unwrap_or(RequestErrorCode::InvalidRange),
+                        error.to_string(),
+                    )
+                },
+            )?;
+        return Ok((track.clone(), start, end));
+    }
+    let FetchParams::Standalone {
+        track_namespace,
+        track_name,
+        start_location,
+        end_location,
+    } = &handler.fetch.fetch_params
+    else {
+        unreachable!("only a Standalone Fetch joins no subscription");
+    };
+    let namespace = track_namespace.join("/");
+    let track = recording
+        .tracks
+        .iter()
+        .find(|track| track.namespace == namespace && track.name == *track_name)
+        .ok_or((
+            RequestErrorCode::TrackDoesNotExist,
+            "no such recorded track".to_string(),
+        ))?;
+    let end =
+        resolve_fetch_range(*start_location, *end_location, Some(track.last)).map_err(|_| {
+            (
+                RequestErrorCode::InvalidRange,
+                "invalid recording range".to_string(),
+            )
+        })?;
+    Ok((track.clone(), *start_location, end))
 }
 
 fn fetch_finished(
@@ -378,14 +407,12 @@ async fn prepare_fetch(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        archive_chunks::ChunkWriter, archive_receiver::Event, store::RecordingStore,
-        test_support::connected_sessions,
-    };
+    use crate::test_support::{connected_sessions, stored_object, stored_recording};
     use bytes::Bytes;
     use moqt::{
         fetch::{Fetch, FetchOption},
         object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
+        subscribe::SubscribeOption,
     };
     use object_store::{ObjectStoreExt, PutPayload};
 
@@ -428,14 +455,6 @@ mod tests {
     #[tokio::test]
     async fn leases_keep_replay_alive_until_the_last_one_is_dropped_and_fetch_preserves_objects() {
         // Arrange
-        let store = RecordingStore::open(&url::Url::parse("memory:///").unwrap()).unwrap();
-        let backend = store.object_store();
-        let prefix = store.recording_prefix("id");
-        let mut writer = ChunkWriter::new(
-            backend.clone(),
-            prefix.clone().join("archive"),
-            "anon/room/alice".into(),
-        );
         let make = |group_id, object_id, payload, status| Object {
             location: Location {
                 group_id,
@@ -460,19 +479,8 @@ mod tests {
             make(1, 0, Bytes::from_static(b"first"), ObjectStatus::Normal),
             make(3, 2, Bytes::new(), ObjectStatus::EndOfTrack),
         ];
-        for object in &objects {
-            writer
-                .push("video", &Event::Object(object.clone()))
-                .await
-                .unwrap();
-        }
-        let key = writer.finish().await.unwrap();
-        backend.put(&prefix.join("manifest.json"), PutPayload::from(serde_json::json!({ "version": 1, "format": "moq", "members": [{ "namespace": "anon/room/alice", "camera": [key.as_ref()], "screen_share": [] }] }).to_string())).await.unwrap();
-        let recording = Arc::new(
-            StoredRecording::open(&store, "id", "anon/room")
-                .await
-                .unwrap(),
-        );
+        let (store, recording) = stored_recording(vec![("video", objects.clone())]).await;
+        let recording = Arc::new(recording);
         let namespace = recording.tracks[0].namespace.clone();
         let corrupt_key =
             object_store::path::Path::from(recording.tracks[0].chunks[0]["data"].as_str().unwrap());
@@ -529,7 +537,8 @@ mod tests {
             received,
             [objects[1].clone(), objects[0].clone(), objects[2].clone()]
         );
-        backend
+        store
+            .object_store()
             .put(&corrupt_key, PutPayload::from("damaged"))
             .await
             .unwrap();
@@ -561,5 +570,60 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), pair.client.close())
             .await
             .expect("client close");
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_returns_the_groups_before_the_last_object_as_a_live_publisher_would() {
+        // Arrange
+        let objects = vec![
+            stored_object(1, 0, "g1"),
+            stored_object(5, 0, "g5"),
+            stored_object(7, 0, "g7a"),
+            stored_object(7, 1, "g7b"),
+        ];
+        let (_store, recording) = stored_recording(vec![("video", objects.clone())]).await;
+        let namespace = recording.tracks[0].namespace.clone();
+        let pair = connected_sessions().await;
+        let server = pair.server.clone();
+        let (_lease_sender, lease_receiver) = mpsc::channel(1);
+        tokio::spawn(async move { serve(&server, Arc::new(recording), lease_receiver).await });
+        let mut subscriber = pair.client.session.subscriber();
+        let subscription = subscriber
+            .subscribe(
+                namespace,
+                "video".into(),
+                SubscribeOption {
+                    filter_type: FilterType::LargestObject,
+                    ..SubscribeOption::default()
+                },
+            )
+            .await
+            .unwrap();
+        let fetch = async |subscriber: &mut moqt::Subscriber, handle| {
+            let mut receiver = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+            let mut payloads = Vec::new();
+            while let Fetch::Object(object) = receiver.receive().await.unwrap() {
+                payloads.push(object.payload);
+            }
+            payloads
+        };
+
+        // Act
+        let mut joined = Vec::new();
+        for joining_start in [0, 2] {
+            let handle = subscriber
+                .fetch_relative_joining(&subscription, joining_start, FetchOption::default())
+                .await
+                .unwrap();
+            joined.push(
+                tokio::time::timeout(Duration::from_secs(5), fetch(&mut subscriber, handle))
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        // Assert: offset 0 takes the last group; offset 2 starts at group 5, two ids before it, though group 6 was never published
+        assert_eq!(joined, [vec!["g7a", "g7b"], vec!["g5", "g7a", "g7b"]]);
+        pair.client.close().await;
     }
 }
