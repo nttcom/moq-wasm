@@ -25,9 +25,11 @@ use tracing_subscriber::{
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
 use crate::modules::transport::{
-    accept_error::AcceptError, application_protocol::ApplicationProtocols,
-    connect_target::ConnectTarget, transport_connection::BoxedConnection,
-    transport_connection_creator::TransportConnectionCreator,
+    accept_error::AcceptError,
+    application_protocol::ApplicationProtocols,
+    connect_target::ConnectTarget,
+    transport_connection::BoxedConnection,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
     websocket::websocket_listener::WebSocketListener,
 };
 
@@ -172,8 +174,9 @@ impl TransportConnectionCreator for WebSocketOnlyCreator {
         anyhow::bail!("a WebSocket-only endpoint is a server")
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
-        Ok(Box::new(self.listener.accept().await?))
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
+        let connection: BoxedConnection = Box::new(self.listener.accept().await?);
+        Ok(Box::pin(std::future::ready(Ok(connection))))
     }
 
     fn refuse_new_connections(&self) {}

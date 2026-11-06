@@ -119,7 +119,7 @@ client that ignored its GOAWAY.
 
 ### Session intake
 `SessionHandler` (`relay_server/session_handler.rs`) runs one accept loop per endpoint and hands every accepted
-transport connection to a per-connection task owned by `SessionIntake`:
+connection attempt, its transport handshake still to run, to a per-connection task owned by `SessionIntake`:
 
 1. await the `moqt::server::Accepting` future → `Handshake` (CLIENT_SETUP received,
    SERVER_SETUP not yet sent);
