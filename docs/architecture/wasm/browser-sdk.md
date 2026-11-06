@@ -106,6 +106,7 @@ moq-wasm            core: init, connect, Session, Subscription, TrackWriter, 型
 moq-wasm/media      publish(), MediaBroadcast, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
+moq-wasm/recording  openRecording, Recording, RecorderError
 ```
 
 1パッケージにする理由: `core` と `media` は1つの wasm インスタンスと1つの `Session`
@@ -113,7 +114,8 @@ moq-wasm/media/controls.css
 バージョンがずれるとページに wasm インスタンスが2つでき、wasm の初期化が重なると
 ヒープが壊れることがすでにわかっている。subpath exports なら tree shaking が効き、
 視聴だけ、データだけのバンドルは小さく保てる。`media` はプレイヤー、decoder と
-encoder の worker、CSS を引き込むが、`core` はどれも引き込まない。
+encoder の worker、CSS を引き込むが、`core` はどれも引き込まない。`recording` は
+recorder の HTTP API だけを持ち、wasm も `media` も引き込まない。
 
 ソースの置き場所: Rust 側は `crates/wasm` のまま。TypeScript 側は
 `examples/browser/lib` から、その隣のパッケージディレクトリ（`crates/wasm/js/`）へ
@@ -315,7 +317,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 7 を実装した。
+ステータス: 承認済み。移行の手順 1 から 8 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -446,12 +448,17 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 `moq-wasm/recording`:
 
 - `openRecording(session, recorderUrl, id, { token })` が、`POST /recordings/{id}/publish`
-  の応答を開いたまま持ち、replay の prefix を返す。`close()` で応答を閉じる。
+  の応答を開いたまま持ち、replay の prefix を返す。`close()` で応答を閉じる。`session` が
+  閉じたときも閉じる。`token` は `connect` と同じく文字列か非同期関数で、関数なら応答を
+  開くたびに呼ぶ。recorder が断ったら、HTTP の status を持つ `RecorderError` で reject する。
 - `renew_after_seconds` ごとに次の応答を開き、60 秒重ねてから前の応答を閉じる。新しい
   応答を開いた後の FETCH は、relay が新しい publisher に送る。古い replay に向かった FETCH
   は、relay が FETCH_OK を 10 秒（`moqt` の `CONTROL_MESSAGE_RESPONSE_TIMEOUT`）、データを
   20 秒（`MOQT_FETCH_FILL_TIMEOUT_SECS` の既定）待って打ち切るので、合わせて 30 秒より
   長く重ねれば、replay が閉じて切れることはない。`Session` にも player にも手を入れない。
+- ページが閉じていない応答が終わったら、すぐ次の応答を開く。開けなければ、`closed` が
+  そのエラーで解決する。`renew_after_seconds` の時に開けなかったときは、今の応答を持ち続け、
+  それが終わったときにもう一度開く。
 
 会議の録画を再生するアプリは、`openRecording` で prefix を得て、`watchNamespaces(prefix)`
 で参加者ごとの namespace を知り、ソースごとに `LivePlayer` を作って1つの `PlaybackGroup`
@@ -713,9 +720,9 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
   semver に従う。1.0 までは minor でも API を壊してよく、壊したものはすべて
   changelog に書く。公開するまでは `package.json` の version を 0.x に保つだけで、
   changelog は公開するときに始める。
-- 公開範囲は `moq-wasm` と `moq-wasm/media` が export するもので、`internal/` 以下は
-  含まない。session がネゴシエートする draft のバージョンも API の約束の一部とし、
-  changelog に書く。
+- 公開範囲は `moq-wasm`、`moq-wasm/media`、`moq-wasm/recording` が export するもので、
+  `internal/` 以下は含まない。session がネゴシエートする draft のバージョンも API の
+  約束の一部とし、changelog に書く。
 - wasm、glue、TypeScript は1つの成果物なので、ページがそれらのバージョンを混ぜる
   ことはない。
 

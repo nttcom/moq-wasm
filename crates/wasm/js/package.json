@@ -19,6 +19,11 @@
     "./media/controls.css": "./src/media/controls/playerControls.css",
     "./media/*": {
       "source": "./src/media/*.ts"
+    },
+    "./recording": {
+      "source": "./src/recording/index.ts",
+      "types": "./types/recording/index.d.ts",
+      "default": "./dist/recording/index.js"
     }
   },
   "scripts": {
