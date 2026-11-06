@@ -1,21 +1,22 @@
 import { alawToAudioData, isPcmAlawCodec } from '../internal/alaw'
 import { AudioPlayout } from './audioPlayout'
-import { PlayoutClock, syncOffsetMs } from './playoutClock'
+import { syncOffsetMs } from './playoutClock'
+import type { ClockFollower, ReviewClock } from './reviewClock'
 import { VideoPlayout } from './videoPlayout'
 import type { ReviewFrame } from './rewind'
 
-const REVIEW_LEAD_MS = 150
 const WAIT_POLL_MS = 200
 
-/// Presents a review. The fetched media is decoded ahead of time, so the clock
-/// only maps capture timestamps onto local time from the position the review
-/// starts at, and the drift the audio device shows moves it so the picture
-/// keeps step with the sound. Pausing freezes both, and resuming moves the
-/// clock by the pause so playback carries on where it stopped. A review
-/// started paused shows the frame at its position and holds there.
-export class ReviewPlayout {
-  private readonly clock = new PlayoutClock()
-  private readonly audio = new AudioPlayout((driftMs) => this.clock.shift(driftMs))
+/// Presents a review on a `ReviewClock`. The fetched media is decoded ahead
+/// of time and presented when the clock says it is due. The sound plays
+/// through the clock's AudioContext and reports its drift to the clock. A
+/// review started on a paused clock shows the frame at its position and holds
+/// there.
+export class ReviewPlayout implements ClockFollower {
+  private readonly audio = new AudioPlayout(
+    (driftMs) => this.clock.drift(driftMs),
+    (sampleRate) => this.clock.audioContext(sampleRate)
+  )
   private readonly video: VideoPlayout
   private audioDecoder: AudioDecoder | undefined
   /// The decoder stamps its outputs from the sample count it has produced, so
@@ -23,24 +24,25 @@ export class ReviewPlayout {
   /// decoded from.
   private readonly pendingCaptureMicros: number[] = []
   private shownFromMicros = 0
-  private pausedAtMs: number | undefined
 
+  /// `clock` is the one the playout plays on until `start` gives another.
   constructor(
     show: (frame: VideoFrame) => void,
-    private readonly onError: (message: string) => void
+    private readonly onError: (message: string) => void,
+    private clock: ReviewClock
   ) {
     this.video = new VideoPlayout(show)
   }
 
-  start(shownFromMicros: number, paused = false): void {
+  /// The caller anchors `clock` before the call.
+  start(clock: ReviewClock, shownFromMicros: number): void {
     this.stop()
+    this.clock = clock
+    clock.follow(this)
     this.shownFromMicros = shownFromMicros
-    this.clock.anchor(shownFromMicros, performance.now() + REVIEW_LEAD_MS)
-    if (paused) {
-      this.pausedAtMs = performance.now()
+    if (clock.paused) {
       this.video.setPaused(true)
       this.video.showNextWhilePaused()
-      void this.audio.suspend()
     }
   }
 
@@ -48,12 +50,17 @@ export class ReviewPlayout {
     this.video.flush()
     this.video.setPaused(false)
     this.audio.flush()
-    void this.audio.resume()
     this.audioDecoder?.close()
     this.audioDecoder = undefined
     this.pendingCaptureMicros.length = 0
-    this.clock.reset()
-    this.pausedAtMs = undefined
+    this.clock.unfollow(this)
+  }
+
+  followPause(paused: boolean, pausedForMs: number): void {
+    if (!paused) {
+      this.video.shift(pausedForMs)
+    }
+    this.video.setPaused(paused)
   }
 
   /// Frames before the position are decoded for the ones after them and
@@ -108,30 +115,12 @@ export class ReviewPlayout {
     this.audio.setVolume(volume)
   }
 
-  setPaused(paused: boolean): void {
-    if (paused === (this.pausedAtMs !== undefined)) {
-      return
-    }
-    if (paused) {
-      this.pausedAtMs = performance.now()
-      this.video.setPaused(true)
-      void this.audio.suspend()
-      return
-    }
-    const pausedForMs = performance.now() - (this.pausedAtMs ?? 0)
-    this.pausedAtMs = undefined
-    this.clock.shift(pausedForMs)
-    this.video.shift(pausedForMs)
-    this.video.setPaused(false)
-    void this.audio.resume()
-  }
-
   /// Resolves once the sample captured at `captureMicros` is due, pausing
   /// with playback; `isCurrent` lets a superseded review stop waiting.
   async waitUntilDue(captureMicros: number, isCurrent: () => boolean): Promise<void> {
     while (isCurrent()) {
       const remainingMs = this.dueAt(captureMicros) - performance.now()
-      if (remainingMs <= 0 && this.pausedAtMs === undefined) {
+      if (remainingMs <= 0 && !this.clock.paused) {
         return
       }
       await new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(remainingMs, 20), WAIT_POLL_MS)))
@@ -144,7 +133,7 @@ export class ReviewPlayout {
   }
 
   private dueAt(captureMicros: number): number {
-    return this.clock.dueAt(captureMicros) ?? performance.now()
+    return this.clock.dueAt(captureMicros)
   }
 
   private playDecoded(audioData: AudioData, captureMicros: number | undefined): void {
