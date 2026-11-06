@@ -54,6 +54,9 @@ services:
     environment:
       RELAY_ID: relay-a
       RELAY_ADVERTISE_HOST: relay-a
+      # The relays share the self-signed certificate mounted below, whose SAN
+      # names relay-a and relay-b, so each trusts it to dial the other.
+      RELAY_INNER_CA_FILE: /workspace/services/relay/keys/cert.pem
       RELAY_PUBLIC_HOST: localhost:4433
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"
@@ -90,6 +93,9 @@ services:
     environment:
       RELAY_ID: relay-b
       RELAY_ADVERTISE_HOST: relay-b
+      # The relays share the self-signed certificate mounted below, whose SAN
+      # names relay-a and relay-b, so each trusts it to dial the other.
+      RELAY_INNER_CA_FILE: /workspace/services/relay/keys/cert.pem
       RELAY_PUBLIC_HOST: localhost:4434
       RELAY_PORT: "443"
       RELAY_INNER_PORT: "444"

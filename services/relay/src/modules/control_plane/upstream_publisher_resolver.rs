@@ -121,6 +121,7 @@ impl UpstreamPublisherResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use crate::modules::{
         directory::InMemoryLocalPubSubDirectory,
         domain::{session_id::SessionId, session_peer::SessionPeer},
@@ -136,7 +137,7 @@ mod tests {
             Arc::new(StubRouteRegistry::new(lookup)),
             Arc::new(InterRelayConnectionManager::new(
                 repository,
-                "unused-relay-token".to_string(),
+                unused_inter_relay_client_config(),
             )),
         )
     }

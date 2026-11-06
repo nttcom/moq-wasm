@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use moqt::object::ContentExists;
+use moqt::{CertificateVerification, object::ContentExists};
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
     cascading::{
-        inter_relay_connection_manager::InterRelayConnectionManager,
+        inter_relay_connection_manager::{InterRelayClientConfig, InterRelayConnectionManager},
         route_registry::NoopRelayRouteRegistry,
     },
     control_plane::{
@@ -153,12 +153,19 @@ impl UpstreamReleaseContext {
     }
 }
 
+pub(crate) fn unused_inter_relay_client_config() -> InterRelayClientConfig {
+    InterRelayClientConfig {
+        relay_token: "unused-relay-token".to_string(),
+        certificate_verification: CertificateVerification::NativeRoots,
+    }
+}
+
 pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
     UpstreamPublisherResolver::new(
         Arc::new(NoopRelayRouteRegistry),
         Arc::new(InterRelayConnectionManager::new(
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
-            "unused-relay-token".to_string(),
+            unused_inter_relay_client_config(),
         )),
     )
 }

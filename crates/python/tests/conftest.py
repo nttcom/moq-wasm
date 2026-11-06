@@ -136,6 +136,8 @@ def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = N
             "RELAY_ID": relay_id,
             "RELAY_PORT": str(port),
             "RELAY_ADVERTISE_HOST": "127.0.0.1",
+            # Every relay serves this certificate, so each trusts it to dial another.
+            "RELAY_INNER_CA_FILE": str(REPO_ROOT / "services" / "relay" / "keys" / "cert.pem"),
             "RELAY_PUBLIC_HOST": f"127.0.0.1:{port}",
             "OTEL_SDK_DISABLED": "true",
             **(env or {}),

@@ -136,6 +136,7 @@ impl PublishNamespaceDone {
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use std::sync::Arc;
 
     use moqt::namespace::PublishNamespaceDoneHandler;
@@ -176,7 +177,7 @@ mod tests {
         .await;
         let inter_relay_connection_manager = InterRelayConnectionManager::new(
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
-            "unused-relay-token".to_string(),
+            unused_inter_relay_client_config(),
         );
         let forwarder = ControlMessageForwarder { repository };
         forwarder

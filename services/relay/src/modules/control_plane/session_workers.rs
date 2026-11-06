@@ -90,6 +90,7 @@ impl Drop for SessionWorkers {
 #[cfg(test)]
 mod tests {
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
+    use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -134,7 +135,7 @@ mod tests {
             let route_registry: Arc<dyn RelayRouteRegistry> = Arc::new(NoopRelayRouteRegistry);
             let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
                 repo.clone(),
-                String::new(),
+                unused_inter_relay_client_config(),
             ));
             let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
                 route_registry.clone(),

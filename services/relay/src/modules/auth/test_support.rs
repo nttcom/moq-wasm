@@ -1,5 +1,5 @@
 use moqt::RequestErrorCode;
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use moqt::{
@@ -18,7 +18,10 @@ use crate::{
         },
         cascading::route_registry::{NoopRelayRouteRegistry, RelayRouteRegistry},
         session::session_repository::SessionRepository,
-        test_support::relay_harness::fixtures::disk_cache::TempDir,
+        test_support::{
+            directory_fixtures::unused_inter_relay_client_config,
+            relay_harness::fixtures::disk_cache::TempDir,
+        },
     },
     relay_server::{
         runtime::DataPlaneConfig, server::RelayServerDeps, session_handler::SessionHandler,
@@ -80,6 +83,8 @@ pub(crate) struct RunningRelay {
     pub(crate) port: u16,
     pub(crate) server: RelayServer,
     pub(crate) handler: SessionHandler,
+    /// Self-signed for `localhost` and `127.0.0.1`.
+    pub(crate) cert_path: PathBuf,
     _cert_dir: TempDir,
 }
 
@@ -107,7 +112,7 @@ pub(crate) async fn spawn_relay(
             authenticator: SessionAuthenticator {
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },
-            relay_token: "unused-relay-token".to_string(),
+            inter_relay_client: unused_inter_relay_client_config(),
             data_plane: DataPlaneConfig {
                 cache: CacheConfig::default(),
                 disk_cache: None,
@@ -120,6 +125,7 @@ pub(crate) async fn spawn_relay(
         port: handler.local_port,
         server,
         handler,
+        cert_path: PathBuf::from(&cert_path),
         _cert_dir: cert_dir,
     }
 }

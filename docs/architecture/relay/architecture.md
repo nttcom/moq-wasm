@@ -40,7 +40,9 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PUBLIC_HOST` (the `host[:port]` clients connect to, default
    `localhost:RELAY_PORT`), `RELAY_PORT` (default 4433), `RELAY_INNER_PORT`
-   (default port+1), `REDIS_URL` (optional), and the authentication settings
+   (default port+1), `RELAY_INNER_CA_FILE` (the certificates trusted when
+   dialing another relay, otherwise the OS roots; see "Cascading"),
+   `REDIS_URL` (optional), and the authentication settings
    (`AuthConfig`):
    `AUTH_VTS_URL` and `AUTH_RELAY_TOKEN` are both required; startup fails
    without them. There is no unauthenticated mode: a relay that should serve
@@ -984,11 +986,20 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   subscribe each other, yet the pair never keeps the track alive once their
   clients are gone.
 - `InterRelayConnectionManager` lazily dials the remote relay's inner endpoint
-  over raw QUIC (`moqt::QUIC`, certificate verification disabled), presenting
-  this relay's own JWT (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
+  over raw QUIC (`moqt::QUIC`), presenting this relay's own JWT
+  (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
   session as `SessionPeer::Relay` with `VerifiedToken::full_access()` naming
   the dialed relay in `relay_id`, reusing it afterwards. From then on the remote relay behaves like any upstream
   publisher session.
+- The dialing relay verifies the remote relay's certificate against
+  `InterRelayClientConfig::certificate_verification` before CLIENT_SETUP, so
+  the relay token, which grants full access and is long-lived, never reaches
+  a host that cannot prove it is the advertised relay. The certificate must
+  name `RELAY_ADVERTISE_HOST`. With `RELAY_INNER_CA_FILE` set only the
+  certificates of that file are trusted (compose: the self-signed certificate
+  relay-a and relay-b share); otherwise the OS roots are (production: a
+  publicly trusted certificate for the relay's host name). There is no client
+  certificate: the dialed relay authenticates the dialing one by its token.
 - A client's PUBLISH reaches every remote relay `find_namespace_subscribers`
   returns (namespace-subscriber and watched-namespace routes) as a
   `DownstreamPublish` on the dialled session (see "PUBLISH sequence"). The

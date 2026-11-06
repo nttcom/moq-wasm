@@ -1,6 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::bail;
+use moqt::CertificateVerification;
 
 use crate::modules::auth::token_claims::ClaimPolicy;
 
@@ -154,6 +155,9 @@ pub struct RelayConfig {
     pub public_host: String,
     pub port: u16,
     pub inner_port: u16,
+    /// How this relay verifies the relays it dials on their inner port. A dialed
+    /// relay's certificate must name its `advertise_host`.
+    pub inner_certificate_verification: CertificateVerification,
     pub redis_url: Option<String>,
     /// How long a shutdown waits for the clients to leave after GOAWAY
     /// before closing them with GOAWAY_TIMEOUT.
@@ -198,6 +202,10 @@ impl RelayConfig {
                 anyhow::anyhow!("RELAY_INNER_PORT is required when RELAY_PORT is 65535")
             })?,
         };
+        let inner_certificate_verification = non_empty_env("RELAY_INNER_CA_FILE")
+            .map_or(CertificateVerification::NativeRoots, |path| {
+                CertificateVerification::TrustedCertificates(PathBuf::from(path))
+            });
         let public_host =
             non_empty_env("RELAY_PUBLIC_HOST").unwrap_or_else(|| format!("localhost:{port}"));
         let redis_url = non_empty_env("REDIS_URL");
@@ -240,6 +248,7 @@ impl RelayConfig {
             public_host,
             port,
             inner_port,
+            inner_certificate_verification,
             redis_url,
             drain_timeout,
             auth,
