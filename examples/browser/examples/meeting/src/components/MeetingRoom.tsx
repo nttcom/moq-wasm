@@ -351,12 +351,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         }
       : undefined
 
-  /// Returns undefined, after telling the user, when the browser cannot decode the track.
+  /// Throws when the browser cannot decode the track.
   const resolveTrackMediaConfig = async (
     memberId: string,
     role: CatalogSubscribeRole,
     trackName: string
-  ): Promise<{ config: TrackMediaConfig | undefined } | undefined> => {
+  ): Promise<TrackMediaConfig | undefined> => {
     const selectedTrack =
       role === 'chat'
         ? undefined
@@ -371,21 +371,17 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           reason: unsupportedReason,
           track: selectedTrack
         })
-        window.alert(`Subscribe blocked: ${unsupportedReason}`)
-        return undefined
+        throw new Error(`Subscribe blocked: ${unsupportedReason}`)
       }
     }
-    return {
-      config:
-        role !== 'chat'
-          ? {
-              codec: selectedTrack?.codec,
-              samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
-              channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
-              initData: selectedTrack?.initData
-            }
-          : undefined
-    }
+    return role !== 'chat'
+      ? {
+          codec: selectedTrack?.codec,
+          samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
+          channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
+          initData: selectedTrack?.initData
+        }
+      : undefined
   }
 
   const subscriptionEnded = (memberId: string, role: CatalogSubscribeRole) => (endedId: bigint) =>
@@ -404,10 +400,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (typeof previousId !== 'bigint' || trackState.isSubscribing) {
       return
     }
-    const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
-    if (!resolved) {
-      return
-    }
+    const config = await resolveTrackMediaConfig(memberId, role, trackName)
     setRoom((currentRoom) =>
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({ ...track, isSubscribing: true }))
     )
@@ -417,7 +410,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         member.trackNamespace,
         trackName,
         role,
-        resolved.config,
+        config,
         subscriptionEnded(memberId, role),
         buildVideoAdaptation(memberId, role, trackName)
       )
@@ -468,25 +461,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         subscribeId: undefined
       }))
     )
-    const stopSubscribing = () =>
-      setRoom((currentRoom) =>
-        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
-          ...track,
-          isSubscribing: false
-        }))
-      )
-
     try {
-      const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
-      if (!resolved) {
-        stopSubscribing()
-        return
-      }
+      const config = await resolveTrackMediaConfig(memberId, role, trackName)
       const subscribeId = await session.subscribe(
         member.trackNamespace,
         trackName,
         role,
-        resolved.config,
+        config,
         subscriptionEnded(memberId, role),
         buildVideoAdaptation(memberId, role, trackName)
       )
@@ -499,7 +480,12 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         }))
       )
     } catch (error) {
-      stopSubscribing()
+      setRoom((currentRoom) =>
+        updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
+          ...track,
+          isSubscribing: false
+        }))
+      )
       throw error
     }
   }
