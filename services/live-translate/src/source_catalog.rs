@@ -1,17 +1,11 @@
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use bytes::Bytes;
-use moqt::{
-    Session, Subscriber, Subscription, TrackReader,
-    fetch::{Fetch, FetchOption},
-    object::{ContentExists, DataReceiver},
-    subscribe::SubscribeOption,
-};
-use msf::Catalog;
+use moqt::{Session, Subscriber, Subscription, TrackReader};
+use msf::{CATALOG_TRACK_NAME, Catalog};
 use tokio::{sync::mpsc, task::JoinHandle};
 
-pub(crate) const CATALOG_TRACK: &str = "catalog";
 const SUBSCRIBE_ATTEMPTS: u32 = 5;
 const SUBSCRIBE_RETRY_DELAY: Duration = Duration::from_secs(2);
 
@@ -50,16 +44,7 @@ async fn follow(
     catalog_sender: &mpsc::UnboundedSender<Catalog>,
 ) -> Result<()> {
     let mut subscriber = session.subscriber();
-    let subscription = subscribe_with_retry(&mut subscriber, namespace).await?;
-    if let ContentExists::True { .. } = subscription.content_exists() {
-        let payload = cached_catalog_object(&mut subscriber, &subscription).await?;
-        deliver(catalog_sender, &payload);
-    }
-    let DataReceiver::Stream(factory) = subscriber.accept_data_receiver(&subscription).await?
-    else {
-        bail!("source catalog arrived as datagrams");
-    };
-    let mut reader = TrackReader::new(factory);
+    let (subscription, mut reader) = subscribe_with_retry(&mut subscriber, namespace).await?;
     while let Some(object) = reader.next_object().await? {
         if catalog_sender.is_closed() {
             break;
@@ -75,18 +60,14 @@ async fn follow(
 async fn subscribe_with_retry(
     subscriber: &mut Subscriber,
     namespace: &str,
-) -> Result<Subscription> {
+) -> Result<(Subscription, TrackReader)> {
     let mut attempt = 1;
     loop {
         match subscriber
-            .subscribe(
-                namespace.to_string(),
-                CATALOG_TRACK.to_string(),
-                SubscribeOption::default(),
-            )
+            .subscribe_current_group(namespace.to_string(), CATALOG_TRACK_NAME.to_string())
             .await
         {
-            Ok(subscription) => return Ok(subscription),
+            Ok(subscribed) => return Ok(subscribed),
             Err(error) if attempt < SUBSCRIBE_ATTEMPTS => {
                 tracing::info!(%namespace, attempt, ?error, "source catalog not ready, retrying");
                 attempt += 1;
@@ -103,26 +84,5 @@ fn deliver(catalog_sender: &mpsc::UnboundedSender<Catalog>, payload: &Bytes) {
             let _ = catalog_sender.send(catalog);
         }
         Err(error) => tracing::warn!(?error, "source catalog object is not an MSF catalog"),
-    }
-}
-
-async fn cached_catalog_object(
-    subscriber: &mut Subscriber,
-    subscription: &Subscription,
-) -> Result<Bytes> {
-    let handle = subscriber
-        .fetch_relative_joining(subscription, 0, FetchOption::default())
-        .await
-        .context("fetch the cached source catalog")?;
-    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-    loop {
-        match receiver.receive().await? {
-            Fetch::Object(object) => {
-                if !object.payload.is_empty() {
-                    return Ok(object.payload);
-                }
-            }
-            Fetch::End => bail!("cached source catalog was empty"),
-        }
     }
 }

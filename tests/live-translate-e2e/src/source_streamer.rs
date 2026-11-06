@@ -75,7 +75,7 @@ async fn serve(session: Arc<Session>, catalog: Bytes) {
             continue;
         };
         let result = match handler.track_name.as_str() {
-            "catalog" => accept(&session, &handler)
+            msf::CATALOG_TRACK_NAME => accept(&session, &handler)
                 .await
                 .map(|writer| writers.push(spawn_catalog_writer(writer, catalog.clone()))),
             SOURCE_AUDIO_TRACK => accept(&session, &handler)

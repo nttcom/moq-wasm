@@ -17,7 +17,7 @@ use crate::{
     catalog_publication::CatalogPublication,
     language_translation::{LanguageTranslation, WriterUpdate},
     source_audio::SourceAudio,
-    source_catalog::{CATALOG_TRACK, SourceCatalog},
+    source_catalog::SourceCatalog,
     target_language::{
         SOURCE_TEXT_TRACK, TARGET_LANGUAGES, TargetLanguage, find_by_text_track_name,
         find_by_track_name,
@@ -223,7 +223,7 @@ async fn serve(
 impl Serving {
     async fn subscribe(&mut self, handler: SubscribeHandler) {
         let track_name = handler.track_name.clone();
-        let result = if track_name == CATALOG_TRACK {
+        let result = if track_name == msf::CATALOG_TRACK_NAME {
             self.subscribe_catalog(&handler).await
         } else if track_name == SOURCE_TEXT_TRACK {
             self.subscribe_source_text(&handler).await
