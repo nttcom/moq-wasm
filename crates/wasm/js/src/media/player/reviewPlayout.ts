@@ -14,7 +14,7 @@ const WAIT_POLL_MS = 200
 /// there.
 export class ReviewPlayout implements ClockFollower {
   private readonly audio = new AudioPlayout(
-    (driftMs) => this.clock.drift(driftMs),
+    (driftMs) => this.clock.drift(this, driftMs),
     (sampleRate) => this.clock.audioContext(sampleRate)
   )
   private readonly video: VideoPlayout
@@ -136,8 +136,16 @@ export class ReviewPlayout implements ClockFollower {
     return this.clock.dueAt(captureMicros)
   }
 
+  /// Sound that is due already starts at once and moves the clock by how late
+  /// it is. When another review's sound moves the clock, as when this review
+  /// joins a playing `PlaybackGroup`, late sound is dropped instead: it would
+  /// be heard late and over what follows it.
   private playDecoded(audioData: AudioData, captureMicros: number | undefined): void {
-    if (captureMicros === undefined || captureMicros + (audioData.duration ?? 0) <= this.shownFromMicros) {
+    if (
+      captureMicros === undefined ||
+      captureMicros + (audioData.duration ?? 0) <= this.shownFromMicros ||
+      (!this.clock.movedBy(this) && this.dueAt(captureMicros) < performance.now() + this.audio.scheduleAheadMs())
+    ) {
       audioData.close()
       return
     }
