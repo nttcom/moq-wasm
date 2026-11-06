@@ -1,29 +1,14 @@
 import { expect, test } from '@playwright/test'
-import type { MediaCatalogTrack } from '../catalog'
 import { type LocHeader, TIMESTAMP_ID } from '../internal/loc'
 import { SeekTimeline } from './seekTimeline'
-
-const GROUP_MS = 2_000
-const FIRST_ENCODED_AT_MS = 1_759_924_100_000
-
-function timeline(name: string, depends: string[]): MediaCatalogTrack {
-  return { name, label: name, packaging: 'mediatimeline', depends }
-}
-
-function timelineObject(first: number, last: number): string {
-  const records = []
-  for (let groupId = first; groupId <= last; groupId += 1) {
-    const presentationMs = (groupId - first) * GROUP_MS
-    records.push([presentationMs, [groupId, 0], FIRST_ENCODED_AT_MS + presentationMs])
-  }
-  return JSON.stringify(records)
-}
-
-function followingVideoTimeline(): SeekTimeline {
-  const seek = new SeekTimeline()
-  seek.followMediaTimeline(timeline('video_timeline', ['video', 'audio']))
-  return seek
-}
+import {
+  FIRST_ENCODED_AT_MS,
+  GROUP_MS,
+  followingVideoTimeline,
+  timeline,
+  timelineObject,
+  vodTracks
+} from './testing/mediaTimelineFixtures'
 
 test('a later catalog updates the tracks the followed timeline depends on', () => {
   // Arrange: the source's video is muted when the first catalog arrives
@@ -108,4 +93,53 @@ test('the audio of the source the timeline follows shares the video ids even whe
 
   // Assert
   expect([sameSource, otherSource]).toEqual([true, false])
+})
+
+test('the axis of a broadcast that is not live runs from the first timeline record for its duration', () => {
+  // Arrange: groups 100 to 109 start every 2 s, and the last one lasts 2 s
+  const seek = followingVideoTimeline()
+  seek.applyCatalogTracks(vodTracks(20_000))
+
+  // Act
+  seek.replaceMediaTimeline(timelineObject(100, 109), 'video')
+
+  // Assert
+  const startSeconds = FIRST_ENCODED_AT_MS / 1_000
+  expect(seek.live).toBe(false)
+  expect(seek.axis()).toEqual({
+    liveEdgeSeconds: startSeconds + 20,
+    replayableStartSeconds: startSeconds,
+    broadcastStartSeconds: startSeconds,
+    replayableSeconds: 20,
+    seekable: true
+  })
+})
+
+test('the newest group of a broadcast that is not live is closed and a seek target', () => {
+  // Arrange
+  const seek = followingVideoTimeline()
+  seek.applyCatalogTracks(vodTracks(20_000))
+  seek.replaceMediaTimeline(timelineObject(100, 109), 'video')
+
+  // Act
+  const target = seek.groups.resolveSeekTarget((FIRST_ENCODED_AT_MS + 30_000) * 1_000)
+
+  // Assert
+  expect(target?.groupId).toBe(109n)
+  expect(seek.groups.newestClosed?.groupId).toBe(109n)
+})
+
+test('a broadcast with a track that is live, or that does not say, stays live', () => {
+  // Arrange
+  const seek = new SeekTimeline()
+  const [video, audio] = vodTracks(20_000)
+
+  // Act
+  seek.applyCatalogTracks([video, { ...audio, isLive: true }])
+  const withLiveAudio = seek.live
+  seek.applyCatalogTracks([video, { name: 'audio', label: 'audio' }])
+  const withGivenAudio = seek.live
+
+  // Assert
+  expect([withLiveAudio, withGivenAudio]).toEqual([true, true])
 })

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `LivePlayer` plays a broadcast none of whose catalog tracks is live
+  (`isLive: false`), such as a recorder replay, as VOD: it subscribes to no
+  media track, reads the media timeline with a joining FETCH, plays from the
+  timeline's first group through FETCH, and pauses at the end.
+  `LivePlayerState.isLive` and `LivePlayerState.ended` say so; the seek axis
+  ends `trackDuration` after the timeline's first record, `goLive` does
+  nothing, `PlayerControls` hides `LIVE`, and resuming after the end plays
+  from the start. `MediaCatalogTrack` carries `isLive` and `trackDuration`.
 - `init({ telemetry: { url, page } })` sends the wasm module's logs (at
   `logLevel` or above) and spans to the observability server at `url` every
   10 s and when the page is hidden, each session's under its token. The page's

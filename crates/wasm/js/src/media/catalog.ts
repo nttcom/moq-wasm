@@ -58,6 +58,10 @@ export type MediaCatalogTrack = {
   initData?: string
   depends?: string[]
   lang?: string
+  /// draft-ietf-moq-msf-01 §5.2.7: false when no new objects will be added.
+  isLive?: boolean
+  /// draft-ietf-moq-msf-01 §5.2.35, in milliseconds; only on a track that is not live.
+  trackDuration?: number
 }
 
 export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitData[] = []): string {
@@ -148,7 +152,9 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       height: asNumber(track.height),
       initData: resolveInitData(catalog, track),
       depends: asStrings(track.depends),
-      lang: asString(track.lang)
+      lang: asString(track.lang),
+      isLive: typeof track.isLive === 'boolean' ? track.isLive : undefined,
+      trackDuration: asNumber(track.trackDuration)
     })
     return acc
   }, [])

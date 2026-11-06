@@ -20,11 +20,17 @@ export type ReviewWindow = {
 
 type ReviewWindowFailure = FetchFailure & { start: bigint }
 
+/// The window after the last group of a broadcast that is not live.
+const END_OF_TRACK = 'end of track'
+
 export type ReviewFetchWindow = { video?: bigint; audio?: bigint }
 
 export type ReviewHost = {
   playedTrack(kind: MediaKind): PlayedTrack | undefined
   playWindow(window: ReviewWindow, session: ReviewSession): Promise<boolean>
+  /// No group is left to fetch of a broadcast that is not live; `throughMicros`,
+  /// when known, is the capture timestamp of the last frame shown.
+  reachedEnd(session: ReviewSession, throughMicros: number | undefined): void
   windowStarted(): void
   fastForwardDrained(): boolean
   observeLiveVideoGroup(groupId: bigint): void
@@ -74,7 +80,12 @@ export class ReviewSession {
   /// request.
   private async run(): Promise<void> {
     let pending = await this.fetchWindow(this.target.groupId)
+    let previous: ReviewWindow | undefined
     while (pending && this.isCurrent()) {
+      if (pending === END_OF_TRACK) {
+        this.host.reachedEnd(this, previous && lastShownMicros(previous.frames))
+        return
+      }
       if (!('frames' in pending)) {
         this.recover(pending)
         return
@@ -83,6 +94,7 @@ export class ReviewSession {
       this.behindSeconds = this.timeline.groups.secondsBehindLive(pending.start)
       this.host.windowStarted()
       const played = await this.host.playWindow({ ...pending, audio: this.unplayedAudio(pending.audio) }, this)
+      previous = pending
       pending = played ? await upcoming : undefined
     }
   }
@@ -134,17 +146,25 @@ export class ReviewSession {
     }
     this.timeline.groups.forgetThrough(failure.start)
     const next = this.timeline.groups.resolveSeekTarget(0)
-    if (!next) {
+    if (next) {
+      this.context.log('warn', `${reason}; resuming from group ${next.groupId}`)
+      this.host.seek(next.captureMicros)
+    } else if (this.timeline.live) {
       this.context.log('warn', `${reason}; no later group is cached, going live`)
       this.host.goLive()
-      return
+    } else {
+      this.context.log('warn', `${reason}; no later group is listed`)
+      this.host.reachedEnd(this, undefined)
     }
-    this.context.log('warn', `${reason}; resuming from group ${next.groupId}`)
-    this.host.seek(next.captureMicros)
   }
 
-  private async fetchWindow(start: bigint): Promise<ReviewWindow | ReviewWindowFailure | undefined> {
+  private async fetchWindow(
+    start: bigint
+  ): Promise<ReviewWindow | ReviewWindowFailure | typeof END_OF_TRACK | undefined> {
     const end = await this.awaitClosedWindowEnd(start)
+    if (end === END_OF_TRACK) {
+      return end
+    }
     const video = this.host.playedTrack('video')
     if (end === undefined || !video) {
       return undefined
@@ -201,7 +221,8 @@ export class ReviewSession {
   /// the audio track has moved on past the window, or after a bounded wait. When
   /// the audio groups share the ids of the video groups the window's audio is
   /// the same group range; otherwise it is the range of audio groups whose
-  /// capture times cover the window's.
+  /// capture times cover the window's. A broadcast that is not live has every
+  /// group closed, so there is nothing to wait for.
   private async awaitAudioRange(trackName: string, start: bigint, end: bigint): Promise<GroupRange | undefined> {
     const { audio, groups } = this.timeline
     const fromMicros = groups.startOf(start)
@@ -211,7 +232,8 @@ export class ReviewSession {
       untilMicros !== undefined &&
       !this.timeline.audioSharesVideoIds(this.host.playedTrack('video')?.name, trackName)
     const movedOn = () =>
-      byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end
+      !groups.live ||
+      (byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end)
     const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
     while (this.isCurrent() && !movedOn() && performance.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
@@ -236,13 +258,17 @@ export class ReviewSession {
   /// the relay cache, so a window can only end at the newest closed group. Once
   /// playback has consumed those, wait for the publisher to close another one;
   /// at more than real time that wait would recur on every group from then on,
-  /// so review that has played out everything fetched goes live instead.
-  private async awaitClosedWindowEnd(start: bigint): Promise<bigint | undefined> {
+  /// so review that has played out everything fetched goes live instead. A
+  /// broadcast that is not live has no group to wait for.
+  private async awaitClosedWindowEnd(start: bigint): Promise<bigint | typeof END_OF_TRACK | undefined> {
     while (this.isCurrent()) {
       const newestClosed = this.timeline.groups.newestClosed
       if (newestClosed && start <= newestClosed.groupId) {
         const bounded = start + REWIND_GROUP_COUNT
         return bounded < newestClosed.groupId ? bounded : newestClosed.groupId
+      }
+      if (!this.timeline.live) {
+        return END_OF_TRACK
       }
       if (newestClosed && this.host.fastForwardDrained()) {
         this.host.goLive()
@@ -252,4 +278,10 @@ export class ReviewSession {
     }
     return undefined
   }
+}
+
+/// With B-frames the last frame in decode order is not the last one shown.
+function lastShownMicros(frames: ReviewFrame[]): number | undefined {
+  const captures = frames.flatMap(({ captureMicros }) => (captureMicros === undefined ? [] : [captureMicros]))
+  return captures.length > 0 ? Math.max(...captures) : undefined
 }
