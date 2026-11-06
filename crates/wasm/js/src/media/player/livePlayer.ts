@@ -21,7 +21,7 @@ import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWind
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
-import type { LogLevel, MediaKind, Packaging, TrackContext } from './trackContext'
+import type { LogLevel, MediaKind, Packaging, PlayedTrack, TrackContext } from './trackContext'
 import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
 import { type StatusState, getErrorMessage } from '../internal/status'
 import {
@@ -84,6 +84,11 @@ export type LivePlayerState = {
   cmafAvailable: boolean
   packaging: Packaging
   mode: 'live' | 'review'
+  /// False for a broadcast none of whose tracks is live (draft-ietf-moq-msf-01
+  /// §5.2.7), which plays as VOD.
+  isLive: boolean
+  /// Set once VOD playback has reached the end, which pauses it.
+  ended: boolean
   paused: boolean
   stalled: boolean
   playbackRate: number
@@ -139,6 +144,7 @@ export class LivePlayer {
   private watchGeneration = 0
   private trackChanges: Promise<void> = Promise.resolve()
   private paused = false
+  private ended = false
   private volume = 1
   private playbackRate = 1
   private videoObjectCount = 0
@@ -206,7 +212,9 @@ export class LivePlayer {
       onLog: this.context.log
     })
     this.reviewHost = {
+      playedTrack: (kind) => this.playedTrack(kind),
       playWindow: (window, session) => this.playReviewWindow(window, session),
+      reachedEnd: (session, throughMicros) => void this.endPlayback(session, throughMicros),
       windowStarted: () => this.renderReviewStatus(),
       fastForwardDrained: () => this.playbackRateAdjustable() && this.playbackRate > 1 && this.cmafReview.drained(),
       observeLiveVideoGroup: (groupId) => this.observeLiveVideoGroup(groupId),
@@ -237,6 +245,8 @@ export class LivePlayer {
       cmafAvailable: this.cmafTracks.length > 0,
       packaging: this.packaging,
       mode: review ? 'review' : 'live',
+      isLive: this.timeline.live,
+      ended: this.ended,
       paused: this.paused,
       stalled: this.stallWatch.stalled,
       playbackRate: this.playbackRate,
@@ -445,13 +455,14 @@ export class LivePlayer {
   /// A position at or past the live edge goes live. Any other position is
   /// replayed from the closed keyframe group that holds it: the frames before it
   /// are decoded without pacing and only the ones from the position on are shown.
-  /// A paused player stays paused on the frame at the position.
+  /// A paused player stays paused on the frame at the position. A position
+  /// before the first group plays from the first group.
   seek(captureMicros: number): void {
     const latest = this.timeline.groups.latest
     if (!latest) {
       return
     }
-    if (captureMicros >= latest.captureMicros) {
+    if (this.timeline.live && captureMicros >= latest.captureMicros) {
       this.goLive()
       return
     }
@@ -462,6 +473,7 @@ export class LivePlayer {
     }
 
     this.review?.end()
+    this.ended = false
     this.abandonVideoSwitch()
     const session = new ReviewSession(
       this.context,
@@ -472,24 +484,31 @@ export class LivePlayer {
       captureMicros
     )
     this.review = session
-    if (!this.keepLiveWhileReviewing) {
+    if (!this.keepLiveWhileReviewing && this.timeline.live) {
       this.subscriptions.pauseForward()
     }
     this.cmafReview.needsOpen = true
     this.locReview.playout.start(session.anchorMicros, this.paused)
     this.setPaused(this.paused)
     this.applyVolume()
-    this.playbackStatus = { text: 'Reviewing', state: 'review' }
+    this.playbackStatus = this.timeline.live
+      ? { text: 'Reviewing', state: 'review' }
+      : { text: `Playing ${this.selected.video}`, state: 'ok' }
     this.changed()
     session.start()
   }
 
   /// The live picture showed nothing while delivery was paused for the review,
   /// so a skip right after going live measures from the live edge until a new
-  /// live frame has been shown.
+  /// live frame has been shown. Does nothing for a broadcast that is not live,
+  /// which has no live edge.
   goLive(): void {
+    if (!this.timeline.live) {
+      return
+    }
     this.review?.end()
     this.review = undefined
+    this.ended = false
     this.locLive.shownCaptureMicros = undefined
     this.resumeLiveForward()
     this.locReview.clearFrameIds()
@@ -507,8 +526,14 @@ export class LivePlayer {
   /// Pausing holds whatever is on screen; a seek or skip keeps the pause and
   /// every other transition (live, packaging or quality change) resumes.
   /// Resuming live CMAF jumps to the end of what is buffered so the picture is
-  /// live again; the LOC MediaStream has no backlog to skip.
+  /// live again; the LOC MediaStream has no backlog to skip. Resuming VOD that
+  /// has ended plays it from the start, as a media element does.
   setPaused(paused: boolean): void {
+    if (!paused && this.ended) {
+      this.paused = false
+      this.seek(0)
+      return
+    }
     this.paused = paused
     if (paused) {
       this.stallWatch.clear()
@@ -599,6 +624,7 @@ export class LivePlayer {
   }
 
   private replaceAllTracks(video: MediaCatalogTrack[], audio: MediaCatalogTrack[], source: string): boolean {
+    this.timeline.applyCatalogTracks([...video, ...audio])
     const videoChanged = this.replaceTracks('video', video)
     const audioChanged = this.replaceTracks('audio', audio)
     this.catalogStatus = { text: `${source}: ${video.length} video / ${audio.length} audio`, state: 'ok' }
@@ -646,26 +672,35 @@ export class LivePlayer {
     if (!track || !this.timeline.followMediaTimeline(track)) {
       return
     }
-    await this.textTracks.subscribe(track.name, (text) => {
+    const onTimeline = (text: string) => {
       try {
-        this.timeline.replaceMediaTimeline(text, this.subscriptions.get('video')?.name)
+        this.timeline.replaceMediaTimeline(text, this.playedTrack('video')?.name)
       } catch (error) {
         this.context.log('error', `media timeline: ${getErrorMessage(error)}`)
         return
       }
       this.changed()
-    })
+      if (!this.timeline.live && !this.review) {
+        this.seek(0)
+      }
+    }
+    // A SUBSCRIBE to a track that is not live delivers no object, so the
+    // timeline of a VOD broadcast arrives through the joining FETCH alone.
+    await this.textTracks.subscribe(track.name, onTimeline, { currentGroup: !this.timeline.live })
   }
 
   private cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
     return this.cmafTracks.find((candidate) => candidate.name === `${track.name}_cmaf`)
   }
 
+  /// Nothing is subscribed for a broadcast that is not live: review FETCHes the
+  /// selected track from its next window on.
   private async resubscribe(kind: MediaKind): Promise<void> {
-    const trackName = this.selected[kind]
-    const track = this.tracks[kind].find((candidate) => candidate.name === trackName)
-    const wire = track && (this.packaging === 'cmaf' ? this.cmafSibling(track) : track)
-    if (wire && this.subscriptions.get(kind)?.name === wire.name) {
+    const played = this.selectedTrack(kind)
+    if (!this.timeline.live) {
+      return
+    }
+    if (played && this.subscriptions.get(kind)?.name === played.name) {
       return
     }
 
@@ -679,17 +714,18 @@ export class LivePlayer {
       this.timeline.audio.reset()
     }
     await this.subscriptions.unsubscribe(kind)
-    if (!track || !wire) {
+    if (!played) {
       return
     }
 
+    const { name, track } = played
     const currentGroup = kind === 'video'
     if (this.packaging === 'cmaf') {
       await this.subscriptions.subscribe(
         kind,
-        wire.name,
+        name,
         track,
-        (groupId, object) => this.handleCmafObject(kind, wire.name, groupId, object),
+        (groupId, object) => this.handleCmafObject(kind, name, groupId, object),
         currentGroup
       )
       return
@@ -697,11 +733,17 @@ export class LivePlayer {
     this.locLive.configureTrack(kind, track)
     await this.subscriptions.subscribe(
       kind,
-      wire.name,
+      name,
       track,
-      (groupId, object, cached) => this.handleLocObject(kind, trackName, groupId, object, cached),
+      (groupId, object, cached) => this.handleLocObject(kind, track.name, groupId, object, cached),
       currentGroup
     )
+  }
+
+  private selectedTrack(kind: MediaKind): PlayedTrack | undefined {
+    const track = this.tracks[kind].find((candidate) => candidate.name === this.selected[kind])
+    const wire = track && (this.packaging === 'cmaf' ? this.cmafSibling(track) : track)
+    return track && wire && { name: wire.name, track }
   }
 
   /// Switches live LOC video to another rendition of its switching set
@@ -950,9 +992,13 @@ export class LivePlayer {
     }
   }
 
-  private subscribedCmafSource(kind: MediaKind): MseTrackSource | undefined {
-    const name = this.subscriptions.get(kind)?.name
-    const track = this.cmafTracks.find((candidate) => candidate.name === name)
+  /// A broadcast that is not live is read by FETCH alone, from the selected tracks.
+  private playedTrack(kind: MediaKind): PlayedTrack | undefined {
+    return this.timeline.live ? this.subscriptions.get(kind) : this.selectedTrack(kind)
+  }
+
+  private cmafSourceOf(played: PlayedTrack | undefined): MseTrackSource | undefined {
+    const track = this.cmafTracks.find((candidate) => candidate.name === played?.name)
     return track && cmafSource(track)
   }
 
@@ -960,13 +1006,13 @@ export class LivePlayer {
     if (this.packaging !== 'cmaf') {
       return
     }
-    const video = this.subscribedCmafSource('video')
+    const video = this.cmafSourceOf(this.subscriptions.get('video'))
     if (!video) {
       return
     }
     const previous = await this.cmafLive.open(this.stage.freeMseElement(), {
       video,
-      audio: this.subscribedCmafSource('audio')
+      audio: this.cmafSourceOf(this.subscriptions.get('audio'))
     })
     const next = this.cmafLive.sink
     this.applyVolume()
@@ -1045,7 +1091,7 @@ export class LivePlayer {
 
   private async playCmafReviewWindow(window: ReviewWindow, session: ReviewSession): Promise<boolean> {
     if (this.cmafReview.needsOpen) {
-      const video = this.subscribedCmafSource('video')
+      const video = this.cmafSourceOf(this.playedTrack('video'))
       if (!video) {
         this.setRewindStatus('Rewind unavailable: the CMAF track has no init segment', 'error')
         return false
@@ -1055,7 +1101,7 @@ export class LivePlayer {
         this.stage.freeMseElement(),
         {
           video,
-          audio: this.subscribedCmafSource('audio'),
+          audio: this.cmafSourceOf(this.playedTrack('audio')),
           startAtSeconds: (session.anchorMicros - origin) / MICROS_PER_SECOND
         },
         (secondsFromStart) => {
@@ -1075,7 +1121,7 @@ export class LivePlayer {
   }
 
   private reviewVideoConfig(): VideoDecoderConfig | undefined {
-    const track = this.subscriptions.get('video')?.track
+    const track = this.playedTrack('video')?.track
     if (!track?.codec) {
       return undefined
     }
@@ -1083,7 +1129,7 @@ export class LivePlayer {
   }
 
   private reviewAudioConfig(): AudioDecoderConfig | undefined {
-    const track = this.subscriptions.get('audio')?.track
+    const track = this.playedTrack('audio')?.track
     if (!track?.codec || !track.samplerate) {
       return undefined
     }
@@ -1116,7 +1162,23 @@ export class LivePlayer {
     }
     const offset = this.locReview.playout.syncOffsetMs()
     const sync = offset === undefined ? '' : ` · A/V ${formatSyncOffset(offset)}`
-    this.setRewindStatus(`Rewound ${review.behindSeconds.toFixed(1)}s${sync}`, 'review')
+    const position = this.timeline.live ? `Rewound ${review.behindSeconds.toFixed(1)}s` : 'VOD'
+    this.setRewindStatus(`${position}${sync}`, 'review')
+  }
+
+  /// Stops once the last frame is due, paused like a media element that has
+  /// played to its end.
+  private async endPlayback(session: ReviewSession, throughMicros: number | undefined): Promise<void> {
+    if (throughMicros !== undefined) {
+      await this.locReview.playout.waitUntilDue(throughMicros, session.isCurrent)
+    }
+    if (!session.isCurrent()) {
+      return
+    }
+    session.playheadMicros = throughMicros ?? session.playheadMicros
+    this.ended = true
+    this.playbackStatus = { text: 'Ended', state: 'idle' }
+    this.setPaused(true)
   }
 
   private playingMedia(): HTMLMediaElement[] {

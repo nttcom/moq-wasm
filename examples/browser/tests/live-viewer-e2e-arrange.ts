@@ -182,3 +182,12 @@ export async function syncOffsetMs(viewer: LiveViewerPageModel): Promise<number>
 export async function rewindableSeconds(viewer: LiveViewerPageModel): Promise<number> {
   return Number.parseFloat((await viewer.seekAvailableWindow.getAttribute('data-seconds')) ?? '0')
 }
+
+export function parseClock(text: string): number {
+  return text.split(':').reduce((total, part) => total * 60 + Number(part), 0)
+}
+
+/// The position of the seek readout `position / broadcast`, in seconds.
+export function elapsedAtPosition(seekElapsed: string): number {
+  return parseClock(seekElapsed.split(' / ')[0])
+}

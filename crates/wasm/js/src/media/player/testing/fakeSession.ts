@@ -1,4 +1,5 @@
 import type {
+  MoqFetch,
   MoqGroup,
   MoqLocation,
   MoqSession,
@@ -6,6 +7,7 @@ import type {
   MoqSubscription,
   ReceivedObject
 } from '../../../core/session'
+import { TIMESTAMP_ID } from '../../internal/loc'
 import { UNOBSERVED_DELIVERIES } from '../deliveryObserver'
 import type { TrackContext } from '../trackContext'
 
@@ -15,7 +17,8 @@ export type SubscribeCall = {
   options?: MoqSubscribeOptions
 }
 
-/// Every SUBSCRIBE answers with `largest` and delivers `objects`.
+/// Every SUBSCRIBE answers with `largest` and delivers `objects`; a FETCH
+/// delivers the objects `fetchable` lists for its track in its group range.
 /// `drained` resolves once a reader has taken them all.
 export class FakeSession {
   readonly calls: SubscribeCall[] = []
@@ -23,7 +26,8 @@ export class FakeSession {
 
   constructor(
     private readonly largest: MoqLocation | undefined,
-    private readonly objects: ReceivedObject[]
+    private readonly objects: ReceivedObject[],
+    private readonly fetchable: Record<string, ReceivedObject[]> = {}
   ) {}
 
   context(): TrackContext {
@@ -47,6 +51,17 @@ export class FakeSession {
   async subscribeCurrentGroup(_namespace: string[], track: string): Promise<MoqSubscription> {
     this.calls.push({ method: 'subscribeCurrentGroup', track })
     return this.subscription()
+  }
+
+  async fetch(_namespace: string[], track: string, start: MoqLocation, end: MoqLocation): Promise<MoqFetch> {
+    const objects = (this.fetchable[track] ?? []).filter(
+      ({ groupId }) => groupId >= start.groupId && groupId <= end.groupId
+    )
+    return {
+      async *[Symbol.asyncIterator]() {
+        yield* objects
+      }
+    } as unknown as MoqFetch
   }
 
   private subscription(): MoqSubscription {
@@ -85,7 +100,7 @@ async function* iterate(objects: ReceivedObject[], onEnd: () => void): AsyncGene
   onEnd()
 }
 
-export function receivedObject(groupId: bigint, objectId: bigint): ReceivedObject {
+export function receivedObject(groupId: bigint, objectId: bigint, captureMicros?: number): ReceivedObject {
   return {
     groupId,
     subgroupId: 0n,
@@ -93,6 +108,6 @@ export function receivedObject(groupId: bigint, objectId: bigint): ReceivedObjec
     objectStatus: undefined,
     objectPayload: new Uint8Array([1]),
     objectPayloadLength: 1,
-    locHeader: []
+    locHeader: captureMicros === undefined ? [] : [{ id: TIMESTAMP_ID, value: { varint: captureMicros } }]
   }
 }
