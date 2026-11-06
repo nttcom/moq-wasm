@@ -219,12 +219,13 @@ where they are used, not as options, until a publisher differs:
 The audio row is the one difference that changes behavior. `AudioGroups`
 records where each audio group starts on the capture axis, from live audio
 objects and, for groups known only from TRACK_STATUS during a review, from the
-arrival lag of the last live object. When every group seen on both tracks
-starts within 500 ms of the video group with the same id, review fetches a
-window's audio by the video's group range, as before; otherwise it fetches the
-closed audio groups whose starts cover the window's capture span, waiting until
-an audio group has started past the window. Audio chunks an earlier window
-already played are left out, since a 2 s audio group can span two windows.
+arrival lag of the last live object. When the media timeline depends on both
+tracks, or every group seen on both tracks starts within 500 ms of the video
+group with the same id, review fetches a window's audio by the video's group
+range; otherwise it fetches the closed audio groups whose starts cover the
+window's capture span, waiting until an audio group has started past the window.
+Audio chunks an earlier window already played are left out, since a 2 s audio
+group can span two windows.
 
 ## Invariants
 

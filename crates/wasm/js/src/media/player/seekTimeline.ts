@@ -50,6 +50,16 @@ export class SeekTimeline {
     return trackName !== undefined && (this.mediaTrack?.depends.includes(trackName) ?? false)
   }
 
+  /// A media timeline that depends on both tracks says they share the ids; it
+  /// also lists groups whose audio starts were never observed. Otherwise the
+  /// groups observed on both tracks tell.
+  audioSharesVideoIds(videoTrackName: string | undefined, audioTrackName: string): boolean {
+    if (this.stampedByMediaTimeline(videoTrackName) && this.stampedByMediaTimeline(audioTrackName)) {
+      return true
+    }
+    return this.audio.sharesVideoIds((groupId) => this.groups.startOf(groupId))
+  }
+
   reset(): void {
     this.groups.reset()
     this.media.reset()
