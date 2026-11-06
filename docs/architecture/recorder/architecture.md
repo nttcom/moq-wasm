@@ -427,7 +427,13 @@ room recording instead leaves out a participant whose task failed.
 `POST /recordings/{id}/publish` accepts a finished MoQ recording, verifies
 access to its source room and starts `replay::ReplayTask`; an MP4 recording is
 answered `409`. The replay announces namespaces under
-`<room>/recordings/<id>/<member-index>/<content>/<session-index>`, and the
+`<room>/recordings/<id>/<member>/<content>/<session-index>`: `<member>` is the
+member's namespace elements after the room, the participant's name or
+`bots/transcriber`, `<content>` is `camera` or `screen_share`, and
+`<session-index>` counts the member's archives of that content, one per time
+they joined. Taking only the last element would give a participant named
+`transcriber` the transcriber's namespace; with every element, and the last
+two always content and index, two members never share one. The
 answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
 line with `namespace_prefix` (`<room>/recordings/<id>`) and
 `renew_after_seconds`, then an empty line every 15 s. A player finds the

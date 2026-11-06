@@ -90,12 +90,9 @@ impl StoredRecording {
         let members = manifest["members"]
             .as_array()
             .context("recording has no members")?;
-        for (member_index, member) in members.iter().enumerate() {
+        for member in members {
             let source_namespace = string(member, "namespace")?;
-            ensure!(
-                source_namespace.starts_with(&format!("{room}/")),
-                "member is outside the recorded room"
-            );
+            let replay_prefix = member_replay_prefix(room, id, source_namespace)?;
             for content in ["camera", "screen_share"] {
                 let sources = member[content]
                     .as_array()
@@ -145,9 +142,7 @@ impl StoredRecording {
                             .context("track has no last object")?;
                         ensure!(first <= last, "track has an invalid object range");
                         recording.tracks.push(Arc::new(StoredTrack {
-                            namespace: format!(
-                                "{room}/recordings/{id}/{member_index}/{content}/{source_index}"
-                            ),
+                            namespace: format!("{replay_prefix}/{content}/{source_index}"),
                             source_namespace: source_namespace.to_string(),
                             name: string(track, "name")?.to_string(),
                             chunks,
@@ -293,6 +288,19 @@ impl StoredRecording {
     }
 }
 
+/// `<room>/recordings/<id>/<member>`, the prefix of the room member
+/// `namespace`'s replay namespaces, where `<member>` is every element after
+/// `room` (`alice`, `bots/transcriber`), so a participant named `transcriber`
+/// stays apart from the bot. Fails when `namespace` is not below `room`.
+fn member_replay_prefix(room: &str, id: &str, namespace: &str) -> Result<String> {
+    let member = namespace
+        .strip_prefix(room)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|member| !member.is_empty())
+        .context("member is outside the recorded room")?;
+    Ok(format!("{room}/recordings/{id}/{member}"))
+}
+
 /// Whether a FETCH of `[start, end)` covers `at`; an `end` with object id 0
 /// takes its whole group (draft-14 §9.16.1).
 pub(crate) fn in_fetch_range(at: Location, start: Location, end: Location) -> bool {
@@ -370,9 +378,62 @@ pub(crate) fn location(value: &Value) -> Result<Location> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{archive_chunks::ChunkWriter, archive_receiver::Event};
+    use crate::{
+        archive_chunks::ChunkWriter, archive_receiver::Event, test_support::recorded_camera,
+    };
     use object_store::{PutPayload, memory::InMemory};
     use serde_json::json;
+
+    #[test]
+    fn a_member_replays_under_its_elements_after_the_room() {
+        // Arrange: participants named transcriber and bots besides the transcriber bot
+        let members = [
+            "anon/room/alice",
+            "anon/room/transcriber",
+            "anon/room/bots",
+            "anon/room/bots/transcriber",
+        ];
+
+        // Act
+        let prefixes: Vec<String> = members
+            .iter()
+            .map(|member| member_replay_prefix("anon/room", "id", member).unwrap())
+            .collect();
+
+        // Assert
+        assert_eq!(
+            prefixes,
+            [
+                "anon/room/recordings/id/alice",
+                "anon/room/recordings/id/transcriber",
+                "anon/room/recordings/id/bots",
+                "anon/room/recordings/id/bots/transcriber",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stored_archive_replays_under_its_member_content_and_index() {
+        // Act
+        let recording = recorded_camera().await;
+
+        // Assert
+        assert_eq!(
+            recording.namespaces(),
+            ["anon/room/recordings/id/alice/camera/0"]
+        );
+    }
+
+    #[test]
+    fn a_member_outside_the_room_is_rejected() {
+        // Act / Assert
+        for member in ["anon/room2/alice", "anon/room", "anon/room/", "anon/other"] {
+            assert!(
+                member_replay_prefix("anon/room", "id", member).is_err(),
+                "{member}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn restores_raw_objects_and_rejects_corrupt_chunks_and_escaping_keys() {

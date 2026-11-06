@@ -30,18 +30,19 @@ test('records a room and replays it through the relay as a VOD broadcast', async
   const replay = await recorderServe.publish(recording)
   try {
     await page.goto('/moq-wasm/')
-    const { catalog, timeline } = await page.evaluate(
-      async ({ relay, prefix }) => {
+    const prefix = `anon/live/recordings/${recording.id}`
+    const [catalog, timeline] = await page.evaluate(
+      async ({ relay, prefix, namespace }) => {
         const moduleUrl = '/moq-wasm/tests/recording-replay.ts'
         const { readReplay } = await import(/* @vite-ignore */ moduleUrl)
-        return readReplay(relay, prefix.split('/'), 'video_timeline')
+        return readReplay(relay, prefix.split('/'), namespace.split('/'), ['catalog', 'video_timeline'])
       },
-      { relay: liveViewerE2EConfig.moqtUrl, prefix: `anon/live/recordings/${recording.id}` }
+      { relay: liveViewerE2EConfig.moqtUrl, prefix, namespace: `${prefix}/e2e/camera/0` }
     )
 
     // Assert: the catalog and the timeline cover the recording
     expect(replay.answer).toEqual({
-      namespace_prefix: `anon/live/recordings/${recording.id}`,
+      namespace_prefix: prefix,
       renew_after_seconds: 2700
     })
     expect(catalog.isComplete).toBe(true)
