@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use crate::{
     archive_chunks::{MAX_CHUNK_BYTES, digest},
+    recorder::Content,
+    room_recording::TRANSCRIBER_MEMBER,
     store::RecordingStore,
 };
 
@@ -18,6 +20,7 @@ const MAX_TRACKS: usize = 256;
 pub(crate) struct StoredTrack {
     pub(crate) namespace: String,
     pub(crate) source_namespace: String,
+    pub(crate) content: Content,
     pub(crate) name: String,
     pub(crate) chunks: Vec<Value>,
     pub(crate) first: Location,
@@ -59,7 +62,12 @@ impl StoredTrack {
 pub(crate) struct StoredRecording {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
+    /// The recorded namespace prefix, which every member's namespace is under.
+    pub(crate) room: String,
     pub(crate) tracks: Vec<Arc<StoredTrack>>,
+    /// The transcriber's tracks, which the replay reads only to build each
+    /// participant's transcript.
+    pub(crate) transcriber: Vec<StoredTrack>,
 }
 
 pub(crate) struct StoredEntry {
@@ -73,7 +81,9 @@ impl StoredRecording {
         let mut recording = Self {
             store: store.object_store(),
             prefix: store.recording_prefix(id),
+            room: room.to_string(),
             tracks: Vec::new(),
+            transcriber: Vec::new(),
         };
         let manifest: Value = serde_json::from_slice(
             &recording
@@ -93,7 +103,11 @@ impl StoredRecording {
         for member in members {
             let source_namespace = string(member, "namespace")?;
             let replay_prefix = member_replay_prefix(room, id, source_namespace)?;
-            for content in ["camera", "screen_share"] {
+            let is_transcriber = source_namespace == format!("{room}/{TRANSCRIBER_MEMBER}");
+            for (content, kind) in [
+                ("camera", Content::Camera),
+                ("screen_share", Content::ScreenShare),
+            ] {
                 let sources = member[content]
                     .as_array()
                     .context("member has no archive list")?;
@@ -110,7 +124,7 @@ impl StoredRecording {
                         .context("archive has no tracks")?
                     {
                         ensure!(
-                            recording.tracks.len() < MAX_TRACKS,
+                            recording.tracks.len() + recording.transcriber.len() < MAX_TRACKS,
                             "recording has too many tracks"
                         );
                         let chunks = track["chunks"]
@@ -141,14 +155,20 @@ impl StoredRecording {
                             .max()
                             .context("track has no last object")?;
                         ensure!(first <= last, "track has an invalid object range");
-                        recording.tracks.push(Arc::new(StoredTrack {
+                        let track = StoredTrack {
                             namespace: format!("{replay_prefix}/{content}/{source_index}"),
                             source_namespace: source_namespace.to_string(),
+                            content: kind,
                             name: string(track, "name")?.to_string(),
                             chunks,
                             first,
                             last,
-                        }));
+                        };
+                        if is_transcriber {
+                            recording.transcriber.push(track);
+                        } else {
+                            recording.tracks.push(Arc::new(track));
+                        }
                     }
                 }
             }
@@ -290,8 +310,8 @@ impl StoredRecording {
 
 /// `<room>/recordings/<id>/<member>`, the prefix of the room member
 /// `namespace`'s replay namespaces, where `<member>` is every element after
-/// `room` (`alice`, `bots/transcriber`), so a participant named `transcriber`
-/// stays apart from the bot. Fails when `namespace` is not below `room`.
+/// `room` (`alice`, `bots/transcriber`), so two members never get the same
+/// one. Fails when `namespace` is not below `room`.
 fn member_replay_prefix(room: &str, id: &str, namespace: &str) -> Result<String> {
     let member = namespace
         .strip_prefix(room)
@@ -379,7 +399,9 @@ pub(crate) fn location(value: &Value) -> Result<Location> {
 mod tests {
     use super::*;
     use crate::{
-        archive_chunks::ChunkWriter, archive_receiver::Event, test_support::recorded_camera,
+        archive_chunks::ChunkWriter,
+        archive_receiver::Event,
+        test_support::{recorded_camera, recorded_meeting},
     };
     use object_store::{PutPayload, memory::InMemory};
     use serde_json::json;
@@ -422,6 +444,28 @@ mod tests {
             recording.namespaces(),
             ["anon/room/recordings/id/alice/camera/0"]
         );
+    }
+
+    #[tokio::test]
+    async fn the_transcriber_is_read_apart_from_the_replayed_namespaces() {
+        // Act
+        let recording = recorded_meeting(vec![json!([])]).await;
+
+        // Assert
+        assert_eq!(
+            recording.namespaces(),
+            [
+                "anon/room/recordings/id/alice/camera/0",
+                "anon/room/recordings/id/alice/camera/1",
+                "anon/room/recordings/id/bob/camera/0",
+            ]
+        );
+        let transcriber: Vec<&str> = recording
+            .transcriber
+            .iter()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(transcriber, ["transcript"]);
     }
 
     #[test]
@@ -470,7 +514,9 @@ mod tests {
         let reader = StoredRecording {
             store: store.clone(),
             prefix,
+            room: "anon/room".to_string(),
             tracks: Vec::new(),
+            transcriber: Vec::new(),
         };
 
         // Act / Assert

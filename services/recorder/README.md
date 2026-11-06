@@ -94,9 +94,10 @@ Its first line is
 empty keepalive lines follow. Under the prefix, each participant's camera and
 screen share is an MSF VOD broadcast,
 `<prefix>/<participant>/camera/<n>` and `<prefix>/<participant>/screen_share/<n>`,
-where `<participant>` is the namespace's elements after the room (the
-transcriber's is `bots/transcriber`) and `<n>` counts the times the participant
-joined, from 0. Find the namespaces with
+where `<participant>` is the namespace's elements after the room and `<n>`
+counts the times the participant joined, from 0. The transcriber's namespace is
+not replayed: a participant's camera catalog lists their part of the transcript
+as the `transcript` event timeline. Find the namespaces with
 SUBSCRIBE_NAMESPACE, read each `catalog` with SUBSCRIBE and a joining FETCH,
 which lists the recorded tracks with `isLive: false` and `trackDuration`, place
 the groups with the media timeline it lists, which covers the whole recording,

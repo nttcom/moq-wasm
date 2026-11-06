@@ -43,3 +43,25 @@ export async function readReplay(
     session.close()
   }
 }
+
+/// The namespaces SUBSCRIBE_NAMESPACE on `prefix` announces within `waitMs`.
+export async function announcedNamespaces(relay: string, prefix: string[], waitMs: number): Promise<string[]> {
+  const session = await MoqSession.connect(relay)
+  try {
+    const watch = await session.watchNamespaces(prefix)
+    const namespaces: string[] = []
+    const collected = (async () => {
+      for await (const event of watch) {
+        if (event.kind === 'announced') {
+          namespaces.push(event.namespace.join('/'))
+        }
+      }
+    })()
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+    await watch.close()
+    await collected
+    return namespaces
+  } finally {
+    session.close()
+  }
+}

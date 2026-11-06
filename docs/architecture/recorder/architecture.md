@@ -428,12 +428,12 @@ room recording instead leaves out a participant whose task failed.
 access to its source room and starts `replay::ReplayTask`; an MP4 recording is
 answered `409`. The replay announces namespaces under
 `<room>/recordings/<id>/<member>/<content>/<session-index>`: `<member>` is the
-member's namespace elements after the room, the participant's name or
-`bots/transcriber`, `<content>` is `camera` or `screen_share`, and
-`<session-index>` counts the member's archives of that content, one per time
-they joined. Taking only the last element would give a participant named
-`transcriber` the transcriber's namespace; with every element, and the last
-two always content and index, two members never share one. The
+member's namespace elements after the room, a meeting participant's name,
+`<content>` is `camera` or `screen_share`, and `<session-index>` counts the
+member's archives of that content, one per time they joined. With every
+element rather than the last, and the last two always content and index, two
+members never share one. The transcriber's namespace is not announced (see
+below). The
 answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
 line with `namespace_prefix` (`<room>/recordings/<id>`) and
 `renew_after_seconds`, then an empty line every 15 s. A player finds the
@@ -468,14 +468,37 @@ timeline tracks with one object each, at group 0, object 0:
   Presentation time and wallclock stay the publisher's (§7.1.1). §7.1.1 asks
   for wallclock 0 in a VOD asset whose wallclock is unknown; a recording's is
   known, and the player places groups by it.
-- Both come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
+- A participant's transcript is an event timeline of its own, built from the
+  transcriber's recording (see below).
+- All of them come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
   requires an object to be the same bytes wherever it is read, and several
   instances may replay one recording under the same namespaces, which the
   relay merges (§8.2); a creation time or an instance's value would put two
   contents at one location.
 
-A namespace without a stored catalog, the transcriber's, gets none, and its
-tracks are served as stored.
+The transcriber publishes one `transcript` for the whole room under
+`<room>/bots/transcriber`, without a catalog: its catalog entry would have to
+name the audio it transcribes in `depends` (draft-ietf-moq-msf-01 §8.2), whose
+names MSF resolves in the timeline's own namespace (§5.2.14), and that audio is
+in the participants' (see [its design](../ai-bots/meeting-transcriber.md)). The
+replay therefore splits the transcript by speaker and serves each part in the
+speaker's camera namespace, where it can name the audio, and does not announce
+the transcriber's namespace:
+
+- The transcriber names a speaker after the element below the room of the
+  namespace it transcribed, so a record goes to the member `<room>/<speaker>`,
+  in the camera session whose captured media spans its `t`, the first one when
+  several do. A record of another speaker, at a `t` outside all their sessions
+  or for a session without an audio track is left out. `t` is the
+  transcriber's clock and the capture timestamps the participant's, so a skew
+  between them moves the boundaries by as much.
+- The session's catalog lists `transcript` after its other tracks:
+  `packaging` `eventtimeline`, role `subtitle` ("a transcription of the spoken
+  dialogue", §5.2.6), `eventType` `com.skyway.transcript.v1`, label
+  `Transcript`, `mimeType` `application/json`, `depends` the session's audio
+  tracks, and the namespace's `trackDuration` like the others.
+- The track is one object at group 0, object 0: the session's records as one
+  §8.1 array sorted by `t`, a record stored twice listed once.
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
