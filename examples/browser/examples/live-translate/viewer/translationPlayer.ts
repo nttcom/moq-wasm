@@ -11,7 +11,6 @@ import { PictureStage } from 'moq-wasm/media/player/pictureStage'
 import { TextTracks } from 'moq-wasm/media/player/textTrack'
 import { type LogLevel, type TrackContext, readJoinedObjects, streamId } from 'moq-wasm/media/player/trackContext'
 import { getErrorMessage } from '../../../utils/page'
-import { translatedNamespace } from '../liveTranslate'
 import { type LanguageOption, ORIGINAL_LANGUAGE, languageOptions } from './languages'
 
 /// Every track plays this long after its capture timestamp, so a translation
@@ -182,10 +181,10 @@ export class TranslationPlayer {
       : (translatedMicros - originalMicros) / 1_000
   }
 
-  async start(session: MoqSession, broadcastId: string): Promise<void> {
+  async start(session: MoqSession, namespace: string[]): Promise<void> {
     await this.queue(async () => {
       this.context.session = session
-      this.context.namespace = translatedNamespace(broadcastId)
+      this.context.namespace = namespace
       this.started = true
       this.followed = false
     })

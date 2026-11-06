@@ -3,7 +3,7 @@ import 'moq-wasm/media/player.css'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { RELAY_URL_PARAM_NAMES, firstSearchParam, setUpRelayUrlControls } from '../../../utils/relayPresets'
-import { BROADCAST_ID_PARAM } from '../liveTranslate'
+import { type BroadcastAccess, BROADCAST_ID_PARAM, openBroadcastAccess, translatedNamespace } from '../liveTranslate'
 import { TranslationPlayer, type TranslationPlayerStats } from './translationPlayer'
 
 declare global {
@@ -26,6 +26,7 @@ const languageBar = element<HTMLElement>('language-bar')
 const languageOptions = element<HTMLDivElement>('language-options')
 const connection = element<HTMLDetailsElement>('connection')
 let session: MoqSession | undefined
+let access: BroadcastAccess | undefined
 const delaySeconds = Number(new URLSearchParams(location.search).get(DELAY_SECONDS_PARAM))
 const player = new TranslationPlayer(
   element<HTMLDivElement>('stage'),
@@ -58,7 +59,6 @@ setInterval(logStats, STATS_LOG_INTERVAL_MS)
 
 async function watch(): Promise<void> {
   const broadcastId = broadcastIdInput.value.trim()
-  const url = urlInput.value.trim()
   if (!broadcastId) {
     setStatusText('viewer-status', '配信 ID を入れてください（下の「接続」）')
     connection.open = true
@@ -67,8 +67,12 @@ async function watch(): Promise<void> {
   try {
     await stop()
     setStatusText('viewer-status', '接続しています')
-    session = await MoqSession.connect(url)
-    await player.start(session, broadcastId)
+    access = await openBroadcastAccess(broadcastId, 'viewer')
+    if (access.relayUrl) {
+      urlInput.value = access.relayUrl
+    }
+    session = await MoqSession.connect(urlInput.value.trim(), { token: access.token })
+    await player.start(session, translatedNamespace(access.namespace))
     renderOverlay()
   } catch (error) {
     setStatusText('viewer-status', `接続できませんでした: ${getErrorMessage(error)}`)
@@ -79,6 +83,8 @@ async function stop(): Promise<void> {
   await player.stop()
   session?.close()
   session = undefined
+  access?.release()
+  access = undefined
   languageBar.hidden = true
   watchOverlay.hidden = false
   watchButton.hidden = false
