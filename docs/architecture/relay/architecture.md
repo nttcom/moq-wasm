@@ -246,13 +246,17 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   lives. The task behind such a span only borrows the request span to link
   it; keeping a `Span` handle would hold the request span open the same way. Before dispatching, it runs `auth::request_gate::authorize_request` against the session's
   `VerifiedToken` (looked up once when the worker starts and replaced when a
-  TRACK_STATUS token refresh succeeds). PUBLISH and
-  PUBLISH_NAMESPACE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
+  TRACK_STATUS token refresh succeeds). PUBLISH, PUBLISH_NAMESPACE and
+  PUBLISH_NAMESPACE_DONE need the `publish` claim; SUBSCRIBE, SUBSCRIBE_NAMESPACE,
   standalone FETCH and a TRACK_STATUS status query (no AUTHORIZATION TOKEN)
   need `subscribe`; a token-refresh TRACK_STATUS, joining FETCH and every other
-  message pass through (they reference an already authorized request). A
-  denied request is answered with the message's `*_ERROR` carrying
-  `UNAUTHORIZED (0x1)` and the sequence is never invoked.
+  message pass through (they reference an already authorized request).
+  PUBLISH_NAMESPACE_DONE is gated although it ends a PUBLISH_NAMESPACE because
+  it carries a namespace rather than a Request ID, so nothing ties it to an
+  authorized request. A denied request is answered with the message's
+  `*_ERROR` carrying `UNAUTHORIZED (0x1)` and the sequence is never invoked; a
+  denied PUBLISH_NAMESPACE_DONE, which has no error response, is logged and
+  dropped.
 - `SessionWorkers` (`session_workers.rs` spawns and reaps,
   `session_workers/session_worker.rs` is the per-session worker,
   `session_workers/session_cleanup.rs` the terminal cleanup): each worker

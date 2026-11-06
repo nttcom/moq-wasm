@@ -14,6 +14,9 @@ pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, V
         MoqtSessionEvent::PublishNamespace(handler) => {
             Some((Operation::Publish, handler.track_namespace_tuple().to_vec()))
         }
+        MoqtSessionEvent::PublishNamespaceDone(handler) => {
+            Some((Operation::Publish, handler.track_namespace_tuple().to_vec()))
+        }
         MoqtSessionEvent::Publish(handler) => {
             Some((Operation::Publish, handler.track_namespace_tuple().to_vec()))
         }
@@ -57,6 +60,15 @@ pub(crate) fn authorize_request(
 }
 
 pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied) {
+    if let MoqtSessionEvent::PublishNamespaceDone(handler) = &event {
+        // PUBLISH_NAMESPACE_DONE has no error response (draft-14 §9.26).
+        tracing::warn!(
+            reason = denied.reason,
+            track_namespace = handler.track_namespace(),
+            "PUBLISH_NAMESPACE_DONE denied; dropped"
+        );
+        return;
+    }
     tracing::warn!(reason = denied.reason, "request denied");
     let reason = denied.reason.to_string();
     let sent = match event {
@@ -94,15 +106,71 @@ mod tests {
         fetch::FetchOption, object::Location, publish::PublishOption, subscribe::SubscribeOption,
     };
 
-    use crate::modules::auth::{
-        test_support::{app_token, request_error_code, spawn_relay_and_connect_client},
-        verified_token::VerifiedToken,
+    use moqt::namespace::PublishNamespaceDoneHandler;
+
+    use super::{authorize_request, reject_unauthorized};
+    use crate::modules::{
+        auth::{
+            test_support::{app_token, request_error_code, spawn_relay_and_connect_client},
+            verified_token::VerifiedToken,
+        },
+        session::moqt_session_event::MoqtSessionEvent,
     };
 
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
     fn site1_token() -> VerifiedToken {
         app_token(Some("site1"), Some("site1"))
+    }
+
+    fn publish_namespace_done(track_namespace: &str) -> MoqtSessionEvent {
+        MoqtSessionEvent::PublishNamespaceDone(PublishNamespaceDoneHandler {
+            track_namespace: track_namespace.to_string(),
+            track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
+        })
+    }
+
+    #[test]
+    fn publish_namespace_done_inside_the_granted_path_is_authorized() {
+        // Arrange
+        let token = site1_token();
+
+        // Act
+        let result = authorize_request(Some(&token), &publish_namespace_done("APP/site1/cam1"));
+
+        // Assert
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn publish_namespace_done_outside_the_granted_path_is_denied() {
+        // Arrange
+        let token = site1_token();
+
+        // Act
+        let result = authorize_request(Some(&token), &publish_namespace_done("APP/site2"));
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn publish_namespace_done_without_a_token_is_denied() {
+        // Act
+        let result = authorize_request(None, &publish_namespace_done("APP/site1"));
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn denied_publish_namespace_done_is_dropped_without_a_response() {
+        // Arrange
+        let event = publish_namespace_done("APP/site2");
+        let denied = authorize_request(Some(&site1_token()), &event).unwrap_err();
+
+        // Act / Assert: returns instead of reaching the unreachable arm
+        reject_unauthorized(event, denied).await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
