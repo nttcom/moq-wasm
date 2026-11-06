@@ -5,7 +5,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus};
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     archive_chunks::{MAX_CHUNK_BYTES, digest},
@@ -18,7 +18,6 @@ const MAX_TRACKS: usize = 256;
 pub(crate) struct StoredTrack {
     pub(crate) namespace: String,
     pub(crate) source_namespace: String,
-    pub(crate) content: String,
     pub(crate) name: String,
     pub(crate) chunks: Vec<Value>,
     pub(crate) first: Location,
@@ -150,7 +149,6 @@ impl StoredRecording {
                                 "{room}/recordings/{id}/{member_index}/{content}/{source_index}"
                             ),
                             source_namespace: source_namespace.to_string(),
-                            content: content.to_string(),
                             name: string(track, "name")?.to_string(),
                             chunks,
                             first,
@@ -165,22 +163,6 @@ impl StoredRecording {
             "recording contains no objects"
         );
         Ok(recording)
-    }
-
-    pub(crate) fn description(&self) -> Value {
-        json!({
-            "tracks": self.tracks.iter().map(|track| json!({
-                "namespace": track.namespace, "source_namespace": track.source_namespace,
-                "content": track.content, "name": track.name,
-                "first": location_json(track.first), "last": location_json(track.last),
-                "chunks": track.chunks.iter().map(|chunk| json!({
-                    "first": chunk["first"], "last": chunk["last"],
-                    "capture_start_us": chunk["capture_start_us"],
-                    "capture_end_us": chunk["capture_end_us"],
-                    "data_size": chunk["data_size"],
-                })).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
-        })
     }
 
     /// The replay namespaces, in the order the tracks list them.
@@ -385,15 +367,12 @@ pub(crate) fn location(value: &Value) -> Result<Location> {
     })
 }
 
-fn location_json(location: Location) -> Value {
-    json!({ "group": location.group_id.to_string(), "object": location.object_id.to_string() })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{archive_chunks::ChunkWriter, archive_receiver::Event};
     use object_store::{PutPayload, memory::InMemory};
+    use serde_json::json;
 
     #[tokio::test]
     async fn restores_raw_objects_and_rejects_corrupt_chunks_and_escaping_keys() {
