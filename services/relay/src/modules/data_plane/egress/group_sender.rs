@@ -25,6 +25,12 @@ use crate::modules::{
 
 use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};
 
+/// Per subscription. Only a subscriber that stopped reading reaches it,
+/// since a live track keeps a few subgroups open; the scheduler then blocks
+/// on the task channel, and its lag scan schedules the missed groups that are
+/// still cached.
+const MAX_CONCURRENT_SEND_TASKS: usize = 256;
+
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
 
 pub(crate) struct GroupSender {
@@ -132,7 +138,7 @@ impl GroupSender {
 
         loop {
             tokio::select! {
-                Some(task) = self.receiver.recv() => {
+                Some(task) = self.receiver.recv(), if joinset.len() < MAX_CONCURRENT_SEND_TASKS => {
                     match task.key {
                         SubgroupKey::Stream { group_id, subgroup_id } => {
                             let factory = stream_factory
@@ -208,15 +214,13 @@ impl GroupSender {
         else {
             unreachable!("run() spawns send_stream_task only for SubgroupKey::Stream");
         };
-        let (first, publisher_priority) = match task.source.next(task.object_id).await {
-            SubgroupNext::Cache(NextObject::Object(first)) => {
-                let publisher_priority = first.object.publisher_priority;
-                (NextObject::Object(first), publisher_priority)
-            }
-            SubgroupNext::Cache(NextObject::Partial(first)) => {
-                let publisher_priority = first.object.publisher_priority;
-                (NextObject::Partial(first), publisher_priority)
-            }
+        // The open waits for the subscriber's stream credit, so only the priority is
+        // kept across it and the object is read again once the stream is open:
+        // holding the object would keep it alive past its cache expiry. Every object
+        // of a subgroup has this priority (draft-14 §10.4.2).
+        let publisher_priority = match task.source.next(task.object_id).await {
+            SubgroupNext::Cache(NextObject::Object(first)) => first.object.publisher_priority,
+            SubgroupNext::Cache(NextObject::Partial(first)) => first.object.publisher_priority,
             SubgroupNext::LeftRange => {
                 tracing::debug!("group left the subscription range before any object to send");
                 return (0, "left_range");
@@ -264,7 +268,13 @@ impl GroupSender {
         }
 
         let mut object_count = 0u64;
-        let mut next = first;
+        let mut next = match task.source.next(task.object_id).await {
+            SubgroupNext::Cache(next) => next,
+            SubgroupNext::Malformed => return (object_count, "malformed_track"),
+            SubgroupNext::LeftRange => {
+                return Self::reset_left_range(sender, &task.delivery_stats, object_count).await;
+            }
+        };
         loop {
             let object_id = match next {
                 NextObject::Object(object) => {
@@ -331,14 +341,23 @@ impl GroupSender {
                 SubgroupNext::Cache(next) => next,
                 SubgroupNext::Malformed => return (object_count, "malformed_track"),
                 SubgroupNext::LeftRange => {
-                    task.delivery_stats.record_stream_reset();
-                    if let Err(error) = sender.reset(DataStreamResetCode::Cancelled).await {
-                        tracing::warn!(?error, "failed to reset egress stream sender");
-                    }
-                    return (object_count, "left_range");
+                    return Self::reset_left_range(sender, &task.delivery_stats, object_count)
+                        .await;
                 }
             };
         }
+    }
+
+    async fn reset_left_range(
+        mut sender: Box<dyn DataSender>,
+        delivery_stats: &DeliveryStats,
+        object_count: u64,
+    ) -> (u64, &'static str) {
+        delivery_stats.record_stream_reset();
+        if let Err(error) = sender.reset(DataStreamResetCode::Cancelled).await {
+            tracing::warn!(?error, "failed to reset egress stream sender");
+        }
+        (object_count, "left_range")
     }
 
     async fn send_datagram_task(
@@ -453,10 +472,107 @@ async fn forward_partial(
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, time::Duration};
+
     use anyhow::Context;
     use moqt::TransportSendError;
+    use tokio::sync::{mpsc, watch};
 
-    use super::send_failure_reason;
+    use super::{GroupSendTask, GroupSender, MAX_CONCURRENT_SEND_TASKS, send_failure_reason};
+    use crate::modules::{
+        data_plane::cache::track_cache::TrackCache,
+        domain::track_key::TrackKey,
+        test_support::{
+            directory_fixtures::delivery_control,
+            mock_session::wait_until,
+            relay_harness::{
+                MockPublisher, MockPublisherObservers,
+                fixtures::{
+                    cached_object::{open_group, stream_key},
+                    subscription::make_subscription,
+                },
+            },
+        },
+    };
+
+    fn run_group_sender(
+        cache: &Arc<TrackCache>,
+        publisher: MockPublisher,
+    ) -> mpsc::Sender<GroupSendTask> {
+        let (task_sender, task_receiver) = mpsc::channel(1);
+        let group_sender = GroupSender::new(
+            TrackKey::new("ns", "track"),
+            cache.clone(),
+            Arc::new(publisher),
+            make_subscription(moqt::subscribe::FilterType::LargestObject),
+            task_receiver,
+            Arc::default(),
+            watch::channel(delivery_control(true)).1,
+        );
+        tokio::spawn(group_sender.run());
+        task_sender
+    }
+
+    fn send_task(group_id: u64) -> GroupSendTask {
+        GroupSendTask {
+            key: stream_key(group_id),
+            generation: 0,
+            object_id: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stream_waiting_for_stream_credit_does_not_hold_its_first_object() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let _open = open_group(&cache, 0, &[0]);
+        let (publisher, MockPublisherObservers { mut priorities, .. }) = MockPublisher::channel();
+        let task_sender = run_group_sender(&cache, publisher.stalling_stream_opens());
+
+        // Act
+        task_sender.send(send_task(0)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), priorities.recv())
+            .await
+            .expect("the task should start opening its stream")
+            .expect("the publisher should stay alive");
+
+        // Assert: only the cache and this lookup hold the object
+        let first = cache
+            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(Arc::strong_count(&first), 2);
+    }
+
+    #[tokio::test]
+    async fn send_tasks_beyond_the_cap_wait_until_one_ends() {
+        // Arrange: every subgroup is open and empty, so each task waits for its first object
+        let cache = Arc::new(TrackCache::new());
+        let task_count = MAX_CONCURRENT_SEND_TASKS as u64 + 1;
+        let mut opens: Vec<_> = (0..task_count)
+            .map(|group_id| open_group(&cache, group_id, &[]))
+            .collect();
+        let (publisher, _observers) = MockPublisher::channel();
+        let task_sender = run_group_sender(&cache, publisher);
+
+        // Act
+        for group_id in 0..task_count {
+            task_sender.send(send_task(group_id)).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Assert: the task past the cap stays in the channel
+        assert_eq!(task_sender.capacity(), 0);
+
+        // Act
+        opens.remove(0).finish();
+
+        // Assert: the ended task frees a slot for the waiting one
+        wait_until(|| task_sender.capacity() == 1)
+            .await
+            .expect("the group sender should take the waiting task");
+    }
 
     fn send_error(error: TransportSendError) -> anyhow::Error {
         Err::<(), _>(error)

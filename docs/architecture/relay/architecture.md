@@ -906,14 +906,20 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   task that has not opened its stream yet ends without one. Groups still in
   the range are delivered to their end. Datagram groups are
   re-emitted with the downstream track alias, and stop at the same range
-  change.
+  change. One subscription runs at most `MAX_CONCURRENT_SEND_TASKS` (256)
+  stream and datagram tasks. At the cap `GroupSender` stops taking tasks, so
+  the scheduler blocks on sending the next one; once it reads open events
+  again, its lag scan schedules the missed groups that are still cached.
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscription's subscriber priority, the first object's publisher
   priority, the subscription's group order with a per-subscription
   `GroupSequence` (incremented for every newer group id the sender sees,
   shared by the subgroups of one group), and the subgroup id.
   `StreamSenderFactory::next(priority)` applies it before the header
-  is written. The sequence, not the group id, feeds the rank because group
+  is written. That call waits for the subscriber's stream credit, so the task
+  keeps only the publisher priority across it and reads the first object from
+  the cache again afterwards: a subscriber that withholds credit cannot keep an
+  object alive past its cache expiry. The sequence, not the group id, feeds the rank because group
   ids may be wall-clock timestamps; assigning it at open time means a still
   buffered tail of group N keeps outranking group N+1's keyframe without
   re-prioritizing streams already queued in the transport.

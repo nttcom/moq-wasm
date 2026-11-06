@@ -46,6 +46,7 @@ impl DataSender for MockDataSender {
 struct MockStreamSenderFactory {
     sent: mpsc::UnboundedSender<Sent>,
     priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
+    stall_opens: bool,
 }
 
 #[async_trait::async_trait]
@@ -57,6 +58,9 @@ impl StreamSenderFactory for MockStreamSenderFactory {
         self.priorities
             .send(priority)
             .map_err(|_| anyhow::anyhow!("test side dropped"))?;
+        if self.stall_opens {
+            std::future::pending::<()>().await;
+        }
         Ok(Box::new(MockDataSender {
             sent: self.sent.clone(),
         }))
@@ -75,6 +79,7 @@ pub(crate) struct MockPublisher {
     sent: mpsc::UnboundedSender<Sent>,
     priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
+    stall_opens: bool,
 }
 
 pub(crate) struct MockPublisherObservers {
@@ -93,6 +98,7 @@ impl MockPublisher {
                 sent: sender,
                 priorities: priorities_sender,
                 publish_done: publish_done_sender,
+                stall_opens: false,
             },
             MockPublisherObservers {
                 sent: receiver,
@@ -100,6 +106,15 @@ impl MockPublisher {
                 publish_done: publish_done_receiver,
             },
         )
+    }
+
+    /// A subscriber that never grants stream credit: each stream open reports
+    /// its priority, then waits forever.
+    pub(crate) fn stalling_stream_opens(self) -> Self {
+        Self {
+            stall_opens: true,
+            ..self
+        }
     }
 }
 
@@ -149,6 +164,7 @@ impl Publisher for MockPublisher {
         Box::new(MockStreamSenderFactory {
             sent: self.sent.clone(),
             priorities: self.priorities.clone(),
+            stall_opens: self.stall_opens,
         })
     }
 
