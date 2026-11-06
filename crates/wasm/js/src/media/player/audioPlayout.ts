@@ -90,16 +90,23 @@ export class AudioPlayout {
   shedMs = 0
   concealedMs = 0
 
+  /// Without `givenContext` the playout opens and closes an AudioContext of
+  /// its own.
   constructor(
     private readonly onDrift: (driftMs: number, captureMicros: number) => void,
-    private readonly host?: AudioPlayout
+    private readonly givenContext?: (sampleRate: number) => AudioContext
   ) {}
 
   /// Another input mixed into this playout's context through a gain of its
   /// own. It reports no drift, so this playout alone moves the clock; closing
-  /// it disconnects its gain and leaves the context open.
+  /// it disconnects its gain and leaves the context open. The context stays at
+  /// the rate of this playout's stream; a buffer at another rate is resampled
+  /// by the context.
   openInput(): AudioPlayout {
-    return new AudioPlayout(() => undefined, this)
+    return new AudioPlayout(
+      () => undefined,
+      (sampleRate) => (this.output ?? this.ensureOutput(sampleRate)).context
+    )
   }
 
   /// Opens the context ahead of the first chunk so that its start-up has
@@ -182,11 +189,7 @@ export class AudioPlayout {
       this.renderingPoll = undefined
     }
     if (this.output) {
-      if (this.host) {
-        this.output.gain.disconnect()
-      } else {
-        void this.output.context.close()
-      }
+      this.releaseOutput(this.output)
       this.output = undefined
     }
   }
@@ -320,23 +323,24 @@ export class AudioPlayout {
     return channels
   }
 
-  /// The context is created on first use, after the Watch click, so that the
-  /// autoplay policy lets it run. It is replaced when the stream's sample rate
-  /// changes so no chunk is resampled on its own.
+  /// The playout's own context is created on first use, after the Watch
+  /// click, so the autoplay policy lets it run. It is replaced when the
+  /// stream's sample rate changes so no chunk is resampled on its own. A given
+  /// context is asked for on every chunk; the playout moves to whichever it
+  /// returns.
   private ensureOutput(sampleRate: number): Output {
-    if (this.host) {
-      return this.ensureHostedOutput(this.host, sampleRate)
-    }
-    if (this.output && this.output.context.sampleRate !== sampleRate) {
+    const given = this.givenContext?.(sampleRate)
+    const current = given ? this.output?.context === given : this.output?.context.sampleRate === sampleRate
+    if (this.output && !current) {
       this.flush()
-      void this.output.context.close()
+      this.releaseOutput(this.output)
       this.output = undefined
     }
     if (!this.output) {
-      const context = new AudioContext({ sampleRate })
+      const context = given ?? new AudioContext({ sampleRate })
       const gain = new GainNode(context, { gain: this.volume })
       gain.connect(context.destination)
-      if (context.state === 'suspended') {
+      if (!given && context.state === 'suspended') {
         void context.resume()
       }
       this.output = { context, gain }
@@ -344,18 +348,12 @@ export class AudioPlayout {
     return this.output
   }
 
-  /// The host keeps the context at the rate of its own stream; a buffer at
-  /// another rate is resampled by the context.
-  private ensureHostedOutput(host: AudioPlayout, sampleRate: number): Output {
-    const { context } = host.output ?? host.ensureOutput(sampleRate)
-    if (this.output?.context !== context) {
-      this.flush()
-      this.output?.gain.disconnect()
-      const gain = new GainNode(context, { gain: this.volume })
-      gain.connect(context.destination)
-      this.output = { context, gain }
+  private releaseOutput(output: Output): void {
+    if (this.givenContext) {
+      output.gain.disconnect()
+    } else {
+      void output.context.close()
     }
-    return this.output
   }
 
   private awaitRendering(output: Output): void {

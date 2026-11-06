@@ -1,4 +1,5 @@
 import { CanvasSink } from './livePictureSink'
+import type { ReviewClock } from './reviewClock'
 import { ReviewPlayout } from './reviewPlayout'
 import type { ReviewFrame } from './rewind'
 import type { Playhead } from './deliveryObserver'
@@ -19,12 +20,14 @@ export class LocReview {
 
   constructor(
     readonly canvas: HTMLCanvasElement,
-    private readonly callbacks: LocReviewCallbacks
+    private readonly callbacks: LocReviewCallbacks,
+    clock: ReviewClock
   ) {
     this.picture = new CanvasSink(canvas)
     this.playout = new ReviewPlayout(
       (frame) => this.show(frame),
-      (message) => callbacks.onLog('error', message)
+      (message) => callbacks.onLog('error', message),
+      clock
     )
   }
 

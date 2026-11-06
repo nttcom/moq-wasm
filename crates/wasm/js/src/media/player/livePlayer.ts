@@ -17,6 +17,7 @@ import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
 import { RenditionSplice, type SpliceStart } from './renditionSplice'
+import { ReviewClock } from './reviewClock'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
@@ -128,6 +129,7 @@ export class LivePlayer {
   private readonly stage: PictureStage
   private readonly locLive: LocLive
   private readonly cmafLive = new CmafLive()
+  private readonly reviewClock = new ReviewClock()
   private readonly locReview: LocReview
   private readonly cmafReview = new CmafReview()
   private readonly stallWatch: StallWatch
@@ -200,17 +202,21 @@ export class LivePlayer {
         this.callbacks.onLiveFrame()
       }
     })
-    this.locReview = new LocReview(this.stage.reviewCanvas, {
-      onFrameShown: (captureMicros, playhead) => {
-        if (playhead) {
-          this.context.observer.setPlayhead(playhead)
-        }
-        this.stage.show(this.locReview.canvas)
-        this.notePresentedFrame(this.locReview.canvas)
-        this.advanceReviewPlayhead(captureMicros)
+    this.locReview = new LocReview(
+      this.stage.reviewCanvas,
+      {
+        onFrameShown: (captureMicros, playhead) => {
+          if (playhead) {
+            this.context.observer.setPlayhead(playhead)
+          }
+          this.stage.show(this.locReview.canvas)
+          this.notePresentedFrame(this.locReview.canvas)
+          this.advanceReviewPlayhead(captureMicros)
+        },
+        onLog: this.context.log
       },
-      onLog: this.context.log
-    })
+      this.reviewClock
+    )
     this.reviewHost = {
       playedTrack: (kind) => this.playedTrack(kind),
       playWindow: (window, session) => this.playReviewWindow(window, session),
@@ -488,7 +494,8 @@ export class LivePlayer {
       this.subscriptions.pauseForward()
     }
     this.cmafReview.needsOpen = true
-    this.locReview.playout.start(session.anchorMicros, this.paused)
+    this.reviewClock.anchor(session.anchorMicros, this.paused)
+    this.locReview.playout.start(this.reviewClock, session.anchorMicros)
     this.setPaused(this.paused)
     this.applyVolume()
     this.playbackStatus = this.timeline.live
@@ -515,6 +522,7 @@ export class LivePlayer {
     this.context.observer.clearPlayhead('fetch')
     this.setPaused(false)
     this.locReview.playout.stop()
+    this.reviewClock.reset()
     this.playbackRate = 1
     this.applyVolume()
     this.stage.show(this.livePicture())
@@ -550,7 +558,7 @@ export class LivePlayer {
       this.locLive.playout.setPaused(paused)
     }
     if (this.review && this.packaging === 'loc') {
-      this.locReview.playout.setPaused(paused)
+      this.reviewClock.setPaused(paused)
     }
     const liveEnd = liveSink?.bufferedEnd()
     if (!paused && !this.review && liveSink && liveEnd !== undefined) {

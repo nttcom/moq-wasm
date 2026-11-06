@@ -196,6 +196,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery, the end of a VOD broadcast; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
+| `reviewClock` | The clock `ReviewPlayout` presents a review on: capture time onto local time from where it is anchored, the pause, and the AudioContext of the review's sound |
 | `stallWatch` | Whether the wanted picture has stood still |
 | `streamConventions` | The relay cache TTL the seek axis keeps groups for |
 
