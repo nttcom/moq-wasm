@@ -913,7 +913,10 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   `GroupSequence` (incremented for every newer group id the sender sees,
   shared by the subgroups of one group), and the subgroup id.
   `StreamSenderFactory::next(priority)` applies it before the header
-  is written. The sequence, not the group id, feeds the rank because group
+  is written. That call waits for the subscriber's stream credit, so the task
+  keeps only the publisher priority across it and reads the first object from
+  the cache again afterwards: a subscriber that withholds credit cannot keep an
+  object alive past its cache expiry. The sequence, not the group id, feeds the rank because group
   ids may be wall-clock timestamps; assigning it at open time means a still
   buffered tail of group N keeps outranking group N+1's keyframe without
   re-prioritizing streams already queued in the transport.
