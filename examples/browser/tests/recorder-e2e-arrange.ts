@@ -1,7 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -97,30 +96,6 @@ export function recordingPlayerPath(recorderUrl: string, id: string): string {
 }
 
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
-
-export async function createProgressiveRecording(storeDir: string, recording: RoomRecording): Promise<string> {
-  const id = `${recording.id}-progressive`
-  const directory = join(storeDir, id)
-  await mkdir(directory)
-  const key = join(directory, 'source.mp4').replace(/^\//, '')
-  await copyFile(join(REPO_ROOT, 'crates/mediapack/fixtures/testsrc_progressive.mp4'), join('/', key))
-  const original = JSON.parse(await readFile(join(storeDir, recording.id, 'manifest.json'), 'utf8'))
-  const member = original.members.find((member: { files: unknown[] }) => member.files.length)
-  await writeFile(
-    join(directory, 'manifest.json'),
-    JSON.stringify({
-      members: [
-        {
-          namespace: member.namespace,
-          files: [{ key, capture_origin_us: member.files[0].capture_origin_us }]
-        }
-      ]
-    })
-  )
-  const state = JSON.parse(await readFile(join(storeDir, 'state', `${recording.id}.json`), 'utf8'))
-  await writeFile(join(storeDir, 'state', `${id}.json`), JSON.stringify({ ...state, id }))
-  return id
-}
 
 /// `recorder serve` with a directory store; it runs every recording and composite as a child process.
 async function startRecorderServe() {

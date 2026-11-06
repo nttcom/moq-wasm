@@ -10,7 +10,6 @@ mod composite_job;
 mod file_writer;
 mod launcher;
 mod manifest;
-mod mp4_replay;
 mod pipeline;
 mod record_job;
 mod recorder;
