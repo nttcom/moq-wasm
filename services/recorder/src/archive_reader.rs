@@ -44,7 +44,7 @@ impl StoredRecording {
             prefix: store.recording_prefix(id),
             tracks: Vec::new(),
         };
-        let mut manifest: Value = serde_json::from_slice(
+        let manifest: Value = serde_json::from_slice(
             &recording
                 .read(
                     store.recording_prefix(id).join("manifest.json").as_ref(),
@@ -52,9 +52,6 @@ impl StoredRecording {
                 )
                 .await?,
         )?;
-        if manifest["format"] != "moq" {
-            manifest = crate::mp4_replay::import(store, id, room, &manifest).await?;
-        }
         ensure!(
             manifest["version"] == 1 && manifest["format"] == "moq",
             "unsupported recording format"

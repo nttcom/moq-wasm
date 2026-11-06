@@ -185,6 +185,10 @@ async fn handle(
                     StatusCode::CONFLICT,
                     "only finished recordings can be published",
                 ),
+                Err(PublishRejection::NotMoq) => error_response(
+                    StatusCode::CONFLICT,
+                    "only recordings in the moq format can be published",
+                ),
                 Err(PublishRejection::OutsideRoot) => error_response(
                     StatusCode::FORBIDDEN,
                     "the recording's room cannot be replayed here",

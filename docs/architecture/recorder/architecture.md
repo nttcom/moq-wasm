@@ -425,8 +425,9 @@ recording fails if a subscription, task or upload fails, and its final room
 manifest is written only after its broadcast manifests are committed. An MP4
 room recording instead leaves out a participant whose task failed.
 
-`POST /recordings/{id}/publish` accepts a finished MoQ or MP4 recording,
-verifies access to its source room and starts `replay::ReplayTask`. It announces
+`POST /recordings/{id}/publish` accepts a finished MoQ recording, verifies
+access to its source room and starts `replay::ReplayTask`; an MP4 recording is
+answered `409`. It announces
 namespaces under
 `<room>/recordings/<id>/<member-index>/<content>/<session-index>` and answers
 with an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one line
@@ -437,24 +438,6 @@ relay URL given in its form, not the returned one. The returned URL is the one
 the recorder connects to the relay with and may be `moqt://`, which a browser
 cannot open. This is historical playback; a live-only player that expects newly
 published frames needs a replay adapter.
-
-For an MP4 recording, `mp4_replay` reads the original room manifest and converts
-each listed camera or screen-share file into a separate archived broadcast.
-The first request reads each file in bounded ranges: `mediapack::mp4::Demuxer`
-handles fMP4; `Mp4Index` supplies sample ranges for progressive H.264 MP4.
-Encoded samples pass through `loc::Muxer` and `archive_chunks::ChunkWriter`
-without decoding or re-encoding. Capture origins from the room manifest map
-file presentation times onto the common source clock. Catalogs and object IDs
-are generated; text events and original MoQ headers cannot be recovered.
-Every file gets its own namespace, including rotated and per-track files, so
-its configuration stays fixed. The original MP4 files and manifest remain
-unchanged. Completed replay manifests are cached at `<id>/mp4-replay/manifest.json`
-only after all chunks are written, and later requests reuse them. A failed
-conversion leaves its attempt unpublished; retries use a fresh attempt prefix.
-The first request needs a complete file read and extra storage for the replay
-chunks. MP4 metadata is limited to 4 MiB, and fragments and samples to 16 MiB;
-there is no total media-size limit. Ordinary MP4 uses `Mp4Index`'s supported
-track types (H.264 video and its supported audio codecs).
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
@@ -471,7 +454,7 @@ is dropped, or at once on server shutdown. Hyper drops an answer when its
 connection closes; a keepalive write fails once the client has gone away.
 Repeated HTTP requests on that API instance share its publication. A request
 reserves its recording's slot under a lock and opens the recording outside it,
-so a long MP4 conversion delays only the requests for that recording.
+so opening one recording delays only the requests for that recording.
 
 The lease exists for Cloud Run with CPU allocated only during requests: an open
 answer keeps CPU on the instance that serves the replay, and a replay whose last
