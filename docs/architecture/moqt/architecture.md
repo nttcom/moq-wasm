@@ -841,15 +841,15 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 ## Key invariants
 
-- **Request IDs reach the peer in increasing order** (draft-14 §9.1). A
+- **Request IDs reach the peer in order and without gaps** (draft-14 §9.1). A
   `RequestIdReservation` holds the next Request ID's lock until the request
   is written, so concurrent requests cannot overtake each other on the
   control stream. The next Request ID advances only once the request is
   written, so dropping the reservation or the request future before then
   leaves the ID for the next request.
-  `ControlMessageReceiveTask` closes the session with INVALID_REQUEST_ID when
-  a peer's new request has this side's parity or is not larger than the
-  peer's previous one. Skipped IDs are accepted.
+  `ControlMessageReceiveTask` closes the session with INVALID_REQUEST_ID
+  unless a peer's new request uses exactly its previous Request ID plus 2
+  (for its first, 0 from a client and 1 from a server).
 
 - **Request IDs stay below the peer's Maximum Request ID** (draft-14 §9.5).
   `reserve_request_id` waits while the next ID reaches the limit from the

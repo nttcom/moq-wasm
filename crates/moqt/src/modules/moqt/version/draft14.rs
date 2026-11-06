@@ -109,7 +109,7 @@ pub(crate) struct ControlChannel {
     /// Exclusive upper bound for this side's Request IDs: the peer's SETUP or
     /// MAX_REQUEST_ID (§9.5).
     peer_request_id_limit: tokio::sync::watch::Sender<RequestId>,
-    /// The smallest Request ID the peer may use for its next request.
+    /// The Request ID the peer must use for its next request.
     next_peer_request_id: AtomicU64,
     /// Exclusive upper bound for the peer's Request IDs: the last SETUP or
     /// MAX_REQUEST_ID this side sent.
@@ -187,8 +187,8 @@ impl ControlChannel {
 
     /// Returns the Maximum Request ID to advertise once the peer has used half
     /// the window, so a peer that keeps sending never blocks. Fails when the
-    /// Request ID reuses or goes below an earlier one, has this side's parity
-    /// (§9.1), or reaches the advertised limit (§9.5).
+    /// Request ID is not `next_peer_request_id` (§9.1) or reaches the
+    /// advertised limit (§9.5).
     fn accept_peer_request_id(
         &self,
         request_id: RequestId,
@@ -201,17 +201,15 @@ impl ControlChannel {
         if request_id % 2 != next % 2 {
             return Err(invalid("Request ID has the parity of the other endpoint"));
         }
-        if request_id < next {
-            return Err(invalid(
-                "Request ID is not larger than the previous request's",
-            ));
-        }
         let limit = self.request_id_limit.load(Ordering::Relaxed);
         if request_id >= limit {
             return Err(RequestIdViolation {
                 code: TerminationErrorCode::TooManyRequests,
                 reason: "Request ID reaches the Maximum Request ID",
             });
+        }
+        if request_id != next {
+            return Err(invalid("Request ID is not the next expected one"));
         }
         let next = request_id + 2;
         self.next_peer_request_id.store(next, Ordering::Relaxed);
@@ -714,7 +712,11 @@ fn close_on_mismatched_late_response(
 
 #[cfg(test)]
 mod tests {
-    use std::{pin::Pin, sync::Arc, time::Duration};
+    use std::{
+        pin::Pin,
+        sync::{Arc, atomic::Ordering},
+        time::Duration,
+    };
 
     use tokio::sync::mpsc::error::TryRecvError;
 
@@ -1117,15 +1119,12 @@ mod tests {
         send_track_status(&client, 0).await;
 
         // Assert: the server closes the session
-        assert_closed_with_invalid_request_id(
-            &client,
-            "Request ID is not larger than the previous request's",
-        )
-        .await;
+        assert_closed_with_invalid_request_id(&client, "Request ID is not the next expected one")
+            .await;
     }
 
     #[tokio::test]
-    async fn request_id_skipping_unused_ids_is_accepted() {
+    async fn request_id_skipping_the_next_one_closes_the_session() {
         // Arrange
         let (client, server) = spawn_connected_native_sessions("request-id-gap").await;
         send_track_status(&client, 0).await;
@@ -1136,7 +1135,8 @@ mod tests {
         send_track_status(&client, 6).await;
 
         // Assert
-        assert_eq!(receive_track_status(&server).await.request_id(), 6);
+        assert_closed_with_invalid_request_id(&client, "Request ID is not the next expected one")
+            .await;
     }
 
     #[tokio::test]
@@ -1175,6 +1175,9 @@ mod tests {
         let mut client_limit = ControlChannel::of(&connection_of(&client))
             .peer_request_id_limit
             .subscribe();
+        let server_connection = connection_of(&server);
+        let next_client_request_id = &ControlChannel::of(&server_connection).next_peer_request_id;
+        next_client_request_id.store(REQUEST_ID_WINDOW / 2, Ordering::Relaxed);
 
         // Act
         send_track_status(&client, REQUEST_ID_WINDOW / 2).await;
@@ -1190,6 +1193,7 @@ mod tests {
         .map(|limit| *limit)
         .unwrap();
         assert_eq!(raised, REQUEST_ID_WINDOW / 2 + 2 + REQUEST_ID_WINDOW);
+        next_client_request_id.store(REQUEST_ID_WINDOW, Ordering::Relaxed);
         send_track_status(&client, REQUEST_ID_WINDOW).await;
         assert_eq!(
             receive_track_status(&server).await.request_id(),
