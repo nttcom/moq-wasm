@@ -12,7 +12,7 @@ use redis::AsyncCommands;
 use tokio::sync::watch;
 
 use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
-use crate::modules::domain::track_key::TrackKey;
+use crate::modules::domain::track_key::{TrackKey, namespace_has_prefix};
 
 #[derive(Clone, Copy)]
 enum RouteKind {
@@ -261,6 +261,16 @@ impl RedisRelayRouteRegistry {
         format!("{}{track_namespace}", Self::PUBLISHER_NAMESPACE_KEY_PREFIX)
     }
 
+    /// Matches characters, not fields (`a/b*` also matches `a/bc`), so filter
+    /// each key it returns with `namespace_has_prefix`.
+    fn publisher_namespace_pattern(track_namespace_prefix: &str) -> String {
+        format!(
+            "{}{}*",
+            Self::PUBLISHER_NAMESPACE_KEY_PREFIX,
+            escape_glob(track_namespace_prefix)
+        )
+    }
+
     /// Outside `PUBLISHER_NAMESPACE_KEY_PREFIX`, so a namespace subscriber
     /// is not told about a namespace no publisher announced.
     fn publisher_track_key(track_key: &TrackKey) -> String {
@@ -375,17 +385,16 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
         track_namespace_prefix: &str,
     ) -> anyhow::Result<Vec<NamespaceRoute>> {
         let mut connection = self.connection.clone();
-        let pattern = format!(
-            "{}{}*",
-            Self::PUBLISHER_NAMESPACE_KEY_PREFIX,
-            track_namespace_prefix
-        );
+        let pattern = Self::publisher_namespace_pattern(track_namespace_prefix);
         let keys: Vec<String> = connection.keys(pattern).await?;
         let mut routes = Vec::new();
 
         for key in keys {
             let Some(track_namespace) = key
                 .strip_prefix(Self::PUBLISHER_NAMESPACE_KEY_PREFIX)
+                .filter(|track_namespace| {
+                    namespace_has_prefix(track_namespace, track_namespace_prefix)
+                })
                 .map(ToString::to_string)
             else {
                 continue;
@@ -451,11 +460,22 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     }
 }
 
+fn escape_glob(literal: &str) -> String {
+    let mut escaped = String::with_capacity(literal.len());
+    for character in literal.chars() {
+        if matches!(character, '*' | '?' | '[' | ']' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(character);
+    }
+    escaped
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use super::RedisRelayRouteRegistry;
+    use super::{RedisRelayRouteRegistry, escape_glob};
 
     fn relay(status: &str, public_host: &str) -> HashMap<String, String> {
         HashMap::from([
@@ -528,5 +548,23 @@ mod tests {
 
         // Assert
         assert_eq!(target, None);
+    }
+
+    #[test]
+    fn glob_metacharacters_are_escaped() {
+        // Act
+        let escaped = escape_glob(r"APP/a*b?c[d]e\f");
+
+        // Assert
+        assert_eq!(escaped, r"APP/a\*b\?c\[d\]e\\f");
+    }
+
+    #[test]
+    fn publisher_namespace_pattern_escapes_the_prefix() {
+        // Act / Assert
+        assert_eq!(
+            RedisRelayRouteRegistry::publisher_namespace_pattern("APP/*"),
+            r"route:publisher:namespace:APP/\**"
+        );
     }
 }

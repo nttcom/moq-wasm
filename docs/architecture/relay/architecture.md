@@ -951,7 +951,10 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
 - `RelayRouteRegistry` trait: `NoopRelayRouteRegistry` (single-relay, no
   `REDIS_URL`) or `RedisRelayRouteRegistry` (relay info hash and
   namespace-publisher / track-publisher / namespace-subscriber routes with a
-  15 s TTL). The
+  15 s TTL). `find_namespace_publishers_by_prefix` lists the
+  namespace-publisher keys with a `KEYS` pattern built from the escaped
+  prefix, which matches characters, and keeps only the keys under the prefix
+  field by field (`namespace_has_prefix`). The
   registry keeps the routes it registered in memory, and its 5 s heartbeat
   rewrites the relay info hash and re-registers any owned route whose entry is
   missing, so state that expired while the relay, its host or Redis was
