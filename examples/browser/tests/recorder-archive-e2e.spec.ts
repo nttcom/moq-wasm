@@ -2,97 +2,66 @@ import { expect } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { recordingPlayerPath, test } from './recorder-e2e-arrange'
-import { createLargeRecording } from './large-recording'
+import { test } from './recorder-e2e-arrange'
+import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 import { arrangeMeetingClient, enableMedia, joinRoom, sendChatMessage, startScreenShare } from './meeting-e2e-arrange'
 
 test.setTimeout(120_000)
 
-test('records a room and plays and seeks through the relay', async ({ recorderServe, page }) => {
+type Track = { name: string; isLive: boolean; trackDuration?: number; role?: string }
+type TimelineRecord = [number, [number, number], number]
+
+test('records a room and replays it through the relay as a VOD broadcast', async ({ recorderServe, page }) => {
   // Arrange: the live-viewer runner publishes a broadcast under anon/live
   const recording = await recorderServe.start('anon/live', 'combined', false, 'moq')
   expect(recording.format).toBe('moq')
   await sleep(37_000)
-
-  // Act
   await recorderServe.stop(recording)
   const room = JSON.parse(await readFile(join(recorderServe.storeDir, recording.id, 'manifest.json'), 'utf8'))
   const member = room.members.find((entry: { namespace: string }) => entry.namespace === 'anon/live/e2e')
-
-  // Assert
   expect(room.format).toBe('moq')
   expect(member.camera.length).toBeGreaterThan(0)
   const archive = JSON.parse(await readFile(join('/', member.camera[0]), 'utf8'))
-  const names = archive.tracks.map((track: { name: string }) => track.name)
-  expect(names).toContain('catalog')
-  expect(names).toContain('video')
-  expect(names).toContain('audio')
-
-  await page.addInitScript(() => {
-    const start = AudioBufferSourceNode.prototype.start
-    AudioBufferSourceNode.prototype.start = function (...args) {
-      if (this.buffer?.getChannelData(0).some((sample) => Math.abs(sample) > 0.001))
-        document.documentElement.dataset.audioPlayed = 'true'
-      return start.apply(this, args)
-    }
-  })
-  await page.goto(recordingPlayerPath(recorderServe.url, recording.id))
-  await page.locator('#load').click()
-  await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
-  await page.locator('#play').click()
-  const canvas = page.locator('canvas').first()
-  await expect
-    .poll(async () => Number(await canvas.getAttribute('data-capture-us')), { timeout: 20_000 })
-    .toBeGreaterThan(0)
-  await expect(page.locator('html')).toHaveAttribute('data-audio-played', 'true', { timeout: 15_000 })
-  const beforeSeek = Number(await canvas.getAttribute('data-capture-us'))
-  await page.locator('#seek').evaluate((element: HTMLInputElement) => {
-    element.value = '32'
-    element.dispatchEvent(new Event('change', { bubbles: true }))
-  })
-  await expect
-    .poll(async () => Number(await canvas.getAttribute('data-capture-us')), { timeout: 15_000 })
-    .toBeGreaterThan(beforeSeek + 30_000_000)
-
-  // Assert: a logical recording larger than 256 MiB opens and seeks without downloading it all.
-  const large = await createLargeRecording(recorderServe.storeDir, recording.id)
-  expect(large.bytes).toBeGreaterThan(256 * 1024 * 1024)
-  await page.goto(recordingPlayerPath(recorderServe.url, large.id))
-  await page.evaluate(async () => {
-    const moduleUrl = '/moq-wasm/tests/recording-publisher.ts'
-    const { measureFetchBytes } = await import(/* @vite-ignore */ moduleUrl)
-    measureFetchBytes()
-  })
-  await page.locator('#load').click()
-  await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
-  expect(await page.locator('#seek').getAttribute('max')).not.toBe('0')
-  await page.locator('#seek').evaluate((element: HTMLInputElement, seconds) => {
-    element.value = String(seconds)
-    element.dispatchEvent(new Event('change', { bubbles: true }))
-  }, large.periodSeconds - 1)
-  await expect
-    .poll(async () => Number(await page.locator('canvas').first().getAttribute('data-capture-us')), {
-      timeout: 20_000
-    })
-    .toBeGreaterThan(beforeSeek + large.periodSeconds * 1_000_000 + 500_000)
-  await expect(page.locator('html')).toHaveAttribute('data-audio-played', 'true', { timeout: 15_000 })
-  await page.locator('#seek').evaluate((element: HTMLInputElement) => {
-    element.value = String(Number(element.max) - 3)
-    element.dispatchEvent(new Event('change', { bubbles: true }))
-  })
-  await expect
-    .poll(async () => Number(await page.locator('canvas').first().getAttribute('data-capture-us')), { timeout: 20_000 })
-    .toBeGreaterThan(beforeSeek + 60_000_000)
-  expect(await page.locator('html').evaluate((element) => Number(element.dataset.fetchBytes))).toBeLessThan(
-    32 * 1024 * 1024
+  expect(archive.tracks.map((track: { name: string }) => track.name)).toEqual(
+    expect.arrayContaining(['catalog', 'video', 'audio', 'video_timeline'])
   )
+
+  // Act
+  const replay = await recorderServe.publish(recording)
+  try {
+    await page.goto('/moq-wasm/')
+    const { catalog, timeline } = await page.evaluate(
+      async ({ relay, prefix }) => {
+        const moduleUrl = '/moq-wasm/tests/recording-replay.ts'
+        const { readReplay } = await import(/* @vite-ignore */ moduleUrl)
+        return readReplay(relay, prefix.split('/'), 'video_timeline')
+      },
+      { relay: liveViewerE2EConfig.moqtUrl, prefix: `anon/live/recordings/${recording.id}` }
+    )
+
+    // Assert: the catalog and the timeline cover the recording
+    expect(replay.answer).toEqual({
+      namespace_prefix: `anon/live/recordings/${recording.id}`,
+      renew_after_seconds: 2700
+    })
+    expect(catalog.isComplete).toBe(true)
+    expect(catalog.generatedAt).toBeUndefined()
+    const tracks: Track[] = catalog.tracks
+    expect(tracks.map((track) => track.name)).toEqual(expect.arrayContaining(['video', 'audio', 'video_timeline']))
+    for (const track of tracks) {
+      expect(track.isLive, track.name).toBe(false)
+      expect(track.trackDuration, track.name).toBeGreaterThan(30_000)
+    }
+    const records: TimelineRecord[] = timeline
+    const wallclocks = records.map(([, , wallclock]) => wallclock)
+    expect(Math.max(...wallclocks) - Math.min(...wallclocks)).toBeGreaterThan(30_000)
+  } finally {
+    await replay.close()
+  }
 })
 
-test('records and replays participants, screen share, chat and transcript', async ({
-  recorderServe,
-  browser,
-  page
-}) => {
+test('records participants, screen share, chat and transcript', async ({ recorderServe, browser }) => {
+  // Arrange
   const roomName = `archive-${Date.now()}`
   const recording = await recorderServe.start(`anon/${roomName}`, 'combined', false, 'moq')
   const alice = await arrangeMeetingClient(browser, { params: { recorderUrl: recorderServe.url } })
@@ -114,8 +83,11 @@ test('records and replays participants, screen share, chat and transcript', asyn
       { roomName }
     )
     await sleep(3_000)
+
+    // Act
     await recorderServe.stop(recording)
 
+    // Assert
     const room = JSON.parse(await readFile(join(recorderServe.storeDir, recording.id, 'manifest.json'), 'utf8'))
     const aliceMember = room.members.find(
       (member: { namespace: string }) => member.namespace === `anon/${roomName}/alice`
@@ -125,6 +97,10 @@ test('records and replays participants, screen share, chat and transcript', asyn
     expect(aliceMember?.screen_share.length).toBeGreaterThan(0)
     expect(bobMember?.camera.length).toBeGreaterThan(0)
     const archive = JSON.parse(await readFile(join('/', aliceMember.camera[0]), 'utf8'))
+    const names = archive.tracks.map((track: { name: string }) => track.name)
+    expect(names).toContain('video_timeline')
+    const share = JSON.parse(await readFile(join('/', aliceMember.screen_share[0]), 'utf8'))
+    expect(share.tracks.map((track: { name: string }) => track.name)).toContain('screenshare_timeline')
     const chat = archive.tracks.find((track: { name: string }) => track.name === 'chat')
     expect(chat).toBeTruthy()
     const payloads = []
@@ -138,32 +114,9 @@ test('records and replays participants, screen share, chat and transcript', asyn
       }
     }
     expect(payloads.some((payload) => payload.includes('archive chat message'))).toBe(true)
-
     await alice.page.page.getByTestId('activities-button').click()
     await expect(alice.page.page.getByTestId('record-moq')).toBeVisible()
     await expect(alice.page.page.getByTestId('record-play')).toBeVisible()
-
-    await page.goto(recordingPlayerPath(recorderServe.url, recording.id))
-    await page.locator('#load').click()
-    await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
-    expect(await page.locator('canvas').count()).toBeGreaterThanOrEqual(3)
-    await expect(page.locator('#chat li')).toHaveCount(0)
-    await expect(page.locator('#transcript li')).toHaveCount(0)
-    await page.locator('#seek').evaluate((element: HTMLInputElement) => {
-      element.value = String(Math.max(0, Number(element.max) - 1))
-      element.dispatchEvent(new Event('change', { bubbles: true }))
-    })
-    await expect(page.locator('#chat')).toContainText('archive chat message')
-    await expect(page.locator('#transcript')).toContainText('archived transcript')
-    await expect
-      .poll(async () => page.locator('canvas[data-capture-us]').count(), { timeout: 15_000 })
-      .toBeGreaterThanOrEqual(3)
-    await page.locator('#seek').evaluate((element: HTMLInputElement) => {
-      element.value = '0'
-      element.dispatchEvent(new Event('change', { bubbles: true }))
-    })
-    await expect(page.locator('#chat li')).toHaveCount(0)
-    await expect(page.locator('#transcript li')).toHaveCount(0)
   } finally {
     await alice.context.close()
     await bob.context.close()
