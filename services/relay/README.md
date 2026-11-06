@@ -24,7 +24,8 @@ An empty value counts as unset and selects the default.
 | `RELAY_PORT` | `4433` | QUIC and WebTransport listen port |
 | `RELAY_INNER_PORT` | `RELAY_PORT + 1` | QUIC port other relays connect to |
 | `RELAY_ID` | `relay-local` | Name in logs and in the route registry |
-| `RELAY_ADVERTISE_HOST` | `localhost` | Host other relays use to reach this one |
+| `RELAY_ADVERTISE_HOST` | `localhost` | Host other relays use to reach this one; the certificate this relay serves must name it, since other relays verify it before they send `AUTH_RELAY_TOKEN` |
+| `RELAY_INNER_CA_FILE` | unset | PEM file of the certificates this relay trusts when it connects to other relays; unset uses the operating system's root certificates. Verification cannot be turned off |
 | `RELAY_PUBLIC_HOST` | `localhost:RELAY_PORT` | `host[:port]` clients connect to; a draining relay names it in the GOAWAY it sends for another relay |
 | `RELAY_CERT_DIR` | `services/relay/keys` | Directory holding `cert.pem` and `key.pem`; self-signed ones are generated there if missing |
 | `REDIS_URL` | unset | Route registry shared by cascading relays; unset runs standalone |

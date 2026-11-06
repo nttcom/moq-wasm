@@ -755,8 +755,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::{
-        AuthorizationToken, AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, Session,
-        SessionEvent, Subscription, TerminationErrorCode, TrackReader, TrackWriter,
+        AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig,
+        Endpoint, NATIVE, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
+        TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
@@ -778,7 +779,7 @@ mod tests {
 
     async fn connect(port: u16) -> Session {
         let client = native_client_with_config(ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             ..ClientConfig::default()
         });
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
@@ -1610,7 +1611,7 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let provider_calls = calls.clone();
         let endpoint = native_client_with_config(ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             authorization_token: Some(AuthorizationTokenSource::provider(move || {
                 let call = provider_calls.fetch_add(1, Ordering::SeqCst);
                 async move { Ok(format!("token-{call}")) }
@@ -1677,7 +1678,7 @@ mod tests {
 
     async fn connect_with(port: u16, token: AuthorizationTokenSource) -> Session {
         let endpoint = native_client_with_config(ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             authorization_token: Some(token),
             ..ClientConfig::default()
         });

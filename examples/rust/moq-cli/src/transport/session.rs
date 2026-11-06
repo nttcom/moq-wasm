@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use moqt::{ClientConfig, Endpoint, QUIC, Session};
+use moqt::{CertificateVerification, ClientConfig, Endpoint, QUIC, Session};
 use tracing::info;
 
 use super::{auth_token_file::current_auth_token, auth_token_refresh_task::AuthTokenRefreshTask};
@@ -22,7 +22,9 @@ impl RelayConnection {
 pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConnection> {
     let auth_token = current_auth_token(relay).await?;
     let config = ClientConfig {
-        verify_certificate: !relay.insecure,
+        certificate_verification: CertificateVerification::native_roots_or_disabled(
+            !relay.insecure,
+        ),
         authorization_token: auth_token.clone().map(Into::into),
         ..ClientConfig::default()
     };

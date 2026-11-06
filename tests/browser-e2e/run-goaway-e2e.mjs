@@ -66,6 +66,8 @@ function spawnRelay({ id, port, innerPort }) {
       RELAY_PORT: String(port),
       RELAY_INNER_PORT: String(innerPort),
       RELAY_ADVERTISE_HOST: "127.0.0.1",
+      // Both relays serve this certificate, so each trusts it to dial the other.
+      RELAY_INNER_CA_FILE: `${repoRoot}/services/relay/keys/cert.pem`,
       RELAY_PUBLIC_HOST: `127.0.0.1:${port}`,
       REDIS_URL: `redis://127.0.0.1:${redisPort}`,
     },

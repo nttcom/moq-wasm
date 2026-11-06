@@ -204,6 +204,7 @@ fn subscription_stats(
 #[cfg(test)]
 mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
     use moqt::fetch::JoinPoint;
     use std::{sync::Arc, time::Duration};
@@ -256,7 +257,7 @@ mod tests {
                     cache_store: self.cache_store.clone(),
                     inter_relay_connection_manager: Arc::new(InterRelayConnectionManager::new(
                         self.repo.clone(),
-                        "relay-token".to_string(),
+                        unused_inter_relay_client_config(),
                     )),
                 },
             )

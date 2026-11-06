@@ -1,5 +1,6 @@
 use crate::modules::{
     executor::{BoxFuture, MaybeSend, MaybeSync},
+    moqt::domains::endpoint::CertificateVerification,
     transport::{
         accept_error::AcceptError, application_protocol::ApplicationProtocols,
         connect_target::ConnectTarget, transport_connection::BoxedConnection,
@@ -22,14 +23,7 @@ pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
 
     fn client(
         port_num: u16,
-        verify_certificate: bool,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self>
-    where
-        Self: Sized;
-    fn client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self>
     where

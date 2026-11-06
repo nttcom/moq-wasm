@@ -218,7 +218,7 @@ mod tests {
     use bytes::Bytes;
     use client_telemetry::{SpanRecordLayer, current_traceparent};
     use moqt::{
-        ClientConfig, Endpoint, NATIVE, RequestFailure,
+        CertificateVerification, ClientConfig, Endpoint, NATIVE, RequestFailure,
         object::ContentExists,
         publish::{GroupBoundary, OutgoingObject, PublishDoneCode, PublishOption, Retention},
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
@@ -263,7 +263,7 @@ mod tests {
             (server, session.unwrap())
         });
         let client = Endpoint::<NATIVE>::create_client(&ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             follow_go_away: false,
             ..ClientConfig::default()
         })

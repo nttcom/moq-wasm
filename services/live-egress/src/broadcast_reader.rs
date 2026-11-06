@@ -208,7 +208,7 @@ mod tests {
         mpegts,
     };
     use moqt::{
-        ClientConfig,
+        CertificateVerification, ClientConfig,
         publish::{GroupBoundary, OutgoingObject, Retention},
     };
 
@@ -407,7 +407,7 @@ mod tests {
         let relay = relay_session::connect(
             &publisher.url,
             &ClientConfig {
-                verify_certificate: false,
+                certificate_verification: CertificateVerification::Disabled,
                 ..ClientConfig::default()
             },
         )

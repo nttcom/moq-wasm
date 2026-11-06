@@ -7,7 +7,8 @@ use std::{
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TransportStats,
+    CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
+    TransportStats,
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
     subscribe::SubscribeHandler,
@@ -240,7 +241,9 @@ impl ConnectedRelay {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
-            verify_certificate: target.verify_certificate,
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                target.verify_certificate,
+            ),
             authorization_token: target.auth_token.clone().map(Into::into),
             ..ClientConfig::default()
         })?;
@@ -1138,7 +1141,7 @@ mod tests {
 
     async fn owned_session_broadcast(relay: &FakeRelay) -> OwnedSessionBroadcast {
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             ..ClientConfig::default()
         })
         .unwrap();

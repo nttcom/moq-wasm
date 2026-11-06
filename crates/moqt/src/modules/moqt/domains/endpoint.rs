@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     Connecting, TransportProtocol,
@@ -66,9 +66,30 @@ impl From<String> for AuthorizationTokenSource {
     }
 }
 
+/// `Endpoint::create_client` fails on `BROWSER` for every variant but `NativeRoots`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum CertificateVerification {
+    /// Trusts the operating system's root certificates.
+    #[default]
+    NativeRoots,
+    /// Trusts only the certificates of this PEM file.
+    TrustedCertificates(PathBuf),
+    Disabled,
+}
+
+impl CertificateVerification {
+    pub fn native_roots_or_disabled(verify: bool) -> Self {
+        if verify {
+            Self::NativeRoots
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
 pub struct ClientConfig {
     pub port: u16,
-    pub verify_certificate: bool,
+    pub certificate_verification: CertificateVerification,
     pub authorization_token: Option<AuthorizationTokenSource>,
     /// A session follows the server's GOAWAY by itself (draft-14 §3.5):
     /// it connects to the New Session URI, sends its subscriptions there
@@ -85,7 +106,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             port: 0,
-            verify_certificate: true,
+            certificate_verification: CertificateVerification::NativeRoots,
             authorization_token: None,
             follow_go_away: true,
             web_socket_fallback: WebSocketFallback::default(),
@@ -126,7 +147,7 @@ impl<T: TransportProtocol> Endpoint<T> {
     pub fn create_client(config: &ClientConfig) -> anyhow::Result<Self> {
         let client = T::ConnectionCreator::client(
             config.port,
-            config.verify_certificate,
+            &config.certificate_verification,
             APPLICATION_PROTOCOLS,
         )?;
         let session_creator = SessionCreator::new(
@@ -135,21 +156,6 @@ impl<T: TransportProtocol> Endpoint<T> {
             config.follow_go_away,
             config.web_socket_fallback,
         );
-        Ok(Self {
-            session_creator: Arc::new(session_creator),
-        })
-    }
-
-    pub fn create_client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-    ) -> anyhow::Result<Self> {
-        let client = T::ConnectionCreator::client_with_custom_cert(
-            port_num,
-            custom_cert_path,
-            APPLICATION_PROTOCOLS,
-        )?;
-        let session_creator = SessionCreator::new(client, None, true, WebSocketFallback::default());
         Ok(Self {
             session_creator: Arc::new(session_creator),
         })
@@ -211,12 +217,46 @@ impl<T: TransportProtocol> Endpoint<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Endpoint, NATIVE,
+        CertificateVerification, ClientConfig, Endpoint, NATIVE,
+        modules::moqt::domains::endpoint::ServerConfig,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, native_client, receive_disconnected, self_signed_server_config,
-            spawn_native_server,
+            HANDSHAKE_TIMEOUT, native_client, native_client_with_config, receive_disconnected,
+            self_signed_server_config, spawn_native_server,
         },
     };
+
+    async fn connect_trusting(
+        server_config: ServerConfig,
+        trusted_cert_path: String,
+    ) -> anyhow::Result<()> {
+        let server = Endpoint::<NATIVE>::create_server(&server_config).unwrap();
+        let port = server.local_port().unwrap();
+        let accept = tokio::spawn(async move {
+            server
+                .accept()
+                .await?
+                .await?
+                .accept(&tracing::Span::current())
+                .await
+        });
+        let client = native_client_with_config(ClientConfig {
+            certificate_verification: CertificateVerification::TrustedCertificates(
+                trusted_cert_path.into(),
+            ),
+            follow_go_away: false,
+            ..ClientConfig::default()
+        });
+        let result = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            client
+                .connect(&format!("moqt://127.0.0.1:{port}"))
+                .await?
+                .await
+        })
+        .await
+        .expect("the handshake must end before its timeout");
+        accept.abort();
+        result.map(drop)
+    }
 
     async fn run_client_that_drops_its_session_and_exits_after_wait_idle(url: String) {
         tokio::task::spawn_blocking(move || {
@@ -233,6 +273,33 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_client_connects_to_a_server_whose_certificate_it_trusts() {
+        // Arrange
+        let server_config = self_signed_server_config("trusted");
+        let trusted_cert_path = server_config.cert_path.clone();
+
+        // Act
+        let result = connect_trusting(server_config, trusted_cert_path).await;
+
+        // Assert
+        result.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_client_refuses_a_server_whose_certificate_it_does_not_trust() {
+        // Arrange
+        let server_config = self_signed_server_config("untrusted");
+        let trusted_cert_path = self_signed_server_config("untrusted-other").cert_path;
+
+        // Act
+        let result = connect_trusting(server_config, trusted_cert_path).await;
+
+        // Assert
+        let error = format!("{:#}", result.unwrap_err());
+        assert!(error.contains("invalid peer certificate"), "{error}");
     }
 
     #[tokio::test]

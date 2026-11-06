@@ -83,7 +83,7 @@ Four zero-sized markers implement it; the first three are native-only:
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `NATIVE` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
-| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport that loses the race, to WebSocket or to the hedged second WebTransport, is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, only `CertificateVerification::NativeRoots` (the browser's own trust store), `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport that loses the race, to WebSocket or to the hedged second WebTransport, is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 `T: TransportProtocol`, because the creator's constructors are static
@@ -122,9 +122,12 @@ Client-side helpers shared by the three creators:
   error names both. `BROWSER` also hedges WebTransport: a second one dials
   at 500 ms, since a first whose initial packet was lost waits about a
   second for QUIC to resend it and would lose to WebSocket.
-- `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
-  custom CA file), the `quinn::ClientConfig` per ALPN, and the client
-  `quinn::Endpoint`.
+- `client_crypto.rs` — the rustls client config for
+  `ClientConfig::certificate_verification` (native roots, the certificates of
+  one PEM file, or no verification), the `quinn::ClientConfig` per ALPN, and
+  the client `quinn::Endpoint`. The config is built once per `Endpoint`, so
+  every connection it opens, including those a session opens to follow
+  GOAWAY or to reconnect, verifies the server the same way.
 
 The three creators bind server endpoints to `[::]:port` through
 `bind_dual_stack` (`dual_stack_bind.rs`). On Apple targets it holds

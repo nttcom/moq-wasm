@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail, ensure};
 use mediapack::loc::{LocObject, from_extension_headers};
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, TrackReader, object::DataReceiver,
-    subscribe::SubscribeOption,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, Session, TrackReader,
+    object::DataReceiver, subscribe::SubscribeOption,
 };
 use msf::Catalog;
 
@@ -19,7 +19,7 @@ const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) async fn run(relay_url: &str, broadcast_namespace: &str) -> Result<()> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         ..ClientConfig::default()
     })?;
     let session = endpoint.connect(relay_url).await?.await?;

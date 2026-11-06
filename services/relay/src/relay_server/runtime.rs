@@ -7,8 +7,9 @@ use crate::{
     modules::{
         auth::token_verifier::TokenVerifier,
         cascading::{
-            inter_relay_connection_manager::InterRelayConnectionManager,
-            route_registry::RelayRouteRegistry, watched_namespace_job::WatchedNamespaceJob,
+            inter_relay_connection_manager::{InterRelayClientConfig, InterRelayConnectionManager},
+            route_registry::RelayRouteRegistry,
+            watched_namespace_job::WatchedNamespaceJob,
         },
         control_plane::{
             control_message_forwarder::ControlMessageForwarder,
@@ -50,7 +51,7 @@ impl RelayRuntime {
     pub(crate) fn new(
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         route_registry: Arc<dyn RelayRouteRegistry>,
-        relay_token: String,
+        inter_relay_client: InterRelayClientConfig,
         token_verifier: Arc<dyn TokenVerifier>,
         data_plane: DataPlaneConfig,
         session_added_receiver: mpsc::UnboundedReceiver<SessionAdded>,
@@ -59,8 +60,10 @@ impl RelayRuntime {
         let cache_store = Arc::new(TrackCacheStore::with_disk(
             disk_cache.as_ref().map(DiskCacheTask::handle),
         ));
-        let inter_relay_connection_manager =
-            Arc::new(InterRelayConnectionManager::new(repo.clone(), relay_token));
+        let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
+            repo.clone(),
+            inter_relay_client,
+        ));
         let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
             route_registry.clone(),
             inter_relay_connection_manager.clone(),

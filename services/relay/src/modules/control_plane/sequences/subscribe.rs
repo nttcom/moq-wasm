@@ -522,6 +522,7 @@ impl Subscribe {
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use std::sync::{
         OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -1045,7 +1046,7 @@ mod tests {
             Arc::new(NoopRelayRouteRegistry),
             Arc::new(InterRelayConnectionManager::new(
                 repository.clone(),
-                "unused-relay-token".to_string(),
+                unused_inter_relay_client_config(),
             )),
         );
         let upstream_ended = Arc::new(AtomicBool::new(false));

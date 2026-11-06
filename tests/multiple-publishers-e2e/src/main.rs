@@ -22,7 +22,7 @@ use std::env;
 use std::time::Duration;
 
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
         ObjectStatus, StreamDataReceiverFactory, StreamDataSenderFactory, Subgroup, SubgroupStart,
@@ -79,7 +79,7 @@ fn relay_url() -> String {
 
 async fn connect(relay_url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         ..ClientConfig::default()
     })?;
     endpoint.connect(relay_url).await?.await

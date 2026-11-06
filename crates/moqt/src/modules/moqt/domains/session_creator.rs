@@ -381,8 +381,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        AuthorizationTokenSource, ClientConfig, Endpoint, NATIVE, Session, TerminationErrorCode,
-        WebSocketFallback,
+        AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, NATIVE, Session,
+        TerminationErrorCode, WebSocketFallback,
         modules::{
             moqt::control_plane::{
                 constants::MOQ_TRANSPORT_VERSION,
@@ -403,7 +403,7 @@ mod tests {
     async fn stalled_web_transport_peer(port: u16) -> quinn::Connection {
         let endpoint = client_endpoint(0).unwrap();
         let config = quic_client_config(
-            client_crypto(false).unwrap(),
+            client_crypto(&CertificateVerification::Disabled).unwrap(),
             vec![web_transport_quinn::ALPN.as_bytes().to_vec()],
         )
         .unwrap();
@@ -417,7 +417,7 @@ mod tests {
 
     fn falling_back_client(fallback: WebSocketFallback) -> Endpoint<NATIVE> {
         native_client_with_config(ClientConfig {
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             follow_go_away: false,
             web_socket_fallback: fallback,
             ..ClientConfig::default()
@@ -569,7 +569,7 @@ mod tests {
         let url = format!("moqt://127.0.0.1:{port}");
         let client = tokio::spawn(async move {
             native_client_with_config(ClientConfig {
-                verify_certificate: false,
+                certificate_verification: CertificateVerification::Disabled,
                 authorization_token: Some("jwt".to_string().into()),
                 follow_go_away: false,
                 ..ClientConfig::default()
@@ -603,7 +603,7 @@ mod tests {
                 authorization_token: Some(AuthorizationTokenSource::provider(|| async {
                     Ok("fresh-jwt".to_string())
                 })),
-                verify_certificate: false,
+                certificate_verification: CertificateVerification::Disabled,
                 ..ClientConfig::default()
             })
             .connect(&url)
@@ -634,7 +634,7 @@ mod tests {
             authorization_token: Some(AuthorizationTokenSource::provider(|| async {
                 anyhow::bail!("token backend unreachable")
             })),
-            verify_certificate: false,
+            certificate_verification: CertificateVerification::Disabled,
             ..ClientConfig::default()
         });
 

@@ -7,8 +7,11 @@ use crate::{
     RelayConfig,
     modules::{
         auth::session_authenticator::SessionAuthenticator,
-        cascading::route_registry::{
-            NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
+        cascading::{
+            inter_relay_connection_manager::InterRelayClientConfig,
+            route_registry::{
+                NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
+            },
         },
         data_plane::cache::disk_cache::prepare_directory,
         domain::session_peer::SessionPeer,
@@ -27,7 +30,7 @@ pub(crate) struct RelayServerDeps {
     pub(crate) session_added_receiver: mpsc::UnboundedReceiver<SessionAdded>,
     pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
     pub(crate) authenticator: SessionAuthenticator,
-    pub(crate) relay_token: String,
+    pub(crate) inter_relay_client: InterRelayClientConfig,
     pub(crate) data_plane: DataPlaneConfig,
 }
 
@@ -78,7 +81,10 @@ impl RelayServer {
                 session_added_receiver,
                 route_registry,
                 authenticator,
-                relay_token: config.auth.relay_token,
+                inter_relay_client: InterRelayClientConfig {
+                    relay_token: config.auth.relay_token,
+                    certificate_verification: config.inner_certificate_verification,
+                },
                 data_plane: DataPlaneConfig {
                     cache: config.cache,
                     disk_cache: config.disk_cache,
@@ -94,14 +100,14 @@ impl RelayServer {
             session_added_receiver,
             route_registry,
             authenticator,
-            relay_token,
+            inter_relay_client,
             data_plane,
         } = deps;
         let repo = Arc::new(tokio::sync::Mutex::new(repo));
         let runtime = RelayRuntime::new(
             repo.clone(),
             route_registry.clone(),
-            relay_token,
+            inter_relay_client,
             authenticator.verifier.clone(),
             data_plane,
             session_added_receiver,

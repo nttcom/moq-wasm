@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
         ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location,
@@ -68,7 +68,7 @@ async fn new_session() -> anyhow::Result<Session> {
 
 async fn connect_to_relay(relay_url: &str) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         ..ClientConfig::default()
     })?;
     let connecting = endpoint.connect(relay_url).await?;
