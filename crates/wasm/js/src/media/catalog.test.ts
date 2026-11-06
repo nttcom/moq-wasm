@@ -120,6 +120,23 @@ test('a track keeps whether it is live and the duration of one that is not', () 
   expect([audio.isLive, audio.trackDuration]).toEqual([true, undefined])
 })
 
+test('an event timeline keeps the type of its records', () => {
+  // Arrange
+  const catalog = {
+    version: 1,
+    tracks: [
+      { name: 'video', packaging: 'loc', role: 'video', isLive: true },
+      { name: 'chat', packaging: 'eventtimeline', eventType: 'com.skyway.chat.v1', isLive: true, depends: ['video'] }
+    ]
+  }
+
+  // Act
+  const [video, chat] = extractCatalogTracks(catalog)
+
+  // Assert
+  expect([video.eventType, chat.eventType]).toEqual([undefined, 'com.skyway.chat.v1'])
+})
+
 /// The tracks `publish()` lists for a camera with a rendition and a shared screen.
 function cameraAndScreenTracks({ withoutCamera = false } = {}): MediaCatalogTrack[] {
   const track = (name: string, packaging: string, altGroup?: number): MediaCatalogTrack => ({

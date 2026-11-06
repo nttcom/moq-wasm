@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `MediaCatalogTrack` carries `eventType`, which names the records of an event
+  timeline track (draft-ietf-moq-msf-01 §5.2.5), so a page can tell a chat
+  from a transcript.
 - `moq-wasm/recording`: `openRecording(session, recorderUrl, id, { token })`
   asks the recorder to replay a finished recording and holds the answer of
   `POST /recordings/{id}/publish`, which keeps the replay running, until
