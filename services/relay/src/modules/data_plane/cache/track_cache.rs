@@ -333,10 +333,7 @@ impl TrackCache {
                 removed_payload_bytes + swapped_payload_bytes,
                 AtomicOrdering::Relaxed,
             );
-            removed.sort_unstable();
-            ledger
-                .known_ranges
-                .remove_locations(removed.iter().copied());
+            ledger.known_ranges.remove_locations(&removed);
             ledger.forget_runs_of_vanished_groups(&removed);
             if purge && let Some(disk) = &self.disk {
                 disk.purge();
