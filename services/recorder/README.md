@@ -83,8 +83,9 @@ needs the GStreamer plugins listed in the
 [transcode README](../../crates/transcode/README.md#compositing).
 
 An experimental `"format": "moq"` records participant camera, audio,
-screen-share and chat tracks, and the meeting transcriber's transcript, as
-object-store chunks instead of MP4. Omitting `format` retains MP4 behavior.
+screen-share and chat tracks with the media timelines of the camera and the
+screen share, and the meeting transcriber's transcript, as object-store chunks
+instead of MP4. Omitting `format` retains MP4 behavior.
 
 To replay a finished MoQ or MP4 recording, send `POST /recordings/<id>/publish`.
 The response is an NDJSON stream that stays open. Its first line names the
