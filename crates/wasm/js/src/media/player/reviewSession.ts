@@ -179,7 +179,7 @@ export class ReviewSession {
     start: bigint,
     end: bigint
   ): Promise<ReviewFrame[] | FetchFailure | undefined> {
-    const range = await this.awaitAudioRange(start, end)
+    const range = await this.awaitAudioRange(trackName, start, end)
     if (!this.isCurrent()) {
       return undefined
     }
@@ -197,14 +197,14 @@ export class ReviewSession {
   /// the audio groups share the ids of the video groups the window's audio is
   /// the same group range; otherwise it is the range of audio groups whose
   /// capture times cover the window's.
-  private async awaitAudioRange(start: bigint, end: bigint): Promise<GroupRange | undefined> {
+  private async awaitAudioRange(trackName: string, start: bigint, end: bigint): Promise<GroupRange | undefined> {
     const { audio, groups } = this.timeline
     const fromMicros = groups.startOf(start)
     const untilMicros = groups.startAfter(end)
     const byCapture =
       fromMicros !== undefined &&
       untilMicros !== undefined &&
-      !audio.sharesVideoIds((groupId) => groups.startOf(groupId))
+      !this.timeline.audioSharesVideoIds(this.subscriptions.get('video')?.name, trackName)
     const movedOn = () =>
       byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end
     const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS

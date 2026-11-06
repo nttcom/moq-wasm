@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { MediaCatalogTrack } from '../catalog'
+import { type LocHeader, TIMESTAMP_ID } from '../internal/loc'
 import { SeekTimeline } from './seekTimeline'
 
 const GROUP_MS = 2_000
@@ -90,4 +91,21 @@ test('a timeline object replaces the groups the previous one listed', () => {
   // Assert
   expect(seek.groups.resolveSeekTarget(0)?.groupId).toBe(110n)
   expect(seek.groups.latest?.groupId).toBe(130n)
+})
+
+test('the audio of the source the timeline follows shares the video ids even when its groups start later', () => {
+  // Arrange: the first audio of group 101 starts 800 ms after its video keyframe
+  const seek = followingVideoTimeline()
+  seek.replaceMediaTimeline(timelineObject(100, 120), 'video')
+  const audioStart: LocHeader = [
+    { id: TIMESTAMP_ID, value: { varint: (FIRST_ENCODED_AT_MS + GROUP_MS + 800) * 1_000 } }
+  ]
+  seek.audio.record(101n, audioStart)
+
+  // Act
+  const sameSource = seek.audioSharesVideoIds('video', 'audio')
+  const otherSource = seek.audioSharesVideoIds('screenshare', 'audio')
+
+  // Assert
+  expect([sameSource, otherSource]).toEqual([true, false])
 })
