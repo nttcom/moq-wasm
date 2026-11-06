@@ -90,11 +90,6 @@ export const test = base.extend<{ recorderServe: RecorderServe }>({
   }
 })
 
-export function recordingPlayerPath(recorderUrl: string, id: string): string {
-  const params = new URLSearchParams({ recorder: recorderUrl, relayUrl: liveViewerE2EConfig.moqtUrl, id })
-  return `/moq-wasm/examples/recording-player/?${params}`
-}
-
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
 
 /// `recorder serve` with a directory store; it runs every recording and composite as a child process.
@@ -203,6 +198,24 @@ async function startRecorderServe() {
         }
         await sleep(POLL_INTERVAL_MS)
       }
+    },
+    /// Opens a replay of the recording, which runs until `close`, and returns the first line of the answer.
+    async publish(recording: RoomRecording): Promise<{ answer: Record<string, unknown>; close: () => Promise<void> }> {
+      const response = await fetch(`${url}/recordings/${recording.id}/publish`, { method: 'POST' })
+      if (!response.ok || !response.body) {
+        throw new Error(`publish answered ${response.status}: ${await response.text()}`)
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let text = ''
+      while (!text.includes('\n')) {
+        const { value, done } = await reader.read()
+        if (done) {
+          throw new Error(`the publish answer ended before its first line: ${text}`)
+        }
+        text += decoder.decode(value, { stream: true })
+      }
+      return { answer: JSON.parse(text.slice(0, text.indexOf('\n'))), close: () => reader.cancel() }
     },
     async close(): Promise<void> {
       recorder.kill('SIGINT')
