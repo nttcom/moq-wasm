@@ -408,14 +408,6 @@ impl InMemoryLocalPubSubDirectory {
         peer == SessionPeer::Client && !had_client
     }
 
-    /// Returns true when no client subscriber remains for the prefix,
-    /// i.e. the caller may clean up the Redis route.
-    #[tracing::instrument(
-        level = "debug",
-        name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
-        skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
-    )]
     /// Whether `session_id` has an active SUBSCRIBE_NAMESPACE whose prefix is a
     /// prefix of, equal to or an extension of `track_namespace_prefix`, compared
     /// field by field (draft-14 §9.28).
@@ -430,6 +422,14 @@ impl InMemoryLocalPubSubDirectory {
         })
     }
 
+    /// Returns true when no client subscriber remains for the prefix,
+    /// i.e. the caller may clean up the Redis route.
+    #[tracing::instrument(
+        level = "debug",
+        name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
+        skip_all,
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+    )]
     pub(crate) fn unregister_subscribe_namespace(
         &self,
         session_id: SessionId,
