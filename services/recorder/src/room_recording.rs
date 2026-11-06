@@ -370,8 +370,9 @@ pub(crate) fn stopping(status: &Mutex<RoomStatus>) {
     }
 }
 
-/// Records the camera and the audio, and apart from them the screen share,
-/// each from its own catalog subscription.
+/// Records the camera and the microphone (`Content::Camera`) and, apart from
+/// them, the screen share (`Content::ScreenShare`), each from its own catalog
+/// subscription.
 fn record_member(
     session: Arc<Session>,
     namespace: String,
