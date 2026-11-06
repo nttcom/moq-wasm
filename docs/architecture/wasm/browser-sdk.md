@@ -315,7 +315,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 を実装した。
+ステータス: 承認済み。移行の手順 1 と 2 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
