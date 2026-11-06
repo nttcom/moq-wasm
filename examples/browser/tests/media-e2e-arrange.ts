@@ -1,4 +1,4 @@
-import type { Browser, Page } from '@playwright/test'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { MEDIA_PUBLISHER_PATH, MEDIA_SUBSCRIBER_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
@@ -28,6 +28,25 @@ function recordSessionTransports(page: Page): string[] {
     }
   })
   return transports
+}
+
+type TelemetryReport = {
+  page: string
+  logs: { timeMs: number; level: string; target: string; message: string; fields: Record<string, unknown> }[]
+}
+
+/** Prints the pages' client telemetry logs, the wasm module's included, and answers 202 in place of the observability server, which the E2E does not run. */
+async function printClientTelemetry(context: BrowserContext): Promise<void> {
+  await context.route('**/api/client-telemetry', async (route) => {
+    const report = JSON.parse(route.request().postData() ?? '{}') as TelemetryReport
+    for (const { timeMs, level, target, message, fields } of report.logs ?? []) {
+      const values = Object.entries(fields).map(([key, value]) => ` ${key}=${value}`)
+      console.log(
+        `[telemetry ${report.page}] ${new Date(timeMs).toISOString()} ${level} [${target}] ${message}${values.join('')}`
+      )
+    }
+    await route.fulfill({ status: 202 })
+  })
 }
 
 function buildPagePath(path: string): string {
@@ -85,6 +104,7 @@ export async function arrangeMediaE2ESession(browser: Browser) {
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']
   })
+  await printClientTelemetry(context)
   const publisherPage = await context.newPage()
   const subscriberPage = await context.newPage()
 

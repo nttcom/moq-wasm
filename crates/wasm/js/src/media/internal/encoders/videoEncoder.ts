@@ -31,6 +31,7 @@ class Rendition {
   encoder: VideoEncoder | undefined
   // null makes the next frame reconfigure the encoder.
   configuredFrameSize: string | null = null
+  private encodedAny = false
   readonly captureTimestamps = new CaptureTimestamps()
 
   constructor(
@@ -69,6 +70,8 @@ class Rendition {
     }
     this.encoder = encoder
     this.configuredFrameSize = null
+    this.encodedAny = false
+    workerLog('info', TARGET, 'encoder initialized', { config, rendition: this.index })
     return true
   }
 
@@ -95,6 +98,13 @@ class Rendition {
   }
 
   private send(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
+    if (!this.encodedAny) {
+      this.encodedAny = true
+      workerLog('info', TARGET, 'first chunk encoded', {
+        rendition: this.index,
+        codec: metadata?.decoderConfig?.codec ?? 'none'
+      })
+    }
     videoBitrateLogger.addBytes(chunk.byteLength)
     const { init, captureTimestampMicros } = this.captureTimestamps.restamp(chunk)
     const encodeDoneTimestampMicros = monotonicUnixMicros()
@@ -144,11 +154,11 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     try {
       videoResult = await videoReader.read()
     } catch (e) {
-      self.postMessage({ type: 'streamEnded', error: e instanceof Error ? e.message : String(e) })
+      workerLog('warn', TARGET, 'video frame read failed', { error: e })
       return
     }
     if (videoResult.done) {
-      self.postMessage({ type: 'streamEnded' })
+      workerLog('info', TARGET, 'video stream ended')
       return
     }
     const videoFrame = videoResult.value

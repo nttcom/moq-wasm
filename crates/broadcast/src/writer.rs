@@ -71,6 +71,9 @@ async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPub
         match queued {
             Queued::Event(event) => {
                 if let Err(err) = tracks.push(&event).await {
+                    // The oneshot hands the cause to one later push; the pushes after it get a bare
+                    // "media publishing stopped", so log the cause here.
+                    tracing::error!(error = %format!("{err:#}"), "media publishing stopped");
                     let _ = consumer.failure_sender.send(err);
                     return;
                 }

@@ -24,6 +24,8 @@ export type PublishOptions = SourceOptions & {
   /// Lists the `chat` track in the catalog even while nothing is published on
   /// `video` or `audio`.
   offerChat?: boolean
+  /// Skips a failure whose `String()` equals the previous one, such as the
+  /// "media publishing stopped" every chunk fails with after publishing stops.
   onError?: (error: unknown) => void
 }
 
@@ -96,7 +98,13 @@ export async function publish(
   if (options.offerChat) {
     await broadcast.offerChat()
   }
+  let lastReported: string | undefined
   const report = (error: unknown) => {
+    const message = String(error)
+    if (message === lastReported) {
+      return
+    }
+    lastReported = message
     if (options.onError) {
       forwardSdkLog('error', TARGET, 'publish failed', { error })
       options.onError(error)
@@ -258,6 +266,7 @@ function encodeVideo(
   const worker = new Worker(new URL('./internal/encoders/videoEncoder.ts', import.meta.url), {
     type: 'module'
   })
+  worker.onerror = (event) => report(workerError('video', event))
   const configuredCodecs: (string | undefined)[] = []
   worker.onmessage = (
     event: MessageEvent<
@@ -345,6 +354,7 @@ function encodeAudio(
   const worker = new Worker(new URL('./internal/encoders/audioEncoder.ts', import.meta.url), {
     type: 'module'
   })
+  worker.onerror = (event) => report(workerError('audio', event))
   let configured = false
   worker.onmessage = (
     event: MessageEvent<ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel }>
@@ -388,6 +398,12 @@ function encodeAudio(
       )
     }
   }
+}
+
+/// `Worker.onerror` is the only signal of a worker script that failed to load or threw an
+/// uncaught exception; a load failure has no message.
+function workerError(kind: MediaKind, event: ErrorEvent): Error {
+  return new Error(`${kind} encoder worker failed: ${event.message || 'the script did not load'}`)
 }
 
 function bytes(source: AllowSharedBufferSource): Uint8Array {
