@@ -18,7 +18,7 @@ use crate::{
     launcher::{Job, Launcher},
     recording::Layout,
     relay::{ServiceToken, TemporaryToken},
-    replay::{ReplayLease, ReplayTask},
+    replay::{RENEW_AFTER, ReplayLease, ReplayTask},
     room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
     state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
     store::RecordingStore,
@@ -161,8 +161,8 @@ impl Recordings {
                     anyhow::Ok(replay)
                 })
                 .await;
-            let (mut description, lease) = match replay {
-                Ok(replay) => (replay.description(), first_lease.or_else(|| replay.lease())),
+            let lease = match replay {
+                Ok(replay) => first_lease.or_else(|| replay.lease()),
                 Err(error) => {
                     self.forget_replay(id, &cell).await;
                     return Err(error.into());
@@ -175,10 +175,10 @@ impl Recordings {
                 self.forget_replay(id, &cell).await;
                 continue;
             };
-            description["recording_id"] = id.into();
-            description["relay"] = self.config.room.relay.clone().into();
-            description["namespace_prefix"] =
-                format!("{}/recordings/{id}", record.namespace_prefix).into();
+            let description = json!({
+                "namespace_prefix": format!("{}/recordings/{id}", record.namespace_prefix),
+                "renew_after_seconds": RENEW_AFTER.as_secs(),
+            });
             return Ok(Some(Publication { description, lease }));
         }
     }

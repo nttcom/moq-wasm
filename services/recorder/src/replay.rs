@@ -14,7 +14,6 @@ use moqt::{
     object::{ContentExists, GroupOrder, Location, Object},
     subscribe::FilterType,
 };
-use serde_json::Value;
 use tokio::{
     sync::mpsc,
     task::{AbortHandle, JoinError, JoinHandle, JoinSet},
@@ -28,14 +27,13 @@ use crate::{
 
 /// Shorter than the Cloud Run request timeout (60 minutes, its maximum), so a
 /// client opens the next answer before Cloud Run ends the current one.
-const RENEW_AFTER: Duration = Duration::from_secs(45 * 60);
+pub(crate) const RENEW_AFTER: Duration = Duration::from_secs(45 * 60);
 const MAX_FETCHES: usize = 4;
 
 /// Serves immutable recorded tracks while a [`ReplayLease`] exists.
 pub(crate) struct ReplayTask {
     handle: JoinHandle<()>,
     session: Arc<Session>,
-    description: Value,
     lease_sender: mpsc::WeakSender<()>,
 }
 
@@ -62,7 +60,6 @@ impl ReplayTask {
         verify_certificate: bool,
         token: &ServiceToken,
     ) -> Result<(Self, ReplayLease)> {
-        let description = recording.description();
         let tracks = ReplayTracks::open(recording).await?;
         let namespace = &tracks
             .recording
@@ -94,7 +91,6 @@ impl ReplayTask {
         let task = Self {
             handle,
             session,
-            description,
             lease_sender: lease_sender.downgrade(),
         };
         Ok((task, ReplayLease::new(lease_sender)))
@@ -107,12 +103,6 @@ impl ReplayTask {
 
     pub(crate) fn is_active(&self) -> bool {
         !self.handle.is_finished()
-    }
-
-    pub(crate) fn description(&self) -> Value {
-        let mut description = self.description.clone();
-        description["renew_after_seconds"] = RENEW_AFTER.as_secs().into();
-        description
     }
 }
 

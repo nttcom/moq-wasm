@@ -3,10 +3,9 @@
 An experimental archive is available with `--archive` and with the room API's
 `format: "moq"`. It stores catalogs, selected LOC media and available meeting
 event tracks without muxing. Closed data and index chunks are uploaded before
-their manifest. `POST /recordings/{id}/publish` exposes a finished archive
-through relay FETCH, and `examples/recording-player` plays the meeting with
-chat and transcript. The separate experimental archive player handles a local
-single-broadcast JSON Lines file.
+their manifest. `POST /recordings/{id}/publish` replays a finished archive
+through the relay as MSF VOD broadcasts. The separate experimental archive
+player handles a local single-broadcast JSON Lines file.
 
 ## Status
 Living document. Update this file in the same change whenever the track
@@ -427,17 +426,15 @@ room recording instead leaves out a participant whose task failed.
 
 `POST /recordings/{id}/publish` accepts a finished MoQ recording, verifies
 access to its source room and starts `replay::ReplayTask`; an MP4 recording is
-answered `409`. It announces
-namespaces under
-`<room>/recordings/<id>/<member-index>/<content>/<session-index>` and answers
-with an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one line
-with the relay URL and each track's original first and last object locations,
-then an empty line every 15 s. Raw catalogs and media retain their object
-identities. The player issues standalone FETCH for these ranges through the
-relay URL given in its form, not the returned one. The returned URL is the one
-the recorder connects to the relay with and may be `moqt://`, which a browser
-cannot open. This is historical playback; a live-only player that expects newly
-published frames needs a replay adapter.
+answered `409`. The replay announces namespaces under
+`<room>/recordings/<id>/<member-index>/<content>/<session-index>`, and the
+answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
+line with `namespace_prefix` (`<room>/recordings/<id>`) and
+`renew_after_seconds`, then an empty line every 15 s. A player finds the
+namespaces with SUBSCRIBE_NAMESPACE and reads each as it reads a live
+broadcast, from its catalog; media objects keep their recorded identities. The
+relay URL and the track list are not in the answer: the player reaches the
+relay it already uses, and the catalog lists the tracks.
 
 Each replay namespace is an MSF VOD broadcast (see 「録画を `LivePlayer` で
 再生する」 in the browser SDK's architecture). When the replay starts,
@@ -512,21 +509,9 @@ a new answer when the current one ends without the player closing it. The number
 of active publications per instance is capped by `--max-recordings`; recording
 jobs remain independent and their stored state stays shared.
 
-The recording player uses one audio context and a common capture-to-playback
-mapping for every source. It detects video access points in the H.264, VP8, VP9
-or AV1 bitstream, decodes ahead with bounded decoder queues, mixes participant
-audio and reconstructs chat and transcript on every seek. Transcript snapshots
-are deduplicated by utterance time and speaker. Source clocks are not calibrated:
-the UI explicitly calls alignment approximate. The replay description includes
-each chunk's capture-time bounds and object locations, without storage keys.
-The player fetches one media range per track at a time, releases consumed
-payloads, and limits concurrent FETCH requests to three. Seeking starts at the
-indexed target chunk and searches backward for a video access point before
-resuming incremental reads. There is no total recording-size limit; catalogs,
-chunk descriptors and text history remain in memory. The player rejects
-codec/configuration changes within a track instead of playing them with an
-incorrect configuration. This restriction is separate from the persisted
-format and relay range serving.
+`examples/recording-player` read the track list and chunk ranges from the
+answer this replaced, and cannot play a replay until it moves to `LivePlayer`
+(「録画を `LivePlayer` で再生する」, step 9).
 
 The recorder subscribes through the relay rather than reading the relay's disk
 cache, which is optional, drops data under pressure and loses its index on
