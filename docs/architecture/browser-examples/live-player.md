@@ -654,10 +654,13 @@ changes that resubscribe (see *Rendition switch*) clear the timeline and cancel 
 range is not a guarantee of cache retention: an evicted group can no longer
 be replayed. A FETCH that fails with INTERNAL_ERROR, TIMEOUT, INVALID_RANGE,
 NO_OBJECTS or UNKNOWN_STATUS_IN_RANGE, whose stream is reset with INTERNAL_ERROR,
-or that returns no objects, is taken as eviction: the groups up to the failed one leave the
-timeline, even while the media timeline still lists them, and review resumes from
-the oldest group left, or goes live when none is. Any other failure reports the FETCH error and holds the requested position,
-so pick another position or press Live to resume.
+that returns no objects, or whose first group starts past its first object, is
+taken as eviction: the groups up to the failed one leave the timeline, even while
+the media timeline still lists them, and review resumes from the oldest group
+left, or goes live when none is. The caches evict object by object, so the
+oldest group the timeline lists can arrive without its keyframe. Any other
+failure reports the FETCH error and holds the requested position, so pick
+another position or press Live to resume.
 
 ### Broadcast elapsed time
 
