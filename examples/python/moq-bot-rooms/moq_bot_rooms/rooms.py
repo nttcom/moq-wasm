@@ -33,10 +33,6 @@ class BotRoom:
     namespace_root: str = PUBLIC_NAMESPACE_ROOT
     token: AppToken | None = None
 
-    @classmethod
-    def of_app(cls, room_id: str, token: AppToken) -> "BotRoom":
-        return cls(room_id, token.app_id, token)
-
     @property
     def key(self) -> str:
         """Tells rooms apart: two apps may use the same room ID."""
