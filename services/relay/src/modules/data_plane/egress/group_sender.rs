@@ -25,6 +25,12 @@ use crate::modules::{
 
 use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};
 
+/// Per subscription. Only a subscriber that stopped reading reaches it,
+/// since a live track keeps a few subgroups open; the scheduler then blocks
+/// on the task channel, and its lag scan schedules the missed groups that are
+/// still cached.
+const MAX_CONCURRENT_SEND_TASKS: usize = 256;
+
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
 
 pub(crate) struct GroupSender {
@@ -132,7 +138,7 @@ impl GroupSender {
 
         loop {
             tokio::select! {
-                Some(task) = self.receiver.recv() => {
+                Some(task) = self.receiver.recv(), if joinset.len() < MAX_CONCURRENT_SEND_TASKS => {
                     match task.key {
                         SubgroupKey::Stream { group_id, subgroup_id } => {
                             let factory = stream_factory
@@ -472,12 +478,13 @@ mod tests {
     use moqt::TransportSendError;
     use tokio::sync::{mpsc, watch};
 
-    use super::{GroupSendTask, GroupSender, send_failure_reason};
+    use super::{GroupSendTask, GroupSender, MAX_CONCURRENT_SEND_TASKS, send_failure_reason};
     use crate::modules::{
         data_plane::cache::track_cache::TrackCache,
         domain::track_key::TrackKey,
         test_support::{
             directory_fixtures::delivery_control,
+            mock_session::wait_until,
             relay_harness::{
                 MockPublisher, MockPublisherObservers,
                 fixtures::{
@@ -536,6 +543,35 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(Arc::strong_count(&first), 2);
+    }
+
+    #[tokio::test]
+    async fn send_tasks_beyond_the_cap_wait_until_one_ends() {
+        // Arrange: every subgroup is open and empty, so each task waits for its first object
+        let cache = Arc::new(TrackCache::new());
+        let task_count = MAX_CONCURRENT_SEND_TASKS as u64 + 1;
+        let mut opens: Vec<_> = (0..task_count)
+            .map(|group_id| open_group(&cache, group_id, &[]))
+            .collect();
+        let (publisher, _observers) = MockPublisher::channel();
+        let task_sender = run_group_sender(&cache, publisher);
+
+        // Act
+        for group_id in 0..task_count {
+            task_sender.send(send_task(group_id)).await.unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Assert: the task past the cap stays in the channel
+        assert_eq!(task_sender.capacity(), 0);
+
+        // Act
+        opens.remove(0).finish();
+
+        // Assert: the ended task frees a slot for the waiting one
+        wait_until(|| task_sender.capacity() == 1)
+            .await
+            .expect("the group sender should take the waiting task");
     }
 
     fn send_error(error: TransportSendError) -> anyhow::Error {
