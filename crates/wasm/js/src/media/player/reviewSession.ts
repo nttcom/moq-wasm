@@ -41,7 +41,8 @@ export type ReviewHost = {
 }
 
 /// One review, from a seek until the next seek or the way back to live.
-/// Nothing it started may act once it has ended.
+/// Nothing it started may act once it has ended. A review without a `target`
+/// fetches nothing: no group covers its position.
 export class ReviewSession {
   readonly originMicros: number
   readonly anchorMicros: number
@@ -57,17 +58,24 @@ export class ReviewSession {
     private readonly timeline: SeekTimeline,
     private readonly subscriptions: TrackSubscriptions,
     private readonly host: ReviewHost,
-    private readonly target: GroupMark,
+    private readonly target: GroupMark | undefined,
     captureMicros: number
   ) {
-    this.originMicros = target.captureMicros
-    this.anchorMicros = Math.max(captureMicros, target.captureMicros)
+    this.originMicros = target?.captureMicros ?? captureMicros
+    this.anchorMicros = Math.max(captureMicros, this.originMicros)
     this.playheadMicros = this.anchorMicros
   }
 
+  get inRange(): boolean {
+    return this.target !== undefined
+  }
+
   start(): void {
+    if (!this.target) {
+      return
+    }
     void this.pollLiveEdge()
-    void this.run()
+    void this.run(this.target)
   }
 
   end(): void {
@@ -78,8 +86,8 @@ export class ReviewSession {
   /// until the viewer asks to go back. The FETCH for the next window is issued
   /// while the current one plays, so a window boundary does not stall on the
   /// request.
-  private async run(): Promise<void> {
-    let pending = await this.fetchWindow(this.target.groupId)
+  private async run(target: GroupMark): Promise<void> {
+    let pending = await this.fetchWindow(target.groupId)
     let previous: ReviewWindow | undefined
     while (pending && this.isCurrent()) {
       if (pending === END_OF_TRACK) {

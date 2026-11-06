@@ -162,12 +162,36 @@ subscribes to the tracks given and nothing else, the catalog status reads
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
 
+`PlaybackGroup` plays several players at one position (see *Playback group*):
+
+```ts
+type PlaybackGroupState = {
+  mode: 'live' | 'review'
+  positionMicros: number | undefined
+  paused: boolean
+  ended: boolean
+}
+
+class PlaybackGroup {
+  constructor(callbacks?: { onStateChange(): void })
+  add(player: LivePlayer): void
+  remove(player: LivePlayer): void
+  play(): void
+  pause(): void
+  seek(captureMicros: number): void
+  skip(seconds: number): void
+  goLive(): void
+  readonly state: PlaybackGroupState
+}
+```
+
 `LivePlayerState` carries what the controls and the diagnostics render: the
 catalog tracks and the selection, whether the video rendition is chosen
 automatically, whether CMAF is available, the packaging,
 `mode: 'live' | 'review'`, whether the broadcast is live (`isLive`) and VOD
-playback has ended (`ended`), paused, stalled, the playback rate and whether it
-is adjustable,
+playback has ended (`ended`), whether the position of the player's
+`PlaybackGroup` lies in its range (`inRange`), paused, stalled, the playback
+rate and whether it is adjustable,
 the catalog / playback / rewind status, the seek range (broadcast start,
 replayable start, live edge, review anchor and playhead, and elapsed times from
 the media timeline), and the aliases of the live subscriptions and review
@@ -196,7 +220,8 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery, the end of a VOD broadcast; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
-| `reviewClock` | The clock `ReviewPlayout` presents a review on: capture time onto local time from where it is anchored, the pause, and the AudioContext of the review's sound |
+| `reviewClock` | The clock `ReviewPlayout` presents a review on: capture time onto local time from where it is anchored, the pause, the AudioContext of the review's sound, and which review's drift moves it |
+| `playbackGroup` / `groupMember` | One position for several players: where the group puts each of them (live, aligned or held) as the position moves, and the commands a player in the group hands to it |
 | `stallWatch` | Whether the wanted picture has stood still |
 | `streamConventions` | The relay cache TTL the seek axis keeps groups for |
 
@@ -250,6 +275,9 @@ group can span two windows.
   only a live publisher answers one, so a returning publisher is never
   mistaken for the relay's cache.
 - A picture that has not presented a frame is never shown.
+- A player in a `PlaybackGroup` reviews only on the group's clock, from the
+  position the group gave it, and its own `seek`, `skip`, `goLive` and
+  `setPaused` act on the group; its pause is always the group's.
 - The pre-decode hold stays in the video worker and the playout budget on the
   main thread (see `LivePlayout`); the worker's superseded-group drop stays.
 
@@ -317,6 +345,57 @@ catalog's own fields tells it from a live broadcast.
   End and right end seek to the end instead of going live.
 - A failed FETCH is handled as in a rewind; one with no group listed after it
   ends playback.
+
+### Playback group
+
+`PlaybackGroup` plays several players at one position, for a meeting rewound
+for everyone or a recorded meeting played with everyone in step. A broadcast
+with one video and one audio track needs none: one player keeps those
+together.
+
+- The group owns one `ReviewClock` and the AudioContext with it. Its position
+  is a LOC capture timestamp, which the publishers stamp on one wall clock.
+  A player aligned to it reviews on that clock, so the same capture time is
+  due at the same moment on every player, and its sound plays through that
+  context. The drift of the first sound scheduled since the clock was
+  anchored moves it; the other players' sound plays on the same audio device
+  and keeps step with it, and a chunk of theirs that is already due is
+  dropped rather than heard late.
+- While live, every player plays at its own live edge through its own live
+  pipeline, as alone. The players are aligned only while the group reviews:
+  after a seek or skip, and while playing VOD. A seek at or past the live edge
+  of every live player goes live, one before every player's range plays from
+  the earliest start, and a skip while live measures from the newest position
+  a player shows. `goLive` does nothing while a player is VOD.
+- A player whose range covers the position plays from it; the others hold:
+  they fetch nothing, their live subscriptions do not forward, as in a review,
+  and `state.inRange` is false. The range runs from the oldest group the
+  player can seek to (the media timeline's first entry, unless a FETCH found
+  it evicted) to the end of a VOD broadcast, or on past the live edge of a
+  live one. The group checks every 250 ms which ranges the moving position
+  lies in, so a participant who joined late starts once the position reaches
+  their first group and one who left early holds once it has passed their
+  last. Within its range, an evicted group fails its FETCH as in a rewind;
+  the groups up to it leave the range, and the player holds until the
+  position reaches what is left.
+- An aligned player is held only once its range is gone or the position has
+  passed the end of its VOD range, not when the sound's drift moves the
+  position back across the start it was aligned at.
+- `add` and `remove` work at any time. A player added takes the group's pause
+  and position. A VOD player added to a group that is live, or the first media
+  timeline of a VOD player in one, starts the group at the earliest start of
+  the ranges known then, as one VOD player starts once its timeline arrives;
+  a player whose range starts earlier but arrives later plays from where the
+  group has got to. A player removed
+  plays on alone from the group's position. Its own commands act on the group
+  while it is in it, so `PlayerControls` on any player drives the group; to
+  rewind one player alone, the page removes it first.
+- A VOD player that has played its last frame keeps it on screen instead of
+  pausing. Once the position has passed the end of every player, the group
+  pauses and sets `state.ended`, and `play` then plays from the start.
+- A player on CMAF packaging is placed at the position like the others, but
+  plays the windows on its media element's clock, which the group does not
+  steer.
 
 ### MP4 publisher
 
