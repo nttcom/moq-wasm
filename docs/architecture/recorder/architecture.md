@@ -415,7 +415,9 @@ track, `video_timeline` for a `broadcast` camera, from their current group as
 the catalog: each object lists only the last 60 s, so the replay rebuilds the
 whole recording's timeline from all of them (see below). Each track has immutable payload chunks and JSON
 indexes, including canonical object fields, subgroup headers, FIN events and
-capture timestamps. Duplicate object identities retain the first payload;
+capture timestamps. The archive manifest lists each chunk with its object
+range, its capture range and the groups it holds media of, so the replay
+finds a track's recorded groups without reading the indexes. Duplicate object identities retain the first payload;
 conflicting duplicates fail the recording.
 The chunks go straight to the object store; no local copy is written. A reset
 subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The
