@@ -194,11 +194,28 @@ pub(crate) fn keeps(catalog: &Catalog, choice: Choice, track: &str) -> bool {
 /// The event timeline tracks (draft-ietf-moq-msf-01 §8), such as a meeting's
 /// chat.
 pub(crate) fn event_timelines(catalog: &Catalog) -> impl Iterator<Item = &Track> {
-    catalog
-        .tracks
-        .iter()
-        .flatten()
-        .filter(|track| track.packaging == Packaging::Known(KnownPackaging::EventTimeline))
+    packaged(catalog, KnownPackaging::EventTimeline)
+}
+
+/// The media timeline tracks (draft-ietf-moq-msf-01 §7) whose `depends` names
+/// any of `tracks`.
+pub(crate) fn media_timelines<'a>(
+    catalog: &'a Catalog,
+    tracks: &[&str],
+) -> impl Iterator<Item = &'a Track> {
+    packaged(catalog, KnownPackaging::MediaTimeline).filter(|timeline| {
+        timeline
+            .depends
+            .iter()
+            .flatten()
+            .any(|name| tracks.contains(&name.as_str()))
+    })
+}
+
+fn packaged(catalog: &Catalog, packaging: KnownPackaging) -> impl Iterator<Item = &Track> {
+    catalog.tracks.iter().flatten().filter(
+        move |track| matches!(&track.packaging, Packaging::Known(known) if *known == packaging),
+    )
 }
 
 /// The LOC video and audio tracks of the source `choice` takes.
@@ -404,6 +421,33 @@ mod tests {
         assert_eq!(main.audio.unwrap().name, "mic_128kbps");
         assert_eq!(other.video.unwrap().name, "share_720p");
         assert_eq!(other.audio.unwrap().name, "share_audio");
+    }
+
+    #[test]
+    fn the_media_timelines_of_a_source_are_those_that_depend_on_its_tracks() {
+        // Arrange
+        let mut catalog = meeting();
+        let timeline = |name: &str, depends: &[&str]| {
+            let mut timeline = Track::new(name, KnownPackaging::MediaTimeline, true);
+            timeline.depends = Some(depends.iter().map(|name| name.to_string()).collect());
+            timeline
+        };
+        catalog.tracks.as_mut().unwrap().extend([
+            timeline(
+                "share_1080p_timeline",
+                &["share_1080p", "share_720p", "share_audio"],
+            ),
+            timeline("cam_timeline", &["cam", "cam_720p", "cam_480p"]),
+            timeline("mic_timeline", &["mic_32kbps", "mic_128kbps"]),
+        ]);
+
+        // Act
+        let names: Vec<&str> = media_timelines(&catalog, &["cam_720p", "mic_128kbps"])
+            .map(|track| track.name.as_str())
+            .collect();
+
+        // Assert
+        assert_eq!(names, ["cam_timeline", "mic_timeline"]);
     }
 
     #[test]

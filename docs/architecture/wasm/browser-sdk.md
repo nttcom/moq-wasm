@@ -315,7 +315,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 3 を実装した。
+ステータス: 承認済み。移行の手順 1 から 4 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -380,6 +380,12 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の最後の要素（参加者名）を `<member-index>` の代わりに入れる |
 | transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の namespace にも catalog を作り、`transcript` を event timeline として載せる |
 | HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）と `renew_after_seconds` だけにする |
+
+`trackDuration` は replay の namespace の全 track で同じ値にし、timeline の最初の entry
+（それより前の media があればその capture timestamp）から最後の media の capture timestamp
+までのミリ秒とする。timeline の wallclock も元の publisher の値をそのまま使う。§7.1.1 は
+VOD で 0 にするよう勧める（SHOULD）が、それは wallclock がわからないときのためで、録画では
+わかっており、player は wallclock で group を並べる。
 
 録画中に timeline の Object を取りこぼしても、次の Object が直近 60 秒分を持つので、
 60 秒より短い抜けは埋まる。それより長く届かなかった区間には entry が無く、その区間へは

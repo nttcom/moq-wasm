@@ -3,10 +3,9 @@
 An experimental archive is available with `--archive` and with the room API's
 `format: "moq"`. It stores catalogs, selected LOC media and available meeting
 event tracks without muxing. Closed data and index chunks are uploaded before
-their manifest. `POST /recordings/{id}/publish` exposes a finished archive
-through relay FETCH, and `examples/recording-player` plays the meeting with
-chat and transcript. The separate experimental archive player handles a local
-single-broadcast JSON Lines file.
+their manifest. `POST /recordings/{id}/publish` replays a finished archive
+through the relay as MSF VOD broadcasts. The separate experimental archive
+player handles a local single-broadcast JSON Lines file.
 
 ## Status
 Living document. Update this file in the same change whenever the track
@@ -409,9 +408,15 @@ settings, so a request cannot point the recorder at another relay or bucket.
 screen-share and event archives. Camera archives also receive the event
 timeline tracks the catalog lists, a meeting's `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
-an otherwise empty room alive. Each track has immutable payload chunks and JSON
+an otherwise empty room alive. Every archive also receives the media timeline
+tracks (draft-ietf-moq-msf-01 §7) whose `depends` names its video or audio
+track, `video_timeline` for a `broadcast` camera, from their current group as
+the catalog: each object lists only the last 60 s, so the replay rebuilds the
+whole recording's timeline from all of them (see below). Each track has immutable payload chunks and JSON
 indexes, including canonical object fields, subgroup headers, FIN events and
-capture timestamps. Duplicate object identities retain the first payload;
+capture timestamps. The archive manifest lists each chunk with its object
+range, its capture range and the groups it holds media of, so the replay
+finds a track's recorded groups without reading the indexes. Duplicate object identities retain the first payload;
 conflicting duplicates fail the recording.
 The chunks go straight to the object store; no local copy is written. A reset
 subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The
@@ -419,36 +424,52 @@ recording fails if a subscription, task or upload fails, and its final room
 manifest is written only after its broadcast manifests are committed. An MP4
 room recording instead leaves out a participant whose task failed.
 
-`POST /recordings/{id}/publish` accepts a finished MoQ or MP4 recording,
-verifies access to its source room and starts `replay::ReplayTask`. It announces
-namespaces under
-`<room>/recordings/<id>/<member-index>/<content>/<session-index>` and answers
-with an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one line
-with the relay URL and each track's original first and last object locations,
-then an empty line every 15 s. Raw catalogs and media retain their object
-identities. The player issues standalone FETCH for these ranges through the
-relay URL given in its form, not the returned one. The returned URL is the one
-the recorder connects to the relay with and may be `moqt://`, which a browser
-cannot open. This is historical playback; a live-only player that expects newly
-published frames needs a replay adapter.
+`POST /recordings/{id}/publish` accepts a finished MoQ recording, verifies
+access to its source room and starts `replay::ReplayTask`; an MP4 recording is
+answered `409`. The replay announces namespaces under
+`<room>/recordings/<id>/<member-index>/<content>/<session-index>`, and the
+answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
+line with `namespace_prefix` (`<room>/recordings/<id>`) and
+`renew_after_seconds`, then an empty line every 15 s. A player finds the
+namespaces with SUBSCRIBE_NAMESPACE and reads each as it reads a live
+broadcast, from its catalog; media objects keep their recorded identities. The
+relay URL and the track list are not in the answer: the player reaches the
+relay it already uses, and the catalog lists the tracks.
 
-For an MP4 recording, `mp4_replay` reads the original room manifest and converts
-each listed camera or screen-share file into a separate archived broadcast.
-The first request reads each file in bounded ranges: `mediapack::mp4::Demuxer`
-handles fMP4; `Mp4Index` supplies sample ranges for progressive H.264 MP4.
-Encoded samples pass through `loc::Muxer` and `archive_chunks::ChunkWriter`
-without decoding or re-encoding. Capture origins from the room manifest map
-file presentation times onto the common source clock. Catalogs and object IDs
-are generated; text events and original MoQ headers cannot be recovered.
-Every file gets its own namespace, including rotated and per-track files, so
-its configuration stays fixed. The original MP4 files and manifest remain
-unchanged. Completed replay manifests are cached at `<id>/mp4-replay/manifest.json`
-only after all chunks are written, and later requests reuse them. A failed
-conversion leaves its attempt unpublished; retries use a fresh attempt prefix.
-The first request needs a complete file read and extra storage for the replay
-chunks. MP4 metadata is limited to 4 MiB, and fragments and samples to 16 MiB;
-there is no total media-size limit. Ordinary MP4 uses `Mp4Index`'s supported
-track types (H.264 video and its supported audio codecs).
+Each replay namespace is an MSF VOD broadcast (see 「録画を `LivePlayer` で
+再生する」 in the browser SDK's architecture). When the replay starts,
+`vod::build_tracks` replaces the namespace's stored `catalog` and media
+timeline tracks with one object each, at group 0, object 0:
+
+- The catalog lists every stored track a stored catalog object describes, in
+  the archive's order, with the fields of the last object that describes it.
+  Each track is `isLive: false` (draft-ietf-moq-msf-01 §5.2.7) and has the
+  namespace's one `trackDuration` (§5.2.35): from the earlier of its first
+  timeline record and its first captured media object to its last captured
+  media object. `namespace` is left out, so every track inherits the replay
+  namespace (§5.2.2) rather than naming the original publisher's;
+  `targetLatency` is dropped (§5.2.8). `depends` names only listed tracks, and
+  `initDataList` holds the entries the listed `initRef`s name. The LOC tracks
+  take one `renderGroup`, the first one's: a replay namespace holds one source,
+  but `broadcast` numbers the sources anew in each catalog, so tracks described
+  by different objects may disagree. The root is `isComplete: true` (§5.1.3)
+  without `generatedAt` (§5.1.2).
+- A media timeline merges the records of every stored timeline object by
+  location, keeping the first stored, and keeps those of the groups the archive
+  holds media of on a track the timeline depends on (the chunks' `groups`), in
+  location order. A gap in the stored timeline objects shorter than 60 s is
+  filled by the next object; a longer one leaves its groups without records.
+  Presentation time and wallclock stay the publisher's (§7.1.1). §7.1.1 asks
+  for wallclock 0 in a VOD asset whose wallclock is unknown; a recording's is
+  known, and the player places groups by it.
+- Both come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
+  requires an object to be the same bytes wherever it is read, and several
+  instances may replay one recording under the same namespaces, which the
+  relay merges (§8.2); a creation time or an instance's value would put two
+  contents at one location.
+
+A namespace without a stored catalog, the transcriber's, gets none, and its
+tracks are served as stored.
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
@@ -459,13 +480,20 @@ control response rather than an unreadable stream reset. This reads selected
 payload chunks twice, once for validation and once for sending. Four FETCH
 requests can run at once per replay.
 
+A SUBSCRIBE with the Largest Object filter is answered with the track's last
+object and delivers nothing; other filters are refused. A Joining Fetch of such
+a subscription resolves against that object as a live publisher's would
+(draft-14 §9.16.2), so the relative one with offset 0 returns the track's last
+group. The relay itself turns a subscriber's Joining Fetch into a Standalone
+Fetch of the same range, so both reach the replay alike.
+
 A replay runs while an answer to `publish` is open: each open answer holds a
 `ReplayLease`, and the replay closes its relay session as soon as the last one
 is dropped, or at once on server shutdown. Hyper drops an answer when its
 connection closes; a keepalive write fails once the client has gone away.
 Repeated HTTP requests on that API instance share its publication. A request
 reserves its recording's slot under a lock and opens the recording outside it,
-so a long MP4 conversion delays only the requests for that recording.
+so opening one recording delays only the requests for that recording.
 
 The lease exists for Cloud Run with CPU allocated only during requests: an open
 answer keeps CPU on the instance that serves the replay, and a replay whose last
@@ -481,21 +509,9 @@ a new answer when the current one ends without the player closing it. The number
 of active publications per instance is capped by `--max-recordings`; recording
 jobs remain independent and their stored state stays shared.
 
-The recording player uses one audio context and a common capture-to-playback
-mapping for every source. It detects video access points in the H.264, VP8, VP9
-or AV1 bitstream, decodes ahead with bounded decoder queues, mixes participant
-audio and reconstructs chat and transcript on every seek. Transcript snapshots
-are deduplicated by utterance time and speaker. Source clocks are not calibrated:
-the UI explicitly calls alignment approximate. The replay description includes
-each chunk's capture-time bounds and object locations, without storage keys.
-The player fetches one media range per track at a time, releases consumed
-payloads, and limits concurrent FETCH requests to three. Seeking starts at the
-indexed target chunk and searches backward for a video access point before
-resuming incremental reads. There is no total recording-size limit; catalogs,
-chunk descriptors and text history remain in memory. The player rejects
-codec/configuration changes within a track instead of playing them with an
-incorrect configuration. This restriction is separate from the persisted
-format and relay range serving.
+`examples/recording-player` read the track list and chunk ranges from the
+answer this replaced, and cannot play a replay until it moves to `LivePlayer`
+(「録画を `LivePlayer` で再生する」, step 9).
 
 The recorder subscribes through the relay rather than reading the relay's disk
 cache, which is optional, drops data under pressure and loses its index on

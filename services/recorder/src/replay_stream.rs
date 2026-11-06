@@ -64,15 +64,20 @@ mod tests {
     async fn sends_the_description_first_and_releases_the_lease_when_dropped() {
         // Arrange
         let (lease_sender, mut lease_receiver) = mpsc::channel(1);
-        let mut stream =
-            ReplayStream::new(&json!({ "tracks": [] }), ReplayLease::new(lease_sender));
+        let mut stream = ReplayStream::new(
+            &json!({ "namespace_prefix": "anon/room/recordings/id" }),
+            ReplayLease::new(lease_sender),
+        );
 
         // Act
         let first = stream.frame().await.unwrap().unwrap().into_data().unwrap();
         drop(stream);
 
         // Assert
-        assert_eq!(first, Bytes::from_static(b"{\"tracks\":[]}\n"));
+        assert_eq!(
+            first,
+            Bytes::from_static(b"{\"namespace_prefix\":\"anon/room/recordings/id\"}\n")
+        );
         assert!(lease_receiver.recv().await.is_none());
     }
 }
