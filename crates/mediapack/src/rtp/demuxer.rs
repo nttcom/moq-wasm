@@ -57,12 +57,19 @@ enum StreamCodec {
     WholeFrames,
 }
 
+/// Bounds on the access unit being assembled, so a sender that never sets the
+/// marker bit nor changes the timestamp cannot grow it without limit.
+const MAX_ACCESS_UNIT_NALS: usize = 8192;
+const MAX_ACCESS_UNIT_LENGTH: usize = 16 * 1024 * 1024;
+
 struct VideoStream {
     depacketizer: h264::Depacketizer,
     parameter_sets: ParameterSetTracker,
     /// NAL units of the access unit being assembled, which ends at the
     /// marker bit or when a packet with another timestamp arrives.
     access_unit: Vec<Bytes>,
+    /// Total bytes of the NAL units in `access_unit`.
+    access_unit_length: usize,
     access_unit_timestamp: Option<u32>,
     access_unit_pts: Timestamp,
     /// A packet of this access unit was lost, so it is discarded when complete.
@@ -263,6 +270,7 @@ impl VideoStream {
             parameter_sets: parameter_sets
                 .map_or_else(ParameterSetTracker::new, ParameterSetTracker::from_record),
             access_unit: Vec::new(),
+            access_unit_length: 0,
             access_unit_timestamp: None,
             access_unit_pts: Timestamp::ZERO,
             corrupt: false,
@@ -286,7 +294,16 @@ impl VideoStream {
         self.access_unit_timestamp = Some(header.timestamp);
         self.access_unit_pts = pts;
         let nals = self.depacketizer.push(payload)?;
+        self.access_unit_length += nals.iter().map(Bytes::len).sum::<usize>();
         self.access_unit.extend(nals);
+        if self.access_unit.len() > MAX_ACCESS_UNIT_NALS
+            || self.access_unit_length > MAX_ACCESS_UNIT_LENGTH
+        {
+            self.access_unit.clear();
+            self.access_unit_length = 0;
+            self.depacketizer.reset();
+            self.corrupt = true;
+        }
         if header.marker {
             self.complete(events)?;
         }
@@ -295,12 +312,13 @@ impl VideoStream {
 
     fn complete(&mut self, events: &mut Vec<MediaEvent>) -> Result<()> {
         let nals = mem::take(&mut self.access_unit);
+        self.access_unit_length = 0;
         self.access_unit_timestamp = None;
-        if nals.is_empty() {
-            return Ok(());
-        }
         if mem::take(&mut self.corrupt) {
             self.awaiting_keyframe = true;
+            return Ok(());
+        }
+        if nals.is_empty() {
             return Ok(());
         }
         let annexb = with_start_codes(nals.iter().map(Bytes::as_ref));
@@ -370,8 +388,9 @@ mod tests {
             sdp::MediaKind,
         },
         test_support::{
-            FIXTURE_PPS, FIXTURE_SPS, audio_samples, delta_frame_annexb, fixture_video_config,
-            h264_aac_configs, keyframe_annexb, keyframe_sample, video_samples,
+            FIXTURE_PPS, FIXTURE_SPS, NON_IDR_SLICE, audio_samples, delta_frame_annexb,
+            fixture_video_config, h264_aac_configs, keyframe_annexb, keyframe_sample,
+            video_samples,
         },
     };
 
@@ -486,6 +505,68 @@ mod tests {
         assert_eq!(video.len(), 1);
         assert_eq!(video[0].pts, Timestamp::from_millis(66));
         assert_eq!(audio_samples(&events).len(), 2);
+    }
+
+    /// Muxed source packets preceded by one video access unit made of `count`
+    /// packets carrying `payload`.
+    fn after_an_unterminated_access_unit(
+        payload: &[u8],
+        count: usize,
+    ) -> (Vec<RtpPacket>, SessionDescription) {
+        let (packets, description) = mux(&source_events());
+        let first_video = packets
+            .iter()
+            .find(|packet| packet.kind == MediaKind::Video)
+            .unwrap();
+        let (template, _) = Header::parse(&first_video.data).unwrap();
+        let mut crafted: Vec<RtpPacket> = (1..=count)
+            .rev()
+            .map(|before| RtpPacket {
+                kind: MediaKind::Video,
+                data: Header {
+                    marker: false,
+                    sequence_number: template.sequence_number.wrapping_sub(before as u16),
+                    timestamp: template.timestamp.wrapping_sub(3_000),
+                    ..template
+                }
+                .encode(payload),
+            })
+            .collect();
+        crafted.extend(packets);
+        (crafted, description)
+    }
+
+    #[test]
+    fn drops_an_access_unit_with_too_many_nal_units() {
+        // Arrange
+        let (packets, description) =
+            after_an_unterminated_access_unit(&NON_IDR_SLICE, MAX_ACCESS_UNIT_NALS + 1);
+
+        // Act
+        let (events, discontinuities) = demux(&packets, &description);
+
+        // Assert: only the three source frames play
+        assert_eq!(discontinuities, 0);
+        let video = video_samples(&events);
+        assert_eq!(video.len(), 3);
+        assert!(video[0].is_keyframe);
+    }
+
+    #[test]
+    fn drops_an_access_unit_with_too_many_bytes() {
+        // Arrange
+        let nal = vec![NON_IDR_SLICE[0]; 1024 * 1024];
+        let count = MAX_ACCESS_UNIT_LENGTH / nal.len() + 1;
+        let (packets, description) = after_an_unterminated_access_unit(&nal, count);
+
+        // Act
+        let (events, discontinuities) = demux(&packets, &description);
+
+        // Assert: only the three source frames play
+        assert_eq!(discontinuities, 0);
+        let video = video_samples(&events);
+        assert_eq!(video.len(), 3);
+        assert!(video[0].is_keyframe);
     }
 
     #[test]
