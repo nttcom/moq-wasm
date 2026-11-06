@@ -114,8 +114,8 @@ impl Drop for ReplayTask {
     }
 }
 
-/// What a replay serves: the stored tracks, and the catalogs and media
-/// timelines it built in place of the stored ones.
+/// What a replay serves: the stored tracks, and the catalogs, media timelines
+/// and transcripts it built in place of the stored ones.
 struct ReplayTracks {
     recording: StoredRecording,
     built: Vec<Arc<BuiltTrack>>,
@@ -123,11 +123,11 @@ struct ReplayTracks {
 
 impl ReplayTracks {
     async fn open(recording: StoredRecording) -> Result<Self> {
-        let mut built = Vec::new();
-        for namespace in recording.namespaces() {
-            let tracks = build_tracks(&recording, namespace).await?;
-            built.extend(tracks.into_iter().map(Arc::new));
-        }
+        let built = build_tracks(&recording)
+            .await?
+            .into_iter()
+            .map(Arc::new)
+            .collect();
         Ok(Self { recording, built })
     }
 
