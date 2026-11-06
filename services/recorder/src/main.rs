@@ -29,6 +29,7 @@ mod token_refresh_task;
 mod track_list;
 mod track_selection;
 mod upload_task;
+mod vod;
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 

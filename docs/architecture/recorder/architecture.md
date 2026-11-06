@@ -439,6 +439,41 @@ the recorder connects to the relay with and may be `moqt://`, which a browser
 cannot open. This is historical playback; a live-only player that expects newly
 published frames needs a replay adapter.
 
+Each replay namespace is an MSF VOD broadcast (see 「録画を `LivePlayer` で
+再生する」 in the browser SDK's architecture). When the replay starts,
+`vod::build_tracks` replaces the namespace's stored `catalog` and media
+timeline tracks with one object each, at group 0, object 0:
+
+- The catalog lists every stored track a stored catalog object describes, in
+  the archive's order, with the fields of the last object that describes it.
+  Each track is `isLive: false` (draft-ietf-moq-msf-01 §5.2.7) and has the
+  namespace's one `trackDuration` (§5.2.35): from the earlier of its first
+  timeline record and its first captured media object to its last captured
+  media object. `namespace` is left out, so every track inherits the replay
+  namespace (§5.2.2) rather than naming the original publisher's;
+  `targetLatency` is dropped (§5.2.8). `depends` names only listed tracks, and
+  `initDataList` holds the entries the listed `initRef`s name. The LOC tracks
+  take one `renderGroup`, the first one's: a replay namespace holds one source,
+  but `broadcast` numbers the sources anew in each catalog, so tracks described
+  by different objects may disagree. The root is `isComplete: true` (§5.1.3)
+  without `generatedAt` (§5.1.2).
+- A media timeline merges the records of every stored timeline object by
+  location, keeping the first stored, and keeps those of the groups the archive
+  holds media of on a track the timeline depends on (the chunks' `groups`), in
+  location order. A gap in the stored timeline objects shorter than 60 s is
+  filled by the next object; a longer one leaves its groups without records.
+  Presentation time and wallclock stay the publisher's (§7.1.1). §7.1.1 asks
+  for wallclock 0 in a VOD asset whose wallclock is unknown; a recording's is
+  known, and the player places groups by it.
+- Both come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
+  requires an object to be the same bytes wherever it is read, and several
+  instances may replay one recording under the same namespaces, which the
+  relay merges (§8.2); a creation time or an instance's value would put two
+  contents at one location.
+
+A namespace without a stored catalog, the transcriber's, gets none, and its
+tracks are served as stored.
+
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
 boundaries, supports ascending and descending group order and handles

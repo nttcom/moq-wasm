@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -23,6 +23,38 @@ pub(crate) struct StoredTrack {
     pub(crate) chunks: Vec<Value>,
     pub(crate) first: Location,
     pub(crate) last: Location,
+}
+
+impl StoredTrack {
+    /// The groups the track holds media of, as the archive manifest lists
+    /// them.
+    pub(crate) fn groups(&self) -> Result<BTreeSet<u64>> {
+        let mut groups = BTreeSet::new();
+        for chunk in &self.chunks {
+            for group in chunk["groups"]
+                .as_array()
+                .context("archive chunk lists no groups")?
+            {
+                let group = group.as_str().context("group id is not a string")?;
+                groups.insert(group.parse().context("invalid group id")?);
+            }
+        }
+        Ok(groups)
+    }
+
+    /// The earliest and the latest LOC capture timestamp of the track's
+    /// objects; `None` for a track whose objects carry none.
+    pub(crate) fn capture_range_us(&self) -> Option<(u64, u64)> {
+        let bounds = |field: &'static str| {
+            self.chunks
+                .iter()
+                .filter_map(move |chunk| chunk[field].as_str()?.parse::<u64>().ok())
+        };
+        Some((
+            bounds("capture_start_us").min()?,
+            bounds("capture_end_us").max()?,
+        ))
+    }
 }
 
 pub(crate) struct StoredRecording {
@@ -151,6 +183,17 @@ impl StoredRecording {
         })
     }
 
+    /// The replay namespaces, in the order the tracks list them.
+    pub(crate) fn namespaces(&self) -> Vec<&str> {
+        let mut namespaces: Vec<&str> = Vec::new();
+        for track in &self.tracks {
+            if !namespaces.contains(&track.namespace.as_str()) {
+                namespaces.push(&track.namespace);
+            }
+        }
+        namespaces
+    }
+
     #[cfg(test)]
     pub(crate) async fn objects(&self, chunk: &Value) -> Result<Vec<Object>> {
         let data = self.checked_bytes(chunk, "data").await?;
@@ -165,6 +208,24 @@ impl StoredRecording {
             .filter(|entry| entry["type"] == "object")
             .map(|entry| decode_object(entry, &data))
             .collect()
+    }
+
+    /// The payloads of the track's Normal objects, in location order.
+    pub(crate) async fn payloads(&self, track: &StoredTrack) -> Result<Vec<Bytes>> {
+        let mut payloads = Vec::new();
+        let mut cached_chunk = None;
+        let mut data = Bytes::new();
+        for entry in self.entries(track, track.first, track.last.next()).await? {
+            if cached_chunk != Some(entry.chunk) {
+                data = self.data(&track.chunks[entry.chunk]).await?;
+                cached_chunk = Some(entry.chunk);
+            }
+            let object = decode_object(&entry.value, &data)?;
+            if object.status == ObjectStatus::Normal {
+                payloads.push(object.payload);
+            }
+        }
+        Ok(payloads)
     }
 
     pub(crate) async fn entries(
@@ -205,8 +266,7 @@ impl StoredRecording {
                     at >= first && at <= last,
                     "object is outside its indexed location range"
                 );
-                if at >= start && (at < end || (at.group_id == end.group_id && end.object_id == 0))
-                {
+                if in_fetch_range(at, start, end) {
                     entries.push(StoredEntry {
                         chunk: chunk_index,
                         value,
@@ -249,6 +309,12 @@ impl StoredRecording {
         ensure!(bytes.len() <= limit, "archive object is too large");
         Ok(bytes)
     }
+}
+
+/// Whether a FETCH of `[start, end)` covers `at`; an `end` with object id 0
+/// takes its whole group (draft-14 §9.16.1).
+pub(crate) fn in_fetch_range(at: Location, start: Location, end: Location) -> bool {
+    at >= start && (at < end || (at.group_id == end.group_id && end.object_id == 0))
 }
 
 pub(crate) fn decode_object(entry: &Value, data: &Bytes) -> Result<Object> {
