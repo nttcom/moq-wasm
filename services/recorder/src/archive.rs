@@ -86,7 +86,7 @@ pub(crate) async fn record_broadcast(
     )
     .await?;
     let (mut video, mut audio): (Option<ArchiveTrack>, Option<ArchiveTrack>) = (None, None);
-    let mut events: Vec<ArchiveTrack> = Vec::new();
+    let mut timelines: Vec<ArchiveTrack> = Vec::new();
     let mut catalog_open = true;
     loop {
         tokio::select! {
@@ -103,7 +103,8 @@ pub(crate) async fn record_broadcast(
                     archive.write_event("catalog", event).await?;
                     let Some(document) = document else { continue };
                     if options.content == Content::Camera {
-                        subscribe_event_timelines(session, namespace, &document, &mut events).await?;
+                        let names = track_selection::event_timelines(&document).map(|track| track.name.as_str());
+                        subscribe_timelines(session, namespace, names, &mut timelines).await?;
                     }
                     let selection = track_selection::select_tracks(&document, choice(options))?;
                     let video_name = selection.as_ref().and_then(|s| s.video.as_ref()).map(|v| v.name.as_str());
@@ -120,6 +121,9 @@ pub(crate) async fn record_broadcast(
                             None => None,
                         };
                     }
+                    let recorded: Vec<&str> = video_name.into_iter().chain(audio_name).collect();
+                    let names = track_selection::media_timelines(&document, &recorded).map(|track| track.name.as_str());
+                    subscribe_timelines(session, namespace, names, &mut timelines).await?;
                 }
                 None => catalog_open = false,
             },
@@ -135,12 +139,12 @@ pub(crate) async fn record_broadcast(
                 },
                 None => audio = None,
             },
-            (index, item) = next_of(&mut events) => match item? {
-                Some(event) => archive.write_event(events[index].subscription.track_name(), event).await?,
-                None => drop(events.remove(index)),
+            (index, item) = next_of(&mut timelines) => match item? {
+                Some(event) => archive.write_event(timelines[index].subscription.track_name(), event).await?,
+                None => drop(timelines.remove(index)),
             },
         }
-        if !catalog_open && video.is_none() && audio.is_none() && events.is_empty() {
+        if !catalog_open && video.is_none() && audio.is_none() && timelines.is_empty() {
             break;
         }
     }
@@ -179,18 +183,17 @@ async fn next(track: &mut Option<ArchiveTrack>) -> Result<Option<Event>> {
     }
 }
 
-/// Subscribes each event timeline track that `catalog` lists and `events`
-/// lacks, from its current group. A track the relay does not know yet is
-/// tried again at the next catalog.
-async fn subscribe_event_timelines(
+/// Subscribes each of the event or media timeline tracks `names` that
+/// `timelines` lacks, from its current group. A track the relay does not
+/// know yet is tried again at the next catalog.
+async fn subscribe_timelines<'a>(
     session: &Session,
     namespace: &str,
-    catalog: &msf::Catalog,
-    events: &mut Vec<ArchiveTrack>,
+    names: impl Iterator<Item = &'a str>,
+    timelines: &mut Vec<ArchiveTrack>,
 ) -> Result<()> {
-    for timeline in track_selection::event_timelines(catalog) {
-        let name = timeline.name.as_str();
-        if events
+    for name in names {
+        if timelines
             .iter()
             .any(|track| track.subscription.track_name() == name)
         {
@@ -199,7 +202,7 @@ async fn subscribe_event_timelines(
         match ArchiveTrack::subscribe(session, namespace, name, FilterType::LargestObject, true)
             .await
         {
-            Ok(track) => events.push(track),
+            Ok(track) => timelines.push(track),
             Err(error)
                 if matches!(
                     error.downcast_ref::<moqt::RequestFailure>(),
@@ -212,7 +215,7 @@ async fn subscribe_event_timelines(
                 tracing::debug!(
                     track_namespace = namespace,
                     track_name = name,
-                    "event timeline track does not exist yet"
+                    "timeline track does not exist yet"
                 );
             }
             Err(error) => return Err(error),
@@ -467,7 +470,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn records_the_catalog_the_video_and_the_listed_chat_over_a_real_session() {
+    async fn records_the_catalog_the_video_its_timeline_and_the_listed_chat_over_a_real_session() {
         // Arrange
         let dir = scratch_dir();
         let path = dir.join("archive.jsonl");
@@ -483,12 +486,17 @@ mod tests {
         origin
             .ensure_track(namespace, "chat", 0, Retention::NewestOnly)
             .await;
+        origin
+            .ensure_track(namespace, "video_timeline", 0, Retention::NewestOnly)
+            .await;
         let mut video = msf::Track::new("video", KnownPackaging::Loc, true);
         video.role = Some(KnownTrackRole::Video.into());
         video.codec = Some("avc1.42C01E".into());
         let mut chat = msf::Track::new("chat", KnownPackaging::EventTimeline, true);
         chat.depends = Some(vec!["video".into()]);
-        let catalog = serde_json::to_vec(&Catalog::new(vec![video, chat], 0)).unwrap();
+        let mut timeline = msf::Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
+        timeline.depends = Some(vec!["video".into()]);
+        let catalog = serde_json::to_vec(&Catalog::new(vec![video, chat, timeline], 0)).unwrap();
         origin
             .write(
                 namespace,
@@ -502,6 +510,14 @@ mod tests {
                 namespace,
                 "chat",
                 OutgoingObject::plain(GroupBoundary::Next, Bytes::from_static(b"hello")),
+            )
+            .await
+            .unwrap();
+        origin
+            .write(
+                namespace,
+                "video_timeline",
+                OutgoingObject::plain(GroupBoundary::Next, Bytes::from_static(b"[[0,[1,0],1]]")),
             )
             .await
             .unwrap();
@@ -564,6 +580,9 @@ mod tests {
                 if entries
                     .iter()
                     .any(|entry| entry["track"] == "video" && entry["payload"].is_string())
+                    && entries.iter().any(|entry| {
+                        entry["track"] == "video_timeline" && entry["payload"].is_string()
+                    })
                     && entries
                         .iter()
                         .filter(|entry| entry["track"] == "chat" && entry["payload"].is_string())
@@ -605,6 +624,16 @@ mod tests {
                 .decode(stored["extensions"].as_str().unwrap())
                 .unwrap(),
             frame.extension_headers.encode().to_vec()
+        );
+        let timeline = entries
+            .iter()
+            .find(|entry| entry["track"] == "video_timeline" && entry["payload"].is_string())
+            .unwrap();
+        assert_eq!(
+            STANDARD
+                .decode(timeline["payload"].as_str().unwrap())
+                .unwrap(),
+            b"[[0,[1,0],1]]"
         );
         let final_data = tokio::fs::read_to_string(&path).await.unwrap();
         assert!(final_data.lines().any(|line| line == "{\"complete\":true}"));

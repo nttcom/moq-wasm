@@ -409,7 +409,11 @@ settings, so a request cannot point the recorder at another relay or bucket.
 screen-share and event archives. Camera archives also receive the event
 timeline tracks the catalog lists, a meeting's `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
-an otherwise empty room alive. Each track has immutable payload chunks and JSON
+an otherwise empty room alive. Every archive also receives the media timeline
+tracks (draft-ietf-moq-msf-01 §7) whose `depends` names its video or audio
+track, `video_timeline` for a `broadcast` camera, from their current group as
+the catalog: each object lists only the last 60 s, so the replay rebuilds the
+whole recording's timeline from all of them (see below). Each track has immutable payload chunks and JSON
 indexes, including canonical object fields, subgroup headers, FIN events and
 capture timestamps. Duplicate object identities retain the first payload;
 conflicting duplicates fail the recording.
