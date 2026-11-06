@@ -55,22 +55,22 @@ pub(crate) struct Args {
     pub(crate) namespace: String,
 
     /// Name of the LOC video track listed in the catalog; without it the
-    /// recorder picks one by `--max-video-height`
+    /// recorder picks the main source's by `--max-video-height`
     #[arg(long)]
     pub(crate) video_track: Option<String>,
 
-    /// Without `--video-track`, record the tallest video track at most this
-    /// high, or the shortest one when all are taller
+    /// Without `--video-track`, record the main source's tallest video track
+    /// at most this high, or the shortest one when all are taller
     #[arg(
         long,
         value_name = "PIXELS",
-        default_value_t = 480,
+        default_value_t = 720,
         conflicts_with = "video_track"
     )]
     pub(crate) max_video_height: u32,
 
     /// Name of the LOC audio track listed in the catalog; defaults to the
-    /// decodable audio track with the highest bitrate
+    /// main source's decodable audio track with the highest bitrate
     #[arg(long)]
     pub(crate) audio_track: Option<String>,
 
@@ -247,9 +247,9 @@ pub(crate) struct RoomArgs {
     #[arg(long, value_name = "SECONDS", default_value_t = 300)]
     pub(crate) empty_room_seconds: u64,
 
-    /// Record each participant's tallest video track at most this high, or
-    /// the shortest one when all are taller
-    #[arg(long, value_name = "PIXELS", default_value_t = 480)]
+    /// Record the tallest video track of each recorded source at most this
+    /// high, or the shortest one when all are taller
+    #[arg(long, value_name = "PIXELS", default_value_t = 720)]
     pub(crate) max_video_height: u32,
 
     /// Skip TLS certificate verification (INSECURE, local development only)

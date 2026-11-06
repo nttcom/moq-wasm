@@ -49,18 +49,19 @@ both tracks into one init segment and one fragment stream.
    `TrackReader` that yields the current group before the live objects, or
    only the live objects when the publisher has sent none yet.
    `track_selection::select_tracks` picks the LOC track named by
-   `--video-track` and `--audio-track`. Without a name it ranks the LOC
-   tracks by their catalog role and quality fields instead of guessing names
-   the publisher chose (a meeting participant lists `video`, `video_720p`,
-   `video_480p` and `audio`): among the video tracks whose codec can be recorded,
-   leaving out the screen share (below), the tallest at or below `--max-video-height` (480 by default; the shortest when
-   all are taller), then the lowest `bitrate`, and the audio track with the
-   highest `bitrate` among those that can be decoded; remaining ties go to
-   the track listed first. The video default is a light rendition because a
-   meeting participant encodes a rendition only while it has a subscriber
-   and the recorder's SUBSCRIBE counts, so a rendition no viewer watches is
-   encoded for the recording alone. Audio takes the highest bitrate, which
-   viewers start on as well, and Opus is cheap to encode. The video codec
+   `--video-track` and `--audio-track`. Without a name it takes the tracks
+   of one source (see "Sources") by their catalog role and quality fields
+   instead of guessing names the publisher chose: among the source's video
+   tracks whose codec can be recorded, the tallest at or below
+   `--max-video-height` (720 by default; the shortest when all are taller),
+   then the lowest `bitrate`, and the source's audio track with the highest
+   `bitrate` among those that can be decoded; remaining ties go to the track
+   listed first. A meeting participant encodes a rendition only while it has
+   a subscriber, and the recorder's SUBSCRIBE counts, so a 720p rendition no
+   viewer watches is encoded for the recording alone. The limit is the same
+   for every source, and 720 keeps a shared screen's text legible. Audio
+   takes the highest bitrate, which viewers start on as well, and Opus is
+   cheap to encode. The video codec
    comes from the catalog's `codec`, a WebCodecs codec string naming H.264, VP8, VP9 or AV1,
    the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
@@ -103,6 +104,37 @@ both tracks into one init segment and one fragment stream.
    streams, so the recorder needs no session-event handling of its own. A
    media track that ends alone only stops that track (see "Tracks that come
    and go").
+
+## Sources
+A broadcast can carry several sources: a meeting participant publishes the
+camera with its renditions and the microphone, and the screen share with
+its renditions. The recorder tells them apart by the catalog's
+`renderGroup` (draft-ietf-moq-msf-01 §5.2.11), not by track names: a source
+is the LOC video and audio tracks of one `renderGroup`, and the tracks
+without one form one source. `broadcast` gives a source's renditions one
+`altGroup` (§5.2.12), so the video tracks of a source are the renditions
+the recorder chooses from. A `renderGroup` number means nothing beyond its
+catalog: `broadcast` numbers the sources anew in each catalog, and the
+camera's number changes when a screen share starts. So the source is found
+again in every catalog (`track_selection::SourceChoice`):
+
+- The main source (`Content::Camera`) is the one an event timeline applies
+  to: the source of the first track an event timeline lists in `depends`
+  (§8.2). A meeting's chat applies to the camera and the microphone. While
+  the event timelines apply to no listed track, as for a participant with
+  the camera and the microphone off, there is no main source; a catalog
+  without an event timeline takes its first source.
+- Another source (`Content::ScreenShare`) is the first one listed besides
+  the main one: a meeting participant's screen share.
+- A recorded track stays while the catalog lists it in a source of its
+  recording's kind (`track_selection::keeps`), so a track whose source turns
+  into the main one leaves the screen share recording.
+
+Neither MSF nor the catalog says which source is a camera and which a
+screen share, and no field of our own was added for it (see 「録画を
+`LivePlayer` で再生する」 in the browser SDK's architecture). The room
+recording still keeps the two apart, for the composite's focus and the
+archive layout, and the event timeline's `depends` stands in for it.
 
 ## Tracks that come and go
 A publisher's first catalog often lacks the audio a later one lists:
@@ -310,17 +342,16 @@ nothing. Otherwise it records the room as `room_recording::record`:
 - It opens its own relay session and sends SUBSCRIBE_NAMESPACE for the
   prefix. Each PUBLISH_NAMESPACE under it, the participants already there and
   those who join later, starts `record_broadcast` for that namespace with the
-  requested layout. The tracks are picked from the catalog as without
-  `--video-track` (`--max-video-height`, 480 by default), so a participant's
-  browser encodes at most one extra light rendition for the recorder.
+  requested layout. The tracks of the main source are picked from the
+  catalog as without `--video-track` (`--max-video-height`, 720 by default),
+  so a participant's browser encodes at most one extra rendition per source
+  for the recorder.
 - A second `record_broadcast` for the same namespace, with its own catalog
-  subscription, records the screen share alone (`Content::ScreenShare`) for
-  the composite. A meeting lists it as `video` tracks named `screenshare…`;
-  the recorder takes the tallest at or below 720 (text needs more pixels
-  than a face) and leaves those tracks out of the camera choice. It waits
-  for a share the way the camera recording waits for its tracks, follows a
-  share that stops and starts again into the same file, and records nothing
-  for a participant who never shares.
+  subscription, records another source (`Content::ScreenShare`, see
+  "Sources"), the screen share, for the composite, with its audio when it
+  has one. It waits for a share the way the camera recording waits for its
+  tracks, follows a share that stops and starts again into the same file,
+  and records nothing for a participant who never shares.
 - A forwarded PUBLISH is refused with PUBLISH_ERROR UNINTERESTED. Accepting
   it would deliver every track of the namespace, every rendition included.
 - A participant who leaves ends their tracks with PUBLISH_DONE, which ends
@@ -375,7 +406,8 @@ settings, so a request cannot point the recorder at another relay or bucket.
 ## MoQ archives and replay
 
 `format: "moq"` writes a room manifest that refers to participant camera,
-screen-share and event archives. Camera archives also receive `chat`; the
+screen-share and event archives. Camera archives also receive the event
+timeline tracks the catalog lists, a meeting's `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
 an otherwise empty room alive. Each track has immutable payload chunks and JSON
 indexes, including canonical object fields, subgroup headers, FIN events and
@@ -535,8 +567,15 @@ the recorder started with.
 - Video outside H.264, VP8, VP9 and AV1 in the catalog a recording starts
   from ends the recorder with an error before anything is recorded. Listed
   later, it is logged and the recording goes on without it.
-- A screen share is told from a camera only by the `screenshare` prefix of
-  its track name, the meeting's convention; MSF has no role for it.
+- A screen share is told from the camera only by the chat's `depends` (see
+  "Sources"). `broadcast` lists the default `video` and `audio` there, not
+  their renditions, so a catalog that lists a camera rendition before
+  `video` while the microphone is off shows the camera as another source
+  until the next catalog: the screen share recording subscribes to the
+  rendition and drops it again, and an MP4 recording can keep an empty
+  screen share file from it.
+- Of more than two sources, the screen share recording takes only the first
+  listed besides the main one.
 - A room recording that fails while `composite` was requested is not
   composited (`skipped`).
 - A composite job that dies stays `composing`: unlike the recording job it

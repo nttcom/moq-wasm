@@ -1,3 +1,5 @@
+use std::task::{Context, Poll};
+
 use anyhow::Result;
 use moqt::{
     Session, Subscription,
@@ -137,6 +139,10 @@ impl ArchiveTrack {
 
     pub(crate) async fn next(&mut self) -> Result<Option<Event>> {
         self.receiver.recv().await.transpose()
+    }
+
+    pub(crate) fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<Event>>> {
+        self.receiver.poll_recv(cx).map(Option::transpose)
     }
 }
 
