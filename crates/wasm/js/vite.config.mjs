@@ -25,7 +25,11 @@ export default defineConfig({
     assetsInlineLimit: 0,
     modulePreload: false,
     rolldownOptions: {
-      input: { 'core/index': 'src/core/index.ts', 'media/index': 'src/media/index.ts' },
+      input: {
+        'core/index': 'src/core/index.ts',
+        'media/index': 'src/media/index.ts',
+        'recording/index': 'src/recording/index.ts'
+      },
       preserveEntrySignatures: 'strict',
       output: { entryFileNames: '[name].js' }
     }
