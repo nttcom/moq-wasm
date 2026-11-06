@@ -2,6 +2,7 @@ import type { MoqSubscription, PublishDone } from '../../core/session'
 import {
   type MediaKind,
   type ObjectHandler,
+  type PlayedTrack,
   type TrackContext,
   observedObjectHandler,
   readGroups,
@@ -16,11 +17,9 @@ import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
 /// so audio takes the downlink ahead of video.
 const SUBSCRIBER_PRIORITY: Record<MediaKind, number> = { video: 128, audio: 0 }
 
-export type TrackSubscription = {
+export type TrackSubscription = PlayedTrack & {
   id: bigint
   handle: MoqSubscription
-  name: string
-  track: MediaCatalogTrack
   /// Set once the player let go of it, so objects still in flight are dropped.
   forgotten: boolean
 }

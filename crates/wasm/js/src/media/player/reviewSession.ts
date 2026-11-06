@@ -2,7 +2,7 @@ import { type GroupMark, type ReviewFrame, sortReviewFrames } from './rewind'
 import { type FetchFailure, fetchFrames, isFetchFailure } from './reviewFetch'
 import type { GroupRange } from './audioGroups'
 import type { SeekTimeline } from './seekTimeline'
-import { type MediaKind, type TrackContext, sessionOf } from './trackContext'
+import { type MediaKind, type PlayedTrack, type TrackContext, sessionOf } from './trackContext'
 import type { TrackSubscriptions } from './trackSubscriptions'
 import { getErrorMessage } from '../internal/status'
 
@@ -23,6 +23,7 @@ type ReviewWindowFailure = FetchFailure & { start: bigint }
 export type ReviewFetchWindow = { video?: bigint; audio?: bigint }
 
 export type ReviewHost = {
+  playedTrack(kind: MediaKind): PlayedTrack | undefined
   playWindow(window: ReviewWindow, session: ReviewSession): Promise<boolean>
   windowStarted(): void
   fastForwardDrained(): boolean
@@ -144,13 +145,13 @@ export class ReviewSession {
 
   private async fetchWindow(start: bigint): Promise<ReviewWindow | ReviewWindowFailure | undefined> {
     const end = await this.awaitClosedWindowEnd(start)
-    const subscription = this.subscriptions.get('video')
-    if (end === undefined || !subscription) {
+    const video = this.host.playedTrack('video')
+    if (end === undefined || !video) {
       return undefined
     }
-    const audioName = this.subscriptions.get('audio')?.name
+    const audioName = this.host.playedTrack('audio')?.name
     const [frames, audio] = await Promise.all([
-      fetchFrames(this.context, subscription.name, start, end, this.isCurrent),
+      fetchFrames(this.context, video.name, start, end, this.isCurrent),
       audioName ? this.fetchAudio(audioName, start, end) : Promise.resolve([])
     ])
     if (!frames || !audio) {
@@ -208,7 +209,7 @@ export class ReviewSession {
     const byCapture =
       fromMicros !== undefined &&
       untilMicros !== undefined &&
-      !this.timeline.audioSharesVideoIds(this.subscriptions.get('video')?.name, trackName)
+      !this.timeline.audioSharesVideoIds(this.host.playedTrack('video')?.name, trackName)
     const movedOn = () =>
       byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end
     const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
