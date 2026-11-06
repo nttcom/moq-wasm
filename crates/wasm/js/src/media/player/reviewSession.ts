@@ -81,10 +81,7 @@ export class ReviewSession {
       const upcoming = this.fetchWindow(pending.nextGroup)
       this.behindSeconds = this.timeline.groups.secondsBehindLive(pending.start)
       this.host.windowStarted()
-      const played = await this.host.playWindow(
-        { ...pending, frames: sortReviewFrames(pending.frames), audio: this.unplayedAudio(pending.audio) },
-        this
-      )
+      const played = await this.host.playWindow({ ...pending, audio: this.unplayedAudio(pending.audio) }, this)
       pending = played ? await upcoming : undefined
     }
   }
@@ -165,13 +162,20 @@ export class ReviewSession {
     if (frames.length === 0) {
       return { start, evicted: true, description: 'no cached objects' }
     }
+    const sorted = sortReviewFrames(frames)
+    const [first] = sorted
+    // The caches evict object by object, so the oldest group the media timeline
+    // lists can have lost its keyframe while its later objects remain.
+    if (first.objectId !== 0n) {
+      return { start, evicted: true, description: `group ${first.groupId} starts at object ${first.objectId}` }
+    }
     if (isFetchFailure(audio)) {
       this.context.log('error', `fetch ${audioName}: ${audio.description}`)
     }
     const audioFrames = isFetchFailure(audio) ? [] : audio
     this.context.log('info', `fetched ${frames.length} objects from group ${start}`)
     this.fetchWindows.push({ video: frames[0]?.requestId, audio: audioFrames[0]?.requestId })
-    return { start, nextGroup: end + 1n, frames, audio: sortReviewFrames(audioFrames) }
+    return { start, nextGroup: end + 1n, frames: sorted, audio: sortReviewFrames(audioFrames) }
   }
 
   private async fetchAudio(
