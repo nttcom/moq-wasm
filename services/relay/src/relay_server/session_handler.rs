@@ -29,7 +29,13 @@ impl SessionIntake {
         let handshake = match connecting.await {
             Ok(handshake) => handshake,
             Err(error) => {
-                tracing::warn!(%error, "failed to establish session");
+                tracing::warn!(
+                    %error,
+                    session_id,
+                    session_peer = self.accepted_peer.kind(),
+                    relay_hostname = relay_hostname(),
+                    "failed to establish session"
+                );
                 return;
             }
         };
