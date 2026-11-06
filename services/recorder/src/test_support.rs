@@ -226,6 +226,51 @@ pub(crate) fn stored_object(
     }
 }
 
+/// A camera archive as `stored_recording` writes it: one catalog object
+/// listing `video` and `video_timeline`, one video group per second from
+/// group 10 captured from 1_700_000_000 s, and a timeline object per group
+/// listing up to the last two groups.
+pub(crate) async fn recorded_camera() -> StoredRecording {
+    use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
+    use msf::{Catalog, KnownPackaging, KnownTrackRole, MediaTimelineRecord, Track};
+
+    let mut video = Track::new("video", KnownPackaging::Loc, true);
+    video.role = Some(KnownTrackRole::Video.into());
+    video.codec = Some("avc1.42C01E".to_string());
+    video.render_group = Some(1);
+    video.target_latency = Some(500);
+    let mut timeline = Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
+    timeline.depends = Some(vec!["video".to_string(), "video_480p".to_string()]);
+    let catalog = serde_json::to_vec(&Catalog::new(vec![video, timeline], 1)).unwrap();
+    let frames = (10..13)
+        .map(|group| {
+            let mut object = stored_object(group, 0, "frame");
+            let capture_us = (1_700_000_000 + group - 10) * 1_000_000;
+            object.extension_headers =
+                to_extension_headers(&[LocExtension::varint(TIMESTAMP_ID, capture_us)]);
+            object
+        })
+        .collect();
+    let timeline_objects = (10..13)
+        .map(|group| {
+            let records: Vec<MediaTimelineRecord> = (group.max(11) - 1..=group)
+                .map(|listed| {
+                    let elapsed_ms = (listed - 10) * 1000;
+                    MediaTimelineRecord::new(elapsed_ms, listed, 0, 1_700_000_000_000 + elapsed_ms)
+                })
+                .collect();
+            stored_object(group, 0, serde_json::to_vec(&records).unwrap())
+        })
+        .collect();
+    let (_store, recording) = stored_recording(vec![
+        ("catalog", vec![stored_object(0, 0, catalog)]),
+        ("video", frames),
+        ("video_timeline", timeline_objects),
+    ])
+    .await;
+    recording
+}
+
 pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";
 
 /// A recording API over an in-memory store, whose jobs exit at once, that
