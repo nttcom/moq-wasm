@@ -1,53 +1,54 @@
 import { expect, test } from '@playwright/test'
-import { eventRecords, isKeyframe, keyframeDetector, mergeEvents, chunkIndexAt, type IndexedChunk } from './timeline'
+import { captionAt, eventRecords, mergeEvents } from './timeline'
 
-test('a long recording selects the seek chunk without retaining preceding payloads', () => {
+const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
+
+test('a chat record is the participant whose broadcast carries it and a transcript record names its speaker', () => {
   // Arrange
-  const chunks: IndexedChunk[] = Array.from({ length: 1000 }, (_, index) => ({
-    first: { group: String(index), object: '0' },
-    last: { group: String(index), object: '99' },
-    capture_start_us: String(index * 10_000_000),
-    capture_end_us: String((index + 1) * 10_000_000 - 1),
-    data_size: String(4 * 1024 * 1024)
-  }))
-  // Act / Assert
-  expect(chunkIndexAt(chunks, 9_995_000_000)).toBe(999)
-  expect(chunkIndexAt(chunks, -1)).toBe(0)
-  expect(chunkIndexAt(chunks, 50_000_000)).toBe(5)
+  const chat = encode([{ t: 100, data: { text: 'hello' } }])
+  const transcript = encode([{ t: 200, data: { speaker: 'bob', text: 'hi' } }])
+
+  // Act
+  const events = [...eventRecords(chat, 'chat', 'alice'), ...eventRecords(transcript, 'transcript', 'alice')]
+
+  // Assert
+  expect(events).toEqual([
+    { at: 100_000, kind: 'chat', speaker: 'alice', text: 'hello' },
+    { at: 200_000, kind: 'transcript', speaker: 'bob', text: 'hi' }
+  ])
+  expect(() => eventRecords(encode([{ data: { text: 'no clock' } }]), 'chat', 'alice')).toThrow()
 })
 
-test('transcript snapshots deduplicate and late corrections retain utterance time', () => {
+test('repeated records merge and a later transcript correction keeps the utterance time', () => {
   // Arrange
-  const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
-  const old = eventRecords(
-    encode([{ t: 100, data: { speaker: 'alice', text: 'old' } }]),
-    'anon/r/bots/transcriber',
-    'transcript'
-  )
+  const old = eventRecords(encode([{ t: 100, data: { speaker: 'alice', text: 'old' } }]), 'transcript', 'alice')
   const corrected = eventRecords(
     encode([{ t: 100, data: { speaker: 'alice', text: 'corrected' } }]),
-    'anon/r/bots/transcriber',
-    'transcript'
+    'transcript',
+    'alice'
   )
+  const chat = eventRecords(encode([{ t: 50, data: { text: 'first' } }]), 'chat', 'alice')
+
   // Act
-  const events = mergeEvents([...old, ...corrected, ...corrected])
+  const events = mergeEvents([...old, ...corrected, ...corrected, ...chat, ...chat])
+
   // Assert
-  expect(events).toHaveLength(1)
-  expect(events[0]).toMatchObject({ at: 100_000, text: 'corrected', speaker: 'alice' })
-  expect(() => eventRecords(encode([{ data: { text: 'no clock' } }]), 'alice', 'chat')).toThrow()
+  expect(events.map(({ kind, at, text }) => [kind, at, text])).toEqual([
+    ['chat', 50_000, 'first'],
+    ['transcript', 100_000, 'corrected']
+  ])
 })
 
-test('access points come from encoded bytes rather than object numbering', () => {
+test('a caption shows its speaker utterance for four seconds from its time', () => {
   // Arrange
-  const h264Key = new Uint8Array([0, 0, 0, 1, 0x65, 0x88])
-  const h264Delta = new Uint8Array([0, 0, 1, 0x41, 0x88])
+  const events = mergeEvents([
+    ...eventRecords(encode([{ t: 1_000, data: { speaker: 'alice', text: 'hi' } }]), 'transcript', 'alice'),
+    ...eventRecords(encode([{ t: 2_000, data: { speaker: 'bob', text: 'hello' } }]), 'transcript', 'bob')
+  ])
+
   // Act / Assert
-  expect(isKeyframe('avc1.42C01E', h264Key)).toBe(true)
-  expect(isKeyframe('avc1.42C01E', h264Delta)).toBe(false)
-  expect(isKeyframe('vp8', new Uint8Array([0, 0, 0, 0x9d, 1, 0x2a]))).toBe(true)
-  expect(isKeyframe('vp8', new Uint8Array([1, 0, 0, 0x9d, 1, 0x2a]))).toBe(false)
-  const av1 = keyframeDetector('av01.0.05M.08')
-  expect(av1(new Uint8Array([0x0a, 1, 0, 0x32, 1, 0]))).toBe(true)
-  expect(av1(new Uint8Array([0x32, 1, 0x20]))).toBe(false)
-  expect(() => av1(new Uint8Array([0x32, 4, 0]))).toThrow('Truncated')
+  expect(captionAt(events, 'alice', 999_000)).toBeUndefined()
+  expect(captionAt(events, 'alice', 4_999_000)?.text).toBe('hi')
+  expect(captionAt(events, 'alice', 5_000_000)).toBeUndefined()
+  expect(captionAt(events, 'bob', 2_000_000)?.text).toBe('hello')
 })
