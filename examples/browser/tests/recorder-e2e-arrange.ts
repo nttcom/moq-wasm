@@ -90,6 +90,11 @@ export const test = base.extend<{ recorderServe: RecorderServe }>({
   }
 })
 
+export function recordingPlayerPath(recorderUrl: string, id: string): string {
+  const params = new URLSearchParams({ recorder: recorderUrl, relayUrl: liveViewerE2EConfig.moqtUrl, id })
+  return `/moq-wasm/examples/recording-player/?${params}`
+}
+
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
 
 /// `recorder serve` with a directory store; it runs every recording and composite as a child process.
