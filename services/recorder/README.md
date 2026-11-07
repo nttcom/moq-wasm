@@ -105,13 +105,15 @@ and FETCH the media. The recorder reads and checks the stored chunks without
 generating an MP4. The namespace stays available while at least one response
 is open and closes when the last one closes. Open the next response after
 `renew_after_seconds`, before Cloud Run's request timeout ends the current one,
-and close the previous one once no FETCH request is in flight. Replay
+and close the previous one a minute later, once FETCHes sent to it have ended;
+`openRecording` in `moq-wasm/recording` does both. Replay
 publications belong to one API process; keep that instance running while
 serving them.
 
-`examples/recording-player/` in the browser examples cannot play this replay
-yet; recordings are to play in `LivePlayer` instead. The meeting's Activities
-menu offers **Record meeting with chat and transcript**.
+`examples/recording-player/` in the browser examples plays this replay, every
+participant in a `LivePlayer` of one `PlaybackGroup`, with the chat and the
+transcript beside them. The meeting's Activities menu offers **Record meeting
+with chat and transcript**.
 
 Anonymous rooms are public. Private rooms require `Authorization: Bearer <JWT>`
 and `--auth-vts-url <VTS verify endpoint>` (`AUTH_VTS_URL`): `subscribe` grants

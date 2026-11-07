@@ -47,6 +47,9 @@ export type MediaCatalogTrack = {
   name: string
   label: string
   packaging?: string
+  /// draft-ietf-moq-msf-01 §5.2.5: the type and structure of the records of an
+  /// event timeline (§8).
+  eventType?: string
   role?: string
   codec?: string
   altGroup?: number
@@ -142,6 +145,7 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       name,
       label: asString(track.label) ?? name,
       packaging: asString(track.packaging),
+      eventType: asString(track.eventType),
       role: trackRole,
       codec: asString(track.codec),
       altGroup: asNumber(track.altGroup),
