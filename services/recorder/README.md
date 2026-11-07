@@ -109,9 +109,10 @@ and close the previous one once no FETCH request is in flight. Replay
 publications belong to one API process; keep that instance running while
 serving them.
 
-`examples/recording-player/` in the browser examples cannot play this replay
-yet; recordings are to play in `LivePlayer` instead. The meeting's Activities
-menu offers **Record meeting with chat and transcript**.
+`examples/recording-player/` in the browser examples plays this replay, every
+participant in a `LivePlayer` of one `PlaybackGroup`, with the chat and the
+transcript beside them. The meeting's Activities menu offers **Record meeting
+with chat and transcript**.
 
 Anonymous rooms are public. Private rooms require `Authorization: Bearer <JWT>`
 and `--auth-vts-url <VTS verify endpoint>` (`AUTH_VTS_URL`): `subscribe` grants

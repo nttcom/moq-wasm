@@ -544,9 +544,13 @@ without the player closing it. The number of active publications per instance
 is capped by `--max-recordings`; recording jobs remain independent and their
 stored state stays shared.
 
-`examples/recording-player` read the track list and chunk ranges from the
-answer this replaced, and cannot play a replay until it moves to `LivePlayer`
-(「録画を `LivePlayer` で再生する」, step 9).
+`examples/recording-player` plays a replay with the SDK alone: `openRecording`
+holds the answer and gives the prefix, SUBSCRIBE_NAMESPACE on the prefix finds
+each participant's camera and screen share namespaces, and each plays in a
+`LivePlayer`, all in one `PlaybackGroup` on one position. The page puts a
+participant's sessions in one tile, showing the one whose range covers the
+position, and reads the chat and transcript event timelines each catalog lists
+with FETCH (docs/architecture/wasm/browser-sdk.md, 「録画を `LivePlayer` で再生する」).
 
 The recorder subscribes through the relay rather than reading the relay's disk
 cache, which is optional, drops data under pressure and loses its index on
