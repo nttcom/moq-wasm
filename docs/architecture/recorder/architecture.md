@@ -508,7 +508,10 @@ cancellation; the writer already rejected conflicting duplicates. Data and
 index checksums are verified before FETCH_OK so damaged data is rejected with a
 control response rather than an unreadable stream reset. This reads selected
 payload chunks twice, once for validation and once for sending. Four FETCH
-requests can run at once per replay.
+requests run at once per replay, which bounds the chunks held in memory; a
+later one waits for a slot before its FETCH_OK instead of failing, since a
+player of a meeting fetches every participant's video and audio, and the next
+window of each while the current one plays.
 
 A SUBSCRIBE with the Largest Object filter is answered with the track's last
 object and delivers nothing; other filters are refused. A Joining Fetch of such
