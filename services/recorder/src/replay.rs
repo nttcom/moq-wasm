@@ -16,7 +16,7 @@ use moqt::{
 };
 use msf::CATALOG_TRACK_NAME;
 use tokio::{
-    sync::mpsc,
+    sync::{Semaphore, mpsc},
     task::{AbortHandle, JoinError, JoinHandle, JoinSet},
 };
 
@@ -29,6 +29,8 @@ use crate::{
 /// Shorter than the Cloud Run request timeout (60 minutes, its maximum), so a
 /// client opens the next answer before Cloud Run ends the current one.
 pub(crate) const RENEW_AFTER: Duration = Duration::from_secs(45 * 60);
+/// Each FETCH running holds the chunks it reads in memory; one beyond this
+/// many waits for a slot before its FETCH_OK.
 const MAX_FETCHES: usize = 4;
 
 /// Serves immutable recorded tracks while a [`ReplayLease`] exists.
@@ -179,6 +181,7 @@ async fn serve(
     mut lease_receiver: mpsc::Receiver<()>,
 ) -> Result<()> {
     let mut fetches = JoinSet::new();
+    let slots = Arc::new(Semaphore::new(MAX_FETCHES));
     let mut active: HashMap<u64, AbortHandle> = HashMap::new();
     // The track of each SUBSCRIBE a Joining Fetch may join, by request id.
     let mut subscriptions: HashMap<u64, ReplayTrack> = HashMap::new();
@@ -194,15 +197,6 @@ async fn serve(
         };
         match event {
             SessionEvent::Fetch(handler) => {
-                if active.len() >= MAX_FETCHES {
-                    handler
-                        .error(
-                            RequestErrorCode::InternalError,
-                            "too many recording fetches".into(),
-                        )
-                        .await?;
-                    continue;
-                }
                 let (track, start, end) = match fetch_target(&tracks, &subscriptions, &handler) {
                     Ok(target) => target,
                     Err((code, reason)) => {
@@ -213,7 +207,10 @@ async fn serve(
                 let request_id = handler.request_id;
                 let session = session.clone();
                 let tracks = tracks.clone();
+                let slots = slots.clone();
                 let task = fetches.spawn(async move {
+                    // The semaphore is never closed.
+                    let _slot = slots.acquire_owned().await.expect("FETCH slots closed");
                     (
                         request_id,
                         send_fetch(&session, &tracks, track, handler, start, end).await,
@@ -487,7 +484,7 @@ mod tests {
     use object_store::{ObjectStoreExt, PutPayload};
 
     #[tokio::test]
-    async fn a_panicked_fetch_frees_its_slot() {
+    async fn a_panicked_fetch_leaves_the_active_set() {
         // Arrange
         let mut fetches = JoinSet::new();
         let mut active = HashMap::new();
@@ -505,7 +502,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_failed_fetch_frees_its_slot() {
+    async fn a_failed_fetch_leaves_the_active_set() {
         // Arrange
         let mut fetches = JoinSet::new();
         let mut active = HashMap::new();
@@ -701,6 +698,88 @@ mod tests {
 
         // Assert: offset 0 takes the last group; offset 2 starts at group 5, two ids before it, though group 6 was never published
         assert_eq!(joined, [vec!["g7a", "g7b"], vec!["g5", "g7a", "g7b"]]);
+        pair.client.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_fetch_beyond_the_limit_waits_for_a_slot() {
+        // Arrange: each FETCH sends an object larger than the client's stream
+        // window, so it runs until its stream is read
+        let object = stored_object(0, 0, Bytes::from(vec![8; 4 * 1024 * 1024]));
+        let (_store, recording) = stored_recording(vec![("video", vec![object.clone()])]).await;
+        let namespace = recording.tracks[0].namespace.clone();
+        let tracks = Arc::new(ReplayTracks::open(recording).await.unwrap());
+        let pair = connected_sessions().await;
+        let server = pair.server.clone();
+        let (_lease_sender, lease_receiver) = mpsc::channel(1);
+        tokio::spawn(async move { serve(&server, tracks, lease_receiver).await });
+        let start = Location {
+            group_id: 0,
+            object_id: 0,
+        };
+        let end = Location {
+            group_id: 1,
+            object_id: 0,
+        };
+        let fetch = |mut subscriber: moqt::Subscriber| {
+            let namespace = namespace.clone();
+            async move {
+                let handle = subscriber
+                    .fetch(
+                        namespace,
+                        "video".into(),
+                        start,
+                        end,
+                        FetchOption::default(),
+                    )
+                    .await?;
+                let mut received = subscriber.accept_fetch_receiver(&handle).await?;
+                let mut objects = Vec::new();
+                while let Fetch::Object(object) = received.receive().await? {
+                    objects.push(object);
+                }
+                anyhow::Ok(objects)
+            }
+        };
+        let mut running = Vec::new();
+        for _ in 0..MAX_FETCHES {
+            let mut subscriber = pair.client.session.subscriber();
+            let handle = tokio::time::timeout(
+                Duration::from_secs(5),
+                subscriber.fetch(
+                    namespace.clone(),
+                    "video".into(),
+                    start,
+                    end,
+                    FetchOption::default(),
+                ),
+            )
+            .await
+            .expect("FETCH_OK within the limit")
+            .unwrap();
+            running.push((subscriber, handle));
+        }
+
+        // Act
+        let waiting = tokio::spawn(fetch(pair.client.session.subscriber()));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let waited = !waiting.is_finished();
+        for (mut subscriber, handle) in running {
+            let mut received = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+            while let Fetch::Object(_) = received.receive().await.unwrap() {}
+        }
+        let objects = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("the waiting FETCH is answered once a slot frees")
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert!(
+            waited,
+            "the FETCH beyond the limit waits while every slot is taken"
+        );
+        assert_eq!(objects, [object]);
         pair.client.close().await;
     }
 
