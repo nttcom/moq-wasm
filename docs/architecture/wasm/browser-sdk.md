@@ -317,7 +317,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 8 を実装した。
+ステータス: 承認済み。移行の手順 1 から 9 をすべて実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -464,6 +464,11 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 で参加者ごとの namespace を知り、ソースごとに `LivePlayer` を作って1つの `PlaybackGroup`
 に入れる。namespace の参加者名で player をタイルにまとめ、その時刻に範囲内の player を
 映す。チャットと字幕は、catalog の event timeline track をアプリが FETCH して並べる。
+`examples/browser/examples/recording-player` がこの形で再生する。event timeline は
+`eventType`（§5.2.5）で見分け、`MediaCatalogTrack` がそれを持つ。track の終わりは
+SUBSCRIBE_OK の Largest Location で知り、そこまでを1つの FETCH で読む。relay は購読して
+いない track の TRACK_STATUS に答えないので、TRACK_STATUS は使えない。player が catalog を
+購読し続けるので、ページは player を始める前に catalog を読む。
 ライブの会議で `PlaybackGroup` を使えるのは、meeting の再生を `LivePlayer` に移した後
 （「会議の再生を `LivePlayer` に載せる」の手順 6）になる。
 
