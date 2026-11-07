@@ -64,7 +64,9 @@ pub(crate) async fn build_tracks(recording: &StoredRecording) -> Result<Vec<Buil
 }
 
 /// The tracks `build_tracks` builds for one namespace; none when it recorded
-/// no catalog. `transcript` is left out when the catalog lists no audio track.
+/// no catalog, or no media its catalog lists, such as the screen share of a
+/// participant who never shared one. `transcript` is left out when the catalog
+/// lists no audio track.
 async fn namespace_tracks(
     recording: &StoredRecording,
     namespace: &str,
@@ -89,6 +91,13 @@ async fn namespace_tracks(
         .filter(|name| *name != CATALOG_TRACK_NAME)
         .collect();
     let mut listed = listed_tracks(&catalogs, &names);
+    if !listed
+        .tracks
+        .iter()
+        .any(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
+    {
+        return Ok(Vec::new());
+    }
     let stored_track = |name: &str| stored.iter().find(|track| track.name == name);
     let mut built = Vec::new();
     let mut first_records_ms = Vec::new();
@@ -365,7 +374,9 @@ fn duration_ms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{recorded_camera, recorded_meeting, transcript_record};
+    use crate::test_support::{
+        recorded_camera, recorded_meeting, stored_object, stored_recording, transcript_record,
+    };
     use serde_json::json;
 
     fn track(name: &str, packaging: KnownPackaging) -> Track {
@@ -520,6 +531,23 @@ mod tests {
                 .iter()
                 .all(|track| track.object.location == BUILT_LOCATION)
         );
+    }
+
+    #[tokio::test]
+    async fn builds_nothing_for_a_namespace_that_recorded_its_catalog_alone() {
+        // Arrange: a screen share archive of a participant who never shared their screen
+        let catalog = Catalog::new(vec![track("screenshare", KnownPackaging::Loc)], 1);
+        let (_store, recording) = stored_recording(vec![(
+            CATALOG_TRACK_NAME,
+            vec![stored_object(0, 0, serde_json::to_vec(&catalog).unwrap())],
+        )])
+        .await;
+
+        // Act
+        let built = build_tracks(&recording).await.unwrap();
+
+        // Assert
+        assert!(built.is_empty());
     }
 
     #[tokio::test]

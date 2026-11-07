@@ -433,8 +433,9 @@ member's namespace elements after the room, a meeting participant's name,
 member's archives of that content, one per time they joined. With every
 element rather than the last, and the last two always content and index, two
 members never share one. The transcriber's namespace is not announced (see
-below). The
-answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
+below), nor one that recorded no media its catalog lists, such as the screen
+share of a participant who never shared their screen: it has nothing to play.
+The answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
 line with `namespace_prefix` (`<room>/recordings/<id>`) and
 `renew_after_seconds`, then an empty line every 15 s. A player finds the
 namespaces with SUBSCRIBE_NAMESPACE and reads each as it reads a live

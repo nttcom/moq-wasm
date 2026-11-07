@@ -14,6 +14,7 @@ use moqt::{
     object::{ContentExists, GroupOrder, Location, Object},
     subscribe::FilterType,
 };
+use msf::CATALOG_TRACK_NAME;
 use tokio::{
     sync::mpsc,
     task::{AbortHandle, JoinError, JoinHandle, JoinSet},
@@ -69,7 +70,7 @@ impl ReplayTask {
             .source_namespace;
         let connection =
             RelayConnection::connect_service(relay, verify_certificate, namespace, token).await?;
-        for namespace in tracks.recording.namespaces() {
+        for namespace in tracks.namespaces() {
             if let Err(error) = connection
                 .session
                 .publisher()
@@ -129,6 +130,14 @@ impl ReplayTracks {
             .map(Arc::new)
             .collect();
         Ok(Self { recording, built })
+    }
+
+    /// The namespaces a catalog was built for; the others have nothing to play.
+    fn namespaces(&self) -> impl Iterator<Item = &str> {
+        self.built
+            .iter()
+            .filter(|track| track.name == CATALOG_TRACK_NAME)
+            .map(|track| track.namespace.as_str())
     }
 
     /// A built track hides the stored one of its name.
