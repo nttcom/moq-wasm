@@ -3,11 +3,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use auth_token::{Claims, sign_token};
 
-/// How long a token is good for: the relay's longest. When it runs out the
-/// relay closes the session with EXPIRED_AUTH_TOKEN, which ends the broadcast
-/// for every viewer until the client reconnects with a new token from its
-/// provider, so the lifetime is as long as the relay allows.
-pub(crate) const TOKEN_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+/// How long a token is good for, which bounds one use of the demo: nobody
+/// refreshes a token, so when it runs out the relay closes the session with
+/// EXPIRED_AUTH_TOKEN. One hour matches the time limit of a language's
+/// translation.
+pub(crate) const TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 /// The app the translator serves: the broadcasts live under its id and every
 /// session presents a token signed with its secret, the translator's own
