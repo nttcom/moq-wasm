@@ -714,6 +714,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onToggle={() => setIsSidebarOpen(false)}
             captions={captions}
             transcribing={transcriberPresent}
+            recording={recording}
           />
         )}
       </div>
