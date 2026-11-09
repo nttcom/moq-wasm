@@ -5,7 +5,10 @@ use upstream_fetch_task::{UpstreamFetchStart, UpstreamFetchTask};
 
 use std::{sync::Arc, time::Duration};
 
-use moqt::fetch::{FetchParams, JoiningFetchError, JoiningStart, resolve_joining_fetch};
+use moqt::fetch::{
+    FetchParams, JoinPoint, JoinedSubscription, JoiningFetchError, JoiningFetchRefusal,
+    JoiningStart, resolve_joining_fetch,
+};
 
 use crate::modules::{
     control_plane::{
@@ -56,6 +59,10 @@ enum FetchSource {
 enum FetchError {
     TrackNotFound,
     Joining(JoiningFetchError),
+    JoinedNotForwarding,
+    /// A `JoiningFetchRefusal` variant this relay has no mapping for (the enum
+    /// is non_exhaustive).
+    JoiningRefused,
     InvalidRange,
     NoObjects,
     MalformedTrack,
@@ -67,6 +74,8 @@ impl FetchError {
         match self {
             Self::TrackNotFound => Some(RequestErrorCode::TrackDoesNotExist),
             Self::Joining(error) => error.request_error_code(),
+            Self::JoinedNotForwarding => Some(RequestErrorCode::InvalidRange),
+            Self::JoiningRefused => Some(RequestErrorCode::InternalError),
             Self::InvalidRange => Some(RequestErrorCode::InvalidRange),
             Self::NoObjects => Some(RequestErrorCode::NoObjects),
             Self::MalformedTrack => Some(RequestErrorCode::MalformedTrack),
@@ -82,9 +91,23 @@ impl FetchError {
             }
             Self::Joining(JoiningFetchError::NothingPublished) => "No objects published",
             Self::Joining(_) => "Invalid fetch range",
+            Self::JoinedNotForwarding => "Joining FETCH of a subscription with Forward State 0",
+            Self::JoiningRefused => "Joining FETCH refused",
             Self::InvalidRange => "Invalid fetch range",
             Self::NoObjects => "No objects in fetch range",
             Self::MalformedTrack => "Malformed track",
+        }
+    }
+}
+
+impl From<JoiningFetchRefusal> for FetchError {
+    fn from(refusal: JoiningFetchRefusal) -> Self {
+        match refusal {
+            JoiningFetchRefusal::NotLargestObjectFilter => {
+                Self::Joining(JoiningFetchError::NotLargestObject)
+            }
+            JoiningFetchRefusal::NotForwarding => Self::JoinedNotForwarding,
+            _ => Self::JoiningRefused,
         }
     }
 }
@@ -100,34 +123,37 @@ impl Fetch {
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         handler: Box<dyn FetchHandler>,
     ) {
-        let fetch_params = handler.fetch_params();
         let request_id = handler.request_id();
 
-        let (target, source) =
-            match self.resolve_target_and_source(session_id, fetch_params, table, cache_store) {
-                Ok(resolved) => resolved,
-                Err(err) => {
-                    let reason = err.reason().to_string();
-                    match err.code() {
-                        Some(code) => {
-                            let _ = handler.error(code, reason).await;
-                        }
-                        None => {
-                            tracing::error!(
-                                session_id,
-                                %reason,
-                                "protocol violation detected; closing session"
-                            );
-                            forwarder
-                                .repository
-                                .lock()
-                                .await
-                                .close_with_protocol_violation(session_id, &reason);
-                        }
+        let (target, source) = match self.resolve_target_and_source(
+            session_id,
+            handler.as_ref(),
+            table,
+            cache_store,
+        ) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                let reason = err.reason().to_string();
+                match err.code() {
+                    Some(code) => {
+                        let _ = handler.error(code, reason).await;
                     }
-                    return;
+                    None => {
+                        tracing::error!(
+                            session_id,
+                            %reason,
+                            "protocol violation detected; closing session"
+                        );
+                        forwarder
+                            .repository
+                            .lock()
+                            .await
+                            .close_with_protocol_violation(session_id, &reason);
+                    }
                 }
-            };
+                return;
+            }
+        };
 
         match source {
             FetchSource::Cache(CacheTarget {
@@ -322,11 +348,11 @@ impl Fetch {
     fn resolve_target_and_source(
         &self,
         session_id: SessionId,
-        fetch_params: FetchParams,
+        handler: &dyn FetchHandler,
         table: &InMemoryLocalPubSubDirectory,
         cache_store: &TrackCacheStore,
     ) -> Result<(FetchTarget, FetchSource), FetchError> {
-        let target = self.resolve_fetch_target(session_id, fetch_params, table)?;
+        let target = self.resolve_fetch_target(session_id, handler, table)?;
         if cache_store
             .get(&target.track_key)
             .is_some_and(|cache| cache.is_malformed())
@@ -340,10 +366,10 @@ impl Fetch {
     fn resolve_fetch_target(
         &self,
         session_id: SessionId,
-        fetch_params: FetchParams,
+        handler: &dyn FetchHandler,
         table: &InMemoryLocalPubSubDirectory,
     ) -> Result<FetchTarget, FetchError> {
-        match fetch_params {
+        match handler.fetch_params() {
             FetchParams::Standalone {
                 track_namespace,
                 track_name,
@@ -366,6 +392,7 @@ impl Fetch {
                 session_id,
                 joining_request_id,
                 JoiningStart::Relative(joining_start),
+                handler,
                 table,
             ),
             FetchParams::AbsoluteJoining {
@@ -375,6 +402,7 @@ impl Fetch {
                 session_id,
                 joining_request_id,
                 JoiningStart::Absolute(joining_start),
+                handler,
                 table,
             ),
         }
@@ -419,31 +447,46 @@ impl Fetch {
         Ok(source)
     }
 
-    /// draft-14 §9.16.2: a Joining FETCH of a subscription without the Largest Object
-    /// filter is a PROTOCOL_VIOLATION; one made before any object existed gets INVALID_RANGE.
+    /// Checks a Joining FETCH in the order the drafts state: the joined
+    /// subscription must exist (draft-14 §9.16.2, draft-18 §10.12.2), the
+    /// session's draft must permit joining it, and the track must have
+    /// objects (INVALID_RANGE).
     fn resolve_joining_target(
         &self,
         session_id: SessionId,
         joining_request_id: u64,
         joining_start: JoiningStart,
+        handler: &dyn FetchHandler,
         table: &InMemoryLocalPubSubDirectory,
     ) -> Result<FetchTarget, FetchError> {
-        let (downstream_sub, (start_location, end_location)) = table
-            .get_downstream_subscription(session_id, joining_request_id)
-            .ok_or(JoiningFetchError::UnknownSubscription)
-            .and_then(|sub| {
-                resolve_joining_fetch(joining_start, sub.join_point).map(|range| (sub, range))
-            })
-            .map_err(|error| {
-                // A subscriber may write its Joining FETCH behind the SUBSCRIBE before it knows
-                // whether the track has content, so NothingPublished is expected.
-                if error == JoiningFetchError::NothingPublished {
-                    tracing::debug!(session_id, joining_request_id, %error, "Joining fetch rejected");
-                } else {
-                    tracing::warn!(session_id, joining_request_id, %error, "Joining fetch rejected");
-                }
-                FetchError::Joining(error)
-            })?;
+        let rejected = |error: JoiningFetchError| {
+            // A subscriber may write its Joining FETCH behind the SUBSCRIBE before it knows
+            // whether the track has content, so NothingPublished is expected.
+            if error == JoiningFetchError::NothingPublished {
+                tracing::debug!(session_id, joining_request_id, %error, "Joining fetch rejected");
+            } else {
+                tracing::warn!(session_id, joining_request_id, %error, "Joining fetch rejected");
+            }
+            FetchError::Joining(error)
+        };
+        // draft-18 §10.12.2 has pending REQUEST_UPDATEs of the subscription
+        // applied first: the session worker handles a session's events in
+        // order, so every update received before this FETCH already is.
+        let (Some(downstream_sub), Some(delivery_control)) = (
+            table.get_downstream_subscription(session_id, joining_request_id),
+            table.downstream_delivery_control(session_id, joining_request_id),
+        ) else {
+            return Err(rejected(JoiningFetchError::UnknownSubscription));
+        };
+        handler.check_joining(JoinedSubscription {
+            filter_type: downstream_sub.filter_type,
+            forward: delivery_control.forward,
+        })?;
+        let (start_location, end_location) = resolve_joining_fetch(
+            joining_start,
+            JoinPoint::Largest(downstream_sub.joining_location),
+        )
+        .map_err(rejected)?;
 
         if table.track_state(&downstream_sub.track_key).is_none() {
             tracing::warn!("Joined subscription has no active upstream subscription");
@@ -465,7 +508,9 @@ mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
     use crate::modules::auth::test_support::RunningRelay;
+    use crate::modules::directory::track::DownstreamSubscription;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
         auth::{
             test_support::{app_token, connect_client, spawn_relay_and_connect_client},
@@ -488,7 +533,7 @@ mod tests {
             },
         },
     };
-    use moqt::{fetch::JoinPoint, subscribe::SubscribeOption};
+    use moqt::subscribe::{FilterType, SubscribeOption};
 
     const FETCH: Fetch = Fetch {
         fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
@@ -542,7 +587,10 @@ mod tests {
         let target = FETCH
             .resolve_fetch_target(
                 2,
-                standalone_fetch_params(location(0, 0), location(1, 0)),
+                &MockFetchHandler::fetching(standalone_fetch_params(
+                    location(0, 0),
+                    location(1, 0),
+                )),
                 &table,
             )
             .unwrap();
@@ -589,7 +637,10 @@ mod tests {
         let target = FETCH
             .resolve_fetch_target(
                 2,
-                standalone_fetch_params(location(0, 0), location(1, 0)),
+                &MockFetchHandler::fetching(standalone_fetch_params(
+                    location(0, 0),
+                    location(1, 0),
+                )),
                 &table,
             )
             .unwrap();
@@ -600,7 +651,7 @@ mod tests {
             &ControlMessageForwarder { repository },
             &local_publisher_resolver(),
             SessionPeer::Client,
-            &MockFetchHandler,
+            &MockFetchHandler::default(),
             &target,
         )
         .await;
@@ -642,7 +693,10 @@ mod tests {
         let target = FETCH
             .resolve_fetch_target(
                 2,
-                standalone_fetch_params(location(0, 0), location(1, 0)),
+                &MockFetchHandler::fetching(standalone_fetch_params(
+                    location(0, 0),
+                    location(1, 0),
+                )),
                 &table,
             )
             .unwrap();
@@ -653,7 +707,7 @@ mod tests {
             &ControlMessageForwarder { repository },
             &local_publisher_resolver(),
             SessionPeer::Client,
-            &MockFetchHandler,
+            &MockFetchHandler::default(),
             &target,
         )
         .await;
@@ -711,7 +765,7 @@ mod tests {
         let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
-                standalone_fetch_params(start, end),
+                &MockFetchHandler::fetching(standalone_fetch_params(start, end)),
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
@@ -747,7 +801,7 @@ mod tests {
         let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
-                standalone_fetch_params(start, end),
+                &MockFetchHandler::fetching(standalone_fetch_params(start, end)),
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
@@ -777,7 +831,7 @@ mod tests {
         let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
-                standalone_fetch_params(start, end),
+                &MockFetchHandler::fetching(standalone_fetch_params(start, end)),
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
@@ -807,7 +861,7 @@ mod tests {
         let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
-                standalone_fetch_params(start, end),
+                &MockFetchHandler::fetching(standalone_fetch_params(start, end)),
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
@@ -845,7 +899,7 @@ mod tests {
         let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
-                standalone_fetch_params(start, requested_end),
+                &MockFetchHandler::fetching(standalone_fetch_params(start, requested_end)),
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
@@ -880,7 +934,7 @@ mod tests {
         // Act
         let result = FETCH.resolve_target_and_source(
             2,
-            standalone_fetch_params(
+            &MockFetchHandler::fetching(standalone_fetch_params(
                 moqt::object::Location {
                     group_id: 0,
                     object_id: 1,
@@ -889,7 +943,7 @@ mod tests {
                     group_id: 0,
                     object_id: 2,
                 },
-            ),
+            )),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         );
@@ -911,7 +965,7 @@ mod tests {
         // Act
         let result = FETCH.resolve_target_and_source(
             2,
-            standalone_fetch_params(
+            &MockFetchHandler::fetching(standalone_fetch_params(
                 moqt::object::Location {
                     group_id: 1,
                     object_id: 0,
@@ -920,7 +974,7 @@ mod tests {
                     group_id: 1,
                     object_id: 0,
                 },
-            ),
+            )),
             &InMemoryLocalPubSubDirectory::new(),
             &cache_store,
         );
@@ -949,7 +1003,7 @@ mod tests {
         let (_, source) = FETCH
             .resolve_target_and_source(
                 2,
-                standalone_fetch_params(start, end),
+                &MockFetchHandler::fetching(standalone_fetch_params(start, end)),
                 &InMemoryLocalPubSubDirectory::new(),
                 &cache_store,
             )
@@ -980,7 +1034,11 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
 
         // Act
-        let result = FETCH.resolve_fetch_target(1, relative_joining_fetch_params(999), &table);
+        let result = FETCH.resolve_fetch_target(
+            1,
+            &MockFetchHandler::fetching(relative_joining_fetch_params(999)),
+            &table,
+        );
 
         // Assert
         assert!(matches!(
@@ -997,19 +1055,112 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            key,
-            JoinPoint::Largest(None),
+            downstream_subscription(key, None),
             delivery_control(true),
         );
 
         // Act
-        let result = FETCH.resolve_fetch_target(2, relative_joining_fetch_params(100), &table);
+        let result = FETCH.resolve_fetch_target(
+            2,
+            &MockFetchHandler::fetching(relative_joining_fetch_params(100)),
+            &table,
+        );
 
         // Assert
         assert!(matches!(
             result,
             Err(FetchError::Joining(JoiningFetchError::NothingPublished))
         ));
+    }
+
+    /// draft-18 §10.12.2, as the session's moqt handler applies it.
+    fn draft18_joining_rule(subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal> {
+        if subscription.forward {
+            Ok(())
+        } else {
+            Err(JoiningFetchRefusal::NotForwarding)
+        }
+    }
+
+    fn draft18_joining_fetch() -> MockFetchHandler {
+        MockFetchHandler {
+            joining_rule: draft18_joining_rule,
+            ..MockFetchHandler::fetching(relative_joining_fetch_params(100))
+        }
+    }
+
+    fn register_joined(
+        table: &InMemoryLocalPubSubDirectory,
+        subscription: DownstreamSubscription,
+        forward: bool,
+    ) {
+        table.register_downstream_subscription(
+            2,
+            100,
+            SessionPeer::Client,
+            subscription,
+            delivery_control(forward),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_subscription_at_forward_0_gets_invalid_range() {
+        // Arrange
+        let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
+        register_joined(
+            &table,
+            downstream_subscription(key, Some(location(3, 0))),
+            false,
+        );
+
+        // Act
+        let result = FETCH.resolve_fetch_target(2, &draft18_joining_fetch(), &table);
+
+        // Assert: draft-18 §10.12.2
+        let Err(error) = result else {
+            panic!("the Joining FETCH should be refused");
+        };
+        assert!(
+            matches!(error, FetchError::JoinedNotForwarding),
+            "{error:?}"
+        );
+        assert_eq!(error.code(), Some(RequestErrorCode::InvalidRange));
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_the_draft_permits_joins_a_next_group_start_subscription() {
+        // Arrange
+        let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let subscription = DownstreamSubscription {
+            filter_type: FilterType::NextGroupStart,
+            ..downstream_subscription(key, Some(location(3, 0)))
+        };
+        register_joined(&table, subscription, true);
+
+        // Act
+        let target = FETCH
+            .resolve_fetch_target(2, &draft18_joining_fetch(), &table)
+            .unwrap();
+
+        // Assert
+        assert_eq!(target.end_location, location(3, 1));
+    }
+
+    #[tokio::test]
+    async fn the_refusal_of_the_draft_comes_before_a_track_without_objects() {
+        // Arrange
+        let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
+        register_joined(&table, downstream_subscription(key, None), false);
+
+        // Act
+        let result = FETCH.resolve_fetch_target(2, &draft18_joining_fetch(), &table);
+
+        // Assert
+        assert!(
+            matches!(result, Err(FetchError::JoinedNotForwarding)),
+            "{:?}",
+            result.err()
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1087,14 +1238,17 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            key,
-            JoinPoint::Largest(Some(largest)),
+            downstream_subscription(key, Some(largest)),
             delivery_control(true),
         );
 
         // Act
         let target = FETCH
-            .resolve_fetch_target(2, relative_joining_fetch_params(100), &table)
+            .resolve_fetch_target(
+                2,
+                &MockFetchHandler::fetching(relative_joining_fetch_params(100)),
+                &table,
+            )
             .unwrap();
 
         // Assert
@@ -1121,11 +1275,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 1,
-                object_id: 1,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+            ),
             delivery_control(true),
         );
         let _open_g1 = open_group(&cache, 1, &[0, 1]);
@@ -1134,10 +1290,10 @@ mod tests {
         let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
-                FetchParams::RelativeJoining {
+                &MockFetchHandler::fetching(FetchParams::RelativeJoining {
                     joining_request_id: 100,
                     joining_start: 1,
-                },
+                }),
                 &table,
                 &cache_store,
             )
@@ -1178,11 +1334,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 2,
-                object_id: 3,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 2,
+                    object_id: 3,
+                }),
+            ),
             delivery_control(true),
         );
 
@@ -1190,10 +1348,10 @@ mod tests {
         let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
-                FetchParams::AbsoluteJoining {
+                &MockFetchHandler::fetching(FetchParams::AbsoluteJoining {
                     joining_request_id: 100,
                     joining_start: 1,
-                },
+                }),
                 &table,
                 &cache_store,
             )
@@ -1230,11 +1388,13 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 1,
-                object_id: 1,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+            ),
             delivery_control(true),
         );
 
@@ -1242,10 +1402,10 @@ mod tests {
         let (target, source) = FETCH
             .resolve_target_and_source(
                 2,
-                FetchParams::RelativeJoining {
+                &MockFetchHandler::fetching(FetchParams::RelativeJoining {
                     joining_request_id: 100,
                     joining_start: 5,
-                },
+                }),
                 &table,
                 &cache_store,
             )
@@ -1282,21 +1442,23 @@ mod tests {
             2,
             100,
             SessionPeer::Client,
-            upstream_key,
-            JoinPoint::Largest(Some(moqt::object::Location {
-                group_id: 1,
-                object_id: 1,
-            })),
+            downstream_subscription(
+                upstream_key,
+                Some(moqt::object::Location {
+                    group_id: 1,
+                    object_id: 1,
+                }),
+            ),
             delivery_control(true),
         );
 
         // Act
         let result = FETCH.resolve_target_and_source(
             2,
-            FetchParams::AbsoluteJoining {
+            &MockFetchHandler::fetching(FetchParams::AbsoluteJoining {
                 joining_request_id: 100,
                 joining_start: 2,
-            },
+            }),
             &table,
             &cache_store,
         );

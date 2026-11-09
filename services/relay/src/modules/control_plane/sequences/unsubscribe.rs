@@ -1,20 +1,24 @@
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
-    directory::InMemoryLocalPubSubDirectory, domain::session_id::SessionId,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
 };
 
 pub(crate) struct Unsubscribe;
 
 impl Unsubscribe {
     /// Removes the downstream subscription `subscribe_id` and releases the
-    /// upstream subscriptions it leaves unneeded; runs for an UNSUBSCRIBE and
-    /// for a subscription whose egress runner delivered its whole range.
+    /// upstream subscriptions it leaves unneeded; runs for an UNSUBSCRIBE,
+    /// for a subscription whose egress runner delivered its whole range, and
+    /// for one the relay ends with PUBLISH_DONE `end` (see
+    /// `InMemoryLocalPubSubDirectory::end_downstream_subscription`).
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         subscribe_id: u64,
+        end: Option<PublishDoneReason>,
     ) {
         tracing::debug!(
             session_id = %session_id,
@@ -22,7 +26,7 @@ impl Unsubscribe {
             "UNSUBSCRIBE received"
         );
 
-        let Some(removed) = table.remove_downstream_subscription(session_id, subscribe_id) else {
+        let Some(removed) = table.end_downstream_subscription(session_id, subscribe_id, end) else {
             tracing::warn!(
                 session_id = %session_id,
                 request_id = %subscribe_id,
@@ -54,7 +58,7 @@ impl Unsubscribe {
 #[cfg(test)]
 mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
-    use moqt::fetch::JoinPoint;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use tokio::sync::oneshot;
 
     use super::*;
@@ -88,8 +92,7 @@ mod tests {
                         *session_id,
                         *subscribe_id,
                         SessionPeer::Client,
-                        track_key(),
-                        JoinPoint::Largest(None),
+                        downstream_subscription(track_key(), None),
                         delivery_control(true),
                     )
                     .unwrap()
@@ -103,14 +106,43 @@ mod tests {
     }
 
     async fn run_unsubscribe(ctx: &TestContext, session_id: SessionId, subscribe_id: u64) {
+        end_subscription(ctx, session_id, subscribe_id, None).await;
+    }
+
+    async fn end_subscription(
+        ctx: &TestContext,
+        session_id: SessionId,
+        subscribe_id: u64,
+        end: Option<PublishDoneReason>,
+    ) {
         Unsubscribe
             .handle(
                 session_id,
                 &ctx.upstream.table,
                 &ctx.upstream.forwarder,
                 subscribe_id,
+                end,
             )
             .await;
+    }
+
+    #[tokio::test]
+    async fn ending_a_subscription_hands_its_runner_the_publish_done_and_releases_upstream() {
+        // Arrange
+        let mut ctx = setup(ProducerOrigin::Subscribe, &[(100, 10)]).await;
+
+        // Act
+        end_subscription(&ctx, 100, 10, Some(PublishDoneReason::update_failed())).await;
+
+        // Assert: the runner answers it with PUBLISH_DONE UPDATE_FAILED
+        assert_eq!(
+            ctx.runner_stop_receivers[0].try_recv(),
+            Ok(PublishDoneReason::update_failed())
+        );
+        assert_eq!(
+            ctx.upstream.recorded.unsubscribed_request_ids(),
+            vec![UPSTREAM_REQUEST_ID]
+        );
     }
 
     #[tokio::test]

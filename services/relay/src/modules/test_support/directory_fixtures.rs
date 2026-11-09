@@ -16,7 +16,7 @@ use crate::modules::{
     data_plane::{cache::store::TrackCacheStore, ingress::ingest_task::IngestTask},
     directory::{
         InMemoryLocalPubSubDirectory,
-        track::{Producer, ProducerOrigin, ProducerState, TrackState},
+        track::{DownstreamSubscription, Producer, ProducerOrigin, ProducerState, TrackState},
     },
     domain::{
         delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
@@ -44,6 +44,18 @@ pub(crate) fn track_key() -> TrackKey {
 /// An open-ended subscription starting at {0, 0}.
 pub(crate) fn delivery_control(forward: bool) -> DeliveryControl {
     DeliveryControl::new(forward, &moqt::subscribe::FilterType::LargestObject, None)
+}
+
+/// A Largest Object subscription to `track_key` accepted at `joining_location`.
+pub(crate) fn downstream_subscription(
+    track_key: TrackKey,
+    joining_location: Option<moqt::object::Location>,
+) -> DownstreamSubscription {
+    DownstreamSubscription {
+        track_key,
+        filter_type: moqt::subscribe::FilterType::LargestObject,
+        joining_location,
+    }
 }
 
 pub(crate) fn active_upstream(origin: ProducerOrigin) -> ProducerState {

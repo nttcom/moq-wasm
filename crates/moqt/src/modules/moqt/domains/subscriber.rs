@@ -545,6 +545,18 @@ impl Subscriber {
         subscription: &Subscription,
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
+        let start = option.start_location;
+        self.send_update(subscription, option, |_| start).await
+    }
+
+    /// `subscribe_update` with the Start Location `start_on` gives for each
+    /// connection.
+    async fn send_update(
+        &self,
+        subscription: &Subscription,
+        option: SubscribeUpdateOption,
+        start_on: impl Fn(&Connection) -> Location,
+    ) -> anyhow::Result<()> {
         subscription.last_update().set(option);
         let carried = self.session.read_carried().await;
         if let Some(carried) = &carried {
@@ -570,7 +582,7 @@ impl Subscriber {
             let subscribe_update = SubscribeUpdate {
                 request_id: reservation.request_id(),
                 subscription_request_id,
-                start_location: option.start_location,
+                start_location: start_on(&connection),
                 end_group: option.end_group,
                 subscriber_priority: option.subscriber_priority,
                 forward: option.forward,
@@ -593,7 +605,7 @@ impl Subscriber {
         subscription: &Subscription,
         forward: bool,
     ) -> anyhow::Result<()> {
-        self.subscribe_update(subscription, repeated_update(subscription, forward))
+        self.repeat(subscription, repeated_update(subscription, forward))
             .await
     }
 
@@ -607,13 +619,30 @@ impl Subscriber {
         group_id: u64,
         forward: bool,
     ) -> anyhow::Result<()> {
-        self.subscribe_update(
+        self.repeat(
             subscription,
             SubscribeUpdateOption {
                 end_group: group_id,
                 ..repeated_update(subscription, forward)
             },
         )
+        .await
+    }
+
+    /// Sends `option`, which repeats the subscription's Start Location, with
+    /// the later start a SUBSCRIBE sent again after GOAWAY established on its
+    /// connection.
+    async fn repeat(
+        &self,
+        subscription: &Subscription,
+        option: SubscribeUpdateOption,
+    ) -> anyhow::Result<()> {
+        let start = option.start_location;
+        self.send_update(subscription, option, |connection| {
+            connection
+                .carried_start(subscription.request_id())
+                .map_or(start, |carried| carried.max(start))
+        })
         .await
     }
 
@@ -1057,7 +1086,7 @@ mod tests {
                 location, notify_datagram, object_with_extensions, read_fetch_objects,
                 read_subgroup_objects, send_subgroup_object, send_without_waiting,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
-                subgroup_receiver, subscribe_namespace_accepted, subscription,
+                subgroup_receiver, subscribe_namespace_accepted, subscribed_track,
                 wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
@@ -1066,7 +1095,8 @@ mod tests {
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         },
         subscribe::{
-            SubscribeHandler, SubscribeOption, SubscribeUpdateHandler, SubscribeUpdateOption,
+            FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateHandler,
+            SubscribeUpdateOption,
         },
     };
 
@@ -1764,14 +1794,55 @@ mod tests {
         assert_eq!(update.subscription_request_id(), handler.request_id());
         assert!(!update.forward());
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 3,
-                object_id: 2
+            update.filter(),
+            Some(FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 3,
+                    object_id: 2
+                }
+            })
+        );
+        assert_eq!(update.subscriber_priority(), 128);
+    }
+
+    #[tokio::test]
+    async fn accepting_a_draft14_update_tells_the_subscriber_nothing() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("subscriber-update-largest").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        handler.ok(0, ContentExists::False).await.unwrap();
+        let subscription = request.await.unwrap().unwrap();
+        client
+            .subscriber()
+            .update_forward(&subscription, true)
+            .await
+            .unwrap();
+        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE_UPDATE from the client");
+        };
+
+        // Act
+        let told = update.ok(Some(location(3, 1)));
+
+        // Assert: draft-14 SUBSCRIBE_UPDATE has no answer
+        assert_eq!(
+            told,
+            crate::subscribe::UpdateAnswer::Accepted {
+                largest_told: false
             }
         );
-        assert_eq!(update.end_group(), 0);
-        assert_eq!(update.subscriber_priority(), 128);
     }
 
     #[tokio::test]
@@ -1790,14 +1861,16 @@ mod tests {
         // Assert: groups up to 6 stay in the range, which the field encodes as 6 + 1
         let update = receive_subscribe_update(&server).await;
         assert_eq!(update.subscription_request_id(), handler.request_id());
-        assert_eq!(update.end_group(), 7);
         assert!(update.forward());
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 3,
-                object_id: 2
-            }
+            update.filter(),
+            Some(FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 3,
+                    object_id: 2
+                },
+                end_group: 6,
+            })
         );
     }
 
@@ -1824,13 +1897,15 @@ mod tests {
         // Assert: an End Group of 0 would widen the range back to open-ended
         let update = receive_subscribe_update(&server).await;
         assert!(!update.forward());
-        assert_eq!(update.end_group(), 7);
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 3,
-                object_id: 2
-            }
+            update.filter(),
+            Some(FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 3,
+                    object_id: 2
+                },
+                end_group: 6,
+            })
         );
     }
 
@@ -1869,15 +1944,19 @@ mod tests {
         // Assert: the SUBSCRIBE's Start Location {3, 2} would move the start back
         let update = receive_subscribe_update(&server).await;
         assert!(!update.forward());
-        assert_eq!(update.start_location(), narrowed_start);
-        assert_eq!(update.end_group(), 0);
+        assert_eq!(
+            update.filter(),
+            Some(FilterType::AbsoluteStart {
+                location: narrowed_start
+            })
+        );
         assert_eq!(update.subscriber_priority(), 9);
     }
 
     #[tokio::test]
     async fn subscribe_update_sends_the_given_fields_for_the_given_subscription() {
         // Arrange
-        let (client, server) = spawn_connected_native_sessions("subscriber-subscribe-update").await;
+        let track = subscribed_track("subscriber-subscribe-update").await;
         let option = SubscribeUpdateOption {
             start_location: Location {
                 group_id: 4,
@@ -1889,25 +1968,32 @@ mod tests {
         };
 
         // Act
-        client
+        track
+            .client
             .subscriber()
-            .subscribe_update(&subscription(6, 0), option)
+            .subscribe_update(&track.subscription, option)
             .await
             .unwrap();
 
         // Assert
-        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+        let SessionEvent::SubscribeUpdate(update) = track.server.receive_event().await.unwrap()
+        else {
             panic!("expected SUBSCRIBE_UPDATE from the client");
         };
-        assert_eq!(update.subscription_request_id(), 6);
         assert_eq!(
-            update.start_location(),
-            Location {
-                group_id: 4,
-                object_id: 2
-            }
+            update.subscription_request_id(),
+            track.subscription.request_id()
         );
-        assert_eq!(update.end_group(), 9);
+        assert_eq!(
+            update.filter(),
+            Some(FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 4,
+                    object_id: 2
+                },
+                end_group: 8,
+            })
+        );
         assert_eq!(update.subscriber_priority(), 7);
         assert!(update.forward());
     }

@@ -259,8 +259,8 @@ impl PublishNamespace {
 #[cfg(test)]
 mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
-    use moqt::fetch::JoinPoint;
     use std::time::Duration;
 
     use super::*;
@@ -324,8 +324,7 @@ mod tests {
                 2,
                 100,
                 SessionPeer::Client,
-                track_key.clone(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key.clone(), None),
                 delivery_control(true),
             )
             .unwrap();

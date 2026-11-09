@@ -15,18 +15,24 @@ use crate::modules::{
         verified_token::VerifiedToken,
     },
     control_plane::sequences::{
-        CascadingRelayContext, downstream_publish::DownstreamPublish,
-        drain_release::ReleaseUnwatchedPublishes, fetch::Fetch, go_away::GoAway,
-        malformed_track::MalformedTrackCleanup, publish::Publish,
-        publish_namespace::PublishNamespace, publish_namespace_done::PublishNamespaceDone,
-        subscribe::Subscribe, subscribe_namespace::SubscribeNameSpace,
-        subscribe_update::SubscribeUpdate, track_status::TrackStatus, unsubscribe::Unsubscribe,
-        unsubscribe_namespace::UnsubscribeNamespace, upstream_publish_done::UpstreamPublishDone,
+        CascadingRelayContext,
+        downstream_publish::DownstreamPublish,
+        drain_release::ReleaseUnwatchedPublishes,
+        fetch::Fetch,
+        go_away::GoAway,
+        malformed_track::MalformedTrackCleanup,
+        publish::Publish,
+        publish_namespace::PublishNamespace,
+        publish_namespace_done::PublishNamespaceDone,
+        subscribe::Subscribe,
+        subscribe_namespace::SubscribeNameSpace,
+        subscribe_update::{SubscribeUpdate, UpdateVerdict},
+        track_status::TrackStatus,
+        unsubscribe::Unsubscribe,
+        unsubscribe_namespace::UnsubscribeNamespace,
+        upstream_publish_done::UpstreamPublishDone,
     },
-    domain::{
-        delivery_control::DeliveryControl, publish_done_reason::PublishDoneReason,
-        session_id::SessionId,
-    },
+    domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
     session::{
         Session, handler::track_status::TrackStatusHandler, moqt_session_event::MoqtSessionEvent,
         session_event::SessionEvent,
@@ -163,6 +169,7 @@ impl SessionWorker {
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
                         request_id,
+                        None,
                     )
                     .instrument(event_span)
                     .await;
@@ -290,6 +297,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         handler.subscribe_id(),
+                        None,
                     )
                     .instrument(event_span)
                     .await;
@@ -325,18 +333,42 @@ impl SessionWorker {
                     .await;
             }
             MoqtSessionEvent::SubscribeUpdate(handler) => {
-                event_span.in_scope(|| {
+                let verdict = event_span.in_scope(|| {
                     SubscribeUpdate {}.handle(
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
-                        handler.subscription_request_id(),
-                        DeliveryControl::from_subscribe_update(
-                            handler.forward(),
-                            handler.start_location(),
-                            handler.end_group(),
-                        ),
+                        &deps.cache_store,
+                        handler.as_ref(),
                     )
                 });
+                match verdict {
+                    UpdateVerdict::Done => {}
+                    UpdateVerdict::EndSubscription(end) => {
+                        Unsubscribe {}
+                            .handle(
+                                session_id,
+                                deps.local_pub_sub_directory.as_ref(),
+                                &deps.control_message_forwarder,
+                                handler.subscription_request_id(),
+                                Some(end),
+                            )
+                            .instrument(event_span)
+                            .await;
+                    }
+                    UpdateVerdict::CloseSession(reason) => {
+                        event_span.in_scope(|| {
+                            tracing::error!(
+                                session_id,
+                                %reason,
+                                "protocol violation detected; closing session"
+                            );
+                        });
+                        deps.repo
+                            .lock()
+                            .await
+                            .close_with_protocol_violation(session_id, reason);
+                    }
+                }
             }
             MoqtSessionEvent::PublishDone(handler) => {
                 UpstreamPublishDone

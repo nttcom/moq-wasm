@@ -293,6 +293,7 @@ pub(crate) async fn start_fetch_delivery(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
         directory::track::{ProducerOrigin, ProducerState},
         test_support::{
@@ -303,7 +304,6 @@ mod tests {
             relay_harness::fixtures::subscription::upstream_subscription,
         },
     };
-    use moqt::fetch::JoinPoint;
 
     const PUBLISH_REQUEST_ID: u64 = 43;
 
@@ -346,8 +346,7 @@ mod tests {
                 100,
                 10,
                 SessionPeer::Client,
-                track_key(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key(), None),
                 delivery_control(true),
             )
             .unwrap();

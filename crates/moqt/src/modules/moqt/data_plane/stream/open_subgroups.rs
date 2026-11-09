@@ -30,6 +30,11 @@ impl OpenSubgroups {
         // `self` holds the sender, so the channel cannot close.
         let _ = receiver.wait_for(|open| *open == 0).await;
     }
+
+    /// Sees every later stream opening or ending.
+    pub(crate) fn changes(&self) -> watch::Receiver<usize> {
+        self.0.subscribe()
+    }
 }
 
 impl Drop for OpenSubgroup {

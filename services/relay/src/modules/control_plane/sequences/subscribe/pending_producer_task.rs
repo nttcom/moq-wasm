@@ -261,9 +261,10 @@ async fn end_if_publisher_gone(
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use std::{sync::OnceLock, time::Duration};
 
-    use moqt::{fetch::JoinPoint, object::ContentExists};
+    use moqt::object::ContentExists;
 
     use super::*;
     use crate::modules::{
@@ -405,8 +406,7 @@ mod tests {
                 SUBSCRIBER_SESSION,
                 100,
                 SessionPeer::Client,
-                track_key(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key(), None),
                 delivery_control(true),
             )
             .unwrap();
@@ -457,8 +457,7 @@ mod tests {
                 SUBSCRIBER_SESSION,
                 100,
                 SessionPeer::Client,
-                track_key(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key(), None),
                 delivery_control(true),
             )
             .unwrap();

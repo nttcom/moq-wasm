@@ -617,6 +617,18 @@ impl ControlChannel {
         }
     }
 
+    /// Uses the next Request ID for a request a test writes itself.
+    #[cfg(test)]
+    pub(crate) async fn take_request_id(&self) -> RequestId {
+        let RequestIdReservation(mut next_request_id) = self
+            .reserve_request_id()
+            .await
+            .expect("a test's peer allows its requests");
+        let request_id = *next_request_id;
+        *next_request_id += 2;
+        request_id
+    }
+
     /// Fails with `RequestFailure::Send` when the request cannot be written.
     /// Dropping the returned `PendingResponse` abandons the request.
     /// `connection` owns this channel; draft-18 opens a stream on it per

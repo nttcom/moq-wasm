@@ -1,6 +1,7 @@
 use moqt::RequestErrorCode;
 use std::sync::Arc;
 
+use crate::modules::directory::track::DownstreamSubscription;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -17,7 +18,6 @@ use crate::modules::{
     },
     session::handler::subscribe::SubscribeHandler,
 };
-use moqt::fetch::JoinPoint;
 
 use moqt::object::ContentExists;
 
@@ -398,8 +398,11 @@ impl Subscribe {
             session_id,
             handler.subscribe_id(),
             subscriber_peer,
-            track_key.clone(),
-            JoinPoint::new(&filter_type, largest_location),
+            DownstreamSubscription {
+                track_key: track_key.clone(),
+                filter_type,
+                joining_location: largest_location,
+            },
             DeliveryControl::new(handler.forward(), &filter_type, largest_location),
         ) else {
             tracing::debug!(
@@ -519,6 +522,7 @@ impl Subscribe {
 
 #[cfg(test)]
 mod tests {
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use std::sync::{
         OnceLock,
@@ -711,8 +715,7 @@ mod tests {
                     SUBSCRIBER_SESSION,
                     1,
                     SessionPeer::Client,
-                    access.track_key.clone(),
-                    JoinPoint::Largest(None),
+                    downstream_subscription(access.track_key.clone(), None),
                     delivery_control(true),
                 )
                 .unwrap();

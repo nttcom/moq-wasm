@@ -288,7 +288,9 @@ mod tests {
         workers.register_publisher(1, "ns").await;
         let subscriber = workers.register_session(2).await;
         workers.wait_for_live_workers(2).await;
-        subscriber.send_event(MoqtSessionEvent::Fetch(Box::new(MockFetchHandler)));
+        subscriber.send_event(MoqtSessionEvent::Fetch(Box::new(
+            MockFetchHandler::default(),
+        )));
 
         // Act
         subscriber.send_event(MoqtSessionEvent::Disconnected());

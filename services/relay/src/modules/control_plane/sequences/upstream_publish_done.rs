@@ -36,6 +36,7 @@ impl UpstreamPublishDone {
 mod tests {
     use super::*;
     use crate::modules::test_support::directory_fixtures::delivery_control;
+    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
         cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::ProducerOrigin,
@@ -45,7 +46,6 @@ mod tests {
             upstream_release_context,
         },
     };
-    use moqt::fetch::JoinPoint;
 
     const DOWNSTREAM_SESSION: SessionId = 2;
     const DOWNSTREAM_SUBSCRIBE_ID: u64 = 100;
@@ -73,8 +73,7 @@ mod tests {
                 DOWNSTREAM_SESSION,
                 DOWNSTREAM_SUBSCRIBE_ID,
                 SessionPeer::Client,
-                track_key(),
-                JoinPoint::Largest(None),
+                downstream_subscription(track_key(), None),
                 delivery_control(true),
             )
             .unwrap()

@@ -6,6 +6,7 @@ use anyhow::bail;
 use moqt::{object::ContentExists, publish::PublishDoneCode};
 use tokio::sync::oneshot;
 
+use crate::modules::directory::track::DownstreamSubscription;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
@@ -18,7 +19,6 @@ use crate::modules::{
         session_id::SessionId, track_key::TrackKey,
     },
 };
-use moqt::fetch::JoinPoint;
 
 #[derive(Clone)]
 pub(crate) struct DownstreamPublish {
@@ -77,8 +77,11 @@ impl DownstreamPublish {
             subscriber_session_id,
             request_id,
             subscriber_peer,
-            track_key.clone(),
-            JoinPoint::new(&filter_type, largest_location),
+            DownstreamSubscription {
+                track_key: track_key.clone(),
+                filter_type,
+                joining_location: largest_location,
+            },
             DeliveryControl::new(forward, &filter_type, largest_location),
         ) else {
             let track_ended = PublishDoneReason {
@@ -229,8 +232,8 @@ mod tests {
         assert_eq!(
             ctx.table
                 .get_downstream_subscription(NAMESPACE_SUBSCRIBER_SESSION, PUBLISH_REQUEST_ID)
-                .map(|registered| registered.join_point),
-            Some(JoinPoint::Largest(Some(location(4, 1))))
+                .map(|registered| registered.joining_location),
+            Some(Some(location(4, 1)))
         );
     }
 

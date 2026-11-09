@@ -10,7 +10,9 @@ use crate::{
     modules::{
         executor::{self, BoxFuture, JoinHandle},
         moqt::{
-            control_plane::control_messages::messages::unsubscribe::Unsubscribe,
+            control_plane::control_messages::messages::{
+                parameters::content_exists::ContentExists, unsubscribe::Unsubscribe,
+            },
             data_plane::stream::open_subgroups::OpenSubgroups,
             domains::{
                 connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
@@ -24,7 +26,7 @@ use crate::{
         },
         transport::transport_connection::TransportClose,
     },
-    object::{ContentExists, Location},
+    object::Location,
     subscribe::UnsubscribeHandler,
     subscribe::{FilterType, SubscribeOption},
 };
@@ -548,8 +550,9 @@ async fn migrate(
 }
 
 /// Resolves once `moved_from` has no subgroup stream open for the
-/// subscription `open` counts, and releases the previous side of `cutover`:
-/// the publisher sends every later group to the new connection too.
+/// subscription `open` counts and owes no group before the new
+/// subscription's start, and releases the previous side of `cutover`: the
+/// publisher sends every later group to the new connection too.
 async fn release_when_idle(
     moved_from: &Connection,
     cutover: &std::sync::Mutex<SharedCutover>,
@@ -557,17 +560,25 @@ async fn release_when_idle(
 ) {
     loop {
         open.all_ended().await;
-        // Sinks count a new stream under this lock, so none opens between the
-        // check and the release.
-        let _sinks = moved_from.object_sinks.lock().await;
-        if open.is_empty() {
+        let mut changes = {
+            // Sinks count a new stream under this lock, so none opens between
+            // the check and the release.
+            let _sinks = moved_from.object_sinks.lock().await;
+            if !open.is_empty() {
+                continue;
+            }
             let mut shared = cutover
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            shared.cutover.release_previous();
-            shared.cut_over = None;
-            return;
-        }
+            if shared.cutover.release_previous() {
+                shared.cut_over = None;
+                return;
+            }
+            // Subscribed under the lock, so the owed group's stream is seen
+            // even if it ends before this task runs again.
+            open.changes()
+        };
+        let _ = changes.changed().await;
     }
 }
 
@@ -633,6 +644,11 @@ async fn carry_subscription(
             return (request_id, Carried::Stays);
         }
     };
+    let largest = match subscribe_ok.content_exists {
+        ContentExists::True { location } => Some(location),
+        ContentExists::False => None,
+    };
+    let start = option.filter_type.start_location(largest);
     let (cut_over, cut_over_receiver) = oneshot::channel();
     let Some(CutoverStart {
         logical_alias,
@@ -655,7 +671,7 @@ async fn carry_subscription(
             .await;
         return (request_id, Carried::Gone);
     };
-    connection.carry(request_id, subscribe_ok.request_id);
+    connection.carry_subscription(request_id, subscribe_ok.request_id, start);
     if let Err(code) = connection
         .install_receiver(
             subscribe_ok.track_alias,
@@ -759,10 +775,15 @@ mod tests {
         Endpoint, NATIVE, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
         TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
-        modules::test_support::{
-            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
-            open_subgroup, self_signed_server_config, send_payload, spawn_native_server,
-            spawn_native_server_handshake, subscribe_namespace_accepted, subscribed_track_reader,
+        modules::{
+            moqt::version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
+            test_support::{
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
+                open_subgroup, self_signed_server_config, send_payload, spawn_native_server,
+                spawn_native_server_handshake, spawn_native_server_offering,
+                subscribe_namespace_accepted, subscribed_track_reader,
+            },
+            transport::application_protocol::ApplicationProtocols,
         },
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
@@ -778,10 +799,16 @@ mod tests {
     use super::*;
 
     async fn connect(port: u16) -> Session {
-        let client = native_client_with_config(ClientConfig {
+        connect_offering(port, APPLICATION_PROTOCOLS).await
+    }
+
+    async fn connect_offering(port: u16, protocols: ApplicationProtocols) -> Session {
+        let config = ClientConfig {
             certificate_verification: CertificateVerification::Disabled,
+            follow_go_away: true,
             ..ClientConfig::default()
-        });
+        };
+        let client = Endpoint::<NATIVE>::create_client_offering(&config, protocols).unwrap();
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             client
                 .connect(&format!("moqt://127.0.0.1:{port}"))
@@ -908,6 +935,77 @@ mod tests {
             previous_close.expect("previous connection closed").code,
             Some(0)
         );
+    }
+
+    /// Subscribes on a server with no content, moves to a server whose
+    /// Largest Object is {5, 3} and pauses the subscription there; returns
+    /// the filter of the update the new server receives.
+    async fn filter_of_an_update_after_go_away(
+        name: &str,
+        protocols: ApplicationProtocols,
+    ) -> Option<FilterType> {
+        let (port_a, accept_a) = spawn_native_server_offering(&format!("{name}-a"), protocols);
+        let (port_b, accept_b) = spawn_native_server_offering(&format!("{name}-b"), protocols);
+        let client = connect_offering(port_a, protocols).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, _, _) = subscribe(&client, &server_a).await;
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let largest = ContentExists::True {
+            location: Location {
+                group_id: 5,
+                object_id: 3,
+            },
+        };
+        let _ = serve_subscribe_with_content(&server_b, largest).await;
+        let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+        assert!(closed.is_ok(), "the migration ends once A is closed");
+
+        client
+            .subscriber()
+            .update_forward(&subscription, false)
+            .await
+            .unwrap();
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+            .await
+            .expect("the update arrives")
+            .unwrap();
+        let SessionEvent::SubscribeUpdate(update) = event else {
+            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+        };
+        update.filter()
+    }
+
+    /// The Start Location the SUBSCRIBE sent again established: past B's
+    /// Largest Object, later than A's {0, 0}.
+    const START_ON_B: FilterType = FilterType::AbsoluteStart {
+        location: Location {
+            group_id: 6,
+            object_id: 0,
+        },
+    };
+
+    #[tokio::test]
+    async fn a_draft14_update_after_go_away_repeats_the_start_the_new_server_resolved() {
+        // Act
+        let filter =
+            filter_of_an_update_after_go_away("migration-update-14", APPLICATION_PROTOCOLS).await;
+
+        // Assert: draft-14 §9.10 forbids moving the Start Location back
+        assert_eq!(filter, Some(START_ON_B));
+    }
+
+    #[tokio::test]
+    async fn a_draft18_update_after_go_away_repeats_the_start_the_new_server_resolved() {
+        // Act
+        let filter =
+            filter_of_an_update_after_go_away("migration-update-18", DRAFT18_PROTOCOLS).await;
+
+        // Assert: draft-18 §10.9.1 serves an earlier Start Location as a restart
+        assert_eq!(filter, Some(START_ON_B));
     }
 
     #[tokio::test]
@@ -1082,6 +1180,52 @@ mod tests {
         );
         assert_eq!(previous_tail, payload(1, b"a1-1"));
         assert_eq!(close.expect("A closed once group 1 ended").code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn the_old_server_is_kept_for_the_groups_before_the_new_servers_start() {
+        // Arrange: group 1 has ended on A; B already holds group 2, so its
+        // SUBSCRIBE starts at group 3 and group 2 can only come from A
+        let (port_a, accept_a) = spawn_native_server("session-migration-owed-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-owed-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        group_1_a.close().await.unwrap();
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let largest_on_b = ContentExists::True {
+            location: Location {
+                group_id: 2,
+                object_id: 0,
+            },
+        };
+        let (sender_b, _, _) = serve_subscribe_with_content(&server_b, largest_on_b).await;
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
+        let mut group_2_a = open_subgroup(&sender_a, 2, SubgroupId::None).await;
+        send_payload(&mut group_2_a, b"a2-0").await;
+        group_2_a.close().await.unwrap();
+        let owed = next_payload(&mut reader).await;
+        let mut group_3_b = open_subgroup(&sender_b, 3, SubgroupId::None).await;
+        send_payload(&mut group_3_b, b"b3-0").await;
+        let after_cutover = next_payload(&mut reader).await;
+
+        // Assert: no group is skipped between the connections
+        assert!(
+            still_open.is_err(),
+            "A must stay open while it owes group 2"
+        );
+        assert_eq!(owed, payload(2, b"a2-0"));
+        assert_eq!(after_cutover, payload(3, b"b3-0"));
     }
 
     #[tokio::test]

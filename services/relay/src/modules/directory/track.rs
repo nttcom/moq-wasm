@@ -3,13 +3,17 @@ use std::{
     sync::Arc,
 };
 
-use moqt::{RequestErrorCode, fetch::JoinPoint, object::ContentExists};
+use moqt::{
+    RequestErrorCode,
+    object::{ContentExists, Location},
+    subscribe::FilterType,
+};
 use tokio::sync::{oneshot, watch};
 
 use crate::modules::{
     data_plane::ingress::ingest_task::IngestTask,
     domain::{
-        delivery_control::{DeliveryControl, UpdateOutcome},
+        delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
         publish_done_reason::PublishDoneReason,
         runner_signals::DownstreamRunnerSignals,
@@ -94,22 +98,30 @@ impl Consumer {
         let _ = self.runner_stop_sender.send(reason);
     }
 
-    /// See `DeliveryControl::apply_update`.
-    pub(crate) fn update_delivery(&self, update: DeliveryControl) -> UpdateOutcome {
-        let mut outcome = UpdateOutcome::Applied;
+    /// See `DeliveryControl::apply_update`. `told_largest` is the Largest
+    /// Location the update's answer gave the subscriber, if it gave one; an
+    /// update that turns Forward on makes it the Joining Location.
+    pub(crate) fn update_delivery(
+        &mut self,
+        requested: DeliveryControl,
+        told_largest: Option<Option<Location>>,
+    ) {
+        let mut forward_turned_on = false;
         self.delivery_control_sender.send_if_modified(|control| {
             let previous = *control;
-            outcome = control.apply_update(update);
+            control.apply_update(requested);
+            forward_turned_on = !previous.forward && control.forward;
             *control != previous
         });
-        outcome
+        if forward_turned_on && let Some(largest_location) = told_largest {
+            self.subscription.joining_location = largest_location;
+        }
     }
 
     pub(crate) fn delivery_counters(&self) -> DeliveryCounters {
         self.delivery_stats.counters()
     }
 
-    #[cfg(test)]
     pub(crate) fn delivery_control(&self) -> DeliveryControl {
         *self.delivery_control_sender.borrow()
     }
@@ -325,10 +337,15 @@ pub(crate) enum MatchingPublication {
     Track(TrackKey),
 }
 
-#[derive(Clone, Debug)]
+/// What a Joining FETCH of the subscription resolves against (draft-14
+/// §9.16.2, draft-18 §10.12.2).
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DownstreamSubscription {
     pub(crate) track_key: TrackKey,
-    pub(crate) join_point: JoinPoint,
+    pub(crate) filter_type: FilterType,
+    /// The Largest Location the subscription was accepted with, `None` when
+    /// the track had no objects; draft-18 §5.1 calls it the Joining Location.
+    pub(crate) joining_location: Option<Location>,
 }
 
 #[derive(Clone, Debug)]

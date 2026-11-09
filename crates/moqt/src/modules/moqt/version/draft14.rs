@@ -111,6 +111,8 @@ pub(crate) struct ControlChannel {
     /// Exclusive upper bound for the peer's Request IDs: the last SETUP or
     /// MAX_REQUEST_ID this side sent.
     request_id_limit: AtomicU64,
+    /// The Request ID after the last one this side wrote.
+    written_request_id_end: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
     /// The peer's SETUP carried the TRACE_CONTEXT Setup Option.
     pub(super) peer_reads_trace_context: bool,
@@ -135,6 +137,7 @@ impl ControlChannel {
             peer_request_id_limit: tokio::sync::watch::Sender::new(peer_request_id_limit),
             next_peer_request_id: AtomicU64::new(first_request_id ^ 1),
             request_id_limit: AtomicU64::new(REQUEST_ID_WINDOW),
+            written_request_id_end: AtomicU64::new(first_request_id),
             inflight_requests: Arc::default(),
             peer_reads_trace_context,
         }
@@ -156,6 +159,18 @@ impl ControlChannel {
         )
         .await
         .map_err(|()| RequestFailure::Timeout)
+    }
+
+    /// Whether either endpoint has used `request_id` in this session. Each
+    /// endpoint uses its Request IDs in order (§9.1), so every one below its
+    /// next has existed.
+    fn request_id_has_existed(&self, request_id: RequestId) -> bool {
+        let next = if request_id % 2 == self.next_peer_request_id.load(Ordering::Relaxed) % 2 {
+            &self.next_peer_request_id
+        } else {
+            &self.written_request_id_end
+        };
+        request_id < next.load(Ordering::Relaxed)
     }
 
     /// Waits while the next Request ID reaches the peer's Maximum Request
@@ -320,6 +335,8 @@ impl ControlChannel {
         let RequestIdReservation(mut next_request_id) = reservation;
         self.send_stream.send(message_type, payload).await?;
         *next_request_id += 2;
+        self.written_request_id_end
+            .store(*next_request_id, Ordering::Relaxed);
         Ok(())
     }
 

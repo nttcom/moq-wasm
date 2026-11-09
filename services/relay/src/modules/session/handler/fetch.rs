@@ -1,5 +1,8 @@
 use async_trait::async_trait;
-use moqt::RequestErrorCode;
+use moqt::{
+    RequestErrorCode,
+    fetch::{JoinedSubscription, JoiningFetchRefusal},
+};
 
 use crate::logging::mark_current_span_failed;
 
@@ -9,6 +12,7 @@ pub(crate) trait FetchHandler: 'static + Send + Sync {
     fn request_id(&self) -> u64;
     fn group_order(&self) -> moqt::object::GroupOrder;
     fn fetch_params(&self) -> moqt::fetch::FetchParams;
+    fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal>;
     async fn ok(
         &self,
         end_of_track: bool,
@@ -37,6 +41,10 @@ impl FetchHandler for moqt::fetch::FetchHandler {
 
     fn fetch_params(&self) -> moqt::fetch::FetchParams {
         self.fetch.fetch_params.clone()
+    }
+
+    fn check_joining(&self, subscription: JoinedSubscription) -> Result<(), JoiningFetchRefusal> {
+        moqt::fetch::FetchHandler::check_joining(self, subscription)
     }
 
     async fn ok(
