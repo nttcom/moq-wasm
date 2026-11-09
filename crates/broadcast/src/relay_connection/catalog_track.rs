@@ -3,24 +3,24 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    Session, executor,
+    Session,
     publish::{Origin, WriteOutcome},
 };
 use msf::CATALOG_TRACK_NAME;
 use tokio::sync::Mutex;
 
-use super::{CatalogSent, RelayState, TrackKey, ensure_origin_track};
+use super::{RelayState, TrackKey, ensure_origin_track};
 use crate::{
     broadcast::{build_catalog, is_cmaf},
     stream_ledger::StreamLedger,
 };
 
 /// Writes a namespace's catalog as a new group, when the catalog changes and
-/// when it is due again.
+/// when `CatalogRefreshTask` resends it.
 pub(super) struct CatalogTrack {
-    session: Arc<Session>,
+    pub(super) session: Arc<Session>,
     origin: Origin,
-    state: Arc<Mutex<RelayState>>,
+    pub(super) state: Arc<Mutex<RelayState>>,
     ledger: StreamLedger,
     sending: Mutex<()>,
 }
@@ -78,13 +78,11 @@ impl CatalogTrack {
         }
         let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
         tracing::debug!(track_namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
-        self.state.lock().await.catalog_sent.insert(
-            namespace_path.to_string(),
-            CatalogSent {
-                at: executor::now(),
-                generation: self.session.connection_generation(),
-            },
-        );
+        self.state
+            .lock()
+            .await
+            .catalog_sent_since_tick
+            .insert(namespace_path.to_string(), true);
         let bytes = payload.len();
         match self
             .origin

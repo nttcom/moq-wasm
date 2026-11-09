@@ -50,8 +50,8 @@ pub(super) fn cached_largest(
 
 /// The upstream SUBSCRIBE uses the Largest Object filter, which starts after
 /// the Largest Location its SUBSCRIBE_OK reports (§9.7), so the cache lacks
-/// that object until the track's next one; a meeting catalog sends that only
-/// when it changes.
+/// that object until the track's next one; a catalog sends that only when it
+/// changes or, when its publisher refreshes it, up to 30 s later.
 pub(super) fn existing_track_largest(
     cache_store: &TrackCacheStore,
     track_key: &TrackKey,
