@@ -20,6 +20,9 @@
 - `MoqSubscription.close()`, `MoqNamespaceWatch.close()` and
   `Announcement.close()` resolve instead of rejecting with "connection lost"
   when the session has already ended.
+- `LivePlayer`'s live playout buffer has no minimum by default: it is as long
+  as the arrival spread plus the audio output latency, instead of at least
+  200 ms. A page that wants a floor sets `minimumMs` with `setBufferPolicy`.
 
 ## 0.3.0
 

@@ -59,7 +59,7 @@ The controls appear while the pointer is over the picture.
 | Speed                                         | 0.5x to 2x, available while rewinding in CMAF mode                                                                                                                                |
 | Volume, fullscreen                            | Live audio gain; fullscreen with auto-hiding controls                                                                                                                             |
 | Gear                                          | Video rendition, audio track and packaging: `LOC` (WebCodecs) or `CMAF` (MediaSource)                                                                                             |
-| `Min buffer` / `Max buffer`, `Catch up`       | Bounds of the adaptive jitter buffer (200 ms minimum by default) and how excess latency is shed: `Skip`, `Speed up` or `Off`                                                      |
+| `Min buffer` / `Max buffer`, `Catch up`       | Bounds of the adaptive jitter buffer (no minimum by default) and how excess latency is shed: `Skip`, `Speed up` or `Off`                                                          |
 
 Rewinding plays from the relay cache through FETCH and keeps running behind
 live until `LIVE` is pressed. It cannot go further back than the relay keeps

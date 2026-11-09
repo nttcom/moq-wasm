@@ -44,7 +44,7 @@ export const CONTROLS_MARKUP = `
             <option value="cmaf">CMAF (MSE)</option>
           </select>
         </label>
-        <label>Min buffer (ms) <input type="number" min="0" max="5000" step="50" value="200" data-part="min-buffer" data-testid="live-player-playout-buffer-input" /></label>
+        <label>Min buffer (ms) <input type="number" min="0" max="5000" step="50" value="0" data-part="min-buffer" data-testid="live-player-playout-buffer-input" /></label>
         <label>Max buffer (ms) <input type="number" min="0" max="5000" step="50" placeholder="∞" data-part="max-buffer" data-testid="live-player-max-buffer-input" /></label>
         <output data-part="buffer-current" data-testid="live-player-buffer-current">Current: -</output>
         <label>Catch up

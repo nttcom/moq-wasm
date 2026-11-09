@@ -4,7 +4,7 @@ import { PlayoutClock, syncOffsetMs, type PlayoutOrigin } from './playoutClock'
 import type { MediaKind } from './trackContext'
 import { VideoPlayout } from './videoPlayout'
 
-export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 200, maximumMs: Number.POSITIVE_INFINITY }
+export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 0, maximumMs: Number.POSITIVE_INFINITY }
 export type CatchUp = 'speed-up' | 'skip' | 'off'
 /// What a sample whose time has passed does: moves the clock back by its
 /// miss, or is dropped so a fixed delay never grows.

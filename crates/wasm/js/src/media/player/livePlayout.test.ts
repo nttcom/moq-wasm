@@ -76,8 +76,8 @@ test('video arriving later than the audio raises the buffer target', () => {
   streamLive(audioOnly, SETTLE_MS)
   streamLive(withVideo, SETTLE_MS, VIDEO_DELAY_MS)
 
-  // Assert
-  expect(audioOnly.targetBufferMs()).toBeCloseTo(200)
+  // Assert: one arrival delay leaves no spread, and `audioOnly` adds no output latency once its audio has gone stale
+  expect(audioOnly.targetBufferMs()).toBeCloseTo(0)
   expect(withVideo.targetBufferMs()).toBeCloseTo(VIDEO_DELAY_MS - AUDIO_DELAY_MS + SCHEDULE_AHEAD_MS)
 })
 
@@ -166,8 +166,8 @@ test('cached frames arriving after the live ones leave the buffer target alone',
   }
   streamLiveVideo(playout, 1_000)
 
-  // Assert
-  expect(playout.targetBufferMs()).toBeCloseTo(200)
+  // Assert: the live frames arrive with one delay, and without audio no output latency is added
+  expect(playout.targetBufferMs()).toBeCloseTo(0)
 })
 
 test('audio joining a playing picture with a cached burst leaves the picture running', () => {
