@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { temporaryAppToken } from '../../../../utils/access'
 import { type BotRoomEnd, BotRoomRequest } from '../../../../utils/botRoom'
 import { resolveServiceUrl } from '../../../../utils/serviceUrl'
 import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
@@ -23,12 +24,9 @@ export const ASR_CHOICES = [
   { asr: 'whisper', label: 'Whisper (CPU)' },
   { asr: 'granite-speech-5-470m', label: 'Granite 470m (CPU)' },
   { asr: 'qwen3-asr', label: 'Qwen3-ASR (GPU)' },
-  { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' }
+  { asr: 'granite-speech-5-2b', label: 'Granite 2b (GPU)' },
+  { asr: 'haas-ja', label: 'Haas-ja (GPU)' }
 ] as const
-
-export function asrLabel(asr: string): string {
-  return ASR_CHOICES.find((choice) => choice.asr === asr)?.label ?? asr
-}
 
 export type CaptionsControls = {
   /// Whether the transcriber is in the room or this page has asked it in.
@@ -78,7 +76,8 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       setError(TRANSCRIBER_END_TEXT[reason])
     })
     request.open(resolveServiceUrl(window.location.search, session.relayUrl, TRANSCRIBER_SERVICE), session.roomName, {
-      asr: heldAsr
+      query: { asr: heldAsr },
+      token: temporaryAppToken
     })
     holding.current = request
     return () => {

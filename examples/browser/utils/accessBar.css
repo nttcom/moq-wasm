@@ -1,0 +1,58 @@
+.access-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+  margin: 0 0 1rem;
+  padding: 0.6rem 1rem;
+  border-radius: 0.7rem;
+  font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+body > .access-bar {
+  margin: 0.75rem;
+}
+
+.access-bar.public {
+  border: 1px solid #e3e6ec;
+  background: #ffffff;
+  color: #1f2937;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.access-bar.temporary,
+.access-bar.given {
+  border: 1px solid #2a2d38;
+  background: #111318;
+  color: #eceef3;
+}
+
+.access-bar.unavailable {
+  border: 1px solid rgba(220, 38, 38, 0.6);
+  background: #2a1114;
+  color: #fde8e8;
+}
+
+.access-bar b {
+  font-weight: 700;
+}
+
+.access-bar code {
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.35rem;
+  background: rgba(127, 127, 127, 0.2);
+}
+
+.access-bar button {
+  margin-left: auto;
+  padding: 0.3rem 0.8rem;
+  border: 0;
+  border-radius: 0.45rem;
+  background: #eceef3;
+  color: #111318;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}

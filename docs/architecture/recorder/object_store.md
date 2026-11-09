@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Add `object_store` (Apache Arrow project, `gcp` and `fs` features) to
-`crates/recorder` to upload closed recording files to Google Cloud Storage, or to
+`services/recorder` to upload closed recording files to Google Cloud Storage, or to
 a local directory, and `url` to pass it the upload location, which
 `object_store::parse_url_opts` takes as a `url::Url`.
 

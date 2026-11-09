@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Translate Viewer</title>
+    <link rel="stylesheet" href="../../media/media.css" />
+    <link rel="stylesheet" href="./viewer.css" />
+  </head>
+  <body>
+    <div class="page viewer-page">
+      <header class="viewer-header">
+        <span class="pill">Live Translate</span>
+        <span id="broadcast-title" class="viewer-title" data-testid="viewer-title">配信を見る</span>
+      </header>
+
+      <section class="viewer-stage-frame">
+        <div id="stage" class="viewer-stage" data-testid="viewer-stage"></div>
+        <div id="watch-overlay" class="viewer-overlay viewer-overlay-center">
+          <button type="button" id="watchBtn" class="viewer-watch" data-testid="viewer-watch-button">視聴する</button>
+          <p id="viewer-status" class="viewer-overlay-status" data-testid="viewer-status"></p>
+        </div>
+        <p id="captions" class="viewer-captions" data-testid="viewer-captions" hidden></p>
+        <nav id="language-bar" class="viewer-overlay viewer-language-bar" aria-label="音声の言語" hidden>
+          <span id="language-status" class="viewer-language-status" data-testid="viewer-language-status"></span>
+          <div id="language-options" class="viewer-language-options" data-testid="viewer-language-select"></div>
+        </nav>
+      </section>
+
+      <dl id="viewer-stats" class="viewer-stats" data-testid="viewer-stats" hidden></dl>
+
+      <details id="connection" class="viewer-details">
+        <summary>接続</summary>
+        <div class="viewer-details-body">
+          <label for="url">Relay URL</label>
+          <input type="url" id="url" data-testid="viewer-url-input" />
+          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <label for="broadcast-id">配信 ID</label>
+          <input type="text" id="broadcast-id" data-testid="viewer-broadcast-id" />
+          <label class="checkbox-row">
+            <input type="checkbox" id="monitor-original" data-testid="viewer-monitor-original" />
+            元の音声も小さく重ねる（デバッグ）
+          </label>
+          <div class="button-row">
+            <button type="button" id="stopBtn">視聴をやめる</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="viewer-details">
+        <summary>Console</summary>
+        <div id="logPanel" class="viewer-console" data-testid="viewer-log-panel"></div>
+      </details>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

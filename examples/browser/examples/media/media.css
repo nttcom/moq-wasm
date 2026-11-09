@@ -13,8 +13,34 @@
   --accent-2: #e07a5f;
   --border: #d5e3df;
   --shadow: 0 30px 60px -45px rgba(16, 42, 42, 0.6);
+  --surface-solid: #fff;
+  --surface-soft: rgba(255, 255, 255, 0.7);
+  --surface-soft-strong: rgba(255, 255, 255, 0.72);
+  --code-bg: #f1f3f3;
+  --glow-1: rgba(15, 118, 110, 0.15);
+  --glow-2: rgba(224, 122, 95, 0.18);
   --radius: 18px;
   --button-height: 36px;
+}
+
+/* utils/access.ts sets data-access-mode. */
+:root[data-access-mode='temporary'] {
+  --bg-0: #0b0d10;
+  --bg-1: #11151a;
+  --card: rgba(24, 28, 34, 0.92);
+  --ink: #e9eef0;
+  --muted: #9aa6ad;
+  --accent: #2dd4bf;
+  --accent-strong: #5eead4;
+  --border: #2a3138;
+  --shadow: 0 30px 60px -45px rgba(0, 0, 0, 0.9);
+  --surface-solid: #161a20;
+  --surface-soft: rgba(22, 26, 32, 0.7);
+  --surface-soft-strong: rgba(22, 26, 32, 0.72);
+  --code-bg: #1b2027;
+  --glow-1: rgba(45, 212, 191, 0.08);
+  --glow-2: rgba(224, 122, 95, 0.06);
+  color-scheme: dark;
 }
 
 *,
@@ -29,8 +55,8 @@ body {
   font-family: var(--font-sans);
   color: var(--ink);
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(15, 118, 110, 0.15), transparent 60%),
-    radial-gradient(1200px 700px at 90% -20%, rgba(224, 122, 95, 0.18), transparent 55%),
+    radial-gradient(1200px 600px at 10% -10%, var(--glow-1), transparent 60%),
+    radial-gradient(1200px 700px at 90% -20%, var(--glow-2), transparent 55%),
     linear-gradient(160deg, var(--bg-0), var(--bg-1));
 }
 
@@ -184,7 +210,7 @@ select {
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface-solid);
   font-family: var(--font-sans);
   font-size: 0.95rem;
   color: var(--ink);
@@ -266,7 +292,7 @@ button:active {
   min-height: var(--button-height);
   padding: 0 12px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--surface-solid);
   color: var(--accent);
   border: 1px dashed var(--border);
   box-shadow: none;
@@ -303,7 +329,7 @@ button:active {
 
 .mode-toggle-button {
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface-solid);
   color: var(--accent);
   border: 1px solid var(--border);
   box-shadow: none;
@@ -327,7 +353,7 @@ button:active {
   height: 34px;
   padding: 0;
   border-radius: 10px;
-  background: #fff;
+  background: var(--surface-solid);
   color: var(--accent);
   border: 1px solid var(--border);
   box-shadow: none;
@@ -380,7 +406,7 @@ button:active {
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--surface-soft-strong);
 }
 
 .visualizer-card h3 {
@@ -450,7 +476,7 @@ button:active {
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--surface-soft);
 }
 
 .status-list {
@@ -490,7 +516,7 @@ audio {
 }
 
 audio {
-  background: #fff;
+  background: var(--surface-solid);
   padding: 6px;
 }
 
@@ -503,7 +529,7 @@ audio {
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--surface-soft);
 }
 
 .playback-meta {

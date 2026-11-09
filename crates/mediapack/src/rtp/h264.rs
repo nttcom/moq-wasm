@@ -16,6 +16,9 @@ const FU_B: u8 = 29;
 const FU_START: u8 = 0x80;
 const FU_END: u8 = 0x40;
 const FU_HEADER_LENGTH: usize = 2;
+/// Bound on a NAL unit reassembled from FU-A fragments, so a sender that
+/// never sets the end bit cannot grow the fragment without limit.
+const MAX_NAL_UNIT_LENGTH: usize = 8 * 1024 * 1024;
 
 /// Reassembles the NAL units of RTP payloads, holding an FU-A fragment across
 /// packets. Call [`Depacketizer::reset`] when packets were lost so a fragment
@@ -30,7 +33,9 @@ impl Depacketizer {
         Self::default()
     }
 
-    /// Returns the NAL units completed by this payload.
+    /// Returns the NAL units completed by this payload. Fails on a malformed or
+    /// interleaved payload, or when FU-A fragments grow a NAL unit beyond 8 MiB,
+    /// which also drops the held fragment.
     pub fn push(&mut self, payload: &[u8]) -> Result<Vec<Bytes>> {
         ensure!(!payload.is_empty(), "empty H.264 RTP payload");
         match payload[0] & NAL_TYPE_MASK {
@@ -82,6 +87,10 @@ impl Depacketizer {
             let Some(fragment) = &mut self.fragment else {
                 return Ok(None);
             };
+            if fragment.len() + body.len() > MAX_NAL_UNIT_LENGTH {
+                self.fragment = None;
+                bail!("FU-A fragments exceed {MAX_NAL_UNIT_LENGTH} bytes");
+            }
             fragment.put_slice(body);
         }
         if fu_header & FU_END == 0 {
@@ -245,6 +254,24 @@ mod tests {
 
         // Assert
         assert_eq!(nals, [Bytes::from(second_nal)]);
+    }
+
+    #[test]
+    fn drops_a_fragment_exceeding_the_nal_unit_bound() {
+        // Arrange
+        let mut start = vec![0x7C, 0x85];
+        start.resize(FU_HEADER_LENGTH + MAX_NAL_UNIT_LENGTH - 1, 0);
+        let middle = [0x7C, 0x05, 0, 0];
+        let mut depacketizer = Depacketizer::new();
+        depacketizer.push(&start).unwrap();
+
+        // Act
+        let overflow = depacketizer.push(&middle);
+        let skipped = depacketizer.push(&middle).unwrap();
+
+        // Assert
+        assert!(overflow.is_err());
+        assert!(skipped.is_empty());
     }
 
     #[test]

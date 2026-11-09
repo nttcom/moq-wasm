@@ -1,0 +1,1361 @@
+import { forwardSdkLog } from '../../core/log'
+import { RequestError, RequestErrorCode } from '../../core/requestError'
+import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session'
+import { parseAudioChannelCount } from '../internal/audioChannelConfig'
+import { monotonicUnixMicros } from '../internal/clock'
+import { type AudioLevel, readLocHeader } from '../internal/loc'
+import { AdaptiveBitrate, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
+import type { MseTrackSource } from '../internal/mseSink'
+import type { BufferPolicy } from './jitterBuffer'
+import type { CatchUp } from './livePlayout'
+import type { LivePictureKind } from './livePictureSink'
+import { CatalogFollower } from './catalogFollower'
+import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
+import { CmafLive, cmafSource } from './cmafLive'
+import { CmafReview } from './cmafReview'
+import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
+import { LocReview } from './locReview'
+import { PictureStage } from './pictureStage'
+import { type GroupLink, type GroupMember, registerGroupMember } from './groupMember'
+import { RenditionSplice, type SpliceStart } from './renditionSplice'
+import { ReviewClock } from './reviewClock'
+import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
+import type { GroupMark } from './rewind'
+import { type SeekAxis, SeekTimeline } from './seekTimeline'
+import { StallWatch } from './stallWatch'
+import { TextTracks } from './textTrack'
+import type { LogLevel, MediaKind, Packaging, PlayedTrack, TrackContext } from './trackContext'
+import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
+import { type StatusState, getErrorMessage } from '../internal/status'
+import {
+  CATALOG_TRACK_NAME,
+  type LiveSource,
+  type MediaCatalogTrack,
+  extractCatalogTracks,
+  mediaTimelineOf,
+  sourceTracks
+} from '../catalog'
+import { parseCatalog } from '../parseCatalog'
+
+const MICROS_PER_SECOND = 1_000_000
+const REVIEW_PLAYHEAD_STEP_US = 1_000_000
+const PUBLISHER_RETRY_MS = 2_000
+const ADAPT_INTERVAL_MS = 500
+/// Listeners redraw their whole UI on each state change, and every video object
+/// advances the playback position, so a position-only change is reported at
+/// most this often.
+const PROGRESS_NOTIFY_INTERVAL_MS = 200
+
+export type { Packaging } from './trackContext'
+
+export type LivePlayerCallbacks = {
+  onStateChange(): void
+  onLiveFrame(): void
+  onLog(level: LogLevel, message: string): void
+  /// Called with the LOC Audio Level (draft-ietf-moq-loc-04 §2.3.3.2) of each
+  /// live LOC audio object that carries one.
+  onAudioLevel?(level: AudioLevel): void
+}
+
+export type LivePlayerOptions = {
+  container: HTMLElement
+  callbacks: LivePlayerCallbacks
+  deliveryObserver?: DeliveryObserver
+  livePicture?: LivePictureKind
+  /// Keeps the live subscriptions forwarding and the live picture playing
+  /// behind a review, so `goLive` shows the live picture at once instead of
+  /// waiting for the next group; it costs the live bandwidth and decoding
+  /// while reviewing.
+  keepLiveWhileReviewing?: boolean
+  /// Plays only this source of the catalog; without it, every video and audio
+  /// track is a choice.
+  source?: LiveSource
+}
+
+export type PlayerStatus = { text: string; state: StatusState }
+
+/// The LOC tracks of a publisher that announces no catalog.
+export type LiveTracks = { video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }
+
+export type LivePlayerState = {
+  started: boolean
+  videoTracks: MediaCatalogTrack[]
+  audioTracks: MediaCatalogTrack[]
+  selectedVideoTrack: string
+  selectedAudioTrack: string
+  adaptiveVideo: boolean
+  cmafAvailable: boolean
+  packaging: Packaging
+  mode: 'live' | 'review'
+  /// False for a broadcast none of whose tracks is live (draft-ietf-moq-msf-01
+  /// §5.2.7), which plays as VOD.
+  isLive: boolean
+  /// Set once VOD playback has reached the end, which pauses it.
+  ended: boolean
+  /// False while the position of the player's `PlaybackGroup` lies outside
+  /// what the player can play; the player then fetches nothing.
+  inRange: boolean
+  paused: boolean
+  stalled: boolean
+  playbackRate: number
+  playbackRateAdjustable: boolean
+  catalogStatus: PlayerStatus
+  playbackStatus: PlayerStatus
+  rewindStatus: PlayerStatus
+  seek: SeekAxis & { anchorSeconds: number | undefined; playheadSeconds: number | undefined }
+  delivery: {
+    liveVideoAlias: bigint | undefined
+    liveAudioAlias: bigint | undefined
+    mediaTimelineTrackName: string | undefined
+    reviewFetchWindows: ReviewFetchWindow[]
+  }
+}
+
+export type LivePlayerStats = LiveStats & { videoObjects: number }
+
+/// A live LOC video rendition change in progress: `next` is subscribed next
+/// to `outgoing` until the splice has handed playback over to it.
+type VideoSwitch = {
+  splice: RenditionSplice
+  outgoing: TrackSubscription
+  next?: TrackSubscription
+  previousName: string
+}
+
+export class LivePlayer {
+  private readonly context: TrackContext
+  private readonly callbacks: LivePlayerCallbacks
+  private readonly keepLiveWhileReviewing: boolean
+  private readonly source: LiveSource | undefined
+  private readonly textTracks: TextTracks
+  private readonly catalog: CatalogFollower
+  private readonly subscriptions: TrackSubscriptions
+  private readonly timeline = new SeekTimeline()
+  private readonly stage: PictureStage
+  private readonly locLive: LocLive
+  private readonly cmafLive = new CmafLive()
+  private readonly reviewClock = new ReviewClock()
+  private readonly locReview: LocReview
+  private readonly cmafReview = new CmafReview()
+  private readonly stallWatch: StallWatch
+  private readonly reviewHost: ReviewHost
+  private tracks: Record<MediaKind, MediaCatalogTrack[]> = { video: [], audio: [] }
+  private cmafTracks: MediaCatalogTrack[] = []
+  private selected: Record<MediaKind, string> = { video: '', audio: '' }
+  private packaging: Packaging = 'loc'
+  private review: ReviewSession | undefined
+  private group: GroupLink | undefined
+  private started = false
+  private givenTracks: LiveTracks | undefined
+  /// Incremented by every start and stop; a publisher wait from an earlier
+  /// start sees the change and returns.
+  private watchGeneration = 0
+  private trackChanges: Promise<void> = Promise.resolve()
+  private paused = false
+  private ended = false
+  private volume = 1
+  private playbackRate = 1
+  private videoObjectCount = 0
+  private progressNotifiedAt = Number.NEGATIVE_INFINITY
+  private newestVideoGroup: bigint | undefined
+  private videoSwitch: VideoSwitch | undefined
+  private readonly adaptiveBitrate = new AdaptiveBitrate()
+  private adaptiveVideo = true
+  private nextAdaptAtMs = 0
+  /// The container's height in device pixels, the unit a rendition's height
+  /// compares to; undefined before it is laid out.
+  private pictureHeightPx: number | undefined
+  private catalogStatus: PlayerStatus = { text: 'Catalog not loaded yet', state: 'idle' }
+  private playbackStatus: PlayerStatus = { text: 'Playback idle', state: 'idle' }
+  private rewindStatus: PlayerStatus = { text: 'Live', state: 'ok' }
+
+  constructor(options: LivePlayerOptions) {
+    this.callbacks = options.callbacks
+    this.keepLiveWhileReviewing = options.keepLiveWhileReviewing ?? false
+    this.source = options.source
+    this.context = {
+      session: undefined,
+      namespace: [],
+      observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
+      log: (level, message) => {
+        forwardSdkLog(level, 'moq-wasm::media::live_player', message)
+        options.callbacks.onLog(level, message)
+      }
+    }
+    this.textTracks = new TextTracks(this.context)
+    this.catalog = new CatalogFollower(
+      this.textTracks,
+      (text) => void this.queueTrackChange(() => this.applyCatalog(text)),
+      (done) => void this.publisherLeft(publisherEndedText(CATALOG_TRACK_NAME, done))
+    )
+    this.subscriptions = new TrackSubscriptions(this.context, (kind, done) => this.publisherEnded(kind, done))
+    this.stallWatch = new StallWatch(() => {
+      this.changed()
+      this.adaptVideo()
+    })
+    this.stage = new PictureStage(options.container)
+    new ResizeObserver(([entry]) => {
+      const heightPx = entry.contentRect.height * window.devicePixelRatio
+      this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
+    }).observe(options.container)
+    this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
+      onPresented: (picture) => this.notePresentedFrame(picture),
+      onFrameShown: (ids, captureMicros) => {
+        const trackAlias = this.subscriptions.get('video')?.id
+        if (ids && trackAlias !== undefined) {
+          this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
+        }
+        this.callbacks.onLiveFrame()
+      }
+    })
+    this.locReview = new LocReview(
+      this.stage.reviewCanvas,
+      {
+        onFrameShown: (captureMicros, playhead) => {
+          if (playhead) {
+            this.context.observer.setPlayhead(playhead)
+          }
+          this.stage.show(this.locReview.canvas)
+          this.notePresentedFrame(this.locReview.canvas)
+          this.advanceReviewPlayhead(captureMicros)
+        },
+        onLog: this.context.log
+      },
+      this.reviewClock
+    )
+    this.reviewHost = {
+      playedTrack: (kind) => this.playedTrack(kind),
+      playWindow: (window, session) => this.playReviewWindow(window, session),
+      reachedEnd: (session, throughMicros) => void this.endPlayback(session, throughMicros),
+      windowStarted: () => this.renderReviewStatus(),
+      fastForwardDrained: () => this.playbackRateAdjustable() && this.playbackRate > 1 && this.cmafReview.drained(),
+      observeLiveVideoGroup: (groupId) => this.observeLiveVideoGroup(groupId),
+      resumeLiveForward: () => this.resumeLiveForward(),
+      goLive: () => this.endReview(),
+      seek: (captureMicros) => (this.group ? this.group.placeAgain() : this.seekAlone(captureMicros)),
+      failed: (description) => {
+        this.stallWatch.clear()
+        this.setRewindStatus(`Rewind failed: ${description}`, 'error')
+      }
+    }
+    this.stage.show(this.locLive.picture.element)
+    for (const video of this.stage.videos()) {
+      this.watchPresentedFrames(video)
+    }
+    registerGroupMember(this, this.groupMember())
+  }
+
+  get state(): LivePlayerState {
+    const axis = this.timeline.axis()
+    const review = this.review
+    return {
+      started: this.started,
+      videoTracks: this.tracks.video,
+      audioTracks: this.tracks.audio,
+      selectedVideoTrack: this.selected.video,
+      selectedAudioTrack: this.selected.audio,
+      adaptiveVideo: this.adaptiveVideo,
+      cmafAvailable: this.cmafTracks.length > 0,
+      packaging: this.packaging,
+      mode: review ? 'review' : 'live',
+      isLive: this.timeline.live,
+      ended: this.ended,
+      inRange: this.review?.inRange ?? true,
+      paused: this.paused,
+      stalled: this.stallWatch.stalled,
+      playbackRate: this.playbackRate,
+      playbackRateAdjustable: this.playbackRateAdjustable(),
+      catalogStatus: this.catalogStatus,
+      playbackStatus: this.playbackStatus,
+      rewindStatus: this.rewindStatus,
+      seek: {
+        ...axis,
+        anchorSeconds: review && review.anchorMicros / MICROS_PER_SECOND,
+        playheadSeconds: review && review.playheadMicros / MICROS_PER_SECOND
+      },
+      delivery: {
+        liveVideoAlias: this.subscriptions.get('video')?.id,
+        liveAudioAlias: this.subscriptions.get('audio')?.id,
+        mediaTimelineTrackName: this.timeline.mediaTimelineTrackName,
+        reviewFetchWindows: review?.fetchWindows ?? []
+      }
+    }
+  }
+
+  stats(): LivePlayerStats {
+    return { ...this.locLive.stats(), videoObjects: this.videoObjectCount }
+  }
+
+  elapsedMsAt(captureMicros: number): number | undefined {
+    return this.timeline.media.elapsedMsAt(captureMicros)
+  }
+
+  /// The session stays the caller's to close.
+  /// Tracks given by the page replace the catalog: nothing is subscribed for
+  /// them but the tracks themselves, and they never change.
+  /// Resolves once the tracks are subscribed or, when nobody publishes the
+  /// namespace yet, once the player has started waiting for the publisher.
+  async start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void> {
+    await this.queueTrackChange(async () => {
+      this.context.session = session
+      this.context.namespace = namespace
+      this.givenTracks = tracks
+      this.started = true
+      this.watchGeneration += 1
+      this.changed()
+    })
+    if (!(await this.followPublisher())) {
+      void this.waitForPublisher(this.watchGeneration)
+    }
+  }
+
+  stop(): Promise<void> {
+    return this.queueTrackChange(() => this.stopWatching())
+  }
+
+  /// Returns false when nobody publishes the namespace: the relay answers the
+  /// SUBSCRIBE with TRACK_DOES_NOT_EXIST.
+  private async followPublisher(): Promise<boolean> {
+    const tracks = this.givenTracks
+    try {
+      if (tracks) {
+        await this.queueTrackChange(() => this.applyGivenTracks(tracks))
+      } else {
+        await this.catalog.follow()
+      }
+      return true
+    } catch (error) {
+      if (!(error instanceof RequestError && error.errorCode === RequestErrorCode.TrackDoesNotExist)) {
+        throw error
+      }
+      await this.queueTrackChange(() => this.forgetPublisher('Waiting for the publisher', 'Playback idle'))
+      return false
+    }
+  }
+
+  private async waitForPublisher(generation: number): Promise<void> {
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, PUBLISHER_RETRY_MS))
+      if (generation !== this.watchGeneration) {
+        return
+      }
+      try {
+        if (await this.followPublisher()) {
+          return
+        }
+      } catch (error) {
+        this.context.log('error', `waiting for the publisher: ${getErrorMessage(error)}`)
+        return
+      }
+    }
+  }
+
+  /// Called when the catalog, or the video track when the page gave the
+  /// tracks, ends with PUBLISH_DONE. `playbackText` reports that PUBLISH_DONE:
+  /// the wasm client drops the other tracks' PUBLISH_DONE once
+  /// `forgetPublisher` has unsubscribed them.
+  private async publisherLeft(playbackText: string): Promise<void> {
+    const generation = this.watchGeneration
+    await this.queueTrackChange(async () => {
+      if (generation === this.watchGeneration) {
+        await this.forgetPublisher('Waiting for the publisher to return', playbackText)
+      }
+    })
+    void this.waitForPublisher(generation)
+  }
+
+  private async stopWatching(): Promise<void> {
+    this.started = false
+    this.watchGeneration += 1
+    await this.forgetPublisher('Catalog not loaded yet', 'Playback idle')
+  }
+
+  /// Also resets the catalog, so the next catalog subscribes its tracks anew.
+  private async forgetPublisher(catalogText: string, playbackText: string): Promise<void> {
+    this.timeline.reset()
+    this.endReview()
+    this.cmafLive.close()
+    this.locLive.reset()
+    this.stallWatch.clear()
+    this.stage.show(this.locLive.picture.element)
+    this.abandonVideoSwitch()
+    for (const [kind] of this.subscriptions.entries()) {
+      await this.subscriptions.unsubscribe(kind)
+    }
+    await this.subscriptions.retireAll()
+    this.newestVideoGroup = undefined
+    await this.textTracks.unsubscribeAll()
+    this.catalog.reset()
+    this.tracks = { video: [], audio: [] }
+    this.cmafTracks = []
+    this.selected = { video: '', audio: '' }
+    this.videoObjectCount = 0
+    this.catalogStatus = { text: catalogText, state: 'idle' }
+    this.playbackStatus = { text: playbackText, state: 'idle' }
+    this.changed()
+  }
+
+  /// A track picked by hand ends the automatic choice of the rendition.
+  selectVideoTrack(name: string): Promise<void> {
+    this.adaptiveVideo = false
+    return this.selectTrack('video', name)
+  }
+
+  /// See *Automatic quality* in docs/architecture/browser-examples/live-player.md.
+  setAdaptiveVideo(enabled: boolean): void {
+    this.adaptiveVideo = enabled
+    this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+    this.changed()
+  }
+
+  selectAudioTrack(name: string): Promise<void> {
+    return this.selectTrack('audio', name)
+  }
+
+  private selectTrack(kind: MediaKind, name: string): Promise<void> {
+    return this.queueTrackChange(async () => {
+      if (kind === 'video') {
+        this.abandonVideoSwitch()
+        if (await this.spliceVideo(name)) {
+          return
+        }
+      }
+      this.selected[kind] = name
+      await this.resubscribe(kind)
+      await this.openLiveMse()
+    })
+  }
+
+  setPackaging(packaging: Packaging): Promise<void> {
+    return this.queueTrackChange(() => this.switchPackaging(packaging))
+  }
+
+  private async switchPackaging(packaging: Packaging): Promise<void> {
+    if (packaging === this.packaging) {
+      return
+    }
+    this.packaging = packaging
+    this.changed()
+    await this.resubscribe('video')
+    await this.resubscribe('audio')
+    if (this.packaging === 'cmaf') {
+      await this.openLiveMse()
+    } else {
+      const previous = this.cmafLive.detach()
+      this.stage.replace(this.locLive.picture.element, () => this.packaging === 'loc' && !this.review, previous)
+    }
+    this.context.log('info', `packaging switched to ${this.packaging}`)
+  }
+
+  setBufferPolicy(policy: BufferPolicy): void {
+    this.locLive.setBufferPolicy(policy)
+  }
+
+  setCatchUp(catchUp: CatchUp): void {
+    this.locLive.playout.setCatchUp(catchUp)
+  }
+
+  /// Skips from the position on screen: the review playhead, the live frame
+  /// shown last, or the live edge before a frame has been shown. In a
+  /// `PlaybackGroup`, skips the group.
+  skip(seconds: number): void {
+    if (this.group) {
+      this.group.skip(seconds)
+      return
+    }
+    const from = this.positionMicros()
+    if (from !== undefined) {
+      this.seekAlone(from + seconds * MICROS_PER_SECOND)
+    }
+  }
+
+  private positionMicros(): number | undefined {
+    const latest = this.timeline.groups.latest
+    if (!latest) {
+      return undefined
+    }
+    return this.review?.playheadMicros ?? this.locLive.shownCaptureMicros ?? latest.captureMicros
+  }
+
+  /// A position at or past the live edge goes live. Any other position is
+  /// replayed from the closed keyframe group that holds it: the frames before it
+  /// are decoded without pacing and only the ones from the position on are shown.
+  /// A paused player stays paused on the frame at the position. A position
+  /// before the first group plays from the first group. In a `PlaybackGroup`,
+  /// seeks the group.
+  seek(captureMicros: number): void {
+    if (this.group) {
+      this.group.seek(captureMicros)
+      return
+    }
+    this.seekAlone(captureMicros)
+  }
+
+  private seekAlone(captureMicros: number): void {
+    const latest = this.timeline.groups.latest
+    if (!latest) {
+      return
+    }
+    if (this.timeline.live && captureMicros >= latest.captureMicros) {
+      this.returnToLive()
+      return
+    }
+    const target = this.timeline.groups.resolveSeekTarget(captureMicros)
+    if (!target) {
+      this.setRewindStatus('Rewind unavailable: nothing buffered yet', 'error')
+      return
+    }
+    const session = this.beginReview(target, captureMicros)
+    this.reviewClock.anchor(session.anchorMicros, this.paused)
+    this.playReview(session, this.reviewClock)
+  }
+
+  private align(positionMicros: number): void {
+    const clock = this.group?.clock
+    const target = this.timeline.groups.resolveSeekTarget(positionMicros)
+    if (clock && target) {
+      this.playReview(this.beginReview(target, positionMicros), clock)
+    }
+  }
+
+  /// The group's position lies outside the player's range: nothing is
+  /// fetched, and the live subscriptions do not forward, as in a review.
+  private hold(positionMicros: number): void {
+    this.beginReview(undefined, positionMicros)
+    this.locReview.playout.stop()
+    this.cmafReview.close()
+    this.stallWatch.clear()
+    this.applyVolume()
+    this.playbackStatus = { text: 'Out of range', state: 'idle' }
+    this.changed()
+  }
+
+  /// Without a `target`, the review holds a position outside the player's range.
+  private beginReview(target: GroupMark | undefined, captureMicros: number): ReviewSession {
+    this.review?.end()
+    this.ended = false
+    this.abandonVideoSwitch()
+    const session = new ReviewSession(
+      this.context,
+      this.timeline,
+      this.subscriptions,
+      this.reviewHost,
+      target,
+      captureMicros
+    )
+    this.review = session
+    if (!this.keepLiveWhileReviewing && this.timeline.live) {
+      this.subscriptions.pauseForward()
+    }
+    this.cmafReview.needsOpen = true
+    return session
+  }
+
+  private playReview(session: ReviewSession, clock: ReviewClock): void {
+    this.locReview.playout.start(clock, session.anchorMicros)
+    this.applyPaused(this.paused)
+    this.applyVolume()
+    this.playbackStatus = this.timeline.live
+      ? { text: 'Reviewing', state: 'review' }
+      : { text: `Playing ${this.selected.video}`, state: 'ok' }
+    this.changed()
+    session.start()
+  }
+
+  /// Does nothing for a broadcast that is not live, which has no live edge.
+  /// In a `PlaybackGroup`, takes the group live.
+  goLive(): void {
+    if (this.group) {
+      this.group.goLive()
+    } else if (this.timeline.live) {
+      this.returnToLive()
+    }
+  }
+
+  private endReview(): void {
+    if (this.group) {
+      this.group.placeAgain()
+    } else {
+      this.returnToLive()
+    }
+  }
+
+  /// The live picture showed nothing while delivery was paused for the review,
+  /// so a skip right after going live measures from the live edge until a new
+  /// live frame has been shown.
+  private returnToLive(): void {
+    this.review?.end()
+    this.review = undefined
+    this.ended = false
+    this.locLive.shownCaptureMicros = undefined
+    this.resumeLiveForward()
+    this.locReview.clearFrameIds()
+    this.context.observer.clearPlayhead('fetch')
+    this.applyPaused(false)
+    this.locReview.playout.stop()
+    this.reviewClock.reset()
+    this.playbackRate = 1
+    this.applyVolume()
+    this.stage.show(this.livePicture())
+    this.cmafReview.close()
+    this.rewindStatus = { text: 'Live', state: 'ok' }
+    this.changed()
+  }
+
+  /// Pausing holds whatever is on screen; a seek or skip keeps the pause and
+  /// every other transition (live, packaging or quality change) resumes.
+  /// Resuming live CMAF jumps to the end of what is buffered so the picture is
+  /// live again; the LOC MediaStream has no backlog to skip. Resuming VOD that
+  /// has ended plays it from the start, as a media element does. In a
+  /// `PlaybackGroup`, pauses or resumes the group.
+  setPaused(paused: boolean): void {
+    if (this.group) {
+      this.group.setPaused(paused)
+      return
+    }
+    if (!paused && this.ended) {
+      this.paused = false
+      this.seekAlone(0)
+      return
+    }
+    this.applyPaused(paused)
+  }
+
+  private applyPaused(paused: boolean): void {
+    this.paused = paused
+    if (paused) {
+      this.stallWatch.clear()
+    }
+    for (const media of this.playingMedia()) {
+      if (paused) {
+        media.pause()
+      } else {
+        void media.play().catch(() => undefined)
+      }
+    }
+    const liveSink = this.cmafLive.sink
+    if (!this.review && !liveSink) {
+      this.locLive.playout.setPaused(paused)
+    }
+    if (this.review && this.packaging === 'loc') {
+      const clock = this.group?.clock ?? this.reviewClock
+      clock.setPaused(paused)
+    }
+    const liveEnd = liveSink?.bufferedEnd()
+    if (!paused && !this.review && liveSink && liveEnd !== undefined) {
+      liveSink.element.currentTime = liveEnd
+    }
+    this.changed()
+  }
+
+  /// Review carries its own sound, so whatever live audio is still buffered when
+  /// a review starts is silenced, and it is heard again on the way back to live.
+  setVolume(volume: number): void {
+    this.volume = volume
+    this.applyVolume()
+  }
+
+  setPlaybackRate(rate: number): void {
+    this.playbackRate = rate
+    this.changed()
+  }
+
+  /// A change unsubscribes and resubscribes media tracks across awaits, so two
+  /// running at once would both subscribe the same kind and leave one of the
+  /// subscriptions behind; changes run one after another in the order they came.
+  private queueTrackChange(change: () => Promise<void>): Promise<void> {
+    const run = this.trackChanges.then(change)
+    this.trackChanges = run.catch(() => undefined)
+    return run
+  }
+
+  private changed(): void {
+    this.applyPlaybackRate()
+    this.callbacks.onStateChange()
+  }
+
+  private setRewindStatus(text: string, state: StatusState): void {
+    this.rewindStatus = { text, state }
+    this.changed()
+  }
+
+  private async applyCatalog(payload: string): Promise<void> {
+    if (!this.started) {
+      return
+    }
+    try {
+      const catalog = parseCatalog(payload)
+      const sourceNames =
+        this.source && new Set(sourceTracks(extractCatalogTracks(catalog), this.source).map(({ name }) => name))
+      const ofSource = (role?: 'video' | 'audio') =>
+        extractCatalogTracks(catalog, role).filter((track) => !sourceNames || sourceNames.has(track.name))
+      this.cmafTracks = ofSource().filter((track) => track.packaging === 'cmaf')
+      const changed = this.replaceAllTracks(
+        ofSource('video').filter(isLocTrack),
+        ofSource('audio').filter(isLocTrack),
+        'Catalog loaded'
+      )
+      await this.subscribeMediaTimeline(catalog)
+      await this.subscribeReplacedTracks(changed)
+    } catch (error) {
+      this.catalogStatus = { text: `Catalog error: ${getErrorMessage(error)}`, state: 'error' }
+      this.changed()
+      this.context.log('error', `catalog: ${getErrorMessage(error)}`)
+    }
+  }
+
+  private async applyGivenTracks(tracks: LiveTracks): Promise<void> {
+    if (!this.started) {
+      return
+    }
+    this.cmafTracks = []
+    await this.subscribeReplacedTracks(this.replaceAllTracks(tracks.video, tracks.audio ?? [], 'Tracks given'))
+  }
+
+  private replaceAllTracks(video: MediaCatalogTrack[], audio: MediaCatalogTrack[], source: string): boolean {
+    this.timeline.applyCatalogTracks([...video, ...audio])
+    const videoChanged = this.replaceTracks('video', video)
+    const audioChanged = this.replaceTracks('audio', audio)
+    this.catalogStatus = { text: `${source}: ${video.length} video / ${audio.length} audio`, state: 'ok' }
+    this.changed()
+    return videoChanged || audioChanged
+  }
+
+  private async subscribeReplacedTracks(changed: boolean): Promise<void> {
+    if (!changed) {
+      this.reconfigureDecoders()
+      return
+    }
+    await this.resubscribe('video')
+    await this.resubscribe('audio')
+    await this.openLiveMse()
+  }
+
+  private replaceTracks(kind: MediaKind, tracks: MediaCatalogTrack[]): boolean {
+    const previous = this.tracks[kind].map((track) => track.name)
+    this.tracks[kind] = tracks
+    const names = tracks.map((track) => track.name)
+    if (names.length === previous.length && names.every((name, index) => name === previous[index])) {
+      return false
+    }
+    this.selected[kind] = names.includes(this.selected[kind]) ? this.selected[kind] : this.startingTrack(kind, tracks)
+    return true
+  }
+
+  private startingTrack(kind: MediaKind, tracks: MediaCatalogTrack[]): string {
+    const [first] = tracks
+    if (!first) {
+      return ''
+    }
+    if (kind !== 'video' || !this.adaptiveVideo) {
+      return first.name
+    }
+    return renditionAboveHeight(bitrateLadder(tracks, first), first.name, this.pictureHeightPx) ?? first.name
+  }
+
+  private async subscribeMediaTimeline(catalog: unknown): Promise<void> {
+    const track = mediaTimelineOf(
+      catalog,
+      [...this.tracks.video, ...this.tracks.audio].map(({ name }) => name)
+    )
+    if (!track || !this.timeline.followMediaTimeline(track)) {
+      return
+    }
+    const onTimeline = (text: string) => {
+      try {
+        this.timeline.replaceMediaTimeline(text, this.playedTrack('video')?.name)
+      } catch (error) {
+        this.context.log('error', `media timeline: ${getErrorMessage(error)}`)
+        return
+      }
+      this.changed()
+      if (!this.timeline.live && !this.review) {
+        this.seek(0)
+      }
+    }
+    // A SUBSCRIBE to a track that is not live delivers no object, so the
+    // timeline of a VOD broadcast arrives through the joining FETCH alone.
+    await this.textTracks.subscribe(track.name, onTimeline, { currentGroup: !this.timeline.live })
+  }
+
+  private cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
+    return this.cmafTracks.find((candidate) => candidate.name === `${track.name}_cmaf`)
+  }
+
+  /// Nothing is subscribed for a broadcast that is not live: review FETCHes the
+  /// selected track from its next window on.
+  private async resubscribe(kind: MediaKind): Promise<void> {
+    const played = this.selectedTrack(kind)
+    if (!this.timeline.live) {
+      return
+    }
+    if (played && this.subscriptions.get(kind)?.name === played.name) {
+      return
+    }
+
+    if (kind === 'video') {
+      this.abandonVideoSwitch()
+      this.newestVideoGroup = undefined
+      this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+      this.timeline.groups.reset()
+      this.endReview()
+    } else {
+      this.timeline.audio.reset()
+    }
+    await this.subscriptions.unsubscribe(kind)
+    if (!played) {
+      return
+    }
+
+    const { name, track } = played
+    const currentGroup = kind === 'video'
+    if (this.packaging === 'cmaf') {
+      await this.subscriptions.subscribe(
+        kind,
+        name,
+        track,
+        (groupId, object) => this.handleCmafObject(kind, name, groupId, object),
+        currentGroup
+      )
+      return
+    }
+    this.locLive.configureTrack(kind, track)
+    await this.subscriptions.subscribe(
+      kind,
+      name,
+      track,
+      (groupId, object, cached) => this.handleLocObject(kind, track.name, groupId, object, cached),
+      currentGroup
+    )
+  }
+
+  private selectedTrack(kind: MediaKind): PlayedTrack | undefined {
+    const track = this.tracks[kind].find((candidate) => candidate.name === this.selected[kind])
+    const wire = track && (this.packaging === 'cmaf' ? this.cmafSibling(track) : track)
+    return track && wire && { name: wire.name, track }
+  }
+
+  /// Switches live LOC video to another rendition of its switching set
+  /// without a gap: the rendition subscribed so far plays on until the new one
+  /// takes over at a group boundary (see `RenditionSplice`). Returns false when
+  /// the change needs the regular resubscription.
+  private async spliceVideo(name: string): Promise<boolean> {
+    const outgoing = this.subscriptions.get('video')
+    const track = this.tracks.video.find((candidate) => candidate.name === name)
+    if (
+      this.packaging !== 'loc' ||
+      this.review ||
+      !outgoing ||
+      !track ||
+      outgoing.name === name ||
+      outgoing.track.altGroup === undefined ||
+      outgoing.track.altGroup !== track.altGroup
+    ) {
+      return false
+    }
+    const pending: VideoSwitch = {
+      splice: new RenditionSplice(this.newestVideoGroup),
+      outgoing,
+      previousName: this.selected.video
+    }
+    this.videoSwitch = pending
+    this.selected.video = name
+    this.changed()
+    let next: TrackSubscription
+    try {
+      next = await this.subscriptions.open('video', name, track, (groupId, object) =>
+        this.handleIncomingVideo(pending, name, groupId, object)
+      )
+    } catch (error) {
+      this.abandonVideoSwitch()
+      this.changed()
+      throw error
+    }
+    if (this.videoSwitch !== pending) {
+      await this.subscriptions.close(next)
+      return true
+    }
+    pending.next = next
+    return true
+  }
+
+  /// Objects that arrive before the subscription is known to the switch are
+  /// dropped, so the splice is decided by a group start seen afterwards.
+  private handleIncomingVideo(pending: VideoSwitch, trackName: string, groupId: bigint, object: ReceivedObject): void {
+    const next = pending.next
+    if (!next) {
+      return
+    }
+    if (this.videoSwitch !== pending) {
+      if (this.subscriptions.get('video') === next) {
+        this.handleLocObject('video', trackName, groupId, object)
+      }
+      return
+    }
+    const verdict = pending.splice.acceptIncoming(groupId, object.objectId)
+    if (verdict.start) {
+      this.startIncomingVideo(pending, next, verdict.start)
+    }
+    if (verdict.retireOutgoing) {
+      this.retireOutgoingVideo(pending)
+    }
+    if (verdict.play) {
+      this.handleLocObject('video', trackName, groupId, object)
+    }
+  }
+
+  /// An aligned splice keeps the seek timeline, since both renditions number
+  /// their groups alike, and asks the publisher to end the outgoing rendition
+  /// before the start group; one that is not aligned starts the timeline over.
+  private startIncomingVideo(pending: VideoSwitch, next: TrackSubscription, start: SpliceStart): void {
+    this.subscriptions.handOver('video', next)
+    this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+    this.locLive.configureTrack('video', next.track)
+    if (!start.aligned) {
+      this.timeline.groups.reset()
+      return
+    }
+    this.subscriptions.endBeforeGroup(pending.outgoing, start.groupId).catch((error) => {
+      this.context.log('warn', `end ${pending.outgoing.name} before group ${start.groupId}: ${getErrorMessage(error)}`)
+      this.retireOutgoingVideo(pending)
+    })
+  }
+
+  private retireOutgoingVideo(pending: VideoSwitch): void {
+    if (this.videoSwitch !== pending) {
+      return
+    }
+    this.videoSwitch = undefined
+    this.subscriptions.retire(pending.outgoing).catch((error) => {
+      this.context.log('error', `unsubscribe ${pending.outgoing.name}: ${getErrorMessage(error)}`)
+    })
+  }
+
+  /// Settles a switch in progress: one that has handed over keeps the new
+  /// rendition and drops the outgoing one, one that has not keeps playing the
+  /// outgoing rendition.
+  private abandonVideoSwitch(): void {
+    const pending = this.videoSwitch
+    if (!pending) {
+      return
+    }
+    if (pending.splice.start !== undefined) {
+      this.retireOutgoingVideo(pending)
+      return
+    }
+    this.videoSwitch = undefined
+    this.selected.video = pending.previousName
+    if (pending.next) {
+      this.subscriptions.close(pending.next).catch((error) => {
+        this.context.log('error', `unsubscribe ${pending.next?.name}: ${getErrorMessage(error)}`)
+      })
+    }
+  }
+
+  private handleLocObject(
+    kind: MediaKind,
+    trackName: string,
+    groupId: bigint,
+    object: ReceivedObject,
+    cached = false
+  ): void {
+    if (kind === 'video') {
+      const pending = this.videoSwitch
+      if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'drop') {
+        return
+      }
+      if (this.newestVideoGroup === undefined || groupId > this.newestVideoGroup) {
+        this.newestVideoGroup = groupId
+      }
+      if (!cached) {
+        this.observeVideoDelivery(object)
+      }
+      this.videoObjectCount += 1
+      this.timeline.groups.record(groupId, object.locHeader)
+      this.notePlaying(trackName)
+    } else {
+      this.timeline.audio.record(groupId, object.locHeader)
+      const audioLevel = readLocHeader(object.locHeader).audioLevel
+      if (audioLevel) {
+        this.callbacks.onAudioLevel?.(audioLevel)
+      }
+    }
+    this.locLive.push(kind, groupId, object, cached)
+  }
+
+  private handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: ReceivedObject): void {
+    if (object.objectStatus != null) {
+      return
+    }
+    if (kind === 'video') {
+      this.videoObjectCount += 1
+      this.notePlaying(trackName)
+    } else {
+      this.timeline.audio.record(groupId, undefined)
+    }
+    this.cmafLive.append(kind, object)
+  }
+
+  private observeVideoDelivery(object: ReceivedObject): void {
+    const arrivedAtMs = monotonicUnixMicros() / 1_000
+    const captureMicros = readLocHeader(object.locHeader).timestampMicros
+    this.adaptiveBitrate.observe({
+      arrivedAtMs,
+      bytes: object.objectPayloadLength,
+      lagMs: captureMicros === undefined ? undefined : arrivedAtMs - captureMicros / 1_000
+    })
+    this.adaptVideo()
+  }
+
+  private adaptVideo(): void {
+    const nowMs = monotonicUnixMicros() / 1_000
+    const current = this.subscriptions.get('video')
+    if (
+      !this.adaptiveVideo ||
+      this.packaging !== 'loc' ||
+      this.review ||
+      this.videoSwitch ||
+      !current ||
+      nowMs < this.nextAdaptAtMs
+    ) {
+      return
+    }
+    this.nextAdaptAtMs = nowMs + ADAPT_INTERVAL_MS
+    const ladder = bitrateLadder(this.tracks.video, current.track)
+    const choice = this.adaptiveBitrate.decideUnderHeight(
+      nowMs,
+      ladder,
+      current.name,
+      this.stallWatch.stalled,
+      this.pictureHeightPx
+    )
+    if (choice) {
+      this.context.log('info', `adaptive quality: ${current.name} -> ${choice}`)
+      this.selectTrack('video', choice).catch((error) => {
+        this.context.log('error', `adaptive quality: ${getErrorMessage(error)}`)
+      })
+    }
+  }
+
+  private publisherEnded(kind: MediaKind, done: PublishDone): void {
+    if (kind === 'video') {
+      this.stallWatch.clear()
+    }
+    const playbackText = publisherEndedText(kind, done)
+    this.playbackStatus = { text: playbackText, state: 'idle' }
+    this.changed()
+    if (kind === 'video' && this.givenTracks) {
+      void this.publisherLeft(playbackText)
+    }
+  }
+
+  private notePlaying(trackName: string): void {
+    const text = `Playing ${trackName}`
+    const statusChanged = !this.review && this.playbackStatus.text !== text
+    if (statusChanged) {
+      this.playbackStatus = { text, state: 'ok' }
+    }
+    const now = performance.now()
+    if (!statusChanged && now - this.progressNotifiedAt < PROGRESS_NOTIFY_INTERVAL_MS) {
+      return
+    }
+    this.progressNotifiedAt = now
+    this.changed()
+  }
+
+  /// A catalog update may redefine a track under the same name, as when the
+  /// publisher is replaced by one with another audio codec, so the decoders
+  /// take the new definition of the tracks they are already subscribed to.
+  private reconfigureDecoders(): void {
+    if (this.packaging !== 'loc') {
+      return
+    }
+    for (const [kind, subscription] of this.subscriptions.entries()) {
+      const track = this.tracks[kind].find((candidate) => candidate.name === subscription.track.name)
+      if (!track || JSON.stringify(track) === JSON.stringify(subscription.track)) {
+        continue
+      }
+      this.locLive.configureTrack(kind, track)
+      subscription.track = track
+      this.context.log('info', `${kind} track ${track.name} redefined by the catalog`)
+    }
+  }
+
+  /// A broadcast that is not live is read by FETCH alone, from the selected tracks.
+  private playedTrack(kind: MediaKind): PlayedTrack | undefined {
+    return this.timeline.live ? this.subscriptions.get(kind) : this.selectedTrack(kind)
+  }
+
+  private cmafSourceOf(played: PlayedTrack | undefined): MseTrackSource | undefined {
+    const track = this.cmafTracks.find((candidate) => candidate.name === played?.name)
+    return track && cmafSource(track)
+  }
+
+  private async openLiveMse(): Promise<void> {
+    if (this.packaging !== 'cmaf') {
+      return
+    }
+    const video = this.cmafSourceOf(this.subscriptions.get('video'))
+    if (!video) {
+      return
+    }
+    const previous = await this.cmafLive.open(this.stage.freeMseElement(), {
+      video,
+      audio: this.cmafSourceOf(this.subscriptions.get('audio'))
+    })
+    const next = this.cmafLive.sink
+    this.applyVolume()
+    if (next) {
+      this.stage.replace(next.element, () => this.cmafLive.sink === next && !this.review, previous)
+    }
+  }
+
+  private livePicture(): HTMLElement {
+    return this.cmafLive.sink?.element ?? this.locLive.picture.element
+  }
+
+  private wantedPicture(): HTMLElement | undefined {
+    if (!this.review) {
+      return this.livePicture()
+    }
+    return this.packaging === 'cmaf' ? this.cmafReview.sink?.element : this.locReview.canvas
+  }
+
+  private watchPresentedFrames(video: HTMLVideoElement): void {
+    const onFrame = () => {
+      this.notePresentedFrame(video)
+      video.requestVideoFrameCallback(onFrame)
+    }
+    video.requestVideoFrameCallback(onFrame)
+  }
+
+  /// A picture being replaced plays on until its successor has presented a
+  /// frame, and the live picture plays out what it had buffered behind a review;
+  /// only the picture playback is trying to show counts as progress.
+  private notePresentedFrame(picture: HTMLElement): void {
+    if (this.paused || picture !== this.wantedPicture()) {
+      return
+    }
+    this.stallWatch.framePresented()
+  }
+
+  /// Delivery resumes at the next group, and the picture standing still until
+  /// then is no sign of congestion, so the rendition choice starts over.
+  private resumeLiveForward(): void {
+    if (this.subscriptions.resumeForward()) {
+      this.cmafLive.sink?.resumeAtNewestRange()
+      this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+    }
+  }
+
+  /// The media timeline lists the groups of the tracks it depends on. A group
+  /// of any other track is placed from the arrival lag of the last live
+  /// object, which runs late by however long the main thread took to handle the
+  /// TRACK_STATUS answer.
+  private observeLiveVideoGroup(groupId: bigint): void {
+    if (!this.timeline.stampedByMediaTimeline(this.subscriptions.get('video')?.name)) {
+      this.timeline.groups.recordLiveGroup(groupId)
+    }
+    this.changed()
+  }
+
+  private async playReviewWindow(window: ReviewWindow, session: ReviewSession): Promise<boolean> {
+    if (this.packaging === 'cmaf') {
+      return this.playCmafReviewWindow(window, session)
+    }
+    const config = this.reviewVideoConfig()
+    if (!config) {
+      this.setRewindStatus('Rewind unavailable: the video track has no codec', 'error')
+      return false
+    }
+    return this.locReview.play(
+      window.frames,
+      window.audio,
+      config,
+      this.reviewAudioConfig(),
+      session.originMicros,
+      session.isCurrent
+    )
+  }
+
+  private async playCmafReviewWindow(window: ReviewWindow, session: ReviewSession): Promise<boolean> {
+    if (this.cmafReview.needsOpen) {
+      const video = this.cmafSourceOf(this.playedTrack('video'))
+      if (!video) {
+        this.setRewindStatus('Rewind unavailable: the CMAF track has no init segment', 'error')
+        return false
+      }
+      const origin = session.originMicros
+      const previous = await this.cmafReview.open(
+        this.stage.freeMseElement(),
+        {
+          video,
+          audio: this.cmafSourceOf(this.playedTrack('audio')),
+          startAtSeconds: (session.anchorMicros - origin) / MICROS_PER_SECOND
+        },
+        (secondsFromStart) => {
+          if (session.isCurrent()) {
+            this.advanceReviewPlayhead(origin + secondsFromStart * MICROS_PER_SECOND)
+          }
+        }
+      )
+      const next = this.cmafReview.sink
+      this.applyVolume()
+      this.applyPlaybackRate()
+      if (next) {
+        this.stage.replace(next.element, session.isCurrent, previous)
+      }
+    }
+    return this.cmafReview.append(window.frames, window.audio, session.isCurrent)
+  }
+
+  private reviewVideoConfig(): VideoDecoderConfig | undefined {
+    const track = this.playedTrack('video')?.track
+    if (!track?.codec) {
+      return undefined
+    }
+    return { codec: track.codec, optimizeForLatency: true }
+  }
+
+  private reviewAudioConfig(): AudioDecoderConfig | undefined {
+    const track = this.playedTrack('audio')?.track
+    if (!track?.codec || !track.samplerate) {
+      return undefined
+    }
+    return {
+      codec: track.codec,
+      sampleRate: track.samplerate,
+      numberOfChannels: parseAudioChannelCount(track.channelConfig) ?? 2,
+      description: track.initData ? Uint8Array.fromBase64(track.initData) : undefined
+    }
+  }
+
+  /// The decoder emits frames in bursts, so the readout steps a second at a time
+  /// instead of following every frame. The thumb stays on the position that was
+  /// seeked to and the progress fill carries the movement.
+  private advanceReviewPlayhead(captureMicros: number): void {
+    const review = this.review
+    if (!review || Math.abs(captureMicros - review.playheadMicros) < REVIEW_PLAYHEAD_STEP_US) {
+      return
+    }
+    review.playheadMicros = captureMicros
+    this.renderReviewStatus()
+  }
+
+  /// Starting the next window's fetch can already have taken playback live, so
+  /// a status for the window is only shown while still reviewing.
+  private renderReviewStatus(): void {
+    const review = this.review
+    if (!review) {
+      return
+    }
+    const offset = this.locReview.playout.syncOffsetMs()
+    const sync = offset === undefined ? '' : ` · A/V ${formatSyncOffset(offset)}`
+    const position = this.timeline.live ? `Rewound ${review.behindSeconds.toFixed(1)}s` : 'VOD'
+    this.setRewindStatus(`${position}${sync}`, 'review')
+  }
+
+  /// Stops once the last frame is due, paused like a media element that has
+  /// played to its end. In a `PlaybackGroup` the last frame stays on screen
+  /// until the group's position passes the end of the player's range.
+  private async endPlayback(session: ReviewSession, throughMicros: number | undefined): Promise<void> {
+    if (this.group) {
+      return
+    }
+    if (throughMicros !== undefined) {
+      await this.locReview.playout.waitUntilDue(throughMicros, session.isCurrent)
+    }
+    if (!session.isCurrent()) {
+      return
+    }
+    session.playheadMicros = throughMicros ?? session.playheadMicros
+    this.ended = true
+    this.playbackStatus = { text: 'Ended', state: 'idle' }
+    this.applyPaused(true)
+  }
+
+  private groupMember(): GroupMember {
+    return {
+      range: () => {
+        const axis = this.timeline.axis()
+        return axis.seekable
+          ? {
+              startMicros: axis.replayableStartSeconds * MICROS_PER_SECOND,
+              endMicros: axis.liveEdgeSeconds * MICROS_PER_SECOND,
+              live: this.timeline.live
+            }
+          : undefined
+      },
+      livePositionMicros: () => this.positionMicros(),
+      join: (link) => {
+        if (this.group) {
+          throw new Error('the player is in a PlaybackGroup already')
+        }
+        this.group = link
+      },
+      leave: (positionMicros) => {
+        this.group = undefined
+        if (!this.review) {
+          return
+        }
+        if (positionMicros !== undefined && this.timeline.groups.resolveSeekTarget(positionMicros)) {
+          this.seekAlone(positionMicros)
+        } else {
+          this.returnToLive()
+        }
+      },
+      goLive: () => this.returnToLive(),
+      align: (positionMicros) => this.align(positionMicros),
+      hold: (positionMicros) => this.hold(positionMicros),
+      setPaused: (paused) => this.applyPaused(paused)
+    }
+  }
+
+  private playingMedia(): HTMLMediaElement[] {
+    if (this.review) {
+      return this.cmafReview.sink ? [this.cmafReview.sink.element] : []
+    }
+    if (this.cmafLive.sink) {
+      return [this.cmafLive.sink.element]
+    }
+    const live = this.locLive.picture.element
+    return live instanceof HTMLMediaElement ? [live] : []
+  }
+
+  private applyVolume(): void {
+    const liveVolume = this.review ? 0 : this.volume
+    this.locLive.playout.setVolume(liveVolume)
+    this.locReview.playout.setVolume(this.volume)
+    if (this.cmafLive.sink) {
+      this.cmafLive.sink.element.volume = liveVolume
+    }
+    if (this.cmafReview.sink) {
+      this.cmafReview.sink.element.volume = this.volume
+    }
+  }
+
+  /// Only review playback through MSE can run at another rate: live playback
+  /// has to keep pace with the publisher, and the WebCodecs path paces frames
+  /// itself. Loading a new source resets the element's rate, so the chosen speed
+  /// is applied again whenever the review MediaSource is opened.
+  private playbackRateAdjustable(): boolean {
+    return this.packaging === 'cmaf' && this.review !== undefined
+  }
+
+  private applyPlaybackRate(): void {
+    if (this.playbackRateAdjustable() && this.cmafReview.sink) {
+      this.cmafReview.sink.element.playbackRate = this.playbackRate
+    }
+  }
+}
+
+function publisherEndedText(trackName: string, done: PublishDone): string {
+  const reason = done.reason ? `: ${done.reason}` : ''
+  return `Publisher ended the ${trackName} track${reason}`
+}
+
+/// The bridge lists a CMAF sibling next to every LOC track; the WebCodecs
+/// decoders only take the LOC ones.
+function isLocTrack(track: MediaCatalogTrack): boolean {
+  return track.packaging !== 'cmaf'
+}

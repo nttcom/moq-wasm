@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MoQ archive player</title>
+  </head>
+  <body>
+    <main>
+      <h1>MoQ archive player</h1>
+      <p>Choose an experimental recorder archive, then play or seek.</p>
+      <input id="file" type="file" accept=".jsonl,application/json" />
+      <button id="play" disabled>Play</button>
+      <label>Position <input id="seek" type="range" min="0" max="0" step="0.1" value="0" disabled /></label>
+      <output id="status">Choose an archive.</output>
+      <div><canvas id="video" width="640" height="360"></canvas></div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

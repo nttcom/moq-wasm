@@ -35,8 +35,12 @@ impl StreamRecord {
 
 impl StreamLedger {
     pub(crate) fn open(&self, track_name: &str, group_id: u64) {
-        let now = executor::now();
+        self.open_at(track_name, group_id, executor::now());
+    }
+
+    fn open_at(&self, track_name: &str, group_id: u64, now: Duration) {
         let mut records = self.records.lock().unwrap();
+        forget_finished(&mut records, now);
         for record in records.iter_mut() {
             if record.track_name == track_name && record.is_open() {
                 record.finished_at = Some(now);
@@ -57,6 +61,7 @@ impl StreamLedger {
         let mut records = self.records.lock().unwrap();
         if let Some(record) = records
             .iter_mut()
+            .rev()
             .find(|record| record.track_name == track_name && record.is_open())
         {
             record.bytes += bytes as u64;
@@ -77,13 +82,17 @@ impl StreamLedger {
     pub fn snapshot(&self) -> Vec<StreamRecord> {
         let now = executor::now();
         let mut records = self.records.lock().unwrap();
-        records.retain(|record| {
-            record
-                .finished_at
-                .is_none_or(|finished_at| now.saturating_sub(finished_at) < FINISHED_RETENTION)
-        });
+        forget_finished(&mut records, now);
         records.clone()
     }
+}
+
+fn forget_finished(records: &mut Vec<StreamRecord>, now: Duration) {
+    records.retain(|record| {
+        record
+            .finished_at
+            .is_none_or(|finished_at| now.saturating_sub(finished_at) < FINISHED_RETENTION)
+    });
 }
 
 #[cfg(test)]
@@ -132,5 +141,21 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert!(!records[0].is_open());
         assert_eq!(records[0].bytes, 0);
+    }
+
+    #[test]
+    fn opening_a_group_forgets_streams_finished_past_the_retention() {
+        // Arrange
+        let ledger = StreamLedger::default();
+        ledger.open("video", 1);
+        ledger.finish("video");
+
+        // Act
+        ledger.open_at("video", 2, executor::now() + FINISHED_RETENTION);
+
+        // Assert: pruned without a snapshot
+        let records = ledger.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].group_id, 2);
     }
 }

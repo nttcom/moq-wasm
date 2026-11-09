@@ -1,0 +1,84 @@
+import type { GroupMark } from './rewind'
+
+const MICROS_PER_MILLI = 1_000
+const MILLIS_PER_SECOND = 1_000
+const SECONDS_PER_MINUTE = 60
+const SECONDS_PER_HOUR = 3_600
+
+type MediaTimelineRecord = {
+  presentationTimeMs: number
+  groupId: bigint
+  /// Where the group lies on the LOC Timestamp axis: the wallclock, or, when that is 0, the
+  /// presentation time, which a recording's replay also stamps its objects with.
+  timestampMs: number
+}
+
+/// draft-ietf-moq-msf-01 §7.1.1: `[presentation time ms, [group id, object id], wallclock ms]`,
+/// the wallclock 0 for VOD.
+type MediaTimelineEntry = [number, [number, number], number]
+
+function parseMediaTimeline(document: string): MediaTimelineRecord[] {
+  return (JSON.parse(document) as MediaTimelineEntry[]).map(([presentationTimeMs, [groupId], wallclockMs]) => ({
+    presentationTimeMs,
+    groupId: BigInt(groupId),
+    timestampMs: wallclockMs === 0 ? presentationTimeMs : wallclockMs
+  }))
+}
+
+export class MediaTimeline {
+  private records: MediaTimelineRecord[] = []
+
+  replace(document: string): void {
+    this.records = parseMediaTimeline(document).sort(
+      (left, right) => left.presentationTimeMs - right.presentationTimeMs
+    )
+  }
+
+  reset(): void {
+    this.records = []
+  }
+
+  groupMarks(): GroupMark[] {
+    return this.records.map(({ groupId, timestampMs }) => ({ groupId, captureMicros: timestampMs * MICROS_PER_MILLI }))
+  }
+
+  /// Presentation times are measured from the start of the broadcast, so any
+  /// record places that start on the capture timestamp axis the seek bar uses.
+  broadcastStartMicros(): number | undefined {
+    const record = this.records[this.records.length - 1]
+    if (!record) {
+      return undefined
+    }
+    return (record.timestampMs - record.presentationTimeMs) * MICROS_PER_MILLI
+  }
+
+  /// A group's LOC Timestamp and its record's `timestampMs` are the same
+  /// instant, so a position resolves to a presentation time by offsetting from
+  /// the newest record at or before it.
+  /// The offset is what keeps this working across renditions, whose group ids
+  /// are numbered independently of the track the records point at.
+  elapsedMsAt(captureMicros: number): number | undefined {
+    const captureMs = captureMicros / MICROS_PER_MILLI
+    const anchor = this.recordAtOrBefore(captureMs) ?? this.records[0]
+    if (!anchor) {
+      return undefined
+    }
+    return Math.max(0, anchor.presentationTimeMs + (captureMs - anchor.timestampMs))
+  }
+
+  private recordAtOrBefore(captureMs: number): MediaTimelineRecord | undefined {
+    return this.records.findLast((record) => record.timestampMs <= captureMs)
+  }
+}
+
+export function formatElapsed(millis: number): string {
+  const totalSeconds = Math.floor(millis / MILLIS_PER_SECOND)
+  const hours = Math.floor(totalSeconds / SECONDS_PER_HOUR)
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE) % SECONDS_PER_MINUTE
+  const seconds = totalSeconds % SECONDS_PER_MINUTE
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0')
+}

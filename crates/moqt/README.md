@@ -43,8 +43,7 @@ let mut writer = TrackWriter::new(publisher.create_stream(&subscription), first_
 writer.write_group(Bytes::from_static(b"hello")).await?;
 writer.finish().await?;
 
-drop(session);
-endpoint.wait_idle().await;
+session.close().await;
 # Ok(())
 # }
 ```
@@ -53,9 +52,9 @@ Seed the first group ID from the clock: a relay keeps the groups it has
 cached, so a publisher that reconnects and starts again from group 0 repeats
 locations the relay already holds.
 
-Await `Endpoint::wait_idle` after dropping the sessions and before the process
-exits. The close is sent by a background task; exiting first leaves the peer
-to notice through its idle timeout.
+Await `Session::close` before the process exits. The close is sent by a
+background task; exiting first leaves the peer to notice through its idle
+timeout.
 
 ## Subscribe to a track
 

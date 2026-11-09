@@ -378,6 +378,7 @@ mod tests {
         let sample = AudioSample {
             data: Bytes::from_static(&[1]),
             pts: Timestamp::ZERO,
+            audio_level: None,
         };
 
         // Act / Assert
