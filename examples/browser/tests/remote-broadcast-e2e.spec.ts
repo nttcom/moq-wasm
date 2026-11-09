@@ -5,6 +5,9 @@ import type { ViewSnapshot } from './remote-broadcast/main'
 const PAGE_PATH = '/moq-wasm/tests/remote-broadcast/index.html'
 /// Long enough for a 15 fps camera to deliver several video objects.
 const DELIVERY_WAIT_MS = 1_500
+/// Well under the relay's idle timeout, after which it withdraws the
+/// namespaces of a session that went silent.
+const WITHDRAW_TIMEOUT_MS = 5_000
 
 /// Publishes under `namespace`, or the namespace the media E2E opens the publisher with.
 async function startPublishing(publisher: PublisherPageModel, namespace?: string[]): Promise<void> {
@@ -132,6 +135,38 @@ test('watchBroadcasts plays the broadcasts under a prefix but its own and the fi
     // Assert: the closed publisher's namespace is withdrawn and its broadcast removed
     await expect
       .poll(() => page.evaluate(() => window.remoteBroadcastE2E.watched()), { timeout: 20_000 })
+      .toEqual([`add ${publisher.join('/')}`, `remove ${publisher.join('/')}`])
+  } finally {
+    await session.context.close()
+  }
+})
+
+test('a page that closes withdraws its broadcast at once', async ({ browser }) => {
+  // Arrange: the page watches the media publisher's broadcast, under a prefix of its own
+  const session = await arrangeMediaE2ESession(browser)
+  const page = await session.context.newPage()
+  await page.goto(PAGE_PATH)
+  const prefix = [...mediaE2EConfig.namespace.split('/'), 'close']
+  const publisher = [...prefix, 'publisher']
+
+  try {
+    await page.evaluate(({ url, prefix, own, bot }) => window.remoteBroadcastE2E.startWatching(url, prefix, own, bot), {
+      url: mediaE2EConfig.moqtUrl,
+      prefix,
+      own: [...prefix, 'own'],
+      bot: [...prefix, 'bot']
+    })
+    await startPublishing(session.publisher, publisher)
+    await expect
+      .poll(() => page.evaluate(() => window.remoteBroadcastE2E.watched()), { timeout: 20_000 })
+      .toEqual([`add ${publisher.join('/')}`])
+
+    // Act
+    await session.publisher.connectButton.page().close()
+
+    // Assert: the browser closed the publisher's WebTransport with its page, so the relay withdrew its namespace
+    await expect
+      .poll(() => page.evaluate(() => window.remoteBroadcastE2E.watched()), { timeout: WITHDRAW_TIMEOUT_MS })
       .toEqual([`add ${publisher.join('/')}`, `remove ${publisher.join('/')}`])
   } finally {
     await session.context.close()
