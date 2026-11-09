@@ -160,6 +160,10 @@ function resolveRole({ role, name }: MsfTrack): CatalogTrackRole | null {
   if (role === 'video' || role === 'audio') {
     return role
   }
+  // A track with another role, such as the `video_timeline` media timeline, is neither.
+  if (role) {
+    return null
+  }
   if (name.startsWith('video')) {
     return 'video'
   }

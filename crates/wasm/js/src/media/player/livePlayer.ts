@@ -29,6 +29,7 @@ import {
   type LiveSource,
   type MediaCatalogTrack,
   extractCatalogTracks,
+  mediaTimelineOf,
   sourceTracks
 } from '../catalog'
 import { parseCatalog } from '../parseCatalog'
@@ -638,11 +639,10 @@ export class LivePlayer {
   }
 
   private async subscribeMediaTimeline(catalog: unknown): Promise<void> {
-    const [track] = extractCatalogTracks(catalog, 'mediatimeline')
-    // The media timeline follows the default video; another source has none.
-    if (this.source && !track?.depends?.includes(this.source.video)) {
-      return
-    }
+    const track = mediaTimelineOf(
+      catalog,
+      [...this.tracks.video, ...this.tracks.audio].map(({ name }) => name)
+    )
     if (!track || !this.timeline.followMediaTimeline(track)) {
       return
     }

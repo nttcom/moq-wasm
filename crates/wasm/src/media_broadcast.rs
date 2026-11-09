@@ -98,9 +98,9 @@ impl MediaBroadcast {
         }))
     }
 
-    /// Only a source on the tracks `video` and `audio` brings the media
-    /// timeline and the chat. Its video forms a switching set of its own with
-    /// its renditions.
+    /// Only a source on the tracks `video` and `audio` brings the chat. Every
+    /// source brings its media timeline, `<video>_timeline`. Its video forms
+    /// a switching set of its own with its renditions.
     /// `video_bitrate` is the video encoder's target in bits per second.
     #[wasm_bindgen(js_name = addSource)]
     pub fn add_source(
