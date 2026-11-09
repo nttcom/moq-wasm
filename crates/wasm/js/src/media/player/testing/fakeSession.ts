@@ -19,9 +19,14 @@ export type SubscribeCall = {
 
 /// Every SUBSCRIBE answers with `largest` and delivers `objects`; a FETCH
 /// delivers the objects `fetchable` lists for its track in its group range.
-/// `drained` resolves once a reader has taken them all.
+/// `drained` resolves once a reader has taken them all. `updates` records each
+/// UNSUBSCRIBE and SUBSCRIBE_UPDATE sent on a subscription, such as
+/// `close video` or `setForward audio true`; `failedClose` makes each
+/// UNSUBSCRIBE fail.
 export class FakeSession {
   readonly calls: SubscribeCall[] = []
+  readonly updates: string[] = []
+  failedClose: Error | undefined
   drained: Promise<void> = Promise.resolve()
 
   constructor(
@@ -45,12 +50,12 @@ export class FakeSession {
 
   async subscribe(_namespace: string[], track: string, options: MoqSubscribeOptions = {}): Promise<MoqSubscription> {
     this.calls.push({ method: 'subscribe', track, options })
-    return this.subscription()
+    return this.subscription(track)
   }
 
   async subscribeCurrentGroup(_namespace: string[], track: string): Promise<MoqSubscription> {
     this.calls.push({ method: 'subscribeCurrentGroup', track })
-    return this.subscription()
+    return this.subscription(track)
   }
 
   async fetch(_namespace: string[], track: string, start: MoqLocation, end: MoqLocation): Promise<MoqFetch> {
@@ -64,7 +69,7 @@ export class FakeSession {
     } as unknown as MoqFetch
   }
 
-  private subscription(): MoqSubscription {
+  private subscription(track: string): MoqSubscription {
     let drain = () => {}
     this.drained = new Promise((resolve) => {
       drain = resolve
@@ -89,8 +94,15 @@ export class FakeSession {
           } as unknown as MoqGroup
         }
       },
-      close: async () => {},
-      setForward: async () => {}
+      close: async () => {
+        this.updates.push(`close ${track}`)
+        if (this.failedClose) {
+          throw this.failedClose
+        }
+      },
+      setForward: async (forward: boolean) => {
+        this.updates.push(`setForward ${track} ${forward}`)
+      }
     } as unknown as MoqSubscription
   }
 }
