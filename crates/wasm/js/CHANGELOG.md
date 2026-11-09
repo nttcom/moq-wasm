@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `LivePlayer.setVideoEnabled(false)` unsubscribes the live video and leaves
+  the audio playing, so a page that hides the picture lets the publisher stop
+  sending it; `setVideoEnabled(true)` subscribes it again from its current
+  group.
 - `BroadcastCatalog` subscribes the catalog of one broadcast once for every
   reader on the session, and `LivePlayer.start(session, namespace, catalog)`
   listens to it instead of subscribing the catalog itself. Players that play

@@ -112,6 +112,7 @@ class LivePlayer {
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
   selectAudioTrack(name: string): Promise<void>
+  setVideoEnabled(enabled: boolean): Promise<void>
   setPackaging(packaging: Packaging): Promise<void>
   seek(captureMicros: number): void
   skip(seconds: number): void
