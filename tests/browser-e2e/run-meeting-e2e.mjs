@@ -29,9 +29,6 @@ const meetingIndexPath = "/moq-wasm/examples/meeting/index.html";
 const composeServices = ["redis", "relay-a", "relay-b"];
 // Reuses the vts binary that token minting already builds, instead of the compose vts service.
 const containerVtsUrl = `http://host.docker.internal:${vtsPort}/verify`;
-// Over loopback a send stream close that awaits the FIN's ACK takes under 10 ms,
-// inside the meeting E2E's 50 ms bound. With this delay it takes at least 60 ms.
-const relayReplyDelayMs = 60;
 
 const childProcesses = [];
 const playwrightArgs = process.argv.slice(2);
@@ -88,7 +85,6 @@ async function main() {
         "relay-b",
       );
       ownedDockerServices = true;
-      await delayRelayReplies();
     }
 
     const relayReadyPromise = relaysAlreadyRunning
@@ -133,52 +129,6 @@ function dockerCompose(...args) {
     cwd: repoRoot,
     env: { ...process.env, AUTH_VTS_URL: containerVtsUrl },
   });
-}
-
-// The relay image is distroless, so the host's tc runs inside each relay's
-// network namespace. Linux only: Docker Desktop keeps the namespace in its VM.
-async function delayRelayReplies() {
-  if (process.platform !== "linux") {
-    console.error(
-      "[setup] Running without the relay reply delay: tc netem needs Linux.",
-    );
-    return;
-  }
-  for (const service of ["relay-a", "relay-b"]) {
-    const containerId = execFileSync(
-      "docker",
-      ["compose", "ps", "-q", service],
-      { cwd: repoRoot, encoding: "utf8" },
-    ).trim();
-    const pid = execFileSync(
-      "docker",
-      ["inspect", "-f", "{{.State.Pid}}", containerId],
-      { encoding: "utf8" },
-    ).trim();
-    await runCommand(
-      "sudo",
-      [
-        "-n",
-        "nsenter",
-        "-t",
-        pid,
-        "-n",
-        "tc",
-        "qdisc",
-        "add",
-        "dev",
-        "eth0",
-        "root",
-        "netem",
-        "delay",
-        `${relayReplyDelayMs}ms`,
-      ],
-      { cwd: repoRoot, env: process.env },
-    );
-  }
-  console.error(
-    `[setup] Delaying every relay reply by ${relayReplyDelayMs} ms.`,
-  );
 }
 
 function getMeetingRelayUrl(envName, port) {

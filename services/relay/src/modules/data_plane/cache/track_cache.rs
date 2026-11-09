@@ -1,0 +1,1894 @@
+use std::{
+    collections::{BTreeMap, HashMap, btree_map::Entry},
+    sync::{
+        Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
+    },
+    time::Duration,
+};
+
+use tokio::{
+    sync::{Notify, broadcast},
+    time::Instant,
+};
+
+use moqt::{TrackProperties, object::ForwardingPreference};
+
+use crate::modules::{
+    data_plane::cache::{
+        cached_object::CachedObject,
+        disk_cache::{DiskSink, StoredPayload},
+    },
+    domain::{session_id::SessionId, single_preference::SinglePreference},
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TrackMalformed;
+
+/// How long a track's persisted objects outlive its publisher.
+const PUBLISHER_GONE_GRACE: Duration = Duration::from_secs(10);
+
+pub(crate) fn location(group_id: u64, object_id: u64) -> moqt::object::Location {
+    moqt::object::Location {
+        group_id,
+        object_id,
+    }
+}
+
+fn after(at: moqt::object::Location) -> moqt::object::Location {
+    location(at.group_id, at.object_id.saturating_add(1))
+}
+
+mod eviction_queues;
+mod fetch_cursor;
+mod fetch_plan;
+mod ingress_stats;
+mod ledger;
+mod open_subgroup;
+mod partial_object;
+
+pub(crate) use fetch_cursor::FetchCursor;
+pub(crate) use fetch_plan::PlannedFetch;
+pub(crate) use ingress_stats::{IngressCounters, IngressStats};
+use ledger::Ledger;
+pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, PartialObjectWriter, SubgroupRun};
+pub(crate) use partial_object::{PartialEnd, PartialObject};
+
+pub(crate) struct TrackCache {
+    ledger: RwLock<Ledger>,
+    notify: Notify,
+    live_ingest_count: AtomicUsize,
+    eviction_generation: AtomicU64,
+    /// When the track was found malformed; the latch is never cleared.
+    malformed_at: std::sync::OnceLock<Instant>,
+    malformed_notify: Notify,
+    /// The latest object live ingest inserted was a datagram.
+    latest_live_datagram: AtomicBool,
+    /// The preference each downstream session that keeps one gets the
+    /// track in, fixed by its first subscription; dropped when the session
+    /// ends.
+    single_preferences: std::sync::Mutex<HashMap<SessionId, SinglePreference>>,
+    subgroup_opened_sender: broadcast::Sender<SubgroupRun>,
+    ingress_stats: IngressStats,
+    payload_bytes: AtomicU64,
+    disk: Option<DiskSink>,
+    /// The track properties the relay serves downstream; a FETCH served from
+    /// the cache once no publisher is left answers with them (draft-18 §2.5).
+    track_properties: std::sync::Mutex<ServedTrackProperties>,
+}
+
+/// The track properties the relay serves downstream: those of the newest
+/// live publisher, as `UpstreamTrack::track_properties` picks for SUBSCRIBE_OK
+/// and the forwarded PUBLISH, then the last served once none is left.
+#[derive(Debug, Default)]
+struct ServedTrackProperties {
+    /// What each live publisher's SUBSCRIBE_OK or PUBLISH said; session ids
+    /// grow with time, so the last is the newest publisher's.
+    publishers: BTreeMap<SessionId, TrackProperties>,
+    served: TrackProperties,
+}
+
+impl ServedTrackProperties {
+    fn follow_the_newest_publisher(&mut self) {
+        if let Some((_, track_properties)) = self.publishers.last_key_value() {
+            self.served = track_properties.clone();
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CacheOccupancy {
+    pub(crate) objects: u64,
+    pub(crate) payload_bytes: u64,
+}
+
+impl TrackCache {
+    #[cfg(test)]
+    pub(crate) fn new() -> Self {
+        Self::with_disk(None)
+    }
+
+    pub(crate) fn with_disk(disk: Option<DiskSink>) -> Self {
+        Self {
+            ledger: RwLock::new(Ledger::default()),
+            notify: Notify::new(),
+            live_ingest_count: AtomicUsize::new(0),
+            eviction_generation: AtomicU64::new(0),
+            malformed_at: std::sync::OnceLock::new(),
+            malformed_notify: Notify::new(),
+            latest_live_datagram: AtomicBool::new(false),
+            single_preferences: std::sync::Mutex::default(),
+            subgroup_opened_sender: broadcast::channel(256).0,
+            ingress_stats: IngressStats::default(),
+            payload_bytes: AtomicU64::new(0),
+            disk,
+            track_properties: std::sync::Mutex::default(),
+        }
+    }
+
+    fn served_track_properties(&self) -> std::sync::MutexGuard<'_, ServedTrackProperties> {
+        self.track_properties
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A publisher's ingest started with what its SUBSCRIBE_OK or PUBLISH
+    /// said. Each set replaces the served one whole: draft-18 §2.5 forbids
+    /// merging sets.
+    pub(crate) fn publisher_started(
+        &self,
+        publisher_session_id: SessionId,
+        track_properties: TrackProperties,
+    ) {
+        let mut served = self.served_track_properties();
+        served
+            .publishers
+            .insert(publisher_session_id, track_properties);
+        served.follow_the_newest_publisher();
+    }
+
+    /// The relay no longer routes the track from this publisher.
+    pub(crate) fn publisher_stopped(&self, publisher_session_id: SessionId) {
+        let mut served = self.served_track_properties();
+        served.publishers.remove(&publisher_session_id);
+        served.follow_the_newest_publisher();
+    }
+
+    /// What an upstream FETCH_OK the relay forwarded said; it is served
+    /// only while no publisher is live, whose set SUBSCRIBE_OK carries.
+    pub(crate) fn fetched_track_properties(&self, track_properties: TrackProperties) {
+        let mut served = self.served_track_properties();
+        if served.publishers.is_empty() {
+            served.served = track_properties;
+        }
+    }
+
+    pub(crate) fn track_properties(&self) -> TrackProperties {
+        self.served_track_properties().served.clone()
+    }
+
+    pub(crate) fn ingress_stats(&self) -> &IngressStats {
+        &self.ingress_stats
+    }
+
+    pub(crate) fn occupancy(&self) -> CacheOccupancy {
+        CacheOccupancy {
+            objects: self.read().objects.len() as u64,
+            payload_bytes: self.payload_bytes.load(AtomicOrdering::Relaxed),
+        }
+    }
+
+    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupRun> {
+        self.subgroup_opened_sender.subscribe()
+    }
+
+    // The ledger is never held across an await, so poisoning can only come from
+    // a panic inside a critical section; the data is still consistent enough
+    // to keep serving.
+    fn read(&self) -> RwLockReadGuard<'_, Ledger> {
+        self.ledger.read().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn write(&self) -> RwLockWriteGuard<'_, Ledger> {
+        self.ledger.write().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn is_malformed(&self) -> bool {
+        self.malformed_at.get().is_some()
+    }
+
+    pub(crate) fn mark_malformed(&self) {
+        let _ = self.malformed_at.set(Instant::now());
+        self.malformed_notify.notify_waiters();
+    }
+
+    pub(crate) async fn malformed_track_detected(&self) {
+        loop {
+            let notified = self.malformed_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.is_malformed() {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// Fetch fill: the object is stored but proves nothing about its
+    /// neighbours until the fill completes (`insert_fetch_known_range`).
+    pub(crate) fn insert(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        self.insert_with_knowledge(object, false)
+    }
+
+    fn insert_live(&self, object: CachedObject) -> Result<(), TrackMalformed> {
+        self.ingress_stats.record_live_arrival(object.received_at);
+        let registers_knowledge = matches!(
+            object.object.forwarding,
+            ForwardingPreference::Subgroup { .. }
+        );
+        self.latest_live_datagram
+            .store(object.is_datagram(), AtomicOrdering::Relaxed);
+        self.insert_with_knowledge(object, registers_knowledge)
+    }
+
+    fn single_preferences(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<SessionId, SinglePreference>> {
+        self.single_preferences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The preference the track goes in to `session_id`, a session that
+    /// keeps one: the one fixed earlier, or else `first`, which is kept.
+    pub(crate) fn fix_single_preference(
+        &self,
+        session_id: SessionId,
+        first: SinglePreference,
+    ) -> SinglePreference {
+        *self.single_preferences().entry(session_id).or_insert(first)
+    }
+
+    pub(crate) fn forget_downstream_session(&self, session_id: SessionId) {
+        self.single_preferences().remove(&session_id);
+    }
+
+    /// The forwarding preference a FETCH from the cache to `session_id`
+    /// gives `object`. A session the track went to in one preference gets
+    /// the object as live delivery gave it. Otherwise, as a draft-14 track
+    /// keeps one preference (§10), while live ingest inserts datagrams an
+    /// inferred copy in the subgroup of its Object ID is a datagram: a
+    /// draft-18 FETCH then marks it (§11.4.4), matching the live datagram
+    /// the subscriber may hold.
+    pub(crate) fn fetch_forwarding(
+        &self,
+        object: &CachedObject,
+        session_id: SessionId,
+    ) -> ForwardingPreference {
+        let single_preference = self.single_preferences().get(&session_id).copied();
+        if let Some(forwarding) =
+            single_preference.and_then(|preference| preference.forwarding(&object.object))
+        {
+            return forwarding;
+        }
+        let in_subgroup_of_its_object_id = object.object.forwarding
+            == ForwardingPreference::Subgroup {
+                subgroup_id: object.object.location.object_id,
+            };
+        if object.forwarding_inferred
+            && in_subgroup_of_its_object_id
+            && self.latest_live_datagram.load(AtomicOrdering::Relaxed)
+        {
+            ForwardingPreference::Datagram
+        } else {
+            object.object.forwarding
+        }
+    }
+
+    fn insert_with_knowledge(
+        &self,
+        mut object: CachedObject,
+        registers_knowledge: bool,
+    ) -> Result<(), TrackMalformed> {
+        if self.is_malformed() {
+            return Err(TrackMalformed);
+        }
+        object.persisted &= self.disk.is_some();
+        let payload_bytes = object.object.payload.len();
+        self.ingress_stats.record_object(payload_bytes);
+        let at = object.object.location;
+        let mut guard = self.write();
+        let ledger = &mut *guard;
+        let mut to_persist = None;
+        let inserted = match ledger.objects.entry(at) {
+            Entry::Occupied(existing) if existing.get().conflicts_with(&object) => {
+                drop(guard);
+                self.mark_malformed();
+                return Err(TrackMalformed);
+            }
+            Entry::Occupied(mut existing) => {
+                if existing.get().forwarding_inferred && !object.forwarding_inferred {
+                    // A draft-14 fetched copy arrived first; the live copy
+                    // supplies the forwarding preference, so a FETCH serves
+                    // the object as live delivery did and datagram egress can
+                    // find a datagram. A datagram also supplies the End of
+                    // Group type, which FETCH cannot carry.
+                    let mut upgraded = (**existing.get()).clone();
+                    upgraded.object.forwarding = object.object.forwarding;
+                    if object.is_datagram() {
+                        upgraded.object.ends_group = object.object.ends_group;
+                    }
+                    upgraded.forwarding_inferred = false;
+                    *existing.get_mut() = Arc::new(upgraded);
+                }
+                false
+            }
+            Entry::Vacant(slot) => {
+                let object = Arc::new(object);
+                ledger.eviction_queues.track(&object);
+                if object.persisted {
+                    to_persist = Some(object.clone());
+                }
+                slot.insert(object);
+                self.payload_bytes
+                    .fetch_add(payload_bytes as u64, AtomicOrdering::Relaxed);
+                true
+            }
+        };
+        if registers_knowledge {
+            ledger.register_live_object(at);
+        }
+        drop(guard);
+        if let (Some(object), Some(disk)) = (to_persist, &self.disk) {
+            disk.write(&object);
+        }
+        if inserted {
+            self.notify.notify_waiters();
+        }
+        Ok(())
+    }
+
+    /// The disk cache wrote the payload of the object at `at`. Ignored when
+    /// the object left the cache, or was replaced, in the meantime.
+    pub(crate) fn record_stored(&self, at: moqt::object::Location, stored: StoredPayload) {
+        let mut guard = self.write();
+        let ledger = &mut *guard;
+        if let Some(object) = ledger.objects.get_mut(&at)
+            && object.stored.is_none()
+            && object.object.payload.len() == stored.len
+        {
+            *object = Arc::new(object.with_stored(stored.clone()));
+            ledger.eviction_queues.track_stored(object, &stored);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_stored_payload(&self, at: moqt::object::Location) -> bool {
+        self.read()
+            .objects
+            .get(&at)
+            .is_some_and(|object| object.stored.is_some())
+    }
+
+    pub(crate) fn groups_at_or_after(&self, group_id: u64) -> Vec<u64> {
+        self.read().groups_in_range(group_id, u64::MAX)
+    }
+
+    pub(crate) fn subgroup_runs_in_group(
+        &self,
+        group_id: u64,
+        from_object_id: u64,
+    ) -> Vec<SubgroupRun> {
+        self.read().subgroup_runs_in_group(group_id, from_object_id)
+    }
+
+    pub(crate) fn largest_location(&self) -> Option<moqt::object::Location> {
+        self.read().largest_location()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.read().objects.is_empty()
+    }
+
+    /// Empty, and not latched malformed within `ttl`: a request for a
+    /// latched track is answered MALFORMED_TRACK (draft-18 §2.4.2) for the
+    /// TTL even when nothing of it was cached.
+    pub(crate) fn is_removable(&self, ttl: Duration) -> bool {
+        self.is_empty()
+            && self
+                .malformed_at
+                .get()
+                .is_none_or(|malformed_at| malformed_at.elapsed() >= ttl)
+    }
+
+    /// Visits only the objects that expired, lost their disk copy or passed
+    /// the memory TTL since the last call. The end-of-broadcast purge walks
+    /// every persisted object once.
+    pub(crate) fn evict(&self, ttl: Duration) {
+        let removed_count = {
+            let mut guard = self.write();
+            let ledger = &mut *guard;
+            let live = self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0;
+            // A late subscriber joins at the largest location (draft-14 §9.8
+            // Content Exists) and fetches it, so a track whose publisher is
+            // still live keeps its newest object past the TTL.
+            let newest_of_live_track = live.then(|| ledger.largest_location()).flatten();
+            let now = Instant::now();
+            let purge = !live
+                && ledger
+                    .publisher_left_at
+                    .is_some_and(|left_at| now.duration_since(left_at) >= PUBLISHER_GONE_GRACE);
+            let mut removed = Vec::new();
+            let mut removed_payload_bytes = 0u64;
+            let mut swapped_payload_bytes = 0u64;
+            let mut remove = |ledger: &mut Ledger, at| {
+                if let Some(object) = ledger.objects.remove(&at) {
+                    removed_payload_bytes += object.object.payload.len() as u64;
+                    removed.push(at);
+                }
+            };
+            if purge {
+                ledger.publisher_left_at = None;
+                let persisted: Vec<_> = ledger
+                    .objects
+                    .iter()
+                    .filter(|(_, object)| object.persisted)
+                    .map(|(at, _)| *at)
+                    .collect();
+                for at in persisted {
+                    remove(ledger, at);
+                }
+                ledger.eviction_queues.forget_segments();
+            }
+            for at in ledger.eviction_queues.take_expired(now) {
+                if ledger
+                    .objects
+                    .get(&at)
+                    .is_some_and(|object| object.is_expired(now))
+                {
+                    remove(ledger, at);
+                }
+            }
+            let arrived = now
+                .checked_sub(ttl)
+                .map(|deadline| ledger.eviction_queues.take_arrived_before(deadline))
+                .unwrap_or_default();
+            for (received_at, at) in arrived {
+                let Some(object) = ledger.objects.get_mut(&at) else {
+                    continue;
+                };
+                if object.received_at != received_at {
+                    continue;
+                }
+                if object.stored.is_some() {
+                    // Past the memory TTL only the disk copy is kept.
+                    if !object.object.payload.is_empty() {
+                        swapped_payload_bytes += object.object.payload.len() as u64;
+                        *object = Arc::new(object.without_memory_payload());
+                    }
+                } else if object.persisted && object.object.payload.is_empty() {
+                    // A status object needs no disk copy to stay with its
+                    // neighbours on disk.
+                } else if object.expires_at.is_some() {
+                    // A publisher's MAX_CACHE_DURATION replaces the relay TTL,
+                    // longer or shorter, and the newest-object exception does
+                    // not apply to it (draft-14 §9.2.1.3).
+                } else if Some(at) == newest_of_live_track {
+                    ledger.eviction_queues.return_arrival((received_at, at));
+                } else {
+                    remove(ledger, at);
+                }
+            }
+            self.payload_bytes.fetch_sub(
+                removed_payload_bytes + swapped_payload_bytes,
+                AtomicOrdering::Relaxed,
+            );
+            ledger.known_ranges.remove_locations(&removed);
+            ledger.forget_runs_of_vanished_groups(&removed);
+            if purge && let Some(disk) = &self.disk {
+                disk.purge();
+            }
+            removed.len()
+        };
+        if removed_count > 0 {
+            self.eviction_generation
+                .fetch_add(1, AtomicOrdering::Relaxed);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_fetch_known_range(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
+        self.write().known_ranges.insert(start, end);
+    }
+
+    pub(crate) fn insert_known_until(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) {
+        self.write().known_ranges.insert_until(start, end);
+    }
+
+    pub(crate) fn eviction_generation(&self) -> u64 {
+        self.eviction_generation.load(AtomicOrdering::Relaxed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn covers(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
+        self.read().known_ranges.contains_range(start, end)
+    }
+
+    pub(crate) fn begin_live_ingest(&self) {
+        self.live_ingest_count.fetch_add(1, AtomicOrdering::Relaxed);
+        self.write().publisher_left_at = None;
+    }
+
+    /// A FETCH after the broadcast ended need not be served, so eviction
+    /// drops the persisted objects and their disk segments once no ingest
+    /// came back within `PUBLISHER_GONE_GRACE`; a publisher reconnecting in
+    /// that time keeps them.
+    pub(crate) fn publisher_left(&self) {
+        self.write().publisher_left_at = Some(Instant::now());
+    }
+
+    pub(crate) fn end_live_ingest(&self) {
+        self.live_ingest_count.fetch_sub(1, AtomicOrdering::Relaxed);
+    }
+}
+
+/// Why a cache-served FETCH cannot be completed with a FIN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FetchInterrupted {
+    Malformed,
+    /// An upstream subgroup in the range ended without a FIN, so objects may be missing.
+    Incomplete,
+}
+
+impl From<TrackMalformed> for FetchInterrupted {
+    fn from(_: TrackMalformed) -> Self {
+        Self::Malformed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum FetchRangeResolution {
+    Serve {
+        end_location: moqt::object::Location,
+    },
+    InvalidRange,
+    NoObjects,
+    NotCovered,
+}
+
+impl TrackCache {
+    /// `upstream_largest` is the Largest Location an upstream SUBSCRIBE_OK
+    /// reported; the cache lacks the objects up to it until ingest catches up.
+    pub(crate) fn resolve_fetch_range(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+        upstream_largest: Option<moqt::object::Location>,
+    ) -> FetchRangeResolution {
+        if Self::explicit_end_before_or_equal_start(start, end) {
+            return FetchRangeResolution::InvalidRange;
+        }
+
+        let ledger = self.read();
+        let Some(largest) = ledger.largest_location() else {
+            return FetchRangeResolution::NotCovered;
+        };
+
+        let known_largest = upstream_largest.map_or(largest, |reported| reported.max(largest));
+        if start > known_largest && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0 {
+            return FetchRangeResolution::InvalidRange;
+        }
+
+        let end_location = Self::resolve_fetch_end_location(&ledger, end, largest);
+        // draft-14 §9.2.1.3: an expired object's status is unknown again, so
+        // a range holding one is re-requested upstream.
+        if ledger.has_expired_object_in(start, end_location, Instant::now()) {
+            return FetchRangeResolution::NotCovered;
+        }
+        if ledger.known_ranges.contains_range(start, end_location) {
+            if !ledger.has_object_in(start, end_location) {
+                return FetchRangeResolution::NoObjects;
+            }
+            return FetchRangeResolution::Serve { end_location };
+        }
+
+        if self.serves_after_in_flight_wait(&ledger, start, end_location)
+            && ledger.has_object_in(start, end_location)
+        {
+            return FetchRangeResolution::Serve { end_location };
+        }
+
+        FetchRangeResolution::NotCovered
+    }
+
+    /// The FETCH_OK End Location of a response serving only what the cache
+    /// holds, or `None` when it holds no object at or after `start`.
+    pub(crate) fn known_end_location(
+        &self,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> Option<moqt::object::Location> {
+        let ledger = self.read();
+        let largest = ledger.largest_location()?;
+        (start <= largest).then(|| Self::resolve_fetch_end_location(&ledger, end, largest))
+    }
+
+    fn serves_after_in_flight_wait(
+        &self,
+        ledger: &Ledger,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
+        if self.live_ingest_count.load(AtomicOrdering::Relaxed) == 0 {
+            return false;
+        }
+        // Object 0 of every group from start to end must lie in a known range.
+        // Group ids are wall-clock seeded and sparse, so skip to each range's
+        // end instead of testing every id.
+        let mut group_id = start.group_id;
+        while group_id <= end.group_id {
+            let Some(range_end) = ledger
+                .known_ranges
+                .end_of_range_containing(location(group_id, 0))
+            else {
+                return false;
+            };
+            // When knowledge of a group stops inside the range, only an open
+            // subgroup of that group can bring the rest.
+            if range_end.object_id != 0
+                && range_end < end
+                && !ledger.has_open_subgroup_in_group(range_end.group_id)
+            {
+                return false;
+            }
+            if range_end > location(end.group_id, 0) {
+                return true;
+            }
+            group_id = range_end.group_id + u64::from(range_end.object_id != 0);
+        }
+        true
+    }
+
+    fn explicit_end_before_or_equal_start(
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> bool {
+        start.group_id > end.group_id
+            || (start.group_id == end.group_id
+                && end.object_id != 0
+                && start.object_id >= end.object_id)
+    }
+
+    fn resolve_fetch_end_location(
+        ledger: &Ledger,
+        requested_end: moqt::object::Location,
+        largest: moqt::object::Location,
+    ) -> moqt::object::Location {
+        if requested_end.group_id > largest.group_id
+            || (requested_end.group_id == largest.group_id
+                && requested_end.object_id != 0
+                && requested_end.object_id > largest.object_id.saturating_add(1))
+        {
+            return after(largest);
+        }
+
+        if requested_end.object_id == 0 {
+            let whole_group = location(requested_end.group_id, 0);
+            if requested_end.group_id < largest.group_id
+                || ledger.known_ranges.contains_range(whole_group, whole_group)
+            {
+                return requested_end;
+            }
+            return after(largest);
+        }
+
+        requested_end
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::*;
+    use crate::modules::{
+        data_plane::cache::subgroup_key::SubgroupKey,
+        test_support::relay_harness::fixtures::{
+            cached_object::{
+                datagram_object, fetched_copy_in_subgroup, insert_aborted_group,
+                insert_closed_group, open_group, stream_key, stream_object,
+                stream_object_in_subgroup, stream_object_with_payload,
+            },
+            subscription::unknown_track_properties,
+        },
+    };
+
+    #[test]
+    fn the_served_track_properties_are_the_newest_live_publishers() {
+        // Arrange
+        let cache = TrackCache::new();
+        cache.publisher_started(1, unknown_track_properties(1));
+        cache.publisher_started(2, unknown_track_properties(2));
+
+        // Act
+        let while_both_publish = cache.track_properties();
+        cache.publisher_started(1, unknown_track_properties(3));
+        let after_the_older_sent_again = cache.track_properties();
+        cache.publisher_stopped(2);
+        let after_the_newest_left = cache.track_properties();
+        cache.publisher_stopped(1);
+        let after_every_publisher_left = cache.track_properties();
+
+        // Assert: the set SUBSCRIBE_OK carries at each point, then the last
+        // served one; draft-18 §2.5 replaces a set whole
+        assert_eq!(while_both_publish, unknown_track_properties(2));
+        assert_eq!(after_the_older_sent_again, unknown_track_properties(2));
+        assert_eq!(after_the_newest_left, unknown_track_properties(3));
+        assert_eq!(after_every_publisher_left, unknown_track_properties(3));
+    }
+
+    fn subgroup_keys_in_group(cache: &TrackCache, group_id: u64) -> Vec<SubgroupKey> {
+        cache
+            .subgroup_runs_in_group(group_id, 0)
+            .iter()
+            .map(|run| run.key)
+            .collect()
+    }
+
+    fn payload_at(cache: &TrackCache, group_id: u64, object_id: u64) -> Bytes {
+        cache
+            .read()
+            .objects
+            .get(&location(group_id, object_id))
+            .map(|object| object.object.payload.clone())
+            .expect("object should be cached")
+    }
+
+    #[test]
+    fn identical_duplicate_keeps_first() {
+        // Arrange
+        let cache = TrackCache::new();
+        let first = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"same"),
+        ));
+        // Act
+        let second = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"same"),
+        ));
+        // Assert
+        assert_eq!(first, Ok(()));
+        assert_eq!(second, Ok(()));
+        assert!(!cache.is_malformed());
+        assert_eq!(payload_at(&cache, 0, 0), Bytes::from_static(b"same"));
+    }
+
+    #[test]
+    fn conflicting_duplicate_latches_the_track() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"first"),
+        ));
+        // Act
+        let outcome = cache.insert_live(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(b"second"),
+        ));
+        // Assert: malformed and sticky; the first object is kept untouched
+        assert_eq!(outcome, Err(TrackMalformed));
+        assert!(cache.is_malformed());
+        assert_eq!(payload_at(&cache, 0, 0), Bytes::from_static(b"first"));
+        assert_eq!(cache.insert_live(stream_object(0, 1)), Err(TrackMalformed));
+    }
+
+    #[test]
+    fn same_object_id_in_two_subgroups_is_malformed() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        // Act
+        let outcome = cache.insert_live(stream_object_in_subgroup(0, 1, 0));
+        // Assert
+        assert_eq!(outcome, Err(TrackMalformed));
+    }
+
+    #[test]
+    fn live_datagram_upgrades_the_fetched_copy_to_datagram_forwarding() {
+        // Arrange: a fetch fill stored the datagram object first (§10.4.4 shape)
+        let cache = TrackCache::new();
+        let _ = cache.insert(fetched_copy_in_subgroup(0, 5, 5));
+        // Act
+        let _ = cache.insert_live(datagram_object(0, 5));
+        // Assert: no conflict, and datagram egress now finds the object
+        assert!(!cache.is_malformed());
+        let key = SubgroupKey::Datagram { group_id: 0 };
+        assert!(
+            cache
+                .read()
+                .next_subgroup_object(key, 0, Instant::now())
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_fetched_copy_with_a_known_preference_does_not_match_the_live_datagram() {
+        // Arrange: a draft-18 FETCH marks a datagram object, so this one is in a subgroup
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(datagram_object(0, 5));
+        // Act
+        let outcome = cache.insert(stream_object_in_subgroup(0, 5, 5));
+        // Assert
+        assert_eq!(outcome, Err(TrackMalformed));
+    }
+
+    #[test]
+    fn fetched_copy_of_an_end_of_group_datagram_is_the_same_object() {
+        // Arrange: FETCH cannot carry End of Group, so the fetched copy lacks `ends_group`
+        let mut live = datagram_object(0, 5);
+        live.object.ends_group = true;
+        let fetched = fetched_copy_in_subgroup(0, 5, 5);
+        let live_first = TrackCache::new();
+        let fetched_first = TrackCache::new();
+        // Act
+        let _ = live_first.insert_live(live.clone());
+        let _ = live_first.insert(fetched.clone());
+        let _ = fetched_first.insert(fetched);
+        let _ = fetched_first.insert_live(live);
+        // Assert
+        for cache in [&live_first, &fetched_first] {
+            assert!(!cache.is_malformed());
+            let cached = cache.read().objects[&location(0, 5)].clone();
+            assert_eq!(cached.object.forwarding, ForwardingPreference::Datagram);
+            assert!(cached.object.ends_group);
+        }
+    }
+
+    #[test]
+    fn live_insert_registers_only_the_received_position() {
+        // Arrange
+        let cache = TrackCache::new();
+        // Act
+        let _ = cache.insert_live(stream_object(3, 2));
+        // Assert: §10.4.2 — the skipped ids 0 and 1 stay undecided
+        assert!(cache.covers(location(3, 2), location(3, 3)));
+        assert!(!cache.covers(location(3, 0), location(3, 3)));
+    }
+
+    #[test]
+    fn closing_the_group_decides_the_tail_but_not_a_skipped_id() {
+        // Arrange: object 1 was never received
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 2]);
+        // Act / Assert: everything after the largest seen object is known absent
+        assert!(cache.covers(location(0, 3), location(0, 0)));
+        assert!(!cache.covers(location(0, 1), location(0, 2)));
+    }
+
+    #[test]
+    fn fill_insert_does_not_register_knowledge() {
+        // Arrange
+        let cache = TrackCache::new();
+        // Act
+        let _ = cache.insert(stream_object(0, 0));
+        // Assert: only Fetch::End may register the filled range as known
+        assert!(!cache.covers(location(0, 0), location(0, 1)));
+    }
+
+    #[test]
+    fn datagram_insert_does_not_register_knowledge() {
+        // Arrange
+        let cache = TrackCache::new();
+        // Act
+        let _ = cache.insert_live(datagram_object(0, 1));
+        let _ = cache.insert_live(datagram_object(0, 3));
+        // Assert: datagram-only contents never establish fetch coverage
+        assert!(!cache.covers(location(0, 1), location(0, 4)));
+        assert!(!cache.covers(location(0, 3), location(0, 4)));
+    }
+
+    #[test]
+    fn largest_location_is_none_when_empty() {
+        // Arrange / Act / Assert
+        assert!(TrackCache::new().largest_location().is_none());
+    }
+
+    #[test]
+    fn largest_location_is_the_highest_object_of_the_highest_group() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 5]);
+        insert_closed_group(&cache, 2, &[0, 3]);
+        let _ = cache.insert_live(datagram_object(2, 4));
+        // Act / Assert: datagram objects count too
+        assert_eq!(cache.largest_location(), Some(location(2, 4)));
+    }
+
+    #[test]
+    fn subgroup_runs_in_group_lists_cached_and_open_subgroups() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert(stream_object_in_subgroup(0, 1, 0));
+        let _open = cache.open_subgroup(SubgroupKey::Datagram { group_id: 0 });
+        // Act / Assert
+        assert_eq!(
+            subgroup_keys_in_group(&cache, 0),
+            vec![
+                SubgroupKey::Stream {
+                    group_id: 0,
+                    subgroup_id: 1
+                },
+                SubgroupKey::Datagram { group_id: 0 }
+            ]
+        );
+        assert!(cache.subgroup_runs_in_group(1, 0).is_empty());
+    }
+
+    #[test]
+    fn every_received_payload_is_counted_but_only_stored_objects_occupy_the_cache() {
+        // Arrange
+        let cache = TrackCache::new();
+        let payload = Bytes::from_static(b"12345");
+
+        // Act
+        let _ = cache.insert_live(stream_object_with_payload(0, 0, payload.clone()));
+        let _ = cache.insert_live(stream_object_with_payload(0, 0, payload.clone()));
+        let _ = cache.insert(stream_object_with_payload(0, 1, payload));
+
+        // Assert
+        let counters = cache.ingress_stats().take();
+        assert_eq!(counters.bytes_received, 15);
+        assert_eq!(
+            cache.occupancy(),
+            CacheOccupancy {
+                objects: 2,
+                payload_bytes: 10,
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn arrival_gap_is_measured_between_live_inserts_only() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        tokio::time::advance(Duration::from_millis(200)).await;
+        let _ = cache.insert(stream_object(0, 1));
+        tokio::time::advance(Duration::from_millis(100)).await;
+
+        // Act
+        let _ = cache.insert_live(stream_object(0, 2));
+
+        // Assert
+        assert_eq!(
+            cache.ingress_stats().take().max_arrival_gap,
+            Duration::from_millis(300)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eviction_releases_the_payload_bytes_of_removed_objects() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object_with_payload(0, 0, Bytes::from_static(b"old")));
+        tokio::time::advance(Duration::from_secs(6)).await;
+        let _ = cache.insert_live(stream_object_with_payload(
+            0,
+            1,
+            Bytes::from_static(b"fresh"),
+        ));
+        tokio::time::advance(Duration::from_secs(5)).await;
+
+        // Act
+        cache.evict(Duration::from_secs(10));
+
+        // Assert
+        assert_eq!(
+            cache.occupancy(),
+            CacheOccupancy {
+                objects: 1,
+                payload_bytes: 5,
+            }
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_objects_older_than_ttl() {
+        // Arrange: object 0 at t=0, object 1 at t=6s, TTL=10s
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        tokio::time::advance(Duration::from_secs(6)).await;
+        let _ = cache.insert_live(stream_object(0, 1));
+        // Act: at t=11s, object 0 is 11s old (>10), object 1 is 5s old (<=10)
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict(ttl);
+        // Assert
+        assert!(!cache.read().objects.contains_key(&location(0, 0)));
+        assert!(cache.read().objects.contains_key(&location(0, 1)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_object_at_exactly_ttl() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        // Act: age == TTL, which is not `> TTL`
+        tokio::time::advance(Duration::from_secs(10)).await;
+        cache.evict(ttl);
+        // Assert
+        assert!(!cache.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_the_newest_object_of_a_live_track_past_ttl() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0));
+        let _ = cache.insert_live(stream_object(1, 0));
+        tokio::time::advance(Duration::from_secs(11)).await;
+
+        // Act
+        cache.evict(ttl);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 1);
+        assert_eq!(cache.largest_location(), Some(location(1, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_the_kept_newest_object_once_a_newer_one_arrives() {
+        // Arrange: group 0 was kept past the TTL as the newest object
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0));
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        let _ = cache.insert_live(stream_object(1, 0));
+        tokio::time::advance(Duration::from_secs(11)).await;
+
+        // Act
+        cache.evict(ttl);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 1);
+        assert_eq!(cache.largest_location(), Some(location(1, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_the_newest_object_once_live_ingest_ended() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(stream_object(0, 0));
+        cache.end_live_ingest();
+        tokio::time::advance(Duration::from_secs(11)).await;
+
+        // Act
+        cache.evict(ttl);
+
+        // Assert
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_releases_knowledge_only_where_objects_were_removed() {
+        // Arrange: object 0 expires before object 1
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        tokio::time::advance(Duration::from_secs(6)).await;
+        let _ = cache.insert_live(stream_object(0, 1));
+        // Act
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict(ttl);
+        // Assert
+        assert!(!cache.covers(location(0, 0), location(0, 1)));
+        assert!(cache.covers(location(0, 1), location(0, 2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evicting_newer_location_keeps_fresh_fetch_known_range() {
+        // Arrange: a high-location live object is older than a low-location fetched range
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(5, 0));
+        tokio::time::advance(Duration::from_secs(6)).await;
+        cache.insert_fetch_known_range(location(0, 0), location(2, 0));
+        // Act: only the live g5 object is past TTL
+        tokio::time::advance(Duration::from_secs(5)).await;
+        cache.evict(ttl);
+        // Assert
+        assert!(cache.covers(location(0, 0), location(2, 0)));
+        assert!(!cache.covers(location(5, 0), location(5, 1)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_removes_fetch_known_range_for_deleted_objects() {
+        // Arrange: a completed upstream FETCH made [g0:o0, g3:o0) known
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert(stream_object(0, 0));
+        cache.insert_fetch_known_range(location(0, 0), location(3, 0));
+        // Act: object g0:o0 expires
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Assert: coverage can no longer claim the deleted head object
+        assert!(!cache.covers(location(0, 0), location(1, 0)));
+        assert!(cache.covers(location(0, 1), location(3, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_an_open_group_visible_after_its_objects_expire() {
+        // Arrange: live ingest may pause long after the header; the open subgroup
+        // is what keeps egress waiters alive
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _open = open_group(&cache, 0, &[0]);
+        // Act
+        tokio::time::advance(Duration::from_secs(100)).await;
+        cache.evict(ttl);
+        // Assert
+        assert!(cache.is_empty());
+        assert_eq!(subgroup_keys_in_group(&cache, 0), vec![stream_key(0)]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_forgets_the_runs_of_a_vanished_group() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        insert_aborted_group(&cache, 0, &[0]);
+        drop(cache.open_subgroup(stream_key(0)));
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        tokio::time::advance(Duration::from_secs(11)).await;
+        // Act
+        cache.evict(ttl);
+        let _open = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.generation),
+            Ok(0)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_forgets_the_runs_of_a_group_that_closes_after_its_objects_left() {
+        // Arrange: the open group's only object was evicted, then the group aborted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        drop(open);
+        drop(cache.open_subgroup(stream_key(0)));
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        // Act
+        cache.evict(ttl);
+        let _open = cache.open_subgroup(stream_key(0));
+        // Assert
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.generation),
+            Ok(0)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn eviction_generation_increments_only_when_objects_are_removed() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(stream_object(0, 0));
+        // Act / Assert: nothing expired yet
+        cache.evict(ttl);
+        assert_eq!(cache.eviction_generation(), 0);
+        // Act / Assert: the object expired
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        assert_eq!(cache.eviction_generation(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn live_insert_after_eviction_does_not_reclaim_the_hole() {
+        // Arrange: object 0 of an open group expired and was evicted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Act: the group keeps going
+        let _ = open.insert(stream_object(0, 1));
+        // Assert: the evicted position stays unknown (§9.2.1.3), the new one is known
+        assert!(!cache.covers(location(0, 0), location(0, 1)));
+        assert!(cache.covers(location(0, 1), location(0, 2)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn closing_a_group_after_eviction_claims_only_the_tail() {
+        // Arrange
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0, 1]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Act
+        open.finish();
+        // Assert: "no more objects after 1" is known, positions 0 and 1 are not
+        assert!(!cache.covers(location(0, 0), location(0, 2)));
+        assert!(cache.covers(location(0, 2), location(0, 0)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reordered_lower_object_id_does_not_reclaim_the_evicted_frontier() {
+        // Arrange: object 5 arrived first (claiming 0..=4 as skipped) and was later evicted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[5]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Act: a lower id from another subgroup arrives afterwards
+        let _ = open.insert(stream_object_in_subgroup(0, 1, 2));
+        // Assert: its own position is known again, the evicted object's is not
+        assert!(cache.covers(location(0, 2), location(0, 3)));
+        assert!(!cache.covers(location(0, 5), location(0, 6)));
+    }
+}
+
+#[cfg(test)]
+mod fetch_tests {
+    use moqt::object::ObjectStatus;
+    use tokio::task::JoinHandle;
+
+    use super::*;
+    use crate::modules::{
+        data_plane::cache::subgroup_key::SubgroupKey,
+        test_support::relay_harness::fixtures::cached_object::{
+            datagram_object, fetch_all, insert_aborted_group, insert_closed_group, open_group,
+            status_object, stream_key, stream_object, stream_object_in_subgroup,
+        },
+    };
+
+    fn object_ids(objects: &[moqt::object::Object]) -> Vec<(u64, u64)> {
+        objects
+            .iter()
+            .map(|object| (object.location.group_id, object.location.object_id))
+            .collect()
+    }
+
+    fn spawn_fetch(
+        cache: &Arc<TrackCache>,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> JoinHandle<Result<Vec<moqt::object::Object>, FetchInterrupted>> {
+        let cache = cache.clone();
+        tokio::spawn(async move {
+            fetch_all(&cache, start, end, moqt::object::GroupOrder::Ascending).await
+        })
+    }
+
+    async fn fetch(
+        cache: &TrackCache,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> Vec<moqt::object::Object> {
+        fetch_all(cache, start, end, moqt::object::GroupOrder::Ascending)
+            .await
+            .unwrap()
+    }
+
+    #[test]
+    fn resolve_fetch_range_returns_not_covered_for_empty_cache() {
+        // Arrange / Act / Assert: no cached objects means the relay cannot safely FIN a fetch stream
+        assert_eq!(
+            TrackCache::new().resolve_fetch_range(location(0, 0), location(0, 1), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_accepts_explicit_range() {
+        // Arrange: group 0 has exactly the requested object coverage
+        let cache = TrackCache::new();
+        let _open = open_group(&cache, 0, &[0, 1, 2]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 3), None),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 3)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_is_not_covered_across_a_skipped_object_id() {
+        // Arrange: object 1 was skipped by the publisher, so its existence is
+        // undecided (§10.4.2) and the relay must not FIN a range spanning it
+        let cache = TrackCache::new();
+        let _open = open_group(&cache, 0, &[0, 2]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 3), None),
+            FetchRangeResolution::NotCovered
+        );
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 2), location(0, 3), None),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 3)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_rejects_missing_group() {
+        // Arrange: group 1 is absent between cached group 0 and requested group 2
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0]);
+        let _open = open_group(&cache, 2, &[0]);
+        // Act / Assert: local FIN would imply group 1 has no objects
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(2, 1), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_clamps_entire_open_largest_group() {
+        // Arrange: end.object_id == 0 requests the full group, but it is still open
+        let cache = TrackCache::new();
+        let _open = open_group(&cache, 0, &[0, 1, 2]);
+        // Act / Assert: unpublished tail objects are not fetched; End Location is largest + 1
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 0), None),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 3)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_accepts_entire_closed_group() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 1, 2]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 0), None),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 0)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_returns_no_objects_for_a_known_empty_group() {
+        // Arrange: group 1 opened and closed without objects between two live groups
+        let cache = TrackCache::new();
+        let _g0 = open_group(&cache, 0, &[0]);
+        insert_closed_group(&cache, 1, &[]);
+        let _g2 = open_group(&cache, 2, &[0]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(1, 0), location(1, 0), None),
+            FetchRangeResolution::NoObjects
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_serves_in_flight_groups_before_close() {
+        // Arrange: live ingest delivered g0/g1 objects but their FINs have not
+        // been processed yet (QUIC gives no cross-stream ordering)
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _g0 = open_group(&cache, 0, &[0, 1, 2]);
+        let _g1 = open_group(&cache, 1, &[0, 1]);
+        // Act / Assert: serve and let delivery wait for the pending closes
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(1, 2), None),
+            FetchRangeResolution::Serve {
+                end_location: location(1, 2)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_steps_over_a_known_range_without_visiting_each_group_id() {
+        // Arrange: a FETCH fill covers {0, 0} through a wall-clock group id; the
+        // live group starts 2,000,000 ids later
+        const FILLED_TO: u64 = 1_791_962_098_067_012;
+        const LIVE_GROUP: u64 = FILLED_TO + 2_000_000;
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        cache.insert_fetch_known_range(location(0, 0), location(FILLED_TO, 0));
+        let _live = open_group(&cache, LIVE_GROUP, &[0, 1]);
+
+        // Act
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(LIVE_GROUP, 2), None);
+
+        // Assert: the group ids between the fill and the live group are unknown, so the FETCH goes upstream
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[test]
+    fn resolve_fetch_range_not_covered_for_the_rest_of_a_group_whose_stream_ended() {
+        // Arrange: g0's upstream stream ended after object 0, but the publisher
+        // sent object 1 too; g1 is live
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        insert_aborted_group(&cache, 0, &[0]);
+        let _g1 = open_group(&cache, 1, &[0]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(0, 2), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_not_covered_for_open_groups_without_live_ingest() {
+        // Arrange: same cache state, but no live ingest is running
+        let cache = TrackCache::new();
+        let _g0 = open_group(&cache, 0, &[0, 1, 2]);
+        let _g1 = open_group(&cache, 1, &[0, 1]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(1, 2), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn resolve_fetch_range_not_covered_when_group_head_was_evicted() {
+        // Arrange: live ingest moved on to g1, then g0's only object expired and was evicted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _g0 = open_group(&cache, 0, &[0]);
+        tokio::time::advance(Duration::from_secs(11)).await;
+        let _g1 = open_group(&cache, 1, &[0]);
+        cache.evict(ttl);
+        // Act / Assert: evicted knowledge must not be served as an in-flight wait
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(1, 1), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_start_after_largest_depends_on_live_ingest() {
+        // Arrange
+        let cache = TrackCache::new();
+        let _open = open_group(&cache, 0, &[0]);
+        // Act / Assert: without live ingest the relay forwards upstream instead of asserting invalidity
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
+            FetchRangeResolution::NotCovered
+        );
+        // Act / Assert: with live ingest Largest is trusted
+        cache.begin_live_ingest();
+        cache.begin_live_ingest();
+        cache.end_live_ingest();
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
+            FetchRangeResolution::InvalidRange
+        );
+        cache.end_live_ingest();
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_uses_fetch_known_range_before_live_coverage_start() {
+        // Arrange: live cache started at g3, then an upstream FETCH filled g0..g2
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 3, &[0]);
+        let _ = cache.insert(stream_object(0, 0));
+        cache.insert_fetch_known_range(location(0, 0), location(3, 0));
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(3, 0), None),
+            FetchRangeResolution::Serve {
+                end_location: location(3, 0)
+            }
+        );
+    }
+
+    #[test]
+    fn covers_live_range_from_first_ingested_object_to_open_largest_group() {
+        // Arrange: live ingestion started at group 3, groups 3 and 4 closed, group 5 open
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 4, &[0]);
+        let _g5 = open_group(&cache, 5, &[0]);
+        // Act / Assert
+        assert!(cache.covers(location(3, 0), location(5, 1)));
+        assert!(!cache.covers(location(0, 0), location(5, 1)));
+    }
+
+    #[test]
+    fn covers_merged_fetch_and_live_ranges_but_not_the_unknown_tail() {
+        // Arrange: upstream FETCH filled groups 0..2, then live ingest reached group 5
+        let cache = TrackCache::new();
+        cache.insert_fetch_known_range(location(0, 0), location(2, 0));
+        insert_closed_group(&cache, 3, &[0]);
+        insert_closed_group(&cache, 4, &[0]);
+        let _g5 = open_group(&cache, 5, &[0]);
+        // Act / Assert
+        assert!(cache.covers(location(0, 0), location(5, 1)));
+        assert!(!cache.covers(location(0, 0), location(6, 0)));
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_excludes_end_object() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 1, 2, 3, 4]);
+        // Act / Assert
+        let objects = fetch(&cache, location(0, 0), location(0, 3)).await;
+        assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1), (0, 2)]);
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_preserves_status_objects() {
+        // Arrange: a fill-only group carrying positive knowledge about non-existence
+        let cache = TrackCache::new();
+        let _ = cache.insert(status_object(0, 2, ObjectStatus::DoesNotExist));
+        // Act
+        let objects = fetch(&cache, location(0, 0), location(0, 3)).await;
+        // Assert
+        assert_eq!(object_ids(&objects), vec![(0, 2)]);
+        assert_eq!(objects[0].status, ObjectStatus::DoesNotExist);
+        assert!(objects[0].payload.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_end_object_zero_returns_entire_group() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 1, 2, 3, 4]);
+        // Act / Assert
+        let objects = fetch(&cache, location(0, 0), location(0, 0)).await;
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_filters_range_with_gaps() {
+        // Arrange: gapped object_ids 0, 3, 5, 8
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 3, 5, 8]);
+        // Act / Assert: start 3 inclusive, end 8 exclusive
+        let objects = fetch(&cache, location(0, 3), location(0, 8)).await;
+        assert_eq!(object_ids(&objects), vec![(0, 3), (0, 5)]);
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_spans_groups_with_exclusive_end() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 1, 2, 3, 4]);
+        insert_closed_group(&cache, 1, &[0, 1, 2, 3, 4]);
+        // Act / Assert
+        let objects = fetch(&cache, location(0, 2), location(1, 3)).await;
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 2), (0, 3), (0, 4), (1, 0), (1, 1), (1, 2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_merges_subgroups_by_object_id() {
+        // Arrange: one group split across even and odd object ids
+        let cache = TrackCache::new();
+        let even = open_group(&cache, 0, &[0, 2, 4]);
+        let odd = cache.open_subgroup(SubgroupKey::Stream {
+            group_id: 0,
+            subgroup_id: 1,
+        });
+        for object_id in [1, 3, 5] {
+            let _ = odd.insert(stream_object_in_subgroup(0, 1, object_id));
+        }
+        even.finish();
+        odd.finish();
+        // Act / Assert
+        let objects = fetch(&cache, location(0, 0), location(0, 6)).await;
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_includes_datagram_objects() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0]);
+        let _ = cache.insert_live(datagram_object(0, 1));
+        // Act
+        let objects = fetch(&cache, location(0, 0), location(0, 2)).await;
+        // Assert: the cache keeps the datagram preference; moqt gives it its object id as
+        // subgroup id when encoding (§10.4.4)
+        assert_eq!(object_ids(&objects), vec![(0, 0), (0, 1)]);
+        assert_eq!(
+            objects[1].forwarding,
+            moqt::object::ForwardingPreference::Datagram
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_descending_groups_keep_objects_ascending() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 1]);
+        insert_closed_group(&cache, 1, &[0, 1]);
+        // Act
+        let objects = fetch_all(
+            &cache,
+            location(0, 0),
+            location(1, 2),
+            moqt::object::GroupOrder::Descending,
+        )
+        .await
+        .unwrap();
+        // Assert
+        assert_eq!(object_ids(&objects), vec![(1, 0), (1, 1), (0, 0), (0, 1)]);
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_waits_for_in_flight_group() {
+        // Arrange: group 0 is open with no objects yet while group 1 already
+        // completed — the cross-stream reordering QUIC allows
+        let cache = Arc::new(TrackCache::new());
+        let open_g0 = cache.open_subgroup(stream_key(0));
+        insert_closed_group(&cache, 1, &[0, 1, 2, 3, 4]);
+        // Act: fetch [{0,0}, {1,3}) while group 0's objects have not arrived yet
+        let fetch = spawn_fetch(&cache, location(0, 0), location(1, 3));
+        tokio::task::yield_now().await;
+        for object_id in 0..3 {
+            let _ = open_g0.insert(stream_object(0, object_id));
+        }
+        open_g0.finish();
+        // Assert: the late group 0 objects are delivered, not silently dropped
+        let objects = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must complete once the in-flight group closes")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            object_ids(&objects),
+            vec![(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2)]
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_aborts_when_track_goes_malformed() {
+        // Arrange: a live group whose tail the fetch will wait for
+        let cache = Arc::new(TrackCache::new());
+        let open = open_group(&cache, 0, &[0]);
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
+        tokio::task::yield_now().await;
+        // Act: a conflicting duplicate latches the track mid-wait
+        let outcome = open.insert(stream_object_in_subgroup(0, 1, 0));
+        assert_eq!(outcome, Err(TrackMalformed));
+        // Assert
+        let result = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must abort once the track is malformed")
+            .unwrap();
+        assert!(matches!(result, Err(FetchInterrupted::Malformed)));
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_is_incomplete_when_a_waited_subgroup_aborts() {
+        // Arrange: the fetch waits on an open group whose stream is then reset upstream
+        let cache = Arc::new(TrackCache::new());
+        let open = open_group(&cache, 0, &[0]);
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
+        tokio::task::yield_now().await;
+        // Act
+        drop(open);
+        // Assert: the relay must not FIN a range that may be missing objects
+        let result = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must end once the subgroup aborts")
+            .unwrap();
+        assert_eq!(result, Err(FetchInterrupted::Incomplete));
+    }
+
+    #[tokio::test]
+    async fn fetch_objects_is_incomplete_when_a_waited_subgroup_reopens_before_the_fetch_wakes() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let open = open_group(&cache, 0, &[0]);
+        let fetch = spawn_fetch(&cache, location(0, 0), location(0, 3));
+        tokio::task::yield_now().await;
+        // Act
+        drop(open);
+        let _reopened = cache.open_subgroup(stream_key(0));
+        // Assert: the reopened stream cannot restore objects lost with the reset
+        let result = tokio::time::timeout(Duration::from_secs(5), fetch)
+            .await
+            .expect("fetch must end once the subgroup aborts")
+            .unwrap();
+        assert_eq!(result, Err(FetchInterrupted::Incomplete));
+    }
+}
+
+#[cfg(test)]
+mod max_cache_duration_tests {
+    use super::*;
+    use crate::modules::data_plane::cache::cached_object::{CacheStamp, RETENTION_LIMIT};
+    use crate::modules::test_support::relay_harness::fixtures::cached_object::{
+        fetch_all, stream_key, stream_object,
+    };
+
+    const MAX_CACHE_DURATION: Duration = Duration::from_secs(2);
+
+    fn expiring_after(object: CachedObject, max_cache_duration: Duration) -> CachedObject {
+        CacheStamp {
+            max_cache_duration: Some(max_cache_duration),
+            persist: false,
+            ..CacheStamp::default()
+        }
+        .apply(object)
+    }
+    const RELAY_TTL: Duration = Duration::from_secs(10);
+
+    /// Group 0 closed with objects 0 and 1, both expiring `after` their receipt.
+    fn closed_expiring_group(cache: &TrackCache, after: Duration) {
+        let open = cache.open_subgroup(stream_key(0));
+        let _ = open.insert(expiring_after(stream_object(0, 0), after));
+        let _ = open.insert(expiring_after(stream_object(0, 1), after));
+        open.finish();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn live_read_skips_an_object_past_its_max_cache_duration() {
+        // Arrange: object 0 expires, object 1 was received without a limit
+        let cache = TrackCache::new();
+        let open = cache.open_subgroup(stream_key(0));
+        let _ = open.insert(expiring_after(stream_object(0, 0), MAX_CACHE_DURATION));
+        let _ = open.insert(stream_object(0, 1));
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let next = cache
+            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .await
+            .unwrap();
+
+        // Assert
+        let NextObject::Object(object) = next else {
+            panic!("expected an object");
+        };
+        assert_eq!(object.object.location, location(0, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fetch_from_cache_stops_at_an_object_past_its_max_cache_duration() {
+        // Arrange
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, MAX_CACHE_DURATION);
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let result = fetch_all(
+            &cache,
+            location(0, 0),
+            location(1, 0),
+            moqt::object::GroupOrder::Ascending,
+        )
+        .await;
+
+        // Assert
+        assert!(matches!(result, Err(FetchInterrupted::Incomplete)));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fetch_range_holding_an_expired_object_goes_upstream() {
+        // Arrange: the range is fully known, so only the expiry stops serving it
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, MAX_CACHE_DURATION);
+        let before_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2), None);
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let after_expiry = cache.resolve_fetch_range(location(0, 0), location(0, 2), None);
+
+        // Assert
+        assert_eq!(
+            before_expiry,
+            FetchRangeResolution::Serve {
+                end_location: location(0, 2)
+            }
+        );
+        assert_eq!(after_expiry, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_whole_group_fetch_holding_an_expired_object_goes_upstream() {
+        // Arrange: end {0, 0} asks for all of group 0
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, MAX_CACHE_DURATION);
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        let resolution = cache.resolve_fetch_range(location(0, 0), location(0, 0), None);
+
+        // Assert
+        assert_eq!(resolution, FetchRangeResolution::NotCovered);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_keeps_an_object_past_the_relay_ttl_until_its_max_cache_duration() {
+        // Arrange
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, RELAY_TTL * 3);
+        tokio::time::advance(RELAY_TTL * 2).await;
+
+        // Act
+        cache.evict(RELAY_TTL);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_caps_a_longer_max_cache_duration_at_the_retention_limit() {
+        // Arrange
+        let cache = TrackCache::new();
+        closed_expiring_group(&cache, RETENTION_LIMIT * 2);
+        tokio::time::advance(RETENTION_LIMIT + Duration::from_secs(1)).await;
+
+        // Act
+        cache.evict(RELAY_TTL);
+
+        // Assert
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn evict_drops_the_newest_object_of_a_live_track_at_its_max_cache_duration() {
+        // Arrange: well within the relay TTL, and the newest object of a live track
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _ = cache.insert_live(expiring_after(stream_object(0, 0), MAX_CACHE_DURATION));
+        tokio::time::advance(MAX_CACHE_DURATION).await;
+
+        // Act
+        cache.evict(RELAY_TTL);
+
+        // Assert
+        assert_eq!(cache.occupancy().objects, 0);
+    }
+}

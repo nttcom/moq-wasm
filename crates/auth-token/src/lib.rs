@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 pub use jwt::{SignatureError, decode_unverified_payload, sign_token, verify_signature};
 pub use lifetime::parse_lifetime;
 
+/// The `appId` prefix of a temporary app: an app that exists only as the
+/// tokens issued for it, all signed with one shared secret instead of a
+/// registered one.
+pub const TEMPORARY_APP_ID_PREFIX: &str = "temp-";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Claims {
@@ -20,6 +25,10 @@ pub struct Claims {
     pub iat: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exp: Option<u64>,
+    /// The `RELAY_ID` of the relay presenting this token. The accepting relay
+    /// reads it only from a relay app's token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relay_id: Option<String>,
 }
 
 impl Claims {
@@ -37,6 +46,7 @@ impl Claims {
             subscribe,
             iat: Some(now),
             exp: Some(now + lifetime.as_secs()),
+            relay_id: None,
         }
     }
 }
@@ -71,6 +81,7 @@ mod tests {
             "subscribe": "",
             "iat": 1,
             "exp": 2,
+            "relayId": "relay-a",
             "custom": "ignored",
         });
 
@@ -86,6 +97,7 @@ mod tests {
                 subscribe: Some(String::new()),
                 iat: Some(1),
                 exp: Some(2),
+                relay_id: Some("relay-a".into()),
             }
         );
     }
@@ -104,6 +116,7 @@ mod tests {
                 subscribe: None,
                 iat: None,
                 exp: None,
+                relay_id: None,
             }
         );
     }
@@ -123,6 +136,7 @@ mod tests {
             subscribe: None,
             iat: Some(1),
             exp: Some(2),
+            relay_id: None,
         };
 
         // Act / Assert

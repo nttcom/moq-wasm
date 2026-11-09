@@ -1,6 +1,9 @@
 //! The application protocol a connection negotiates: the ALPN of a raw QUIC
-//! connection, or the WebTransport subprotocol (WT-Available-Protocols /
-//! WT-Protocol) of a WebTransport session.
+//! connection, the WebTransport subprotocol (WT-Available-Protocols /
+//! WT-Protocol) of a WebTransport session, or the WebSocket subprotocol
+//! (Sec-WebSocket-Protocol) of a QMux session.
+
+use crate::modules::transport::qmux::subprotocol;
 
 /// What a client offers and a server accepts, most preferred first.
 #[derive(Clone, Debug)]
@@ -28,6 +31,24 @@ impl ApplicationProtocols {
             .copied()
             .find(|protocol| offered.iter().any(|offered| offered == protocol))
     }
+
+    /// The WebSocket subprotocols, most preferred first: QMux with each ALPN,
+    /// then QMux without an application protocol.
+    pub(crate) fn web_socket_subprotocols(&self) -> Vec<String> {
+        self.quic_alpns
+            .iter()
+            .map(|alpn| subprotocol::subprotocol_for(Some(alpn)))
+            .chain(std::iter::once(subprotocol::subprotocol_for(None)))
+            .collect()
+    }
+
+    /// The first of the server's WebSocket subprotocols the client also offered.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn select_web_socket(&self, offered: &[String]) -> Option<String> {
+        self.web_socket_subprotocols()
+            .into_iter()
+            .find(|protocol| offered.contains(protocol))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +61,20 @@ pub(crate) enum NegotiatedProtocol {
     WebTransport {
         protocol: Option<String>,
     },
+    /// QMux over WebSocket; `alpn` is what the subprotocol named.
+    WebSocket {
+        alpn: Option<String>,
+    },
+}
+
+impl NegotiatedProtocol {
+    pub(crate) fn transport_name(&self) -> &'static str {
+        match self {
+            Self::Quic { .. } => "QUIC",
+            Self::WebTransport { .. } => "WebTransport",
+            Self::WebSocket { .. } => "WebSocket",
+        }
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -60,6 +95,25 @@ mod tests {
 
         // Assert
         assert_eq!(selected, Some("moqt-b"));
+    }
+
+    #[test]
+    fn web_socket_subprotocols_pair_qmux_with_each_alpn_and_prefer_the_alpn_form() {
+        // Arrange
+        let protocols = ApplicationProtocols {
+            quic_alpns: vec!["moq-00"],
+            web_transport: vec![],
+        };
+
+        // Act
+        let offered = protocols.web_socket_subprotocols();
+        let selected = protocols.select_web_socket(&["qmux-02".into(), "qmux-02.moq-00".into()]);
+        let none = protocols.select_web_socket(&["qmux-01.moq-00".into()]);
+
+        // Assert
+        assert_eq!(offered, ["qmux-02.moq-00", "qmux-02"]);
+        assert_eq!(selected.as_deref(), Some("qmux-02.moq-00"));
+        assert_eq!(none, None);
     }
 
     #[test]

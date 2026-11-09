@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
@@ -25,6 +26,7 @@ pub struct Publish {
     /// Holds the Group Order and the DELIVERY_TIMEOUT and MAX_CACHE_DURATION
     /// parameters of a draft-14 PUBLISH.
     pub track_properties: TrackProperties,
+    pub trace_context: Option<TraceContext>,
 }
 
 impl Publish {
@@ -47,6 +49,7 @@ impl Publish {
         track_properties.set_group_order(Some(group_order));
         track_properties.set_delivery_timeout(find_even(&parameters, 0x02));
         track_properties.set_max_cache_duration(find_even(&parameters, 0x04));
+        let trace_context = TraceContext::find(&parameters);
         Ok(Self {
             request_id,
             track_namespace_tuple,
@@ -56,6 +59,7 @@ impl Publish {
             forward,
             authorization_tokens,
             track_properties,
+            trace_context,
         })
     }
 
@@ -89,6 +93,7 @@ impl Publish {
                 .into_iter()
                 .flatten(),
             )
+            .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
 
@@ -99,6 +104,7 @@ impl Publish {
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::{TEST_TRACEPARENT, TraceContext};
         use bytes::Bytes;
         use crate::modules::moqt::control_plane::control_messages::key_value_pair::KeyValuePair;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::track_properties::TrackProperties;
@@ -131,6 +137,7 @@ mod tests {
                 forward: true,
                 authorization_tokens: vec![],
                 track_properties: ordered(GroupOrder::Ascending),
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -172,6 +179,7 @@ mod tests {
                 forward: false,
                 authorization_tokens: vec![],
                 track_properties: ordered(GroupOrder::Descending),
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -213,6 +221,7 @@ mod tests {
                 forward: true,
                 authorization_tokens: vec![],
                 track_properties: ordered(GroupOrder::Ascending),
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -237,6 +246,7 @@ mod tests {
                     token_value: Bytes::from_static(b"secret"),
                 }],
                 track_properties: ordered(GroupOrder::Ascending),
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -279,6 +289,7 @@ mod tests {
                 content_exists: ContentExists::False,
                 forward: true,
                 authorization_tokens: vec![],
+                trace_context: None,
                 track_properties: {
                     let mut properties = TrackProperties::from_pairs(other);
                     properties.set_max_cache_duration(Some(5));
@@ -292,6 +303,30 @@ mod tests {
 
             // Assert
             assert_eq!(encoded, publish(vec![]).encode());
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let message = Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["room".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 2,
+                content_exists: ContentExists::False,
+                forward: true,
+                authorization_tokens: vec![],
+                track_properties: ordered(GroupOrder::Ascending),
+                trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+            };
+
+            // Act
+            let bytes = message.encode();
+            let decoded = Publish::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context.is_some());
+            assert_eq!(decoded.trace_context, message.trace_context);
         }
     }
 }

@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 # predate RELAY_MOQT_VERSIONS. Override the ports when they are taken.
 RELAY_PORT="${CROSS_VERSION_E2E_RELAY_PORT:-4633}"
 VTS_PORT="${CROSS_VERSION_E2E_VTS_PORT:-8081}"
-# Development relay token minted from apps.example.json (see crates/vts/README.md).
+# Development relay token minted from apps.example.json (see services/vts/README.md).
 DEFAULT_RELAY_TOKEN="eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3ODkwOTMzMzMsImV4cCI6MjEwNDQ1MzMzM30.F_vveCJktf2C5cAnojDN_wLUZm6ILQpCACOvXxezqD4"
 
 VTS_PID=""
@@ -45,7 +45,7 @@ wait_until() {
 
 cargo build -p vts -p relay -p cross-version-e2e
 
-VTS_PORT="$VTS_PORT" VTS_APPS_FILE=crates/vts/apps.example.json ./target/debug/vts &
+VTS_PORT="$VTS_PORT" VTS_APPS_FILE=services/vts/apps.example.json ./target/debug/vts &
 VTS_PID=$!
 wait_until vts "$VTS_PID" curl -fsS "http://127.0.0.1:$VTS_PORT/healthz" -o /dev/null
 

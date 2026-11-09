@@ -1,11 +1,15 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { LivePlayer } from '@player/livePlayer'
-import { SingleObjectGroupPublisher, latestRecordForPrompt, setUpD3FlashBotPage } from '../../utils/d3FlashBot'
+import type { TrackWriter } from 'moq-wasm'
+import { withNamespaceRoot } from '../../utils/access'
+import { LivePlayer } from 'moq-wasm/media'
+import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
+import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { element, setStatus } from '../../utils/page'
+import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
+import 'moq-wasm/media/player.css'
 
-const CAMERA_NAMESPACE = ['anon', 'onvif', 'client']
-const VIEWER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'viewer']
-const TRACKER_NAMESPACE = ['anon', 'moq-ptz-tracking', 'tracker']
+const CAMERA_NAMESPACE = withNamespaceRoot(['anon', 'onvif', 'client'])
+const VIEWER_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking', 'viewer'])
+const TRACKER_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking', 'tracker'])
 // There is one ONVIF camera, so the bot service runs this one room only.
 const ROOM = 'onvif'
 const BOT_SERVICE = {
@@ -14,90 +18,136 @@ const BOT_SERVICE = {
   cloud: 'https://moq-ptz-tracking.moqt.research.skyway.io'
 }
 const PROMPT_TRACK = 'prompt'
-const AUTH_INFO = ''
+const MAX_TARGETS = 16
 
-type Prompt = { target: string; video: string } | { target: null }
+type Prompt = { targets: string[]; video?: string }
+/// [index into the prompt's targets, edges]
+type TargetBox = [number, BoxEdges]
 
-const session = new MoqtClientWrapper()
+const telemetry = startPageTelemetry(
+  'moq-ptz-tracking',
+  () => element<HTMLInputElement>('url').value.trim(),
+  () => playerSamples(player)
+)
 const player = new LivePlayer({
-  client: session,
   container: element('stage'),
   callbacks: {
     onStateChange: followSelectedVideoTrack,
     onLiveFrame: renderViewerDelay,
-    onLog: (level, message) => console[level](`[moq-ptz-tracking] ${message}`)
+    onLog: (level, message) => {
+      telemetry.log(level, message)
+      console[level](`[moq-ptz-tracking] ${message}`)
+    }
   }
 })
-let promptPublisher: SingleObjectGroupPublisher | undefined
-let trackingTarget: string | undefined
-let sentPrompt: Prompt = { target: null }
+let promptWriter: TrackWriter | undefined
+let promptGroupId: bigint | undefined
+let trackingTargets: string[] = []
+let sentPrompt: Prompt = { targets: [] }
 
 const targetForm = element<HTMLFormElement>('targetForm')
-const targetInput = element<HTMLInputElement>('target')
+const targetList = element<HTMLDivElement>('targets')
+const addTargetButton = element<HTMLButtonElement>('addTargetBtn')
 const stopButton = element<HTMLButtonElement>('stopBtn')
+const boxOverlay = element<HTMLDivElement>('boxes')
 const positionLabel = element<HTMLSpanElement>('position')
 const moveLabel = element<HTMLSpanElement>('move')
 const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 
-setUpD3FlashBotPage({
-  session,
+setUpSystemOneBotPage({
   logTag: 'moq-ptz-tracking',
-  ownNamespace: VIEWER_NAMESPACE,
-  ownTracks: [PROMPT_TRACK],
   botNamespace: TRACKER_NAMESPACE,
   room: ROOM,
   botService: BOT_SERVICE,
-  afterConnect: () => player.start(CAMERA_NAMESPACE, AUTH_INFO),
-  onSubscriber: async ({ requestId, trackAlias }) => {
-    setPromptPublisher(new SingleObjectGroupPublisher(session, requestId, trackAlias))
-    await sendPrompt(currentPrompt())
+  onConnect: async (session) => {
+    await session.announce(VIEWER_NAMESPACE)
+    promptWriter = await session.publishTrack(VIEWER_NAMESPACE, PROMPT_TRACK)
+    onEachSubscriber(promptWriter, async () => {
+      setTrackerStatus(true)
+      await sendPrompt(currentPrompt())
+    })
   },
-  onUnsubscribe: (requestId) => {
-    if (promptPublisher?.requestId === requestId) {
-      setPromptPublisher(undefined)
-    }
-  },
+  afterConnect: (session) => player.start(session, CAMERA_NAMESPACE),
+  onBotLeft: () => setTrackerStatus(false),
   onTimelineObject: (payload) => {
     const data = latestRecordForPrompt<{
-      position: TrackerRecord['position']
+      boxes: TrackerRecord['boxes']
       pan_seconds: number
       tilt_seconds: number
-    }>(payload, promptPublisher?.latestGroupId)
+    }>(payload, promptGroupId)
     if (data) {
-      showRecord({ position: data.position, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
+      showRecord({ boxes: data.boxes, panSeconds: data.pan_seconds, tiltSeconds: data.tilt_seconds })
     }
   },
   onReset: async () => {
     await player.stop()
     viewerDelayLabel.textContent = ''
-    setPromptPublisher(undefined)
-    sentPrompt = { target: null }
+    promptWriter = undefined
+    promptGroupId = undefined
+    setTrackerStatus(false)
+    sentPrompt = { targets: [] }
   }
 })
+addTargetRow('人')
 targetForm.addEventListener('submit', (event) => {
   event.preventDefault()
-  targetInput.setCustomValidity(targetInput.value.trim() ? '' : '追従する対象を入力してください')
+  const inputs = [...targetList.querySelectorAll('input')]
+  const targets = [...new Set(inputs.map((input) => input.value.trim()).filter((text) => text))]
+  inputs[0].setCustomValidity(targets.length > 0 ? '' : '追従する対象を入力してください')
   if (targetForm.reportValidity()) {
-    setTrackingTarget(targetInput.value.trim())
+    setTrackingTargets(targets)
   }
 })
-stopButton.addEventListener('click', () => setTrackingTarget(undefined))
+addTargetButton.addEventListener('click', () => addTargetRow('').focus())
+stopButton.addEventListener('click', () => setTrackingTargets([]))
 
-function setPromptPublisher(publisher: SingleObjectGroupPublisher | undefined): void {
-  promptPublisher = publisher
-  setStatus('tracker-status', publisher ? 'bot 接続済み' : 'bot 未接続', publisher ? 'ok' : 'idle')
+function addTargetRow(value: string): HTMLInputElement {
+  const row = document.createElement('div')
+  row.className = 'target-row'
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.value = value
+  input.maxLength = 100
+  input.autocomplete = 'off'
+  input.setAttribute('aria-label', '追従する対象')
+  input.dataset.testid = 'ptz-tracking-target-input'
+  const remove = document.createElement('button')
+  remove.type = 'button'
+  remove.textContent = '削除'
+  remove.dataset.testid = 'ptz-tracking-remove-target-button'
+  remove.addEventListener('click', () => {
+    row.remove()
+    updateTargetRows()
+  })
+  row.append(input, remove)
+  targetList.append(row)
+  updateTargetRows()
+  return input
+}
+
+function updateTargetRows(): void {
+  const rows = [...targetList.children] as HTMLElement[]
+  rows.forEach((row, index) => {
+    row.style.setProperty('--box-color', boxColor(index))
+    row.querySelector('button')!.disabled = rows.length === 1
+  })
+  addTargetButton.disabled = rows.length >= MAX_TARGETS
+}
+
+function setTrackerStatus(joined: boolean): void {
+  setStatus('tracker-status', joined ? 'bot 接続済み' : 'bot 未接続', joined ? 'ok' : 'idle')
   showRecord(undefined)
 }
 
-function setTrackingTarget(target: string | undefined): void {
-  trackingTarget = target
-  stopButton.disabled = target === undefined
+function setTrackingTargets(targets: string[]): void {
+  trackingTargets = targets
+  stopButton.disabled = targets.length === 0
   void sendPrompt(currentPrompt())
 }
 
 function currentPrompt(): Prompt {
   const video = player.state.selectedVideoTrack
-  return trackingTarget && video ? { target: trackingTarget, video } : { target: null }
+  return trackingTargets.length > 0 && video ? { targets: trackingTargets, video } : { targets: [] }
 }
 
 /// The bot watches the video track named in the prompt, so a prompt follows the
@@ -112,47 +162,52 @@ function followSelectedVideoTrack(): void {
 async function sendPrompt(prompt: Prompt): Promise<void> {
   sentPrompt = prompt
   showRecord(undefined)
-  if (!promptPublisher) {
+  if (!promptWriter) {
     return
   }
   try {
-    await promptPublisher.send(new TextEncoder().encode(JSON.stringify(prompt)))
+    promptGroupId = await promptWriter.writeGroup(new TextEncoder().encode(JSON.stringify(prompt)))
   } catch (error) {
     console.error('[moq-ptz-tracking] prompt send failed', error)
   }
 }
 
 type TrackerRecord = {
-  position: [number, number] | 'not visible' | null
+  boxes: TargetBox[] | 'not visible'
   panSeconds: number
   tiltSeconds: number
 }
 
 function showRecord(record: TrackerRecord | undefined): void {
-  positionLabel.dataset.position = !record ? 'pending' : record.position === null ? 'unknown' : 'answer'
-  positionLabel.textContent = !record ? pendingText() : positionText(record.position)
+  const boxes = record && record.boxes !== 'not visible' ? record.boxes : []
+  positionLabel.dataset.position = !record ? 'pending' : boxes.length === 0 ? 'unknown' : 'answer'
+  positionLabel.textContent = !record ? pendingText() : boxes.length === 0 ? '見つかりません' : countText(boxes)
+  drawTargetBoxes(boxes)
   moveLabel.textContent =
     record && (record.panSeconds !== 0 || record.tiltSeconds !== 0)
       ? `パン ${formatSeconds(record.panSeconds)}・チルト ${formatSeconds(record.tiltSeconds)}`
       : ''
 }
 
-function positionText(position: TrackerRecord['position']): string {
-  if (position === null) {
-    return '判定できません'
-  }
-  if (position === 'not visible') {
-    return '見つかりません'
-  }
-  const [x, y] = position
-  return `横 ${Math.round(x * 100)}%・縦 ${Math.round(y * 100)}%`
+function countText(boxes: TargetBox[]): string {
+  return sentPrompt.targets
+    .map((target, index) => `${target} ${boxes.filter(([found]) => found === index).length}`)
+    .join('・')
+}
+
+function drawTargetBoxes(boxes: TargetBox[]): void {
+  drawBoxes(
+    boxOverlay,
+    boxes.map(([target, edges]) => ({ edges, label: sentPrompt.targets[target] ?? '', color: boxColor(target) })),
+    'ptz-tracking-box'
+  )
 }
 
 function pendingText(): string {
-  if (trackingTarget === undefined) {
+  if (trackingTargets.length === 0) {
     return '停止中'
   }
-  return sentPrompt.target === null ? '映像を待っています' : '判定待ち'
+  return sentPrompt.targets.length === 0 ? '映像を待っています' : '判定待ち'
 }
 
 function renderViewerDelay(): void {

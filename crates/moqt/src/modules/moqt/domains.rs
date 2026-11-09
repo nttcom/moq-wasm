@@ -1,3 +1,7 @@
+use std::time::Duration;
+
+use crate::modules::executor::now;
+
 pub(crate) mod accepting;
 pub(crate) mod connecting;
 pub(crate) mod connection;
@@ -6,6 +10,7 @@ pub(crate) mod fetch_handle;
 pub(crate) mod fetch_range;
 pub(crate) mod group_cutover;
 pub(crate) mod handshake;
+pub(crate) mod namespace_watchers;
 pub(crate) mod origin;
 pub(crate) mod pending_publish_namespace;
 pub(crate) mod publisher;
@@ -23,4 +28,9 @@ pub(crate) mod track_writer;
 
 pub(crate) fn namespace_tuple(namespace: &str) -> Vec<String> {
     namespace.split('/').map(str::to_string).collect()
+}
+
+/// Milliseconds from `since`, a reading of `executor::now`, to now.
+pub(crate) fn elapsed_ms(since: Duration) -> u64 {
+    now().saturating_sub(since).as_millis() as u64
 }

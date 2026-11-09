@@ -1,4 +1,5 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -25,10 +26,16 @@ pub struct SubscribeNamespaceHandler {
     /// the FORWARD parameter of a draft-18 SUBSCRIBE_TRACKS (§10.19), always
     /// `true` for draft-14.
     pub forward: bool,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl SubscribeNamespaceHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     /// draft-14's SUBSCRIBE_NAMESPACE, which asks for namespaces and tracks.
     pub(crate) fn new(
         connection: Arc<Connection>,
@@ -50,11 +57,16 @@ impl SubscribeNamespaceHandler {
     ) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            subscribe_namespace.request_id,
-            RequestKind::SubscribeNamespace,
+            RequestSummary::new(
+                RequestKind::SubscribeNamespace,
+                subscribe_namespace.request_id,
+                Some(&subscribe_namespace.track_namespace_prefix),
+                None,
+            ),
         );
         Self {
             guard,
+            trace_context: subscribe_namespace.trace_context,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
             interest,
@@ -63,14 +75,11 @@ impl SubscribeNamespaceHandler {
     }
 
     pub async fn ok(&self) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
             request_id: self.guard.request_id(),
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
+            .accept(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
             .await?;
         Ok(())
     }
@@ -88,14 +97,14 @@ impl SubscribeNamespaceHandler {
 mod tests {
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{connect_sessions, spawn_native_server},
         namespace::NamespaceInterest,
     };
 
     #[tokio::test]
     async fn exposes_track_namespace_prefix_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-namespace-handler-namespace");
+        let (port, accept) = spawn_native_server("subscribe-namespace-handler-namespace");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -122,7 +131,7 @@ mod tests {
     async fn a_draft14_subscribe_namespace_asks_for_namespaces_and_tracks_whatever_the_interest() {
         for interest in [NamespaceInterest::Namespaces, NamespaceInterest::Tracks] {
             // Arrange
-            let (port, accept) = spawn_dual_server("subscribe-namespace-handler-interest");
+            let (port, accept) = spawn_native_server("subscribe-namespace-handler-interest");
             let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
                 .await
                 .unwrap();

@@ -1,3 +1,6 @@
+mod catalog_refresh_task;
+mod catalog_track;
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
@@ -5,9 +8,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent, TerminationErrorCode,
+    CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
     TransportStats,
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, WriteOutcome},
@@ -17,21 +19,19 @@ use msf::CATALOG_TRACK_NAME;
 use tokio::sync::{Mutex, watch};
 
 use crate::{
-    broadcast::{CatalogMetadata, awaits_subscribe, build_catalog, is_cmaf},
+    broadcast::{CatalogMetadata, awaits_subscribe, build_catalog},
     stream_ledger::{StreamLedger, StreamRecord},
 };
+use catalog_refresh_task::CatalogRefreshTask;
+use catalog_track::CatalogTrack;
 
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for a range it never cached can still be answered here.
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
-/// Half the relay's default RELAY_CACHE_TTL_SECS, so the catalog is republished
-/// before it falls out of the relay cache (draft-ietf-moq-msf-01 §5) and a viewer
-/// arriving long after the last change still finds one.
-const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// A browser reaches the relay over WebTransport only.
 #[cfg(not(target_arch = "wasm32"))]
-type RelayTransport = moqt::DUAL;
+type RelayTransport = moqt::NATIVE;
 #[cfg(target_arch = "wasm32")]
 type RelayTransport = moqt::BROWSER;
 
@@ -42,7 +42,8 @@ pub struct MoqtTarget {
     pub verify_certificate: bool,
 }
 
-/// Connects on first use; without a target nothing is ever sent.
+/// Connects on first use, or publishes on a session it is given; without
+/// either nothing is ever sent.
 #[derive(Clone)]
 pub struct RelayConnection {
     target: Option<MoqtTarget>,
@@ -56,22 +57,21 @@ type TrackKey = (String, String);
 struct RelayState {
     announced_namespaces: HashSet<String>,
     catalogs: HashMap<String, CatalogMetadata>,
-    catalog_sent: HashMap<String, CatalogSent>,
+    /// Per namespace path whose catalog has been sent, whether it was sent
+    /// since the previous `CatalogRefreshTask` tick.
+    catalog_sent_since_tick: HashMap<String, bool>,
     /// Per namespace path, the tracks a SUBSCRIBE is accepted for before the
     /// catalog lists them.
     declared_tracks: HashMap<String, HashSet<String>>,
+    /// Per namespace path, the tracks PUBLISH has been sent for. The relay
+    /// takes them from the PUBLISH, and the origin keeps them after
+    /// `remove_track`. `serve_subscribe` rejects a SUBSCRIBE for one that is
+    /// not subscribable; the owner would hand it to the origin.
+    published_tracks: HashMap<String, HashSet<String>>,
     /// Whether a SUBSCRIBE in the namespace has been accepted. Dropped on
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
     disconnected: bool,
-}
-
-struct CatalogSent {
-    /// `executor::now()` at the send.
-    at: Duration,
-    /// `Session::connection_generation` at the send; after a migration the
-    /// new relay gets the catalog at the next send.
-    generation: u64,
 }
 
 impl RelayState {
@@ -84,6 +84,11 @@ impl RelayState {
         self.subscribed
             .entry(namespace_path.to_string())
             .or_insert_with(|| watch::channel(false).0)
+    }
+
+    fn publishes(&self, namespace_path: &str) -> bool {
+        self.catalogs.contains_key(namespace_path)
+            || self.declared_tracks.contains_key(namespace_path)
     }
 
     /// The catalog once the announce has started, the declared tracks, and
@@ -105,21 +110,54 @@ impl RelayState {
             .is_some_and(|catalog| awaits_subscribe(&catalog, track_name))
     }
 
-    fn catalog_refresh_due(&self, namespace_path: &str, now: Duration, generation: u64) -> bool {
-        self.catalog_sent.get(namespace_path).is_some_and(|sent| {
-            now.saturating_sub(sent.at) >= CATALOG_REFRESH_INTERVAL || sent.generation != generation
-        })
+    fn published(&self, namespace_path: &str, track_name: &str) -> bool {
+        self.published_tracks
+            .get(namespace_path)
+            .is_some_and(|tracks| tracks.contains(track_name))
+    }
+
+    /// Returns the namespaces whose catalog was not sent since the previous
+    /// tick, and marks every namespace unsent for the next tick.
+    fn take_catalogs_to_refresh(&mut self) -> Vec<String> {
+        self.catalog_sent_since_tick
+            .iter_mut()
+            .filter_map(|(namespace_path, sent)| {
+                (!std::mem::take(sent)).then(|| namespace_path.clone())
+            })
+            .collect()
+    }
+
+    fn sent_catalogs(&self) -> Vec<String> {
+        self.catalog_sent_since_tick.keys().cloned().collect()
     }
 }
 
 pub(crate) struct ConnectedRelay {
-    endpoint: Endpoint<RelayTransport>,
+    owned: Option<OwnedSession>,
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
-    catalog_send: Mutex<()>,
+    catalog: Arc<CatalogTrack>,
+    _catalog_refresh: CatalogRefreshTask,
     ledger: StreamLedger,
+    events: RelayEvents,
+}
+
+struct OwnedSession {
     event_task: JoinHandle,
+}
+
+impl Drop for OwnedSession {
+    fn drop(&mut self) {
+        self.event_task.abort();
+    }
+}
+
+#[derive(Clone)]
+struct RelayEvents {
+    origin: Origin,
+    state: Arc<Mutex<RelayState>>,
+    ledger: StreamLedger,
 }
 
 impl RelayConnection {
@@ -134,6 +172,36 @@ impl RelayConnection {
         }
     }
 
+    /// Publishes on `session`, whose owner keeps reading its events and passes
+    /// each to `handle` first. The broadcasts write into `origin`, which the
+    /// owner may share with tracks of its own. `close` leaves the session open.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    pub fn with_session(session: Arc<Session>, origin: Origin) -> Self {
+        let ledger = StreamLedger::default();
+        let relay = ConnectedRelay::new(false, session, origin, ledger.clone());
+        Self {
+            target: None,
+            connected: Arc::new(Mutex::new(Some(Arc::new(relay)))),
+            ledger,
+        }
+    }
+
+    /// Answers SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS
+    /// for the broadcasts on a session given to `with_session`, and returns
+    /// every other event. That includes a SUBSCRIBE in a namespace no
+    /// broadcast here publishes, a SUBSCRIBE for a track no broadcast here
+    /// has published (the owner may publish it with the `origin` given to
+    /// `with_session`), and an UNSUBSCRIBE that this `origin` does not know.
+    /// `Disconnected` and `ProtocolViolation` are returned too, after they
+    /// ended the broadcasts' sends.
+    pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+        let connected = self.connected.lock().await.clone();
+        match connected {
+            Some(relay) => relay.events.handle(event).await,
+            None => Some(event),
+        }
+    }
+
     pub fn streams(&self) -> Vec<StreamRecord> {
         self.ledger.snapshot()
     }
@@ -142,11 +210,10 @@ impl RelayConnection {
     /// leaves the relay to end the session only after its idle timeout.
     pub async fn close(&self) {
         let connected = self.connected.lock().await.clone();
-        if let Some(connected) = connected {
-            connected
-                .session
-                .close_with_error(TerminationErrorCode::NoError, "");
-            connected.endpoint.wait_idle().await;
+        if let Some(connected) = connected
+            && connected.owned.is_some()
+        {
+            connected.session.close().await;
         }
     }
 
@@ -161,13 +228,13 @@ impl RelayConnection {
     /// relay's GOAWAY (`ClientConfig::follow_go_away`).
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) async fn connected(&self) -> Result<Option<Arc<ConnectedRelay>>> {
-        let Some(target) = &self.target else {
-            return Ok(None);
-        };
         let mut connected = self.connected.lock().await;
         if let Some(relay) = connected.as_ref() {
             return Ok(Some(relay.clone()));
         }
+        let Some(target) = &self.target else {
+            return Ok(None);
+        };
         let relay = Arc::new(ConnectedRelay::connect(target, self.ledger.clone()).await?);
         *connected = Some(relay.clone());
         Ok(Some(relay))
@@ -178,103 +245,106 @@ impl ConnectedRelay {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     async fn connect(target: &MoqtTarget, ledger: StreamLedger) -> Result<Self> {
         let endpoint = Endpoint::<RelayTransport>::create_client(&ClientConfig {
-            port: 0,
-            verify_certificate: target.verify_certificate,
-            authorization_token: target.auth_token.clone(),
-            follow_go_away: true,
-            ..Default::default()
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                target.verify_certificate,
+            ),
+            authorization_token: target.auth_token.clone().map(Into::into),
+            ..ClientConfig::default()
         })?;
         let connecting = endpoint
             .connect(&target.url)
             .await
             .context("connect moqt transport")?;
         let session = Arc::new(connecting.await.context("establish moqt session")?);
-        let origin = Origin::default();
+        Ok(Self::new(true, session, Origin::default(), ledger))
+    }
+
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    fn new(
+        owns_session: bool,
+        session: Arc<Session>,
+        origin: Origin,
+        ledger: StreamLedger,
+    ) -> Self {
         let state = Arc::new(Mutex::new(RelayState::default()));
-        let event_task = Self::spawn_event_loop(
+        let events = RelayEvents {
+            origin: origin.clone(),
+            state: state.clone(),
+            ledger: ledger.clone(),
+        };
+        let owned = owns_session.then(|| OwnedSession {
+            event_task: Self::spawn_event_loop(session.clone(), events.clone()),
+        });
+        let catalog = Arc::new(CatalogTrack::new(
             session.clone(),
             origin.clone(),
             state.clone(),
             ledger.clone(),
-        );
-        Ok(Self {
-            endpoint,
+        ));
+        Self {
+            owned,
             session,
             origin,
             state,
-            catalog_send: Mutex::new(()),
+            _catalog_refresh: CatalogRefreshTask::run(catalog.clone()),
+            catalog,
             ledger,
-            event_task,
-        })
+            events,
+        }
     }
 
-    fn spawn_event_loop(
-        session: Arc<Session>,
-        origin: Origin,
-        state: Arc<Mutex<RelayState>>,
-        ledger: StreamLedger,
-    ) -> JoinHandle {
+    fn spawn_event_loop(session: Arc<Session>, events: RelayEvents) -> JoinHandle {
         executor::spawn("broadcast-relay-events", async move {
             loop {
                 let event = match session.receive_event().await {
                     Ok(event) => event,
                     Err(err) => {
                         tracing::warn!(?err, "MoQT event loop ended");
-                        state.lock().await.disconnect();
+                        events.state.lock().await.disconnect();
                         break;
                     }
                 };
-
-                // Answered here instead of by `origin.handle`: a SUBSCRIBE is checked
-                // against the catalog and raises the subscribed signal, and an
-                // UNSUBSCRIBE finishes the track in the stream ledger.
-                let event = match event {
-                    SessionEvent::Subscribe(handler) => {
-                        Self::serve_subscribe(&origin, &state, handler).await;
-                        continue;
-                    }
-                    SessionEvent::Unsubscribe(handler) => {
-                        let request_id = handler.subscribe_id();
-                        match origin.release(&handler).await {
-                            Some((namespace, track_name)) => {
-                                ledger.finish(&track_name);
-                                tracing::info!(request_id, %namespace, %track_name, "UNSUBSCRIBE received; track released");
-                            }
-                            None => {
-                                tracing::warn!(request_id, "UNSUBSCRIBE for unknown request");
-                            }
-                        }
-                        continue;
-                    }
-                    event => match origin.handle(event).await {
-                        Some(event) => event,
-                        None => continue,
-                    },
+                let Some(event) = events.handle(event).await else {
+                    continue;
                 };
-
                 match event {
                     SessionEvent::PublishNamespace(handler) => {
                         if let Err(err) = handler.ok().await {
-                            tracing::warn!(namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
+                            tracing::warn!(track_namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
                         }
                     }
                     SessionEvent::PublishNamespaceDone(handler) => {
-                        tracing::info!(namespace = %handler.track_namespace, "PUBLISH_NAMESPACE_DONE received");
+                        tracing::info!(track_namespace = %handler.track_namespace, "PUBLISH_NAMESPACE_DONE received");
                     }
                     SessionEvent::SubscribeNameSpace(handler) => {
                         if let Err(err) = handler.ok().await {
-                            tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
+                            tracing::warn!(track_namespace_prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
                         }
                     }
                     SessionEvent::UnsubscribeNamespace(handler) => {
-                        tracing::info!(prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
+                        tracing::info!(track_namespace_prefix = %handler.track_namespace_prefix(), "UNSUBSCRIBE_NAMESPACE received");
                     }
-                    SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => {
-                        state.lock().await.disconnect();
-                        break;
+                    SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
+                    SessionEvent::Subscribe(handler) => {
+                        let reason = format!(
+                            "{}/{} is not published here",
+                            handler.track_namespace, handler.track_name
+                        );
+                        if let Err(err) = handler
+                            .error(RequestErrorCode::TrackDoesNotExist, reason)
+                            .await
+                        {
+                            tracing::warn!(?err, "failed to reject SUBSCRIBE");
+                        }
+                    }
+                    SessionEvent::Unsubscribe(handler) => {
+                        tracing::warn!(
+                            request_id = handler.subscribe_id(),
+                            "UNSUBSCRIBE for unknown request"
+                        );
                     }
                     SessionEvent::Publish(handler) => {
-                        tracing::warn!(namespace = %handler.track_namespace, track = %handler.track_name, "unexpected PUBLISH received");
+                        tracing::warn!(track_namespace = %handler.track_namespace, track_name = %handler.track_name, "unexpected PUBLISH received");
                     }
                     event => {
                         tracing::debug!(?event, "unhandled control message");
@@ -303,7 +373,6 @@ impl ConnectedRelay {
                 .with_context(|| format!("publish_namespace {}", namespace_path))?;
             let mut guard = self.state.lock().await;
             guard.announced_namespaces.insert(namespace_path.clone());
-            tracing::info!(namespace = %namespace_path, "namespace published");
         }
         Ok(())
     }
@@ -315,13 +384,6 @@ impl ConnectedRelay {
         object: OutgoingObject,
     ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
-        if self.state.lock().await.catalog_refresh_due(
-            &key.0,
-            executor::now(),
-            self.session.connection_generation(),
-        ) {
-            self.send_catalog(&key.0).await?;
-        }
         if self.state.lock().await.disconnected {
             bail!("MoQ publisher disconnected");
         }
@@ -346,14 +408,26 @@ impl ConnectedRelay {
         }
     }
 
+    /// Returns `handler` for a namespace no broadcast here publishes and for a
+    /// track no broadcast here has published.
     async fn serve_subscribe(
         origin: &Origin,
         state: &Mutex<RelayState>,
         handler: SubscribeHandler,
-    ) {
+    ) -> Option<SubscribeHandler> {
         let namespace = handler.track_namespace.clone();
         let track_name = handler.track_name.clone();
-        let subscribable = state.lock().await.subscribable(&namespace, &track_name);
+        let (publishes, subscribable, published) = {
+            let state = state.lock().await;
+            (
+                state.publishes(&namespace),
+                state.subscribable(&namespace, &track_name),
+                state.published(&namespace, &track_name),
+            )
+        };
+        if !publishes || !(subscribable || published) {
+            return Some(handler);
+        }
         if !subscribable {
             if let Err(err) = handler
                 .error(
@@ -362,20 +436,21 @@ impl ConnectedRelay {
                 )
                 .await
             {
-                tracing::warn!(%namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
+                tracing::warn!(track_namespace = %namespace, %track_name, ?err, "failed to reject SUBSCRIBE");
             }
-            return;
+            return None;
         }
         ensure_origin_track(origin, &(namespace.clone(), track_name.clone())).await;
         if let Err(err) = origin.accept_subscribe(handler).await {
-            tracing::warn!(%namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
-            return;
+            tracing::warn!(track_namespace = %namespace, %track_name, ?err, "failed to accept SUBSCRIBE");
+            return None;
         }
         state
             .lock()
             .await
             .subscribed_sender(&namespace)
             .send_replace(true);
+        None
     }
 
     /// Registers the tracks before the announce, after which the relay may
@@ -417,102 +492,103 @@ impl ConnectedRelay {
         info: T,
         tracks: fn(&mut CatalogMetadata) -> &mut BTreeMap<String, T>,
     ) -> Result<()> {
+        self.update_metadata(namespace, |metadata| {
+            let tracks = tracks(metadata);
+            if tracks.get(track_name) == Some(&info) {
+                return false;
+            }
+            tracks.insert(track_name.to_string(), info);
+            true
+        })
+        .await
+    }
+
+    /// Sends the catalog when `update` reports that it changed the metadata.
+    pub(crate) async fn update_metadata(
+        &self,
+        namespace: &[String],
+        update: impl FnOnce(&mut CatalogMetadata) -> bool,
+    ) -> Result<()> {
         self.announce(namespace).await?;
         let namespace_path = namespace.join("/");
-
         {
             let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            let tracks = tracks(guard.catalogs.entry(namespace_path.clone()).or_default());
-            if tracks.get(track_name) == Some(&info) {
+            if !update(guard.catalogs.entry(namespace_path.clone()).or_default()) {
                 return Ok(());
             }
-            tracks.insert(track_name.to_string(), info);
         }
-        self.send_catalog(&namespace_path).await
+        self.catalog.send(&namespace_path).await
     }
 
-    /// The namespace is announced first, since the relay routes a PUBLISH by
-    /// its namespace. The non-CMAF tracks are published before the catalog is
-    /// sent, so a viewer subscribing to a track it read there finds the relay
-    /// already ingesting it; the relay would otherwise forward the SUBSCRIBE
-    /// here. CMAF tracks
-    /// wait for that SUBSCRIBE, so the uplink carries them only while someone
-    /// watches them.
-    ///
-    /// Sends do not overlap: `Origin::write_group` does not send a group
-    /// placed while another write on the track is in flight, and a snapshot
-    /// built earlier could otherwise be written last.
-    async fn send_catalog(&self, namespace_path: &str) -> Result<()> {
-        let _sending = self.catalog_send.lock().await;
-        let catalog = {
-            let guard = self.state.lock().await;
+    pub(crate) async fn remove_track(&self, namespace: &[String], track_name: &str) -> Result<()> {
+        let namespace_path = namespace.join("/");
+        let dropped = {
+            let mut guard = self.state.lock().await;
             if guard.disconnected {
                 bail!("MoQ publisher disconnected");
             }
-            let metadata = guard
-                .catalogs
-                .get(namespace_path)
-                .cloned()
-                .unwrap_or_default();
-            build_catalog(namespace_path, &metadata)?
+            let Some(metadata) = guard.catalogs.get_mut(&namespace_path) else {
+                return Ok(());
+            };
+            let before = catalog_track_names(&namespace_path, metadata)?;
+            if !metadata.remove_track(track_name) {
+                return Ok(());
+            }
+            let after = catalog_track_names(&namespace_path, metadata)?;
+            before.difference(&after).cloned().collect::<Vec<_>>()
         };
-        let published_tracks = catalog
-            .tracks
-            .iter()
-            .flatten()
-            .filter(|track| !is_cmaf(track))
-            .map(|track| track.name.as_str());
-        for track_name in published_tracks.chain([CATALOG_TRACK_NAME]) {
-            self.publish_track((namespace_path.to_string(), track_name.to_string()))
-                .await?;
-        }
-        let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
-        tracing::debug!(namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
-        self.state.lock().await.catalog_sent.insert(
-            namespace_path.to_string(),
-            CatalogSent {
-                at: executor::now(),
-                generation: self.session.connection_generation(),
-            },
-        );
-        let bytes = payload.len();
-        match self
-            .origin
-            .write_group(namespace_path, CATALOG_TRACK_NAME, payload)
-            .await
-            .context("send catalog group")?
-        {
-            WriteOutcome::Sent(placement) => {
-                self.ledger
-                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
-                self.ledger.add_object(CATALOG_TRACK_NAME, bytes);
-                self.ledger.finish(CATALOG_TRACK_NAME);
-                tracing::info!(namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
-            }
-            WriteOutcome::Stopped(placement) => {
-                self.ledger
-                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
-                self.ledger.finish(CATALOG_TRACK_NAME);
-                tracing::info!(namespace = %namespace_path, "subscriber stopped the catalog group");
-            }
-            WriteOutcome::NotSent => {}
+        self.catalog.send(&namespace_path).await?;
+        for name in dropped {
+            self.origin.end_track(&namespace_path, &name).await?;
+            self.ledger.finish(&name);
+            tracing::info!(track_namespace = %namespace_path, track_name = %name, "track removed");
         }
         Ok(())
     }
+}
 
-    async fn publish_track(&self, key: TrackKey) -> Result<()> {
-        ensure_origin_track(&self.origin, &key).await;
-        self.origin.publish(&self.session, &key.0, &key.1).await
+impl RelayEvents {
+    async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+        // Answered here instead of by `origin.handle`: a SUBSCRIBE is checked
+        // against the catalog and raises the subscribed signal, and an
+        // UNSUBSCRIBE finishes the track in the stream ledger.
+        match event {
+            SessionEvent::Subscribe(handler) => {
+                ConnectedRelay::serve_subscribe(&self.origin, &self.state, handler)
+                    .await
+                    .map(SessionEvent::Subscribe)
+            }
+            SessionEvent::Unsubscribe(handler) => {
+                let request_id = handler.subscribe_id();
+                let Some((namespace, track_name)) = self.origin.release(&handler).await else {
+                    return Some(SessionEvent::Unsubscribe(handler));
+                };
+                self.ledger.finish(&track_name);
+                tracing::info!(request_id, track_namespace = %namespace, %track_name, "UNSUBSCRIBE received; track released");
+                None
+            }
+            event @ (SessionEvent::Disconnected() | SessionEvent::ProtocolViolation()) => {
+                self.state.lock().await.disconnect();
+                Some(event)
+            }
+            event => self.origin.handle(event).await,
+        }
     }
 }
 
-impl Drop for ConnectedRelay {
-    fn drop(&mut self) {
-        self.event_task.abort();
-    }
+fn catalog_track_names(
+    namespace_path: &str,
+    metadata: &CatalogMetadata,
+) -> Result<HashSet<String>> {
+    Ok(build_catalog(namespace_path, metadata)?
+        .tracks
+        .into_iter()
+        .flatten()
+        .map(|track| track.name)
+        .collect())
 }
 
 /// The catalog is kept for as long as the publisher runs, because a viewer
@@ -538,16 +614,22 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
 mod tests {
     use std::path::PathBuf;
 
+    use bytes::Bytes;
     use moqt::{
-        DUAL, Subscription, TrackObject, TrackReader,
+        ClientConfig, NATIVE, Subscription, TrackObject, TrackReader,
         publish::GroupBoundary,
         server::{CertificateFiles, ServerConfig, write_self_signed_cert},
         subscribe::FilterType,
     };
+    use std::collections::BTreeSet;
+
+    use msf::Catalog;
     use tokio::sync::{mpsc, oneshot};
 
     use super::*;
-    use crate::broadcast::{Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
+    use mediapack::AudioConfig;
+
+    use crate::broadcast::{AudioTrackInfo, Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -591,7 +673,7 @@ mod tests {
             catalog_gate: Option<oneshot::Receiver<()>>,
         ) -> Self {
             let endpoint =
-                Endpoint::<DUAL>::create_server(&self_signed_server_config(name)).unwrap();
+                Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
             let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
             let (session_sender, session) = oneshot::channel();
             let (request_sender, requests) = mpsc::unbounded_channel();
@@ -600,8 +682,9 @@ mod tests {
             let (catalog_object_sender, catalog_objects) = mpsc::unbounded_channel();
             tokio::spawn(async move {
                 let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
+                let mut published_tracks = HashMap::new();
                 let handshake = endpoint.accept().await.unwrap().await.unwrap();
-                let session = Arc::new(handshake.accept().await.unwrap());
+                let session = Arc::new(handshake.accept(&tracing::Span::current()).await.unwrap());
                 let _ = session_sender.send(session.clone());
                 while let Ok(event) = session.receive_event().await {
                     match event {
@@ -632,6 +715,10 @@ mod tests {
                             }
                             let subscription =
                                 handler.ok(0, FilterType::LargestObject).await.unwrap();
+                            published_tracks.insert(
+                                subscription.request_id(),
+                                format!("{}/{}", handler.track_namespace, handler.track_name),
+                            );
                             if let Some(sender) = object_sender {
                                 let session = session.clone();
                                 let subscription = subscription.clone();
@@ -656,6 +743,11 @@ mod tests {
                                 });
                             }
                             let _ = published_sender.send(subscription);
+                        }
+                        SessionEvent::PublishDone(handler) => {
+                            if let Some(track) = published_tracks.get(&handler.request_id()) {
+                                let _ = request_sender.send(format!("PUBLISH_DONE {track}"));
+                            }
                         }
                         SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
                         _ => {}
@@ -750,6 +842,9 @@ mod tests {
             height: 360,
             init_segment: String::new(),
             bitrate: None,
+            cmaf: true,
+            switching_set: VIDEO_TRACK_NAME.to_string(),
+            source: VIDEO_TRACK_NAME.to_string(),
         }
     }
 
@@ -854,6 +949,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_relay_a_go_away_names_gets_the_catalog_while_no_media_flows() {
+        // Arrange: the broadcast has sent its catalog to relay A and sends no media
+        let mut relay_a = FakeRelay::spawn("goaway-catalog-a");
+        let mut relay_b = FakeRelay::spawn("goaway-catalog-b");
+        let (_connection, _broadcast) = connected_broadcast(&relay_a).await;
+        let session_a = relay_a.session().await;
+
+        // Act
+        session_a.go_away(relay_b.url.clone()).await.unwrap();
+        let catalog = tokio::time::timeout(TEST_TIMEOUT, relay_b.catalog_objects.recv()).await;
+
+        // Assert
+        let catalog = catalog
+            .expect("relay B must get the catalog")
+            .expect("relay B keeps reading the catalog");
+        assert!(serde_json::from_slice::<Catalog>(&catalog.payload).is_ok());
+    }
+
+    #[tokio::test]
     async fn a_track_is_published_only_after_the_relay_accepts_its_namespace() {
         // Arrange: the relay holds its PUBLISH_NAMESPACE_OK
         let (accept_namespace, namespace_gate) = oneshot::channel();
@@ -921,25 +1035,37 @@ mod tests {
     }
 
     #[test]
-    fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
+    fn a_tick_refreshes_only_the_catalogs_not_sent_since_the_previous_tick() {
         // Arrange
-        let sent_at = Duration::from_secs(100);
         let mut state = RelayState::default();
-        state.catalog_sent.insert(
-            "live/test".to_string(),
-            CatalogSent {
-                at: sent_at,
-                generation: 0,
-            },
-        );
+        state
+            .catalog_sent_since_tick
+            .insert("live/changed".to_string(), true);
+        state
+            .catalog_sent_since_tick
+            .insert("live/idle".to_string(), false);
 
-        // Act / Assert
-        let almost = sent_at + CATALOG_REFRESH_INTERVAL - Duration::from_secs(1);
-        assert!(!state.catalog_refresh_due("live/test", almost, 0));
-        assert!(state.catalog_refresh_due("live/test", almost, 1));
-        let due = sent_at + CATALOG_REFRESH_INTERVAL;
-        assert!(state.catalog_refresh_due("live/test", due, 0));
-        assert!(!state.catalog_refresh_due("live/other", due, 0));
+        // Act
+        let refreshed = state.take_catalogs_to_refresh();
+
+        // Assert
+        assert_eq!(refreshed, vec!["live/idle".to_string()]);
+    }
+
+    #[test]
+    fn a_catalog_sent_since_one_tick_is_refreshed_at_the_next() {
+        // Arrange
+        let mut state = RelayState::default();
+        state
+            .catalog_sent_since_tick
+            .insert("live/changed".to_string(), true);
+        state.take_catalogs_to_refresh();
+
+        // Act
+        let refreshed = state.take_catalogs_to_refresh();
+
+        // Assert
+        assert_eq!(refreshed, vec!["live/changed".to_string()]);
     }
 
     #[test]
@@ -985,6 +1111,269 @@ mod tests {
         // Assert
         assert!(subscribed.wait_for(|subscribed| *subscribed).await.is_ok());
         assert!(abandoned.wait_for(|subscribed| *subscribed).await.is_err());
+    }
+
+    /// A broadcast on a session whose owner reads the events: every SUBSCRIBE
+    /// the connection returns is sent to `returned` as `namespace/track` and
+    /// rejected.
+    struct OwnedSessionBroadcast {
+        session: Arc<Session>,
+        connection: RelayConnection,
+        broadcast: Broadcast,
+        returned: mpsc::UnboundedReceiver<String>,
+        owner_loop: tokio::task::JoinHandle<()>,
+    }
+
+    async fn owned_session_broadcast(relay: &FakeRelay) -> OwnedSessionBroadcast {
+        let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            certificate_verification: CertificateVerification::Disabled,
+            ..ClientConfig::default()
+        })
+        .unwrap();
+        let session = Arc::new(endpoint.connect(&relay.url).await.unwrap().await.unwrap());
+        let connection = RelayConnection::with_session(session.clone(), Origin::default());
+        let (returned_sender, returned) = mpsc::unbounded_channel();
+        let owner_loop = tokio::spawn({
+            let session = session.clone();
+            let connection = connection.clone();
+            async move {
+                while let Ok(event) = session.receive_event().await {
+                    if let Some(SessionEvent::Subscribe(handler)) = connection.handle(event).await {
+                        let _ = returned_sender.send(format!(
+                            "{}/{}",
+                            handler.track_namespace, handler.track_name
+                        ));
+                        let _ = handler
+                            .error(RequestErrorCode::TrackDoesNotExist, String::new())
+                            .await;
+                    }
+                }
+            }
+        });
+        let broadcast = Broadcast::new(
+            connection.clone(),
+            vec!["live".to_string(), "cam".to_string()],
+        );
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        OwnedSessionBroadcast {
+            session,
+            connection,
+            broadcast,
+            returned,
+            owner_loop,
+        }
+    }
+
+    async fn relay_subscribe(relay_session: &Session, namespace: &str, track: &str) -> bool {
+        let mut subscriber = relay_session.subscriber();
+        matches!(
+            tokio::time::timeout(
+                TEST_TIMEOUT,
+                subscriber.subscribe(
+                    namespace.to_string(),
+                    track.to_string(),
+                    moqt::subscribe::SubscribeOption::default(),
+                ),
+            )
+            .await,
+            Ok(Ok(_))
+        )
+    }
+
+    #[tokio::test]
+    async fn a_broadcast_publishes_on_a_session_its_owner_reads_and_close_leaves_it_open() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("shared-session");
+        let mut owned = owned_session_broadcast(&relay).await;
+
+        // Act
+        let catalogs = relay.received_catalogs().await;
+        let relay_session = relay.session().await;
+        let subscribed = relay_subscribe(&relay_session, "live/cam", CATALOG_TRACK_NAME).await;
+        relay_subscribe(&relay_session, "other/ns", "track").await;
+        let returned = owned.returned.try_recv();
+        owned.connection.close().await;
+        let still_open =
+            tokio::time::timeout(Duration::from_millis(300), owned.session.closed()).await;
+
+        // Assert
+        assert_eq!(
+            relay.received_requests()[..2],
+            [
+                "PUBLISH_NAMESPACE live/cam".to_string(),
+                format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"),
+            ]
+        );
+        assert!(!catalogs.is_empty(), "the catalog must arrive");
+        assert!(subscribed, "the SUBSCRIBE must be answered through handle");
+        assert_eq!(
+            returned.ok().as_deref(),
+            Some("other/ns/track"),
+            "a SUBSCRIBE in a namespace no broadcast publishes goes back to the owner"
+        );
+        assert!(
+            still_open.is_err(),
+            "close must leave the owner's session open"
+        );
+        owned.owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_for_a_track_the_broadcast_never_listed_goes_back_to_the_owner() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("unlisted-track");
+        let mut owned = owned_session_broadcast(&relay).await;
+        relay.received_catalogs().await;
+
+        let relay_session = relay.session().await;
+
+        // Act
+        relay_subscribe(&relay_session, "live/cam", "prompt").await;
+
+        // Assert
+        assert_eq!(
+            owned.returned.try_recv().ok().as_deref(),
+            Some("live/cam/prompt")
+        );
+        owned.owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_for_a_removed_track_is_rejected_without_reaching_the_owner() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("removed-track");
+        let mut owned = owned_session_broadcast(&relay).await;
+        relay.received_catalogs().await;
+        owned
+            .broadcast
+            .remove_track(VIDEO_TRACK_NAME)
+            .await
+            .unwrap();
+
+        let relay_session = relay.session().await;
+
+        // Act
+        let subscribed = relay_subscribe(&relay_session, "live/cam", VIDEO_TRACK_NAME).await;
+
+        // Assert
+        assert!(!subscribed);
+        assert!(owned.returned.try_recv().is_err());
+        owned.owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn remove_track_ends_it_with_the_tracks_listed_only_with_it_and_an_update_publishes_it_again()
+     {
+        // Arrange: the audio placeholder and the chat are listed only because of `video`, and
+        // the rendition keeps the source's timeline
+        let mut relay = FakeRelay::spawn("remove-track");
+        let (_connection, broadcast) = connected_broadcast(&relay).await;
+        broadcast
+            .update_video_catalog("video_480p", video_track_info())
+            .await
+            .unwrap();
+        relay.wait_for_request("PUBLISH live/cam/video_480p").await;
+        relay.received_catalogs().await;
+
+        // Act
+        broadcast.remove_track(VIDEO_TRACK_NAME).await.unwrap();
+        let ended = tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut ended = BTreeSet::new();
+            while ended.len() < 3 {
+                let request = relay.requests.recv().await.unwrap();
+                if let Some(track) = request.strip_prefix("PUBLISH_DONE ") {
+                    ended.insert(track.to_string());
+                }
+            }
+            ended
+        })
+        .await
+        .expect("PUBLISH_DONE must arrive for every dropped track");
+        let catalogs = relay.received_catalogs().await;
+        let after_removal = relay.received_requests();
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            ended,
+            BTreeSet::from(
+                ["audio", "chat", VIDEO_TRACK_NAME].map(|name| format!("live/cam/{name}"))
+            )
+        );
+        assert!(
+            !after_removal
+                .iter()
+                .any(|request| request.starts_with("PUBLISH_DONE")),
+            "{after_removal:?}"
+        );
+        let newest: Catalog =
+            serde_json::from_slice(&catalogs.last().expect("a catalog must arrive").payload)
+                .unwrap();
+        let names: Vec<&str> = newest
+            .tracks
+            .iter()
+            .flatten()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(names, ["video_480p", "video_480p_cmaf", "video_timeline"]);
+        relay
+            .wait_for_request(&format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn removing_the_default_audio_ends_it_without_a_placeholder_while_video_stays() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("remove-default-audio");
+        let (_connection, broadcast) = connected_broadcast(&relay).await;
+        broadcast
+            .update_audio_catalog(
+                "audio",
+                AudioTrackInfo {
+                    label: "Audio".to_string(),
+                    config: AudioConfig::Opus {
+                        sample_rate: 48_000,
+                        channels: 1,
+                    },
+                    cmaf: false,
+                    switching_set: VIDEO_TRACK_NAME.to_string(),
+                    source: VIDEO_TRACK_NAME.to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        relay.received_catalogs().await;
+
+        // Act
+        broadcast.remove_track("audio").await.unwrap();
+        relay.wait_for_request("PUBLISH_DONE live/cam/audio").await;
+        let catalogs = relay.received_catalogs().await;
+
+        // Assert
+        let newest: Catalog =
+            serde_json::from_slice(&catalogs.last().expect("a catalog must arrive").payload)
+                .unwrap();
+        assert!(
+            newest
+                .tracks
+                .iter()
+                .flatten()
+                .all(|track| track.name != "audio"),
+            "{newest:?}"
+        );
+        assert!(
+            !relay
+                .received_requests()
+                .iter()
+                .any(|request| request.starts_with("PUBLISH_DONE")),
+            "only the audio track ends"
+        );
     }
 
     #[tokio::test]

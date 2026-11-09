@@ -274,51 +274,17 @@ fn running_timestamp(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
-    use crate::test_support::{decode_in_software, fixture_events};
-
-    fn fixture_video_samples() -> Vec<VideoSample> {
-        fixture_events()
-            .into_iter()
-            .filter_map(|event| match event {
-                MediaEvent::Video(sample) => Some(sample),
-                _ => None,
-            })
-            .collect()
-    }
-
-    async fn drain(transcoder: &mut Transcoder) -> Vec<TranscodedEvent> {
-        let mut outputs = Vec::new();
-        while let Some(event) = transcoder.next().await {
-            outputs.push(event.unwrap());
-        }
-        outputs
-    }
+    use crate::test_support::{decode_in_software, fixture_video_samples, transcode_54p};
 
     #[tokio::test]
     async fn transcodes_fixture_into_a_smaller_rendition() {
         // Arrange
         decode_in_software();
         let samples = fixture_video_samples();
-        let rendition = Rendition {
-            name: "54p".into(),
-            width: 96,
-            height: 54,
-            bitrate_kbps: 100,
-        };
-        let mut transcoder = Transcoder::new(&[rendition]).unwrap();
 
         // Act
-        let input = transcoder.input();
-        for sample in &samples {
-            input.push(sample).unwrap();
-        }
-        input.finish().unwrap();
-        let outputs = tokio::time::timeout(Duration::from_secs(30), drain(&mut transcoder))
-            .await
-            .expect("transcoder finished");
+        let outputs = transcode_54p(&samples).await;
 
         // Assert
         let MediaEvent::VideoConfig(config) = &outputs[0].event else {
@@ -366,23 +332,9 @@ mod tests {
             .map(|sample| sample.pts)
             .collect();
         assert!(source_keyframes.len() >= 2);
-        let rendition = Rendition {
-            name: "54p".into(),
-            width: 96,
-            height: 54,
-            bitrate_kbps: 100,
-        };
-        let mut transcoder = Transcoder::new(&[rendition]).unwrap();
 
         // Act
-        let input = transcoder.input();
-        for sample in &repeated {
-            input.push(sample).unwrap();
-        }
-        input.finish().unwrap();
-        let outputs = tokio::time::timeout(Duration::from_secs(30), drain(&mut transcoder))
-            .await
-            .expect("transcoder finished");
+        let outputs = transcode_54p(&repeated).await;
 
         // Assert
         let output_keyframes: Vec<Timestamp> = outputs

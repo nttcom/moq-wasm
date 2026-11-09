@@ -1,3 +1,4 @@
+use crate::modules::moqt::domains::endpoint::CertificateVerification;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -10,13 +11,11 @@ use super::wt_connection::WtConnection;
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
-    client_crypto::{
-        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
-    },
+    client_crypto::{client_crypto, client_endpoint, quic_client_config},
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::bind_dual_stack,
     server_transport_config::quic_server_config,
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
 };
 
 enum WtEndpoint {
@@ -79,22 +78,10 @@ pub(crate) async fn accept_session(
 impl TransportConnectionCreator for WtConnectionCreator {
     fn client(
         port_num: u16,
-        verify_certificate: bool,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
-    }
-
-    fn client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        Self::create_client(
-            port_num,
-            client_crypto_with_custom_cert(custom_cert_path)?,
-            protocols,
-        )
+        Self::create_client(port_num, client_crypto(verification)?, protocols)
     }
 
     fn server(
@@ -113,12 +100,12 @@ impl TransportConnectionCreator for WtConnectionCreator {
 
         let server = bind_dual_stack(port_num, |address| {
             Ok(web_transport_quinn::Server::new(quinn::Endpoint::server(
-                server_config,
+                server_config.clone(),
                 address,
             )?))
         })?;
 
-        tracing::info!("Server ready! for WebTransport port: {}", port_num);
+        tracing::info!(port = port_num, "WebTransport server ready");
 
         Ok(WtConnectionCreator {
             quic_endpoint: quinn::Endpoint::clone(&server),
@@ -152,7 +139,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         Ok(Box::new(WtConnection::new(session)))
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         let server = match &self.endpoint {
             WtEndpoint::Server(s) => s,
             WtEndpoint::Client(_) => Err(anyhow::anyhow!(
@@ -170,8 +157,11 @@ impl TransportConnectionCreator for WtConnectionCreator {
                     .await;
                 continue;
             }
-            let session = accept_session(request, &self.protocols).await?;
-            return Ok(Box::new(WtConnection::new(session)));
+            let protocols = self.protocols.clone();
+            return Ok(Box::pin(async move {
+                let session = accept_session(request, &protocols).await?;
+                Ok(Box::new(WtConnection::new(session)) as BoxedConnection)
+            }));
         }
     }
 
@@ -192,12 +182,12 @@ impl TransportConnectionCreator for WtConnectionCreator {
 mod tests {
     use super::WtConnectionCreator;
     use crate::{
-        Endpoint, WEBTRANSPORT,
+        CertificateVerification, Endpoint, WEBTRANSPORT,
         modules::{
             moqt::version::{DEFAULT_VERSIONS, application_protocols},
             test_support::{
                 HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions_from,
-                insecure_client_config, server_transport_creator, spawn_dual_server,
+                insecure_client_config, server_transport_creator, spawn_native_server,
             },
             transport::{
                 accept_error::AcceptError, connect_target::ConnectTarget,
@@ -209,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn web_transport_client_connects_to_a_host_name() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wt-localhost");
+        let (port, accept) = spawn_native_server("wt-localhost");
         let client = Endpoint::<WEBTRANSPORT>::create_client(&insecure_client_config()).unwrap();
 
         // Act
@@ -224,18 +214,21 @@ mod tests {
     async fn either_side_keeps_more_than_a_hundred_bidirectional_streams_open() {
         // Arrange
         let server: WtConnectionCreator = server_transport_creator("wt-bidi-streams");
-        let client =
-            WtConnectionCreator::client(0, false, application_protocols(DEFAULT_VERSIONS).unwrap())
-                .unwrap();
+        let client = WtConnectionCreator::client(
+            0,
+            &CertificateVerification::Disabled,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
+        )
+        .unwrap();
         let target = ConnectTarget::parse(&format!(
             "https://127.0.0.1:{}/moq",
             server.local_port().unwrap()
         ))
         .unwrap();
-        let (client_connection, server_connection) = tokio::join!(
-            client.create_new_transport(&target),
-            server.accept_new_transport()
-        );
+        let (client_connection, server_connection) =
+            tokio::join!(client.create_new_transport(&target), async {
+                server.accept_new_transport().await.unwrap().await
+            });
         let (client_connection, server_connection) =
             (client_connection.unwrap(), server_connection.unwrap());
 

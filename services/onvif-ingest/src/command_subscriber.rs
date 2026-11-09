@@ -1,0 +1,522 @@
+use std::sync::{mpsc::Sender, Arc};
+
+use anyhow::{bail, Context, Result};
+use moqt::{
+    namespace::NamespaceInterest,
+    object::GroupOrder,
+    publish::PublishHandler,
+    subscribe::{FilterType, SubscribeOption},
+    ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, SessionEvent, Subscriber,
+    Subscription, TrackReader, NATIVE,
+};
+use tokio::task::JoinHandle;
+
+use crate::ptz_worker::Command;
+
+pub struct CommandTrack {
+    pub namespace: String,
+    pub track: String,
+    pub subscriber_priority: u8,
+}
+
+/// Follows the viewer's command track on a session of its own, separate from
+/// the media broadcast, and forwards each command to the PTZ worker. The
+/// viewer announces the namespace or publishes the track; either way the
+/// track is subscribed again whenever a new viewer takes over.
+pub struct CommandSubscriber {
+    _endpoint: Endpoint<NATIVE>,
+    task: JoinHandle<Result<()>>,
+}
+
+impl CommandSubscriber {
+    pub async fn run(
+        url: &str,
+        client_config: &ClientConfig,
+        command_track: CommandTrack,
+        command_sender: Sender<Command>,
+    ) -> Result<Self> {
+        let endpoint = Endpoint::<NATIVE>::create_client(client_config)?;
+        let connecting = endpoint
+            .connect(url)
+            .await
+            .context("connect command session")?;
+        let session = Arc::new(connecting.await.context("establish command session")?);
+        session
+            .subscriber()
+            .subscribe_namespace(
+                command_track.namespace.clone(),
+                NamespaceInterest::NamespacesAndTracks,
+            )
+            .await
+            .context("subscribe command namespace")?;
+        tracing::info!(
+            "Subscribed command namespace for late join viewers: {}",
+            command_track.namespace
+        );
+        let task = tokio::spawn(follow_commands(session, command_track, command_sender));
+        Ok(Self {
+            _endpoint: endpoint,
+            task,
+        })
+    }
+
+    /// Resolves only with an error: the command session disconnected or a
+    /// control message failed.
+    pub async fn finished(&mut self) -> Result<()> {
+        (&mut self.task).await.context("command session task")?
+    }
+}
+
+impl Drop for CommandSubscriber {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+async fn follow_commands(
+    session: Arc<Session>,
+    command_track: CommandTrack,
+    command_sender: Sender<Command>,
+) -> Result<()> {
+    let mut command_receiver: Option<CommandReceiver> = None;
+    let mut handover = ViewerHandover::default();
+    loop {
+        match session.receive_event().await? {
+            SessionEvent::PublishNamespace(handler) => {
+                let announced_namespace = handler.track_namespace.clone();
+                handler.ok().await?;
+                tracing::info!("Command namespace announced: {announced_namespace}");
+                let following = command_receiver
+                    .as_ref()
+                    .is_some_and(CommandReceiver::is_running);
+                if announced_namespace == command_track.namespace && handover.announced(following) {
+                    command_receiver =
+                        subscribe_command_track(&session, &command_track, &command_sender).await?;
+                }
+            }
+            SessionEvent::Publish(handler) => {
+                if let Some(receiver) = accept_command_publish(
+                    handler,
+                    &session,
+                    &command_track,
+                    &command_receiver,
+                    &command_sender,
+                )
+                .await?
+                {
+                    command_receiver = Some(receiver);
+                }
+            }
+            SessionEvent::PublishDone(handler) => {
+                if command_receiver
+                    .as_ref()
+                    .is_some_and(|receiver| receiver.request_id == handler.request_id())
+                {
+                    tracing::info!(
+                        "command publisher finished; waiting for the next command publisher"
+                    );
+                    command_receiver = None;
+                    if handover.followed_viewer_left() {
+                        command_receiver =
+                            subscribe_command_track(&session, &command_track, &command_sender)
+                                .await?;
+                    }
+                }
+            }
+            SessionEvent::Subscribe(handler) => {
+                let _ = handler
+                    .error(
+                        RequestErrorCode::TrackDoesNotExist,
+                        "no tracks on the command session".to_string(),
+                    )
+                    .await;
+            }
+            SessionEvent::Disconnected() => bail!("command session disconnected"),
+            SessionEvent::ProtocolViolation() => bail!("command session protocol violation"),
+            event => tracing::debug!("Unhandled command session message: {event:?}"),
+        }
+    }
+}
+
+/// Decides when an announced command namespace is subscribed. A viewer that
+/// announces while another one is followed takes over once the followed one's
+/// PUBLISH_DONE arrives: the relay may still hold a viewer that has gone, and
+/// its PUBLISH_DONE then comes after the new viewer's PUBLISH_NAMESPACE.
+#[derive(Default)]
+struct ViewerHandover {
+    announced_while_following: bool,
+}
+
+impl ViewerHandover {
+    /// Returns whether to subscribe now.
+    fn announced(&mut self, following: bool) -> bool {
+        self.announced_while_following = following;
+        !following
+    }
+
+    /// Returns whether to subscribe now, for a viewer that announced while
+    /// the one that left was followed.
+    fn followed_viewer_left(&mut self) -> bool {
+        std::mem::take(&mut self.announced_while_following)
+    }
+}
+
+/// `None` is not fatal: the viewer may have left before answering, and the
+/// next announcement subscribes again.
+async fn subscribe_command_track(
+    session: &Session,
+    command_track: &CommandTrack,
+    command_sender: &Sender<Command>,
+) -> Result<Option<CommandReceiver>> {
+    let mut subscriber = session.subscriber();
+    let result = subscriber
+        .subscribe(
+            command_track.namespace.clone(),
+            command_track.track.clone(),
+            SubscribeOption {
+                subscriber_priority: command_track.subscriber_priority,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::NextGroupStart,
+            },
+        )
+        .await;
+    let subscription = match result {
+        Ok(subscription) => subscription,
+        Err(err @ (RequestFailure::Rejected { .. } | RequestFailure::Timeout)) => {
+            tracing::warn!(
+                "command track not subscribed: {}/{}: {err}",
+                command_track.namespace,
+                command_track.track
+            );
+            return Ok(None);
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "subscribe command track after namespace announce: {}/{}",
+                    command_track.namespace, command_track.track
+                )
+            })
+        }
+    };
+    tracing::info!(
+        "Command track subscribed after namespace announce: ns={} track={} alias={}",
+        command_track.namespace,
+        command_track.track,
+        subscription.track_alias()
+    );
+    Ok(Some(CommandReceiver::run(
+        subscriber,
+        subscription,
+        command_sender.clone(),
+    )))
+}
+
+async fn accept_command_publish(
+    handler: PublishHandler,
+    session: &Session,
+    command_track: &CommandTrack,
+    command_receiver: &Option<CommandReceiver>,
+    command_sender: &Sender<Command>,
+) -> Result<Option<CommandReceiver>> {
+    if handler.track_namespace != command_track.namespace
+        || handler.track_name != command_track.track
+    {
+        tracing::warn!(
+            "Ignoring unexpected command publish: ns={} track={}",
+            handler.track_namespace,
+            handler.track_name
+        );
+        let _ = handler
+            .error(
+                RequestErrorCode::Uninterested,
+                "unsupported publish track".to_string(),
+            )
+            .await;
+        return Ok(None);
+    }
+    if command_receiver
+        .as_ref()
+        .is_some_and(CommandReceiver::is_running)
+    {
+        tracing::info!(
+            "Command publish received after subscription already active: ns={} track={}",
+            handler.track_namespace,
+            handler.track_name
+        );
+        let _ = handler
+            .error(
+                RequestErrorCode::Uninterested,
+                "command track already active".to_string(),
+            )
+            .await;
+        return Ok(None);
+    }
+    let subscription = handler
+        .ok(
+            command_track.subscriber_priority,
+            FilterType::NextGroupStart,
+        )
+        .await
+        .context("accept command publish")?;
+    tracing::info!(
+        "Accepted command publish via SUBSCRIBE_NAMESPACE discovery: ns={} track={} alias={}",
+        command_track.namespace,
+        command_track.track,
+        subscription.track_alias()
+    );
+    Ok(Some(CommandReceiver::run(
+        session.subscriber(),
+        subscription,
+        command_sender.clone(),
+    )))
+}
+
+struct CommandReceiver {
+    request_id: u64,
+    join_handle: JoinHandle<()>,
+}
+
+impl CommandReceiver {
+    fn run(
+        mut subscriber: Subscriber,
+        subscription: Subscription,
+        command_sender: Sender<Command>,
+    ) -> Self {
+        let request_id = subscription.request_id();
+        let join_handle = tokio::spawn(async move {
+            let receiver = match subscriber.accept_data_receiver(&subscription).await {
+                Ok(receiver) => receiver,
+                Err(err) => {
+                    tracing::warn!("command accept_data_receiver failed: {err}");
+                    return;
+                }
+            };
+            let mut reader = TrackReader::new(receiver);
+            loop {
+                match reader.next_object().await {
+                    Ok(Some(object)) => {
+                        if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
+                            tracing::warn!("command payload error: {err}");
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::info!(
+                            "command track ended; waiting for the next command publisher"
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        tracing::warn!("command track is malformed: {err}");
+                        return;
+                    }
+                }
+            }
+        });
+        Self {
+            request_id,
+            join_handle,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        !self.join_handle.is_finished()
+    }
+}
+
+impl Drop for CommandReceiver {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
+}
+
+fn handle_command_payload(payload: &[u8], command_sender: &Sender<Command>) -> Result<()> {
+    let command: Command = serde_json::from_slice(payload).context("parse command json")?;
+    tracing::info!("PTZ command received: {command:?}");
+    let _ = command_sender.send(command);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use moqt::{
+        publish::PublishOption,
+        server::{write_self_signed_cert, CertificateFiles, ServerConfig},
+    };
+
+    use super::*;
+
+    const NAMESPACE: &str = "onvif/client";
+    const TRACK: &str = "command";
+    const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Longer than the 10 s a request waits for its response.
+    const PAST_THE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(11);
+
+    /// A command subscriber connected to a relay that has accepted its
+    /// SUBSCRIBE_NAMESPACE.
+    struct Peers {
+        subscriber: CommandSubscriber,
+        relay: Session,
+        _relay_endpoint: Endpoint<NATIVE>,
+    }
+
+    async fn command_subscriber_on_a_relay(name: &str) -> Peers {
+        let dir = std::env::temp_dir().join(format!("onvif-test-{name}-{}", std::process::id()));
+        let CertificateFiles {
+            cert_path,
+            key_path,
+        } = write_self_signed_cert(&dir, &["localhost", "127.0.0.1"]).unwrap();
+        let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
+            port: 0,
+            cert_path,
+            key_path,
+            keep_alive_interval_sec: 5,
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
+        })
+        .unwrap();
+        let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
+        let relay = tokio::spawn(async move {
+            let session = endpoint
+                .accept()
+                .await
+                .unwrap()
+                .await
+                .unwrap()
+                .accept(&tracing::Span::current())
+                .await
+                .unwrap();
+            let SessionEvent::SubscribeNameSpace(handler) = session.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_NAMESPACE");
+            };
+            handler.ok().await.unwrap();
+            (endpoint, session)
+        });
+        let (command_sender, _) = std::sync::mpsc::channel();
+        let subscriber = CommandSubscriber::run(
+            &url,
+            &ClientConfig {
+                certificate_verification: moqt::CertificateVerification::Disabled,
+                ..ClientConfig::default()
+            },
+            CommandTrack {
+                namespace: NAMESPACE.to_string(),
+                track: TRACK.to_string(),
+                subscriber_priority: 0,
+            },
+            command_sender,
+        )
+        .await
+        .unwrap();
+        let (relay_endpoint, relay) = tokio::time::timeout(TEST_TIMEOUT, relay)
+            .await
+            .unwrap()
+            .unwrap();
+        Peers {
+            subscriber,
+            relay,
+            _relay_endpoint: relay_endpoint,
+        }
+    }
+
+    /// The relay announces the command namespace and returns the SUBSCRIBE
+    /// the command subscriber answers it with.
+    async fn announce(relay: &Session) -> moqt::subscribe::SubscribeHandler {
+        let publisher = relay.publisher();
+        let (announced, subscribe) = tokio::time::timeout(TEST_TIMEOUT, async {
+            tokio::join!(publisher.publish_namespace(NAMESPACE.into()), async {
+                let SessionEvent::Subscribe(handler) = relay.receive_event().await.unwrap() else {
+                    panic!("expected SUBSCRIBE for the command track");
+                };
+                handler
+            })
+        })
+        .await
+        .unwrap();
+        announced.unwrap();
+        subscribe
+    }
+
+    async fn takes_a_published_command_track(peers: &mut Peers) -> bool {
+        let published = tokio::time::timeout(
+            TEST_TIMEOUT,
+            peers.relay.publisher().publish(
+                NAMESPACE.into(),
+                TRACK.into(),
+                PublishOption::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        let finished =
+            tokio::time::timeout(Duration::from_millis(200), peers.subscriber.finished()).await;
+        published.is_ok() && finished.is_err()
+    }
+
+    #[tokio::test]
+    async fn a_rejected_command_subscribe_leaves_the_command_session_running() {
+        // Arrange
+        let mut peers = command_subscriber_on_a_relay("command-rejected").await;
+        let subscribe = announce(&peers.relay).await;
+
+        // Act
+        subscribe
+            .error(RequestErrorCode::TrackDoesNotExist, "gone".to_string())
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(takes_a_published_command_track(&mut peers).await);
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_command_subscribe_leaves_the_command_session_running() {
+        // Arrange
+        let mut peers = command_subscriber_on_a_relay("command-timeout").await;
+        let _unanswered = announce(&peers.relay).await;
+
+        // Act: paused time lets the response timeout pass at once
+        tokio::time::pause();
+        tokio::time::sleep(PAST_THE_RESPONSE_TIMEOUT).await;
+        tokio::time::resume();
+
+        // Assert
+        assert!(takes_a_published_command_track(&mut peers).await);
+    }
+
+    #[test]
+    fn a_viewer_announcing_while_none_is_followed_is_subscribed_at_once() {
+        // Arrange
+        let mut handover = ViewerHandover::default();
+
+        // Act / Assert
+        assert!(handover.announced(false));
+    }
+
+    #[test]
+    fn a_viewer_announcing_while_another_is_followed_takes_over_when_that_one_leaves() {
+        // Arrange
+        let mut handover = ViewerHandover::default();
+
+        // Act
+        let subscribed_at_announce = handover.announced(true);
+        let subscribed_at_leave = handover.followed_viewer_left();
+
+        // Assert
+        assert!(!subscribed_at_announce);
+        assert!(subscribed_at_leave);
+    }
+
+    #[test]
+    fn the_followed_viewer_leaving_without_a_waiting_viewer_subscribes_nothing() {
+        // Arrange
+        let mut handover = ViewerHandover::default();
+        handover.announced(false);
+
+        // Act / Assert
+        assert!(!handover.followed_viewer_left());
+    }
+}

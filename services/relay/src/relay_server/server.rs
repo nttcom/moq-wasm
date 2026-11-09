@@ -1,0 +1,315 @@
+use std::{sync::Arc, time::Duration};
+
+use moqt::server::ServerConfig;
+use tokio::sync::mpsc;
+
+#[cfg(test)]
+use crate::modules::data_plane::cache::store::TrackCacheStore;
+
+use crate::{
+    RelayConfig,
+    modules::{
+        auth::session_authenticator::SessionAuthenticator,
+        cascading::{
+            inter_relay_connection_manager::InterRelayClientConfig,
+            route_registry::{
+                NoopRelayRouteRegistry, RedisRelayRouteRegistry, RelayInfo, RelayRouteRegistry,
+            },
+        },
+        data_plane::cache::disk_cache::prepare_directory,
+        domain::session_peer::SessionPeer,
+        observability::stats_export_task::StatsExportTask,
+        session::session_repository::{SessionAdded, SessionRepository},
+    },
+    relay_server::{
+        drain::drain_client_sessions,
+        runtime::{DataPlaneConfig, RelayRuntime},
+        session_handler::{SessionHandler, SessionIntake},
+    },
+};
+
+pub(crate) struct RelayServerDeps {
+    pub(crate) repo: SessionRepository,
+    pub(crate) session_added_receiver: mpsc::UnboundedReceiver<SessionAdded>,
+    pub(crate) route_registry: Arc<dyn RelayRouteRegistry>,
+    pub(crate) authenticator: SessionAuthenticator,
+    pub(crate) inter_relay_client: InterRelayClientConfig,
+    /// See `RelayConfig::moqt_versions`; accepted on both transports.
+    pub(crate) versions: Vec<moqt::Version>,
+    pub(crate) data_plane: DataPlaneConfig,
+}
+
+pub struct RelayServer {
+    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    authenticator: Arc<SessionAuthenticator>,
+    route_registry: Arc<dyn RelayRouteRegistry>,
+    runtime: RelayRuntime,
+    key_path: String,
+    cert_path: String,
+    versions: Vec<moqt::Version>,
+}
+
+impl RelayServer {
+    pub async fn new_with_config(
+        key_path: &str,
+        cert_path: &str,
+        config: RelayConfig,
+    ) -> anyhow::Result<Self> {
+        let relay = RelayInfo {
+            relay_id: config.relay_id,
+            host: config.advertise_host,
+            port: config.inner_port,
+        };
+        let (session_added_sender, session_added_receiver) = mpsc::unbounded_channel();
+        let repo = SessionRepository::new(session_added_sender);
+        let route_registry: Arc<dyn RelayRouteRegistry> = if let Some(redis_url) = config.redis_url
+        {
+            RedisRelayRouteRegistry::connect(
+                &redis_url,
+                relay,
+                config.public_host,
+                repo.client_session_count(),
+            )
+            .await?
+        } else {
+            Arc::new(NoopRelayRouteRegistry)
+        };
+        let authenticator = SessionAuthenticator::from_config(&config.auth)?;
+        if let Some(disk_cache) = &config.disk_cache {
+            prepare_directory(&disk_cache.dir).await?;
+            tracing::info!(dir = %disk_cache.dir.display(), max_bytes = disk_cache.max_bytes, "disk cache enabled");
+        }
+        let server = Self::new_with_deps(
+            key_path,
+            cert_path,
+            RelayServerDeps {
+                repo,
+                session_added_receiver,
+                route_registry,
+                authenticator,
+                inter_relay_client: InterRelayClientConfig {
+                    relay_token: config.auth.relay_token,
+                    certificate_verification: config.inner_certificate_verification,
+                    versions: config.moqt_versions.clone(),
+                },
+                versions: config.moqt_versions,
+                data_plane: DataPlaneConfig {
+                    cache: config.cache,
+                    disk_cache: config.disk_cache,
+                    fetch_fill_timeout: config.fetch_fill_timeout,
+                },
+            },
+        );
+        Ok(server)
+    }
+
+    pub(crate) fn new_with_deps(key_path: &str, cert_path: &str, deps: RelayServerDeps) -> Self {
+        let RelayServerDeps {
+            repo,
+            session_added_receiver,
+            route_registry,
+            authenticator,
+            inter_relay_client,
+            versions,
+            data_plane,
+        } = deps;
+        let repo = Arc::new(tokio::sync::Mutex::new(repo));
+        let runtime = RelayRuntime::new(
+            repo.clone(),
+            route_registry.clone(),
+            inter_relay_client,
+            authenticator.verifier.clone(),
+            data_plane,
+            session_added_receiver,
+        );
+
+        Self {
+            repo,
+            authenticator: Arc::new(authenticator),
+            route_registry,
+            runtime,
+            key_path: key_path.to_string(),
+            cert_path: cert_path.to_string(),
+            versions,
+        }
+    }
+
+    fn spawn_transport<T: moqt::TransportProtocol>(
+        &self,
+        port: u16,
+        accepted_peer: SessionPeer,
+        versions: Vec<moqt::Version>,
+    ) -> anyhow::Result<SessionHandler> {
+        tracing::debug!(
+            port,
+            session_peer = accepted_peer.kind(),
+            supported_versions = ?versions,
+            "spawning transport handler"
+        );
+        let server_config = ServerConfig {
+            port,
+            cert_path: self.cert_path.clone(),
+            key_path: self.key_path.clone(),
+            keep_alive_interval_sec: 15,
+            versions,
+        };
+
+        SessionHandler::run::<T>(
+            server_config,
+            SessionIntake {
+                repo: self.repo.clone(),
+                accepted_peer,
+                authenticator: self.authenticator.clone(),
+            },
+        )
+    }
+
+    /// Fails when the endpoint cannot bind `port` or load the certificate.
+    pub fn spawn_client_transport<T: moqt::TransportProtocol>(
+        &self,
+        port: u16,
+    ) -> anyhow::Result<SessionHandler> {
+        self.spawn_transport::<T>(port, SessionPeer::Client, self.versions.clone())
+    }
+
+    /// Fails when the endpoint cannot bind `port` or load the certificate.
+    pub fn spawn_inner_transport<T: moqt::TransportProtocol>(
+        &self,
+        port: u16,
+    ) -> anyhow::Result<SessionHandler> {
+        self.spawn_transport::<T>(port, SessionPeer::Relay, self.versions.clone())
+    }
+
+    /// Sends GOAWAY to every client session and resolves once they have all
+    /// left or `timeout` has passed, closing the rest with GOAWAY_TIMEOUT.
+    /// Stop the client transport's accept loop first, so that no session
+    /// arrives after the GOAWAYs were sent.
+    pub async fn drain(&self, timeout: Duration) {
+        self.runtime.begin_draining();
+        drain_client_sessions(&self.repo, self.route_registry.as_ref(), timeout).await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_store(&self) -> &Arc<TrackCacheStore> {
+        self.runtime.cache_store()
+    }
+
+    pub fn spawn_stats_exporter(
+        &self,
+        relay_id: String,
+        event_logger: telemetry::EventLogger,
+        process_gauges: telemetry::relay_stats::ProcessGauges,
+    ) -> StatsExportTask {
+        StatsExportTask::run(
+            self.runtime.stats_collector(relay_id),
+            event_logger,
+            process_gauges,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use moqt::{SessionEvent, TerminationErrorCode};
+
+    use crate::modules::{
+        auth::{
+            test_support::{relay_server_offering, spawn_relay_and_connect_client},
+            verified_token::VerifiedToken,
+        },
+        cascading::route_registry::NoopRelayRouteRegistry,
+    };
+
+    const EVENT_TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[tokio::test]
+    async fn the_inner_transport_accepts_the_drafts_relay_moqt_versions_names() {
+        // Arrange
+        let relay = relay_server_offering(
+            VerifiedToken::full_access(),
+            Arc::new(NoopRelayRouteRegistry),
+            &[moqt::Version::Draft18],
+        );
+        let inner = relay.server.spawn_inner_transport::<moqt::QUIC>(0).unwrap();
+        let other_relay = moqt::Endpoint::<moqt::QUIC>::create_client(&moqt::ClientConfig {
+            certificate_verification: moqt::CertificateVerification::Disabled,
+            authorization_token: Some("relay-token".to_string().into()),
+            versions: vec![moqt::Version::Draft18],
+            ..Default::default()
+        })
+        .unwrap();
+
+        // Act
+        let connected = tokio::time::timeout(EVENT_TIMEOUT, async {
+            other_relay
+                .connect(&format!("moqt://127.0.0.1:{}", inner.local_port))
+                .await?
+                .await
+        })
+        .await
+        .expect("the handshake should end");
+
+        // Assert: a draft-18-only relay can cascade to it
+        assert!(connected.is_ok(), "{:?}", connected.err());
+    }
+
+    async fn receive_go_away(client: &moqt::Session) -> String {
+        tokio::time::timeout(EVENT_TIMEOUT, async {
+            loop {
+                if let SessionEvent::GoAway(go_away) = client.receive_event().await.unwrap() {
+                    return go_away.new_session_uri().to_string();
+                }
+            }
+        })
+        .await
+        .expect("GOAWAY must reach the client")
+    }
+
+    #[tokio::test]
+    async fn drain_sends_go_away_and_closes_a_lingering_client_with_goaway_timeout() {
+        // Arrange
+        let (mut relay, client) = spawn_relay_and_connect_client(VerifiedToken::anonymous()).await;
+        relay.handler.stop_accepting();
+
+        // Act
+        relay.server.drain(Duration::from_millis(200)).await;
+
+        // Assert: no route registry, so the client is told to reuse its URI
+        assert_eq!(receive_go_away(&client).await, "");
+        let close = tokio::time::timeout(EVENT_TIMEOUT, client.closed())
+            .await
+            .expect("the relay must close the lingering session");
+        assert_eq!(close.code, Some(0x10));
+    }
+
+    #[tokio::test]
+    async fn drain_returns_when_the_client_closes_after_go_away() {
+        // Arrange
+        let (mut relay, client) = spawn_relay_and_connect_client(VerifiedToken::anonymous()).await;
+        relay.handler.stop_accepting();
+        let client_leaves = tokio::spawn(async move {
+            receive_go_away(&client).await;
+            client.close_with_error(TerminationErrorCode::NoError, "migrated");
+            client
+        });
+
+        // Act
+        let drained =
+            tokio::time::timeout(EVENT_TIMEOUT, relay.server.drain(Duration::from_secs(30))).await;
+
+        // Assert
+        assert!(
+            drained.is_ok(),
+            "drain must return once the client has left"
+        );
+        let client = client_leaves.await.unwrap();
+        drop(client);
+        let idle = tokio::time::timeout(EVENT_TIMEOUT, relay.handler.wait_idle()).await;
+        assert!(
+            idle.is_ok(),
+            "the client endpoint must become idle after the drain"
+        );
+    }
+}

@@ -32,6 +32,9 @@ import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";
 const srtAddress = process.env.LIVE_VIEWER_E2E_SRT_ADDR ?? "127.0.0.1:9000";
+const ingest = process.env.LIVE_VIEWER_E2E_INGEST ?? "rtmp";
+const ingestAddress = ingest === "srt" ? srtAddress : rtmpAddress;
+const transcode = process.env.LIVE_VIEWER_E2E_TRANSCODE !== "0";
 const specs =
   process.argv.length > 2
     ? process.argv.slice(2)
@@ -97,7 +100,7 @@ async function main() {
         "--moqt-url",
         moqtUrl,
         "--insecure-skip-tls-verify",
-        "--transcode",
+        ...(transcode ? ["--transcode"] : []),
       ],
       {
         cwd: repoRoot,
@@ -112,26 +115,27 @@ async function main() {
     childProcesses.push(bridge);
     await waitForOutput(
       bridge,
-      /RTMP listener started/,
+      ingest === "srt" ? /SRT listener started/ : /RTMP listener started/,
       "live-ingest",
       180_000,
     );
 
+    const broadcastReady = waitForOutput(
+      bridge,
+      transcode ? /transcoding renditions started/ : /detected video codec/,
+      "live-ingest broadcast",
+      120_000,
+    );
     const ffmpeg = spawnProcess(
       "ffmpeg",
       "ffmpeg",
-      buildLiveIngestFfmpegArgs(rtmpAddress, namespace),
+      buildLiveIngestFfmpegArgs(ingest, ingestAddress, namespace),
       {
         cwd: repoRoot,
       },
     );
     childProcesses.push(ffmpeg);
-    await waitForOutput(
-      bridge,
-      /transcoding renditions started/,
-      "live-ingest renditions",
-      120_000,
-    );
+    await broadcastReady;
 
     await runCommand(
       resolveCommandName("npm"),

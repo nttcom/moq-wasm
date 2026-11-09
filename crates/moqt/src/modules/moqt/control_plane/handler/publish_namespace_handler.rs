@@ -1,4 +1,5 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -20,21 +21,32 @@ pub struct PublishNamespaceHandler {
     request_id: u64,
     pub track_namespace: String,
     pub track_namespace_tuple: Vec<String>,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl PublishNamespaceHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(connection: Arc<Connection>, publish_namespace: PublishNamespace) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            publish_namespace.request_id,
-            RequestKind::PublishNamespace,
+            RequestSummary::new(
+                RequestKind::PublishNamespace,
+                publish_namespace.request_id,
+                Some(&publish_namespace.track_namespace),
+                None,
+            ),
         );
         Self {
             request_id: guard
                 .connection()
                 .logical_request_id(publish_namespace.request_id),
             guard,
+            trace_context: publish_namespace.trace_context,
             track_namespace: publish_namespace.track_namespace.join("/"),
             track_namespace_tuple: publish_namespace.track_namespace,
         }
@@ -45,14 +57,11 @@ impl PublishNamespaceHandler {
     }
 
     pub async fn ok(&self) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
             request_id: self.guard.request_id(),
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::PublishNamespaceOk(publish_namespace_ok))
+            .accept(OutgoingResponse::PublishNamespaceOk(publish_namespace_ok))
             .await
     }
 
@@ -69,13 +78,13 @@ impl PublishNamespaceHandler {
 mod tests {
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{connect_sessions, spawn_native_server},
     };
 
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("publish-namespace-handler-namespace");
+        let (port, accept) = spawn_native_server("publish-namespace-handler-namespace");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

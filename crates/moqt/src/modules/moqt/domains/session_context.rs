@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt,
     sync::{Arc, Weak},
 };
@@ -8,20 +8,24 @@ use tokio::sync::watch;
 
 use crate::{
     SessionEvent,
-    modules::moqt::{
-        control_plane::{
-            constants::TerminationErrorCode, enums::RequestId,
-            namespace_interest::NamespaceInterest,
+    modules::{
+        executor,
+        moqt::{
+            control_plane::{
+                constants::TerminationErrorCode, enums::RequestId,
+                namespace_interest::NamespaceInterest,
+            },
+            data_plane::{
+                object_ledger::ObjectLedger,
+                stream::{fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups},
+            },
+            domains::{
+                connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
+                request_failure::RequestFailure,
+            },
+            runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
+            version::Version,
         },
-        data_plane::{
-            object_ledger::ObjectLedger,
-            stream::{fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups},
-        },
-        domains::connection::{
-            Connection, ObjectSink, SinkReceiver, generation_of, logical_id, wire_part,
-        },
-        runtime::dispatch::incoming_object::IncomingObject,
-        version::Version,
     },
     publish::PublishOption,
     subscribe::SubscribeOption,
@@ -39,21 +43,26 @@ pub(crate) struct SessionContext {
     /// The ledger of each track a subscription or FETCH is reading, keyed by
     /// namespace and name; the readers hold it, so it ends with the last one.
     ledgers: std::sync::Mutex<HashMap<(String, String), Weak<ObjectLedger>>>,
-    /// `None` for a session that does not follow GOAWAY. Held while a
-    /// carried request is sent and while a migration sends them all again,
-    /// so a request sent during a migration is not skipped.
-    pub(crate) carried: Option<tokio::sync::Mutex<CarriedRequests>>,
+    /// `None` for a session that does not follow GOAWAY. A new request holds the
+    /// read lock from before it is sent until it is recorded (a PUBLISH in
+    /// `publications`) or fails; a migration holds the write lock while it sends
+    /// every carried request again, so none is skipped. Requests edit the record
+    /// through the inner mutex, so they do not wait for one another's answers.
+    pub(crate) carried: Option<tokio::sync::RwLock<std::sync::Mutex<CarriedRequests>>>,
     /// For a session that follows GOAWAY, the tracks this side PUBLISHed,
     /// keyed by logical request id, with every connection each is on. Read
     /// for every subgroup sent, so not behind `carried`.
     publications: std::sync::Mutex<HashMap<u64, Publication>>,
     /// Wakes `unserved` whenever a connection stops serving a track.
     served_changed: watch::Sender<()>,
+    /// Changes whenever a migration makes another connection current, and
+    /// turns `true` once the session will not move again.
+    moves: watch::Sender<bool>,
 }
 
 /// The objects of a subscription, until the application takes them.
 pub(crate) struct DataChannel {
-    pub(crate) receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
+    pub(crate) receiver: IncomingObjectReceiver,
     /// The version of the connection the subscription was accepted on.
     pub(crate) version: Version,
 }
@@ -101,10 +110,45 @@ struct Connections {
 
 #[derive(Default)]
 pub(crate) struct CarriedRequests {
-    pub(crate) namespaces: Vec<(String, NamespaceInterest)>,
-    pub(crate) published_namespaces: Vec<String>,
+    /// Keyed by the logical id of the request that sent the namespace, so a
+    /// failed request removes only its own record, not another request's for
+    /// the same namespace.
+    pub(crate) namespaces: BTreeMap<u64, (String, NamespaceInterest)>,
+    /// Keyed as `namespaces`.
+    pub(crate) published_namespaces: BTreeMap<u64, String>,
     /// Keyed by logical request id.
     pub(crate) subscriptions: HashMap<u64, CarriedSubscription>,
+}
+
+/// Keeps a migration from starting while it is held.
+pub(crate) struct CarriedGuard<'a>(
+    tokio::sync::RwLockReadGuard<'a, std::sync::Mutex<CarriedRequests>>,
+);
+
+impl CarriedGuard<'_> {
+    pub(crate) fn update<T>(&self, update: impl FnOnce(&mut CarriedRequests) -> T) -> T {
+        update(
+            &mut self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        )
+    }
+}
+
+/// The `published_namespaces` record one PUBLISH_NAMESPACE added, which
+/// `forget` removes.
+pub(crate) struct CarriedPublishedNamespace {
+    pub(crate) session: Arc<SessionContext>,
+    pub(crate) request_id: u64,
+}
+
+impl CarriedPublishedNamespace {
+    pub(crate) async fn forget(self) {
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| carried.published_namespaces.remove(&self.request_id));
+        }
+    }
 }
 
 pub(crate) struct CarriedSubscription {
@@ -153,9 +197,10 @@ impl SessionContext {
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
             fetch_receiver_map: std::sync::Mutex::new(HashMap::new()),
             ledgers: std::sync::Mutex::default(),
-            carried: follows_go_away.then(|| tokio::sync::Mutex::new(CarriedRequests::default())),
+            carried: follows_go_away.then(tokio::sync::RwLock::default),
             publications: std::sync::Mutex::default(),
             served_changed: watch::channel(()).0,
+            moves: watch::channel(false).0,
         }
     }
 
@@ -194,13 +239,8 @@ impl SessionContext {
         self.carried.is_some()
     }
 
-    pub(crate) async fn lock_carried(
-        &self,
-    ) -> Option<tokio::sync::MutexGuard<'_, CarriedRequests>> {
-        match &self.carried {
-            Some(carried) => Some(carried.lock().await),
-            None => None,
-        }
+    pub(crate) async fn read_carried(&self) -> Option<CarriedGuard<'_>> {
+        Some(CarriedGuard(self.carried.as_ref()?.read().await))
     }
 
     /// The live connection a logical id belongs to, with its wire part.
@@ -337,7 +377,64 @@ impl SessionContext {
         let mut connections = self.connections();
         let moved_from = std::mem::replace(&mut connections.current, next);
         connections.previous = Some(moved_from.clone());
+        drop(connections);
+        self.moves.send_modify(|_| {});
         moved_from
+    }
+
+    pub(crate) fn end_moves(&self) {
+        self.moves.send_replace(true);
+    }
+
+    /// `Ok` when a migration has replaced the lost `connection`, so the request
+    /// is sent again on the current one; otherwise `error`.
+    /// Drops `carried`, the lock the request was sent under, first: the
+    /// migration takes that lock to send the carried requests.
+    pub(crate) async fn resend_after<G>(
+        &self,
+        carried: G,
+        connection: &Arc<Connection>,
+        error: RequestFailure,
+    ) -> Result<(), RequestFailure> {
+        drop(carried);
+        if self.moved_after_loss(connection, &error).await {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    /// Waits until a migration replaces `connection`; `false` when `error` does
+    /// not mean `connection` was lost, or the session ends on it.
+    pub(crate) async fn moved_after_loss(
+        &self,
+        connection: &Arc<Connection>,
+        error: &RequestFailure,
+    ) -> bool {
+        if !self.follows_go_away()
+            || !matches!(
+                error,
+                RequestFailure::SessionClosed | RequestFailure::Send(_)
+            )
+        {
+            return false;
+        }
+        self.moved_past(connection.generation).await
+    }
+
+    /// `true` once the current connection is later than `generation`; `false`
+    /// once the session will not move again.
+    pub(crate) async fn moved_past(&self, generation: u64) -> bool {
+        let mut moves = self.moves.subscribe();
+        loop {
+            let ended = *moves.borrow_and_update();
+            if self.connection().generation > generation {
+                return true;
+            }
+            if ended || moves.changed().await.is_err() {
+                return false;
+            }
+        }
     }
 
     pub(crate) fn forget_previous(&self, connection: &Arc<Connection>) {
@@ -367,7 +464,7 @@ impl SessionContext {
         request_id: RequestId,
         track_alias: u64,
     ) -> Result<u64, TerminationErrorCode> {
-        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel::<IncomingObject>();
+        let (sender, receiver) = incoming_object_channel();
         let logical_alias = logical_id(connection.generation, track_alias);
         let _sinks = connection
             .install_receiver(
@@ -397,14 +494,7 @@ impl SessionContext {
 
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
-        let found = sinks.iter().find_map(|(track_alias, sink)| match sink {
-            ObjectSink::Receiver(receiver) if receiver.request_id == request_id => {
-                Some((*track_alias, receiver.logical_alias))
-            }
-            _ => None,
-        });
-        if let Some((track_alias, logical_alias)) = found {
-            sinks.insert(track_alias, ObjectSink::Cancelled);
+        if let Some(logical_alias) = sinks.cancel_subscription(request_id, executor::now()) {
             self.receiver_map.lock().await.remove(&logical_alias);
         }
     }
@@ -414,13 +504,11 @@ impl SessionContext {
         connection: &Connection,
         track_alias: u64,
     ) {
-        let mut sinks = connection.object_sinks.lock().await;
-        if !sinks
-            .get(&track_alias)
-            .is_some_and(ObjectSink::is_receiver_registered)
-        {
-            sinks.insert(track_alias, ObjectSink::Cancelled);
-        }
+        connection
+            .object_sinks
+            .lock()
+            .await
+            .cancel_unclaimed(track_alias, executor::now());
     }
 
     /// Call before sending the FETCH on `connection`: its data stream can
@@ -516,14 +604,13 @@ impl fmt::Debug for SessionContext {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
+    use crate::SessionEvent;
     use crate::modules::moqt::domains::connection::IncomingObjectNotification;
     use crate::modules::{
         moqt::runtime::dispatch::incoming_object::IncomingObject,
         test_support::{
             DRAFTS, connected_sessions, datagram_object, notify_datagram,
-            register_and_take_data_receiver, subscription,
+            register_and_take_data_receiver, spawn_connected_native_sessions, subscription, within,
         },
     };
 
@@ -539,26 +626,54 @@ mod tests {
             let context = server.subscriber().session;
 
             // Act
-            let request_ids: Vec<u64> = std::thread::scope(|scope| {
-                let callers: Vec<_> = (0..8)
-                    .map(|_| {
-                        scope.spawn(|| {
-                            (0..1_000)
-                                .map(|_| context.connection().control.next_request_id())
-                                .collect::<Vec<_>>()
-                        })
-                    })
-                    .collect();
-                callers
-                    .into_iter()
-                    .flat_map(|caller| caller.join().unwrap())
-                    .collect()
-            });
+            let request_ids: Vec<u64> = futures::future::join_all((0..8).map(|_| async {
+                let mut ids = Vec::new();
+                for _ in 0..50 {
+                    ids.push(context.connection().control.take_request_id().await);
+                }
+                ids
+            }))
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
 
             // Assert
-            let distinct: HashSet<u64> = request_ids.iter().copied().collect();
+            let distinct: std::collections::HashSet<u64> = request_ids.iter().copied().collect();
             assert_eq!(distinct.len(), request_ids.len());
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_requests_reach_the_peer_in_increasing_request_id_order() {
+        // Arrange
+        const REQUESTS: u64 = 32;
+        let (client, server) = spawn_connected_native_sessions("request-id-concurrent").await;
+
+        // Act
+        let requests: Vec<_> = (0..REQUESTS)
+            .map(|_| {
+                let subscriber = client.subscriber();
+                tokio::spawn(async move {
+                    subscriber
+                        .track_status("ns".into(), "track".into(), vec![])
+                        .await
+                })
+            })
+            .collect();
+        let mut request_ids = Vec::new();
+        for _ in 0..REQUESTS {
+            let SessionEvent::TrackStatus(handler) = within(server.receive_event()).await.unwrap()
+            else {
+                panic!("expected TRACK_STATUS from the client");
+            };
+            request_ids.push(handler.request_id());
+        }
+
+        // Assert
+        let expected: Vec<u64> = (0..REQUESTS).map(|i| i * 2).collect();
+        assert_eq!(request_ids, expected);
+        requests.iter().for_each(|request| request.abort());
     }
 
     #[tokio::test]

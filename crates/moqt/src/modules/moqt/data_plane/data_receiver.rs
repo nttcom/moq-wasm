@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc::UnboundedReceiver;
-
 use crate::modules::moqt::{
     data_plane::{
         immutable_properties,
@@ -10,7 +8,7 @@ use crate::modules::moqt::{
         object_ledger::{CopySource, ObjectLedger},
         stream::stream_data_receiver::StreamDataReceiver,
     },
-    runtime::dispatch::incoming_object::IncomingObject,
+    runtime::dispatch::incoming_object::{IncomingObject, IncomingObjectReceiver},
     version::Version,
 };
 
@@ -26,7 +24,7 @@ pub enum TrackData {
 #[derive(Debug)]
 pub struct DataReceiver {
     pub track_alias: u64,
-    receiver: UnboundedReceiver<IncomingObject>,
+    receiver: IncomingObjectReceiver,
     /// The draft of the connection the subscription was accepted on.
     version: Version,
     first_is_datagram: Option<bool>,
@@ -36,7 +34,7 @@ pub struct DataReceiver {
 impl DataReceiver {
     pub(crate) fn new(
         track_alias: u64,
-        receiver: UnboundedReceiver<IncomingObject>,
+        receiver: IncomingObjectReceiver,
         version: Version,
         ledger: Arc<ObjectLedger>,
     ) -> Self {

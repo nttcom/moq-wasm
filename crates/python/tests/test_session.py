@@ -106,6 +106,45 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
             await within(request)
 
 
+def temporary_app_id() -> str:
+    return f"temp-{uuid.uuid4().hex}"
+
+
+async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_url, temporary_app_token):
+    # Arrange
+    app_id = temporary_app_id()
+    session = await moqt.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+
+    # Act
+    await within(session.refresh_token(temporary_app_token(app_id), app_id=app_id))
+
+    # Assert: a request after the refresh is still authorized under the app's root
+    await within(session.publish_namespace([app_id, "room", "alice"]))
+    await session.close()
+
+
+async def test_a_token_of_another_app_is_refused_as_a_refresh(relay_url, temporary_app_token):
+    # Arrange
+    app_id = temporary_app_id()
+    session = await moqt.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+
+    # Act / Assert
+    with pytest.raises(RuntimeError):
+        await within(session.refresh_token(temporary_app_token(temporary_app_id()), app_id=app_id))
+    await session.close()
+
+
+async def test_a_session_without_a_token_cannot_refresh_one(relay_url, temporary_app_token):
+    # Arrange
+    app_id = temporary_app_id()
+    session = await connect(relay_url)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="without a token"):
+        session.refresh_token(temporary_app_token(app_id), app_id=app_id)
+    await session.close()
+
+
 async def test_the_subscription_ends_when_the_publisher_closes_inside_an_open_group(relay_url):
     # Arrange: the group stays open until the next write starts a new one
     namespace = [*room(), "alice"]

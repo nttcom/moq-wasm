@@ -1,24 +1,33 @@
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, VariantType},
-        messages::parameters::authorization_token::AuthorizationToken,
+        messages::parameters::{
+            authorization_token::AuthorizationToken, trace_context::TraceContext,
+        },
     },
 };
 use anyhow::Context;
 use bytes::{Bytes, BytesMut};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-#[derive(Debug, Clone, Copy, IntoPrimitive, TryFromPrimitive, PartialEq)]
-#[repr(u8)]
-pub enum SetupParameterType {
-    Path = 0x01,
-    MaxRequestID = 0x02,
-    AuthorizationToken = 0x03,
-    MaxAuthTokenCacheSize = 0x04,
-    Authority = 0x05,
-    MOQTimplementation = 0x07,
+wire_enum! {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub enum SetupParameterType: u8 {
+        Path = 0x01,
+        MaxRequestID = 0x02,
+        AuthorizationToken = 0x03,
+        MaxAuthTokenCacheSize = 0x04,
+        Authority = 0x05,
+        MOQTimplementation = 0x07,
+    }
 }
+
+/// The TRACE_CONTEXT Setup Option, not in draft-14: an odd type whose
+/// presence says the sender reads the TRACE_CONTEXT request parameter (see
+/// `TraceContext`). Its value is empty, or in CLIENT_SETUP the traceparent of
+/// the client's connect span, which a server that does not know the option
+/// ignores (draft-14 §9.3).
+const TRACE_CONTEXT: u64 = 0x1fff;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SetupParameter {
@@ -34,6 +43,10 @@ pub struct SetupParameter {
     pub authority: Option<String>,
     // 0x07
     pub moq_implementation: Option<String>,
+    // 0x1fff
+    pub trace_context: bool,
+    /// The value of the TRACE_CONTEXT option; sent only with `trace_context`.
+    pub traceparent: Option<TraceContext>,
 }
 
 impl SetupParameter {
@@ -91,6 +104,8 @@ impl SetupParameter {
                     VariantType::Odd(value) => String::from_utf8(value.to_vec()).unwrap(),
                     VariantType::Even(_) => unreachable!(),
                 });
+        let trace_context = kv_pairs.iter().any(|kv_pair| kv_pair.key == TRACE_CONTEXT);
+        let traceparent = TraceContext::find(&kv_pairs);
 
         Ok(SetupParameter {
             path,
@@ -99,6 +114,8 @@ impl SetupParameter {
             max_auth_token_cache_size,
             authority,
             moq_implementation,
+            trace_context,
+            traceparent,
         })
     }
 
@@ -165,6 +182,14 @@ impl SetupParameter {
             );
             number_of_parameters += 1;
         }
+        if self.trace_context {
+            let option = match &self.traceparent {
+                Some(traceparent) => traceparent.encode(),
+                None => KeyValuePair::odd(TRACE_CONTEXT, Bytes::new()),
+            };
+            buf.unsplit(option.encode());
+            number_of_parameters += 1;
+        }
         let mut result_bytes = BytesMut::new();
         result_bytes.put_varint(number_of_parameters);
         result_bytes.unsplit(buf);
@@ -178,7 +203,9 @@ mod tests {
         use bytes::{Bytes, BytesMut};
 
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
-            authorization_token::AuthorizationToken, setup_parameters::SetupParameter,
+            authorization_token::AuthorizationToken,
+            setup_parameters::SetupParameter,
+            trace_context::{TEST_TRACEPARENT, TraceContext},
         };
 
         #[test]
@@ -195,6 +222,8 @@ mod tests {
                 max_auth_token_cache_size: Some(10),
                 authority: Some("auth".to_string()),
                 moq_implementation: Some("MOQ-WASM".to_string()),
+                trace_context: false,
+                traceparent: None,
             };
 
             let buf = setup_parameter.encode();
@@ -270,6 +299,62 @@ mod tests {
                 depacketized_setup_parameter.moq_implementation,
                 Some("MOQ-WASM".to_string())
             );
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let setup_parameter = SetupParameter {
+                max_request_id: 0,
+                path: None,
+                authorization_token: vec![],
+                max_auth_token_cache_size: None,
+                authority: None,
+                moq_implementation: None,
+                trace_context: true,
+                traceparent: None,
+            };
+
+            // Act
+            let buf = setup_parameter.encode();
+            let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&buf[..])).unwrap();
+
+            // Assert
+            assert_eq!(
+                buf.as_ref(),
+                [
+                    2,    // Number of Parameters (i)
+                    2,    // Max Request ID
+                    0,    // Value(0)
+                    0x5f, // Parameter Type (i): TRACE_CONTEXT (0x1fff), 2 bytes
+                    0xff, 0, // Length
+                ]
+            );
+            assert!(decoded.trace_context);
+        }
+
+        #[test]
+        fn a_traceparent_rides_in_the_trace_context_option() {
+            // Arrange
+            let traceparent = TraceContext::parse(TEST_TRACEPARENT.as_bytes());
+            let setup_parameter = SetupParameter {
+                max_request_id: 0,
+                path: None,
+                authorization_token: vec![],
+                max_auth_token_cache_size: None,
+                authority: None,
+                moq_implementation: None,
+                trace_context: true,
+                traceparent: traceparent.clone(),
+            };
+
+            // Act
+            let buf = setup_parameter.encode();
+            let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&buf[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context);
+            assert_eq!(decoded.traceparent, traceparent);
         }
 
         // #[test]

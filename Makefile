@@ -1,5 +1,3 @@
-export RUSTFLAGS := --cfg tokio_unstable --cfg web_sys_unstable_apis --remap-path-prefix=$(shell pwd)=.
-
 -include .env
 
 MOQT_URL ?= https://127.0.0.1:4433
@@ -33,22 +31,22 @@ LIVE_EGRESS_SDP ?= assets/egress.sdp
 GST_NAMESPACE ?= anon/live/test
 GST_PLUGIN_FILE := target/debug/libgstmoqt.$(if $(filter Darwin,$(shell uname -s)),dylib,so)
 
-.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer
+.PHONY: relay browser chrome chrome\:linux live-ingest live-ingest-transcode live-ingest-stats live-ingest-rtp live-egress gst-plugin gst-srt-publish onvif recorder recorder-serve ffmpeg-rtmp ffmpeg-srt ffmpeg-rtp ffmpeg-srt-bbb-local ffmpeg-srt-bbb-remote test lint format relay-certs browser-e2e-media browser-e2e-meeting browser-e2e-meeting-headed browser-e2e-live-viewer browser-e2e-live-translate
 
 # Applications
-VTS_APPS_FILE ?= crates/vts/apps.example.json
+VTS_APPS_FILE ?= services/vts/apps.example.json
 DEV_RELAY_APP_ID := 11111111-2222-3333-4444-555555555555
 
 # Starts a VTS on 127.0.0.1:8081 for the lifetime of the relay process.
 relay: export AUTH_VTS_URL ?= http://127.0.0.1:8081/verify
 relay:
 	set -a; [ ! -f .env ] || . ./.env; set +a; \
-	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p vts; \
-	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p auth-token --features cli; \
+	cargo build -p vts; \
+	cargo build -p auth-token --features cli; \
 	VTS_APPS_FILE="$(VTS_APPS_FILE)" ./target/debug/vts & VTS_PID=$$!; \
 	trap 'kill $$VTS_PID' EXIT; \
 	export AUTH_RELAY_TOKEN="$${AUTH_RELAY_TOKEN:-$$(AUTH_TOKEN_SECRET="$$(python3 -c 'import json, sys; print(next(app["secret"] for app in json.load(open(sys.argv[1])) if app["appId"] == sys.argv[2]))' "$(VTS_APPS_FILE)" $(DEV_RELAY_APP_ID))" ./target/debug/auth-token --app-id $(DEV_RELAY_APP_ID) --publish "" --subscribe "" --ttl 8760h)}"; \
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p relay
+	cargo run -p relay
 
 browser:
 	cd examples/browser && npm run dev
@@ -62,7 +60,7 @@ chrome\:linux:
 # RTMP/SRT/RTP Bridges
 live-ingest:
 	@echo "Using MoQT relay URL: $(LIVE_INGEST_MOQT_URL)"
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p live-ingest -- \
+	cargo run -p live-ingest -- \
 		--rtmp-addr 0.0.0.0:1935 \
 		--srt-addr 0.0.0.0:9000 \
 		--moqt-url $(LIVE_INGEST_MOQT_URL) $(LIVE_INGEST_TLS_FLAGS) $(if $(LIVE_INGEST_TRANSCODE),--transcode,) $(if $(LIVE_INGEST_STATS),--stats,) $(LIVE_INGEST_RTP_FLAGS)
@@ -80,7 +78,7 @@ live-ingest-rtp: live-ingest
 # MoQT to RTP: play the result with `ffplay -protocol_whitelist file,udp,rtp $(LIVE_EGRESS_SDP)`.
 live-egress:
 	mkdir -p $(dir $(LIVE_EGRESS_SDP))
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p live-egress -- \
+	cargo run -p live-egress -- \
 		--moqt-url $(LIVE_EGRESS_MOQT_URL) $(LIVE_EGRESS_TLS_FLAGS) \
 		--namespace $(LIVE_EGRESS_NAMESPACE) \
 		--destination $(LIVE_EGRESS_DESTINATION) \
@@ -89,7 +87,7 @@ live-egress:
 
 # GStreamer plugin (crates/gst-plugin-moqt): `moqtsink` publishes H.264/AAC into MoQT.
 gst-plugin:
-	RUSTFLAGS="$(RUSTFLAGS)" cargo build -p gst-plugin-moqt
+	cargo build -p gst-plugin-moqt
 
 # Listens for SRT (MPEG-TS) on GST_SRT_ADDR and publishes it under GST_NAMESPACE.
 gst-srt-publish: gst-plugin
@@ -174,7 +172,7 @@ onvif:
 		exit 1; \
 	fi
 	@echo "Using MoQT relay URL: $(ONVIF_MOQT_URL)"
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p onvif-ingest -- \
+	cargo run -p onvif-ingest -- \
 		--ip $(ONVIF_IP) \
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \
@@ -191,7 +189,7 @@ onvif:
 # Recording
 recorder:
 	@echo "Using MoQT relay URL: $(RECORDER_MOQT_URL)"
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p recorder -- \
+	cargo run -p recorder -- \
 		--relay $(RECORDER_MOQT_URL) \
 		--namespace $(RECORDER_NAMESPACE) \
 		$(RECORDER_TLS_FLAGS)
@@ -199,7 +197,7 @@ recorder:
 # The recording API for the meeting example; it runs every recording and composite as a child process.
 recorder-serve:
 	@echo "Using MoQT relay URL: $(RECORDER_MOQT_URL)"
-	RUSTFLAGS="$(RUSTFLAGS)" cargo run -p recorder -- serve \
+	cargo run -p recorder -- serve \
 		--relay $(RECORDER_MOQT_URL) \
 		--store $(RECORDER_STORE_URL) \
 		--output-dir recordings/work \
@@ -225,6 +223,9 @@ browser-e2e-media:
 # Two-relay meeting E2E: brings up relay-a/relay-b via docker compose, then Playwright.
 browser-e2e-live-viewer:
 	node tests/browser-e2e/run-live-viewer-e2e.mjs
+
+browser-e2e-live-translate:
+	node tests/browser-e2e/run-live-translate-e2e.mjs
 
 browser-e2e-meeting:
 	node tests/browser-e2e/setup-media-e2e.mjs
