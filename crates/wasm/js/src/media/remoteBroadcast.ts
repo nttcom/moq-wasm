@@ -42,7 +42,8 @@ export interface SourceView {
   listen(listener: SourceViewListener): () => void
   setVolume(volume: number): void
   stats(): LivePlayerStats
-  /// `false` unsubscribes the video and keeps the audio.
+  /// `false` unsubscribes the video and keeps the audio. Showing the view
+  /// again does not turn back on a video the page turned off.
   setVideoEnabled(enabled: boolean): Promise<void>
 }
 
@@ -58,6 +59,9 @@ export type RemoteBroadcastListener = {
 export type RemoteBroadcastOptions = {
   /// Receives the logs of the broadcast's catalog and players instead of the console.
   onLog?: (level: LogLevel, message: string) => void
+  /// Unsubscribes the video of a view whose element is off screen, detached
+  /// or hidden, until it shows again; the audio plays on. On by default.
+  pauseHiddenVideo?: boolean
 }
 
 /// A broadcast someone else publishes, played source by source: it
@@ -69,6 +73,7 @@ export class RemoteBroadcast {
   private readonly catalog: BroadcastCatalog
   private readonly unlistenCatalog: () => void
   private readonly log: (level: LogLevel, message: string) => void
+  private readonly pauseHiddenVideo: boolean
   private disposed = false
 
   constructor(
@@ -77,6 +82,7 @@ export class RemoteBroadcast {
     options: RemoteBroadcastOptions = {}
   ) {
     this.log = options.onLog ?? ((level, message) => sdkLog(level, TARGET, message))
+    this.pauseHiddenVideo = options.pauseHiddenVideo ?? true
     this.catalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })
     this.unlistenCatalog = this.catalog.listen({
       onCatalog: (text) => this.applyCatalog(text),
@@ -141,7 +147,7 @@ export class RemoteBroadcast {
         existing.update(source)
         continue
       }
-      const view = new View(source, this.log, (level) => this.audioLevel(view, level))
+      const view = new View(source, this.log, this.pauseHiddenVideo, (level) => this.audioLevel(view, level))
       this.views.set(source.name, view)
       view.player
         .start(this.session, this.namespace, this.catalog)
@@ -168,11 +174,14 @@ class View implements SourceView {
   private readonly listeners = new Set<SourceViewListener>()
   private listed: { video: boolean; audio: boolean }
   private videoEnabled = true
+  private shown = true
+  private readonly visibility: IntersectionObserver | undefined
   private videoSizeCheckedAtMs = Number.NEGATIVE_INFINITY
 
   constructor(
     source: CatalogSource,
     log: (level: LogLevel, message: string) => void,
+    pauseHiddenVideo: boolean,
     onAudioLevel: (level: AudioLevel) => void
   ) {
     this.name = source.name
@@ -192,6 +201,10 @@ class View implements SourceView {
       }
     })
     this.showState()
+    if (pauseHiddenVideo) {
+      this.visibility = new IntersectionObserver(([entry]) => void this.setShown(entry.isIntersecting))
+      this.visibility.observe(this.element)
+    }
   }
 
   listen(listener: SourceViewListener): () => void {
@@ -210,7 +223,19 @@ class View implements SourceView {
   async setVideoEnabled(enabled: boolean): Promise<void> {
     this.videoEnabled = enabled
     this.refresh()
-    await this.player.setVideoEnabled(enabled)
+    await this.player.setVideoEnabled(enabled && this.shown)
+  }
+
+  private async setShown(shown: boolean): Promise<void> {
+    if (shown === this.shown) {
+      return
+    }
+    this.shown = shown
+    // The picture shows a stale frame until the video subscribed again delivers one.
+    if (shown && this.state.video === 'playing') {
+      this.setState({ ...this.state, video: 'waiting' })
+    }
+    await this.player.setVideoEnabled(this.videoEnabled && shown)
   }
 
   update(source: CatalogSource): void {
@@ -221,6 +246,7 @@ class View implements SourceView {
 
   async dispose(): Promise<void> {
     this.listeners.clear()
+    this.visibility?.disconnect()
     await this.player.dispose()
     this.element.remove()
   }
