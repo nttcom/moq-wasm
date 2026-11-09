@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use moqt::object::{ObjectStatus, SubgroupStart};
 use tokio::{sync::mpsc, task::JoinSet};
 use tracing::{Instrument, Span};
@@ -18,6 +20,12 @@ use crate::modules::{
         session_event::SessionEvent,
     },
 };
+
+/// A payload that makes no progress for this long means a dead path or a peer
+/// holding the relay's memory: a publisher already has the payload when it
+/// declares its length in the object's header. A stream idle between objects
+/// stays open, as a publisher may keep one open while muted.
+const STALLED_PAYLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 
 struct ReceivedHeader {
     start: SubgroupStart,
@@ -101,6 +109,12 @@ pub(crate) async fn read_stream(
                 return;
             }
             result = receiver.receive_object() => result,
+            () = tokio::time::sleep(STALLED_PAYLOAD_TIMEOUT), if partial.is_some() => {
+                // Dropping `receiver` sends STOP_SENDING.
+                span.record("end_reason", "stalled_payload");
+                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "object payload stalled; stopping the stream");
+                return;
+            }
         };
 
         match receive_result {
@@ -256,8 +270,8 @@ mod tests {
             fixtures::{
                 cached_object::stream_key,
                 data_object::{
-                    make_header, make_header_with, make_object_in_subgroup, make_payload_object,
-                    make_status_object,
+                    make_header, make_header_with, make_object_in_subgroup, make_object_start,
+                    make_payload_object, make_payload_piece, make_status_object,
                 },
                 location,
             },
@@ -386,6 +400,61 @@ mod tests {
             harness.subgroup_end_after(stream_key(0), 0).await,
             NextObject::Aborted
         ));
+    }
+
+    #[tokio::test]
+    async fn a_stalled_payload_stops_the_stream_and_aborts_its_object() {
+        // Arrange
+        let harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
+        send_all(
+            &upstream_stream,
+            vec![
+                make_header(0),
+                payload(0),
+                make_object_start(0, 1, 100),
+                make_payload_piece(b"part", false),
+            ],
+        );
+        harness.wait_largest_location(location(0, 0)).await;
+        let next = harness.subgroup_end_after(stream_key(0), 0).await;
+        let NextObject::Partial(_) = next else {
+            panic!("object 1 should be arriving, got {next:?}");
+        };
+        tokio::time::pause();
+
+        // Act
+        tokio::time::advance(STALLED_PAYLOAD_TIMEOUT).await;
+        upstream_stream.wait_reader_end().await;
+
+        // Assert
+        assert!(matches!(
+            harness.subgroup_end_after(stream_key(0), 0).await,
+            NextObject::Aborted
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_stream_idle_between_objects_stays_open() {
+        // Arrange
+        let harness = RelayHarness::new();
+        let mut upstream_stream = harness.open_upstream_stream();
+        send_all(&upstream_stream, vec![make_header(0), payload(0)]);
+        harness.wait_largest_location(location(0, 0)).await;
+        tokio::time::pause();
+
+        // Act
+        let reading = upstream_stream
+            .reader_runs_for(STALLED_PAYLOAD_TIMEOUT * 2)
+            .await;
+
+        // Assert
+        assert!(reading, "the reader stopped an idle stream");
+        upstream_stream.send(payload(1));
+        assert_eq!(
+            harness.wait_largest_location(location(0, 1)).await,
+            location(0, 1)
+        );
     }
 
     #[tokio::test]
