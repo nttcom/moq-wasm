@@ -20,6 +20,11 @@ export {
   type PlayerStatus,
   LivePlayer
 } from './player/livePlayer'
+export {
+  type BroadcastCatalogListener,
+  type BroadcastCatalogOptions,
+  BroadcastCatalog
+} from './player/broadcastCatalog'
 export { type PlaybackGroupCallbacks, type PlaybackGroupState, PlaybackGroup } from './player/playbackGroup'
 export type { BufferPolicy } from './player/jitterBuffer'
 export type { CatchUp, LateSamples } from './player/livePlayout'

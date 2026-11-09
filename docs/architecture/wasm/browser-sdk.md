@@ -282,6 +282,17 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 1つの session に `LivePlayer` を複数載せる形は、remote-monitoring がすでに使っている。
 タイルは player に container の要素を渡し、React はその要素を置く場所を変えるだけにする。
 
+1人のメンバーのカメラと画面共有は1つの broadcast に載るので、ソースごとの player が
+それぞれ catalog を購読すると、1つの session で同じ track を2回購読することになる。
+draft-ietf-moq-transport-14 §9.7 はこれを禁じている（subscriber は MUST NOT、publisher は
+protocol violation として扱う SHOULD）。meeting もタイルの配置と画質の選択に catalog を読む。
+そこで、broadcast の catalog を1回だけ購読する `BroadcastCatalog` を `moq-wasm/media` に置き、
+`LivePlayer.start(session, namespace, catalog)` で player に渡す。player は catalog の
+listener になり、自分では catalog を購読しない。ページも同じ `BroadcastCatalog` の
+listener になる。publisher がいないときの再購読と、catalog の PUBLISH_DONE の扱いも
+`BroadcastCatalog` が持つ。`start` に catalog を渡さない player は自分用の
+`BroadcastCatalog` を作り、`stop` で閉じるので、今までと同じに動く。
+
 ### 足す機能
 
 | 機能 | API | meeting での使い方 |
@@ -304,15 +315,19 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 ### 移行の手順
 1手順を1 PR にする。
 
+手順 1 から 5 は実装した。
+
 1. **feat(wasm): `LivePlayerOptions.source`。**
 2. **feat(wasm): 表示の高さによる ABR の上限。**
 3. **feat(wasm): `onAudioLevel`。**
 4. **feat(wasm): 映像の最初の購読を joining FETCH にする。**
 5. **feat(wasm): 音声の subscriber priority を映像より高くする。**
-6. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
+6. **feat(wasm): `BroadcastCatalog`。** catalog の購読を player から切り出し、
+   `start` の3つ目の引数で受け取る。
+7. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
    `localSession.ts` の映像・音声の購読と切り替え、`meetingCatalog.ts` の解析を消す。
    ブラウザ E2E（`run-meeting-e2e.mjs`）で守る。
-7. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
+8. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
    なってから行う。
 
 ## 録画を `LivePlayer` で再生する

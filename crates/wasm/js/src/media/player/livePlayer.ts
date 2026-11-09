@@ -9,7 +9,7 @@ import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
 import type { LivePictureKind } from './livePictureSink'
-import { CatalogFollower } from './catalogFollower'
+import { BroadcastCatalog } from './broadcastCatalog'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { CmafLive, cmafSource } from './cmafLive'
 import { CmafReview } from './cmafReview'
@@ -128,7 +128,9 @@ export class LivePlayer {
   private readonly keepLiveWhileReviewing: boolean
   private readonly source: LiveSource | undefined
   private readonly textTracks: TextTracks
-  private readonly catalog: CatalogFollower
+  /// The catalog the player listens to since `start`; `owned` when the
+  /// player created it and closes it at `stop`.
+  private catalog: { catalog: BroadcastCatalog; owned: boolean; unlisten: () => void } | undefined
   private readonly subscriptions: TrackSubscriptions
   private readonly timeline = new SeekTimeline()
   private readonly stage: PictureStage
@@ -183,11 +185,6 @@ export class LivePlayer {
       }
     }
     this.textTracks = new TextTracks(this.context)
-    this.catalog = new CatalogFollower(
-      this.textTracks,
-      (text) => void this.queueTrackChange(() => this.applyCatalog(text)),
-      (done) => void this.publisherLeft(publisherEndedText(CATALOG_TRACK_NAME, done))
-    )
     this.subscriptions = new TrackSubscriptions(this.context, (kind, done) => this.publisherEnded(kind, done))
     this.stallWatch = new StallWatch(() => {
       this.changed()
@@ -292,20 +289,43 @@ export class LivePlayer {
 
   /// The session stays the caller's to close.
   /// Tracks given by the page replace the catalog: nothing is subscribed for
-  /// them but the tracks themselves, and they never change.
+  /// them but the tracks themselves, and they never change. A
+  /// `BroadcastCatalog` replaces `session` and `namespace` with its own, is
+  /// shared with its other listeners, and stays open after `stop`; without
+  /// tracks or a catalog the player subscribes the catalog itself.
   /// Resolves once the tracks are subscribed or, when nobody publishes the
   /// namespace yet, once the player has started waiting for the publisher.
-  async start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void> {
+  async start(session: MoqSession, namespace: string[], tracks?: LiveTracks | BroadcastCatalog): Promise<void> {
+    const shared = tracks instanceof BroadcastCatalog ? tracks : undefined
+    const given = tracks instanceof BroadcastCatalog ? undefined : tracks
+    if (shared) {
+      session = shared.session
+      namespace = shared.namespace
+    }
+    const catalog = given
+      ? undefined
+      : (shared ??
+        new BroadcastCatalog(session, namespace, { deliveryObserver: this.context.observer, onLog: this.context.log }))
     await this.queueTrackChange(async () => {
       this.context.session = session
       this.context.namespace = namespace
-      this.givenTracks = tracks
+      this.givenTracks = given
       this.started = true
       this.watchGeneration += 1
+      if (catalog) {
+        this.listenTo(catalog, !shared)
+      }
       this.changed()
     })
-    if (!(await this.followPublisher())) {
-      void this.waitForPublisher(this.watchGeneration)
+    if (given) {
+      if (!(await this.followGivenTracks(given))) {
+        void this.waitForPublisher(this.watchGeneration)
+      }
+      return
+    }
+    // A stop queued meanwhile has closed the catalog the player owned.
+    if (catalog && this.catalog?.catalog === catalog) {
+      await catalog.start()
     }
   }
 
@@ -315,16 +335,27 @@ export class LivePlayer {
     return this.queueTrackChange(() => this.stopWatching())
   }
 
+  private listenTo(catalog: BroadcastCatalog, owned: boolean): void {
+    const unlisten = catalog.listen({
+      onCatalog: (text) => void this.queueTrackChange(() => this.applyCatalog(text)),
+      onPublisherAbsent: (done) =>
+        void this.queueTrackChange(async () => {
+          if (!this.started) {
+            return
+          }
+          await (done
+            ? this.forgetPublisher('Waiting for the publisher to return', publisherEndedText(CATALOG_TRACK_NAME, done))
+            : this.forgetPublisher('Waiting for the publisher', 'Playback idle'))
+        })
+    })
+    this.catalog = { catalog, owned, unlisten }
+  }
+
   /// Returns false when nobody publishes the namespace: the relay answers the
   /// SUBSCRIBE with TRACK_DOES_NOT_EXIST.
-  private async followPublisher(): Promise<boolean> {
-    const tracks = this.givenTracks
+  private async followGivenTracks(tracks: LiveTracks): Promise<boolean> {
     try {
-      if (tracks) {
-        await this.queueTrackChange(() => this.applyGivenTracks(tracks))
-      } else {
-        await this.catalog.follow()
-      }
+      await this.queueTrackChange(() => this.applyGivenTracks(tracks))
       return true
     } catch (error) {
       if (!(error instanceof RequestError && error.errorCode === RequestErrorCode.TrackDoesNotExist)) {
@@ -341,8 +372,12 @@ export class LivePlayer {
       if (generation !== this.watchGeneration) {
         return
       }
+      const tracks = this.givenTracks
+      if (!tracks) {
+        return
+      }
       try {
-        if (await this.followPublisher()) {
+        if (await this.followGivenTracks(tracks)) {
           return
         }
       } catch (error) {
@@ -352,10 +387,9 @@ export class LivePlayer {
     }
   }
 
-  /// Called when the catalog, or the video track when the page gave the
-  /// tracks, ends with PUBLISH_DONE. `playbackText` reports that PUBLISH_DONE:
-  /// the wasm client drops the other tracks' PUBLISH_DONE once
-  /// `forgetPublisher` has unsubscribed them.
+  /// Called when the video track the page gave ends with PUBLISH_DONE.
+  /// `playbackText` reports that PUBLISH_DONE: the wasm client drops the other
+  /// tracks' PUBLISH_DONE once `forgetPublisher` has unsubscribed them.
   private async publisherLeft(playbackText: string): Promise<void> {
     const generation = this.watchGeneration
     await this.queueTrackChange(async () => {
@@ -369,10 +403,16 @@ export class LivePlayer {
   private async stopWatching(): Promise<void> {
     this.started = false
     this.watchGeneration += 1
+    const catalog = this.catalog
+    this.catalog = undefined
+    catalog?.unlisten()
+    if (catalog?.owned) {
+      await catalog.catalog.close()
+    }
     await this.forgetPublisher('Catalog not loaded yet', 'Playback idle')
   }
 
-  /// Also resets the catalog, so the next catalog subscribes its tracks anew.
+  /// Clears the tracks, so the next catalog subscribes its tracks anew.
   private async forgetPublisher(catalogText: string, playbackText: string): Promise<void> {
     // Before the review ends, so going live sends no SUBSCRIBE_UPDATE to the
     // subscriptions being unsubscribed.
@@ -387,7 +427,6 @@ export class LivePlayer {
     await unsubscribing
     this.newestVideoGroup = undefined
     await this.textTracks.unsubscribeAll()
-    this.catalog.reset()
     this.tracks = { video: [], audio: [] }
     this.cmafTracks = []
     this.selected = { video: '', audio: '' }

@@ -1,14 +1,12 @@
-import { type MoqSession, type MoqSubscription, type PublishDone, RequestError, RequestErrorCode } from 'moq-wasm'
-import { type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
+import { type MoqSession, type MoqSubscription, type PublishDone, RequestError } from 'moq-wasm'
+import { BroadcastCatalog, type MediaCatalogTrack, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
 import { catalogTrackNamespace } from 'moq-wasm/media/catalog'
 import { readLocHeader } from 'moq-wasm/media/internal/loc'
 import { AudioLane } from 'moq-wasm/media/player/audioLane'
 import { CaptionLane } from './captionLane'
-import { CatalogFollower } from 'moq-wasm/media/player/catalogFollower'
 import { UNOBSERVED_DELIVERIES } from 'moq-wasm/media/player/deliveryObserver'
 import { LocLive, type LocObject } from 'moq-wasm/media/player/locLive'
 import { PictureStage } from 'moq-wasm/media/player/pictureStage'
-import { TextTracks } from 'moq-wasm/media/player/textTrack'
 import { type LogLevel, type TrackContext, readJoinedObjects, streamId } from 'moq-wasm/media/player/trackContext'
 import { getErrorMessage } from '../../../utils/page'
 import { type LanguageOption, ORIGINAL_LANGUAGE, languageOptions } from './languages'
@@ -18,7 +16,6 @@ import { type LanguageOption, ORIGINAL_LANGUAGE, languageOptions } from './langu
 /// It must exceed Gemini's delay (about 3.7 s); the rest absorbs the jitter.
 const DEFAULT_PLAYBACK_DELAY_MS = 5_000
 const CROSSFADE_TIME_CONSTANT_SECONDS = 0.08
-const BROADCAST_RETRY_MS = 2_000
 const RETIRED_LANE_CLOSE_DELAY_MS = 500
 const MONITORED_ORIGINAL_VOLUME = 0.5
 
@@ -70,15 +67,13 @@ export type TranslationPlayerStats = {
 /// back to it is a crossfade too.
 export class TranslationPlayer {
   private readonly context: TrackContext
-  private readonly textTracks: TextTracks
-  private readonly catalog: CatalogFollower
+  private catalog: BroadcastCatalog | undefined
   private readonly stage: PictureStage
   private readonly locLive: LocLive
   private readonly forwardedAudioObjects: Record<string, number> = {}
   private changes: Promise<void> = Promise.resolve()
   private started = false
   private followed = false
-  private retryTimer: ReturnType<typeof setTimeout> | undefined
   private video: Subscribed | undefined
   private original: Subscribed | undefined
   private translation: Translation | undefined
@@ -105,21 +100,6 @@ export class TranslationPlayer {
       observer: UNOBSERVED_DELIVERIES,
       log: (level, message) => callbacks.onLog(level, message)
     }
-    this.textTracks = new TextTracks(this.context)
-    this.catalog = new CatalogFollower(
-      this.textTracks,
-      (text) => void this.queue(() => this.applyCatalog(text)),
-      (done) => {
-        callbacks.onLog('warn', `the catalog ended (status ${done.code})`)
-        void this.queue(async () => {
-          this.catalog.reset()
-          this.followed = false
-          this.callbacks.onStateChange()
-        })
-          .then(() => (this.started ? this.followBroadcast() : undefined))
-          .catch((error: unknown) => callbacks.onLog('error', `following the catalog again: ${getErrorMessage(error)}`))
-      }
-    )
     this.stage = new PictureStage(container)
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, undefined, {
       onPresented: (picture) => this.stage.show(picture),
@@ -188,37 +168,33 @@ export class TranslationPlayer {
       : (translatedMicros - originalMicros) / 1_000
   }
 
+  /// Until the streamer starts and the translator announces the broadcast,
+  /// nobody publishes the namespace and the catalog waits for it. Rejects on
+  /// any other failure of the catalog SUBSCRIBE.
   async start(session: MoqSession, namespace: string[]): Promise<void> {
+    const catalog = new BroadcastCatalog(session, namespace, { onLog: this.callbacks.onLog })
     await this.queue(async () => {
       this.context.session = session
       this.context.namespace = namespace
       this.started = true
       this.followed = false
+      catalog.listen({
+        onCatalog: (text) => void this.queue(() => this.applyCatalog(text)),
+        onPublisherAbsent: (done) => {
+          if (done) {
+            this.callbacks.onLog('warn', `the catalog ended (status ${done.code})`)
+          }
+          void this.queue(async () => {
+            this.followed = false
+            this.callbacks.onStateChange()
+          })
+        }
+      })
+      this.catalog = catalog
     })
-    await this.followBroadcast()
-  }
-
-  /// The relay answers the SUBSCRIBE of a namespace nobody publishes with
-  /// TRACK_DOES_NOT_EXIST: the link was opened before the streamer started, or
-  /// the translator has not announced the broadcast yet. The catalog is then
-  /// tried again every 2 s while the player runs. Any other failure of the
-  /// first attempt is the caller's; a later one is logged.
-  private async followBroadcast(): Promise<void> {
-    try {
-      await this.catalog.follow()
-      this.followed = true
-      this.callbacks.onStateChange()
-    } catch (error) {
-      if (!this.started || !(error instanceof RequestError && error.errorCode === RequestErrorCode.TrackDoesNotExist)) {
-        throw error
-      }
-      this.callbacks.onStateChange()
-      this.retryTimer = setTimeout(() => {
-        this.retryTimer = undefined
-        this.followBroadcast().catch((error: unknown) =>
-          this.callbacks.onLog('error', `waiting for the broadcast: ${getErrorMessage(error)}`)
-        )
-      }, BROADCAST_RETRY_MS)
+    // A stop queued meanwhile has closed the catalog.
+    if (this.catalog === catalog) {
+      await catalog.start()
     }
   }
 
@@ -226,8 +202,9 @@ export class TranslationPlayer {
     return this.queue(async () => {
       this.started = false
       this.followed = false
-      clearTimeout(this.retryTimer)
-      this.retryTimer = undefined
+      const catalog = this.catalog
+      this.catalog = undefined
+      await catalog?.close()
       for (const translation of [this.translation, this.incoming]) {
         await this.close(translation)
       }
@@ -238,8 +215,6 @@ export class TranslationPlayer {
       this.video = this.original = undefined
       await this.showCaptions(undefined)
       this.transcriptTracks.clear()
-      await this.textTracks.unsubscribeAll()
-      this.catalog.reset()
       this.locLive.reset()
       this.locLive.playout.setVolume(1)
       this.context.session = undefined
@@ -392,6 +367,7 @@ export class TranslationPlayer {
     if (!this.started) {
       return
     }
+    this.followed = true
     const catalog = parseCatalog(text)
     const [videoTrack] = extractCatalogTracks(catalog, 'video').filter(isLocTrack)
     this.languages = languageOptions(extractCatalogTracks(catalog, 'audio').filter(isLocTrack))
