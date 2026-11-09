@@ -82,7 +82,7 @@ const DRAFT14_ALPN: &str = "moq-00";
 /// draft-18 §3.1.3 / §3.1.4: the WebTransport subprotocol and the ALPN.
 const DRAFT18_PROTOCOL: &str = "moqt-18";
 
-const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The drafts `ClientConfig::default()` offers.
 pub const DEFAULT_VERSIONS: &[Version] = &[Version::Draft14];
