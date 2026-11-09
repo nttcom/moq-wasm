@@ -2,7 +2,7 @@ use bytes::Bytes;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::sample::Timestamp;
+use crate::sample::{AudioLevel, Timestamp};
 
 // draft-ietf-moq-loc-04 §6.1 property ids.
 pub const TIMESCALE_ID: u64 = 0x08;
@@ -66,13 +66,32 @@ impl LocObject {
         self.varint(TIMESTAMP_ID).map(Timestamp::from_micros)
     }
 
+    /// The Timestamp property in µs (draft-ietf-moq-loc-04 §2.3.1.1–2.3.1.2):
+    /// wall-clock time since the Unix epoch, or media time when a Timescale
+    /// property comes with it. `None` without a Timestamp, with a Timescale of
+    /// 0, or when the media time overflows `u64` µs.
+    pub fn timestamp(&self) -> Option<Timestamp> {
+        let value = self.varint(TIMESTAMP_ID)?;
+        let micros = match self.varint(TIMESCALE_ID) {
+            None => value,
+            Some(0) => return None,
+            Some(timescale) => {
+                u64::try_from(u128::from(value) * 1_000_000 / u128::from(timescale)).ok()?
+            }
+        };
+        Some(Timestamp::from_micros(micros))
+    }
+
     /// The codec extradata; for H.264 this is an AVC decoder configuration record.
     pub fn video_config(&self) -> Option<Bytes> {
         self.bytes(VIDEO_CONFIG_ID)
     }
 
-    pub fn audio_level(&self) -> Option<u64> {
+    /// Decodes the property's least significant 8 bits (draft-ietf-moq-loc-04
+    /// §2.3.3.2).
+    pub fn audio_level(&self) -> Option<AudioLevel> {
         self.varint(AUDIO_LEVEL_ID)
+            .map(|value| AudioLevel::from_byte(value as u8))
     }
 
     fn varint(&self, id: u64) -> Option<u64> {
@@ -121,12 +140,19 @@ mod tests {
             object.capture_timestamp(),
             Some(Timestamp::from_micros(1_700_000_000_000_000))
         );
-        assert_eq!(object.audio_level(), Some(42));
+        assert_eq!(object.timestamp(), object.capture_timestamp());
+        assert_eq!(
+            object.audio_level(),
+            Some(AudioLevel {
+                level: 42,
+                voice_activity: false
+            })
+        );
         assert_eq!(object.video_config(), Some(Bytes::from_static(&[1, 0x42])));
     }
 
     #[test]
-    fn reads_no_capture_timestamp_from_a_timestamp_in_media_time() {
+    fn reads_a_timestamp_in_media_time_as_micros_but_no_capture_timestamp() {
         // Arrange
         let object = LocObject {
             extensions: vec![
@@ -137,6 +163,7 @@ mod tests {
         };
 
         // Act / Assert
+        assert_eq!(object.timestamp(), Some(Timestamp::from_micros(2_000_000)));
         assert_eq!(object.capture_timestamp(), None);
     }
 

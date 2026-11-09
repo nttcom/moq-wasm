@@ -20,7 +20,7 @@ use crate::{
 pub(crate) struct UniStreamReceiveTask;
 
 impl UniStreamReceiveTask {
-    pub(crate) fn run(connection: Arc<Connection>, stream_span: Span) -> JoinHandle {
+    pub(crate) fn run(connection: Arc<Connection>, session_span: Span) -> JoinHandle {
         executor::spawn(
             "Uni Stream Receiver",
             async move {
@@ -48,7 +48,7 @@ impl UniStreamReceiveTask {
                     })
                     .await;
             }
-            .instrument(stream_span),
+            .instrument(session_span),
         )
     }
 

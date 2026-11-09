@@ -5,11 +5,14 @@ use bytes::Bytes;
 use futures::future::join_all;
 use tokio::sync::Mutex;
 
-use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
 use crate::{
-    Publisher, Session, SessionEvent, TrackWriter, TransportSendError,
-    fetch::{FetchCancelHandler, FetchHandler, FetchParams},
+    Publisher, Session, SessionEvent, Subscription, TrackWriter, TransportSendError,
+    fetch::{
+        FetchCancelHandler, FetchHandler, FetchParams, JoinPoint, JoiningFetchError, JoiningStart,
+        resolve_joining_fetch,
+    },
     modules::{executor, moqt::domains::session_context::SessionContext},
     object::{ContentExists, ExtensionHeaders, Location},
     publish::PublishOption,
@@ -84,13 +87,24 @@ pub enum WriteOutcome {
 #[derive(Clone, Default)]
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
+    /// Makes `publish` calls run one at a time while `state` is not held across
+    /// the PUBLISH_OK wait, so two calls cannot both send PUBLISH. `release`
+    /// waits on it for a request it does not know yet. Taken before `state`,
+    /// never while holding it.
+    publishing: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
 struct OriginState {
     tracks: HashMap<TrackKey, OriginTrack>,
-    subscriptions: HashMap<RequestKey, TrackKey>,
+    subscriptions: HashMap<RequestKey, OriginSubscription>,
     fetches: HashMap<RequestKey, FetchServeTask>,
+}
+
+struct OriginSubscription {
+    track: TrackKey,
+    /// `None` for a PUBLISH this endpoint sent, which no Joining Fetch names.
+    join_point: Option<JoinPoint>,
 }
 
 impl OriginState {
@@ -113,6 +127,9 @@ enum Publication {
     /// A PUBLISH the peer unsubscribed from; kept so that `publish` does not
     /// send it again.
     Released,
+    /// Marked by `end_track` while a write held the writer; the write ends the
+    /// outlet when it returns the writer.
+    Ending,
 }
 
 struct OriginTrack {
@@ -128,6 +145,8 @@ struct Outlet {
     /// The Start Location (draft-14 §9.7); objects before it are not sent.
     start: Location,
     writer: Option<TrackWriter>,
+    publisher: Publisher,
+    subscription: Subscription,
 }
 
 impl OriginTrack {
@@ -149,6 +168,23 @@ impl OriginTrack {
 impl Outlet {
     fn serving(&self) -> bool {
         self.publication != Publication::Released
+    }
+
+    /// Finishes the open group before PUBLISH_DONE, which draft-14 §9.12
+    /// forbids until every stream of the subscription is closed.
+    async fn end(self, writer: TrackWriter) -> Result<()> {
+        let opened_streams = writer.opened_streams();
+        if let Err(error) = writer.finish().await {
+            tracing::debug!(?error, "open group could not be finished");
+        }
+        self.publisher
+            .publish_done(
+                &self.subscription,
+                PublishDoneCode::TrackEnded,
+                opened_streams,
+                "track ended".to_string(),
+            )
+            .await
     }
 }
 
@@ -180,12 +216,13 @@ impl Origin {
     ) -> Result<()> {
         let key = track_key(namespace, track_name);
         let context = session.context();
-        let mut state = self.state.lock().await;
-        let track = state.track_mut(&key)?;
-        let next_group_id = track.numbering.next_group_id();
-        let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         let key_of_session = session_key(context);
-        if track
+        let _publishing = self.publishing.lock().await;
+        if self
+            .state
+            .lock()
+            .await
+            .track_mut(&key)?
             .outlets
             .iter()
             .any(|outlet| outlet.request.0 == key_of_session)
@@ -201,8 +238,13 @@ impl Origin {
             )
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
-        let request = (session_key(context), subscription.request_id());
-        state.track_mut(&key)?.outlets.push(Outlet {
+        let request = (key_of_session, subscription.request_id());
+        let track_alias = subscription.track_alias();
+        let mut state = self.state.lock().await;
+        let track = state.track_mut(&key)?;
+        let next_group_id = track.numbering.next_group_id();
+        let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
+        track.outlets.push(Outlet {
             request,
             publication: Publication::Published,
             start,
@@ -210,12 +252,20 @@ impl Origin {
                 publisher.create_stream(&subscription),
                 next_group_id,
             )),
+            publisher,
+            subscription,
         });
-        state.subscriptions.insert(request, key);
-        tracing::info!(
-            namespace,
+        state.subscriptions.insert(
+            request,
+            OriginSubscription {
+                track: key,
+                join_point: None,
+            },
+        );
+        tracing::debug!(
+            track_namespace = namespace,
             track_name,
-            track_alias = subscription.track_alias(),
+            track_alias,
             "track published"
         );
         Ok(())
@@ -313,7 +363,7 @@ impl Origin {
                     return Some(SessionEvent::Subscribe(handler));
                 }
                 if let Err(err) = self.accept_subscribe(handler).await {
-                    tracing::warn!(namespace = %key.0, track_name = %key.1, ?err, "failed to accept SUBSCRIBE");
+                    tracing::warn!(track_namespace = %key.0, track_name = %key.1, error = ?err, "failed to accept SUBSCRIBE");
                 }
             }
             SessionEvent::Unsubscribe(handler) => {
@@ -324,14 +374,14 @@ impl Origin {
             SessionEvent::Fetch(handler) => {
                 let request_id = handler.request_id;
                 if let Err(err) = self.serve_fetch(handler).await {
-                    tracing::warn!(request_id, ?err, "failed to answer FETCH");
+                    tracing::warn!(request_id, error = ?err, "failed to answer FETCH");
                 }
             }
             SessionEvent::FetchCancel(handler) => self.cancel_fetch(&handler).await,
             SessionEvent::TrackStatus(handler) => {
                 let request_id = handler.request_id();
                 if let Err(err) = self.answer_track_status(handler).await {
-                    tracing::warn!(request_id, ?err, "failed to answer TRACK_STATUS");
+                    tracing::warn!(request_id, error = ?err, "failed to answer TRACK_STATUS");
                 }
             }
             event => return Some(event),
@@ -342,12 +392,13 @@ impl Origin {
     /// Serves the SUBSCRIBE on the session it arrived on.
     pub async fn accept_subscribe(&self, handler: SubscribeHandler) -> Result<()> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
-        let content_exists = {
-            let mut state = self.state.lock().await;
-            content_exists(state.track_mut(&key)?.numbering.largest())
-        };
+        // Hold the lock until the outlet is registered: the peer can act on
+        // SUBSCRIBE_OK before then, and an `end_track` or `write` in that gap
+        // would miss this subscription.
+        let mut state = self.state.lock().await;
+        let largest = state.track_mut(&key)?.numbering.largest();
         let track_alias = handler
-            .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists)
+            .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists(largest))
             .await
             .context("accept SUBSCRIBE")?;
         let subscription = handler.into_subscription(track_alias);
@@ -355,7 +406,6 @@ impl Origin {
         let publisher = Publisher {
             session: context.clone(),
         };
-        let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
         let start = handler
@@ -370,10 +420,18 @@ impl Origin {
                 publisher.create_stream(&subscription),
                 next_group_id,
             )),
+            publisher,
+            subscription,
         });
-        state.subscriptions.insert(request, key);
+        state.subscriptions.insert(
+            request,
+            OriginSubscription {
+                track: key,
+                join_point: Some(JoinPoint::new(&handler.filter_type, largest)),
+            },
+        );
         tracing::info!(
-            namespace = %handler.track_namespace,
+            track_namespace = %handler.track_namespace,
             track_name = %handler.track_name,
             track_alias,
             "SUBSCRIBE accepted"
@@ -402,7 +460,14 @@ impl Origin {
             handler.subscribe_id(),
         );
         let mut state = self.state.lock().await;
-        let key = state.subscriptions.remove(&request)?;
+        if !state.subscriptions.contains_key(&request) {
+            // The peer can UNSUBSCRIBE right after its PUBLISH_OK, before
+            // `publish` registers the request; wait for that `publish` to finish.
+            drop(state);
+            let _publishing = self.publishing.lock().await;
+            state = self.state.lock().await;
+        }
+        let key = state.subscriptions.remove(&request)?.track;
         let mut released = None;
         if let Some(track) = state.tracks.get_mut(&key) {
             track.outlets.retain_mut(|outlet| {
@@ -424,28 +489,59 @@ impl Origin {
         Some(key)
     }
 
-    pub async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
-        let FetchParams::Standalone {
-            track_namespace,
-            track_name,
-            start_location,
-            end_location,
-        } = &handler.fetch.fetch_params
-        else {
-            handler
-                .error(
-                    RequestErrorCode::NotSupported,
-                    "only standalone FETCH is served".to_string(),
-                )
-                .await?;
-            return Ok(());
+    /// Ends every subscription to the track with PUBLISH_DONE (TRACK_ENDED,
+    /// draft-ietf-moq-transport-14 §9.12). Does nothing for a track that is
+    /// not registered. The track keeps its numbering and cache, so `publish`
+    /// or a SUBSCRIBE takes it up again at the next group.
+    pub async fn end_track(&self, namespace: &str, track_name: &str) -> Result<()> {
+        let key = track_key(namespace, track_name);
+        let ended = {
+            let mut state = self.state.lock().await;
+            let Some(track) = state.tracks.get_mut(&key) else {
+                return Ok(());
+            };
+            let mut ended = Vec::new();
+            let mut requests = Vec::new();
+            for mut outlet in std::mem::take(&mut track.outlets) {
+                requests.push(outlet.request);
+                match outlet.writer.take() {
+                    Some(writer) => ended.push((outlet, writer)),
+                    None if outlet.serving() => {
+                        outlet.publication = Publication::Ending;
+                        track.outlets.push(outlet);
+                    }
+                    None => {}
+                }
+            }
+            for request in requests {
+                state.subscriptions.remove(&request);
+            }
+            ended
         };
-        let key = (track_namespace.join("/"), track_name.clone());
+        end_outlets(ended).await
+    }
+
+    /// Serves a Standalone or Joining Fetch from the cache. A Joining Fetch
+    /// names a SUBSCRIBE this origin accepted on the same session (draft-14
+    /// §9.16.2).
+    pub async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
         let mut state = self.state.lock().await;
+        let (key, start_location, end_location) = match fetch_target(&state, &handler) {
+            Ok(target) => target,
+            Err(error) => {
+                drop(state);
+                tracing::warn!(request_id = handler.request_id, %error, "Joining FETCH rejected");
+                match error.request_error_code() {
+                    Some(code) => handler.error(code, error.to_string()).await?,
+                    None => handler.close_for_protocol_violation(&error.to_string()),
+                }
+                return Ok(());
+            }
+        };
         let range = state
             .tracks
             .get(&key)
-            .map(|track| track.cache.resolve(*start_location, *end_location));
+            .map(|track| track.cache.resolve(start_location, end_location));
         let (code, reason) = match range {
             None => (RequestErrorCode::TrackDoesNotExist, "track not published"),
             Some(FetchRange::InvalidRange) => (RequestErrorCode::InvalidRange, "invalid range"),
@@ -458,7 +554,7 @@ impl Origin {
             }) => {
                 tracing::info!(
                     request_id = handler.request_id,
-                    namespace = %key.0,
+                    track_namespace = %key.0,
                     track_name = %key.1,
                     objects = objects.len(),
                     "FETCH served from the origin cache"
@@ -535,9 +631,14 @@ impl Origin {
         // Writers whose outlet was released or replaced during the write; reset,
         // not dropped (a drop FINs).
         let mut orphaned = Vec::new();
+        let mut ended = Vec::new();
         for (request, writer, result) in results {
-            match track.outlet_mut(request) {
-                Some(outlet) if outlet.writer.is_none() && outlet.serving() => {
+            let ending = track.outlets.iter().position(|outlet| {
+                outlet.request == request && outlet.publication == Publication::Ending
+            });
+            match (ending, track.outlet_mut(request)) {
+                (Some(index), _) => ended.push((track.outlets.remove(index), writer)),
+                (None, Some(outlet)) if outlet.writer.is_none() && outlet.serving() => {
                     outlet.writer = Some(writer)
                 }
                 _ => orphaned.push(writer),
@@ -547,14 +648,14 @@ impl Origin {
                 Ok(false) => {}
                 Err(error) if TransportSendError::is_stopped_by_peer(&error) => {
                     tracing::info!(
-                        namespace = %key.0,
+                        track_namespace = %key.0,
                         track_name = %key.1,
                         "subscriber stopped a subgroup; the track resumes at the next group"
                     );
                     stopped = true;
                 }
                 Err(error) => {
-                    tracing::debug!(namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
+                    tracing::debug!(track_namespace = %key.0, track_name = %key.1, %error, "send failed on one session");
                     failure.get_or_insert(error);
                 }
             }
@@ -562,6 +663,9 @@ impl Origin {
         drop(state);
         for writer in orphaned {
             writer.cancel().await;
+        }
+        if let Err(error) = end_outlets(ended).await {
+            tracing::debug!(%error, "PUBLISH_DONE could not be sent");
         }
         if sent {
             return Ok(WriteOutcome::Sent(placement));
@@ -576,6 +680,47 @@ impl Origin {
     }
 }
 
+/// The track and the `[start, end)` range a FETCH asks for, in the Standalone
+/// Fetch encoding.
+fn fetch_target(
+    state: &OriginState,
+    handler: &FetchHandler,
+) -> Result<(TrackKey, Location, Location), JoiningFetchError> {
+    let (joining_request_id, joining_start) = match &handler.fetch.fetch_params {
+        FetchParams::Standalone {
+            track_namespace,
+            track_name,
+            start_location,
+            end_location,
+        } => {
+            return Ok((
+                (track_namespace.join("/"), track_name.clone()),
+                *start_location,
+                *end_location,
+            ));
+        }
+        FetchParams::RelativeJoining {
+            joining_request_id,
+            joining_start,
+        } => (*joining_request_id, JoiningStart::Relative(*joining_start)),
+        FetchParams::AbsoluteJoining {
+            joining_request_id,
+            joining_start,
+        } => (*joining_request_id, JoiningStart::Absolute(*joining_start)),
+    };
+    let request = (
+        session_key(&handler.session_context),
+        handler.logical_request_id(joining_request_id),
+    );
+    let (track, join_point) = state
+        .subscriptions
+        .get(&request)
+        .and_then(|subscription| Some((&subscription.track, subscription.join_point?)))
+        .ok_or(JoiningFetchError::UnknownSubscription)?;
+    let (start, end) = resolve_joining_fetch(joining_start, join_point)?;
+    Ok((track.clone(), start, end))
+}
+
 fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWriter)> {
     track
         .outlets
@@ -585,6 +730,17 @@ fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWrit
             Some((outlet.request, outlet.start, writer))
         })
         .collect()
+}
+
+/// Returns the first failure after trying every outlet.
+async fn end_outlets(outlets: Vec<(Outlet, TrackWriter)>) -> Result<()> {
+    let results = join_all(
+        outlets
+            .into_iter()
+            .map(|(outlet, writer)| outlet.end(writer)),
+    )
+    .await;
+    results.into_iter().collect()
 }
 
 fn session_key(session: &Arc<SessionContext>) -> SessionKey {
@@ -650,10 +806,10 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            accept_publish, read_fetch_objects, rejection, spawn_connected_dual_sessions,
+            accept_publish, read_fetch_objects, rejection, spawn_connected_native_sessions,
             subscribed_track_reader, within,
         },
-        object::{DataReceiver, GroupOrder, Object, Subgroup},
+        object::{DataReceiver, GroupOrder, Object, ObjectStatus, Subgroup},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -669,7 +825,7 @@ mod tests {
     }
 
     async fn origin_with_track(name: &str, retention: Retention) -> Peers {
-        let (client, server) = spawn_connected_dual_sessions(name).await;
+        let (client, server) = spawn_connected_native_sessions(name).await;
         let client = Arc::new(client);
         let origin = Origin::default();
         origin
@@ -756,6 +912,30 @@ mod tests {
         subscription.unwrap()
     }
 
+    /// Runs `request` while the origin serves the FETCH it sends.
+    async fn served<T>(peers: &Peers, request: impl Future<Output = T>) -> T {
+        let (result, ()) = within(async {
+            tokio::join!(request, async {
+                let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
+                else {
+                    panic!("expected FETCH from the relay");
+                };
+                peers.origin.serve_fetch(handler).await.unwrap();
+            })
+        })
+        .await;
+        result
+    }
+
+    async fn read_fetch(
+        subscriber: &mut crate::Subscriber,
+        handle: FetchHandle,
+    ) -> Result<(FetchHandle, Vec<Object>)> {
+        let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+        let objects = within(read_fetch_objects(&mut receiver)).await;
+        Ok((handle, objects))
+    }
+
     async fn fetch(
         peers: &Peers,
         track_name: &str,
@@ -768,29 +948,27 @@ mod tests {
             group_order,
             ..FetchOption::default()
         };
-        let (handle, ()) = within(async {
-            tokio::join!(
-                subscriber.fetch(
-                    NAMESPACE.to_string(),
-                    track_name.to_string(),
-                    start,
-                    end,
-                    option
-                ),
-                async {
-                    let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
-                    else {
-                        panic!("expected FETCH from the relay");
-                    };
-                    peers.origin.serve_fetch(handler).await.unwrap();
-                }
-            )
-        })
-        .await;
-        let handle = handle?;
-        let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-        let objects = within(read_fetch_objects(&mut receiver)).await;
-        Ok((handle, objects))
+        let request = subscriber.fetch(
+            NAMESPACE.to_string(),
+            track_name.to_string(),
+            start,
+            end,
+            option,
+        );
+        let handle = served(peers, request).await?;
+        read_fetch(&mut subscriber, handle).await
+    }
+
+    async fn joining_fetch(
+        peers: &Peers,
+        subscription: &Subscription,
+        joining_start: u64,
+    ) -> Result<(FetchHandle, Vec<Object>)> {
+        let mut subscriber = peers.server.subscriber();
+        let request =
+            subscriber.fetch_relative_joining(subscription, joining_start, FetchOption::default());
+        let handle = served(peers, request).await?;
+        read_fetch(&mut subscriber, handle).await
     }
 
     async fn track_status(
@@ -813,6 +991,21 @@ mod tests {
         })
         .await;
         status
+    }
+
+    async fn end_track(peers: &Peers) -> crate::publish::PublishDoneHandler {
+        let (ended, done) = within(async {
+            tokio::join!(peers.origin.end_track(NAMESPACE, TRACK), async {
+                let SessionEvent::PublishDone(done) = peers.server.receive_event().await.unwrap()
+                else {
+                    panic!("expected PUBLISH_DONE");
+                };
+                done
+            })
+        })
+        .await;
+        ended.unwrap();
+        done
     }
 
     async fn next_object(peers: &Peers, subscription: &Subscription) -> TrackObject {
@@ -868,6 +1061,45 @@ mod tests {
             ]
         );
         assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+    }
+
+    #[tokio::test]
+    async fn a_write_does_not_wait_for_an_unanswered_publish() {
+        // Arrange
+        let peers = origin_with_track("origin-publish-unanswered", RETENTION).await;
+        let origin = &peers.origin;
+
+        // Act
+        let (published, (written, accepted)) = within(async {
+            tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
+                let SessionEvent::Publish(handler) = peers.server.receive_event().await.unwrap()
+                else {
+                    panic!("expected PUBLISH from the client");
+                };
+                let written = origin
+                    .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                    .await
+                    .unwrap();
+                let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
+                handler.accept_data_receiver().await;
+                (written, accepted)
+            })
+        })
+        .await;
+        let next_group = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+            .await
+            .unwrap();
+        let received = next_object(&peers, &accepted).await;
+
+        // Assert: the write while PUBLISH_OK was pending is cached only; the track is sent from the next group
+        published.unwrap();
+        assert_eq!(written, WriteOutcome::NotSent);
+        assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+        assert_eq!(
+            (received.group_id, received.payload),
+            (FIRST_GROUP_ID + 1, Bytes::from_static(b"b"))
+        );
     }
 
     #[tokio::test]
@@ -1027,6 +1259,95 @@ mod tests {
 
         // Assert: the stream is reset (receive errors), not finished
         assert!(within(subgroup.receive()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn end_track_finishes_the_open_group_and_counts_every_stream_in_publish_done() {
+        // Arrange: two groups were sent, the second one is still open
+        let peers = origin_with_track("origin-end-track", RETENTION).await;
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+        let mut streams = None;
+        let mut subgroups = Vec::new();
+        for payload in [b"a" as &'static [u8], b"b"] {
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, payload))
+                .await
+                .unwrap();
+            if streams.is_none() {
+                let DataReceiver::Stream(receiver) = peers
+                    .server
+                    .subscriber()
+                    .accept_data_receiver(&subscription)
+                    .await
+                    .unwrap()
+                else {
+                    panic!("expected a subgroup stream receiver");
+                };
+                streams = Some(receiver);
+            }
+            let mut subgroup = within(streams.as_mut().unwrap().next()).await.unwrap();
+            assert!(matches!(
+                within(subgroup.receive()).await,
+                Ok(Some(Subgroup::Header(_)))
+            ));
+            assert!(matches!(
+                within(subgroup.receive()).await,
+                Ok(Some(Subgroup::Object(_)))
+            ));
+            subgroups.push(subgroup);
+        }
+
+        // Act
+        let done = end_track(&peers).await;
+        let end_of_group = within(subgroups[1].receive()).await;
+        let fin = within(subgroups[1].receive()).await;
+
+        // Assert: the open group ends with End of Group and a FIN, not a reset
+        assert_eq!(done.request_id(), subscription.request_id());
+        assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
+        assert_eq!(done.stream_count(), 2);
+        assert!(
+            matches!(&end_of_group, Ok(Some(Subgroup::Object(object))) if object.status == ObjectStatus::EndOfGroup),
+            "{end_of_group:?}"
+        );
+        assert!(matches!(fin, Ok(None)), "{fin:?}");
+    }
+
+    #[tokio::test]
+    async fn an_ended_track_is_published_again_and_continues_its_group_ids() {
+        // Arrange
+        let peers = origin_with_track("origin-end-track-republish", RETENTION).await;
+        publish(&peers).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let done = end_track(&peers).await;
+
+        // Act
+        let while_ended = peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+            .await
+            .unwrap();
+        let accepted = publish(&peers).await;
+        let after = peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
+            .await
+            .unwrap();
+        let received = next_object(&peers, &accepted).await;
+
+        // Assert
+        assert_eq!(done.stream_count(), 1);
+        assert_eq!(while_ended, WriteOutcome::NotSent);
+        assert_eq!(after, sent(FIRST_GROUP_ID + 2, 0, true));
+        assert_eq!(
+            (received.group_id, received.payload),
+            (FIRST_GROUP_ID + 2, Bytes::from_static(b"c"))
+        );
     }
 
     #[tokio::test]
@@ -1251,6 +1572,113 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_joining_fetch_ends_at_the_largest_object_its_subscribe_ok_reported() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch", RETENTION).await;
+        let origin = &peers.origin;
+        for group in [
+            GroupBoundary::Next,
+            GroupBoundary::Next,
+            GroupBoundary::Within,
+        ] {
+            origin
+                .write(NAMESPACE, TRACK, plain(group, b"a"))
+                .await
+                .unwrap();
+        }
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"live"))
+            .await
+            .unwrap();
+
+        // Act
+        let (current_group, current_group_objects) =
+            joining_fetch(&peers, &subscription, 0).await.unwrap();
+        let (previous_groups, previous_groups_objects) =
+            joining_fetch(&peers, &subscription, 1).await.unwrap();
+
+        // Assert
+        assert_eq!(current_group.end_location, location(8, 2));
+        assert_eq!(ids(&current_group_objects), vec![(8, 0), (8, 1)]);
+        assert_eq!(previous_groups.end_location, location(8, 2));
+        assert_eq!(ids(&previous_groups_objects), vec![(7, 0), (8, 0), (8, 1)]);
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_subscription_answered_without_content_is_an_invalid_range() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch-empty", RETENTION).await;
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Act
+        let result = joining_fetch(&peers, &subscription, 0).await;
+
+        // Assert
+        assert_eq!(rejection(result).code, RequestErrorCode::InvalidRange);
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_released_subscription_names_an_invalid_request_id() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch-released", RETENTION).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let subscription = subscribe(&peers, FilterType::LargestObject).await;
+        unsubscribe(&peers, &subscription).await.unwrap();
+
+        // Act
+        let result = joining_fetch(&peers, &subscription, 0).await;
+
+        // Assert
+        assert_eq!(
+            rejection(result).code,
+            RequestErrorCode::InvalidJoiningRequestId
+        );
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_of_a_next_group_start_subscription_closes_the_session() {
+        // Arrange
+        let peers = origin_with_track("origin-joining-fetch-violation", RETENTION).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+        let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+
+        // Act
+        let mut subscriber = peers.server.subscriber();
+        let (result, event) = within(async {
+            tokio::join!(
+                subscriber.fetch_relative_joining(&subscription, 0, FetchOption::default()),
+                async {
+                    let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
+                    else {
+                        panic!("expected FETCH from the relay");
+                    };
+                    peers.origin.serve_fetch(handler).await.unwrap();
+                    peers.client.receive_event().await.unwrap()
+                }
+            )
+        })
+        .await;
+
+        // Assert
+        assert!(result.is_err());
+        assert!(matches!(event, SessionEvent::ProtocolViolation()));
+    }
+
+    #[tokio::test]
     async fn cancel_fetch_aborts_the_pending_response() {
         // Arrange
         let peers = origin_with_track("origin-fetch-cancel", RETENTION).await;
@@ -1299,7 +1727,7 @@ mod tests {
     async fn a_track_taken_on_two_sessions_is_written_to_both_until_one_releases_it() {
         // Arrange
         let first = origin_with_track("origin-two-sessions-a", RETENTION).await;
-        let (client, server) = spawn_connected_dual_sessions("origin-two-sessions-b").await;
+        let (client, server) = spawn_connected_native_sessions("origin-two-sessions-b").await;
         let second = Peers {
             origin: first.origin.clone(),
             client: Arc::new(client),

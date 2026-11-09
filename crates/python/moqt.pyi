@@ -2,8 +2,9 @@
 
 from collections.abc import AsyncIterator
 
-async def connect(url: str, *, verify_certificate: bool = True) -> Session:
-    """`moqt://` connects over raw QUIC, `https://` over WebTransport. The session follows the relay's GOAWAY."""
+async def connect(url: str, *, verify_certificate: bool = True, token: str | None = None) -> Session:
+    """`moqt://` connects over raw QUIC, `https://` over WebTransport, presenting `token` (a JWT) in
+    CLIENT_SETUP. The session follows the relay's GOAWAY with the latest token it was given."""
 
 class Session:
     async def subscribe_namespace(self, prefix: list[str]) -> NamespaceEvents:
@@ -15,6 +16,10 @@ class Session:
     async def track(self, namespace: list[str], name: str, *, retention_seconds: float) -> TrackPublication:
         """Registers a track that the session answers SUBSCRIBE and FETCH for. Register it before
         `publish_namespace`, since the relay may forward a SUBSCRIBE at once."""
+    async def refresh_token(self, token: str, *, app_id: str) -> None:
+        """Hands the relay `token`, a later token of the same app, before the current one expires
+        (a TRACK_STATUS for `[app_id]` that carries it). Raises RuntimeError for a session connected
+        without a token or a token the relay refuses; the session then keeps its current token."""
     async def closed(self) -> None:
         """Waits until the relay closes the session."""
     async def close(self) -> None: ...

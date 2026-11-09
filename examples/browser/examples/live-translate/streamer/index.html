@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Translate Streamer</title>
+    <link rel="stylesheet" href="../../media/media.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div>
+          <span class="pill">Live Translate</span>
+          <h1>配信する</h1>
+          <p>カメラとマイクを配信し、視聴者は好きな言語の音声で見られます。</p>
+        </div>
+      </header>
+      <div id="app" class="control-grid">
+        <section class="card stack">
+          <h2>配信</h2>
+          <label for="url">Relay URL:</label>
+          <input type="url" id="url" data-testid="streamer-url-input" />
+          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <p>
+            配信 ID: <strong id="broadcast-id" data-testid="streamer-broadcast-id"></strong>
+            <button type="button" id="copyBroadcastIdBtn" data-testid="streamer-copy-broadcast-id">コピー</button>
+          </p>
+          <div class="button-row">
+            <button type="button" id="startBtn" data-testid="streamer-start-button">配信開始</button>
+            <button type="button" id="stopBtn">停止</button>
+          </div>
+          <p id="streamer-status" class="hint" data-testid="streamer-status"></p>
+        </section>
+        <section id="viewer-link-section" class="card stack" hidden>
+          <h2>視聴リンク</h2>
+          <p class="hint">このリンクを視聴者に共有します。</p>
+          <a id="viewer-link" target="_blank" rel="noopener" data-testid="streamer-viewer-link"></a>
+          <div class="button-row">
+            <button type="button" id="copyViewerLinkBtn" data-testid="streamer-copy-viewer-link">リンクをコピー</button>
+          </div>
+        </section>
+        <section class="card stack full">
+          <h2>プレビュー</h2>
+          <video id="preview" autoplay muted playsinline></video>
+        </section>
+      </div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

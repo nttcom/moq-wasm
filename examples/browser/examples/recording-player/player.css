@@ -1,0 +1,49 @@
+@import 'tailwindcss';
+
+@layer components {
+  .field {
+    @apply h-11 w-full rounded-md border border-slate-700 bg-slate-800 px-3 text-base text-white placeholder:text-slate-500 focus:border-blue-400 focus:outline-none;
+  }
+
+  .round-button {
+    @apply inline-flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full text-white transition hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100;
+  }
+
+  .round-button svg:not([fill]) {
+    @apply fill-none stroke-current stroke-2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .sidebar-tab {
+    @apply cursor-pointer rounded-md px-3 py-1 text-sm font-semibold text-slate-400 transition hover:text-white aria-selected:bg-white/15 aria-selected:text-white;
+  }
+
+  .event-list {
+    @apply mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1;
+  }
+
+  .event-list:empty::before {
+    @apply text-blue-100;
+  }
+
+  #chat:empty::before {
+    content: 'No messages at this point.';
+  }
+
+  #transcript:empty::before {
+    content: 'Nothing transcribed at this point.';
+  }
+
+  #relayPresets button {
+    @apply cursor-pointer rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300 transition hover:bg-slate-700 hover:text-white;
+  }
+
+  .source > .live-player-picture {
+    @apply h-full object-contain;
+  }
+
+  #seek {
+    accent-color: var(--color-blue-500);
+  }
+}

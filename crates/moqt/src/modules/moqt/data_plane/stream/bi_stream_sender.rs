@@ -30,4 +30,9 @@ impl BiStreamSender {
         let mut stream_sender = self.stream_sender.lock().await;
         stream_sender.send(&message_bytes).await
     }
+
+    #[cfg(test)]
+    pub(crate) async fn hold(&self) -> tokio::sync::MutexGuard<'_, BoxedSendStream> {
+        self.stream_sender.lock().await
+    }
 }

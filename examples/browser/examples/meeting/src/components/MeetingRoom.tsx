@@ -9,6 +9,7 @@ import { useCaptions } from '../hooks/useCaptions'
 import { useRoomRecording } from '../hooks/useRoomRecording'
 import { resolveRecorderUrl } from '../recording/recorderApi'
 import { RoomHeader } from './RoomHeader'
+import { sampleRoom } from '../telemetry'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
 import { useRetryBackoff } from '../hooks/useRetryBackoff'
@@ -22,25 +23,17 @@ import {
   isSwitchableRole
 } from '../types/catalog'
 import { catalogTracksForRole, pickHighestBitrateTrack, pickLowestBitrateTrack } from '../media/meetingCatalog'
+import { sameCodecIgnoringLevel } from '../utils/codecLevel'
 import { checkCodecSupport } from '../utils/codecSupport'
 import type { VideoAdaptation } from '../media/mediaSubscriber'
-import type { LocalStatsSample, RemoteStatsSample, VideoSendTiming } from '../types/stats'
+import type { RemoteStatsSample } from '../types/stats'
 import { buildTrackActionKey, updateMemberSubscriptionStateByRole } from '../utils/state/roomState'
 import { type StageView, arrangeStage, tileKey } from '../utils/stageLayout'
-import { capLadderToHeight } from '@player/adaptiveBitrate'
+import { type Rung, capLadderToHeight } from 'moq-wasm/media/player/adaptiveBitrate'
 
 interface MeetingRoomProps {
   session: LocalSession
   onLeave: () => void
-}
-
-type StatsSnapshot = {
-  localCameraBitrate: number | null
-  localScreenShareBitrate: number | null
-  localAudioBitrate: number | null
-  localCameraVideoSendTiming: VideoSendTiming | null
-  localScreenShareVideoSendTiming: VideoSendTiming | null
-  remoteMembers: RemoteMember[]
 }
 
 const SIDEBAR_STATS_SAMPLE_INTERVAL_MS = 1000
@@ -52,6 +45,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const userName = session.localMember.name
   const recording = useRoomRecording(
     resolveRecorderUrl(window.location.search, session.relayUrl),
+    session.relayUrl,
     session.trackNamespacePrefix.join('/')
   )
   const [transcriberPresent, setTranscriberPresent] = useState(false)
@@ -70,7 +64,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       setTileHeights((prev) => (prev.get(key) === heightPx ? prev : new Map(prev).set(key, heightPx))),
     []
   )
-  const [localStatsHistory, setLocalStatsHistory] = useState<LocalStatsSample[]>([])
   const [remoteStatsHistory, setRemoteStatsHistory] = useState<Map<string, RemoteStatsSample[]>>(new Map())
   const [remoteCatalogTracks, setRemoteCatalogTracks] = useState<Map<string, MeetingCatalogTrack[]>>(new Map())
   const [remoteCatalogSelections, setRemoteCatalogSelections] = useState<Map<string, CatalogSelections>>(new Map())
@@ -81,6 +74,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   const [manualTrackKeys, setManualTrackKeys] = useState<Set<string>>(new Set())
   /// The `onPreferred` callback is fixed at SUBSCRIBE; this ref routes it to
   /// the latest render's handler.
+  /// Read by the Auto ladders, which outlive the render that built them.
+  const remoteCatalogTracksRef = useRef<Map<string, MeetingCatalogTrack[]>>(new Map())
   const adaptiveChoiceRef = useRef<(memberId: string, role: CatalogSubscribeRole, trackName: string) => void>(() => {})
   const { backoff: chatSubscribeBackoff, retryTick: chatSubscribeRetryTick } = useRetryBackoff('chat-auto-subscribe')
   const { backoff: catalogSubscribeBackoff, retryTick: catalogSubscribeRetryTick } =
@@ -96,28 +91,18 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     microphoneBusy,
     localVideoStream,
     localScreenShareStream,
-    localAudioBitrate,
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
     remotePictures,
     toggleCamera,
     toggleScreenShare,
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoCodecOptions,
     videoResolutionOptions,
-    videoBitrateOptions,
     videoHardwareAccelerationOptions,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,
     selectScreenShareEncoding,
-    audioCodecOptions,
-    audioBitrateOptions,
-    audioChannelOptions,
     videoDevices,
     audioDevices,
     selectedVideoDeviceId,
@@ -127,22 +112,10 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     captureSettings,
     updateCaptureSettings,
     applyCaptureSettings,
-    catalogTracks,
-    subscribedCatalogTracks,
-    addCatalogTrack,
-    updateCatalogTrack,
-    removeCatalogTrack,
     notice
   } = useMeetingMedia(session)
 
-  const statsSnapshotRef = useRef<StatsSnapshot>({
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localAudioBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
-    remoteMembers: []
-  })
+  const remoteMembersRef = useRef<RemoteMember[]>([])
 
   const [room, setRoom] = useState<Room>(() => ({
     name: roomName,
@@ -193,7 +166,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setCatalogSubscribedMemberIds(new Set())
     setCatalogUnsubscribingTrackKeys(new Set())
     setIsSidebarOpen(false)
-    setLocalStatsHistory([])
     setRemoteStatsHistory(new Map())
   }, [session])
 
@@ -209,41 +181,17 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }, [room.remoteMembers])
 
   useEffect(() => {
-    statsSnapshotRef.current = {
-      localCameraBitrate,
-      localScreenShareBitrate,
-      localAudioBitrate,
-      localCameraVideoSendTiming,
-      localScreenShareVideoSendTiming,
-      remoteMembers: Array.from(room.remoteMembers.values())
-    }
-  }, [
-    localAudioBitrate,
-    localCameraBitrate,
-    localScreenShareBitrate,
-    localCameraVideoSendTiming,
-    localScreenShareVideoSendTiming,
-    room.remoteMembers
-  ])
+    remoteMembersRef.current = Array.from(room.remoteMembers.values())
+  }, [room.remoteMembers])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const snapshot = statsSnapshotRef.current
       const sampledAt = Date.now()
       const { subscriber } = session.getMediaController()
-      const localSample: LocalStatsSample = {
-        timestamp: sampledAt,
-        cameraBitrateKbps: snapshot.localCameraBitrate,
-        screenShareBitrateKbps: snapshot.localScreenShareBitrate,
-        audioBitrateKbps: snapshot.localAudioBitrate,
-        cameraSend: snapshot.localCameraVideoSendTiming,
-        screenShareSend: snapshot.localScreenShareVideoSendTiming
-      }
-      setLocalStatsHistory((prev) => appendStatsSample(prev, localSample))
       setRemoteStatsHistory(
         (prev) =>
           new Map(
-            snapshot.remoteMembers.map((member) => [
+            remoteMembersRef.current.map((member) => [
               member.id,
               appendStatsSample(prev.get(member.id), { timestamp: sampledAt, ...subscriber.stats(member.id) })
             ])
@@ -253,6 +201,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
 
     return () => window.clearInterval(timer)
   }, [session])
+
+  useEffect(() => sampleRoom(session, () => remoteMembersRef.current), [session])
 
   useSessionEventHandlers({
     session,
@@ -376,33 +326,37 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     }
   }
 
-  /// The ladder is the role's tracks of the same codec as `trackName`, the
-  /// ones a picture can switch between without a gap.
+  remoteCatalogTracksRef.current = remoteCatalogTracks
+
+  /// The role's tracks in the latest catalog of the same codec as `trackName`,
+  /// the ones a picture can switch between without a gap.
+  const videoLadder = (memberId: string, role: CatalogSubscribeRole, trackName: string): Rung[] => {
+    const roleTracks = catalogTracksForRole(remoteCatalogTracksRef.current.get(memberId) ?? [], role)
+    const codec = roleTracks.find((track) => track.name === trackName)?.codec
+    return roleTracks
+      .filter((track) => sameCodecIgnoringLevel(track.codec, codec) && track.bitrate !== undefined)
+      .map((track) => ({ name: track.name, bitrate: track.bitrate ?? 0, height: track.height }))
+      .sort((a, b) => a.bitrate - b.bitrate)
+  }
+
   const buildVideoAdaptation = (
     memberId: string,
     role: CatalogSubscribeRole,
     trackName: string
-  ): VideoAdaptation | undefined => {
-    if (!isSwitchableRole(role)) {
-      return undefined
-    }
-    const roleTracks = catalogTracksForRole(remoteCatalogTracks.get(memberId) ?? [], role)
-    const codec = roleTracks.find((track) => track.name === trackName)?.codec
-    const ladder = roleTracks
-      .filter((track) => track.codec === codec && track.bitrate !== undefined)
-      .map((track) => ({ name: track.name, bitrate: track.bitrate ?? 0, height: track.height }))
-      .sort((a, b) => a.bitrate - b.bitrate)
-    return ladder.length > 1
-      ? { ladder, onPreferred: (choice) => adaptiveChoiceRef.current(memberId, role, choice) }
+  ): VideoAdaptation | undefined =>
+    isSwitchableRole(role)
+      ? {
+          ladder: () => videoLadder(memberId, role, trackName),
+          onPreferred: (choice) => adaptiveChoiceRef.current(memberId, role, choice)
+        }
       : undefined
-  }
 
-  /// Returns undefined, after telling the user, when the browser cannot decode the track.
+  /// Throws when the browser cannot decode the track.
   const resolveTrackMediaConfig = async (
     memberId: string,
     role: CatalogSubscribeRole,
     trackName: string
-  ): Promise<{ config: TrackMediaConfig | undefined } | undefined> => {
+  ): Promise<TrackMediaConfig | undefined> => {
     const selectedTrack =
       role === 'chat'
         ? undefined
@@ -417,21 +371,17 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           reason: unsupportedReason,
           track: selectedTrack
         })
-        window.alert(`Subscribe blocked: ${unsupportedReason}`)
-        return undefined
+        throw new Error(`Subscribe blocked: ${unsupportedReason}`)
       }
     }
-    return {
-      config:
-        role !== 'chat'
-          ? {
-              codec: selectedTrack?.codec,
-              samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
-              channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
-              initData: selectedTrack?.initData
-            }
-          : undefined
-    }
+    return role !== 'chat'
+      ? {
+          codec: selectedTrack?.codec,
+          samplerate: role === 'audio' ? selectedTrack?.samplerate : undefined,
+          channelConfig: role === 'audio' ? selectedTrack?.channelConfig : undefined,
+          initData: selectedTrack?.initData
+        }
+      : undefined
   }
 
   const subscriptionEnded = (memberId: string, role: CatalogSubscribeRole) => (endedId: bigint) =>
@@ -450,27 +400,24 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     if (typeof previousId !== 'bigint' || trackState.isSubscribing) {
       return
     }
-    const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
-    if (!resolved) {
-      return
-    }
+    const config = await resolveTrackMediaConfig(memberId, role, trackName)
     setRoom((currentRoom) =>
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({ ...track, isSubscribing: true }))
     )
     try {
-      const requestId = await session.switchTrack(
+      const subscribeId = await session.switchTrack(
         previousId,
         member.trackNamespace,
         trackName,
         role,
-        resolved.config,
+        config,
         subscriptionEnded(memberId, role),
         buildVideoAdaptation(memberId, role, trackName)
       )
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
-          subscribeId: requestId,
+          subscribeId,
           isSubscribing: false,
           isSubscribed: true
         }))
@@ -499,18 +446,13 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       return
     }
     const memberId = member.id
-    const resolved = await resolveTrackMediaConfig(memberId, role, trackName)
-    if (!resolved) {
-      return
-    }
-    const trackMediaConfig = resolved.config
     const trackState = member.subscribedTracks[role]
     const trackKey = buildTrackActionKey(memberId, role)
     if (trackState.isSubscribed || trackState.isSubscribing || catalogUnsubscribingTrackKeys.has(trackKey)) {
       return
     }
-    // Optimistically mark as subscribing; the request id is unknown until
-    // subscribe() returns it (issued internally by moqtClient).
+    // Set before the first await: an effect of a render committed in that gap could otherwise
+    // run after this subscribe finished, see neither flag and subscribe again.
     setRoom((currentRoom) =>
       updateMemberSubscriptionStateByRole(currentRoom, memberId, role, () => ({
         ...trackState,
@@ -519,20 +461,20 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         subscribeId: undefined
       }))
     )
-
     try {
-      const requestId = await session.subscribe(
+      const config = await resolveTrackMediaConfig(memberId, role, trackName)
+      const subscribeId = await session.subscribe(
         member.trackNamespace,
         trackName,
         role,
-        trackMediaConfig,
+        config,
         subscriptionEnded(memberId, role),
         buildVideoAdaptation(memberId, role, trackName)
       )
       setRoom((currentRoom) =>
         updateMemberSubscriptionStateByRole(currentRoom, memberId, role, (track) => ({
           ...track,
-          subscribeId: requestId,
+          subscribeId,
           isSubscribing: false,
           isSubscribed: true
         }))
@@ -641,7 +583,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             if (heightPx === undefined) {
               continue
             }
-            const ladder = buildVideoAdaptation(member.id, role, selected)?.ladder ?? []
+            const ladder = videoLadder(member.id, role, selected)
             trackName = capLadderToHeight(ladder, heightPx).at(-1)?.name ?? selected
             if (trackName !== selected) {
               selectAndSwitchTrack(member.id, role, trackName)
@@ -695,7 +637,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
         roomName={roomName}
         recording={recording?.active?.state}
         transcribing={transcriberPresent}
-        transcriberStatus={captions?.status}
+        transcriberStarting={captions?.status?.state === 'starting'}
         members={Array.from(room.remoteMembers.values()).map((member) => ({
           id: member.id,
           name: member.name,
@@ -732,29 +674,15 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             selectedAudioDeviceId={selectedAudioDeviceId}
             onSelectVideoDevice={selectVideoDevice}
             onSelectAudioDevice={selectAudioDevice}
-            videoEncodingOptions={{
-              codecOptions: videoCodecOptions,
-              resolutionOptions: videoResolutionOptions,
-              bitrateOptions: videoBitrateOptions
-            }}
+            videoResolutionOptions={videoResolutionOptions}
             videoHardwareAccelerationOptions={videoHardwareAccelerationOptions}
             selectedVideoEncoding={selectedVideoEncoding}
             onSelectVideoEncoding={selectVideoEncoding}
             selectedScreenShareEncoding={selectedScreenShareEncoding}
             onSelectScreenShareEncoding={selectScreenShareEncoding}
-            audioEncodingOptions={{
-              codecOptions: audioCodecOptions,
-              bitrateOptions: audioBitrateOptions,
-              channelOptions: audioChannelOptions
-            }}
             captureSettings={captureSettings}
             onChangeCaptureSettings={updateCaptureSettings}
             onApplyCaptureSettings={applyCaptureSettings}
-            catalogTracks={catalogTracks}
-            subscribedCatalogTracks={subscribedCatalogTracks}
-            onAddCatalogTrack={addCatalogTrack}
-            onUpdateCatalogTrack={updateCatalogTrack}
-            onRemoveCatalogTrack={removeCatalogTrack}
             remoteCatalogTracks={remoteCatalogTracks}
             remoteCatalogSelections={remoteCatalogSelections}
             manualTrackKeys={manualTrackKeys}
@@ -762,7 +690,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             catalogSubscribedMemberIds={catalogSubscribedMemberIds}
             catalogUnsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
             onSelectCatalogTrack={handleSelectCatalogTrack}
-            localStatsHistory={localStatsHistory}
             remoteStatsHistory={remoteStatsHistory}
             stage={stage}
             speakingMemberIds={speakingMemberIds}
@@ -785,7 +712,8 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             onMessageChange={setChatMessage}
             onSend={handleSendChatMessage}
             onToggle={() => setIsSidebarOpen(false)}
-            transcript={captions && transcriberPresent ? captions.records : undefined}
+            captions={captions}
+            transcribing={transcriberPresent}
           />
         )}
       </div>

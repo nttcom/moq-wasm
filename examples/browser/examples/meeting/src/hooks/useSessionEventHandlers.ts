@@ -1,5 +1,4 @@
-import { Dispatch, SetStateAction, useEffect, useRef } from 'react'
-import { PublishNamespaceDoneMessage, PublishNamespaceMessage } from '../../../../pkg/moqt'
+import { Dispatch, SetStateAction, useEffect } from 'react'
 import { LocalSession, LocalSessionState } from '../session/localSession'
 import { isTranscriberNamespace, parseTrackNamespace } from '../session/trackNamespace'
 import { Room } from '../types/room'
@@ -25,8 +24,6 @@ export function useSessionEventHandlers({
   setChatMessages,
   setTranscriberPresent
 }: EventHandlerParams) {
-  const subscribedNamespacesRef = useRef<LocalSession | null>(null)
-
   useEffect(() => {
     const handlePublishNamespace = createPublishNamespaceHandler({
       session,
@@ -46,19 +43,7 @@ export function useSessionEventHandlers({
     })
     session.setOnPublishNamespaceDoneHandler(handlePublishNamespaceDone)
 
-    const ensureSubscribeNamespace = async () => {
-      if (subscribedNamespacesRef.current === session) {
-        return
-      }
-      try {
-        await session.subscribeNamespace(session.trackNamespacePrefix)
-        subscribedNamespacesRef.current = session
-      } catch (error) {
-        console.error('Failed to subscribe namespace:', error)
-      }
-    }
-
-    void ensureSubscribeNamespace()
+    session.subscribeNamespace().catch((error) => console.error('Failed to subscribe namespace:', error))
     return () => {
       session.setOnPublishNamespaceHandler(null)
       session.setOnPublishNamespaceDoneHandler(null)
@@ -82,47 +67,52 @@ interface PublishNamespaceHandlerOptions {
   setTranscriberPresent: Dispatch<SetStateAction<boolean>>
 }
 
-function createPublishNamespaceHandler({
-  session,
-  roomName,
-  userName,
-  setRoom,
-  setTranscriberPresent
-}: PublishNamespaceHandlerOptions) {
-  return (publishNamespace: PublishNamespaceMessage) => {
-    if (session.status !== LocalSessionState.Ready) {
-      return
-    }
-    if (isTranscriberNamespace(publishNamespace.trackNamespace, roomName)) {
-      setTranscriberPresent(true)
-      return
-    }
-    const announced = parseTrackNamespace(publishNamespace.trackNamespace)
-    if (!announced || announced.roomName !== roomName || announced.userName === userName) {
+/// The remote member a namespace in this room announces, once the session is ready. For the
+/// transcriber's namespace it sets whether the transcriber is `present` instead.
+function announcedRemoteMember(
+  { session, roomName, userName, setTranscriberPresent }: PublishNamespaceHandlerOptions,
+  trackNamespace: string[],
+  present: boolean
+) {
+  if (session.status !== LocalSessionState.Ready) {
+    return
+  }
+  if (isTranscriberNamespace(trackNamespace, roomName)) {
+    setTranscriberPresent(present)
+    return
+  }
+  const announced = parseTrackNamespace(trackNamespace)
+  if (!announced || announced.roomName !== roomName || announced.userName === userName) {
+    return
+  }
+  return announced
+}
+
+function createPublishNamespaceHandler(options: PublishNamespaceHandlerOptions) {
+  const { session, setRoom } = options
+  return (trackNamespace: string[]) => {
+    const announced = announcedRemoteMember(options, trackNamespace, true)
+    if (!announced) {
       return
     }
 
-    setRoom((currentRoom) => addOrUpdateRemoteMember(currentRoom, announced.userName, publishNamespace.trackNamespace))
+    setRoom((currentRoom) => {
+      const rejoinedMember = currentRoom.remoteMembers.get(announced.userName)
+      if (rejoinedMember) {
+        // The relay keeps these subscriptions alive after a rejoin, so alongside
+        // the new ones every object would arrive twice.
+        unsubscribeMemberTracks(session, rejoinedMember)
+      }
+      return addOrUpdateRemoteMember(currentRoom, announced.userName, trackNamespace)
+    })
   }
 }
 
-function createPublishNamespaceDoneHandler({
-  session,
-  roomName,
-  userName,
-  setRoom,
-  setTranscriberPresent
-}: PublishNamespaceHandlerOptions) {
-  return (message: PublishNamespaceDoneMessage) => {
-    if (session.status !== LocalSessionState.Ready) {
-      return
-    }
-    if (isTranscriberNamespace(message.trackNamespace, roomName)) {
-      setTranscriberPresent(false)
-      return
-    }
-    const announced = parseTrackNamespace(message.trackNamespace)
-    if (!announced || announced.roomName !== roomName || announced.userName === userName) {
+function createPublishNamespaceDoneHandler(options: PublishNamespaceHandlerOptions) {
+  const { session, setRoom } = options
+  return (trackNamespace: string[]) => {
+    const announced = announcedRemoteMember(options, trackNamespace, false)
+    if (!announced) {
       return
     }
 
@@ -151,7 +141,7 @@ function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
       continue
     }
     void session.unsubscribe(track.subscribeId).catch((error) => {
-      console.warn(`[meeting] failed to unsubscribe departed member ${member.id} (${role})`, error)
+      console.warn(`[meeting] failed to unsubscribe member ${member.id} (${role})`, error)
     })
   }
 }

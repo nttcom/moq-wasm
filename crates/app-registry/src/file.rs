@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::Context;
+use tokio::sync::Mutex;
 
 use crate::{
     app::Apps,
@@ -14,6 +15,8 @@ use crate::{
 pub(crate) struct RegistryFile {
     path: PathBuf,
 }
+
+static FILE_WRITE_LOCK: Mutex<()> = Mutex::const_new(());
 
 impl RegistryFile {
     pub(crate) fn new(path: PathBuf) -> Self {
@@ -35,6 +38,7 @@ impl RegistryFile {
         apps: &Apps,
         if_generation_match: Generation,
     ) -> anyhow::Result<Stored> {
+        let _guard = FILE_WRITE_LOCK.lock().await;
         if generation_of(&self.read().await?) != if_generation_match {
             return Ok(Stored::Conflict);
         }
@@ -126,6 +130,32 @@ mod tests {
                 { "appId": "a", "secret": "a-secret", "isRelay": false, "sub": "sub-1" },
             ])
         );
+    }
+
+    #[tokio::test]
+    async fn concurrent_updates_keep_both_changes() {
+        // Arrange
+        let file = TemporaryRegistryFile::new();
+        file.put(&json!([]));
+        let first = file.store();
+        let second = file.store();
+
+        // Act
+        let (a, b) = tokio::join!(
+            first.update(|apps| {
+                apps.push(app("a", Some("one")));
+                Ok(())
+            }),
+            second.update(|apps| {
+                apps.push(app("b", Some("two")));
+                Ok(())
+            }),
+        );
+
+        // Assert
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(file.body().as_array().unwrap().len(), 2);
     }
 
     #[tokio::test]

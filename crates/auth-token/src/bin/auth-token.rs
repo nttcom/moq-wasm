@@ -24,6 +24,10 @@ struct Args {
     /// Token lifetime, e.g. 30m, 12h, 365d
     #[arg(long, default_value = "12h", value_parser = parse_lifetime)]
     ttl: Duration,
+
+    /// RELAY_ID of the relay that presents the token (relay app tokens only)
+    #[arg(long)]
+    relay_id: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -33,7 +37,10 @@ fn main() -> anyhow::Result<()> {
         .filter(|secret| !secret.is_empty())
         .with_context(|| format!("set {SECRET_ENV} to the app's secret"))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let claims = Claims::issued(args.app_id, args.publish, args.subscribe, now, args.ttl);
+    let claims = Claims {
+        relay_id: args.relay_id,
+        ..Claims::issued(args.app_id, args.publish, args.subscribe, now, args.ttl)
+    };
     println!("{}", sign_token(&claims, &secret)?);
     Ok(())
 }

@@ -3,7 +3,7 @@ use crate::modules::{
     moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter,
 };
 use anyhow::Context;
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSetup {
@@ -26,10 +26,22 @@ impl ClientSetup {
             .try_get_varint()
             .context("number_of_supported_versions")?;
 
-        let mut supported_versions = Vec::with_capacity(number_of_supported_versions as usize);
+        // Each encoded version takes at least one byte, so a count above the
+        // remaining payload cannot be satisfied.
+        if number_of_supported_versions > buf.remaining() as u64 {
+            anyhow::bail!(
+                "number_of_supported_versions {} > remaining {}",
+                number_of_supported_versions,
+                buf.remaining()
+            );
+        }
+
+        let mut supported_versions = Vec::new();
         for _ in 0..number_of_supported_versions {
             let supported_version = buf.try_get_varint().context("supported_version")?;
-            supported_versions.push(supported_version as u32);
+            supported_versions.push(u32::try_from(supported_version).with_context(|| {
+                format!("supported version {supported_version:#x} exceeds 32 bits")
+            })?);
         }
         let setup_parameters = SetupParameter::decode(buf)?;
 
@@ -73,6 +85,8 @@ mod test {
                 max_auth_token_cache_size: None,
                 authority: None,
                 moq_implementation: Some("MOQ-WASM".to_string()),
+                trace_context: false,
+                traceparent: None,
             };
             let client_setup = ClientSetup::new(supported_versions, setup_params);
             let buf = client_setup.encode();
@@ -121,6 +135,50 @@ mod test {
                     .setup_parameters
                     .moq_implementation,
                 Some("MOQ-WASM".to_string())
+            );
+        }
+    }
+
+    mod failure {
+        use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
+
+        #[test]
+        fn decode_version_above_u32_is_rejected() {
+            // Arrange: the version's low 32 bits are draft-14
+            let bytes_array = [
+                1,   // Number of Supported Versions (i)
+                192, // Supported Version (i): Length(11 of 2MSB)
+                0, 0, 1, 255, 0, 0, 14, // Supported Version (i): Value(0x1_ff00000e) in 62bit
+                0,  // Number of Parameters (i)
+            ];
+            let mut buf = std::io::Cursor::new(&bytes_array[..]);
+
+            // Act
+            let result = ClientSetup::decode(&mut buf);
+
+            // Assert
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn decode_rejects_version_count_larger_than_payload() {
+            // Arrange
+            let bytes_array = [
+                224, 0, 0, 0, 0, 0, 0,
+                0, // Number of Supported Versions (i): 2^61 as an 8-byte varint
+                1, // Supported Version (i)
+                0, // Number of Parameters (i)
+            ];
+            let mut buf = std::io::Cursor::new(&bytes_array[..]);
+
+            // Act
+            let result = ClientSetup::decode(&mut buf);
+
+            // Assert
+            let error = result.unwrap_err().to_string();
+            assert!(
+                error.contains("number_of_supported_versions"),
+                "unexpected error: {error}"
             );
         }
     }
