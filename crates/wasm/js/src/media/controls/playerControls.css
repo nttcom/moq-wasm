@@ -236,6 +236,10 @@
   cursor: pointer;
 }
 
+.viewer-live[hidden] {
+  display: none;
+}
+
 .viewer-button:hover,
 .viewer-live:hover {
   background: rgba(255, 255, 255, 0.28);

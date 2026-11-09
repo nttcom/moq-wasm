@@ -315,7 +315,7 @@ meeting example は `LivePlayer` を使わず、`LocLive`、`AdaptiveBitrate`、
 
 ## 録画を `LivePlayer` で再生する
 
-ステータス: 承認済み。移行の手順 1 から 5 を実装した。
+ステータス: 承認済み。移行の手順 1 から 6 を実装した。
 
 ### 現状
 `examples/browser/examples/recording-player` は、`LivePlayer` を使わない独自の再生エンジンを持つ。
@@ -416,6 +416,11 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 - catalog の track が `isLive: false` のとき、シークバーの範囲を timeline の最初から最後
   （`trackDuration`）にし、`goLive` を出さない。再生位置が終わりに着いたら止まり、
   `state.ended` を立てる。
+  - 映像と音声は SUBSCRIBE しない（Object が届かない）。全部を巻き戻しと同じ FETCH の窓で読む。
+    timeline も Object が1つだけなので、catalog と同じく joining FETCH で読む。
+  - timeline が届いたら最初の group から再生する。ライブの視聴と同じく、先に一時停止して
+    いなければそのまま再生する。終わりでは一時停止し、そこから再開すると最初から再生する
+    （メディア要素と同じ）。
 - 見たことのない group へも、timeline の entry を使ってシークする。FETCH の窓は今の巻き戻しと
   同じ（group の先頭から、4 group ずつ）。ライブでも、timeline があればこれを使い、relay の
   キャッシュに無い範囲は今どおり `FetchFailure` で扱う。

@@ -101,6 +101,25 @@ test('a video track keeps its alternate group and bitrate', () => {
   expect(rendition.bitrate).toBe(1_200_000)
 })
 
+test('a track keeps whether it is live and the duration of one that is not', () => {
+  // Arrange
+  const catalog = {
+    version: 1,
+    isComplete: true,
+    tracks: [
+      { name: 'video', packaging: 'loc', role: 'video', isLive: false, trackDuration: 37_250 },
+      { name: 'audio', packaging: 'loc', role: 'audio', isLive: true }
+    ]
+  }
+
+  // Act
+  const [video, audio] = extractCatalogTracks(catalog)
+
+  // Assert
+  expect([video.isLive, video.trackDuration]).toEqual([false, 37_250])
+  expect([audio.isLive, audio.trackDuration]).toEqual([true, undefined])
+})
+
 /// The tracks `publish()` lists for a camera with a rendition and a shared screen.
 function cameraAndScreenTracks({ withoutCamera = false } = {}): MediaCatalogTrack[] {
   const track = (name: string, packaging: string, altGroup?: number): MediaCatalogTrack => ({

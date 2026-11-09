@@ -8,9 +8,11 @@ described here change.
 ## Scope
 The Live Player is the MoQT viewer of `examples/browser`: it follows an MSF
 catalog, subscribes to a video and an audio track, plays them live and replays
-what the relay still caches through FETCH. It is extracted from the Live Viewer
-example (`examples/live-viewer`), which keeps every feature it has today, and
-is adopted by the ONVIF example (`examples/onvif`) as its second consumer.
+what the relay still caches through FETCH; a broadcast whose tracks are not
+live, such as a recorder replay, it plays as VOD through FETCH alone. It is
+extracted from the Live Viewer example (`examples/live-viewer`), which keeps
+every feature it has today, and is adopted by the ONVIF example
+(`examples/onvif`) as its second consumer.
 
 Features carried over unchanged:
 
@@ -163,7 +165,8 @@ and the settings (packaging, volume, buffer policy, catch-up) carry over.
 `LivePlayerState` carries what the controls and the diagnostics render: the
 catalog tracks and the selection, whether the video rendition is chosen
 automatically, whether CMAF is available, the packaging,
-`mode: 'live' | 'review'`, paused, stalled, the playback rate and whether it
+`mode: 'live' | 'review'`, whether the broadcast is live (`isLive`) and VOD
+playback has ended (`ended`), paused, stalled, the playback rate and whether it
 is adjustable,
 the catalog / playback / rewind status, the seek range (broadcast start,
 replayable start, live edge, review anchor and playhead, and elapsed times from
@@ -190,7 +193,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
 | `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, the groups the media timeline lists as seek targets, the seek axis |
 | `audioGroups` | Where the audio groups start, whether they share the video group ids, which of them cover a window |
-| `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery; `isCurrent` replaces generation counters |
+| `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery, the end of a VOD broadcast; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
 | `stallWatch` | Whether the wanted picture has stood still |
@@ -230,8 +233,10 @@ group can span two windows.
 ## Invariants
 
 - Only one review runs at a time; a new seek, `goLive`, a video track change
-  or `stop` ends the current one, and nothing an ended review started may touch
-  the picture, the playouts or the state afterwards.
+  of a live broadcast or `stop` ends the current one, and nothing an ended
+  review started may touch the picture, the playouts or the state afterwards.
+- A broadcast whose tracks are not live has no media subscription and no
+  TRACK_STATUS: everything it plays is FETCHed.
 - A review FETCH never reaches into the open live edge group.
 - Forward updates reach every live subscription in the order they were issued.
 - A subscription the publisher ends with PUBLISH_DONE is dropped as soon as it
@@ -284,6 +289,33 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
   `LIVE` restores Forward 1; the relay resumes from the next group it opens,
   so the live picture takes up to one GOP to move. Against a relay that does
   not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
+
+### VOD
+
+A broadcast none of whose played tracks is live (`isLive: false`,
+draft-ietf-moq-msf-01 §5.2.7), such as the recorder's replay, gets no new
+objects, so the player plays it as VOD (`state.isLive` false). Nothing but the
+catalog's own fields tells it from a live broadcast.
+
+- The video and audio are not subscribed, since a SUBSCRIBE would deliver
+  nothing. Playback is a review of the selected tracks, FETCHed in the same
+  windows as a rewind; a track change takes effect from the next window.
+- The media timeline is read like the catalog, with SUBSCRIBE and a joining
+  FETCH: it is one object, which the SUBSCRIBE never delivers. It lists every
+  group, all of them closed, the newest one too, so review neither waits for a
+  group to close nor follows a live edge with TRACK_STATUS.
+- The seek bar runs from the timeline's first record to the tracks'
+  `trackDuration` (§5.2.35) after it, or to the newest group's start without
+  one. The elapsed readout stays the publisher's presentation time.
+- Playback starts at the first group as soon as the timeline arrives, playing
+  as a live watch does; a player paused before then shows the first frame and
+  holds it. Once the last frame of the last group is due it pauses and sets
+  `state.ended`. Resuming then plays from the start, as a media element does;
+  a seek or skip plays from its position and keeps the pause.
+- `goLive` does nothing, `PlayerControls` hides `LIVE`, and the seek bar's
+  End and right end seek to the end instead of going live.
+- A failed FETCH is handled as in a rewind; one with no group listed after it
+  ends playback.
 
 ### MP4 publisher
 
@@ -613,7 +645,8 @@ warms up again). The volume slider next to the speed control drives the live aud
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the
-button doubles as the indicator for which of the two the viewer is watching.
+button doubles as the indicator for which of the two the viewer is watching. A
+VOD broadcast has no live edge and no `LIVE` button.
 
 The button at the right end of the controls puts the picture into fullscreen and
 takes it out again (Escape also leaves). In fullscreen the pointer never leaves

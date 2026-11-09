@@ -33,6 +33,10 @@ export class GroupTimeline {
   /// group holds no keyframe for a FETCH replay to start from.
   private joinGroupId: bigint | undefined
   private readonly arrivalLag = new ArrivalLag()
+  /// False for a track that is not live (draft-ietf-moq-msf-01 §5.2.7): no
+  /// group will be added to it, so its newest group is closed too. `reset()`
+  /// leaves it unchanged.
+  live = true
 
   constructor(private readonly retentionMicros: number) {}
 
@@ -71,6 +75,10 @@ export class GroupTimeline {
     this.arrivalLag.reset()
   }
 
+  get oldest(): GroupMark | undefined {
+    return this.cached()[0]
+  }
+
   get latest(): GroupMark | undefined {
     return this.cached().at(-1)
   }
@@ -79,7 +87,7 @@ export class GroupTimeline {
   /// is still open, and a FETCH that reaches into it leaves the relay cache and
   /// is forwarded to a publisher that does not serve FETCH.
   get newestClosed(): GroupMark | undefined {
-    return this.cached().at(-2)
+    return this.cached().at(this.live ? -2 : -1)
   }
 
   forgetThrough(groupId: bigint): void {
@@ -87,7 +95,7 @@ export class GroupTimeline {
   }
 
   get span(): number {
-    const oldest = this.cached()[0]
+    const oldest = this.oldest
     const latest = this.latest
     if (!oldest || !latest) {
       return 0
@@ -105,7 +113,7 @@ export class GroupTimeline {
       return undefined
     }
 
-    const closed = this.cached().filter((mark) => mark.groupId !== latest.groupId)
+    const closed = this.cached().filter((mark) => !this.live || mark.groupId !== latest.groupId)
     return closed.findLast((mark) => mark.captureMicros <= captureMicros) ?? closed[0]
   }
 
