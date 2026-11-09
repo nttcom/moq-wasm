@@ -10,20 +10,11 @@ import { ParticipantTile } from './ParticipantTile'
 import { LOCAL_MEMBER_ID, type StageArrangement, type StageTile, galleryTileWidth } from '../utils/stageLayout'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { GetUserMediaForm } from './GetUserMediaForm'
-import {
-  CATALOG_SUBSCRIBE_ROLES,
-  type CatalogSelections,
-  type CatalogSubscribeRole,
-  type MeetingCatalogTrack,
-  AUTO_TRACK_SELECTION,
-  isSwitchableRole
-} from '../types/catalog'
-import { catalogTracksForRole } from '../media/meetingCatalog'
-import { buildTrackActionKey } from '../utils/state/roomState'
+import { AUTO_TRACK_SELECTION, type CatalogSubscribeRole } from '../types/catalog'
 import type { RemoteStatsSample } from '../types/stats'
 import { MeetingStats, RemoteMemberStatsCharts } from './StatsCharts'
-import type { RemotePictures } from '../media/mediaSubscriber'
-import { formatLiveStats } from 'moq-wasm/media'
+import type { RemoteMemberView, RemoteSourceView, RemoteVideoSource } from '../media/remotePlayers'
+import { type MediaCatalogTrack, formatLiveStats } from 'moq-wasm/media'
 import type {
   VideoHardwareAccelerationOption,
   VideoResolutionOption,
@@ -37,7 +28,9 @@ interface MemberGridProps {
   remoteMembers: RemoteMember[]
   localVideoStream?: MediaStream | null
   localScreenShareStream?: MediaStream | null
-  remotePictures: Map<string, RemotePictures>
+  remoteViews: Map<string, RemoteMemberView>
+  /// The element a remote source's player draws into.
+  remoteContainer: (memberId: string, source: RemoteVideoSource) => HTMLElement | undefined
   playoutSettings: Map<string, PlayoutSettings>
   onChangePlayoutSettings: (userId: string, settings: PlayoutSettings) => void
   onToggleCamera: () => void
@@ -63,13 +56,7 @@ interface MemberGridProps {
   captureSettings: CaptureSettingsState
   onChangeCaptureSettings: (settings: Partial<CaptureSettingsState>) => void
   onApplyCaptureSettings: () => void
-  remoteCatalogTracks: Map<string, MeetingCatalogTrack[]>
-  remoteCatalogSelections: Map<string, CatalogSelections>
-  manualTrackKeys: Set<string>
-  catalogLoadingMemberIds: Set<string>
-  catalogSubscribedMemberIds: Set<string>
-  catalogUnsubscribingTrackKeys: Set<string>
-  onSelectCatalogTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
+  onSelectTrack: (memberId: string, role: CatalogSubscribeRole, trackName: string) => void
   remoteStatsHistory: Map<string, RemoteStatsSample[]>
   stage: StageArrangement
   speakingMemberIds: Set<string>
@@ -82,7 +69,6 @@ interface MemberGridProps {
   captions: CaptionsControls | null
   onToggleChat: () => void
   onLeave: () => void
-  onTileHeight: (tileKey: string, heightPx: number) => void
 }
 
 export function MemberGrid({
@@ -90,7 +76,8 @@ export function MemberGrid({
   remoteMembers,
   localVideoStream,
   localScreenShareStream,
-  remotePictures,
+  remoteViews,
+  remoteContainer,
   playoutSettings,
   onChangePlayoutSettings,
   onToggleCamera,
@@ -116,13 +103,7 @@ export function MemberGrid({
   captureSettings,
   onChangeCaptureSettings,
   onApplyCaptureSettings,
-  remoteCatalogTracks,
-  remoteCatalogSelections,
-  manualTrackKeys,
-  catalogLoadingMemberIds,
-  catalogSubscribedMemberIds,
-  catalogUnsubscribingTrackKeys,
-  onSelectCatalogTrack,
+  onSelectTrack,
   remoteStatsHistory,
   stage,
   speakingMemberIds,
@@ -134,8 +115,7 @@ export function MemberGrid({
   recording,
   captions,
   onToggleChat,
-  onLeave,
-  onTileHeight
+  onLeave
 }: MemberGridProps) {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false)
   const [isStatsModalOpen, setIsStatsModalOpen] = useState(false)
@@ -162,17 +142,19 @@ export function MemberGrid({
     if (!member) {
       return null
     }
-    const pictures = remotePictures.get(member.id)
+    const view = remoteViews.get(member.id)
+    const picture = {
+      element: remoteContainer(member.id, tile.source),
+      shown: view?.[tile.source].showsPicture ?? false
+    }
     if (tile.source === 'screenshare') {
       return (
         <ParticipantTile
           name={member.name}
           testId={`member-share-${member.name}`}
-          picture={pictures?.screenshare ?? null}
+          picture={picture}
           label="Screen"
           speaking={false}
-          heightKey={tile.key}
-          onHeight={onTileHeight}
           onOpenDetails={() => setDetailsTarget(member.id)}
         />
       )
@@ -183,11 +165,9 @@ export function MemberGrid({
         name={member.name}
         testId={`member-card-${member.name}`}
         menuTestId={`member-menu-${member.name}`}
-        picture={pictures?.camera ?? null}
+        picture={picture}
         speaking={speakingMemberIds.has(member.id)}
         caption={captions?.captions.get(member.name)}
-        heightKey={tile.key}
-        onHeight={onTileHeight}
         footer={
           <span data-testid={`member-stats-${member.name}`}>{stats ? formatLiveStats(stats) : 'Awaiting media'}</span>
         }
@@ -314,13 +294,8 @@ export function MemberGrid({
             <div className="grid gap-4 lg:grid-cols-2">
               <RemoteCatalogSubscribePanel
                 member={detailsMember}
-                tracks={remoteCatalogTracks.get(detailsMember.id) ?? []}
-                selected={remoteCatalogSelections.get(detailsMember.id)}
-                manualTrackKeys={manualTrackKeys}
-                isLoading={catalogLoadingMemberIds.has(detailsMember.id)}
-                isCatalogSubscribed={catalogSubscribedMemberIds.has(detailsMember.id)}
-                unsubscribingTrackKeys={catalogUnsubscribingTrackKeys}
-                onSelectTrack={(role, trackName) => onSelectCatalogTrack(detailsMember.id, role, trackName)}
+                view={remoteViews.get(detailsMember.id)}
+                onSelectTrack={(role, trackName) => onSelectTrack(detailsMember.id, role, trackName)}
               />
               <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
                 <div className="text-sm font-semibold text-blue-100">Playout</div>
@@ -374,24 +349,11 @@ function useElementSize(): [(element: HTMLDivElement | null) => void, { width: n
 
 /// The catalog and per-role subscription state of a remote member as `data-*`
 /// attributes, which the E2E tests read.
-export function memberStates(
-  member: RemoteMember,
-  isCatalogLoading: boolean,
-  isCatalogSubscribed: boolean,
-  unsubscribingTrackKeys: Set<string>
-): Record<string, string> {
-  const states: Record<string, string> = {
-    'data-catalog-status': isCatalogLoading ? 'Loading...' : isCatalogSubscribed ? 'Subscribed' : 'Waiting...'
+export function memberStates(member: RemoteMember, view: RemoteMemberView | undefined): Record<string, string> {
+  return {
+    'data-catalog-status': formatCatalogStatus(view),
+    ...Object.fromEntries(trackRows(member, view).map((row) => [`data-${row.role}-status`, formatSubscribeStatus(row)]))
   }
-  for (const role of CATALOG_SUBSCRIBE_ROLES) {
-    const { isSubscribed, isSubscribing } = member.subscribedTracks[role]
-    states[`data-${role}-status`] = formatSubscribeStatus(
-      isSubscribed,
-      isSubscribing,
-      unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role))
-    )
-  }
-  return states
 }
 
 function DeviceModal({
@@ -470,67 +432,82 @@ const SUBSCRIBE_ROW_TITLES: Record<CatalogSubscribeRole, string> = {
   chat: 'Chat Track'
 }
 
+type TrackRow = {
+  role: CatalogSubscribeRole
+  tracks: MediaCatalogTrack[]
+  selected: string
+  /// Undefined for a role without adaptation.
+  auto?: boolean
+  subscribed: boolean
+  subscribing: boolean
+}
+
+function trackRows(member: RemoteMember, view: RemoteMemberView | undefined): TrackRow[] {
+  const videoRow = (role: CatalogSubscribeRole, source: RemoteSourceView | undefined): TrackRow => ({
+    role,
+    tracks: source?.videoTracks ?? [],
+    selected: source?.selectedVideoTrack ?? '',
+    auto: source?.adaptiveVideo ?? true,
+    subscribed: source?.videoSubscribed ?? false,
+    subscribing: false
+  })
+  return [
+    videoRow('video', view?.camera),
+    videoRow('screenshare', view?.screenshare),
+    {
+      role: 'audio',
+      tracks: view?.audioTracks ?? [],
+      selected: view?.selectedAudioTrack ?? '',
+      subscribed: view?.audioSubscribed ?? false,
+      subscribing: false
+    },
+    {
+      role: 'chat',
+      tracks: [{ name: 'chat', label: 'chat' }],
+      selected: 'chat',
+      subscribed: member.chat.isSubscribed,
+      subscribing: member.chat.isSubscribing
+    }
+  ]
+}
+
 function RemoteCatalogSubscribePanel({
   member,
-  tracks,
-  selected,
-  isLoading,
-  isCatalogSubscribed,
-  unsubscribingTrackKeys,
-  manualTrackKeys,
+  view,
   onSelectTrack
 }: {
   member: RemoteMember
-  tracks: MeetingCatalogTrack[]
-  selected?: CatalogSelections
-  isLoading: boolean
-  isCatalogSubscribed: boolean
-  unsubscribingTrackKeys: Set<string>
-  manualTrackKeys: Set<string>
+  view: RemoteMemberView | undefined
   onSelectTrack: (role: CatalogSubscribeRole, trackName: string) => void
 }) {
   const memberName = member.name
-  const trackRows = CATALOG_SUBSCRIBE_ROLES.map((role) => {
-    const roleTracks = catalogTracksForRole(tracks, role)
-    const { isSubscribed, isSubscribing } = member.subscribedTracks[role]
-    return {
-      role,
-      tracks: roleTracks,
-      selectedTrack: selected?.[role] ?? roleTracks[0]?.name ?? '',
-      subscribed: isSubscribed,
-      subscribing: isSubscribing,
-      unsubscribing: unsubscribingTrackKeys.has(buildTrackActionKey(member.id, role)),
-      auto: isSwitchableRole(role) ? !manualTrackKeys.has(buildTrackActionKey(member.id, role)) : undefined
-    }
-  })
-  const visibleTrackRows = trackRows.filter(
-    (row) => row.tracks.length > 0 || row.subscribed || row.subscribing || row.unsubscribing
+  const catalogLoaded = view?.catalog === 'loaded'
+  const visibleTrackRows = trackRows(member, view).filter(
+    (row) => row.role === 'chat' || row.tracks.length > 0 || row.subscribed
   )
   return (
     <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-semibold text-blue-100">Catalogs</span>
         <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-blue-300">
-          {isLoading ? 'Loading...' : isCatalogSubscribed ? 'Subscribed' : 'Waiting...'}
+          {formatCatalogStatus(view)}
         </span>
       </div>
-      {visibleTrackRows.map((row) => {
-        const busy = row.subscribing || row.unsubscribing
-        return (
-          <TrackSubscribeRow
-            key={row.role}
-            title={SUBSCRIBE_ROW_TITLES[row.role]}
-            tracks={row.tracks}
-            selected={row.selectedTrack}
-            auto={row.auto}
-            disabled={!isCatalogSubscribed || busy || row.role === 'chat'}
-            statusText={formatSubscribeStatus(row.subscribed, row.subscribing, row.unsubscribing)}
-            statusTestId={`track-status-${row.role}-${memberName}`}
-            selectTestId={`track-select-${row.role}-${memberName}`}
-            onChange={(trackName) => onSelectTrack(row.role, trackName)}
-          />
-        )
-      })}
+      {visibleTrackRows.map((row) => (
+        <TrackSubscribeRow
+          key={row.role}
+          title={SUBSCRIBE_ROW_TITLES[row.role]}
+          role={row.role}
+          tracks={row.tracks}
+          selected={row.selected}
+          auto={row.auto}
+          disabled={!catalogLoaded || row.role === 'chat'}
+          statusText={formatSubscribeStatus(row)}
+          statusTestId={`track-status-${row.role}-${memberName}`}
+          selectTestId={`track-select-${row.role}-${memberName}`}
+          onChange={(trackName) => onSelectTrack(row.role, trackName)}
+        />
+      ))}
     </div>
   )
 }
@@ -539,6 +516,7 @@ function RemoteCatalogSubscribePanel({
 /// offers Auto and `auto` tells whether it is selected.
 function TrackSubscribeRow({
   title,
+  role,
   tracks,
   selected,
   auto,
@@ -549,7 +527,8 @@ function TrackSubscribeRow({
   onChange
 }: {
   title: string
-  tracks: MeetingCatalogTrack[]
+  role: CatalogSubscribeRole
+  tracks: MediaCatalogTrack[]
   selected: string
   auto?: boolean
   disabled: boolean
@@ -587,7 +566,7 @@ function TrackSubscribeRow({
               )}
               {tracks.map((track) => (
                 <option key={track.name} value={track.name} className="bg-slate-900 text-white">
-                  {formatCatalogTrackLabel(track)}
+                  {formatCatalogTrackLabel(role, track)}
                 </option>
               ))}
             </>
@@ -598,25 +577,29 @@ function TrackSubscribeRow({
   )
 }
 
-function formatSubscribeStatus(subscribed: boolean, subscribing: boolean, unsubscribing: boolean): string {
-  if (unsubscribing) {
-    return 'Unsubscribing...'
+function formatCatalogStatus(view: RemoteMemberView | undefined): string {
+  if (view?.catalog === 'loaded') {
+    return 'Subscribed'
   }
+  return view?.catalog === 'absent' ? 'Waiting...' : 'Loading...'
+}
+
+function formatSubscribeStatus({ subscribed, subscribing }: TrackRow): string {
   if (subscribing) {
     return 'Subscribing...'
   }
   return subscribed ? 'Subscribed' : 'Not subscribed'
 }
 
-function formatCatalogTrackLabel(track: MeetingCatalogTrack): string {
+function formatCatalogTrackLabel(role: CatalogSubscribeRole, track: MediaCatalogTrack): string {
   const parts: string[] = [track.label || track.name]
   if (typeof track.bitrate === 'number') {
     parts.push(formatTrackBitrateForDisplay(track.bitrate))
   }
-  if (track.role === 'video' && typeof track.width === 'number' && typeof track.height === 'number') {
+  if (role !== 'audio' && typeof track.width === 'number' && typeof track.height === 'number') {
     parts.push(`${track.width}x${track.height}`)
   }
-  if (track.role === 'audio' && typeof track.samplerate === 'number') {
+  if (role === 'audio' && typeof track.samplerate === 'number') {
     parts.push(`${track.samplerate}Hz`)
   }
   return parts.join(' / ')

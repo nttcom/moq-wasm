@@ -315,7 +315,7 @@ listener になる。publisher がいないときの再購読と、catalog の P
 ### 移行の手順
 1手順を1 PR にする。
 
-手順 1 から 5 は実装した。
+手順 1 から 7 は実装した。
 
 1. **feat(wasm): `LivePlayerOptions.source`。**
 2. **feat(wasm): 表示の高さによる ABR の上限。**
@@ -323,7 +323,8 @@ listener になる。publisher がいないときの再購読と、catalog の P
 4. **feat(wasm): 映像の最初の購読を joining FETCH にする。**
 5. **feat(wasm): 音声の subscriber priority を映像より高くする。**
 6. **feat(wasm): `BroadcastCatalog`。** catalog の購読を player から切り出し、
-   `start` の3つ目の引数で受け取る。
+   `start` の3つ目の引数で受け取る。あわせて、隠れたタイルの映像だけを止める
+   `setVideoEnabled` と、退室したメンバーの player を手放す `dispose` を足す。
 7. **refactor(browser): meeting の再生を `LivePlayer` に移す。** `mediaSubscriber.ts` と、
    `localSession.ts` の映像・音声の購読と切り替え、`meetingCatalog.ts` の解析を消す。
    ブラウザ E2E（`run-meeting-e2e.mjs`）で守る。

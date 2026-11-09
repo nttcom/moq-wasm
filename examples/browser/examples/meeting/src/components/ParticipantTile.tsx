@@ -1,24 +1,19 @@
-import { type ReactNode, useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { MoreHorizontal } from 'lucide-react'
 import { MediaStreamVideo, PictureFrame } from './MediaStreamElements'
 
 interface ParticipantTileProps {
   name: string
   testId?: string
-  /// A remote picture owned by its live pipeline; `undefined` for the local
-  /// member, whose capture `stream` is shown instead.
-  picture?: HTMLElement | null
+  /// A remote source's player element and whether it has shown a frame;
+  /// `undefined` for the local member, whose capture `stream` is shown instead.
+  picture?: { element?: HTMLElement; shown: boolean }
   stream?: MediaStream | null
   label?: string
   speaking: boolean
   /// The member's newest transcribed utterance, while it is fresh.
   caption?: string
   footer?: ReactNode
-  /// Echoed back to `onHeight` so the parent can pass one stable callback to
-  /// every tile; a new callback per render would reconnect the ResizeObserver.
-  heightKey?: string
-  /// Called with the shown height in device pixels whenever it changes.
-  onHeight?: (heightKey: string, heightPx: number) => void
   /// When set, the tile shows a details button that calls it.
   onOpenDetails?: () => void
   menuTestId?: string
@@ -33,34 +28,19 @@ export function ParticipantTile({
   speaking,
   caption,
   footer,
-  heightKey,
-  onHeight,
   onOpenDetails,
   menuTestId
 }: ParticipantTileProps) {
   const avatar = <Avatar name={name} />
-  const rootRef = useRef<HTMLDivElement | null>(null)
-  useEffect(() => {
-    const root = rootRef.current
-    if (!root || heightKey === undefined || !onHeight) {
-      return
-    }
-    const observer = new ResizeObserver(([entry]) => {
-      onHeight(heightKey, Math.round(entry.contentRect.height * window.devicePixelRatio))
-    })
-    observer.observe(root)
-    return () => observer.disconnect()
-  }, [heightKey, onHeight])
   return (
     <div
-      ref={rootRef}
       data-testid={testId}
       className={`group relative h-full w-full overflow-hidden rounded-xl bg-slate-800 ring-2 transition ${
         speaking ? 'ring-emerald-400' : 'ring-white/5'
       }`}
     >
       {picture !== undefined ? (
-        <PictureFrame picture={picture} placeholder={avatar} fill />
+        <PictureFrame element={picture.element} shown={picture.shown} placeholder={avatar} />
       ) : stream ? (
         <MediaStreamVideo stream={stream} muted fill />
       ) : (

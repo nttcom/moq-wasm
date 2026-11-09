@@ -1,3 +1,3 @@
-import type { RemotePlaybackStats } from '../media/mediaSubscriber'
+import type { RemotePlaybackStats } from '../media/remotePlayers'
 
 export type RemoteStatsSample = RemotePlaybackStats & { timestamp: number }

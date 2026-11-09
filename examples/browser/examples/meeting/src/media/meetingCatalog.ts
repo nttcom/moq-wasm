@@ -1,12 +1,5 @@
-import { type Rendition, parseCatalog } from 'moq-wasm/media'
-import { resolveInitData, type MsfTrack } from 'moq-wasm/media/catalog'
-import {
-  DEFAULT_VIDEO_KEYFRAME_INTERVAL,
-  type MeetingCatalogTrack,
-  type CatalogTrackRole,
-  type CatalogSubscribeRole
-} from '../types/catalog'
-import { isScreenShareTrackName } from '../utils/catalogTrackName'
+import type { Rendition } from 'moq-wasm/media'
+import { DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 
 type E2ECameraSettings = {
@@ -64,8 +57,6 @@ function resolveE2ECameraSettings(): E2ECameraSettings | null {
   return { width, height, framerate, bitrate, codec, lowHeight }
 }
 
-const CHAT_TRACK_NAME = 'chat'
-
 export const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
 export const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 
@@ -105,70 +96,3 @@ export const SCREEN_SHARE_RENDITIONS: Rendition[] = [
   { name: '720p', label: 'Screen 720p', width: 1280, height: 720, bitrate: 1_200_000 },
   { name: '480p', label: 'Screen 480p', width: 854, height: 480, bitrate: 700_000 }
 ]
-
-export function parseMeetingCatalogTracks(payload: string): MeetingCatalogTrack[] {
-  const catalog: { tracks?: MsfTrack[] } = parseCatalog(payload) as { tracks?: MsfTrack[] }
-  return (catalog.tracks ?? []).flatMap((track) => {
-    const role = resolveRole(track)
-    if (!role) {
-      return []
-    }
-    return [
-      {
-        name: track.name,
-        label: track.label ?? track.name,
-        role,
-        codec: track.codec,
-        bitrate: track.bitrate,
-        width: track.width,
-        height: track.height,
-        framerate: track.framerate,
-        samplerate: track.samplerate,
-        channelConfig: track.channelConfig,
-        initData: resolveInitData(catalog, track),
-        isLive: track.isLive
-      }
-    ]
-  })
-}
-
-export function catalogTracksForRole<T extends MeetingCatalogTrack>(tracks: T[], role: CatalogSubscribeRole): T[] {
-  if (role === 'audio' || role === 'chat') {
-    return tracks.filter((track) => track.role === role)
-  }
-  return tracks.filter(
-    (track) => track.role === 'video' && isScreenShareTrackName(track.name) === (role === 'screenshare')
-  )
-}
-
-export function pickHighestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
-  return tracksByBitrate(tracks).at(-1) ?? tracks[0]
-}
-
-export function pickLowestBitrateTrack<T extends MeetingCatalogTrack>(tracks: T[]): T | undefined {
-  return tracksByBitrate(tracks)[0] ?? tracks[0]
-}
-
-function tracksByBitrate<T extends MeetingCatalogTrack>(tracks: T[]): T[] {
-  return tracks.filter((track) => typeof track.bitrate === 'number').sort((a, b) => (a.bitrate ?? 0) - (b.bitrate ?? 0))
-}
-
-function resolveRole({ role, name }: MsfTrack): CatalogTrackRole | null {
-  if (role === 'chat' || name === CHAT_TRACK_NAME) {
-    return 'chat'
-  }
-  if (role === 'video' || role === 'audio') {
-    return role
-  }
-  // A track with another role, such as the `video_timeline` media timeline, is neither.
-  if (role) {
-    return null
-  }
-  if (name.startsWith('video')) {
-    return 'video'
-  }
-  if (name.startsWith('audio')) {
-    return 'audio'
-  }
-  return null
-}

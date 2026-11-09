@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { LocalSession } from '../session/localSession'
-import type { RemotePictures } from '../media/mediaSubscriber'
 import type { PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
@@ -32,7 +31,8 @@ interface UseMeetingMediaResult {
   localVideoStream: MediaStream | null
   localScreenShareStream: MediaStream | null
   localAudioStream: MediaStream | null
-  remotePictures: Map<string, RemotePictures>
+  /// Changes whenever a remote member's view on the session's `RemotePlayers` does.
+  remoteViewVersion: number
   toggleCamera: () => Promise<boolean>
   toggleScreenShare: () => Promise<boolean>
   toggleMicrophone: () => Promise<boolean>
@@ -66,7 +66,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
   const [localVideoStream, setLocalVideoStream] = useState<MediaStream | null>(null)
   const [localScreenShareStream, setLocalScreenShareStream] = useState<MediaStream | null>(null)
   const [localAudioStream, setLocalAudioStream] = useState<MediaStream | null>(null)
-  const [remotePictures, setRemotePictures] = useState<Map<string, RemotePictures>>(new Map())
+  const [remoteViewVersion, setRemoteViewVersion] = useState(0)
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | undefined>(undefined)
   const [speakingMemberIds, setSpeakingMemberIds] = useState<Set<string>>(new Set())
   const [playoutSettings, setPlayoutSettingsState] = useState<Map<string, PlayoutSettings>>(new Map())
@@ -114,7 +114,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
-      setRemotePictures(new Map())
       setCameraEnabled(false)
       setMicrophoneEnabled(false)
       setScreenShareEnabled(false)
@@ -122,7 +121,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       return
     }
 
-    const { publisher, subscriber } = session.getMediaController()
+    const { publisher, players } = session.getMediaController()
     publisher.setHandlers({
       onLocalCameraStream: (stream) => {
         setLocalVideoStream(stream)
@@ -144,24 +143,8 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       onMicrophoneLost: () => setNotice('Microphone unavailable')
     })
     const dominantSpeaker = new DominantSpeaker()
-    subscriber.setHandlers({
-      onRemotePicture: (userId, source, picture) =>
-        setRemotePictures((prev) => {
-          const updated = new Map(prev)
-          updated.set(userId, { ...updated.get(userId), [source]: picture })
-          return updated
-        }),
-      onRemotePictureClosed: (userId, source) =>
-        setRemotePictures((prev) => {
-          const current = prev.get(userId)
-          if (!current?.[source]) {
-            return prev
-          }
-          const updated = new Map(prev)
-          const { [source]: _closed, ...rest } = current
-          updated.set(userId, rest)
-          return updated
-        }),
+    players.setHandlers({
+      onChange: () => setRemoteViewVersion((version) => version + 1),
       onAudioLevel: (userId, audioLevel) => dominantSpeaker.observe(userId, audioLevel, performance.now())
     })
     const speakerTimer = window.setInterval(() => {
@@ -175,8 +158,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     return () => {
       window.clearInterval(speakerTimer)
       publisher.setHandlers({})
-      subscriber.setHandlers({})
-      setRemotePictures(new Map())
+      players.setHandlers({})
       setLocalVideoStream(null)
       setLocalScreenShareStream(null)
       setLocalAudioStream(null)
@@ -296,7 +278,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       if (!session) {
         return
       }
-      session.getMediaController().subscriber.setPlayoutSettings(userId, settings)
+      session.getMediaController().players.setPlayoutSettings(userId, settings)
       setPlayoutSettingsState((prev) => {
         const updated = new Map(prev)
         updated.set(userId, settings)
@@ -404,7 +386,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     localVideoStream,
     localScreenShareStream,
     localAudioStream,
-    remotePictures,
+    remoteViewVersion,
     toggleCamera,
     toggleScreenShare,
     toggleMicrophone,

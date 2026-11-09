@@ -96,12 +96,13 @@ function createPublishNamespaceHandler(options: PublishNamespaceHandlerOptions) 
       return
     }
 
+    // The relay keeps a rejoined member's old subscriptions alive; `add` disposes
+    // the old players first, or every object would arrive twice.
+    session.getMediaController().players.add(announced.userName, trackNamespace)
     setRoom((currentRoom) => {
       const rejoinedMember = currentRoom.remoteMembers.get(announced.userName)
       if (rejoinedMember) {
-        // The relay keeps these subscriptions alive after a rejoin, so alongside
-        // the new ones every object would arrive twice.
-        unsubscribeMemberTracks(session, rejoinedMember)
+        unsubscribeChat(session, rejoinedMember)
       }
       return addOrUpdateRemoteMember(currentRoom, announced.userName, trackNamespace)
     })
@@ -116,34 +117,25 @@ function createPublishNamespaceDoneHandler(options: PublishNamespaceHandlerOptio
       return
     }
 
+    session.getMediaController().players.remove(announced.userName)
     setRoom((currentRoom) => {
       const member = currentRoom.remoteMembers.get(announced.userName)
       if (!member) {
         return currentRoom
       }
-      // Release local media contexts immediately for the departed member.
-      unsubscribeMemberTracks(session, member)
+      unsubscribeChat(session, member)
       return removeRemoteMember(currentRoom, announced.userName)
     })
   }
 }
 
-function unsubscribeMemberTracks(session: LocalSession, member: RemoteMember) {
-  const tracks = member.subscribedTracks
-  const entries = [
-    ['chat', tracks.chat],
-    ['video', tracks.video],
-    ['screenshare', tracks.screenshare],
-    ['audio', tracks.audio]
-  ] as const
-  for (const [role, track] of entries) {
-    if (track.subscribeId === undefined) {
-      continue
-    }
-    void session.unsubscribe(track.subscribeId).catch((error) => {
-      console.warn(`[meeting] failed to unsubscribe member ${member.id} (${role})`, error)
-    })
+function unsubscribeChat(session: LocalSession, member: RemoteMember) {
+  if (member.chat.subscribeId === undefined) {
+    return
   }
+  void session.unsubscribe(member.chat.subscribeId).catch((error) => {
+    console.warn(`[meeting] failed to unsubscribe the chat of member ${member.id}`, error)
+  })
 }
 
 function createChatHandler(session: LocalSession, setChatMessages: Dispatch<SetStateAction<ChatMessage[]>>) {

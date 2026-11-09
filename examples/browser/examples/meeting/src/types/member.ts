@@ -10,15 +10,10 @@ export interface LocalMember {
   name: string
 }
 
-// Remote member
+/// A remote member; its media plays on `RemotePlayers`, its chat on the session.
 export interface RemoteMember {
   id: string
   name: string
   trackNamespace: string[]
-  subscribedTracks: {
-    chat: SubscriptionState
-    video: SubscriptionState
-    screenshare: SubscriptionState
-    audio: SubscriptionState
-  }
+  chat: SubscriptionState
 }

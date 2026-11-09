@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { LiveStats } from 'moq-wasm/media'
-import type { RemoteVideoSource } from '../media/mediaSubscriber'
+import type { RemoteVideoSource } from '../media/remotePlayers'
 import type { RemoteStatsSample } from '../types/stats'
 
 type ChartYAxisPadding = {

@@ -6,19 +6,15 @@ import {
   type ReceivedObject,
   type TrackWriter
 } from 'moq-wasm'
-import { CATALOG_TRACK_NAME } from 'moq-wasm/media'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
 import { MeetingMediaController } from '../media/meetingMediaController'
-import type { VideoAdaptation } from '../media/mediaSubscriber'
-import { parseMeetingCatalogTracks } from '../media/meetingCatalog'
 import {
   TranscriptTimeline,
   parseTranscriberStatus,
   type TranscriberStatus,
   type TranscriptRecord
 } from '../media/transcript'
-import type { MeetingCatalogTrack, CatalogSubscribeRole, TrackMediaConfig } from '../types/catalog'
 import { connectOptions } from '../../../../utils/access'
 import {
   buildNamespacePrefix,
@@ -34,11 +30,7 @@ interface LocalSessionOptions {
   relayUrl: string
 }
 
-/// draft-14 §7.2: the relay sends a lower subscriber priority first, so video
-/// yields the downlink to audio when the two compete.
-const VIDEO_SUBSCRIBER_PRIORITY = 128
-const AUDIO_SUBSCRIBER_PRIORITY = 0
-const CATALOG_SUBSCRIBE_TIMEOUT_MS = 5000
+const CHAT_TRACK_NAME = 'chat'
 const TRANSCRIPT_TRACK_NAME = 'transcript'
 const TRANSCRIBER_STATUS_TRACK_NAME = 'status'
 
@@ -56,7 +48,8 @@ export class LocalSession {
   readonly roomName: string
   readonly relayUrl: string
   readonly localMember: LocalMember
-  /// Publishes the member's media and chat and subscribes to the others.
+  /// Publishes the member's media and chat and subscribes to the others' chat;
+  /// the media controller's players play their media on it.
   private session: MoqSession | null = null
   private namespaceWatch: Promise<MoqNamespaceWatch> | null = null
   private readonly chatTrack = new TrackPublication<TrackWriter>()
@@ -65,7 +58,7 @@ export class LocalSession {
   private chatMessageHandler: ((message: ChatMessage) => void) | null = null
   private publishNamespaceHandler: NamespaceHandler | null = null
   private publishNamespaceDoneHandler: NamespaceHandler | null = null
-  /// By the id `subscribe` returns, which also keys the track's media registration.
+  /// Keyed by the id that `subscribeChat` and the transcriber subscriptions return.
   private readonly subscriptions = new Map<bigint, MoqSubscription>()
   private nextSubscriptionId = 0n
 
@@ -122,9 +115,10 @@ export class LocalSession {
       // Published at join so a recorder can subscribe to the chat before the first message.
       // A failure only affects chat: sendChatMessage publishes again.
       this.chatTrack
-        .writer(() => session.publishTrack(this.trackNamespace, 'chat'))
+        .writer(() => session.publishTrack(this.trackNamespace, CHAT_TRACK_NAME))
         .catch((error: unknown) => console.warn('[meeting] chat track publish failed', error))
       await this.mediaController.publisher.start(session)
+      this.mediaController.players.connect(session)
       this.transitionToState(LocalSessionState.Ready)
     } catch (error) {
       this.session?.close()
@@ -195,53 +189,14 @@ export class LocalSession {
     })().catch((error: unknown) => console.warn('[meeting] namespace watch ended', error))
   }
 
-  /// `onEnded` is called when the publisher ends the track with PUBLISH_DONE;
-  /// its pipeline is closed by then.
-  async subscribe(
-    trackNamespace: string[],
-    trackName: string,
-    role: CatalogSubscribeRole,
-    config: TrackMediaConfig | undefined,
-    onEnded: (subscribeId: bigint) => void,
-    adaptation?: VideoAdaptation
-  ): Promise<bigint> {
-    const session = this.connected('subscribe')
-    const { subscriber } = this.mediaController
-    const remoteUser = parseTrackNamespace(trackNamespace)?.userName ?? trackName
-    const isVideo = role === 'video' || role === 'screenshare'
-    // A new picture starts at the current group's keyframe, which the joining FETCH brings; a track
-    // that takes over a playing picture waits for its next group instead (see `RenditionSplice`).
-    // NextGroupStart would never deliver the audio of a single-stream publisher, which never starts a
-    // new group (draft-14 §9.7), so audio starts after the largest object.
-    const joining = isVideo && subscriber.startsPicture(remoteUser, trackName)
-    const handle = joining
-      ? await session.subscribeCurrentGroup(trackNamespace, trackName)
-      : await session.subscribe(trackNamespace, trackName, {
-          filter: role === 'chat' ? 'nextGroupStart' : 'largestObject',
-          priority: isVideo ? VIDEO_SUBSCRIBER_PRIORITY : AUDIO_SUBSCRIBER_PRIORITY
-        })
+  /// A member's chat from its next group on. `onEnded` is called when the
+  /// publisher ends it with PUBLISH_DONE.
+  async subscribeChat(trackNamespace: string[], onEnded: (subscribeId: bigint) => void): Promise<bigint> {
+    const session = this.connected('subscribe chat')
+    const sender = parseTrackNamespace(trackNamespace)?.userName ?? CHAT_TRACK_NAME
+    const handle = await session.subscribe(trackNamespace, CHAT_TRACK_NAME, { filter: 'nextGroupStart' })
     const id = this.track(handle, () => onEnded(id))
-
-    if (role === 'chat') {
-      this.read(id, handle, (object) => this.receiveChat(id, remoteUser, trackNamespace, object))
-      return id
-    }
-    if (role === 'audio') {
-      subscriber.registerAudioTrack(remoteUser, trackName, id, config)
-    } else {
-      subscriber.registerVideoTrack(
-        remoteUser,
-        trackName,
-        id,
-        config,
-        () => {
-          this.unsubscribe(id).catch((error) => console.error('Failed to unsubscribe a replaced track:', error))
-        },
-        adaptation
-      )
-    }
-    const cachedUntil = joining ? handle.largest : undefined
-    this.read(id, handle, (object) => subscriber.receive(id, object.groupId, object, isAtOrBefore(object, cachedUntil)))
+    this.read(id, handle, (object) => this.receiveChat(id, sender, trackNamespace, object))
     return id
   }
 
@@ -266,67 +221,6 @@ export class LocalSession {
       })
     } catch (error) {
       console.error('Failed to decode a chat message:', error)
-    }
-  }
-
-  /// Moves a subscribed media role to `trackName`. A track of the same codec
-  /// takes over the picture without a gap and the previous subscription ends
-  /// once it has; any other track replaces it after an UNSUBSCRIBE.
-  async switchTrack(
-    previousId: bigint,
-    trackNamespace: string[],
-    trackName: string,
-    role: CatalogSubscribeRole,
-    config: TrackMediaConfig | undefined,
-    onEnded: (subscribeId: bigint) => void,
-    adaptation?: VideoAdaptation
-  ): Promise<bigint> {
-    if (!this.subscriptions.has(previousId) || !this.mediaController.subscriber.canReplaceVideo(previousId, config)) {
-      await this.unsubscribe(previousId)
-    }
-    return this.subscribe(trackNamespace, trackName, role, config, onEnded, adaptation)
-  }
-
-  /// Resolves after `onTracksUpdated` has received the first catalog.
-  /// `onEnded` is called when the publisher ends the catalog with PUBLISH_DONE.
-  async subscribeCatalog(
-    trackNamespace: string[],
-    onTracksUpdated: (tracks: MeetingCatalogTrack[]) => void,
-    onEnded: () => void
-  ): Promise<void> {
-    const session = this.connected('subscribe catalog')
-    const { promise: firstCatalog, resolve: resolveFirst, reject: rejectFirst } = Promise.withResolvers<void>()
-    const subscribed = async () => {
-      const handle = await session.subscribeCurrentGroup(trackNamespace, CATALOG_TRACK_NAME)
-      const id = this.track(handle, onEnded)
-      this.read(id, handle, ({ groupId, objectPayload }) => {
-        try {
-          const tracks = parseMeetingCatalogTracks(new TextDecoder().decode(objectPayload))
-          console.info('[meeting][catalog] apply', {
-            trackNamespace,
-            groupId: groupId.toString(),
-            tracks: tracks.map((t) => t.role)
-          })
-          onTracksUpdated(tracks)
-          resolveFirst()
-        } catch (error) {
-          console.error('Failed to parse catalog payload:', error)
-          rejectFirst(error instanceof Error ? error : new Error('Failed to parse catalog payload'))
-        }
-      })
-      return firstCatalog
-    }
-    let timeoutId: number | undefined
-    const timedOut = new Promise<never>((_, reject) => {
-      timeoutId = window.setTimeout(
-        () => reject(new Error('Catalog subscribe timed out')),
-        CATALOG_SUBSCRIBE_TIMEOUT_MS
-      )
-    })
-    try {
-      await Promise.race([subscribed(), timedOut])
-    } finally {
-      window.clearTimeout(timeoutId)
     }
   }
 
@@ -368,7 +262,7 @@ export class LocalSession {
   async unsubscribe(subscribeId: bigint): Promise<void> {
     this.connected('unsubscribe')
     const handle = this.subscriptions.get(subscribeId)
-    this.forgetSubscription(subscribeId)
+    this.subscriptions.delete(subscribeId)
     await handle?.close()
   }
 
@@ -379,7 +273,7 @@ export class LocalSession {
     this.subscriptions.set(id, handle)
     void handle.done.then((done) => {
       if (done && this.subscriptions.get(id) === handle) {
-        this.forgetSubscription(id)
+        this.subscriptions.delete(id)
         onEnded()
       }
     })
@@ -397,15 +291,10 @@ export class LocalSession {
     })().catch((error: unknown) => console.warn(`[meeting] subscription ${id.toString()} read ended`, error))
   }
 
-  private forgetSubscription(subscribeId: bigint): void {
-    this.subscriptions.delete(subscribeId)
-    this.mediaController.subscriber.unregisterTrack(subscribeId)
-  }
-
   private async unsubscribeAllActiveSubscriptions(): Promise<void> {
     const handles = Array.from(this.subscriptions.entries())
     for (const [subscribeId] of handles) {
-      this.forgetSubscription(subscribeId)
+      this.subscriptions.delete(subscribeId)
     }
     await Promise.all(
       handles.map(async ([subscribeId, handle]) => {
@@ -423,7 +312,7 @@ export class LocalSession {
       return
     }
     const session = this.connected('send chat message')
-    const writer = await this.chatTrack.writer(() => session.publishTrack(this.trackNamespace, 'chat'))
+    const writer = await this.chatTrack.writer(() => session.publishTrack(this.trackNamespace, CHAT_TRACK_NAME))
     await writer.writeGroup(new TextEncoder().encode(encodeChatPayload(message)))
   }
 

@@ -55,3 +55,9 @@
     color: hsl(var(--foreground));
   }
 }
+
+/* A remote player's picture fills its tile, letterboxed. */
+.meeting-player .live-player-picture {
+  height: 100%;
+  object-fit: contain;
+}
