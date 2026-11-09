@@ -429,10 +429,10 @@ renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同�
 | `local.addSource(name, input)` | source を足し、その track を catalog に載せる。デバイスの権限を拒否されたら `getUserMedia` のエラー（`NotAllowedError`）で reject する |
 | `local.source(name)` / `local.removeSource(name)` / `local.close()` | `close` は全 source の PUBLISH_DONE を送り、session は閉じない |
 | `source.setVideo(input \| false)` / `source.setAudio(input \| false)` | デバイスの切り替え。`false` はデバイスを離す |
-| `source.setMuted(kind, muted)` / `source.muted` | デバイスを掴んだまま、送るのを止める |
+| `source.setMuted(kind, muted)` / `source.isMuted(kind)` | デバイスを掴んだまま、送るのを止める |
 | `source.stream` | 送っている track の `MediaStream`。自分のプレビューに使う。track を替えても同じ stream の中で差し替える |
-| `source.stats()` | encoder の bitrate、fps、keyframe の数、落としたフレームの数 |
-| `source.listen({ onEnded })` | source の track がすべて終わった（デバイスが抜かれた、ブラウザの「共有を停止」）。SDK は source を外してから呼ぶ |
+| `source.stats()` | `publish()` の `SourcePublication.stats()` と同じ（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数） |
+| `source.listen({ onTrackEnded, onEnded })` | `onTrackEnded(kind)` はその kind の track が終わった（デバイスが抜かれた）とき、`onEnded` は source の track がすべて終わった（ブラウザの「共有を停止」）とき。SDK は track や source を外してから呼ぶ |
 
 `input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` で、`video` と
 `audio` は次のどれかである。

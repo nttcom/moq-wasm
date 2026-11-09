@@ -1,6 +1,6 @@
 import { MoqSession } from 'moq-wasm'
 import { connectOptions } from '../../../utils/access'
-import { type Publication, type SourcePublication, publish } from 'moq-wasm/media'
+import { type LocalBroadcast, type LocalSource, createBroadcast } from 'moq-wasm/media'
 import { buildVideoEncoderConfig } from '../videoEncoderConfig'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
@@ -9,9 +9,10 @@ const form = document.getElementById('form') as HTMLFormElement
 startPageTelemetry('media-publisher', () => form.url.value)
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
-let publication: Publication | undefined
+let broadcast: LocalBroadcast | undefined
+let camera: LocalSource | undefined
 let videoMuted = false
-let screenShare: { stream: MediaStream; publication: SourcePublication } | undefined
+let screenShare: LocalSource | undefined
 
 function initializeStatuses(): void {
   setStatusText('publisher-connection-status', 'Not connected')
@@ -52,31 +53,35 @@ async function startPublishing(): Promise<void> {
     setStatusText('publisher-send-status', session ? 'Media stream is not ready' : 'Not connected')
     return
   }
-  if (publication) {
+  if (broadcast) {
     setStatusText('publisher-send-status', 'Publishing already started')
     return
   }
   const namespace = parseTrackNamespace(form['publish-track-namespace'].value)
-  publication = await publish(session, namespace, mediaStream, {
-    videoEncoderConfig: buildVideoEncoderConfig(mediaStream),
-    renditions: [{ name: 'low', label: 'Low', width: 320, height: 180, bitrate: 150_000 }],
+  broadcast = await createBroadcast(session, namespace, {
     onError: (error) => setStatusText('publisher-send-status', `Publish failed: ${getErrorMessage(error)}`)
+  })
+  camera = await broadcast.addSource('camera', {
+    label: 'Camera',
+    stream: mediaStream,
+    videoEncoderConfig: buildVideoEncoderConfig(mediaStream),
+    renditions: [{ name: 'low', label: 'Low', width: 320, height: 180, bitrate: 150_000 }]
   })
   setStatusText('publisher-send-status', `Publishing started: ${namespace.join('/')}`)
 }
 
 async function toggleVideoMute(): Promise<void> {
-  if (!publication) {
+  if (!camera) {
     setStatusText('publisher-send-status', 'Not publishing')
     return
   }
   videoMuted = !videoMuted
-  await publication.setMuted('video', videoMuted)
+  await camera.setMuted('video', videoMuted)
   setStatusText('publisher-send-status', videoMuted ? 'Video muted' : 'Video unmuted')
 }
 
 async function toggleScreenShare(): Promise<void> {
-  if (!publication) {
+  if (!broadcast) {
     setStatusText('publisher-send-status', 'Not publishing')
     return
   }
@@ -84,37 +89,36 @@ async function toggleScreenShare(): Promise<void> {
     await stopScreenShare()
     return
   }
-  const screen = await navigator.mediaDevices.getDisplayMedia({ video: true })
-  screenShare = {
-    stream: screen,
-    publication: publication.addSource('screen', screen, {
-      videoLabel: 'Screen',
-      videoEncoderConfig: buildVideoEncoderConfig(screen)
-    })
-  }
+  screenShare = await broadcast.addSource('screen', {
+    label: 'Screen',
+    display: true,
+    videoEncoderConfig: buildVideoEncoderConfig(new MediaStream())
+  })
   // The browser's own stop button ends the capture without a click here.
-  screen.getVideoTracks()[0]?.addEventListener('ended', () => void stopScreenShare())
+  screenShare.listen({
+    onEnded: () => {
+      screenShare = undefined
+      setStatusText('publisher-send-status', 'Screen share stopped')
+    }
+  })
   setStatusText('publisher-send-status', 'Sharing screen')
 }
 
 async function stopScreenShare(): Promise<void> {
-  const share = screenShare
-  if (!share) {
+  if (!screenShare) {
     return
   }
   screenShare = undefined
-  await share.publication.close()
-  for (const track of share.stream.getTracks()) {
-    track.stop()
-  }
+  await broadcast?.removeSource('screen')
   setStatusText('publisher-send-status', 'Screen share stopped')
 }
 
 async function close(): Promise<void> {
   videoMuted = false
   await stopScreenShare()
-  await publication?.close()
-  publication = undefined
+  await broadcast?.close()
+  broadcast = undefined
+  camera = undefined
   session?.close()
   session = undefined
   initializeStatuses()
