@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import { RemoteBroadcast, type SourceView } from 'moq-wasm/media'
+import { type BroadcastWatch, RemoteBroadcast, type SourceView, createBroadcast, watchBroadcasts } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import { connectOptions } from '../../utils/access'
 
@@ -46,7 +46,22 @@ function move(name: string, slot: string): void {
   }
 }
 
-const api = { start, snapshot, move, events: () => [...events] }
+const watched: string[] = []
+let watch: BroadcastWatch | undefined
+
+async function startWatching(url: string, prefix: string[], own: string[], bot: string[]): Promise<void> {
+  const session = await MoqSession.connect(url, connectOptions())
+  const botSession = await MoqSession.connect(url, connectOptions())
+  await createBroadcast(session, own)
+  await createBroadcast(botSession, bot)
+  watch = await watchBroadcasts(session, prefix, {
+    filter: (namespace) => namespace.join('/') !== bot.join('/'),
+    onAdd: (broadcast) => watched.push(`add ${broadcast.namespace.join('/')}`),
+    onRemove: (broadcast) => watched.push(`remove ${broadcast.namespace.join('/')}`)
+  })
+}
+
+const api = { start, snapshot, move, events: () => [...events], startWatching, watched: () => [...watched] }
 
 declare global {
   interface Window {
