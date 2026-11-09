@@ -55,11 +55,14 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.liveButton).toHaveClass(/reviewing/)
     await expect(viewer.reviewCanvas).toBeVisible()
+
+    // Assert: the rewound picture has the width of the rendition the Auto option names; rewinding between an ABR
+    // switch and the new rendition's first frame leaves the live video at the previous rendition's width
     await expect
       .poll(async () => viewer.reviewCanvas.evaluate((element) => (element as HTMLCanvasElement).width), {
         timeout: 30_000
       })
-      .toBe(await viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
+      .toBe(await autoRenditionWidth(viewer))
 
     await expect(viewer.seekPosition).toHaveText(/-\d+\.\ds/)
 
@@ -337,6 +340,14 @@ async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {
 
 async function playedWidth(viewer: LiveViewerPageModel): Promise<number> {
   return viewer.seekReviewProgress.evaluate((element) => Number.parseFloat((element as HTMLElement).style.width))
+}
+
+async function autoRenditionWidth(viewer: LiveViewerPageModel): Promise<number> {
+  const options = await viewer.videoTrackSelect.locator('option').allTextContents()
+  const label = options[0].match(/^Auto \((.+)\)$/)?.[1]
+  const width = options.find((option) => option.startsWith(`${label} (`))?.match(/\((\d+)x\d+\)$/)?.[1]
+  expect(width).toBeDefined()
+  return Number(width)
 }
 
 /// The first transcoded rendition of the quality menu other than `except`.
