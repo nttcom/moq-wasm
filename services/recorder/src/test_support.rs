@@ -168,30 +168,47 @@ pub(crate) fn write_fixture_fmp4(path: &std::path::Path) {
     std::fs::write(path, output).unwrap();
 }
 
-/// A MoQ room recording `id` of `anon/room` in an in-memory store whose one
-/// member, `anon/room/alice`, has a camera archive holding each track's
-/// objects, written in the order given.
+/// The objects of each track of one archive, written in the order given.
+pub(crate) type StoredArchive<'a> = Vec<(&'a str, Vec<moqt::object::Object>)>;
+
 pub(crate) async fn stored_recording(
-    tracks: Vec<(&str, Vec<moqt::object::Object>)>,
+    tracks: StoredArchive<'_>,
+) -> (RecordingStore, StoredRecording) {
+    stored_room(vec![("anon/room/alice", vec![tracks])]).await
+}
+
+/// A MoQ room recording `id` of `anon/room` in an in-memory store. Each of
+/// `members` is a namespace under `anon/room` with one camera archive per time
+/// it joined.
+pub(crate) async fn stored_room(
+    members: Vec<(&str, Vec<StoredArchive<'_>>)>,
 ) -> (RecordingStore, StoredRecording) {
     let store = RecordingStore::open(&url::Url::parse("memory:///").unwrap()).unwrap();
     let prefix = store.recording_prefix("id");
-    let mut writer = ChunkWriter::new(
-        store.object_store(),
-        prefix.clone().join("archive"),
-        "anon/room/alice".into(),
-    );
-    for (name, objects) in tracks {
-        for object in objects {
-            writer.push(name, &Event::Object(object)).await.unwrap();
+    let mut listed = Vec::new();
+    for (member_index, (namespace, archives)) in members.into_iter().enumerate() {
+        let mut keys = Vec::new();
+        for (archive_index, tracks) in archives.into_iter().enumerate() {
+            let mut writer = ChunkWriter::new(
+                store.object_store(),
+                prefix
+                    .clone()
+                    .join("archive")
+                    .join(format!("{member_index}-{archive_index}")),
+                namespace.into(),
+            );
+            for (name, objects) in tracks {
+                for object in objects {
+                    writer.push(name, &Event::Object(object)).await.unwrap();
+                }
+            }
+            keys.push(writer.finish().await.unwrap().to_string());
         }
+        listed.push(
+            serde_json::json!({ "namespace": namespace, "camera": keys, "screen_share": [] }),
+        );
     }
-    let key = writer.finish().await.unwrap();
-    let manifest = serde_json::json!({
-        "version": 1,
-        "format": "moq",
-        "members": [{ "namespace": "anon/room/alice", "camera": [key.as_ref()], "screen_share": [] }],
-    });
+    let manifest = serde_json::json!({ "version": 1, "format": "moq", "members": listed });
     store
         .object_store()
         .put(
@@ -226,12 +243,22 @@ pub(crate) fn stored_object(
     }
 }
 
+/// Object 0 of group `group_id`, as `stored_object` builds it, with the LOC
+/// capture timestamp `capture_us`.
+pub(crate) fn captured_object(group_id: u64, capture_us: u64) -> moqt::object::Object {
+    use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
+
+    let mut object = stored_object(group_id, 0, "frame");
+    object.extension_headers =
+        to_extension_headers(&[LocExtension::varint(TIMESTAMP_ID, capture_us)]);
+    object
+}
+
 /// A camera archive as `stored_recording` writes it: one catalog object
 /// listing `video` and `video_timeline`, one video group per second from
 /// group 10 captured from 1_700_000_000 s, and a timeline object per group
 /// listing up to the last two groups.
 pub(crate) async fn recorded_camera() -> StoredRecording {
-    use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
     use msf::{Catalog, KnownPackaging, KnownTrackRole, MediaTimelineRecord, Track};
 
     let mut video = Track::new("video", KnownPackaging::Loc, true);
@@ -243,13 +270,7 @@ pub(crate) async fn recorded_camera() -> StoredRecording {
     timeline.depends = Some(vec!["video".to_string(), "video_480p".to_string()]);
     let catalog = serde_json::to_vec(&Catalog::new(vec![video, timeline], 1)).unwrap();
     let frames = (10..13)
-        .map(|group| {
-            let mut object = stored_object(group, 0, "frame");
-            let capture_us = (1_700_000_000 + group - 10) * 1_000_000;
-            object.extension_headers =
-                to_extension_headers(&[LocExtension::varint(TIMESTAMP_ID, capture_us)]);
-            object
-        })
+        .map(|group| captured_object(group, (1_700_000_000 + group - 10) * 1_000_000))
         .collect();
     let timeline_objects = (10..13)
         .map(|group| {
@@ -269,6 +290,64 @@ pub(crate) async fn recorded_camera() -> StoredRecording {
     ])
     .await;
     recording
+}
+
+/// A meeting's recording: `anon/room/alice` joined twice with `video` and
+/// `audio`, captured over seconds 1_700_000_000 to 1_700_000_002 and
+/// 1_700_000_010 to 1_700_000_012; `anon/room/bob` once with `video` alone
+/// over the same seconds as alice's first session; and the transcriber, whose
+/// `transcript` holds one object per document in one group.
+pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> StoredRecording {
+    use msf::{Catalog, KnownPackaging, KnownTrackRole, Track};
+
+    let session = |start_s: u64, with_audio: bool| {
+        let mut tracks = vec![("video", KnownTrackRole::Video)];
+        if with_audio {
+            tracks.push(("audio", KnownTrackRole::Audio));
+        }
+        let listed = tracks
+            .iter()
+            .map(|(name, role)| {
+                let mut track = Track::new(name, KnownPackaging::Loc, true);
+                track.role = Some(role.clone().into());
+                track.render_group = Some(1);
+                track
+            })
+            .collect();
+        let catalog = serde_json::to_vec(&Catalog::new(listed, 1)).unwrap();
+        let mut archive = vec![("catalog", vec![stored_object(0, 0, catalog)])];
+        for (name, _) in tracks {
+            let objects = (0..3)
+                .map(|group| captured_object(group, (start_s + group) * 1_000_000))
+                .collect();
+            archive.push((name, objects));
+        }
+        archive
+    };
+    let transcript = documents
+        .iter()
+        .enumerate()
+        .map(|(object_id, records)| {
+            stored_object(7, object_id as u64, serde_json::to_vec(records).unwrap())
+        })
+        .collect();
+    let (_store, recording) = stored_room(vec![
+        (
+            "anon/room/alice",
+            vec![session(1_700_000_000, true), session(1_700_000_010, true)],
+        ),
+        ("anon/room/bob", vec![session(1_700_000_000, false)]),
+        (
+            "anon/room/bots/transcriber",
+            vec![vec![("transcript", transcript)]],
+        ),
+    ])
+    .await;
+    recording
+}
+
+pub(crate) fn transcript_record(t_ms: u64, speaker: &str) -> serde_json::Value {
+    serde_json::json!({ "t": t_ms, "data": { "speaker": speaker, "text": format!("{speaker} at {t_ms}") } })
 }
 
 pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";

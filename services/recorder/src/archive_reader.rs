@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use crate::{
     archive_chunks::{MAX_CHUNK_BYTES, digest},
+    recorder::Content,
+    room_recording::TRANSCRIBER_MEMBER,
     store::RecordingStore,
 };
 
@@ -18,6 +20,7 @@ const MAX_TRACKS: usize = 256;
 pub(crate) struct StoredTrack {
     pub(crate) namespace: String,
     pub(crate) source_namespace: String,
+    pub(crate) content: Content,
     pub(crate) name: String,
     pub(crate) chunks: Vec<Value>,
     pub(crate) first: Location,
@@ -59,7 +62,12 @@ impl StoredTrack {
 pub(crate) struct StoredRecording {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
+    /// The recorded namespace prefix, which every member's namespace is under.
+    pub(crate) room: String,
     pub(crate) tracks: Vec<Arc<StoredTrack>>,
+    /// The transcriber's tracks, which the replay reads only to build each
+    /// participant's transcript.
+    pub(crate) transcriber: Vec<StoredTrack>,
 }
 
 pub(crate) struct StoredEntry {
@@ -73,7 +81,9 @@ impl StoredRecording {
         let mut recording = Self {
             store: store.object_store(),
             prefix: store.recording_prefix(id),
+            room: room.to_string(),
             tracks: Vec::new(),
+            transcriber: Vec::new(),
         };
         let manifest: Value = serde_json::from_slice(
             &recording
@@ -90,13 +100,14 @@ impl StoredRecording {
         let members = manifest["members"]
             .as_array()
             .context("recording has no members")?;
-        for (member_index, member) in members.iter().enumerate() {
+        for member in members {
             let source_namespace = string(member, "namespace")?;
-            ensure!(
-                source_namespace.starts_with(&format!("{room}/")),
-                "member is outside the recorded room"
-            );
-            for content in ["camera", "screen_share"] {
+            let replay_prefix = member_replay_prefix(room, id, source_namespace)?;
+            let is_transcriber = source_namespace == format!("{room}/{TRANSCRIBER_MEMBER}");
+            for (content, kind) in [
+                ("camera", Content::Camera),
+                ("screen_share", Content::ScreenShare),
+            ] {
                 let sources = member[content]
                     .as_array()
                     .context("member has no archive list")?;
@@ -113,7 +124,7 @@ impl StoredRecording {
                         .context("archive has no tracks")?
                     {
                         ensure!(
-                            recording.tracks.len() < MAX_TRACKS,
+                            recording.tracks.len() + recording.transcriber.len() < MAX_TRACKS,
                             "recording has too many tracks"
                         );
                         let chunks = track["chunks"]
@@ -144,16 +155,20 @@ impl StoredRecording {
                             .max()
                             .context("track has no last object")?;
                         ensure!(first <= last, "track has an invalid object range");
-                        recording.tracks.push(Arc::new(StoredTrack {
-                            namespace: format!(
-                                "{room}/recordings/{id}/{member_index}/{content}/{source_index}"
-                            ),
+                        let track = StoredTrack {
+                            namespace: format!("{replay_prefix}/{content}/{source_index}"),
                             source_namespace: source_namespace.to_string(),
+                            content: kind,
                             name: string(track, "name")?.to_string(),
                             chunks,
                             first,
                             last,
-                        }));
+                        };
+                        if is_transcriber {
+                            recording.transcriber.push(track);
+                        } else {
+                            recording.tracks.push(Arc::new(track));
+                        }
                     }
                 }
             }
@@ -293,6 +308,19 @@ impl StoredRecording {
     }
 }
 
+/// `<room>/recordings/<id>/<member>`, the prefix of the room member
+/// `namespace`'s replay namespaces, where `<member>` is every element after
+/// `room` (`alice`, `bots/transcriber`), so two members never get the same
+/// one. Fails when `namespace` is not below `room`.
+fn member_replay_prefix(room: &str, id: &str, namespace: &str) -> Result<String> {
+    let member = namespace
+        .strip_prefix(room)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .filter(|member| !member.is_empty())
+        .context("member is outside the recorded room")?;
+    Ok(format!("{room}/recordings/{id}/{member}"))
+}
+
 /// Whether a FETCH of `[start, end)` covers `at`; an `end` with object id 0
 /// takes its whole group (draft-14 §9.16.1).
 pub(crate) fn in_fetch_range(at: Location, start: Location, end: Location) -> bool {
@@ -370,9 +398,86 @@ pub(crate) fn location(value: &Value) -> Result<Location> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{archive_chunks::ChunkWriter, archive_receiver::Event};
+    use crate::{
+        archive_chunks::ChunkWriter,
+        archive_receiver::Event,
+        test_support::{recorded_camera, recorded_meeting},
+    };
     use object_store::{PutPayload, memory::InMemory};
     use serde_json::json;
+
+    #[test]
+    fn a_member_replays_under_its_elements_after_the_room() {
+        // Arrange: participants named transcriber and bots besides the transcriber bot
+        let members = [
+            "anon/room/alice",
+            "anon/room/transcriber",
+            "anon/room/bots",
+            "anon/room/bots/transcriber",
+        ];
+
+        // Act
+        let prefixes: Vec<String> = members
+            .iter()
+            .map(|member| member_replay_prefix("anon/room", "id", member).unwrap())
+            .collect();
+
+        // Assert
+        assert_eq!(
+            prefixes,
+            [
+                "anon/room/recordings/id/alice",
+                "anon/room/recordings/id/transcriber",
+                "anon/room/recordings/id/bots",
+                "anon/room/recordings/id/bots/transcriber",
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stored_archive_replays_under_its_member_content_and_index() {
+        // Act
+        let recording = recorded_camera().await;
+
+        // Assert
+        assert_eq!(
+            recording.namespaces(),
+            ["anon/room/recordings/id/alice/camera/0"]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_transcriber_is_read_apart_from_the_replayed_namespaces() {
+        // Act
+        let recording = recorded_meeting(vec![json!([])]).await;
+
+        // Assert
+        assert_eq!(
+            recording.namespaces(),
+            [
+                "anon/room/recordings/id/alice/camera/0",
+                "anon/room/recordings/id/alice/camera/1",
+                "anon/room/recordings/id/bob/camera/0",
+            ]
+        );
+        let transcriber: Vec<&str> = recording
+            .transcriber
+            .iter()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(transcriber, ["transcript"]);
+    }
+
+    #[test]
+    fn a_member_outside_the_room_is_rejected() {
+        // Act / Assert
+        for member in ["anon/room2/alice", "anon/room", "anon/room/", "anon/other"] {
+            assert!(
+                member_replay_prefix("anon/room", "id", member).is_err(),
+                "{member}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn restores_raw_objects_and_rejects_corrupt_chunks_and_escaping_keys() {
@@ -409,7 +514,9 @@ mod tests {
         let reader = StoredRecording {
             store: store.clone(),
             prefix,
+            room: "anon/room".to_string(),
             tracks: Vec::new(),
+            transcriber: Vec::new(),
         };
 
         // Act / Assert
