@@ -1,5 +1,5 @@
 import type { MoqSession } from 'moq-wasm'
-import { type Publication, type SourcePublication, publish } from 'moq-wasm/media'
+import { type LocalBroadcast, type LocalSource, createBroadcast } from 'moq-wasm/media'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import { DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import {
@@ -28,13 +28,13 @@ const AUDIO_PUBLISHER_LOG_PREFIX = '[meeting][publisher][audio]'
 const MAX_MICROPHONE_RECAPTURE_ATTEMPTS = 3
 const MICROPHONE_RECAPTURE_RETRY_DELAY_MS = 1000
 
-/// The member's media in one `publish()` broadcast: the camera and microphone
-/// on its `video` and `audio` tracks, the shared screen as the `screenshare`
-/// source.
+/// The member's media in one broadcast: the camera and microphone as the
+/// source `camera`, the shared screen as the source `screenshare`.
 export class MediaPublisher {
   private handlers: MediaPublisherHandlers = {}
-  private publication: Publication | null = null
-  private screenShare: SourcePublication | null = null
+  private broadcast: LocalBroadcast | null = null
+  private camera: LocalSource | null = null
+  private screenShare: LocalSource | null = null
 
   private cameraStream: MediaStream | null = null
   private screenShareStream: MediaStream | null = null
@@ -54,13 +54,15 @@ export class MediaPublisher {
 
   /// Announces the member's namespace on `session`; call before starting a device.
   async start(session: MoqSession): Promise<void> {
-    this.publication = await publish(session, this.trackNamespace, new MediaStream(), {
-      videoLabel: 'Camera',
-      videoEncoderConfig: this.videoEncodingSettings,
-      renditions: CAMERA_RENDITIONS,
-      keyframeIntervalFrames: CAMERA_KEYFRAME_INTERVAL,
+    this.broadcast = await createBroadcast(session, this.trackNamespace, {
       offerChat: true,
       onError: (error) => this.handlers.onPublishError?.(error instanceof Error ? error.message : String(error))
+    })
+    this.camera = await this.broadcast.addSource('camera', {
+      label: 'Camera',
+      videoEncoderConfig: this.videoEncodingSettings,
+      renditions: CAMERA_RENDITIONS,
+      keyframeIntervalFrames: CAMERA_KEYFRAME_INTERVAL
     })
   }
 
@@ -80,7 +82,7 @@ export class MediaPublisher {
     if (this.cameraStream) {
       return
     }
-    const publication = this.started()
+    const camera = this.started()
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         width: this.videoCaptureConstraints.width ?? this.videoEncodingSettings.width,
@@ -96,22 +98,26 @@ export class MediaPublisher {
     track.onended = () => {
       this.stopCamera().catch((error) => console.warn('Failed to stop camera on track end', error))
     }
-    publication.replaceTrack('video', track)
-    await publication.setMuted('video', false)
+    await camera.setVideo(track)
   }
 
   async stopCamera(): Promise<void> {
-    releaseStream(this.cameraStream)
+    const stream = this.cameraStream
     this.cameraStream = null
     this.handlers.onLocalCameraStream?.(null)
-    await this.publication?.setMuted('video', true)
+    await this.camera?.setVideo(false)
+    releaseStream(stream)
   }
 
   async startScreenShare(): Promise<void> {
     if (this.screenShareStream) {
       return
     }
-    const publication = this.started()
+    this.started()
+    const broadcast = this.broadcast
+    if (!broadcast) {
+      return
+    }
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false })
     this.screenShareStream = stream
     this.handlers.onLocalScreenShareStream?.(stream)
@@ -119,13 +125,9 @@ export class MediaPublisher {
     track.onended = () => {
       this.stopScreenShare().catch((error) => console.warn('Failed to stop screen share on track end', error))
     }
-    if (this.screenShare) {
-      this.screenShare.replaceTrack('video', track)
-      await this.screenShare.setMuted('video', false)
-      return
-    }
-    this.screenShare = publication.addSource(SCREEN_SHARE_SOURCE, stream, {
-      videoLabel: 'Screen',
+    this.screenShare = await broadcast.addSource(SCREEN_SHARE_SOURCE, {
+      label: 'Screen',
+      stream,
       videoEncoderConfig: this.screenShareEncodingSettings,
       renditions: SCREEN_SHARE_RENDITIONS,
       keyframeIntervalFrames: CAMERA_KEYFRAME_INTERVAL
@@ -133,10 +135,12 @@ export class MediaPublisher {
   }
 
   async stopScreenShare(): Promise<void> {
-    releaseStream(this.screenShareStream)
+    const stream = this.screenShareStream
     this.screenShareStream = null
+    this.screenShare = null
     this.handlers.onLocalScreenShareStream?.(null)
-    await this.screenShare?.setMuted('video', true)
+    await this.broadcast?.removeSource(SCREEN_SHARE_SOURCE)
+    releaseStream(stream)
   }
 
   async startAudio(deviceId?: string): Promise<void> {
@@ -148,15 +152,16 @@ export class MediaPublisher {
   }
 
   async stopAudio(): Promise<void> {
-    releaseStream(this.audioStream)
+    const stream = this.audioStream
     this.audioStream = null
     this.handlers.onLocalAudioStream?.(null)
-    await this.publication?.setMuted('audio', true)
+    await this.camera?.setAudio(false)
+    releaseStream(stream)
   }
 
   setVideoEncodingSettings(settings: VideoEncodingSettings): void {
     this.videoEncodingSettings = settings
-    this.publication?.setVideoEncoderConfig(settings)
+    this.camera?.setVideoEncoderConfig(settings)
   }
 
   setScreenShareEncodingSettings(settings: VideoEncodingSettings): void {
@@ -171,16 +176,17 @@ export class MediaPublisher {
     this.cameraStream = null
     this.screenShareStream = null
     this.audioStream = null
-    await this.publication?.close()
-    this.publication = null
+    await this.broadcast?.close()
+    this.broadcast = null
+    this.camera = null
     this.screenShare = null
   }
 
-  private started(): Publication {
-    if (!this.publication) {
+  private started(): LocalSource {
+    if (!this.camera) {
       throw new Error('the media publisher has not started')
     }
-    return this.publication
+    return this.camera
   }
 
   private captureAudio(deviceId?: string): Promise<MediaStream> {
@@ -199,9 +205,7 @@ export class MediaPublisher {
     this.handlers.onLocalAudioStream?.(stream)
     const [track] = stream.getAudioTracks()
     track.onended = () => void this.recaptureEndedAudio(stream)
-    const publication = this.started()
-    publication.replaceTrack('audio', track)
-    await publication.setMuted('audio', false)
+    await this.started().setAudio(track)
   }
 
   private async recaptureEndedAudio(endedStream: MediaStream): Promise<void> {

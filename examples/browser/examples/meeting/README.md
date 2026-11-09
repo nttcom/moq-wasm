@@ -23,7 +23,7 @@ Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
 - **Active speaker**: audio objects carry the LOC Audio Level (RFC 6464 level and voice activity, draft-ietf-moq-loc-04 §2.3.3.2). The loudest participant speaking takes the focus once the current speaker has been quiet for 1.5 s, and a speaking participant's tile and header chip are ringed.
 - **Publishing**: camera, microphone and screen share. Enabling a source adds three catalog profiles (camera and screen share: 1080p / 720p / 480p; audio: 128 / 64 / 32 kbps, of which a viewer subscribes to 32 kbps unless it picks another), each encoded by its own worker with the codec and bitrate of the profile, and only while someone subscribes to it. Codecs include H.264 High@5.0 and AV1. Video sends a keyframe every 2 s by default and numbers each group by the capture time of its keyframe, so the groups of different profiles are ordered by media time.
 - **Catalog editing**: `Catalog Details` adds, removes and edits tracks from presets; each video track has its own keyframe interval; each audio track sends either one stream or a new group every N seconds (default 1 s). Disabling a source keeps its tracks, since disabled may mean muted.
-- **Playback**: each remote participant plays through two `LivePlayer`s (`moq-wasm/media`), one for the camera and the microphone and one for the screen share, which share the participant's `BroadcastCatalog`, so the catalog is subscribed once. One playout clock keeps the picture and the sound together behind an adaptive jitter buffer, and the sound is scheduled on an `AudioContext`. The playout settings (Min / Max buffer, Catch up) are per participant, as in the Live Viewer; Min buffer defaults to 0 ms, so the buffer is only the measured jitter plus the output latency and a lower rendition shortens the delay.
+- **Playback**: each remote participant plays through a `RemoteBroadcast` (`moq-wasm/media`), which subscribes to the catalog once and plays each source it lists, the camera with the microphone and the screen share, in a view of its own. One playout clock keeps the picture and the sound together behind an adaptive jitter buffer, and the sound is scheduled on an `AudioContext`. The playout settings (Min / Max buffer, Catch up) are per participant, as in the Live Viewer; Min buffer defaults to 0 ms, so the buffer is only the measured jitter plus the output latency and a lower rendition shortens the delay.
 - **Tracks**: a tile's details list the participant's tracks and which one plays; catalog updates are applied live.
 - **Quality switching**: the track selects stay usable while subscribed. A rendition of the same switching set takes over the picture at a group boundary while the previous one plays on. `Auto` (the default) is the Live Player's choice: no taller than the tile, lower when the delivery falls behind, and one step higher after a calm spell. Picking a track turns `Auto` off.
 - **Stats**: a per-participant modal charts bitrate, the playout buffer against its target, the capture-to-display delay (from the LOC capture timestamp) and the A/V offset. Each remote video shows a stats line with the same numbers.
@@ -37,14 +37,14 @@ Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
 | --------------- | ------------------------------------------------------------- |
 | Track namespace | `/{RoomName}/{UserName}`                                      |
 | Catalog         | `catalog`                                                     |
-| Camera          | `video` (1080p), `video_720p`, `video_480p`                   |
+| Camera          | `camera` (1080p), `camera_720p`, `camera_480p`                |
 | Screen share    | `screenshare` (1080p), `screenshare_720p`, `screenshare_480p` |
-| Audio           | `audio`                                                       |
+| Audio           | `camera_audio`                                                |
 | Chat            | `chat`                                                        |
 
 1. `CLIENT_SETUP` / `SERVER_SETUP` with the relay.
 2. `SUBSCRIBE_NAMESPACE` on `/{RoomName}/`; `PUBLISH_NAMESPACE` arrives for every present and later participant.
-3. `publish()` announces `/{RoomName}/{UserName}` and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`. The renditions of the camera and of the screen share are encoded from the same frames and share group ids; audio follows the video's groups, or starts a group every second while the camera is off.
+3. `createBroadcast()` announces `/{RoomName}/{UserName}` and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`. The renditions of the camera and of the screen share are encoded from the same frames and share group ids; audio follows the video's groups, or starts a group every second while the camera is off.
 4. Receiving mirrors this: one catalog `SUBSCRIBE` per participant, then the players' per-track `SUBSCRIBE` and `UNSUBSCRIBE`. A quality switch sends the `SUBSCRIBE` of the new track first and the `UNSUBSCRIBE` of the old one once the new one has taken over. A new picture starts at the current group's keyframe through a joining `FETCH`; a track that takes over a playing picture starts at its next group.
 
 ## Stack

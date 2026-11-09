@@ -410,7 +410,7 @@ test('a viewer switches a member camera between renditions on the same picture',
 
     // Act
     await openMemberDetails(bob.page.page, 'alice')
-    await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('video_low')
+    await getTrackSelect(bob.page.page, 'video', 'alice').selectOption('camera_low')
 
     // Assert: the same picture element plays the lower rendition, so the pipeline was kept
     await expect.poll(async () => videoWidth(video), { timeout: 30_000 }).toBe(106)
