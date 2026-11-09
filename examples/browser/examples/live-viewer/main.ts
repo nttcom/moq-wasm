@@ -1,10 +1,7 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import type { LivePictureKind } from '@player/livePictureSink'
-import { PlayerControls } from '@player/ui/playerControls'
+import { MoqSession } from 'moq-wasm'
+import { connectToken } from '../../utils/access'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
-import { LivePlayer, type LivePlayerState } from '@player/livePlayer'
-import { formatLiveStats } from '@player/locLive'
 import { PublishPreview } from './publishPreview'
 import {
   DEFAULT_WINDOW_SECONDS,
@@ -17,16 +14,32 @@ import {
   summarizeStreams
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
-import { CATALOG_TRACK_NAME } from '../../lib/msf/catalog'
+import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
+import {
+  CATALOG_TRACK_NAME,
+  type LivePictureKind,
+  LivePlayer,
+  type LivePlayerState,
+  PlayerControls,
+  formatLiveStats
+} from 'moq-wasm/media'
+import 'moq-wasm/media/player.css'
+import 'moq-wasm/media/controls.css'
 
-const AUTH_INFO = 'secret'
+/// Each draw rebuilds every stream monitor's SVG through innerHTML, too costly
+/// to run on every frame.
+const STREAM_RENDER_INTERVAL_MS = 100
 
-const moqtClient = new MoqtClientWrapper()
+let session: MoqSession | undefined
+const telemetry = startPageTelemetry(
+  'live-viewer',
+  () => element<HTMLInputElement>('url').value.trim(),
+  () => playerSamples(player)
+)
 const streamMonitor = new StreamMonitor()
 const stage = element<HTMLDivElement>('stage')
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS
 const player = new LivePlayer({
-  client: moqtClient,
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: appendLog },
   deliveryObserver: streamMonitor,
@@ -66,7 +79,6 @@ element<HTMLButtonElement>('deliveryToggleBtn').addEventListener('click', () => 
   overlay.hidden = !overlay.hidden
   element<HTMLButtonElement>('deliveryToggleBtn').setAttribute('aria-pressed', String(!overlay.hidden))
 })
-moqtClient.setOnSubgroupHeaderHandler((header) => streamMonitor.opened(header.trackAlias, header.groupId))
 element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
   const keptGroups = Number((event.target as HTMLInputElement).value) || 1
   streamMonitor.setKeptGroups(keptGroups)
@@ -75,8 +87,12 @@ element<HTMLInputElement>('stream-gops').addEventListener('input', (event) => {
 element<HTMLInputElement>('stream-window').addEventListener('input', (event) => {
   streamWindowSeconds = Number((event.target as HTMLInputElement).value) || DEFAULT_WINDOW_SECONDS
 })
-requestAnimationFrame(function renderStreamsEachFrame() {
-  renderStreams()
+let streamsRenderedAt = Number.NEGATIVE_INFINITY
+requestAnimationFrame(function renderStreamsEachFrame(now) {
+  if (now - streamsRenderedAt >= STREAM_RENDER_INTERVAL_MS) {
+    streamsRenderedAt = now
+    renderStreams()
+  }
   requestAnimationFrame(renderStreamsEachFrame)
 })
 
@@ -84,10 +100,10 @@ async function watchStream(): Promise<void> {
   try {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
-    await moqtClient.connect(url)
+    session = await MoqSession.connect(url, { token: connectToken() })
     setStatus('connection-status', `Connected: ${url}`, 'ok')
     appendLog('info', `connected to ${url}`)
-    await player.start(trackNamespace(), AUTH_INFO)
+    await player.start(session, trackNamespace())
   } catch (error) {
     setStatus('connection-status', `Failed: ${getErrorMessage(error)}`, 'error')
     appendLog('error', getErrorMessage(error))
@@ -98,9 +114,8 @@ async function stopStream(): Promise<void> {
   playbackCharts.reset()
   streamMonitor.reset()
   await player.stop()
-  if (moqtClient.getConnectionStatus()) {
-    await moqtClient.disconnect()
-  }
+  session?.close()
+  session = undefined
   setStatus('connection-status', 'Not connected', 'idle')
 }
 
@@ -251,6 +266,7 @@ function trackNamespace(): string[] {
 }
 
 function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
+  telemetry.log(level, message)
   const panel = document.getElementById('logPanel')
   if (!panel) {
     return

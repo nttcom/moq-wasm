@@ -17,6 +17,7 @@ pub struct TrackWriter {
     next_group_id: u64,
     group: Option<GroupSender>,
     pending_group_gap: Option<u64>,
+    opened_streams: u64,
 }
 
 impl TrackWriter {
@@ -27,6 +28,7 @@ impl TrackWriter {
             next_group_id: first_group_id,
             group: None,
             pending_group_gap: None,
+            opened_streams: 0,
         }
     }
 
@@ -147,6 +149,11 @@ impl TrackWriter {
         }
     }
 
+    /// The Stream Count of draft-ietf-moq-transport-14 §9.12.
+    pub(crate) fn opened_streams(&self) -> u64 {
+        self.opened_streams
+    }
+
     pub fn groups(&self) -> u64 {
         self.next_group_id - self.first_group_id
     }
@@ -182,10 +189,9 @@ impl TrackWriter {
 
     async fn open_group(&mut self) -> anyhow::Result<GroupSender> {
         let group_id = self.next_group_id;
-        let sender = self
-            .factory
-            .next()
-            .await?
+        let stream = self.factory.next().await?;
+        self.opened_streams += 1;
+        let sender = stream
             .start(SubgroupStart {
                 group_id,
                 subgroup_id: 0,
@@ -260,7 +266,7 @@ mod tests {
         TrackWriter,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, accept_publish, connect_sessions, data_receiver, next_subgroup,
-            spawn_dual_server, subscribed_track_reader,
+            spawn_native_server, subscribed_track_reader,
         },
         object::{ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
         publish::PublishOption,
@@ -269,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn objects_arrive_with_their_immutable_extensions_and_ids() {
         // Arrange
-        let (port, accept) = spawn_dual_server("track-writer");
+        let (port, accept) = spawn_native_server("track-writer");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -338,7 +344,7 @@ mod tests {
     #[tokio::test]
     async fn chosen_group_ids_announce_the_ids_they_skip() {
         // Arrange
-        let (port, accept) = spawn_dual_server("track-writer-groups");
+        let (port, accept) = spawn_native_server("track-writer-groups");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -388,7 +394,7 @@ mod tests {
     #[tokio::test]
     async fn a_group_the_subscriber_stopped_does_not_keep_the_next_group_from_opening() {
         // Arrange
-        let (port, accept) = spawn_dual_server("track-writer-stopped-group");
+        let (port, accept) = spawn_native_server("track-writer-stopped-group");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

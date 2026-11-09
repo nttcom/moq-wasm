@@ -1,3 +1,5 @@
+import { firstSearchParam } from '../../utils/relayPresets'
+
 export type MediaVideoHardwareAcceleration = 'prefer-hardware' | 'prefer-software' | 'no-preference'
 
 export type MediaVideoEncodingOverrides = {
@@ -6,25 +8,14 @@ export type MediaVideoEncodingOverrides = {
 }
 
 export function getMediaVideoEncodingOverrides(): MediaVideoEncodingOverrides {
-  const params = new URLSearchParams(window.location.search)
-  const codec = firstNonEmptyValue(params, ['videoCodec'])
+  const codec = firstSearchParam(['videoCodec'])
   const hardwareAcceleration = parseMediaVideoHardwareAcceleration(
-    firstNonEmptyValue(params, ['videoEncoderHardwareAcceleration', 'videoHardwareAcceleration'])
+    firstSearchParam(['videoEncoderHardwareAcceleration', 'videoHardwareAcceleration'])
   )
   return {
     codec: codec ?? undefined,
     hardwareAcceleration
   }
-}
-
-function firstNonEmptyValue(params: URLSearchParams, keys: string[]): string | null {
-  for (const key of keys) {
-    const value = params.get(key)?.trim()
-    if (value) {
-      return value
-    }
-  }
-  return null
 }
 
 function parseMediaVideoHardwareAcceleration(value: string | null): MediaVideoHardwareAcceleration | undefined {

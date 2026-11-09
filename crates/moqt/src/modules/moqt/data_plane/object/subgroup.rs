@@ -2,6 +2,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 use crate::modules::extensions::buf_get_ext::BufGetExt;
 use crate::modules::extensions::buf_put_ext::BufPutExt;
+use crate::modules::moqt::data_plane::object::declared_length;
 use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
 use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 
@@ -323,11 +324,11 @@ impl SubgroupObjectHead {
     ) -> Result<Self, DecodeError> {
         let object_id_delta = cursor.try_get_varint()?;
         let extension_headers = if message_type.has_extensions() {
-            ExtensionHeaders::decode(cursor).ok_or(DecodeError::NeedMoreData)?
+            ExtensionHeaders::decode(cursor)?
         } else {
             ExtensionHeaders::default()
         };
-        let body = match cursor.try_get_varint()? as usize {
+        let body = match declared_length(cursor.try_get_varint()?)? {
             0 => ObjectBody::Status {
                 code: cursor.try_get_varint()?,
             },
@@ -637,6 +638,7 @@ mod tests {
 
     mod failure {
         use super::super::*;
+        use crate::modules::moqt::data_plane::object::MAX_WIRE_DECLARED_LENGTH;
 
         #[test]
         fn object_head_decode_split_payload_length_varint_needs_more_data() {
@@ -652,6 +654,24 @@ mod tests {
 
             // Assert
             assert!(matches!(result, Err(DecodeError::NeedMoreData)));
+        }
+
+        #[test]
+        fn object_head_decode_payload_length_over_limit_is_fatal() {
+            // Arrange
+            let header = SubgroupHeader::new(1, 2, SubgroupId::None, 128, false, false);
+            let mut buf = BytesMut::new();
+            buf.put_varint(0);
+            buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1);
+
+            // Act
+            let result = SubgroupObjectHead::decode(
+                header.message_type,
+                &mut std::io::Cursor::new(&buf[..]),
+            );
+
+            // Assert
+            assert!(matches!(result, Err(DecodeError::Fatal(_))));
         }
     }
 }

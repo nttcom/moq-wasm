@@ -17,4 +17,8 @@ impl PublishNamespaceDoneHandler {
     pub fn track_namespace(&self) -> &str {
         &self.track_namespace
     }
+
+    pub fn track_namespace_tuple(&self) -> &[String] {
+        &self.track_namespace_tuple
+    }
 }

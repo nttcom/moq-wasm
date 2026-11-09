@@ -1,0 +1,5 @@
+{
+  "name": "moq-wasm-workspace",
+  "private": true,
+  "workspaces": ["crates/wasm/js", "examples/browser"]
+}

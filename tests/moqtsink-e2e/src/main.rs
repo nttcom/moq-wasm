@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, env, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
 use moqt::{
-    ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
     fetch::{Fetch, FetchOption},
     object::{ContentExists, GroupOrder, Location, Subgroup, TrackData},
     subscribe::{FilterType, SubscribeOption},
@@ -75,10 +75,8 @@ async fn verify(relay_url: &str) -> Result<()> {
 
 async fn connect(relay_url: &str) -> Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
-        verify_certificate: false,
-        authorization_token: None,
-        follow_go_away: true,
+        certificate_verification: CertificateVerification::Disabled,
+        ..ClientConfig::default()
     })?;
     endpoint.connect(relay_url).await?.await
 }

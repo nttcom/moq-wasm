@@ -325,6 +325,7 @@ impl MoqtSink {
             _ => vec![MediaEvent::Audio(AudioSample {
                 data: Bytes::copy_from_slice(map.as_slice()),
                 pts,
+                audio_level: None,
             })],
         };
         for event in events {

@@ -1,9 +1,9 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 use crate::modules::{
-    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
     moqt::control_plane::control_messages::{
         key_value_pair::{KeyValuePair, odd_values},
         messages::parameters::{
@@ -27,12 +27,13 @@ use crate::modules::{
 //   Joining Start (i)
 // }
 
-#[derive(Debug, Clone, TryFromPrimitive, IntoPrimitive)]
-#[repr(u64)]
-enum FetchTypeValue {
-    Standalone = 0x1,
-    RelativeJoining = 0x2,
-    AbsoluteJoining = 0x3,
+wire_enum! {
+    #[derive(Debug, Clone)]
+    enum FetchTypeValue: u64 {
+        Standalone = 0x1,
+        RelativeJoining = 0x2,
+        AbsoluteJoining = 0x3,
+    }
 }
 
 /// Fetch Type plus its type-specific fields from the FETCH message
@@ -152,6 +153,7 @@ pub struct Fetch {
     pub authorization_tokens: Vec<AuthorizationToken>,
     /// FILL_TIMEOUT in milliseconds (draft-18 §10.2.5); draft-14 has none.
     pub fill_timeout: Option<u64>,
+    pub trace_context: Option<TraceContext>,
 }
 
 impl Fetch {
@@ -165,6 +167,7 @@ impl Fetch {
         let authorization_tokens = odd_values(&parameters, 0x03)
             .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
+        let trace_context = TraceContext::find(&parameters);
         Ok(Fetch {
             request_id,
             subscriber_priority,
@@ -172,6 +175,7 @@ impl Fetch {
             fetch_params,
             authorization_tokens,
             fill_timeout: None,
+            trace_context,
         })
     }
 
@@ -185,6 +189,7 @@ impl Fetch {
             .authorization_tokens
             .iter()
             .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
@@ -194,6 +199,7 @@ impl Fetch {
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT;
         use super::super::*;
 
         #[test]
@@ -216,6 +222,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             let buf = fetch.encode();
             let mut cursor = std::io::Cursor::new(&buf[..]);
@@ -243,6 +250,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             let result = fetch.encode();
             let expected = [
@@ -298,6 +306,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             assert_eq!(result, expected);
         }
@@ -314,6 +323,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             let result = fetch.encode();
             let expected = [
@@ -351,6 +361,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             assert_eq!(result, expected);
         }
@@ -367,6 +378,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             let result = fetch.encode();
             let expected = [
@@ -404,8 +416,34 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout: None,
+                trace_context: None,
             };
             assert_eq!(result, expected);
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let message = Fetch {
+                request_id: 1,
+                subscriber_priority: 0,
+                group_order: GroupOrder::Ascending,
+                fetch_params: FetchParams::RelativeJoining {
+                    joining_request_id: 0,
+                    joining_start: 1,
+                },
+                authorization_tokens: vec![],
+                trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+                fill_timeout: None,
+            };
+
+            // Act
+            let bytes = message.encode();
+            let decoded = Fetch::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context.is_some());
+            assert_eq!(decoded.trace_context, message.trace_context);
         }
     }
 

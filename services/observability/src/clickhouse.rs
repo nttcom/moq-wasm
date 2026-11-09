@@ -1,0 +1,70 @@
+use anyhow::{Context, bail};
+use serde::de::DeserializeOwned;
+
+use crate::config::ClickHouseConfig;
+
+#[derive(Clone)]
+pub struct ClickHouse {
+    http: reqwest::Client,
+    config: ClickHouseConfig,
+}
+
+impl ClickHouse {
+    pub fn new(config: ClickHouseConfig) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            config,
+        }
+    }
+
+    pub fn database(&self) -> &str {
+        &self.config.database
+    }
+
+    pub async fn execute(&self, sql: &str) -> anyhow::Result<()> {
+        self.post(&[], sql.to_string()).await.map(drop)
+    }
+
+    pub async fn select<T: DeserializeOwned>(
+        &self,
+        sql: &str,
+        params: &[(&str, String)],
+    ) -> anyhow::Result<Vec<T>> {
+        let params: Vec<(String, &str)> = params
+            .iter()
+            .map(|(name, value)| (format!("param_{name}"), value.as_str()))
+            .collect();
+        let params: Vec<(&str, &str)> = params
+            .iter()
+            .map(|(name, value)| (name.as_str(), *value))
+            .collect();
+        let body = self
+            .post(&params, format!("{sql} FORMAT JSONEachRow"))
+            .await?;
+        body.lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                serde_json::from_str(line).with_context(|| format!("unexpected row {line}"))
+            })
+            .collect()
+    }
+
+    async fn post(&self, params: &[(&str, &str)], body: String) -> anyhow::Result<String> {
+        let mut url =
+            reqwest::Url::parse(&self.config.url).context("CLICKHOUSE_URL is not a URL")?;
+        url.query_pairs_mut()
+            .extend_pairs(params)
+            .append_pair("output_format_json_quote_64bit_integers", "0");
+        let mut request = self.http.post(url).body(body);
+        if let Some(user) = &self.config.user {
+            request = request.basic_auth(user, self.config.password.as_ref());
+        }
+        let response = request.send().await.context("ClickHouse is unreachable")?;
+        let status = response.status();
+        let text = response.text().await?;
+        if !status.is_success() {
+            bail!("ClickHouse answered {status}: {}", text.trim());
+        }
+        Ok(text)
+    }
+}

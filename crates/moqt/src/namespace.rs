@@ -8,4 +8,6 @@ pub use crate::modules::moqt::control_plane::handler::subscribe_namespace_update
 };
 pub use crate::modules::moqt::control_plane::handler::unsubscribe_namespace_handler::UnsubscribeNamespaceHandler;
 pub use crate::modules::moqt::control_plane::namespace_interest::NamespaceInterest;
+pub use crate::modules::moqt::domains::namespace_watchers::NamespaceEvent;
+pub use crate::modules::moqt::domains::namespace_watchers::NamespaceWatchers;
 pub use crate::modules::moqt::domains::pending_publish_namespace::PendingPublishNamespace;

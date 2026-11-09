@@ -52,13 +52,21 @@ async function hasValidCertificates() {
         quiet: true,
       },
     );
-    const subjectAltName = await readCommand(
+    const extensions = await readCommand(
       resolveCommandName("openssl"),
-      ["x509", "-in", certPath, "-noout", "-ext", "subjectAltName"],
+      [
+        "x509",
+        "-in",
+        certPath,
+        "-noout",
+        "-ext",
+        "subjectAltName,basicConstraints",
+      ],
       { cwd: repoRoot },
     );
-    return requiredSubjectAltNames.every((entry) =>
-      subjectAltName.includes(entry),
+    return (
+      requiredSubjectAltNames.every((entry) => extensions.includes(entry)) &&
+      extensions.includes("CA:FALSE")
     );
   } catch (_error) {
     return false;
@@ -99,6 +107,10 @@ async function generateRelayCertificate() {
       "/CN=Test Certificate",
       "-addext",
       "subjectAltName = DNS:localhost,DNS:relay-a,DNS:relay-b,IP:127.0.0.1",
+      // relay-a and relay-b trust this certificate to dial each other, and
+      // rustls refuses a server certificate that is a CA (openssl's default).
+      "-addext",
+      "basicConstraints = critical,CA:FALSE",
     ],
     { cwd: repoRoot },
   );

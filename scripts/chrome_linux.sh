@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-cert_path="${repo_root}/crates/relay/keys/cert.pem"
+cert_path="${repo_root}/services/relay/keys/cert.pem"
 
 if [[ ! -f "${cert_path}" ]]; then
   echo "Certificate not found: ${cert_path}" >&2
@@ -50,12 +50,23 @@ cleanup() {
 
 trap cleanup EXIT
 
+# E2E runs use Chrome's fake camera and microphone; MOQT_FAKE_MEDIA=0 uses the real ones to try a page by hand.
+# MOQT_FAKE_AUDIO_FILE names a WAV (16-bit PCM) the fake microphone plays in a loop, to try a page with
+# prepared speech instead of one's own voice.
+if [[ "${MOQT_FAKE_MEDIA:-1}" == "0" ]]; then
+  media_flags=()
+else
+  media_flags=(--use-fake-device-for-media-stream --use-fake-ui-for-media-stream)
+  if [[ -n "${MOQT_FAKE_AUDIO_FILE:-}" ]]; then
+    media_flags+=(--use-file-for-fake-audio-capture="${MOQT_FAKE_AUDIO_FILE}")
+  fi
+fi
+
 "${chrome_bin}" \
   --test-type \
   --user-data-dir="${user_data_dir}" \
   --origin-to-force-quic-on=127.0.0.1:4433,localhost:4433,127.0.0.1:4434,localhost:4434 \
   --ignore-certificate-errors-spki-list="${certbase64}" \
-  --use-fake-device-for-media-stream \
-  --use-fake-ui-for-media-stream \
+  ${media_flags[@]+"${media_flags[@]}"} \
   --autoplay-policy=no-user-gesture-required \
   "$@"

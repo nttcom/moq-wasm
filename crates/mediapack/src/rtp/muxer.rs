@@ -405,8 +405,8 @@ fn random() -> u64 {
 mod tests {
     use super::*;
     use crate::{
-        sample::{AudioConfig, AudioSample, Timestamp, VideoSample},
-        test_support::{fixture_video_config, h264_aac_configs, keyframe_annexb, mono_48k},
+        sample::{AudioConfig, AudioSample, Timestamp},
+        test_support::{fixture_video_config, h264_aac_configs, keyframe_sample, mono_48k},
     };
 
     const DESTINATION: Destination = Destination {
@@ -427,12 +427,7 @@ mod tests {
     fn sends_each_nal_unit_and_marks_the_end_of_the_access_unit() {
         // Arrange
         let mut muxer = Muxer::default();
-        let keyframe = MediaEvent::Video(VideoSample {
-            data: keyframe_annexb(),
-            is_keyframe: true,
-            pts: Timestamp::from_millis(1_000),
-            dts: Timestamp::from_millis(1_000),
-        });
+        let keyframe = MediaEvent::Video(keyframe_sample(Timestamp::from_millis(1_000)));
 
         // Act
         let packets = muxer.push(&keyframe).unwrap();
@@ -475,6 +470,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from_static(&[0x21]),
                 pts: Timestamp::from_millis(millis),
+                audio_level: None,
             })
         };
 
@@ -504,12 +500,7 @@ mod tests {
         // Act
         let video = headers(
             &muxer
-                .push(&MediaEvent::Video(VideoSample {
-                    data: keyframe_annexb(),
-                    is_keyframe: true,
-                    pts: Timestamp::ZERO,
-                    dts: Timestamp::ZERO,
-                }))
+                .push(&MediaEvent::Video(keyframe_sample(Timestamp::ZERO)))
                 .unwrap(),
         );
         let description = muxer.session_description(&DESTINATION).unwrap();
@@ -539,14 +530,7 @@ mod tests {
         muxer
             .push(&MediaEvent::AudioConfig(AudioConfig::Aac(mono_48k())))
             .unwrap();
-        let video = |millis| {
-            MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts: Timestamp::from_millis(millis),
-                dts: Timestamp::from_millis(millis),
-            })
-        };
+        let video = |millis| MediaEvent::Video(keyframe_sample(Timestamp::from_millis(millis)));
         let first_video = headers(&muxer.push(&video(1_000)).unwrap());
         let last_video = headers(&muxer.push(&video(1_500)).unwrap());
         let audio = headers(
@@ -554,6 +538,7 @@ mod tests {
                 .push(&MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[0x21, 0x10]),
                     pts: Timestamp::from_millis(1_000),
+                    audio_level: None,
                 }))
                 .unwrap(),
         );
@@ -638,10 +623,12 @@ mod tests {
         let frame = MediaEvent::Audio(AudioSample {
             data: Bytes::from(vec![0xD5; 2_400]),
             pts: Timestamp::from_millis(1_000),
+            audio_level: None,
         });
         let next = MediaEvent::Audio(AudioSample {
             data: Bytes::from(vec![0xD5; 160]),
             pts: Timestamp::from_millis(1_150),
+            audio_level: None,
         });
 
         // Act
@@ -677,6 +664,7 @@ mod tests {
             MediaEvent::Audio(AudioSample {
                 data: Bytes::from(vec![0x78; 1_400]),
                 pts: Timestamp::from_millis(millis),
+                audio_level: None,
             })
         };
 
@@ -740,6 +728,7 @@ mod tests {
                 .push(&MediaEvent::Audio(AudioSample {
                     data: Bytes::from_static(&[0x21]),
                     pts: Timestamp::ZERO,
+                    audio_level: None
                 }))
                 .is_err()
         );

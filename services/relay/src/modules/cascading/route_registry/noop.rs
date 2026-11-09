@@ -1,0 +1,84 @@
+use async_trait::async_trait;
+
+use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use crate::modules::domain::track_key::TrackKey;
+
+#[derive(Debug)]
+pub(crate) struct NoopRelayRouteRegistry;
+
+#[async_trait]
+impl RelayRouteRegistry for NoopRelayRouteRegistry {
+    async fn mark_draining(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn find_migration_target(&self) -> anyhow::Result<Option<String>> {
+        Ok(None)
+    }
+
+    async fn register_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn register_namespace_subscriber(
+        &self,
+        _track_namespace_prefix: &str,
+    ) -> Result<(), RegisterRouteError> {
+        Ok(())
+    }
+
+    async fn find_active_namespace_publishers(
+        &self,
+        _track_namespace: &str,
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn register_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn unregister_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn find_active_track_publishers(
+        &self,
+        _track_key: &TrackKey,
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn register_watched_namespace(&self, _track_namespace: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn unregister_watched_namespace(&self, _track_namespace: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn find_namespace_publishers_by_prefix(
+        &self,
+        _track_namespace_prefix: &str,
+    ) -> anyhow::Result<Vec<NamespaceRoute>> {
+        Ok(Vec::new())
+    }
+
+    async fn unregister_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn unregister_namespace_subscriber(
+        &self,
+        _track_namespace_prefix: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn find_namespace_subscribers(
+        &self,
+        _track_namespace: &str,
+    ) -> anyhow::Result<Vec<RelayInfo>> {
+        Ok(Vec::new())
+    }
+}

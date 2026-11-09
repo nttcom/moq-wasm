@@ -35,9 +35,7 @@ export function GetUserMediaForm({
           Apply & getUserMedia
         </button>
       </div>
-      <p className="text-xs text-blue-100/80">
-        Configure capture before starting. Resolution/codec follow the selectors above.
-      </p>
+      <p className="text-xs text-blue-100/80">Configure capture before starting.</p>
       <div className="grid grid-cols-2 gap-3 text-sm text-blue-50">
         <label className="flex items-center gap-2">
           <input

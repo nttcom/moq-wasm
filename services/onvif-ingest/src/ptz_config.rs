@@ -1,0 +1,319 @@
+use crate::onvif_requests::{PtzMoveSpaces, PtzVelocitySpaces};
+use roxmltree::{Document, Node};
+
+#[derive(Clone, Copy, Debug)]
+pub struct AxisRange {
+    pub min: f32,
+    pub max: f32,
+}
+
+impl AxisRange {
+    pub fn new(min: f32, max: f32) -> Self {
+        let (min, max) = if min <= max { (min, max) } else { (max, min) };
+        Self { min, max }
+    }
+
+    pub fn clamp(self, value: f32) -> f32 {
+        value.clamp(self.min, self.max)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PanTiltRange {
+    pub uri: Option<String>,
+    pub x: AxisRange,
+    pub y: AxisRange,
+}
+
+#[derive(Clone, Debug)]
+pub struct ZoomRange {
+    pub uri: Option<String>,
+    pub x: AxisRange,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PtzRange {
+    pub abs_pan_tilt: Option<PanTiltRange>,
+    pub abs_zoom: Option<ZoomRange>,
+    pub rel_pan_tilt: Option<PanTiltRange>,
+    pub rel_zoom: Option<ZoomRange>,
+    pub cont_pan_tilt: Option<PanTiltRange>,
+    pub cont_zoom: Option<ZoomRange>,
+    pub speed_pan_tilt: Option<PanTiltRange>,
+    pub speed_zoom: Option<ZoomRange>,
+}
+
+impl PtzRange {
+    pub fn absolute_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
+        pan_tilt_or_default(self.abs_pan_tilt.as_ref(), None)
+    }
+
+    pub fn absolute_zoom_range(&self) -> AxisRange {
+        zoom_or_default(self.abs_zoom.as_ref(), None)
+    }
+
+    pub fn relative_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
+        pan_tilt_or_default(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
+    }
+
+    pub fn relative_zoom_range(&self) -> AxisRange {
+        zoom_or_default(self.rel_zoom.as_ref(), self.abs_zoom.as_ref())
+    }
+
+    pub fn continuous_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
+        pan_tilt_or_default(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
+    }
+
+    pub fn continuous_zoom_range(&self) -> AxisRange {
+        zoom_or_default(self.cont_zoom.as_ref(), self.abs_zoom.as_ref())
+    }
+
+    pub fn speed_range(&self) -> AxisRange {
+        if let Some(range) = &self.speed_pan_tilt {
+            let min = range.x.min.min(range.y.min);
+            let max = range.x.max.max(range.y.max);
+            return AxisRange::new(min, max);
+        }
+        if let Some(range) = &self.speed_zoom {
+            return range.x;
+        }
+        AxisRange::new(0.0, 1.0)
+    }
+
+    pub fn absolute_spaces(&self) -> PtzMoveSpaces<'_> {
+        PtzMoveSpaces {
+            pan_tilt: pan_tilt_space(self.abs_pan_tilt.as_ref(), None),
+            zoom: zoom_space(self.abs_zoom.as_ref(), None),
+            pan_tilt_speed: pan_tilt_space(self.speed_pan_tilt.as_ref(), None),
+            zoom_speed: zoom_space(self.speed_zoom.as_ref(), None),
+        }
+    }
+
+    pub fn relative_spaces(&self) -> PtzMoveSpaces<'_> {
+        PtzMoveSpaces {
+            pan_tilt: pan_tilt_space(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref()),
+            zoom: zoom_space(self.rel_zoom.as_ref(), self.abs_zoom.as_ref()),
+            ..self.absolute_spaces()
+        }
+    }
+
+    pub fn continuous_spaces(&self) -> PtzVelocitySpaces<'_> {
+        PtzVelocitySpaces {
+            pan_tilt: pan_tilt_space(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref()),
+            zoom: zoom_space(self.cont_zoom.as_ref(), self.abs_zoom.as_ref()),
+        }
+    }
+}
+
+pub fn extract_tokens(body: &str) -> Vec<String> {
+    let Ok(doc) = Document::parse(body) else {
+        return Vec::new();
+    };
+    doc.descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "PTZConfiguration")
+        .filter_map(|node| node.attribute("token").map(str::to_string))
+        .collect()
+}
+
+pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
+    let Ok(doc) = Document::parse(body) else {
+        return PtzRange::default();
+    };
+    let Some(config) = doc.descendants().find(|node| {
+        node.is_element()
+            && node.tag_name().name() == "PTZConfiguration"
+            && node.attribute("token") == Some(token)
+    }) else {
+        return PtzRange::default();
+    };
+    let node_token = find_text(config, "NodeToken").unwrap_or_else(|| "-".to_string());
+    tracing::info!("token={token} node_token={node_token}");
+
+    let mut spaces = Vec::new();
+    push_kv(
+        &mut spaces,
+        "abs_pan_tilt",
+        find_text(config, "DefaultAbsolutePantTiltPositionSpace"),
+    );
+    push_kv(
+        &mut spaces,
+        "rel_pan_tilt",
+        find_text(config, "DefaultRelativePanTiltTranslationSpace"),
+    );
+    push_kv(
+        &mut spaces,
+        "cont_pan_tilt",
+        find_text(config, "DefaultContinuousPanTiltVelocitySpace"),
+    );
+    if !spaces.is_empty() {
+        tracing::info!("spaces: {}", spaces.join(", "));
+    }
+
+    let mut range = PtzRange::default();
+    if let Some(limits) = pan_tilt_limits(config) {
+        tracing::info!(
+            "pan/tilt limits: space={} x=[{:.3}..{:.3}] y=[{:.3}..{:.3}]",
+            limits.uri.as_deref().unwrap_or("-"),
+            limits.x.min,
+            limits.x.max,
+            limits.y.min,
+            limits.y.max
+        );
+        range.abs_pan_tilt = Some(limits);
+    }
+    if let Some((space, x, y)) = default_pan_tilt_speed(config) {
+        tracing::info!(
+            "default speed: pan_tilt x={:.3} y={:.3} space={}",
+            x,
+            y,
+            space.as_deref().unwrap_or("-")
+        );
+    }
+    if let Some(timeout) = find_text(config, "DefaultPTZTimeout") {
+        tracing::info!("timeout: {timeout}");
+    }
+    range
+}
+
+pub fn update_range_from_options(mut range: PtzRange, body: &str) -> PtzRange {
+    let Ok(doc) = Document::parse(body) else {
+        return range;
+    };
+    let Some(options) = doc
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "PTZConfigurationOptions")
+    else {
+        return range;
+    };
+    let Some(spaces) = options
+        .descendants()
+        .find(|node| node.is_element() && node.tag_name().name() == "Spaces")
+    else {
+        return range;
+    };
+    for space in spaces.children().filter(|node| node.is_element()) {
+        match space.tag_name().name() {
+            "AbsolutePanTiltPositionSpace" => set_pan_tilt(&mut range.abs_pan_tilt, space),
+            "AbsoluteZoomPositionSpace" => set_zoom(&mut range.abs_zoom, space),
+            "RelativePanTiltTranslationSpace" => set_pan_tilt(&mut range.rel_pan_tilt, space),
+            "RelativeZoomTranslationSpace" => set_zoom(&mut range.rel_zoom, space),
+            "ContinuousPanTiltVelocitySpace" => set_pan_tilt(&mut range.cont_pan_tilt, space),
+            "ContinuousZoomVelocitySpace" => set_zoom(&mut range.cont_zoom, space),
+            "PanTiltSpeedSpace" => set_pan_tilt(&mut range.speed_pan_tilt, space),
+            "ZoomSpeedSpace" => set_zoom(&mut range.speed_zoom, space),
+            _ => {}
+        }
+    }
+    range
+}
+
+fn pan_tilt_or_default(
+    primary: Option<&PanTiltRange>,
+    fallback: Option<&PanTiltRange>,
+) -> (AxisRange, AxisRange) {
+    let range = primary.or(fallback);
+    let fallback_axis = AxisRange::new(-1.0, 1.0);
+    let x = range.map(|r| r.x).unwrap_or(fallback_axis);
+    let y = range.map(|r| r.y).unwrap_or(fallback_axis);
+    (x, y)
+}
+
+fn zoom_or_default(primary: Option<&ZoomRange>, fallback: Option<&ZoomRange>) -> AxisRange {
+    primary
+        .or(fallback)
+        .map(|r| r.x)
+        .unwrap_or_else(|| AxisRange::new(0.0, 1.0))
+}
+
+fn pan_tilt_space<'a>(
+    primary: Option<&'a PanTiltRange>,
+    fallback: Option<&'a PanTiltRange>,
+) -> Option<&'a str> {
+    primary
+        .and_then(|range| range.uri.as_deref())
+        .or_else(|| fallback.and_then(|range| range.uri.as_deref()))
+}
+
+fn zoom_space<'a>(
+    primary: Option<&'a ZoomRange>,
+    fallback: Option<&'a ZoomRange>,
+) -> Option<&'a str> {
+    primary
+        .and_then(|range| range.uri.as_deref())
+        .or_else(|| fallback.and_then(|range| range.uri.as_deref()))
+}
+
+fn push_kv(items: &mut Vec<String>, key: &str, value: Option<String>) {
+    if let Some(value) = value {
+        items.push(format!("{key}={value}"));
+    }
+}
+
+fn pan_tilt_limits(config: Node) -> Option<PanTiltRange> {
+    let limits = config
+        .descendants()
+        .find(|node| has_tag(*node, "PanTiltLimits"))?;
+    parse_pan_tilt_space(limits.descendants().find(|node| has_tag(*node, "Range"))?)
+}
+
+fn default_pan_tilt_speed(config: Node) -> Option<(Option<String>, f32, f32)> {
+    let speed = config
+        .descendants()
+        .find(|node| has_tag(*node, "DefaultPTZSpeed"))?;
+    let pan_tilt = speed.descendants().find(|node| has_tag(*node, "PanTilt"))?;
+    let space = pan_tilt.attribute("space").map(str::to_string);
+    let x = parse_f32(pan_tilt.attribute("x")?)?;
+    let y = parse_f32(pan_tilt.attribute("y")?)?;
+    Some((space, x, y))
+}
+
+fn set_pan_tilt(slot: &mut Option<PanTiltRange>, space: Node) {
+    if let Some(parsed) = parse_pan_tilt_space(space) {
+        *slot = Some(parsed);
+    }
+}
+
+fn set_zoom(slot: &mut Option<ZoomRange>, space: Node) {
+    if let Some(parsed) = parse_zoom_space(space) {
+        *slot = Some(parsed);
+    }
+}
+
+fn parse_pan_tilt_space(space: Node) -> Option<PanTiltRange> {
+    let uri = find_text(space, "URI");
+    let x_range = space.descendants().find(|node| has_tag(*node, "XRange"))?;
+    let y_range = space.descendants().find(|node| has_tag(*node, "YRange"))?;
+    let x = parse_axis_range(x_range)?;
+    let y = parse_axis_range(y_range)?;
+    Some(PanTiltRange { uri, x, y })
+}
+
+fn parse_zoom_space(space: Node) -> Option<ZoomRange> {
+    let uri = find_text(space, "URI");
+    let x_range = space.descendants().find(|node| has_tag(*node, "XRange"))?;
+    let x = parse_axis_range(x_range)?;
+    Some(ZoomRange { uri, x })
+}
+
+fn parse_axis_range(range: Node) -> Option<AxisRange> {
+    let min = parse_f32(find_text(range, "Min")?.as_str())?;
+    let max = parse_f32(find_text(range, "Max")?.as_str())?;
+    Some(AxisRange::new(min, max))
+}
+
+fn parse_f32(value: &str) -> Option<f32> {
+    value.trim().parse::<f32>().ok()
+}
+
+pub(crate) fn find_text(node: Node, tag: &str) -> Option<String> {
+    node.descendants()
+        .find(|child| has_tag(*child, tag))
+        .and_then(|child| child.text())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
+fn has_tag(node: Node, tag: &str) -> bool {
+    node.is_element() && node.tag_name().name() == tag
+}
