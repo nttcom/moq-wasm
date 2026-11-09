@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { AudioPlayout } from './audioPlayout'
-import { FakeMediaEnvironment, fakeAudioData } from './testing/fakeMediaEnvironment'
+import { type FakeAudioContext, FakeMediaEnvironment, fakeAudioData } from './testing/fakeMediaEnvironment'
 
 const SAMPLE_RATE = 48_000
 const CHUNK_FRAMES = 960
@@ -121,4 +121,41 @@ test('an input opened on a playout plays in its context and leaves its clock alo
   expect(inputPositionMicros).toBe(1_000_000)
   expect(driftsMs).toHaveLength(2)
   expect(host.positionMicrosAt(environment.nowMs)).toBeDefined()
+})
+
+test('a given context is left running and open when the playout pauses and closes', async () => {
+  // Arrange
+  const context = new AudioContext({ sampleRate: SAMPLE_RATE }) as FakeAudioContext
+  const playout = new AudioPlayout(
+    () => undefined,
+    () => context
+  )
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, (nowMs) => nowMs)
+
+  // Act
+  await playout.suspend()
+  await playout.resume()
+  playout.close()
+
+  // Assert
+  expect(context.bufferSampleRates).toEqual([SAMPLE_RATE])
+  expect(context.lifecycleCalls).toEqual([])
+})
+
+test('a repetition on a given context at another rate is made at the rate of the stream it repeats', () => {
+  // Arrange: a 44.1 kHz context, and a 48 kHz chunk due 100 ms from now that runs out with nothing after it
+  const context = new AudioContext({ sampleRate: 44_100 }) as FakeAudioContext
+  const playout = new AudioPlayout(
+    () => undefined,
+    () => context
+  )
+  const startMs = environment.nowMs
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, () => startMs + 100)
+
+  // Act
+  environment.advanceTo(startMs + 270)
+
+  // Assert
+  expect(playout.concealedMs).toBeGreaterThan(0)
+  expect(new Set(context.bufferSampleRates)).toEqual(new Set([SAMPLE_RATE]))
 })

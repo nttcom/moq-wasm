@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test'
 import { LivePlayout } from './livePlayout'
-import { FakeMediaEnvironment, fakeAudioData, fakeVideoFrame } from './testing/fakeMediaEnvironment'
+import {
+  type FakeAudioContext,
+  FakeMediaEnvironment,
+  fakeAudioData,
+  fakeVideoFrame
+} from './testing/fakeMediaEnvironment'
 
 const SAMPLE_RATE = 48_000
 const AUDIO_CHUNK_MS = 20
@@ -224,4 +229,20 @@ test('with late samples dropped, a sample whose time has passed is discarded and
   expect(playout.droppedLateVideo).toBe(droppedLateVideo + 1)
   expect(shown.length).toBe(shownBefore)
   expect(playout.dueAt(nextCaptureMicros)).toBe(dueBeforeMs)
+})
+
+test('live audio plays through the given context, which pausing and closing leave running and open', () => {
+  // Arrange
+  const context = new AudioContext({ sampleRate: SAMPLE_RATE }) as FakeAudioContext
+  const playout = new LivePlayout((frame) => frame.close(), undefined, context)
+
+  // Act
+  playout.playAudio(fakeAudioData(SAMPLE_RATE, (SAMPLE_RATE * AUDIO_CHUNK_MS) / 1_000), undefined)
+  playout.setPaused(true)
+  playout.setPaused(false)
+  playout.close()
+
+  // Assert
+  expect(context.bufferSampleRates).toEqual([SAMPLE_RATE])
+  expect(context.lifecycleCalls).toEqual([])
 })

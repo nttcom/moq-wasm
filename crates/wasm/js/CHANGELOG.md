@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `LivePlayerOptions.audioContext` plays the live LOC sound through the page's
+  `AudioContext` instead of one per player, so players on a page share one
+  output stream and the page picks the speaker with `setSinkId` on it. The
+  player never suspends or closes it. Review and CMAF sound do not play
+  through it.
 - `LivePlayer.dispose()` stops the player and releases its decoder workers,
   audio contexts and pictures, so a page that creates a player per broadcast
   it shows does not keep them after the broadcast leaves.

@@ -52,6 +52,7 @@ type Scheduled = {
 type Concealment = { period: Channels; played: number }
 
 /// Plays decoded audio through an AudioContext running at the stream's sample
+/// rate, or through the one it is given, which resamples a stream at another
 /// rate. Chunks are appended whole at a write head so the waveform stays
 /// continuous, and how far the write head sits from the time the clock asked
 /// for is reported as drift, which lets the clock follow the audio device: a
@@ -83,7 +84,7 @@ export class AudioPlayout {
   private writeHead: number | undefined
   private renderingPoll: ReturnType<typeof setTimeout> | undefined
   private concealmentTimer: ReturnType<typeof setTimeout> | undefined
-  private lastChunk: Channels | undefined
+  private lastChunk: { channels: Channels; sampleRate: number } | undefined
   private concealment: Concealment | undefined
   private last: Scheduled | undefined
   breaks = 0
@@ -91,7 +92,8 @@ export class AudioPlayout {
   concealedMs = 0
 
   /// Without `givenContext` the playout opens and closes an AudioContext of
-  /// its own.
+  /// its own. A given context belongs to the caller: the playout only
+  /// disconnects its nodes from it and never suspends or closes it.
   constructor(
     private readonly onDrift: (driftMs: number, captureMicros: number) => void,
     private readonly givenContext?: (sampleRate: number) => AudioContext
@@ -175,11 +177,15 @@ export class AudioPlayout {
   /// Suspending freezes the context clock, so what is scheduled resumes in
   /// place; the caller flushes first when it should not.
   async suspend(): Promise<void> {
-    await this.output?.context.suspend()
+    if (!this.givenContext) {
+      await this.output?.context.suspend()
+    }
   }
 
   async resume(): Promise<void> {
-    await this.output?.context.resume()
+    if (!this.givenContext) {
+      await this.output?.context.resume()
+    }
   }
 
   close(): void {
@@ -234,7 +240,7 @@ export class AudioPlayout {
       continues
     )
     this.concealment = undefined
-    this.lastChunk = channels
+    this.lastChunk = { channels, sampleRate: chunk.sampleRate }
     this.start(output, channels, chunk.sampleRate, startAt)
     this.last = { captureMicros: chunk.captureMicros, atMs }
   }
@@ -271,13 +277,14 @@ export class AudioPlayout {
       this.output !== output ||
       this.waiting.length > 0 ||
       this.writeHead === undefined ||
-      this.writeHead < output.context.currentTime
+      this.writeHead < output.context.currentTime ||
+      !this.lastChunk
     ) {
       return
     }
-    const { sampleRate } = output.context
+    const { sampleRate } = this.lastChunk
     if (!this.concealment) {
-      const period = this.lastChunk && lastPeriod(this.lastChunk, sampleRate)
+      const period = lastPeriod(this.lastChunk.channels, sampleRate)
       if (!period) {
         return
       }
