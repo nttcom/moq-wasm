@@ -62,6 +62,10 @@ export type RemoteBroadcastOptions = {
   /// Unsubscribes the video of a view whose element is off screen, detached
   /// or hidden, until it shows again; the audio plays on. On by default.
   pauseHiddenVideo?: boolean
+  /// Plays the views' live sound through the page's context, as
+  /// `LivePlayerOptions.audioContext` does: the page resumes it from a user
+  /// gesture and picks the speaker with its `setSinkId`.
+  audioContext?: AudioContext
 }
 
 /// A broadcast someone else publishes, played source by source: it
@@ -74,6 +78,7 @@ export class RemoteBroadcast {
   private readonly unlistenCatalog: () => void
   private readonly log: (level: LogLevel, message: string) => void
   private readonly pauseHiddenVideo: boolean
+  private readonly audioContext: AudioContext | undefined
   private disposed = false
 
   constructor(
@@ -83,6 +88,7 @@ export class RemoteBroadcast {
   ) {
     this.log = options.onLog ?? ((level, message) => sdkLog(level, TARGET, message))
     this.pauseHiddenVideo = options.pauseHiddenVideo ?? true
+    this.audioContext = options.audioContext
     this.catalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })
     this.unlistenCatalog = this.catalog.listen({
       onCatalog: (text) => this.applyCatalog(text),
@@ -147,7 +153,9 @@ export class RemoteBroadcast {
         existing.update(source)
         continue
       }
-      const view = new View(source, this.log, this.pauseHiddenVideo, (level) => this.audioLevel(view, level))
+      const view = new View(source, this.log, this.pauseHiddenVideo, this.audioContext, (level) =>
+        this.audioLevel(view, level)
+      )
       this.views.set(source.name, view)
       view.player
         .start(this.session, this.namespace, this.catalog)
@@ -182,6 +190,7 @@ class View implements SourceView {
     source: CatalogSource,
     log: (level: LogLevel, message: string) => void,
     pauseHiddenVideo: boolean,
+    audioContext: AudioContext | undefined,
     onAudioLevel: (level: AudioLevel) => void
   ) {
     this.name = source.name
@@ -193,6 +202,7 @@ class View implements SourceView {
     this.player = new LivePlayer({
       container: this.element,
       source: liveSource(source),
+      audioContext,
       callbacks: {
         onStateChange: () => {},
         onLiveFrame: () => this.framePresented(),
