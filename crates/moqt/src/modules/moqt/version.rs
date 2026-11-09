@@ -604,7 +604,9 @@ impl ControlReceiver {
     }
 }
 
-fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<Version> {
+pub(crate) fn negotiated_version(
+    transport_connection: &BoxedConnection,
+) -> anyhow::Result<Version> {
     let protocol = transport_connection.negotiated_protocol();
     let version = Version::negotiated(&protocol)?;
     tracing::debug!(?protocol, ?version, "MoQT version negotiated");

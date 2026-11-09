@@ -622,7 +622,9 @@ SUBSCRIBE は TRACK_DOES_NOT_EXIST、PUBLISH は UNINTERESTED で断り、SUBSCR
 
 `token` は文字列か、文字列を返す非同期関数を受け取る。関数なら、最初の接続、GOAWAY に
 従った新しい relay への接続、再接続のそれぞれで、CLIENT_SETUP を送る直前に呼ぶ。期限の
-短い JWT を使うページは、ここで backend から新しいトークンを取る。これは wasm ではなく
+短い JWT を使うページは、ここで backend から新しいトークンを取る。呼ぶのは transport を
+開いた後で、relay は開いてから 10 秒以内に CLIENT_SETUP が届かない接続を閉じる。関数は
+その間に答える。これは wasm ではなく
 moqt の役目にする。`ClientConfig::authorization_token` を、固定値と、接続ごとに呼ばれる
 provider の両方を表せる型に変え、`Session` が新しい `Connection` を開くたびに provider
 を呼ぶ。Rust の publisher（live-ingest など）も同じ口を使える。
