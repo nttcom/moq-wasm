@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `stats()` on a `publish()` result and on each `addSource()` source returns
+  the video and audio that source's encoders output over the last second
+  (`encodedKbps`, `encodedFramesPerSecond`), the encoded video `frameSize`
+  and that of each rendition, and, since it was published, the frames
+  dropped before encoding and the encoder failures.
 - An audio encoder failure now reaches `PublishOptions.onError`, as a video
   encoder failure already did.
 - `LivePlayer` plays a broadcast with audio and no video, such as a member

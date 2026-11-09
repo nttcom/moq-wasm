@@ -1,6 +1,5 @@
 import { louderAudioLevel, measureAudioLevel } from '../audioLevel'
 import type { AudioLevel } from '../loc'
-import { createBitrateLogger } from '../bitrate'
 import { CaptureTimestamps } from './captureTimestamps'
 import { encoderConfigForInput } from './audioInputFormat'
 import { pcmFrames } from './pcmCapture'
@@ -22,13 +21,7 @@ const samplePosition = new EncoderSamplePosition()
 /// it carries the loudest level measured since the previous output.
 let pendingAudioLevel: AudioLevel | undefined
 
-const audioBitrateLogger = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', media: 'audio', kbps })
-})
-
 function sendAudioChunkMessage(chunk: EncodedAudioChunk, metadata: EncodedAudioChunkMetadata | undefined) {
-  audioBitrateLogger.addBytes(chunk.byteLength)
-
   const { init, captureTimestampMicros } = captureTimestamps.restamp(chunk)
   const audioLevel = pendingAudioLevel
   pendingAudioLevel = undefined

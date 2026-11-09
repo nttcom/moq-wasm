@@ -32,6 +32,13 @@ export type { LivePictureKind } from './player/livePictureSink'
 export { type LiveStats, formatLiveStats } from './player/locLive'
 export type { DeliveryObserver, Playhead, StreamKind } from './player/deliveryObserver'
 export type { AudioLevel } from './internal/loc'
+export type {
+  AudioPublishStats,
+  EncodedRateStats,
+  EncodedVideoStats,
+  SourcePublicationStats,
+  VideoPublishStats
+} from './internal/encoders/publishStats'
 export { monotonicUnixMicros } from './internal/clock'
 export { PlayerControls } from './controls/playerControls'
 export { CATALOG_TRACK_NAME, type LiveSource, type MediaCatalogTrack, extractCatalogTracks } from './catalog'
