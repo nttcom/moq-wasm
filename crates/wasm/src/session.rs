@@ -93,10 +93,10 @@ impl Session {
 
     #[wasm_bindgen(js_name = transportStats)]
     pub fn transport_stats(&self) -> TransportStats {
-        let stats = self.session.transport_stats();
+        let bytes = self.session.transferred_bytes();
         TransportStats {
-            sent_bytes: stats.sent_bytes as f64,
-            received_bytes: stats.received_bytes as f64,
+            sent_bytes: bytes.sent as f64,
+            received_bytes: bytes.received as f64,
         }
     }
 

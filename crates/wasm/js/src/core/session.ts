@@ -113,8 +113,8 @@ export class MoqSession {
     return this.open
   }
 
-  /// Bytes sent and received on the session's current connection. A GOAWAY
-  /// move or reconnect resets them to 0.
+  /// Bytes sent and received since the session opened, over every connection
+  /// a GOAWAY move or reconnect opened.
   transportStats(): TransportStats {
     const stats = this.inner.transportStats()
     const copy = { sentBytes: stats.sentBytes, receivedBytes: stats.receivedBytes }

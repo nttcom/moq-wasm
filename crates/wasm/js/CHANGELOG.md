@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- `MoqSession.transportStats()` returns the bytes the session's current
-  connection has sent and received (`sentBytes`, `receivedBytes`), so a page
+- `MoqSession.transportStats()` returns the bytes the session has sent and
+  received over all its connections (`sentBytes`, `receivedBytes`), so a page
   can show its send and receive rate next to `encodedKbps`. Over WebTransport
   the SDK counts them itself; they are the bytes the browser accepted, with
   no round-trip time or loss.

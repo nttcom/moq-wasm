@@ -15,8 +15,10 @@ use crate::modules::moqt::domains::session_creator::WaitIdle;
 use crate::modules::moqt::runtime::tasks::connection_tasks::ConnectionTasks;
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
-    application_protocol::NegotiatedProtocol, transport_addresses::TransportAddresses,
-    transport_connection::TransportClose, transport_stats::TransportStats,
+    application_protocol::NegotiatedProtocol,
+    transport_addresses::TransportAddresses,
+    transport_connection::TransportClose,
+    transport_stats::{TransferredBytes, TransportStats},
 };
 
 mod migration_task;
@@ -166,8 +168,13 @@ impl Session {
         self.inner.moved_past(generation).await
     }
 
+    /// The current connection's path; a migration starts it over.
     pub fn transport_stats(&self) -> TransportStats {
         self.inner.connection().transport.stats()
+    }
+
+    pub fn transferred_bytes(&self) -> TransferredBytes {
+        self.inner.transferred_bytes()
     }
 
     pub fn transport_addresses(&self) -> TransportAddresses {

@@ -68,8 +68,8 @@ session.close()
 throws a `RequestError` whose `errorCode` is the draft-14 error code
 (`RequestErrorCode`) and whose `reasonPhrase` is the relay's reason.
 
-`session.transportStats()` returns the bytes the session's current connection
-has sent and received since it opened. Sample it twice for a send and receive
+`session.transportStats()` returns the bytes the session has sent and
+received since it opened, across GOAWAY moves and reconnects. Sample it twice for a send and receive
 rate, for example next to a source's `encodedKbps`:
 
 ```ts
@@ -88,8 +88,6 @@ The SDK counts them itself, since Chrome has no `WebTransport.getStats()`:
 - Over WebTransport they are the bytes of streams and datagrams, without QUIC
   and HTTP/3 framing; over the WebSocket fallback, the QMux frames, without
   WebSocket and TLS framing.
-- They restart from 0 when the session moves to another connection (GOAWAY or
-  a reconnect).
 - They say nothing about round-trip time or loss.
 
 ## Publishing a camera and microphone
