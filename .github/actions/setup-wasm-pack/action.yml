@@ -24,7 +24,8 @@ runs:
         trap 'rm -f "${archive_file}"' EXIT
         mkdir -p "${dest}"
         echo "Installing prebuilt wasm-pack ${version}..."
-        curl -fsSL \
+        # GitHub's release downloads answer 504 now and then.
+        curl -fsSL --retry 8 --retry-all-errors --retry-delay 10 \
           "https://github.com/wasm-bindgen/wasm-pack/releases/download/${version}/${archive}.tar.gz" \
           -o "${archive_file}"
         echo "${sha256}  ${archive_file}" | sha256sum -c -
