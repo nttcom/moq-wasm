@@ -31,7 +31,7 @@ arrives, only while a default track exists. `Broadcast::offer_chat` lists the ch
 without one, for a broadcast whose publisher writes the chat while it sends no
 media.
 
-Tasks are spawned and clocks read only through `moqt::executor`, so the crate
+Tasks are spawned, timers run and clocks read only through `moqt::executor`, so the crate
 also builds for wasm32 and runs in a browser, where `RelayConnection` reaches
 the relay through moqt's `BROWSER` transport (WebTransport) instead of `NATIVE`.
 
@@ -130,9 +130,14 @@ else is rejected. The stream ledger behind the live-ingest stats panel is
 updated from the write outcomes `Origin` reports.
 
 The catalog is the exception to the 60 seconds: its newest object is kept for
-as long as the publisher runs. It is sent when it changes and again every 30
-seconds, half the relay's default cache retention, so the relay always holds
-one (draft-ietf-moq-msf-01 §5). A viewer that joins a subscription the relay
+as long as the publisher runs. It is sent when it changes, and a
+`CatalogRefreshTask` of the connection sends it again so that two sends are at
+most 30 seconds apart, half the relay's default cache retention
+(draft-ietf-moq-msf-01 §5). The task runs on its own timer, so a broadcast
+that sends no media, such as a meeting member with camera and microphone off,
+keeps its catalog fresh too. The relay can still drop it before the next send,
+since a track that has sent nothing since the relay subscribed does not count
+as live there. A viewer that joins a subscription the relay
 already holds does not wait for the next one on the SUBSCRIBE, which starts
 after the largest object: it fetches the current catalog, and the relay
 completes that FETCH from here when its own cache has dropped it.
@@ -170,9 +175,9 @@ The previous session is closed with NO_ERROR once its relay no longer
 subscribes to any track, which a draining relay of this repository signals
 by unsubscribing when the subscribers it sent GOAWAY to have left, or when
 that relay closes it. The `Origin` and the session stay the same, so the
-numbering and the FETCH cache carry over. The catalog is sent again on the
-first send after the move, since the record of its last send names the
-connection generation it went to. If the named relay cannot be reached within 10 s, the connection keeps
+numbering and the FETCH cache carry over. The catalog is sent again as soon as
+the session moves (`Session::moved_past`), so the new relay holds it whether
+or not media flows. If the named relay cannot be reached within 10 s, the connection keeps
 publishing to the old session until that relay closes it.
 
 ## Group alignment

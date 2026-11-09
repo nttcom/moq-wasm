@@ -1,3 +1,4 @@
+mod catalog_refresh_task;
 mod catalog_track;
 
 use std::{
@@ -21,15 +22,12 @@ use crate::{
     broadcast::{CatalogMetadata, awaits_subscribe, build_catalog},
     stream_ledger::{StreamLedger, StreamRecord},
 };
+use catalog_refresh_task::CatalogRefreshTask;
 use catalog_track::CatalogTrack;
 
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for a range it never cached can still be answered here.
 const FETCH_CACHE_RETENTION: Duration = Duration::from_secs(60);
-/// Half the relay's default RELAY_CACHE_TTL_SECS, so the catalog is republished
-/// before it falls out of the relay cache (draft-ietf-moq-msf-01 §5) and a viewer
-/// arriving long after the last change still finds one.
-const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// A browser reaches the relay over WebTransport only.
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,7 +57,9 @@ type TrackKey = (String, String);
 struct RelayState {
     announced_namespaces: HashSet<String>,
     catalogs: HashMap<String, CatalogMetadata>,
-    catalog_sent: HashMap<String, CatalogSent>,
+    /// Per namespace path whose catalog has been sent, whether it was sent
+    /// since the previous `CatalogRefreshTask` tick.
+    catalog_sent_since_tick: HashMap<String, bool>,
     /// Per namespace path, the tracks a SUBSCRIBE is accepted for before the
     /// catalog lists them.
     declared_tracks: HashMap<String, HashSet<String>>,
@@ -72,14 +72,6 @@ struct RelayState {
     /// disconnect, which ends every wait for one.
     subscribed: HashMap<String, watch::Sender<bool>>,
     disconnected: bool,
-}
-
-struct CatalogSent {
-    /// `executor::now()` at the send.
-    at: Duration,
-    /// `Session::connection_generation` at the send; after a migration the
-    /// new relay gets the catalog at the next send.
-    generation: u64,
 }
 
 impl RelayState {
@@ -124,10 +116,19 @@ impl RelayState {
             .is_some_and(|tracks| tracks.contains(track_name))
     }
 
-    fn catalog_refresh_due(&self, namespace_path: &str, now: Duration, generation: u64) -> bool {
-        self.catalog_sent.get(namespace_path).is_some_and(|sent| {
-            now.saturating_sub(sent.at) >= CATALOG_REFRESH_INTERVAL || sent.generation != generation
-        })
+    /// Returns the namespaces whose catalog was not sent since the previous
+    /// tick, and marks every namespace unsent for the next tick.
+    fn take_catalogs_to_refresh(&mut self) -> Vec<String> {
+        self.catalog_sent_since_tick
+            .iter_mut()
+            .filter_map(|(namespace_path, sent)| {
+                (!std::mem::take(sent)).then(|| namespace_path.clone())
+            })
+            .collect()
+    }
+
+    fn sent_catalogs(&self) -> Vec<String> {
+        self.catalog_sent_since_tick.keys().cloned().collect()
     }
 }
 
@@ -136,7 +137,8 @@ pub(crate) struct ConnectedRelay {
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
-    catalog: CatalogTrack,
+    catalog: Arc<CatalogTrack>,
+    _catalog_refresh: CatalogRefreshTask,
     ledger: StreamLedger,
     events: RelayEvents,
 }
@@ -273,17 +275,19 @@ impl ConnectedRelay {
         let owned = owns_session.then(|| OwnedSession {
             event_task: Self::spawn_event_loop(session.clone(), events.clone()),
         });
+        let catalog = Arc::new(CatalogTrack::new(
+            session.clone(),
+            origin.clone(),
+            state.clone(),
+            ledger.clone(),
+        ));
         Self {
             owned,
-            catalog: CatalogTrack::new(
-                session.clone(),
-                origin.clone(),
-                state.clone(),
-                ledger.clone(),
-            ),
             session,
             origin,
             state,
+            _catalog_refresh: CatalogRefreshTask::run(catalog.clone()),
+            catalog,
             ledger,
             events,
         }
@@ -380,13 +384,6 @@ impl ConnectedRelay {
         object: OutgoingObject,
     ) -> Result<bool> {
         let key = (namespace.join("/"), track_name.to_string());
-        if self.state.lock().await.catalog_refresh_due(
-            &key.0,
-            executor::now(),
-            self.session.connection_generation(),
-        ) {
-            self.catalog.send(&key.0).await?;
-        }
         if self.state.lock().await.disconnected {
             bail!("MoQ publisher disconnected");
         }
@@ -948,6 +945,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_relay_a_go_away_names_gets_the_catalog_while_no_media_flows() {
+        // Arrange: the broadcast has sent its catalog to relay A and sends no media
+        let mut relay_a = FakeRelay::spawn("goaway-catalog-a");
+        let mut relay_b = FakeRelay::spawn("goaway-catalog-b");
+        let (_connection, _broadcast) = connected_broadcast(&relay_a).await;
+        let session_a = relay_a.session().await;
+
+        // Act
+        session_a.go_away(relay_b.url.clone()).await.unwrap();
+        let catalog = tokio::time::timeout(TEST_TIMEOUT, relay_b.catalog_objects.recv()).await;
+
+        // Assert
+        let catalog = catalog
+            .expect("relay B must get the catalog")
+            .expect("relay B keeps reading the catalog");
+        assert!(serde_json::from_slice::<Catalog>(&catalog.payload).is_ok());
+    }
+
+    #[tokio::test]
     async fn go_away_with_an_unreachable_relay_keeps_the_current_session() {
         // Arrange
         let mut relay_a = FakeRelay::spawn("goaway-unreachable");
@@ -989,25 +1005,37 @@ mod tests {
     }
 
     #[test]
-    fn catalog_is_due_again_once_the_refresh_interval_has_passed() {
+    fn a_tick_refreshes_only_the_catalogs_not_sent_since_the_previous_tick() {
         // Arrange
-        let sent_at = Duration::from_secs(100);
         let mut state = RelayState::default();
-        state.catalog_sent.insert(
-            "live/test".to_string(),
-            CatalogSent {
-                at: sent_at,
-                generation: 0,
-            },
-        );
+        state
+            .catalog_sent_since_tick
+            .insert("live/changed".to_string(), true);
+        state
+            .catalog_sent_since_tick
+            .insert("live/idle".to_string(), false);
 
-        // Act / Assert
-        let almost = sent_at + CATALOG_REFRESH_INTERVAL - Duration::from_secs(1);
-        assert!(!state.catalog_refresh_due("live/test", almost, 0));
-        assert!(state.catalog_refresh_due("live/test", almost, 1));
-        let due = sent_at + CATALOG_REFRESH_INTERVAL;
-        assert!(state.catalog_refresh_due("live/test", due, 0));
-        assert!(!state.catalog_refresh_due("live/other", due, 0));
+        // Act
+        let refreshed = state.take_catalogs_to_refresh();
+
+        // Assert
+        assert_eq!(refreshed, vec!["live/idle".to_string()]);
+    }
+
+    #[test]
+    fn a_catalog_sent_since_one_tick_is_refreshed_at_the_next() {
+        // Arrange
+        let mut state = RelayState::default();
+        state
+            .catalog_sent_since_tick
+            .insert("live/changed".to_string(), true);
+        state.take_catalogs_to_refresh();
+
+        // Act
+        let refreshed = state.take_catalogs_to_refresh();
+
+        // Assert
+        assert_eq!(refreshed, vec!["live/changed".to_string()]);
     }
 
     #[test]
