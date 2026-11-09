@@ -20,6 +20,14 @@ export {
   createBroadcast
 } from './localBroadcast'
 export {
+  type RemoteBroadcastListener,
+  type RemoteBroadcastOptions,
+  type SourceView,
+  type SourceViewListener,
+  type SourceViewState,
+  RemoteBroadcast
+} from './remoteBroadcast'
+export {
   type LivePlayerCallbacks,
   type LivePlayerOptions,
   type LivePlayerState,

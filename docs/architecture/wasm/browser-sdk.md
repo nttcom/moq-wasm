@@ -412,7 +412,9 @@ source 名は、その source の映像 track の名前である。`createBroadc
 2. altGroup（§5.2.12）を共有する LOC track は1つの source にまとめる。その名前は、group の
    中で一番短い名前の映像 track（映像が無ければ音声 track）に 3 を当てはめて決める。
    rendition と、live-translate の言語ごとの音声はこれでまとまる。
-3. 残りの映像 track は、その名前の source になる。音声 track は、`<name>_audio` なら
+3. 残りの映像 track は、その名前の source になる。ただし `<name>_<rendition>` の rendition が
+   映像本体より先に載った（ミュートを解除したカメラ）ときは、音声が名付ける source `<name>`
+   に入る。音声 track は、`<name>_audio` なら
    source `<name>`、`audio` なら source `video`（`publish()` と `broadcast` の既定の命名）、
    それ以外は自分の名前の、音声だけの source になる。
 4. source は、その track が catalog に1本でもある間は存在する。カメラを止めても音声が
