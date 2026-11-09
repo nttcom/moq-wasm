@@ -44,6 +44,12 @@ export class ReviewClock {
     this.applyPauseToContext()
   }
 
+  /// Releases the audio context; a later review creates another.
+  close(): void {
+    void this.context?.close()
+    this.context = undefined
+  }
+
   reset(): void {
     this.clock.reset()
     this.anchorMicros = undefined

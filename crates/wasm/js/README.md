@@ -129,7 +129,9 @@ and the browser's autoplay policy keeps a context created without a user
 gesture silent. `start` resolves once the tracks are subscribed or, when
 nobody publishes the namespace yet, once the player waits for the publisher;
 it starts playing when the publisher appears. `stop()` unsubscribes; the
-session stays the caller's to close.
+session stays the caller's to close. `dispose()` also releases the player's
+decoder workers, audio contexts and pictures, for a page that creates a player
+per broadcast; it cannot start again.
 
 Without `PlayerControls`, draw the controls from `player.state` in
 `onStateChange` and drive the player with its methods:

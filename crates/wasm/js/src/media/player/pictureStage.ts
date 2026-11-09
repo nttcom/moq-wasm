@@ -18,6 +18,13 @@ export class PictureStage {
     container.prepend(this.liveVideo, this.liveCanvas, this.reviewCanvas, ...this.msePool)
   }
 
+  /// Takes the pictures out of the container.
+  remove(): void {
+    for (const element of [this.liveVideo, this.liveCanvas, this.reviewCanvas, ...this.msePool]) {
+      element.remove()
+    }
+  }
+
   videos(): HTMLVideoElement[] {
     return [this.liveVideo, ...this.msePool]
   }
