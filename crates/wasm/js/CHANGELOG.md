@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- An audio encoder failure now reaches `PublishOptions.onError`, as a video
+  encoder failure already did.
 - `LivePlayer` plays a broadcast with audio and no video, such as a member
   who joined with the camera off: `LiveTracks.video` is optional, the playback
   status names the audio track, and the PUBLISH_DONE of the audio takes the

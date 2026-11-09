@@ -40,6 +40,7 @@ async function initializeAudioEncoder() {
     output: sendAudioChunkMessage,
     error: (e: any) => {
       workerLog('error', TARGET, 'encoder error', { error: e })
+      self.postMessage({ type: 'encoderError', message: e.message })
     }
   }
 

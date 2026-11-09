@@ -354,9 +354,19 @@ function encodeAudio(
   worker.onerror = (event) => report(workerError('audio', event))
   let configured = false
   worker.onmessage = (
-    event: MessageEvent<ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel }>
+    event: MessageEvent<
+      | (ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel })
+      | { type: 'configError' | 'encoderError' }
+    >
   ) => {
-    if (receiveWorkerLog(event.data) || event.data.type !== 'chunk') {
+    if (receiveWorkerLog(event.data)) {
+      return
+    }
+    if (event.data.type === 'configError' || event.data.type === 'encoderError') {
+      report(new Error(`audio encoder: ${event.data.type}`))
+      return
+    }
+    if (event.data.type !== 'chunk') {
       return
     }
     const { chunk, metadata, audioLevel, captureTimestampMicros } = event.data
