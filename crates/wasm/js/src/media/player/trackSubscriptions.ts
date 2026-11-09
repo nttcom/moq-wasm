@@ -34,7 +34,9 @@ export class TrackSubscriptions {
 
   constructor(
     private readonly context: TrackContext,
-    private readonly onPublishDone: (kind: MediaKind, done: PublishDone) => void
+    /// `leading` when no video is subscribed after the PUBLISH_DONE: the
+    /// video's, or the audio's of a broadcast played without video.
+    private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void
   ) {}
 
   get(kind: MediaKind): TrackSubscription | undefined {
@@ -169,7 +171,7 @@ export class TrackSubscriptions {
     this.subscriptions.delete(kind)
     this.context.observer.forget(subscription.id)
     this.context.log('info', `${subscription.name} ended by the publisher (status ${done.code})`)
-    this.onPublishDone(kind, done)
+    this.onPublishDone(kind, done, !this.subscriptions.has('video'))
   }
 
   private forget(subscription: TrackSubscription): void {

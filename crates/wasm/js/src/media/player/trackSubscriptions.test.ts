@@ -124,3 +124,38 @@ test('unsubscribing every track while forwarding is paused sends no SUBSCRIBE_UP
   expect(session.updates.filter((update) => update.startsWith('setForward') && update.endsWith('true'))).toEqual([])
   expect(session.updates.filter((update) => update.startsWith('close'))).toEqual(['close video', 'close audio'])
 })
+
+const AUDIO: MediaCatalogTrack = { name: 'audio', label: 'audio' }
+const DONE = { code: 2n, reason: 'track ended' }
+
+async function endSubscription(kinds: MediaKind[], ended: MediaKind): Promise<[MediaKind, boolean][]> {
+  const session = new FakeSession(undefined, [])
+  const reported: [MediaKind, boolean][] = []
+  const subscriptions = new TrackSubscriptions(session.context(), (kind, _done, leading) =>
+    reported.push([kind, leading])
+  )
+  for (const kind of kinds) {
+    await subscriptions.subscribe(kind, kind, kind === 'video' ? VIDEO : AUDIO, () => {})
+  }
+  session.publishDone(ended, DONE)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  return reported
+}
+
+test('the PUBLISH_DONE of the audio leads while no video is subscribed', async () => {
+  // Act
+  const reported = await endSubscription(['audio'], 'audio')
+
+  // Assert
+  expect(reported).toEqual([['audio', true]])
+})
+
+test('the PUBLISH_DONE of the audio does not lead while the video is subscribed, and that of the video does', async () => {
+  // Act
+  const audioEnded = await endSubscription(['video', 'audio'], 'audio')
+  const videoEnded = await endSubscription(['video', 'audio'], 'video')
+
+  // Assert
+  expect(audioEnded).toEqual([['audio', false]])
+  expect(videoEnded).toEqual([['video', true]])
+})

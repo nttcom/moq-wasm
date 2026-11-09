@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `LivePlayer` plays a broadcast with audio and no video, such as a member
+  who joined with the camera off: `LiveTracks.video` is optional, the playback
+  status names the audio track, and the PUBLISH_DONE of the audio takes the
+  tracks given to `start` back to waiting for the publisher, as that of the
+  video does. A player whose video `setVideoEnabled(false)` turned off
+  behaves alike. `start` rejects given tracks that list neither. Rewind and
+  VOD still need a video track.
 - `LivePlayerOptions.audioContext` plays the live LOC sound through the page's
   `AudioContext` instead of one per player, so players on a page share one
   output stream and the page picks the speaker with `setSinkId` on it. The

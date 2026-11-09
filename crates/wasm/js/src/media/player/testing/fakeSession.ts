@@ -5,6 +5,7 @@ import type {
   MoqSession,
   MoqSubscribeOptions,
   MoqSubscription,
+  PublishDone,
   ReceivedObject
 } from '../../../core/session'
 import { TIMESTAMP_ID } from '../../internal/loc'
@@ -22,10 +23,12 @@ export type SubscribeCall = {
 /// `drained` resolves once a reader has taken them all. `updates` records each
 /// UNSUBSCRIBE and SUBSCRIBE_UPDATE sent on a subscription, such as
 /// `close video` or `setForward audio true`; `failedClose` makes each
-/// UNSUBSCRIBE fail.
+/// UNSUBSCRIBE fail. `publishDone` ends the newest subscription to a track
+/// with PUBLISH_DONE.
 export class FakeSession {
   readonly calls: SubscribeCall[] = []
   readonly updates: string[] = []
+  private readonly endings = new Map<string, (done: PublishDone) => void>()
   failedClose: Error | undefined
   drained: Promise<void> = Promise.resolve()
 
@@ -69,7 +72,12 @@ export class FakeSession {
     } as unknown as MoqFetch
   }
 
+  publishDone(track: string, done: PublishDone): void {
+    this.endings.get(track)?.(done)
+  }
+
   private subscription(track: string): MoqSubscription {
+    const done = new Promise<PublishDone>((resolve) => this.endings.set(track, resolve))
     let drain = () => {}
     this.drained = new Promise((resolve) => {
       drain = resolve
@@ -78,7 +86,7 @@ export class FakeSession {
     const groupIds = [...new Set(objects.map((object) => object.groupId))]
     return {
       largest: this.largest,
-      done: new Promise(() => {}),
+      done,
       async *[Symbol.asyncIterator]() {
         yield* objects
         drain()
