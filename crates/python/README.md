@@ -37,5 +37,6 @@ or the checkout moves to another commit. After an uncommitted change to the
 uv run pytest
 ```
 
-The tests build and start a relay and a VTS from this workspace on free ports.
+The tests build and start a relay and a VTS from this workspace on free ports;
+the VTS accepts the `temp-` apps the tests sign tokens for.
 The GOAWAY test also needs Docker: it runs a Redis that two relays share.

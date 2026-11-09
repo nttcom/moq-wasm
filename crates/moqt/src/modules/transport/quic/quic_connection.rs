@@ -34,7 +34,7 @@ pub(crate) fn negotiated_alpn(connection: &quinn::Connection) -> Option<String> 
 impl TransportConnection for QUICConnection {
     async fn closed(&self) -> TransportClose {
         let error = self.connection.closed().await;
-        tracing::info!("QUIC connection closed: {:?}", error);
+        tracing::info!(reason = %error, "QUIC connection closed");
         match error {
             quinn::ConnectionError::ApplicationClosed(close) => TransportClose {
                 code: u32::try_from(close.error_code.into_inner()).ok(),

@@ -8,17 +8,18 @@ use crate::{
     modules::moqt::{
         control_plane::{
             constants::TerminationErrorCode,
-            control_messages::messages::request_error::RequestError,
+            control_messages::messages::{
+                max_request_id::MaxRequestId, request_error::RequestError,
+            },
             enums::{ErrorPhrase, RequestId, ResponseMessage},
             error_codes::{PublishDoneCode, RequestErrorCode, RequestKind},
             handler::{
                 fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
-                go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
-                publish_done_handler::PublishDoneHandler, publish_handler::PublishHandler,
+                go_away_handler::GoAwayHandler, publish_done_handler::PublishDoneHandler,
+                publish_handler::PublishHandler,
                 publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
                 publish_namespace_done_handler::PublishNamespaceDoneHandler,
                 publish_namespace_handler::PublishNamespaceHandler,
-                requests_blocked_handler::RequestsBlockedHandler,
                 subscribe_handler::SubscribeHandler,
                 subscribe_namespace_handler::SubscribeNamespaceHandler,
                 subscribe_update_handler::SubscribeUpdateHandler,
@@ -30,13 +31,21 @@ use crate::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
         },
         domains::{connection::Connection, session_context::SessionContext},
-        version::draft14::{ControlChannel, InflightRequest, error_codes, handle_late_response},
+        version::{
+            Notification,
+            draft14::{
+                ControlChannel, InflightRequest, ReceivedResponse, RequestIdViolation, error_codes,
+                handle_late_response,
+            },
+        },
     },
 };
 
 enum DepacketizeResult {
     SessionEvent(SessionEvent),
     ResponseMessage(u64, ResponseMessage),
+    /// The message only updated this session's state.
+    Handled,
     SessionClosed,
 }
 
@@ -48,7 +57,7 @@ impl ControlMessageReceiveTask {
         session_context: Weak<SessionContext>,
         connection: Weak<Connection>,
         publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
-        receiver_span: Span,
+        session_span: Span,
     ) -> JoinHandle {
         executor::spawn(
             "Control Message Receiver",
@@ -60,24 +69,53 @@ impl ControlMessageReceiveTask {
                             let received_message = match receive_stream.receive().await {
                                 Ok(Some(received_message)) => received_message,
                                 Ok(None) => {
-                                    tracing::info!("Stream ended.");
+                                    tracing::debug!("control stream ended");
                                     break;
                                 }
                                 Err(error) => {
-                                    tracing::info!(%error, "Stream closed.");
+                                    tracing::debug!(%error, "control stream closed");
                                     break;
                                 }
                             };
 
+                            if let Some(request_id) = new_request_id(&received_message) {
+                                match ControlChannel::of(&connection)
+                                    .accept_peer_request_id(request_id)
+                                {
+                                    Ok(None) => {}
+                                    Ok(Some(limit)) => {
+                                        tracing::debug!(
+                                            maximum_request_id = limit,
+                                            "raising the peer's Maximum Request ID"
+                                        );
+                                        let raise = Notification::MaxRequestId(MaxRequestId::new(limit));
+                                        if let Err(error) =
+                                            ControlChannel::of(&connection).notify(raise).await
+                                        {
+                                            tracing::debug!(%error, "failed to send MAX_REQUEST_ID");
+                                        }
+                                    }
+                                    Err(RequestIdViolation { code, reason }) => {
+                                        tracing::error!(
+                                            request_id,
+                                            %reason,
+                                            "Protocol violation: invalid Request ID"
+                                        );
+                                        session.close_connection(&connection, code, reason);
+                                        break;
+                                    }
+                                }
+                            }
                             match Self::resolve_message(&session, &connection, received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
                                     if let SessionEvent::PublishDone(handler) = &event {
                                         let _ = publish_done_sender.send(handler.request_id());
                                     }
                                     if let Err(error) = connection.event_sender.send(event) {
-                                        tracing::error!("failed to send message: {:?}", error);
+                                        tracing::error!(?error, "failed to send a control message");
                                     }
                                 }
+                                DepacketizeResult::Handled => {}
                                 DepacketizeResult::SessionClosed => break,
                                 DepacketizeResult::ResponseMessage(request_id, message) => {
                                     let inflight_request = ControlChannel::of(&connection)
@@ -87,19 +125,15 @@ impl ControlMessageReceiveTask {
                                             sender,
                                             on_late_response,
                                         }) => {
-                                            // The caller can stop waiting between response
-                                            // arrival and this send; fall back to the
-                                            // late-response withdrawal in that case.
-                                            if let Err(message) = sender.send(message) {
-                                                handle_late_response(
-                                                    &session,
-                                                    &connection,
-                                                    request_id,
-                                                    on_late_response,
-                                                    message,
-                                                )
-                                                .await;
-                                            }
+                                            // If the caller stopped waiting, `send` hands the
+                                            // response back and dropping it withdraws the request.
+                                            let _ = sender.send(ReceivedResponse::new(
+                                                message,
+                                                &session,
+                                                &connection,
+                                                request_id,
+                                                on_late_response,
+                                            ));
                                         }
                                         Some(InflightRequest::Abandoned(action)) => {
                                             handle_late_response(
@@ -132,7 +166,7 @@ impl ControlMessageReceiveTask {
                         ControlChannel::of(&connection).fail_inflight_requests();
                     }
                 }
-            .instrument(receiver_span),
+            .instrument(session_span),
         )
     }
 
@@ -156,9 +190,6 @@ impl ControlMessageReceiveTask {
                 "SUBSCRIBE_UPDATE for a Request ID that never existed",
             );
             return DepacketizeResult::SessionClosed;
-        }
-        if let Some(request_id) = peer_request_id(&received_message) {
-            channel.note_peer_request_id(request_id);
         }
         match received_message {
             ReceivedMessage::Subscribe(subscribe) => {
@@ -292,7 +323,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::GoAway(go_away) => {
                 if let Err(reason) = connection.note_go_away_received(&go_away.new_session_uri) {
-                    tracing::error!("Protocol violation: {reason}");
+                    tracing::error!(%reason, "protocol violation");
                     session.close_connection(
                         connection,
                         TerminationErrorCode::ProtocolViolation,
@@ -304,14 +335,27 @@ impl ControlMessageReceiveTask {
                 DepacketizeResult::SessionEvent(SessionEvent::GoAway(go_away_handler))
             }
             ReceivedMessage::MaxRequestId(max_request_id) => {
-                let max_request_id_handler = MaxRequestIdHandler::new(max_request_id);
-                DepacketizeResult::SessionEvent(SessionEvent::MaxRequestId(max_request_id_handler))
+                if let Err(reason) = ControlChannel::of(connection)
+                    .raise_peer_request_id_limit(max_request_id.request_id)
+                {
+                    tracing::error!(%reason, "Protocol violation");
+                    session.close_connection(
+                        connection,
+                        TerminationErrorCode::ProtocolViolation,
+                        reason,
+                    );
+                    return DepacketizeResult::SessionClosed;
+                }
+                DepacketizeResult::Handled
             }
             ReceivedMessage::RequestsBlocked(requests_blocked) => {
-                let requests_blocked_handler = RequestsBlockedHandler::new(requests_blocked);
-                DepacketizeResult::SessionEvent(SessionEvent::RequestsBlocked(
-                    requests_blocked_handler,
-                ))
+                // No MAX_REQUEST_ID is sent in response (§9.6 MAY): the window
+                // already moves with use, so a blocked peer has skipped Request IDs.
+                tracing::debug!(
+                    maximum_request_id = requests_blocked.maximum_request_id,
+                    "REQUESTS_BLOCKED received"
+                );
+                DepacketizeResult::Handled
             }
             ReceivedMessage::TrackStatus(track_status) => {
                 let track_status_handler =
@@ -352,18 +396,15 @@ impl ControlMessageReceiveTask {
     }
 }
 
-/// The Request ID of a request the peer sent (§9.1), `None` for other
-/// messages.
-fn peer_request_id(message: &ReceivedMessage) -> Option<RequestId> {
+/// The Request ID of a message that starts a new request (§9.1).
+fn new_request_id(message: &ReceivedMessage) -> Option<RequestId> {
     match message {
-        ReceivedMessage::Subscribe(request) | ReceivedMessage::TrackStatus(request) => {
-            Some(request.request_id)
-        }
-        ReceivedMessage::Publish(request) => Some(request.request_id),
-        ReceivedMessage::PublishNamespace(request) => Some(request.request_id),
-        ReceivedMessage::SubscribeNamespace(request) => Some(request.request_id),
-        ReceivedMessage::Fetch(request) => Some(request.request_id),
-        ReceivedMessage::SubscribeUpdate(request) => Some(request.request_id),
+        ReceivedMessage::Subscribe(m) | ReceivedMessage::TrackStatus(m) => Some(m.request_id),
+        ReceivedMessage::SubscribeUpdate(m) => Some(m.request_id),
+        ReceivedMessage::Fetch(m) => Some(m.request_id),
+        ReceivedMessage::Publish(m) => Some(m.request_id),
+        ReceivedMessage::PublishNamespace(m) => Some(m.request_id),
+        ReceivedMessage::SubscribeNamespace(m) => Some(m.request_id),
         _ => None,
     }
 }
@@ -384,7 +425,7 @@ mod tests {
         SessionEvent,
         modules::test_support::{
             DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
-            spawn_connected_dual_sessions, subscribed_track, subscription, within,
+            spawn_connected_native_sessions, subscribed_track, subscription, within,
         },
     };
 
@@ -394,7 +435,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft14_update_of_a_request_id_that_never_existed_closes_the_session() {
         // Arrange
-        let (client, _server) = spawn_connected_dual_sessions("update-never-existed").await;
+        let (client, _server) = spawn_connected_native_sessions("update-never-existed").await;
 
         // Act
         client

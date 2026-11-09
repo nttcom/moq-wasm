@@ -20,8 +20,8 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use moqt::{
-    AuthorizationToken, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
-    SessionEvent, Subscription,
+    AuthorizationToken, CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode,
+    RequestFailure, Session, SessionEvent, Subscription,
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
         ObjectStatus, Subgroup, SubgroupStart,
@@ -179,10 +179,9 @@ async fn wait_until_relay_accepts(url: &str, token: &str) -> anyhow::Result<()> 
 
 async fn connect(url: &str, token: Option<&str>) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
-        verify_certificate: false,
-        authorization_token: token.map(str::to_string),
-        follow_go_away: true,
+        certificate_verification: CertificateVerification::Disabled,
+        authorization_token: token.map(|token| token.to_string().into()),
+        ..ClientConfig::default()
     })?;
     let connecting = endpoint.connect(url).await?;
     tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)

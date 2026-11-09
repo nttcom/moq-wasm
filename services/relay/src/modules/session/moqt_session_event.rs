@@ -1,0 +1,49 @@
+use crate::modules::session::handler::{
+    fetch::FetchHandler, publish::PublishHandler, publish_namespace::PublishNamespaceHandler,
+    subscribe::SubscribeHandler, subscribe_namespace::SubscribeNamespaceHandler,
+    subscribe_update::SubscribeUpdateHandler, track_status::TrackStatusHandler,
+};
+
+pub(crate) enum MoqtSessionEvent {
+    GoAway(moqt::GoAwayHandler),
+    PublishNamespace(Box<dyn PublishNamespaceHandler>),
+    PublishNamespaceDone(moqt::namespace::PublishNamespaceDoneHandler),
+    PublishNamespaceCancel(moqt::namespace::PublishNamespaceCancelHandler),
+    SubscribeNamespace(Box<dyn SubscribeNamespaceHandler>),
+    UnsubscribeNamespace(moqt::namespace::UnsubscribeNamespaceHandler),
+    Publish(Box<dyn PublishHandler>),
+    PublishDone(moqt::publish::PublishDoneHandler),
+    Subscribe(Box<dyn SubscribeHandler>),
+    SubscribeUpdate(Box<dyn SubscribeUpdateHandler>),
+    Unsubscribe(moqt::subscribe::UnsubscribeHandler),
+    Fetch(Box<dyn FetchHandler>),
+    FetchCancel(moqt::fetch::FetchCancelHandler),
+    TrackStatus(Box<dyn TrackStatusHandler>),
+    Disconnected(),
+    ProtocolViolation(),
+}
+
+impl std::fmt::Debug for MoqtSessionEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            MoqtSessionEvent::GoAway(_) => "GoAway",
+            MoqtSessionEvent::PublishNamespace(_) => "PublishNamespace",
+            MoqtSessionEvent::PublishNamespaceDone(_) => "PublishNamespaceDone",
+            MoqtSessionEvent::PublishNamespaceCancel(_) => "PublishNamespaceCancel",
+            MoqtSessionEvent::SubscribeNamespace(_) => "SubscribeNamespace",
+            MoqtSessionEvent::UnsubscribeNamespace(_) => "UnsubscribeNamespace",
+            MoqtSessionEvent::Publish(_) => "Publish",
+            MoqtSessionEvent::PublishDone(_) => "PublishDone",
+            MoqtSessionEvent::Subscribe(_) => "Subscribe",
+            MoqtSessionEvent::SubscribeUpdate(_) => "SubscribeUpdate",
+            MoqtSessionEvent::Unsubscribe(_) => "Unsubscribe",
+            MoqtSessionEvent::Fetch(_) => "Fetch",
+            MoqtSessionEvent::FetchCancel(_) => "FetchCancel",
+            MoqtSessionEvent::TrackStatus(_) => "TrackStatus",
+            MoqtSessionEvent::Disconnected() => "Disconnected",
+            MoqtSessionEvent::ProtocolViolation() => "ProtocolViolation",
+        };
+
+        f.write_str(name)
+    }
+}

@@ -7,7 +7,7 @@ export function useUrlSync(params: Record<string, string | null>) {
       if (value !== null) sp.set(key, value)
       else sp.delete(key)
     }
-    window.history.replaceState(null, '', `?${sp.toString()}`)
+    window.history.replaceState(null, '', `?${sp.toString()}${window.location.hash}`)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, Object.values(params))
 }

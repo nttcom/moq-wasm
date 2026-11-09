@@ -381,6 +381,7 @@ impl IncomingRequestTask {
                         request_id: subscribe_tracks.request_id,
                         track_namespace_prefix: subscribe_tracks.track_namespace_prefix,
                         authorization_token: subscribe_tracks.authorization_tokens,
+                        trace_context: None,
                     },
                 )),
             ),
@@ -819,6 +820,7 @@ impl OutgoingRequestTask {
                     request_id,
                     track_namespace: namespace,
                     authorization_token: vec![],
+                    trace_context: None,
                 },
             )),
         );

@@ -1,15 +1,9 @@
-import asyncio
-import json
 from dataclasses import dataclass, field
-from typing import Any
 
 import av
-from aiohttp import web
 
-from moq_camera_detection.event_timeline import EventTimeline
-from moq_camera_detection.prompt import Prompt
-
-READ_TIMEOUT_SECONDS = 2
+from moq_camera_detection.prompt import ChoiceQuestion, Prompt
+from moq_camera_detection.vision import Answer
 
 
 def h264_group(frame_count: int) -> list[bytes]:
@@ -25,49 +19,14 @@ def h264_group(frame_count: int) -> list[bytes]:
     return [bytes(packet) for packet in packets]
 
 
-class RecordingPublication:
-    def __init__(self):
-        self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
-
-    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
-        self._writes.put_nowait((new_group, json.loads(payload)))
-
-    async def next_write(self, timeout: float = READ_TIMEOUT_SECONDS) -> tuple[bool, Any]:
-        return await asyncio.wait_for(self._writes.get(), timeout)
-
-
-async def next_records(publication: RecordingPublication) -> list[dict[str, Any]]:
-    _, records = await publication.next_write()
-    return records
-
-
-async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
-    timeline = EventTimeline()
-    publication = RecordingPublication()
-    await timeline.publish_on(publication)
-    await publication.next_write()
-    return timeline, publication
-
-
-YES_NO_PROMPT = Prompt("Is there a person?", ("yes", "no"), (7, 0))
+YES_NO_PROMPT = Prompt((ChoiceQuestion("Is there a person?", ("yes", "no")),), (7, 0))
 
 
 @dataclass
 class StubVision:
-    answer: str | None
+    answers: list[Answer]
     images: list[bytes] = field(default_factory=list)
 
-    async def choose(self, jpeg: bytes, prompt: Prompt) -> str | None:
+    async def answer(self, jpeg: bytes, prompt: Prompt) -> list[Answer]:
         self.images.append(jpeg)
-        return self.answer
-
-
-@dataclass
-class FakeVisionServer:
-    choice: str
-    url: str = ""
-    requests: list[tuple[str | None, dict[str, Any]]] = field(default_factory=list)
-
-    async def handle(self, request: web.Request) -> web.Response:
-        self.requests.append((request.headers.get("Authorization"), await request.json()))
-        return web.json_response({"answers": {"answer": {"choice": self.choice}}})
+        return self.answers

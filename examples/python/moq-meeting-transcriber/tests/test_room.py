@@ -2,22 +2,33 @@ import asyncio
 
 import pytest
 
+from moq_bot_rooms.rooms import BotRoom
 from moq_meeting_transcriber import room as room_module
 from moq_meeting_transcriber.room import BOT_NAMESPACE, Room, participant_name
 from tests.helpers import NamedRecognizer, SessionRefusingNamespaces, SessionWithParticipants
 
-ROOM = "team a"
+ROOM = BotRoom("team a")
 SHORT_GRACE_SECONDS = 0.1
 
 
 def test_one_element_under_the_room_is_a_participant():
     # Act / Assert
-    assert participant_name(["anon", ROOM, "alice"], ROOM) == "alice"
+    assert participant_name(["anon", ROOM.room_id, "alice"], ROOM) == "alice"
+
+
+def test_a_participant_of_a_temporary_app_is_under_its_root():
+    # Act / Assert
+    assert participant_name(["temp-0123", "team a", "alice"], BotRoom("team a", "temp-0123")) == "alice"
 
 
 @pytest.mark.parametrize(
     "namespace",
-    [["anon", ROOM, *BOT_NAMESPACE], ["anon", "other", "alice"], ["app-1", ROOM, "alice"], ["anon", ROOM]],
+    [
+        ["anon", ROOM.room_id, *BOT_NAMESPACE],
+        ["anon", "other", "alice"],
+        ["app-1", ROOM.room_id, "alice"],
+        ["anon", ROOM.room_id],
+    ],
 )
 def test_other_namespaces_are_not_participants(namespace):
     # Act / Assert
@@ -84,7 +95,7 @@ async def test_a_room_ends_once_its_last_participant_has_been_gone_for_the_grace
     # Arrange
     monkeypatch.setattr(room_module, "GRACE_SECONDS", SHORT_GRACE_SECONDS)
     session = SessionWithParticipants()
-    session.publish(["anon", ROOM, "alice"])
+    session.publish(["anon", ROOM.room_id, "alice"])
     transcribing = asyncio.create_task(
         Room("https://relay.invalid", True, NamedRecognizer("whisper"), ROOM)._transcribe(session)
     )
@@ -92,7 +103,7 @@ async def test_a_room_ends_once_its_last_participant_has_been_gone_for_the_grace
     held = not transcribing.done()
 
     # Act
-    session.publish(["anon", ROOM, "alice"], active=False)
+    session.publish(["anon", ROOM.room_id, "alice"], active=False)
     empty = await asyncio.wait_for(transcribing, 1)
 
     # Assert

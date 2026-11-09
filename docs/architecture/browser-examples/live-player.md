@@ -8,9 +8,11 @@ described here change.
 ## Scope
 The Live Player is the MoQT viewer of `examples/browser`: it follows an MSF
 catalog, subscribes to a video and an audio track, plays them live and replays
-what the relay still caches through FETCH. It is extracted from the Live Viewer
-example (`examples/live-viewer`), which keeps every feature it has today, and
-is adopted by the ONVIF example (`examples/onvif`) as its second consumer.
+what the relay still caches through FETCH; a broadcast whose tracks are not
+live, such as a recorder replay, it plays as VOD through FETCH alone. It is
+extracted from the Live Viewer example (`examples/live-viewer`), which keeps
+every feature it has today, and is adopted by the ONVIF example
+(`examples/onvif`) as its second consumer.
 
 Features carried over unchanged:
 
@@ -43,14 +45,14 @@ L3  page            examples/live-viewer, examples/onvif
                     connection form, MP4 publisher / PTZ, diagnostics
                     (StreamMonitor, delivery grid, PlaybackCharts, stats line), log
                         | public API and callbacks only
-L2  controls        lib/player/ui
+L2  controls        crates/wasm/js/src/media/controls
                     seek bar, skip buttons, play/pause, LIVE, volume, speed,
                     quality menu, fullscreen, pointer idle, buffering spinner
                         | public API and callbacks only
-L1  LivePlayer      lib/player
+L1  LivePlayer      crates/wasm/js/src/media/player
                     catalog, subscriptions, live pipelines, seek timeline, review
                         |
-L0  transport/codec @moqt/moqtClient, utils/media (decoder workers, MseSink)
+L0  transport/codec MoqSession, crates/wasm/js/src/media/internal (decoder workers, MseSink)
 ```
 
 Rules:
@@ -60,25 +62,28 @@ Rules:
   the MSE pool), styled by `livePlayer.css`. It never reads form values or
   writes status text; overlays the page puts in the same container stay on
   top of the pictures.
-- L1 does not connect. It is given a connected `MoqtClientWrapper`, so a page
-  can share one session with a publisher or with other players.
-- Relay switchover is the session's, not the player's. The wasm client's
-  `moqt::Session` follows GOAWAY itself (`follow_go_away`, see
-  `docs/architecture/moqt/session-migration.md`): request ids and track
-  aliases stay what the wrapper first saw, so `MoqtClientWrapper` and the
-  player see no switchover at all. A SUBSCRIBE the old relay sent and never
-  unsubscribed is reported through the incoming-unsubscribe handler when its
-  connection closes.
-- L1 does not register session-wide handlers (`setOnSubgroupHeaderHandler`,
-  `setOnConnectionClosedHandler`); they have one slot per client and belong to
-  the page. It registers per-alias and per-request handlers only.
+- L1 does not connect. `start` is given a connected `MoqSession`
+  (`crates/wasm/js/src/core/session.ts`), so a page can share one session with a publisher
+  or with other players, and the page closes it.
+- Relay switchover and reconnecting are the session's, not the player's. The
+  wasm `Session`'s `moqt::Session` follows GOAWAY and reconnects itself (see
+  `docs/architecture/moqt/session-migration.md`), and the handles the player
+  holds keep working across it.
+- L1 holds one handle per request: a `MoqSubscription` per track, read by
+  subgroup stream through `groups()` for media (the End of Group status
+  objects order the groups) and object by object for text tracks; a
+  `MoqFetch` per review window; `trackStatus` for the live edge. The catalog
+  is read with `subscribeCurrentGroup`, the SUBSCRIBE and joining FETCH MSF
+  asks of a late joiner. PUBLISH_DONE arrives on a subscription's `done`.
+  The session API hides track aliases and request ids, so the player keys
+  subscriptions and FETCHes in the delivery observer by ids of its own.
 - L2 (`PlayerControls`) holds no playback state of its own; it renders
   `LivePlayer.state` when the page forwards `onStateChange`, issues commands,
   and keeps only the gesture in progress (a seek bar drag, pointer idle). It
   appends its markup and `playerControls.css` to the same container, after the
   pictures and the page's own overlays. The arrow keys skip wherever the focus
   is, so a page holds one `PlayerControls`.
-- L1 reads the MSF catalog through `lib/msf/catalog.ts` and uses
+- L1 reads the MSF catalog through `crates/wasm/js/src/media/catalog.ts` and uses
   `getErrorMessage` from `utils/page.ts`; neither `lib/` nor `utils/` imports
   from `examples/`.
 - Diagnostics stay in L3. L1 reports deliveries to an optional observer
@@ -88,7 +93,6 @@ Rules:
 
 ```ts
 type LivePlayerOptions = {
-  client: MoqtClientWrapper
   container: HTMLElement
   callbacks: LivePlayerCallbacks
   deliveryObserver?: DeliveryObserver
@@ -103,7 +107,7 @@ type LivePlayerCallbacks = {
 }
 
 class LivePlayer {
-  start(namespace: string[], authInfo: string, tracks?: LiveTracks): Promise<void>
+  start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
@@ -135,7 +139,7 @@ class LocLive {
   readonly playout: LivePlayout
   readonly picture: LivePictureSink
   configureTrack(kind: MediaKind, track: MediaCatalogTrack): void
-  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectMessageWithLoc): void
+  push(kind: MediaKind, groupId: bigint, object: LocObject): void
   setBufferPolicy(policy: BufferPolicy): void
   reset(): void
   dispose(): void
@@ -151,19 +155,43 @@ buffer and target, output latency, arrival spread, video and audio bitrate,
 A/V offset, audio breaks, video drops, shed.
 
 `LiveTracks` (`{ video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }`)
-stands in for the catalog of a publisher that announces none, such as the
-remote-monitoring cameras: `start` subscribes to the tracks given and nothing
-else, the catalog status reads `Tracks given`, and a track redefinition can
-only come from another `start`.
+stands in for the catalog of a publisher that announces none: `start`
+subscribes to the tracks given and nothing else, the catalog status reads
+`Tracks given`, and a track redefinition can only come from another `start`.
 
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
 
+`PlaybackGroup` plays several players at one position (see *Playback group*):
+
+```ts
+type PlaybackGroupState = {
+  mode: 'live' | 'review'
+  positionMicros: number | undefined
+  paused: boolean
+  ended: boolean
+}
+
+class PlaybackGroup {
+  constructor(callbacks?: { onStateChange(): void })
+  add(player: LivePlayer): void
+  remove(player: LivePlayer): void
+  play(): void
+  pause(): void
+  seek(captureMicros: number): void
+  skip(seconds: number): void
+  goLive(): void
+  readonly state: PlaybackGroupState
+}
+```
+
 `LivePlayerState` carries what the controls and the diagnostics render: the
 catalog tracks and the selection, whether the video rendition is chosen
 automatically, whether CMAF is available, the packaging,
-`mode: 'live' | 'review'`, paused, stalled, the playback rate and whether it
-is adjustable,
+`mode: 'live' | 'review'`, whether the broadcast is live (`isLive`) and VOD
+playback has ended (`ended`), whether the position of the player's
+`PlaybackGroup` lies in its range (`inRange`), paused, stalled, the playback
+rate and whether it is adjustable,
 the catalog / playback / rewind status, the seek range (broadcast start,
 replayable start, live edge, review anchor and playhead, and elapsed times from
 the media timeline), and the aliases of the live subscriptions and review
@@ -183,14 +211,17 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
+| `audioLane` | A second audio track on a `LivePlayout`'s clock: its own decoder worker and input, scheduled at the time its capture timestamps are due, for a page that crossfades a translation with the original |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
-| `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, stamping groups from the media timeline, the seek axis |
+| `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, the groups the media timeline lists as seek targets, the seek axis |
 | `audioGroups` | Where the audio groups start, whether they share the video group ids, which of them cover a window |
-| `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery; `isCurrent` replaces generation counters |
+| `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery, the end of a VOD broadcast; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
+| `reviewClock` | The clock `ReviewPlayout` presents a review on: capture time onto local time from where it is anchored, the pause, the AudioContext of the review's sound, and which review's drift moves it |
+| `playbackGroup` / `groupMember` | One position for several players: where the group puts each of them (live, aligned or held) as the position moves, and the commands a player in the group hands to it |
 | `stallWatch` | Whether the wanted picture has stood still |
 | `streamConventions` | The relay cache TTL the seek axis keeps groups for |
 
@@ -209,7 +240,7 @@ where they are used, not as options, until a publisher differs:
 | --- | --- | --- |
 | LOC capture timestamps on one wall clock for all tracks | yes | yes |
 | CMAF sibling named `<track>_cmaf` | live-ingest only | none |
-| MSF media timeline track | yes | none (the seek axis falls back to the replayable window) |
+| MSF media timeline track, one per source | yes | yes, one per camera profile |
 | Audio groups start at the video keyframes with the same ids | yes | **no**: audio rotates every 2 s with its own ids |
 | Codec in the catalog from the first catalog | yes | only once the track's stream has started; a catalog update fills it in |
 | Relay cache TTL 60 s, join group holds no keyframe | yes | yes |
@@ -217,18 +248,21 @@ where they are used, not as options, until a publisher differs:
 The audio row is the one difference that changes behavior. `AudioGroups`
 records where each audio group starts on the capture axis, from live audio
 objects and, for groups known only from TRACK_STATUS during a review, from the
-arrival lag of the last live object. When every group seen on both tracks
-starts within 500 ms of the video group with the same id, review fetches a
-window's audio by the video's group range, as before; otherwise it fetches the
-closed audio groups whose starts cover the window's capture span, waiting until
-an audio group has started past the window. Audio chunks an earlier window
-already played are left out, since a 2 s audio group can span two windows.
+arrival lag of the last live object. When the media timeline depends on both
+tracks, or every group seen on both tracks starts within 500 ms of the video
+group with the same id, review fetches a window's audio by the video's group
+range; otherwise it fetches the closed audio groups whose starts cover the
+window's capture span, waiting until an audio group has started past the window.
+Audio chunks an earlier window already played are left out, since a 2 s audio
+group can span two windows.
 
 ## Invariants
 
 - Only one review runs at a time; a new seek, `goLive`, a video track change
-  or `stop` ends the current one, and nothing an ended review started may touch
-  the picture, the playouts or the state afterwards.
+  of a live broadcast or `stop` ends the current one, and nothing an ended
+  review started may touch the picture, the playouts or the state afterwards.
+- A broadcast whose tracks are not live has no media subscription and no
+  TRACK_STATUS: everything it plays is FETCHed.
 - A review FETCH never reaches into the open live edge group.
 - Forward updates reach every live subscription in the order they were issued.
 - A subscription the publisher ends with PUBLISH_DONE is dropped as soon as it
@@ -241,6 +275,9 @@ already played are left out, since a 2 s audio group can span two windows.
   only a live publisher answers one, so a returning publisher is never
   mistaken for the relay's cache.
 - A picture that has not presented a frame is never shown.
+- A player in a `PlaybackGroup` reviews only on the group's clock, from the
+  position the group gave it, and its own `seek`, `skip`, `goLive` and
+  `setPaused` act on the group; its pause is always the group's.
 - The pre-decode hold stays in the video worker and the playout budget on the
   main thread (see `LivePlayout`); the worker's superseded-group drop stays.
 
@@ -255,9 +292,14 @@ The skip buttons, the arrow keys and the seek bar all FETCH groups the relay
 still caches and play them paced by their capture timestamps: video on the
 review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
 
-- A position is derived from the capture timestamps observed during live
-  playback. The publishers number groups from the wall clock and switch groups
-  at encoder keyframes, so a difference of group ids is not a number of seconds.
+- A position is derived from the encode wallclock the media timeline records
+  at the start of every group, or, for a track the timeline does not depend
+  on, from the capture timestamps observed during live playback. The
+  publishers number groups from the wall clock and switch groups at encoder
+  keyframes, so a difference of group ids is not a number of seconds.
+- The media timeline lists every group the publisher still keeps, so a review
+  reaches groups from before the viewer joined. The relay forwards a FETCH for
+  a range it has not cached to the publisher, which keeps 60 s for it.
 - A review FETCHes from the closed keyframe group that contains the target,
   decodes the frames before the target without pacing and draws from the target
   on; in MSE the same amount is added to `currentTime` before playing.
@@ -270,12 +312,90 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
   SUBSCRIBE_UPDATE so no live objects arrive. Groups the publisher opens in the
   meantime are learned from the Largest Location of a TRACK_STATUS every
   500 ms, which advances the next FETCH range and the right end of the seek bar.
-  Their positions come from the encode time the media timeline records; for a
-  rendition the timeline does not cover they are estimated from the arrival
-  lag of the last live object and drift ahead while the main thread is busy.
+  The media timeline keeps arriving and places them; for a rendition the
+  timeline does not cover they are estimated from the arrival lag of the last
+  live object and drift ahead while the main thread is busy.
   `LIVE` restores Forward 1; the relay resumes from the next group it opens,
   so the live picture takes up to one GOP to move. Against a relay that does
   not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
+
+### VOD
+
+A broadcast none of whose played tracks is live (`isLive: false`,
+draft-ietf-moq-msf-01 §5.2.7), such as the recorder's replay, gets no new
+objects, so the player plays it as VOD (`state.isLive` false). Nothing but the
+catalog's own fields tells it from a live broadcast.
+
+- The video and audio are not subscribed, since a SUBSCRIBE would deliver
+  nothing. Playback is a review of the selected tracks, FETCHed in the same
+  windows as a rewind; a track change takes effect from the next window.
+- The media timeline is read like the catalog, with SUBSCRIBE and a joining
+  FETCH: it is one object, which the SUBSCRIBE never delivers. It lists every
+  group, all of them closed, the newest one too, so review neither waits for a
+  group to close nor follows a live edge with TRACK_STATUS.
+- The seek bar runs from the timeline's first record to the tracks'
+  `trackDuration` (§5.2.35) after it, or to the newest group's start without
+  one. The elapsed readout stays the publisher's presentation time.
+- Playback starts at the first group as soon as the timeline arrives, playing
+  as a live watch does; a player paused before then shows the first frame and
+  holds it. Once the last frame of the last group is due it pauses and sets
+  `state.ended`. Resuming then plays from the start, as a media element does;
+  a seek or skip plays from its position and keeps the pause.
+- `goLive` does nothing, `PlayerControls` hides `LIVE`, and the seek bar's
+  End and right end seek to the end instead of going live.
+- A failed FETCH is handled as in a rewind; one with no group listed after it
+  ends playback.
+
+### Playback group
+
+`PlaybackGroup` plays several players at one position, for a meeting rewound
+for everyone or a recorded meeting played with everyone in step. A broadcast
+with one video and one audio track needs none: one player keeps those
+together.
+
+- The group owns one `ReviewClock` and the AudioContext with it. Its position
+  is a LOC capture timestamp, which the publishers stamp on one wall clock.
+  A player aligned to it reviews on that clock, so the same capture time is
+  due at the same moment on every player, and its sound plays through that
+  context. The drift of the first sound scheduled since the clock was
+  anchored moves it; the other players' sound plays on the same audio device
+  and keeps step with it, and a chunk of theirs that is already due is
+  dropped rather than heard late.
+- While live, every player plays at its own live edge through its own live
+  pipeline, as alone. The players are aligned only while the group reviews:
+  after a seek or skip, and while playing VOD. A seek at or past the live edge
+  of every live player goes live, one before every player's range plays from
+  the earliest start, and a skip while live measures from the newest position
+  a player shows. `goLive` does nothing while a player is VOD.
+- A player whose range covers the position plays from it; the others hold:
+  they fetch nothing, their live subscriptions do not forward, as in a review,
+  and `state.inRange` is false. The range runs from the oldest group the
+  player can seek to (the media timeline's first entry, unless a FETCH found
+  it evicted) to the end of a VOD broadcast, or on past the live edge of a
+  live one. The group checks every 250 ms which ranges the moving position
+  lies in, so a participant who joined late starts once the position reaches
+  their first group and one who left early holds once it has passed their
+  last. Within its range, an evicted group fails its FETCH as in a rewind;
+  the groups up to it leave the range, and the player holds until the
+  position reaches what is left.
+- An aligned player is held only once its range is gone or the position has
+  passed the end of its VOD range, not when the sound's drift moves the
+  position back across the start it was aligned at.
+- `add` and `remove` work at any time. A player added takes the group's pause
+  and position. A VOD player added to a group that is live, or the first media
+  timeline of a VOD player in one, starts the group at the earliest start of
+  the ranges known then, as one VOD player starts once its timeline arrives;
+  a player whose range starts earlier but arrives later plays from where the
+  group has got to. A player removed
+  plays on alone from the group's position. Its own commands act on the group
+  while it is in it, so `PlayerControls` on any player drives the group; to
+  rewind one player alone, the page removes it first.
+- A VOD player that has played its last frame keeps it on screen instead of
+  pausing. Once the position has passed the end of every player, the group
+  pauses and sets `state.ended`, and `play` then plays from the start.
+- A player on CMAF packaging is placed at the position like the others, but
+  plays the windows on its media element's clock, which the group does not
+  steer.
 
 ### MP4 publisher
 
@@ -354,9 +474,12 @@ decoder worker receives the groups before it from the outgoing rendition and
 the rest from the incoming one, one continuous track, and the seek timeline is
 kept. At the hand-over the player sends the outgoing subscription a
 SUBSCRIBE_UPDATE ending it before the start group, so the publisher sends the
-rest of the current group and ends it with PUBLISH_DONE; the outgoing
-subscription is unsubscribed instead once it delivers an object at or past the
-start group, or once the incoming one has moved past it.
+rest of the current group and ends it with PUBLISH_DONE. An object at or past
+the start group it sent before it processed the update (draft-ietf-moq-transport-14
+§9.10) is dropped, and the relay resets the stream of that group, so the
+subscription is still ended by PUBLISH_DONE. The player unsubscribes it only
+once the incoming rendition has moved past the start group, or when the
+SUBSCRIBE_UPDATE could not be sent.
 
 An incoming first group more than one group away from the outgoing one means
 the ids are not aligned; the incoming rendition then starts at once and the
@@ -394,6 +517,14 @@ and each minute without congestion halves it again.
 The first 3 s after a switch are left out, since the lag of the two renditions
 differs by the transcoding delay. Every change goes through the rendition
 switch above, so a step costs no picture gap; CMAF mode and review do not adapt.
+
+The ladder ends at the first rendition at least as tall as the container in
+device pixels, since a picture shown that small gains nothing from a taller
+one. A rendition above that cap steps down to it at once, and a container
+grown taller raises playback to the new cap at once unless the path was
+congested in the last 10 s. Under `Auto` the first video track the player
+subscribes to is already capped, so a small tile never starts on the top
+rendition.
 
 ### Review audio
 
@@ -433,6 +564,11 @@ A track's init data is the `initDataList` entry its `initRef` names
 missing or not `inline`, the only type the draft defines, leaves the track
 without init data and logs a warning instead of rejecting the catalog.
 
+A track that names a `namespace` (draft-ietf-moq-msf-01 §5.2.2) is subscribed
+to there instead of under the catalog's, so a catalog can refer to the tracks
+of another broadcast, as the live translation's catalog does for the source's
+video and original audio.
+
 ### Audio / video synchronisation
 
 In LOC mode the two decoder workers hand every sample over as soon as it is
@@ -440,9 +576,13 @@ decoded, and one playout clock decides when each is presented. The clock maps
 the LOC capture timestamps, which the bridge stamps on the same wall clock for
 every track, onto the local clock behind a jitter buffer. The buffer tracks
 the delay from capture to arrival of the audio chunks of the last 10 s and
-covers their peak-to-peak jitter (the slowest minus the fastest) plus the audio
+covers their peak-to-peak jitter (the slowest minus the fastest; the meeting
+example takes the 95th percentile instead of the slowest, through the buffer
+policy's `arrivalQuantile`, and leaves the rarer delays to the concealment
+below) plus the audio
 device's output latency (the time from handing a chunk to the device to
-hearing it, some 25 ms on built-in speakers and far more over Bluetooth). That
+hearing it, some 25 ms on built-in speakers and far more over Bluetooth) and the
+20 ms within which the sound is continued by repetition (below). That
 sum is clamped to `Min buffer (ms)` (200 ms by default) and `Max buffer (ms)`
 (unlimited when empty), so the bounds are the buffer as displayed; equal
 bounds fix it, and a maximum below the output latency makes every chunk late.
@@ -469,7 +609,17 @@ so a chunk placed on its own target would leave a gap or an overlap each time.
 The distance between the write head and the target is fed back to the clock,
 which makes the audio device the master the picture follows; a late chunk is
 not trimmed but starts at once and moves the clock the same way, so the chunks
-behind it stay contiguous; that is how the buffer grows. Once the buffer has
+behind it stay contiguous; that is how the buffer grows. Another stream that
+shares the timeline, such as a translated audio track, is scheduled as a second
+input of the same `AudioContext` with a gain of its own: it is placed at the
+time the clock gives for its capture timestamp and reports no drift, so the
+main audio stays the only master and the two can be crossfaded. When the scheduled
+sound is about to run out (within 20 ms) and no chunk follows, its last pitch
+period is repeated, fading out to silence over 300 ms (what NetEq calls
+expand); the chunk that ends the repetition fades in from it and starts where
+it ended, so instead of a silent gap the sound continues and the clock moves by
+the repetition. A sound whose end does not repeat, or a timer that fires after
+the sound has run out, as in a background tab, leaves the gap silent. Once the buffer has
 settled (10 s unless its bounds are equal), `Catch up` decides how a buffer above its
 target shrinks. `Skip (trim + crossfade)`, the default, drops each audio chunk that fits in the
 excess and fades the next one in from the head of the first dropped chunk, at
@@ -479,12 +629,15 @@ is more than 20 ms over, without changing its pitch: where the waveform
 repeats, one period of 2.5–10 ms is overlapped onto the next with a 5 ms
 crossfade (the time-scale modification WebRTC's NetEq calls accelerate), and
 it skips like `Skip (trim + crossfade)` once the buffer is more than 400 ms over. `Off` never
-shrinks it. The stats line shows the buffer and its target as
+shrinks it. A player that holds a fixed delay sets late samples to `drop`: a
+sample whose time has passed is then discarded instead of moving the clock, so
+the delay never grows. The stats line shows the buffer and its target as
 `buffer N ms (target M)` and how much latency the catch-up has taken out as
 `shed N ms`.
 The stats line shows the offset between the picture on screen and the sound as
 `A/V +N ms`, as `audio breaks N` how often the sound did not continue where
-the previous chunk ended, and as `video N dropped / M late` how many frames
+the previous chunk ended, as `concealed N ms` how long it was continued by
+repetition, and as `video N dropped / M late` how many frames
 fell due together with a newer one or arrived after a newer one was shown and
 were never shown, and how many were shown more than a frame period after they
 were due.
@@ -498,7 +651,12 @@ from, in the live and the review decoder alike. The relay delivers each group
 on its own stream, and when the tail of one audio group and the head of the
 next are in flight together the streams interleave and the head lands first;
 the audio worker holds the objects of a later group until the group before
-them has ended, for at most 100 ms, so the decoder sees them in order. The
+them has ended, so the decoder sees them in order. It waits for the tail as
+long as the playout buffer allows: the page sends it the playout clock, and the
+later group is released only 50 ms before its head has to reach the audio
+output, or 100 ms after it arrived while the clock is not anchored. A tail
+that arrives after that is older than the sound already scheduled and is
+dropped. The
 video worker instead moves on with the keyframe of the newer group as soon as
 it arrives and drops what is left of the older group: those frames predict
 from references the keyframe has replaced, and decoding them would smear the
@@ -567,7 +725,8 @@ warms up again). The volume slider next to the speed control drives the live aud
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot
 while playback is live and filled while playback is behind the live edge, so the
-button doubles as the indicator for which of the two the viewer is watching.
+button doubles as the indicator for which of the two the viewer is watching. A
+VOD broadcast has no live edge and no `LIVE` button.
 
 The button at the right end of the controls puts the picture into fullscreen and
 takes it out again (Escape also leaves). In fullscreen the pointer never leaves
@@ -580,10 +739,12 @@ The slider below the video spans the whole broadcast: its left end is the start,
 placed by the MSF media timeline, and its right end is the live edge. The thin bar
 underneath marks the part of that range the relay still caches and can therefore
 replay, which is the only part a seek resolves. The relay cannot be asked which
-groups it still holds, so the bar covers the groups the viewer observed within the
-relay's default cache TTL (60 s) and shrinks as they age out. Home jumps to the oldest
-replayable position rather than to the start of the broadcast, and End returns to
-live.
+groups it still holds, so the bar covers the groups the media timeline lists, which
+the publisher keeps for the relay's default cache TTL (60 s), from the first
+timeline object on. For a track the timeline does not depend on it covers the
+groups the viewer observed within that TTL and shrinks as they age out. Home jumps
+to the oldest replayable position rather than to the start of the broadcast, and
+End returns to live.
 
 While review playback runs, the thumb stays on the position that was seeked to
 and a fill from it carries the movement, because the decoder emits frames in
@@ -602,14 +763,17 @@ by capture timestamps it never catches up on its own, and when it reaches the
 newest closed group it waits for the publisher to close another one.
 
 The slider is disabled until a closed group is available. Stop and video quality
-changes that resubscribe (see *Rendition switch*) clear the timeline and cancel pending review playback. The observed
-range is not a guarantee of relay cache retention: an evicted group can no longer
+changes that resubscribe (see *Rendition switch*) clear the timeline and cancel pending review playback. The
+range is not a guarantee of cache retention: an evicted group can no longer
 be replayed. A FETCH that fails with INTERNAL_ERROR, TIMEOUT, INVALID_RANGE,
 NO_OBJECTS or UNKNOWN_STATUS_IN_RANGE, whose stream is reset with INTERNAL_ERROR,
-or that returns no objects, is taken as eviction: the groups up to the failed one leave the
-timeline and review resumes from the oldest group left, or goes live when none
-is. Any other failure reports the FETCH error and holds the requested position,
-so pick another position or press Live to resume.
+that returns no objects, or whose first group starts past its first object, is
+taken as eviction: the groups up to the failed one leave the timeline, even while
+the media timeline still lists them, and review resumes from the oldest group
+left, or goes live when none is. The caches evict object by object, so the
+oldest group the timeline lists can arrive without its keyframe. Any other
+failure reports the FETCH error and holds the requested position, so pick
+another position or press Live to resume.
 
 ### Broadcast elapsed time
 
@@ -618,8 +782,11 @@ start of the broadcast, and the label at its left end the elapsed time at the ax
 start. The numbers come from the MSF media timeline track
 (draft-ietf-moq-msf-01 section 7), which the bridge publishes as a JSON array of
 `[presentation time, [group id, object id], encode wallclock]` records covering
-the groups the relay still caches. The viewer finds it in the catalog by its
-`mediatimeline` packaging and subscribes to it alongside the media tracks.
+the groups the relay still caches. Every source of a broadcast has its own; the
+viewer finds the one of the source it plays in the catalog by its
+`mediatimeline` packaging and a `depends` that names one of the source's tracks,
+and subscribes to it alongside the media tracks. A later catalog updates that
+`depends`, which follows the source's tracks as they come and go.
 
 A capture timestamp resolves to a presentation time by offsetting from the
 newest record at or before it. The renditions share the source's keyframe times
@@ -666,7 +833,9 @@ named `live-player-*`.
   one `LocLive` for the camera and the audio and another for a screen share;
   the pipeline is replaced when its video track is unsubscribed, so the next
   video track starts on fresh decoders, and audio joining a running picture
-  warms the playout up again. A video track that starts a picture fetches
+  (`LocLive.joinAudio`) leaves the clock and the picture running and, for the
+  warm-up's length, drops audio older than the picture, so the relay's cached
+  burst cannot push the clock back as the new master. A video track that starts a picture fetches
   its current group with a joining FETCH, since a still screen share may not
   send another keyframe for minutes; `LocLive` shows those cached frames as
   they decode without anchoring the clock or sizing the buffer on them, and
@@ -679,12 +848,11 @@ named `live-player-*`.
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
   buffer bypass checkbox.
 - `examples/remote-monitoring`: one player per camera on the page's session,
-  started with the camera's `video` track given as `LiveTracks`
-  (`avc3.640028`, no catalog) on a canvas picture, video only. Each player
-  draws into a host element the page moves between the stage and the strip,
-  so the stage and the thumbnails are layout over four players. Clicking the
-  stage pauses its player, which is the first still picture of a review; the
-  step buttons skip a second with the pause kept, the seek bar is the
-  player's capture-time axis, and the debug bar shows the player's rewind
-  status. The players keep live while reviewing, so `LIVE 復帰` shows the live
-  picture at once.
+  following the catalog of the camera's `publish()`, on a canvas picture,
+  video only. Each player draws into a host element the page moves between
+  the stage and the strip, so the stage and the thumbnails are layout over
+  four players. Clicking the stage pauses its player, which is the first
+  still picture of a review; the step buttons skip a second with the pause
+  kept, the seek bar is the player's capture-time axis, and the debug bar
+  shows the player's rewind status. The players keep live while reviewing,
+  so `LIVE 復帰` shows the live picture at once.

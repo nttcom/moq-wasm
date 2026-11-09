@@ -13,7 +13,7 @@ Accepted
 Add `reqwest` (with the `rustls` and `json` features, no default features) as a
 direct dependency of the `app-registry` crate. `src/cloud_storage.rs` uses it to read
 the registry object, read its generation and upload it with
-`ifGenerationMatch`; `src/credentials.rs` uses it to take an access token from
+`ifGenerationMatch`; `metadata-token` uses it to take an access token from
 the metadata server.
 
 ## Context

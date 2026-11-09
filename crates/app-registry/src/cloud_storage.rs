@@ -1,12 +1,11 @@
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use metadata_token::MetadataToken;
 use reqwest::{Client, RequestBuilder, Response, StatusCode, Url, header::CONTENT_TYPE};
-use tokio::sync::Mutex;
 
 use crate::{
     app::Apps,
-    credentials::Credentials,
     store::{Generation, Snapshot, Stored},
 };
 
@@ -41,17 +40,18 @@ pub(crate) struct CloudStorageObject {
     http: Client,
     object_url: Url,
     upload_url: Url,
-    credentials: Credentials,
+    metadata_token: Option<MetadataToken>,
 }
 
 impl CloudStorageObject {
     pub(crate) fn new(endpoint: Endpoint, bucket: &str, object: &str) -> anyhow::Result<Self> {
-        let (base, credentials) = match endpoint {
+        let http = Client::builder().timeout(REQUEST_TIMEOUT).build()?;
+        let (base, metadata_token) = match endpoint {
             Endpoint::CloudStorage => (
                 Url::parse(CLOUD_STORAGE_URL).expect("CLOUD_STORAGE_URL is a valid URL"),
-                Credentials::MetadataServer(Mutex::new(None)),
+                Some(MetadataToken::new(http.clone())),
             ),
-            Endpoint::Emulator(url) => (url, Credentials::None),
+            Endpoint::Emulator(url) => (url, None),
         };
         if !matches!(base.scheme(), "http" | "https") {
             bail!("the Cloud Storage endpoint {base} is not an http(s) URL");
@@ -73,10 +73,10 @@ impl CloudStorageObject {
             .append_pair("uploadType", "media")
             .append_pair("name", object);
         Ok(Self {
-            http: Client::builder().timeout(REQUEST_TIMEOUT).build()?,
+            http,
             object_url,
             upload_url,
-            credentials,
+            metadata_token,
         })
     }
 
@@ -135,8 +135,8 @@ impl CloudStorageObject {
     }
 
     async fn authorize(&self, request: RequestBuilder) -> anyhow::Result<RequestBuilder> {
-        Ok(match self.credentials.bearer_token(&self.http).await? {
-            Some(token) => request.bearer_auth(token),
+        Ok(match &self.metadata_token {
+            Some(token) => request.bearer_auth(token.bearer_token().await?),
             None => request,
         })
     }

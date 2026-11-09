@@ -6,7 +6,7 @@ VTS_PID=""
 # Bypasses the compose vts service, whose image compiles every VTS dependency from scratch.
 start_vts() {
   cargo build -p vts
-  VTS_PORT=8081 VTS_APPS_FILE=crates/vts/apps.example.json ./target/debug/vts &
+  VTS_PORT=8081 VTS_APPS_FILE=services/vts/apps.example.json ./target/debug/vts &
   VTS_PID=$!
   for _ in {1..100}; do
     if ! kill -0 "$VTS_PID" 2>/dev/null; then
