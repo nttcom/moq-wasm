@@ -163,6 +163,7 @@ export class LivePlayer {
   private videoSwitch: VideoSwitch | undefined
   private readonly adaptiveBitrate = new AdaptiveBitrate()
   private adaptiveVideo = true
+  private videoEnabled = true
   private nextAdaptAtMs = 0
   /// The container's height in device pixels, the unit a rendition's height
   /// compares to; undefined before it is laid out.
@@ -451,6 +452,27 @@ export class LivePlayer {
 
   selectAudioTrack(name: string): Promise<void> {
     return this.selectTrack('audio', name)
+  }
+
+  /// Unsubscribes the live video and leaves the audio playing, so a page that
+  /// hides the picture lets the publisher stop sending it; enabling it again
+  /// subscribes the video from its current group. Live CMAF plays its audio
+  /// only with its video, so it falls silent as well.
+  setVideoEnabled(enabled: boolean): Promise<void> {
+    return this.queueTrackChange(async () => {
+      if (enabled === this.videoEnabled) {
+        return
+      }
+      this.videoEnabled = enabled
+      if (this.started) {
+        await this.resubscribe('video')
+        await this.openLiveMse()
+      }
+      if (!enabled) {
+        this.stallWatch.clear()
+      }
+      this.changed()
+    })
   }
 
   private selectTrack(kind: MediaKind, name: string): Promise<void> {
@@ -826,7 +848,7 @@ export class LivePlayer {
   /// Nothing is subscribed for a broadcast that is not live: review FETCHes the
   /// selected track from its next window on.
   private async resubscribe(kind: MediaKind): Promise<void> {
-    const played = this.selectedTrack(kind)
+    const played = kind === 'video' && !this.videoEnabled ? undefined : this.selectedTrack(kind)
     if (!this.timeline.live) {
       return
     }
