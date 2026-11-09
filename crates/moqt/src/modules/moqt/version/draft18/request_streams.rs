@@ -533,7 +533,7 @@ impl IncomingRequestTask {
                         request_id: subscribe_tracks.request_id,
                         track_namespace_prefix: subscribe_tracks.track_namespace_prefix,
                         authorization_token: subscribe_tracks.authorization_tokens,
-                        trace_context: None,
+                        trace_context: subscribe_tracks.trace_context,
                     },
                     NamespaceInterest::Tracks,
                     subscribe_tracks.forward,

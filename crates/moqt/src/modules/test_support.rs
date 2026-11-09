@@ -155,7 +155,7 @@ pub(crate) fn spawn_native_server_handshake(
     spawn_native_server_handshake_offering(name, DEFAULT_VERSIONS)
 }
 
-fn spawn_native_server_handshake_offering(
+pub(crate) fn spawn_native_server_handshake_offering(
     name: &str,
     versions: &[Version],
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {

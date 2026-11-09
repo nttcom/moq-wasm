@@ -19,7 +19,7 @@ use super::{
     parameters::{
         AUTHORIZATION_TOKEN, EXPIRES, FILL_TIMEOUT, FORWARD, GROUP_ORDER, LARGEST_OBJECT,
         NEW_GROUP_REQUEST, OBJECT_DELIVERY_TIMEOUT, Parameter, RENDEZVOUS_TIMEOUT,
-        SUBGROUP_DELIVERY_TIMEOUT, SUBSCRIBER_PRIORITY, SUBSCRIPTION_FILTER,
+        SUBGROUP_DELIVERY_TIMEOUT, SUBSCRIBER_PRIORITY, SUBSCRIPTION_FILTER, TRACE_CONTEXT,
         TRACK_NAMESPACE_PREFIX, decode_token, encode_token, get_parameters, put_parameters,
     },
 };
@@ -34,6 +34,7 @@ use crate::modules::moqt::control_plane::{
             filter_type::FilterType,
             group_order::GroupOrder,
             location::Location,
+            trace_context::TraceContext,
             track_properties::{
                 DEFAULT_PUBLISHER_GROUP_ORDER, DEFAULT_PUBLISHER_PRIORITY as PRIORITY_PROPERTY,
                 IMMUTABLE_PROPERTIES, TrackProperties,
@@ -82,17 +83,25 @@ const SUBSCRIBE_PARAMETERS: &[u64] = &[
     SUBSCRIPTION_FILTER,
     FORWARD,
     NEW_GROUP_REQUEST,
+    TRACE_CONTEXT,
 ];
-const PUBLISH_PARAMETERS: &[u64] = &[AUTHORIZATION_TOKEN, EXPIRES, LARGEST_OBJECT, FORWARD];
+const PUBLISH_PARAMETERS: &[u64] = &[
+    AUTHORIZATION_TOKEN,
+    EXPIRES,
+    LARGEST_OBJECT,
+    FORWARD,
+    TRACE_CONTEXT,
+];
 const FETCH_PARAMETERS: &[u64] = &[
     AUTHORIZATION_TOKEN,
     SUBSCRIBER_PRIORITY,
     GROUP_ORDER,
     FILL_TIMEOUT,
+    TRACE_CONTEXT,
 ];
-const NAMESPACE_PARAMETERS: &[u64] = &[AUTHORIZATION_TOKEN];
+const NAMESPACE_PARAMETERS: &[u64] = &[AUTHORIZATION_TOKEN, TRACE_CONTEXT];
 const TRACK_STATUS_PARAMETERS: &[u64] = &[AUTHORIZATION_TOKEN];
-const SUBSCRIBE_TRACKS_PARAMETERS: &[u64] = &[AUTHORIZATION_TOKEN, FORWARD];
+const SUBSCRIBE_TRACKS_PARAMETERS: &[u64] = &[AUTHORIZATION_TOKEN, FORWARD, TRACE_CONTEXT];
 const REQUEST_UPDATE_PARAMETERS: &[u64] = &[
     AUTHORIZATION_TOKEN,
     OBJECT_DELIVERY_TIMEOUT,
@@ -161,6 +170,11 @@ pub(crate) struct SetupMessage {
     pub(crate) authorization_tokens: Vec<AuthorizationToken>,
     pub(crate) max_auth_token_cache_size: u64,
     pub(crate) implementation: Option<String>,
+    /// The sender reads the TRACE_CONTEXT parameter (`TRACE_CONTEXT_OPTION`).
+    pub(crate) declares_trace_context: bool,
+    /// The TRACE_CONTEXT option's value: in a client's SETUP, the traceparent
+    /// of the span that connected.
+    pub(crate) traceparent: Option<TraceContext>,
 }
 
 const PATH_OPTION: u64 = 0x01;
@@ -168,6 +182,10 @@ const AUTHORIZATION_TOKEN_OPTION: u64 = 0x03;
 const MAX_AUTH_TOKEN_CACHE_SIZE_OPTION: u64 = 0x04;
 const AUTHORITY_OPTION: u64 = 0x05;
 const MOQT_IMPLEMENTATION_OPTION: u64 = 0x07;
+/// Not in draft-18: declares the TRACE_CONTEXT Message Parameter (§3.2).
+/// Same type as the draft-14 Setup Option, since Setup Options share one
+/// namespace across versions (§10.3).
+const TRACE_CONTEXT_OPTION: u64 = 0x1fff;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct GoAwayMessage {
@@ -223,6 +241,7 @@ pub(crate) struct SubscribeTracksMessage {
     pub(crate) authorization_tokens: Vec<AuthorizationToken>,
     /// The Forward State of the PUBLISH messages it leads to (§10.19).
     pub(crate) forward: bool,
+    pub(crate) trace_context: Option<TraceContext>,
 }
 
 /// §10.20 PUBLISH_BLOCKED.
@@ -315,23 +334,23 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
         PUBLISH_NAMESPACE => {
             let request_id = get_vi64(buf)?;
             let track_namespace = get_track_namespace(buf)?;
-            let tokens = tokens(get_parameters(buf, NAMESPACE_PARAMETERS)?);
+            let parameters = get_parameters(buf, NAMESPACE_PARAMETERS)?;
             Message::PublishNamespace(PublishNamespace {
                 request_id,
                 track_namespace,
-                authorization_token: tokens,
-                trace_context: None,
+                trace_context: trace_context(&parameters),
+                authorization_token: tokens(parameters),
             })
         }
         SUBSCRIBE_NAMESPACE => {
             let request_id = get_vi64(buf)?;
             let track_namespace_prefix = get_track_namespace(buf)?;
-            let tokens = tokens(get_parameters(buf, NAMESPACE_PARAMETERS)?);
+            let parameters = get_parameters(buf, NAMESPACE_PARAMETERS)?;
             Message::SubscribeNamespace(SubscribeNamespace {
                 request_id,
                 track_namespace_prefix,
-                authorization_token: tokens,
-                trace_context: None,
+                trace_context: trace_context(&parameters),
+                authorization_token: tokens(parameters),
             })
         }
         SUBSCRIBE_TRACKS => {
@@ -345,6 +364,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
             Message::SubscribeTracks(SubscribeTracksMessage {
                 request_id,
                 track_namespace_prefix,
+                trace_context: trace_context(&parameters),
                 authorization_tokens: tokens(parameters),
                 forward,
             })
@@ -379,6 +399,19 @@ fn tokens(parameters: Vec<Parameter>) -> Vec<AuthorizationToken> {
             _ => None,
         })
         .collect()
+}
+
+fn trace_context(parameters: &[Parameter]) -> Option<TraceContext> {
+    parameters.iter().find_map(|parameter| match parameter {
+        Parameter::TraceContext(trace_context) => trace_context.clone(),
+        _ => None,
+    })
+}
+
+fn trace_context_parameter(trace_context: &Option<TraceContext>) -> Option<Parameter> {
+    trace_context
+        .clone()
+        .map(|trace_context| Parameter::TraceContext(Some(trace_context)))
 }
 
 fn token_parameters(tokens: &[AuthorizationToken]) -> Vec<Parameter> {
@@ -421,6 +454,10 @@ fn decode_setup(buf: &mut Bytes) -> Result<SetupMessage, DecodeError> {
             (AUTHORIZATION_TOKEN_OPTION, VariantType::Odd(value)) => {
                 setup.authorization_tokens.push(decode_token(value)?)
             }
+            (TRACE_CONTEXT_OPTION, VariantType::Odd(value)) => {
+                setup.declares_trace_context = true;
+                setup.traceparent = TraceContext::parse(&value);
+            }
             _ => {}
         }
     }
@@ -459,6 +496,10 @@ pub(crate) fn encode_setup(setup: &SetupMessage) -> anyhow::Result<BytesMut> {
     }
     if let Some(implementation) = &setup.implementation {
         options.push(bytes_option(MOQT_IMPLEMENTATION_OPTION, implementation));
+    }
+    if setup.declares_trace_context {
+        let traceparent = setup.traceparent.as_ref().map_or("", TraceContext::as_str);
+        options.push(bytes_option(TRACE_CONTEXT_OPTION, traceparent));
     }
     let mut payload = BytesMut::new();
     put_key_value_pairs(&mut payload, &options)?;
@@ -522,6 +563,7 @@ fn decode_subscribe(buf: &mut Bytes, allowed: &[u64]) -> Result<Subscribe, Decod
             Parameter::SubscriptionFilter(filter) => subscribe.filter_type = filter,
             Parameter::AuthorizationToken(token) => subscribe.authorization_tokens.push(token),
             Parameter::ObjectDeliveryTimeout(timeout) => subscribe.delivery_timeout = Some(timeout),
+            Parameter::TraceContext(trace_context) => subscribe.trace_context = trace_context,
             _ => {}
         }
     }
@@ -541,6 +583,7 @@ fn subscribe_parameters(subscribe: &Subscribe) -> Vec<Parameter> {
         parameters.push(Parameter::ObjectDeliveryTimeout(timeout));
     }
     parameters.extend(token_parameters(&subscribe.authorization_tokens));
+    parameters.extend(trace_context_parameter(&subscribe.trace_context));
     parameters
 }
 
@@ -683,9 +726,9 @@ fn decode_publish(buf: &mut Bytes) -> Result<Publish, DecodeError> {
         track_alias,
         content_exists: content_exists(&parameters),
         forward,
+        trace_context: trace_context(&parameters),
         authorization_tokens: tokens(parameters),
         track_properties: properties,
-        trace_context: None,
     })
 }
 
@@ -693,6 +736,7 @@ pub(crate) fn encode_publish(publish: &Publish) -> anyhow::Result<BytesMut> {
     let mut parameters = vec![Parameter::Forward(publish.forward)];
     parameters.extend(largest_object(&publish.content_exists));
     parameters.extend(token_parameters(&publish.authorization_tokens));
+    parameters.extend(trace_context_parameter(&publish.trace_context));
     let mut payload = BytesMut::new();
     put_vi64(&mut payload, publish.request_id);
     put_full_track_name(
@@ -748,6 +792,7 @@ fn decode_fetch(buf: &mut Bytes) -> Result<Fetch, DecodeError> {
             Parameter::GroupOrder(order) => fetch.group_order = order,
             Parameter::AuthorizationToken(token) => fetch.authorization_tokens.push(token),
             Parameter::FillTimeout(milliseconds) => fetch.fill_timeout = Some(milliseconds),
+            Parameter::TraceContext(trace_context) => fetch.trace_context = trace_context,
             _ => {}
         }
     }
@@ -792,6 +837,7 @@ pub(crate) fn encode_fetch(fetch: &Fetch) -> anyhow::Result<BytesMut> {
     }
     parameters.extend(fetch.fill_timeout.map(Parameter::FillTimeout));
     parameters.extend(token_parameters(&fetch.authorization_tokens));
+    parameters.extend(trace_context_parameter(&fetch.trace_context));
     put_parameters(&mut payload, &parameters)?;
     frame(FETCH, &payload)
 }
@@ -801,11 +847,14 @@ fn encode_namespace_request(
     request_id: u64,
     namespace: &[String],
     tokens: &[AuthorizationToken],
+    trace_context: &Option<TraceContext>,
 ) -> anyhow::Result<BytesMut> {
+    let mut parameters = token_parameters(tokens);
+    parameters.extend(trace_context_parameter(trace_context));
     let mut payload = BytesMut::new();
     put_vi64(&mut payload, request_id);
     put_track_namespace(&mut payload, namespace);
-    put_parameters(&mut payload, &token_parameters(tokens))?;
+    put_parameters(&mut payload, &parameters)?;
     frame(message_type, &payload)
 }
 
@@ -815,6 +864,7 @@ pub(crate) fn encode_publish_namespace(message: &PublishNamespace) -> anyhow::Re
         message.request_id,
         &message.track_namespace,
         &message.authorization_token,
+        &message.trace_context,
     )
 }
 
@@ -824,6 +874,7 @@ pub(crate) fn encode_subscribe_namespace(message: &SubscribeNamespace) -> anyhow
         message.request_id,
         &message.track_namespace_prefix,
         &message.authorization_token,
+        &message.trace_context,
     )
 }
 
@@ -838,6 +889,7 @@ pub(crate) fn encode_subscribe_tracks(
     if !message.forward {
         parameters.push(Parameter::Forward(false));
     }
+    parameters.extend(trace_context_parameter(&message.trace_context));
     put_parameters(&mut payload, &parameters)?;
     frame(SUBSCRIBE_TRACKS, &payload)
 }
@@ -1093,7 +1145,14 @@ pub(super) fn immutable_application_property() -> KeyValuePair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
+    use crate::modules::moqt::control_plane::{
+        constants::TerminationErrorCode,
+        control_messages::messages::parameters::trace_context::TEST_TRACEPARENT,
+    };
+
+    fn traceparent() -> Option<TraceContext> {
+        TraceContext::parse(TEST_TRACEPARENT.as_bytes())
+    }
 
     fn varint_property(key: u64, value: u64) -> KeyValuePair {
         KeyValuePair {
@@ -1152,6 +1211,8 @@ mod tests {
             authorization_tokens: vec![AuthorizationToken::use_value_utf8("jwt")],
             max_auth_token_cache_size: 0,
             implementation: Some("moq-wasm".to_string()),
+            declares_trace_context: true,
+            traceparent: traceparent(),
         };
 
         // Act
@@ -1205,7 +1266,7 @@ mod tests {
             forward: true,
             authorization_tokens: vec![],
             track_properties: varint_properties(&[(0x02, 200), (0x04, 60_000), (0x22, 2)]),
-            trace_context: None,
+            trace_context: traceparent(),
         };
         let fetch = Fetch {
             request_id: 6,
@@ -1219,7 +1280,7 @@ mod tests {
             },
             authorization_tokens: vec![],
             fill_timeout: None,
-            trace_context: None,
+            trace_context: traceparent(),
         };
         let joining = Fetch {
             fetch_params: FetchParams::RelativeJoining {
@@ -1232,19 +1293,24 @@ mod tests {
             request_id: 8,
             track_namespace: vec!["live".to_string()],
             authorization_token: vec![AuthorizationToken::use_value_utf8("jwt")],
-            trace_context: None,
+            trace_context: traceparent(),
         };
         let subscribe_namespace = SubscribeNamespace {
             request_id: 10,
             track_namespace_prefix: vec![],
             authorization_token: vec![],
-            trace_context: None,
+            trace_context: traceparent(),
+        };
+
+        let traced_subscribe = Subscribe {
+            trace_context: traceparent(),
+            ..subscribe()
         };
 
         // Act / Assert
         assert_eq!(
-            decode(encode_subscribe(&subscribe()).unwrap()),
-            Message::Subscribe(subscribe())
+            decode(encode_subscribe(&traced_subscribe).unwrap()),
+            Message::Subscribe(traced_subscribe)
         );
         let Message::Publish {
             publish: decoded_publish,
@@ -1293,6 +1359,7 @@ mod tests {
                 track_namespace_prefix: vec!["live".to_string()],
                 authorization_tokens: vec![AuthorizationToken::use_value_utf8("jwt")],
                 forward,
+                trace_context: traceparent(),
             };
 
             // Act
