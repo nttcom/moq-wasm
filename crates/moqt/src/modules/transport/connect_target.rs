@@ -105,6 +105,25 @@ impl ConnectTarget {
         Self::parse(&url.href()).ok()
     }
 
+    /// The authority and the path (with its query) of a raw QUIC target, which
+    /// the client states in its draft-18 SETUP; `None` over WebTransport and
+    /// WebSocket, whose handshake carries them.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn quic_uri_parts(&self) -> Option<(String, String)> {
+        (self.transport == ClientTransport::Quic).then(|| {
+            (
+                self.url.authority().to_string(),
+                self.url[url::Position::BeforePath..url::Position::AfterQuery].to_string(),
+            )
+        })
+    }
+
+    /// The browser cannot open raw QUIC.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn quic_uri_parts(&self) -> Option<(String, String)> {
+        None
+    }
+
     /// Host and port resolution is left to the browser's `WebTransport`.
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn parse(url: &str) -> anyhow::Result<Self> {
