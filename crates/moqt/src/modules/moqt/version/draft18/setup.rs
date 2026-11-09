@@ -16,10 +16,7 @@ use crate::modules::{
         },
         data_plane::stream::stream_sender::StreamSender,
     },
-    transport::{
-        connect_target::ConnectTarget,
-        transport_connection::BoxedConnection,
-    },
+    transport::{connect_target::ConnectTarget, transport_connection::BoxedConnection},
 };
 
 const IMPLEMENTATION: &str = "MOQ-WASM";
