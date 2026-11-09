@@ -14,6 +14,7 @@ mod pipeline;
 mod record_job;
 mod recorder;
 mod recording;
+mod recording_clock;
 mod recordings;
 mod relay;
 mod replay;

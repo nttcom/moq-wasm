@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use moqt::{Session, TrackObject, subscribe::FilterType};
+use moqt::{Session, TrackObject, object::ObjectStatus, subscribe::FilterType};
 use serde_json::json;
 use tokio::{
     fs::OpenOptions,
@@ -20,6 +20,7 @@ use crate::{
     archive_chunks::ChunkWriter,
     archive_receiver::{ArchiveTrack, Event},
     recorder::{BroadcastOptions, Content, choice, default_output_path},
+    recording_clock::RecordingClock,
     track_selection::{self, Selection},
 };
 
@@ -67,9 +68,17 @@ async fn record_until(
         segment_length: None,
         upload: None,
     };
-    record_broadcast(session, &args.namespace, Some(path), &options, chunks, stop)
-        .await
-        .map(drop)
+    record_broadcast(
+        session,
+        &args.namespace,
+        Some(path),
+        &options,
+        chunks,
+        None,
+        stop,
+    )
+    .await
+    .map(drop)
 }
 
 fn part_path(path: &Path, index: usize) -> PathBuf {
@@ -90,7 +99,8 @@ fn part_path(path: &Path, index: usize) -> PathBuf {
 /// another, or changes its video codec or audio configuration, ends the
 /// archive, and the next one starts from that catalog. Archive `index`
 /// after the first goes to `path` and `chunks` with `-<index>` added
-/// (`part_path`, `ChunkWriter::part`). Returns the uploaded keys in archive
+/// (`part_path`, `ChunkWriter::part`). With a `clock`, the archives store the
+/// media and the event timelines on it. Returns the uploaded keys in archive
 /// order.
 pub(crate) async fn record_broadcast(
     session: &Session,
@@ -98,6 +108,7 @@ pub(crate) async fn record_broadcast(
     path: Option<PathBuf>,
     options: &BroadcastOptions,
     chunks: Option<ChunkWriter>,
+    clock: Option<RecordingClock>,
     stop: impl Future<Output = ()>,
 ) -> Result<Vec<object_store::path::Path>> {
     tokio::pin!(stop);
@@ -112,6 +123,7 @@ pub(crate) async fn record_broadcast(
             part_path,
             options,
             part_chunks,
+            clock,
             &mut stop,
         )
         .await?;
@@ -135,6 +147,7 @@ async fn record_part(
     path: Option<PathBuf>,
     options: &BroadcastOptions,
     chunks: Option<ChunkWriter>,
+    clock: Option<RecordingClock>,
     mut stop: impl Future<Output = ()> + Unpin,
 ) -> Result<(Option<object_store::path::Path>, PartEnd)> {
     let mut archive = Archive::create(path, namespace, chunks).await?;
@@ -150,7 +163,8 @@ async fn record_part(
     let mut selected = Selection::default();
     // The video and audio track the archive holds media of.
     let mut recorded = Selection::default();
-    let mut timelines: Vec<ArchiveTrack> = Vec::new();
+    let mut event_timelines: Vec<ArchiveTrack> = Vec::new();
+    let (mut video_clock, mut audio_clock) = (MediaOnClock::new(clock), MediaOnClock::new(clock));
     let mut catalog_open = true;
     let mut end = PartEnd::Done;
     loop {
@@ -178,7 +192,7 @@ async fn record_part(
                     let (Some(document), Some(selection)) = (document, selection) else { continue };
                     if options.content == Content::Camera {
                         let names = track_selection::event_timelines(&document).map(|track| track.name.as_str());
-                        subscribe_timelines(session, namespace, names, &mut timelines).await?;
+                        subscribe_event_timelines(session, namespace, names, &mut event_timelines).await?;
                     }
                     let video_name = selection.video.as_ref().map(|v| v.name.as_str());
                     let audio_name = selection.audio.as_ref().map(|a| a.name.as_str());
@@ -194,15 +208,12 @@ async fn record_part(
                             None => None,
                         };
                     }
-                    let names: Vec<&str> = video_name.into_iter().chain(audio_name).collect();
-                    let timeline_names = track_selection::media_timelines(&document, &names).map(|track| track.name.as_str());
-                    subscribe_timelines(session, namespace, timeline_names, &mut timelines).await?;
                     selected = selection;
                 }
                 None => catalog_open = false,
             },
             item = next(&mut video) => match item? {
-                Some(event) => if let Some(track) = &video {
+                Some(event) => if let (Some(track), Some(event)) = (&video, video_clock.store(event)) {
                     if matches!(event, Event::Object(_)) && recorded.video.is_none() {
                         recorded.video = selected.video.clone();
                     }
@@ -211,7 +222,7 @@ async fn record_part(
                 None => video = None,
             },
             item = next(&mut audio) => match item? {
-                Some(event) => if let Some(track) = &audio {
+                Some(event) => if let (Some(track), Some(event)) = (&audio, audio_clock.store(event)) {
                     if matches!(event, Event::Object(_)) && recorded.audio.is_none() {
                         recorded.audio = selected.audio.clone();
                     }
@@ -219,16 +230,62 @@ async fn record_part(
                 },
                 None => audio = None,
             },
-            (index, item) = next_of(&mut timelines) => match item? {
-                Some(event) => archive.write_event(timelines[index].subscription.track_name(), event).await?,
-                None => drop(timelines.remove(index)),
+            (index, item) = next_of(&mut event_timelines) => match item? {
+                Some(event) => archive.write_event(event_timelines[index].subscription.track_name(), event_timeline_on_clock(clock, event)).await?,
+                None => drop(event_timelines.remove(index)),
             },
         }
-        if !catalog_open && video.is_none() && audio.is_none() && timelines.is_empty() {
+        if !catalog_open && video.is_none() && audio.is_none() && event_timelines.is_empty() {
             break;
         }
     }
     Ok((archive.finish().await?, end))
+}
+
+/// Stores a media track's objects on the recording's clock a group at a time:
+/// once an object of a group was captured before the recording started, the
+/// rest of that group is left out too, so no stored group misses the object it
+/// starts with, which for video is the keyframe. A publisher whose clock runs
+/// behind the recorder's loses its first group this way.
+struct MediaOnClock {
+    clock: Option<RecordingClock>,
+    dropped_group: Option<u64>,
+}
+
+impl MediaOnClock {
+    fn new(clock: Option<RecordingClock>) -> Self {
+        Self {
+            clock,
+            dropped_group: None,
+        }
+    }
+
+    fn store(&mut self, event: Event) -> Option<Event> {
+        match (self.clock, event) {
+            (Some(clock), Event::Object(object)) => {
+                let group_id = object.location.group_id;
+                if self.dropped_group == Some(group_id) {
+                    return None;
+                }
+                let stored = clock.media_object(object);
+                if stored.is_none() {
+                    self.dropped_group = Some(group_id);
+                }
+                stored.map(Event::Object)
+            }
+            (_, event) => Some(event),
+        }
+    }
+}
+
+fn event_timeline_on_clock(clock: Option<RecordingClock>, event: Event) -> Event {
+    match (clock, event) {
+        (Some(clock), Event::Object(mut object)) if object.status == ObjectStatus::Normal => {
+            object.payload = clock.event_timeline(&object.payload);
+            Event::Object(object)
+        }
+        (_, event) => event,
+    }
 }
 
 fn replaces(recorded: &Selection, selection: &Selection) -> bool {
@@ -244,6 +301,7 @@ pub(crate) async fn record_event_track(
     name: &str,
     path: Option<PathBuf>,
     chunks: ChunkWriter,
+    clock: RecordingClock,
     stop: impl Future<Output = ()>,
 ) -> Result<Option<object_store::path::Path>> {
     tokio::pin!(stop);
@@ -255,7 +313,7 @@ pub(crate) async fn record_event_track(
             _ = &mut stop => break,
             close = session.closed() => anyhow::bail!("relay session closed: {close}"),
             event = track.next() => match event? {
-                Some(event) => archive.write_event(name, event).await?,
+                Some(event) => archive.write_event(name, event_timeline_on_clock(Some(clock), event)).await?,
                 None => break,
             }
         }
@@ -270,10 +328,10 @@ async fn next(track: &mut Option<ArchiveTrack>) -> Result<Option<Event>> {
     }
 }
 
-/// Subscribes each of the event or media timeline tracks `names` that
+/// Subscribes each of the event timeline tracks `names` that
 /// `timelines` lacks, from its current group. A track the relay does not
 /// know yet is tried again at the next catalog.
-async fn subscribe_timelines<'a>(
+async fn subscribe_event_timelines<'a>(
     session: &Session,
     namespace: &str,
     names: impl Iterator<Item = &'a str>,
@@ -558,7 +616,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn records_the_catalog_the_video_its_timeline_and_the_listed_chat_over_a_real_session() {
+    async fn records_the_catalog_the_video_and_the_listed_chat_but_no_media_timeline_over_a_real_session()
+     {
         // Arrange
         let dir = scratch_dir();
         let path = dir.join("archive.jsonl");
@@ -668,9 +727,6 @@ mod tests {
                 if entries
                     .iter()
                     .any(|entry| entry["track"] == "video" && entry["payload"].is_string())
-                    && entries.iter().any(|entry| {
-                        entry["track"] == "video_timeline" && entry["payload"].is_string()
-                    })
                     && entries
                         .iter()
                         .filter(|entry| entry["track"] == "chat" && entry["payload"].is_string())
@@ -713,20 +769,42 @@ mod tests {
                 .unwrap(),
             frame.extension_headers.encode().to_vec()
         );
-        let timeline = entries
-            .iter()
-            .find(|entry| entry["track"] == "video_timeline" && entry["payload"].is_string())
-            .unwrap();
-        assert_eq!(
-            STANDARD
-                .decode(timeline["payload"].as_str().unwrap())
-                .unwrap(),
-            b"[[0,[1,0],1]]"
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry["track"] == "video_timeline")
         );
         let final_data = tokio::fs::read_to_string(&path).await.unwrap();
         assert!(final_data.lines().any(|line| line == "{\"complete\":true}"));
         connection.close().await;
         tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[test]
+    fn a_group_that_began_before_the_recording_is_left_out_whole() {
+        // Arrange: the publisher's clock runs behind, so group 4 began before the start
+        let mut clock = MediaOnClock::new(Some(RecordingClock::started_at(1_000)));
+        let object = |group_id, object_id, capture_us| {
+            use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
+
+            let mut object = crate::test_support::stored_object(group_id, object_id, "frame");
+            object.extension_headers =
+                to_extension_headers(&[LocExtension::varint(TIMESTAMP_ID, capture_us)]);
+            Event::Object(object)
+        };
+
+        // Act
+        let stored: Vec<bool> = [
+            object(4, 0, 999_000),
+            object(4, 1, 1_033_000),
+            object(5, 0, 1_066_000),
+        ]
+        .into_iter()
+        .map(|event| clock.store(event).is_some())
+        .collect();
+
+        // Assert
+        assert_eq!(stored, [false, false, true]);
     }
 
     #[test]
@@ -990,6 +1068,7 @@ mod tests {
                 "transcript",
                 Some(output_path),
                 chunks,
+                RecordingClock::started_at(0),
                 async {
                     let _ = stop.await;
                 },

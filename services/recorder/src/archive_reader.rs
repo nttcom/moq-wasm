@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -28,35 +28,55 @@ pub(crate) struct StoredTrack {
 }
 
 impl StoredTrack {
-    /// The groups the track holds media of, as the archive manifest lists
-    /// them.
-    pub(crate) fn groups(&self) -> Result<BTreeSet<u64>> {
-        let mut groups = BTreeSet::new();
+    /// The first object with media of each group the track holds media of, as
+    /// the archive manifest lists them; a group that spans chunks keeps its
+    /// first object.
+    pub(crate) fn group_starts(&self) -> Result<BTreeMap<u64, GroupStart>> {
+        let mut starts: BTreeMap<u64, GroupStart> = BTreeMap::new();
         for chunk in &self.chunks {
             for group in chunk["groups"]
                 .as_array()
                 .context("archive chunk lists no groups")?
             {
-                let group = group.as_str().context("group id is not a string")?;
-                groups.insert(group.parse().context("invalid group id")?);
+                let start = GroupStart {
+                    object_id: integer(group, "object")?,
+                    timestamp_us: group["timestamp_us"]
+                        .as_str()
+                        .map(str::parse)
+                        .transpose()
+                        .context("invalid group timestamp")?,
+                };
+                let group_id = integer(group, "group")?;
+                if starts
+                    .get(&group_id)
+                    .is_none_or(|known| start.object_id < known.object_id)
+                {
+                    starts.insert(group_id, start);
+                }
             }
         }
-        Ok(groups)
+        Ok(starts)
     }
 
-    /// The earliest and the latest LOC capture timestamp of the track's
-    /// objects; `None` for a track whose objects carry none.
-    pub(crate) fn capture_range_us(&self) -> Option<(u64, u64)> {
+    /// The earliest and the latest LOC Timestamp of the track's objects;
+    /// `None` for a track whose objects carry none.
+    pub(crate) fn timestamp_range_us(&self) -> Option<(u64, u64)> {
         let bounds = |field: &'static str| {
             self.chunks
                 .iter()
                 .filter_map(move |chunk| chunk[field].as_str()?.parse::<u64>().ok())
         };
         Some((
-            bounds("capture_start_us").min()?,
-            bounds("capture_end_us").max()?,
+            bounds("timestamp_start_us").min()?,
+            bounds("timestamp_end_us").max()?,
         ))
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct GroupStart {
+    pub(crate) object_id: u64,
+    pub(crate) timestamp_us: Option<u64>,
 }
 
 pub(crate) struct StoredRecording {
@@ -64,6 +84,9 @@ pub(crate) struct StoredRecording {
     prefix: Path,
     /// The recorded namespace prefix, which every member's namespace is under.
     pub(crate) room: String,
+    /// When the room recording started: the origin of the media time its
+    /// archives store (`RecordingClock`).
+    pub(crate) started_at_ms: u64,
     pub(crate) tracks: Vec<Arc<StoredTrack>>,
     /// The transcriber's tracks, which the replay reads only to build each
     /// participant's transcript.
@@ -82,6 +105,7 @@ impl StoredRecording {
             store: store.object_store(),
             prefix: store.recording_prefix(id),
             room: room.to_string(),
+            started_at_ms: 0,
             tracks: Vec::new(),
             transcriber: Vec::new(),
         };
@@ -94,9 +118,10 @@ impl StoredRecording {
                 .await?,
         )?;
         ensure!(
-            manifest["version"] == 1 && manifest["format"] == "moq",
+            manifest["version"] == 2 && manifest["format"] == "moq",
             "unsupported recording format"
         );
+        recording.started_at_ms = integer(&manifest, "started_at_ms")?;
         let members = manifest["members"]
             .as_array()
             .context("recording has no members")?;
@@ -116,7 +141,7 @@ impl StoredRecording {
                     let bytes = recording.read(key, MAX_MANIFEST_BYTES).await?;
                     let archive: Value = serde_json::from_slice(&bytes)?;
                     ensure!(
-                        archive["version"] == 1 && archive["namespace"] == source_namespace,
+                        archive["version"] == 2 && archive["namespace"] == source_namespace,
                         "invalid broadcast archive"
                     );
                     for track in archive["tracks"]
@@ -515,6 +540,7 @@ mod tests {
             store: store.clone(),
             prefix,
             room: "anon/room".to_string(),
+            started_at_ms: 0,
             tracks: Vec::new(),
             transcriber: Vec::new(),
         };

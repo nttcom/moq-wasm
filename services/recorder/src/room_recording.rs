@@ -21,6 +21,7 @@ use crate::{
     manifest::{MANIFEST_NAME, manifest_json},
     recorder::{BroadcastOptions, Content, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
+    recording_clock::RecordingClock,
     relay::{RelayConnection, ServiceToken},
     room_state::{MemberStatus, RecordingFormat, RoomState},
     upload_task::UploadTask,
@@ -58,6 +59,7 @@ pub(crate) struct RoomStatus {
 struct ArchiveTarget {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
+    clock: RecordingClock,
 }
 
 /// Records the room until `stop` turns true, the room stops by itself or the
@@ -78,10 +80,12 @@ pub(crate) async fn record(
         }),
         ..config.options.clone()
     });
+    let clock = RecordingClock::starting_now();
     let archive_target = (config.format == RecordingFormat::Moq).then(|| {
         Arc::new(ArchiveTarget {
             store: Arc::clone(&config.store),
             prefix: config.prefix.clone().join("archive"),
+            clock,
         })
     });
     let connection = RelayConnection::connect_service(
@@ -125,8 +129,9 @@ pub(crate) async fn record(
     let manifest = match config.format {
         RecordingFormat::Mp4 => manifest_json(&members, &failed_uploads),
         RecordingFormat::Moq => serde_json::json!({
-            "version": 1,
+            "version": 2,
             "format": "moq",
+            "started_at_ms": clock.started_at_ms().to_string(),
             "members": members.iter().map(|member| serde_json::json!({
                 "namespace": member.namespace,
                 "camera": member.files.iter().filter_map(|file| file.key.as_ref().map(|key| key.as_ref())).collect::<Vec<_>>(),
@@ -439,6 +444,7 @@ fn record_member(
                     path,
                     &options,
                     camera_chunks,
+                    target.clock,
                     stop.clone()
                 ),
                 archive_member(
@@ -447,6 +453,7 @@ fn record_member(
                     share_path,
                     &share_options,
                     share_chunks,
+                    target.clock,
                     stop
                 ),
             );
@@ -484,6 +491,7 @@ async fn archive_member(
     path: PathBuf,
     options: &BroadcastOptions,
     chunks: ChunkWriter,
+    clock: RecordingClock,
     mut stop: watch::Receiver<bool>,
 ) -> Result<Vec<RecordedFile>> {
     let keys = record_archive(
@@ -492,6 +500,7 @@ async fn archive_member(
         None,
         options,
         Some(chunks),
+        Some(clock),
         async move {
             let _ = stop.wait_for(|stop| *stop).await;
         },
@@ -544,6 +553,7 @@ fn record_transcript(
             TRANSCRIPT_TRACK_NAME,
             None,
             chunks,
+            target.clock,
             async move {
                 let _ = stop.wait_for(|stop| *stop).await;
             },

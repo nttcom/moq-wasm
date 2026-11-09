@@ -376,29 +376,29 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | --- | --- | --- |
 | track の選び方 | 画面共有を名前（`screenshare` で始まる）で見分け、画面共有だけ高さの上限を 720p（`SCREEN_SHARE_MAX_HEIGHT`）、カメラを `--max-video-height`（既定 480）にする。チャットは `chat` と決め打ち | catalog の `renderGroup` ごとに1ソースとして録画し、`altGroup` の中から `--max-video-height` 以下で一番高い1本を選ぶ。上限はすべてのソースで同じで、既定を 720 にする。チャットは `eventtimeline` の track を catalog から選ぶ |
 | catalog | 元の catalog の Object をそのまま流す。track の `namespace` 欄は元の publisher のもの | replay の namespace ごとに、保存した track を並べた catalog を1つ作って流す。各 track は元の catalog から codec、幅、高さなどを引き継ぎ、`isLive: false` と `trackDuration` を付ける。catalog 全体は `isComplete: true` にし、`generatedAt` は付けない（§5.1.2） |
-| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline track もほかの track と同じく録画する。replay は、保存した timeline の Object の entry を位置ごとにまとめ、保存した group を指すものだけを残して、ソースごとに全期間の media timeline を1つ出す。元の Object は1つに直近 60 秒分しか持たないので、そのまま流さない。presentation time は元の publisher の値をそのまま使う（§7.1.1） |
+| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline は録画しない。replay は、保存した group ごとの最初の Object の Timestamp（録画の開始からの media time、下の段落）から、ソースごとに全期間の media timeline を1つ出す。presentation time はその Timestamp、wallclock は 0（draft-ietf-moq-msf-01 §7.1.1） |
 | joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
 | 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
 | 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の、room より後の要素（会議では参加者名）を `<member-index>` の代わりに入れる。最後の要素だけにしないのは、room より深い namespace どうしで名前が重ならないようにするため |
 | transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。§8.2 は event timeline の `depends` に当てはまる track を並べることを求め（MUST）、§5.2.14 はその名前を同じ namespace で引くので、音声のある namespace に置く |
-| HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）と `renew_after_seconds` だけにする |
+| HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）、`renew_after_seconds`、録画の開始時刻（`started_at_ms`）だけにする |
 
 transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
-メディアの範囲が記録の `t` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
+メディアの範囲が記録の `m` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
 録画していない session の記録は捨てる。catalog では `packaging` を `eventtimeline`、role を
 `subtitle`（Table 4）、`eventType` を `com.skyway.transcript.v1`、`depends` をその session の音声
 track にし、`trackDuration` はほかの track と同じにする。track は group 0 の Object 1つで、その
-session の記録を `t` の順に並べ、同じ記録は1つにまとめる。
+session の記録を `m` の順に並べ、同じ記録は1つにまとめる。
 
-`trackDuration` は replay の namespace の全 track で同じ値にし、timeline の最初の entry
-（それより前の media があればその capture timestamp）から最後の media の capture timestamp
-までのミリ秒とする。timeline の wallclock も元の publisher の値をそのまま使う。§7.1.1 は
-VOD で 0 にするよう勧める（SHOULD）が、それは wallclock がわからないときのためで、録画では
-わかっており、player は wallclock で group を並べる。
+`trackDuration` は replay の namespace の全 track で同じ値にし、最初の media の Timestamp から
+最後の media の Timestamp までのミリ秒とする。
 
-録画中に timeline の Object を取りこぼしても、次の Object が直近 60 秒分を持つので、
-60 秒より短い抜けは埋まる。それより長く届かなかった区間には entry が無く、その区間へは
-手前の entry からシークする。
+録画の時刻は、録画の開始を起点にした1つの時計に揃える。recorder は保存するときに、LOC の
+Timestamp を開始からの media time（Timescale 1,000,000、draft-ietf-moq-loc-04 §2.3.1.2）にし、
+chat などの event timeline の wallclock の記録（`t`）を media time の記録（`m`、
+draft-ietf-moq-msf-01 §8.1）にする。開始より前のものは保存しない。こうすると参加者全員が1つの
+時間軸に乗り、timeline の wallclock は §7.1.1 が VOD に勧めるとおり 0 にできる。replay は保存した
+Object をそのまま出す。会議の時刻は、publish の応答の `started_at_ms` に media time を足して求める。
 
 replay が作る catalog と timeline は、保存したデータだけから決める。draft-ietf-moq-transport-14
 §2.1 は、Object がどこから取っても同じバイト列で、中身が時間で変わらないことを求める
@@ -501,8 +501,8 @@ publisher の timeline から始め、recorder の replay を VOD にしてか�
 - MP4 で保存した録画の replay。MP4 には元の catalog も timeline も残らないので、VOD の
   broadcast にするには、サンプルの時刻から catalog と timeline を作る経路を MoQ 形式とは別に
   持つことになる。手順 4 で replay ごと消す。MP4 の録画ファイルと合成はそのまま残る。
-- timeline を録画していない録画（手順 4 より前の録画と、timeline を出さない publisher の録画）。
-  後方互換は持たず、`LivePlayer` では再生しない。
+- 録画の時刻を開始からの media time にする前の録画（room manifest の `version` が 1 のもの）。
+  後方互換は持たず、replay しない。
 - カメラか画面共有かを catalog で示すこと。今は `renderGroup` と `label` で足りる。
   画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える必要が出たときに決める。
 

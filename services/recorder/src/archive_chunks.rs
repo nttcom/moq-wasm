@@ -1,10 +1,11 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use mediapack::loc::{self, LocObject};
 use object_store::{ObjectStore, PutMode, PutPayload, path::Path};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -109,16 +110,18 @@ impl ChunkWriter {
                 };
                 let offset = track.data.len();
                 track.data.extend_from_slice(&object.payload);
-                let capture = moqt::TrackObject::from_object(object.clone())
-                    .as_ref()
-                    .and_then(crate::pipeline::capture_timestamp)
-                    .map(|timestamp| timestamp.micros().to_string());
+                let timestamp = LocObject {
+                    extensions: loc::from_extension_headers(&object.extension_headers),
+                    payload: Bytes::new(),
+                }
+                .timestamp()
+                .map(|timestamp| timestamp.micros().to_string());
                 track.entries.push(json!({
                     "type": "object", "group": object.location.group_id.to_string(),
                     "subgroup": subgroup, "object": object.location.object_id.to_string(),
                     "priority": object.publisher_priority, "status": object.status as u8,
                     "ends_group": object.ends_group,
-                    "capture_us": capture,
+                    "timestamp_us": timestamp,
                     "extensions": STANDARD.encode(object.extension_headers.encode()),
                     "offset": offset.to_string(), "length": length.to_string(),
                 }));
@@ -144,7 +147,7 @@ impl ChunkWriter {
             })
             .collect();
         let manifest = serde_json::to_vec(
-            &json!({ "version": 1, "namespace": self.namespace, "tracks": tracks }),
+            &json!({ "version": 2, "namespace": self.namespace, "tracks": tracks }),
         )?;
         let key = self.prefix.clone().join("manifest.json");
         put_new(&self.store, &key, manifest).await?;
@@ -177,21 +180,31 @@ async fn flush(store: &Arc<dyn ObjectStore>, prefix: &Path, track: &mut Track) -
     });
     let first = locations.clone().min();
     let last = locations.max();
-    // The groups with media: a status object alone carries none.
-    let groups: BTreeSet<u64> = track
+    // The groups with media, each with its first such object: a status object
+    // alone carries none.
+    let mut group_starts: BTreeMap<u64, (u64, Option<String>)> = BTreeMap::new();
+    for entry in track.entries.iter().filter(|entry| {
+        entry["type"] == "object" && entry["status"] == moqt::object::ObjectStatus::Normal as u8
+    }) {
+        let (Some(group), Some(object)) = (
+            entry["group"].as_str().and_then(|group| group.parse().ok()),
+            entry["object"]
+                .as_str()
+                .and_then(|object| object.parse().ok()),
+        ) else {
+            continue;
+        };
+        let start = group_starts.entry(group).or_insert((object, None));
+        if object <= start.0 {
+            *start = (object, entry["timestamp_us"].as_str().map(str::to_string));
+        }
+    }
+    let timestamps = track
         .entries
         .iter()
-        .filter(|entry| {
-            entry["type"] == "object" && entry["status"] == moqt::object::ObjectStatus::Normal as u8
-        })
-        .filter_map(|entry| entry["group"].as_str()?.parse().ok())
-        .collect();
-    let captures = track
-        .entries
-        .iter()
-        .filter_map(|entry| entry["capture_us"].as_str()?.parse::<u64>().ok());
-    let capture_start = captures.clone().min();
-    let capture_end = captures.max();
+        .filter_map(|entry| entry["timestamp_us"].as_str()?.parse::<u64>().ok());
+    let timestamp_start = timestamps.clone().min();
+    let timestamp_end = timestamps.max();
     put_new(store, &data_key, data).await?;
     put_new(store, &index_key, index).await?;
     track.entries.clear();
@@ -201,9 +214,11 @@ async fn flush(store: &Arc<dyn ObjectStore>, prefix: &Path, track: &mut Track) -
         "data_sha256": data_digest, "index_sha256": index_digest,
         "first": first.map(|(group, object)| json!({ "group": group.to_string(), "object": object.to_string() })),
         "last": last.map(|(group, object)| json!({ "group": group.to_string(), "object": object.to_string() })),
-        "capture_start_us": capture_start.map(|value| value.to_string()),
-        "capture_end_us": capture_end.map(|value| value.to_string()),
-        "groups": groups.iter().map(u64::to_string).collect::<Vec<_>>(),
+        "timestamp_start_us": timestamp_start.map(|value| value.to_string()),
+        "timestamp_end_us": timestamp_end.map(|value| value.to_string()),
+        "groups": group_starts.iter().map(|(group, (object, timestamp))| json!({
+            "group": group.to_string(), "object": object.to_string(), "timestamp_us": timestamp,
+        })).collect::<Vec<_>>(),
     }));
     Ok(())
 }
@@ -364,6 +379,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lists_the_first_object_of_each_group_with_its_timestamp() {
+        // Arrange
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut writer = ChunkWriter::new(store.clone(), Path::from("starts"), "anon/a".into());
+        let object = |group_id, object_id, timestamp_us| {
+            let mut object = crate::test_support::recorded_object(group_id, timestamp_us);
+            object.location.object_id = object_id;
+            Event::Object(object)
+        };
+        for event in [
+            object(3, 0, 2_000_000),
+            object(3, 1, 2_033_000),
+            object(4, 0, 3_000_000),
+        ] {
+            writer.push("video", &event).await.unwrap();
+        }
+
+        // Act
+        let key = writer.finish().await.unwrap();
+        let bytes = store.get(&key).await.unwrap().bytes().await.unwrap();
+        let manifest: Value = serde_json::from_slice(&bytes).unwrap();
+
+        // Assert
+        let chunk = &manifest["tracks"][0]["chunks"][0];
+        assert_eq!(
+            chunk["groups"],
+            json!([
+                { "group": "3", "object": "0", "timestamp_us": "2000000" },
+                { "group": "4", "object": "0", "timestamp_us": "3000000" },
+            ])
+        );
+        assert_eq!(
+            (&chunk["timestamp_start_us"], &chunk["timestamp_end_us"]),
+            (&json!("2000000"), &json!("3000000"))
+        );
+    }
+
+    #[tokio::test]
     async fn lists_the_groups_whose_media_a_chunk_holds_in_numeric_order() {
         // Arrange
         let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
@@ -402,7 +455,10 @@ mod tests {
         // Assert: group 11 holds only a status object
         assert_eq!(
             manifest["tracks"][0]["chunks"][0]["groups"],
-            json!(["9", "10"])
+            json!([
+                { "group": "9", "object": "0", "timestamp_us": null },
+                { "group": "10", "object": "0", "timestamp_us": null },
+            ])
         );
     }
 

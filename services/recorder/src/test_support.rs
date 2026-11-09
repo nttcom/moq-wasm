@@ -208,7 +208,9 @@ pub(crate) async fn stored_room(
             serde_json::json!({ "namespace": namespace, "camera": keys, "screen_share": [] }),
         );
     }
-    let manifest = serde_json::json!({ "version": 1, "format": "moq", "members": listed });
+    let manifest = serde_json::json!({
+        "version": 2, "format": "moq", "started_at_ms": "1700000000000", "members": listed,
+    });
     store
         .object_store()
         .put(
@@ -243,23 +245,25 @@ pub(crate) fn stored_object(
     }
 }
 
-/// Object 0 of group `group_id`, as `stored_object` builds it, with the LOC
-/// capture timestamp `capture_us`.
-pub(crate) fn captured_object(group_id: u64, capture_us: u64) -> moqt::object::Object {
-    use mediapack::loc::{LocExtension, TIMESTAMP_ID, to_extension_headers};
+/// Object 0 of group `group_id`, as `stored_object` builds it, as a room
+/// recording stores it: its Timestamp `timestamp_us` is media time since the
+/// recording started (`RecordingClock`).
+pub(crate) fn recorded_object(group_id: u64, timestamp_us: u64) -> moqt::object::Object {
+    use mediapack::loc::{LocExtension, TIMESCALE_ID, TIMESTAMP_ID, to_extension_headers};
 
     let mut object = stored_object(group_id, 0, "frame");
-    object.extension_headers =
-        to_extension_headers(&[LocExtension::varint(TIMESTAMP_ID, capture_us)]);
+    object.extension_headers = to_extension_headers(&[
+        LocExtension::varint(TIMESTAMP_ID, timestamp_us),
+        LocExtension::varint(TIMESCALE_ID, 1_000_000),
+    ]);
     object
 }
 
 /// A camera archive as `stored_recording` writes it: one catalog object
-/// listing `video` and `video_timeline`, one video group per second from
-/// group 10 captured from 1_700_000_000 s, and a timeline object per group
-/// listing up to the last two groups.
+/// listing `video` and `video_timeline`, and one video group per second from
+/// group 10, whose Timestamps count from 0 as a recording's do.
 pub(crate) async fn recorded_camera() -> StoredRecording {
-    use msf::{Catalog, KnownPackaging, KnownTrackRole, MediaTimelineRecord, Track};
+    use msf::{Catalog, KnownPackaging, KnownTrackRole, Track};
 
     let mut video = Track::new("video", KnownPackaging::Loc, true);
     video.role = Some(KnownTrackRole::Video.into());
@@ -270,33 +274,21 @@ pub(crate) async fn recorded_camera() -> StoredRecording {
     timeline.depends = Some(vec!["video".to_string(), "video_480p".to_string()]);
     let catalog = serde_json::to_vec(&Catalog::new(vec![video, timeline], 1)).unwrap();
     let frames = (10..13)
-        .map(|group| captured_object(group, (1_700_000_000 + group - 10) * 1_000_000))
-        .collect();
-    let timeline_objects = (10..13)
-        .map(|group| {
-            let records: Vec<MediaTimelineRecord> = (group.max(11) - 1..=group)
-                .map(|listed| {
-                    let elapsed_ms = (listed - 10) * 1000;
-                    MediaTimelineRecord::new(elapsed_ms, listed, 0, 1_700_000_000_000 + elapsed_ms)
-                })
-                .collect();
-            stored_object(group, 0, serde_json::to_vec(&records).unwrap())
-        })
+        .map(|group| recorded_object(group, (group - 10) * 1_000_000))
         .collect();
     let (_store, recording) = stored_recording(vec![
         ("catalog", vec![stored_object(0, 0, catalog)]),
         ("video", frames),
-        ("video_timeline", timeline_objects),
     ])
     .await;
     recording
 }
 
 /// A meeting's recording: `anon/room/alice` joined twice with `video` and
-/// `audio`, captured over seconds 1_700_000_000 to 1_700_000_002 and
-/// 1_700_000_010 to 1_700_000_012; `anon/room/bob` once with `video` alone
-/// over the same seconds as alice's first session; and the transcriber, whose
-/// `transcript` holds one object per document in one group.
+/// `audio`, over seconds 0 to 2 and 10 to 12 of the recording; `anon/room/bob`
+/// once with `video` alone over the same seconds as alice's first session;
+/// and the transcriber, whose `transcript` holds one object per document in
+/// one group.
 pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> StoredRecording {
     use msf::{Catalog, KnownPackaging, KnownTrackRole, Track};
 
@@ -318,7 +310,7 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
         let mut archive = vec![("catalog", vec![stored_object(0, 0, catalog)])];
         for (name, _) in tracks {
             let objects = (0..3)
-                .map(|group| captured_object(group, (start_s + group) * 1_000_000))
+                .map(|group| recorded_object(group, (start_s + group) * 1_000_000))
                 .collect();
             archive.push((name, objects));
         }
@@ -332,11 +324,8 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
         })
         .collect();
     let (_store, recording) = stored_room(vec![
-        (
-            "anon/room/alice",
-            vec![session(1_700_000_000, true), session(1_700_000_010, true)],
-        ),
-        ("anon/room/bob", vec![session(1_700_000_000, false)]),
+        ("anon/room/alice", vec![session(0, true), session(10, true)]),
+        ("anon/room/bob", vec![session(0, false)]),
         (
             "anon/room/bots/transcriber",
             vec![vec![("transcript", transcript)]],
@@ -346,8 +335,8 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
     recording
 }
 
-pub(crate) fn transcript_record(t_ms: u64, speaker: &str) -> serde_json::Value {
-    serde_json::json!({ "t": t_ms, "data": { "speaker": speaker, "text": format!("{speaker} at {t_ms}") } })
+pub(crate) fn transcript_record(m_ms: u64, speaker: &str) -> serde_json::Value {
+    serde_json::json!({ "m": m_ms, "data": { "speaker": speaker, "text": format!("{speaker} at {m_ms}") } })
 }
 
 pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";

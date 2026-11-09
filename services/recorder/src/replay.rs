@@ -38,6 +38,7 @@ pub(crate) struct ReplayTask {
     handle: JoinHandle<()>,
     session: Arc<Session>,
     lease_sender: mpsc::WeakSender<()>,
+    started_at_ms: u64,
 }
 
 /// The replay ends when the last lease is dropped, which closes the channel;
@@ -63,6 +64,7 @@ impl ReplayTask {
         verify_certificate: bool,
         token: &ServiceToken,
     ) -> Result<(Self, ReplayLease)> {
+        let started_at_ms = recording.started_at_ms;
         let tracks = ReplayTracks::open(recording).await?;
         let namespace = &tracks
             .recording
@@ -95,6 +97,7 @@ impl ReplayTask {
             handle,
             session,
             lease_sender: lease_sender.downgrade(),
+            started_at_ms,
         };
         Ok((task, ReplayLease::new(lease_sender)))
     }
@@ -102,6 +105,10 @@ impl ReplayTask {
     /// `None` once the last lease is gone and the replay is ending.
     pub(crate) fn lease(&self) -> Option<ReplayLease> {
         self.lease_sender.upgrade().map(ReplayLease::new)
+    }
+
+    pub(crate) fn started_at_ms(&self) -> u64 {
+        self.started_at_ms
     }
 
     pub(crate) fn is_active(&self) -> bool {

@@ -90,8 +90,9 @@ instead of MP4. Omitting `format` retains MP4 behavior.
 To replay a finished MoQ recording, send `POST /recordings/<id>/publish`
 (`409` for an MP4 recording). The response is an NDJSON stream that stays open.
 Its first line is
-`{"namespace_prefix": "<room>/recordings/<id>", "renew_after_seconds": 2700}`;
-empty keepalive lines follow. Under the prefix, each participant's camera and
+`{"namespace_prefix": "<room>/recordings/<id>", "renew_after_seconds": 2700,
+"started_at_ms": <ms>}`; empty keepalive lines follow. The replay's LOC Timestamps are media time since
+`started_at_ms`, the Unix time in milliseconds the recording started. Under the prefix, each participant's camera and
 screen share is an MSF VOD broadcast,
 `<prefix>/<participant>/camera/<n>` and `<prefix>/<participant>/screen_share/<n>`,
 where `<participant>` is the namespace's elements after the room and `<n>`

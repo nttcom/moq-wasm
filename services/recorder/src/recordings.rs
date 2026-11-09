@@ -161,8 +161,11 @@ impl Recordings {
                     anyhow::Ok(replay)
                 })
                 .await;
-            let lease = match replay {
-                Ok(replay) => first_lease.or_else(|| replay.lease()),
+            let (lease, started_at_ms) = match replay {
+                Ok(replay) => (
+                    first_lease.or_else(|| replay.lease()),
+                    replay.started_at_ms(),
+                ),
                 Err(error) => {
                     self.forget_replay(id, &cell).await;
                     return Err(error.into());
@@ -178,6 +181,7 @@ impl Recordings {
             let description = json!({
                 "namespace_prefix": format!("{}/recordings/{id}", record.namespace_prefix),
                 "renew_after_seconds": RENEW_AFTER.as_secs(),
+                "started_at_ms": started_at_ms,
             });
             return Ok(Some(Publication { description, lease }));
         }

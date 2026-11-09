@@ -409,16 +409,30 @@ settings, so a request cannot point the recorder at another relay or bucket.
 screen-share and event archives. Camera archives also receive the event
 timeline tracks the catalog lists, a meeting's `chat`; the
 `<room>/bots/transcriber` namespace has a transcript archive and does not keep
-an otherwise empty room alive. Every archive also receives the media timeline
-tracks (draft-ietf-moq-msf-01 §7) whose `depends` names its video or audio
-track, `video_timeline` for a `broadcast` camera, from their current group as
-the catalog: each object lists only the last 60 s, so the replay rebuilds the
-whole recording's timeline from all of them (see below). Each track has immutable payload chunks and JSON
-indexes, including canonical object fields, subgroup headers, FIN events and
-capture timestamps. The archive manifest lists each chunk with its object
-range, its capture range and the groups it holds media of, so the replay
-finds a track's recorded groups without reading the indexes. Duplicate object identities retain the first payload;
-conflicting duplicates fail the recording.
+an otherwise empty room alive. The publishers' media timelines are not
+recorded: the replay builds each from the stored media (see below). Each
+track has immutable payload chunks and JSON indexes, including canonical
+object fields, subgroup headers, FIN events and LOC Timestamps. The archive
+manifest lists each chunk with its object range, its Timestamp range and the
+first object of each group it holds media of with its Timestamp, so the
+replay finds a track's recorded groups without reading the indexes.
+Duplicate object identities retain the first payload; conflicting duplicates
+fail the recording.
+
+A room recording stores its archives on one clock, time since the recording
+started (`recording_clock::RecordingClock`), whose start the room manifest
+keeps as `started_at_ms`. Each media object's wall-clock LOC Timestamp becomes media time
+with a Timescale property of 1,000,000 (draft-ietf-moq-loc-04 §2.3.1.2), and a
+group whose objects begin before the start is not stored, so a publisher
+whose clock runs behind the recorder's loses its first group. Each event timeline record
+indexed by wallclock (`t`) becomes a media time record (`m`,
+draft-ietf-moq-msf-01 §8.1), and one from before the start is left out. So
+every participant shares one time axis, and a replay's media timeline names
+each group at the presentation time its first object carries, with wallclock
+0, as §7.1.1 asks of VOD. The replay serves the stored objects unchanged. The
+meeting's time of day is
+`started_at_ms` plus the media time; the publish answer gives it to the
+player (below).
 A catalog that swaps a video or audio track the archive holds media of for
 another, such as a taller rendition, or changes its video codec or audio
 configuration, ends the archive before that catalog is stored, and the next
@@ -447,8 +461,9 @@ members never share one. The transcriber's namespace is not announced (see
 below), nor one that recorded no media its catalog lists, such as the screen
 share of a participant who never shared their screen: it has nothing to play.
 The answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
-line with `namespace_prefix` (`<room>/recordings/<id>`) and
-`renew_after_seconds`, then an empty line every 15 s. A player finds the
+line with `namespace_prefix` (`<room>/recordings/<id>`),
+`renew_after_seconds` and `started_at_ms`, the start of the media time the
+replay's objects carry, then an empty line every 15 s. A player finds the
 namespaces with SUBSCRIBE_NAMESPACE and reads each as it reads a live
 broadcast, from its catalog; media objects keep their recorded identities. The
 relay URL and the track list are not in the answer: the player reaches the
@@ -456,15 +471,14 @@ relay it already uses, and the catalog lists the tracks.
 
 Each replay namespace is an MSF VOD broadcast (see 「録画を `LivePlayer` で
 再生する」 in the browser SDK's architecture). When the replay starts,
-`vod::build_tracks` replaces the namespace's stored `catalog` and media
-timeline tracks with one object each, at group 0, object 0:
+`vod::build_tracks` replaces the namespace's stored `catalog` and builds its
+media timeline tracks, one object each, at group 0, object 0:
 
 - The catalog lists every stored track a stored catalog object describes, in
   the archive's order, with the fields of the last object that describes it.
   Each track is `isLive: false` (draft-ietf-moq-msf-01 §5.2.7) and has the
-  namespace's one `trackDuration` (§5.2.35): from the earlier of its first
-  timeline record and its first captured media object to its last captured
-  media object. `namespace` is left out, so every track inherits the replay
+  namespace's one `trackDuration` (§5.2.35): from the earliest to the latest
+  LOC Timestamp of its media. `namespace` is left out, so every track inherits the replay
   namespace (§5.2.2) rather than naming the original publisher's;
   `targetLatency` is dropped (§5.2.8). `depends` names only listed tracks, and
   `initDataList` holds the entries the listed `initRef`s name. The LOC tracks
@@ -472,14 +486,12 @@ timeline tracks with one object each, at group 0, object 0:
   but `broadcast` numbers the sources anew in each catalog, so tracks described
   by different objects may disagree. The root is `isComplete: true` (§5.1.3)
   without `generatedAt` (§5.1.2).
-- A media timeline merges the records of every stored timeline object by
-  location, keeping the first stored, and keeps those of the groups the archive
-  holds media of on a track the timeline depends on (the chunks' `groups`), in
-  location order. A gap in the stored timeline objects shorter than 60 s is
-  filled by the next object; a longer one leaves its groups without records.
-  Presentation time and wallclock stay the publisher's (§7.1.1). §7.1.1 asks
-  for wallclock 0 in a VOD asset whose wallclock is unknown; a recording's is
-  known, and the player places groups by it.
+- The catalog also lists each media timeline a stored catalog object lists
+  whose `depends` names a stored track. Its object has one record per group a
+  track it depends on holds media of, at the group's earliest first object
+  with a Timestamp among those tracks (the chunks' `groups`): presentation
+  time that Timestamp floored to milliseconds, wallclock 0 (§7.1.1), in
+  presentation order.
 - A participant's transcript is an event timeline of its own, built from the
   transcriber's recording (see below).
 - All of them come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
@@ -499,10 +511,10 @@ the transcriber's namespace:
 
 - The transcriber names a speaker after the element below the room of the
   namespace it transcribed, so a record goes to the member `<room>/<speaker>`,
-  in the camera session whose captured media spans its `t`, the first one when
-  several do. A record of another speaker, at a `t` outside all their sessions
-  or for a session without an audio track is left out. `t` is the
-  transcriber's clock and the capture timestamps the participant's, so a skew
+  in the camera session whose media spans its `m`, the first one when several
+  do. A record of another speaker, at an `m` outside all their sessions or
+  for a session without an audio track is left out. `m` comes from the
+  transcriber's clock and the Timestamps from the participant's, so a skew
   between them moves the boundaries by as much.
 - The session's catalog lists `transcript` after its other tracks:
   `packaging` `eventtimeline`, role `subtitle` ("a transcription of the spoken
@@ -510,7 +522,7 @@ the transcriber's namespace:
   `Transcript`, `mimeType` `application/json`, `depends` the session's audio
   tracks, and the namespace's `trackDuration` like the others.
 - The track is one object at group 0, object 0: the session's records as one
-  §8.1 array sorted by `t`, a record stored twice listed once.
+  §8.1 array sorted by `m`, a record stored twice listed once.
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
