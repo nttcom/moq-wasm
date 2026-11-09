@@ -16,8 +16,8 @@ function recording(id: string, state: RoomRecording['state']): RoomRecording {
 
 test('a configured recorder wins over the local default', () => {
   // Act / Assert
-  expect(resolveRecorderUrl('?recorderUrl=http://recorder.example:8096/', 'https://localhost:4433')).toBe(
-    'http://recorder.example:8096'
+  expect(resolveRecorderUrl('?recorderUrl=http://127.0.0.1:9096/', 'https://localhost:4433')).toBe(
+    'http://127.0.0.1:9096'
   )
 })
 

@@ -59,6 +59,12 @@ apps"). A public page's request carries no token, and its bot runs under
 `anon`. A `?jwt=` token is not handed over, since the issuer cannot refresh
 it: those pages' bots stay under `anon`, and the Meeting hides its captions.
 
+A URL in a page's query, such as `?relayUrl=`, `?recorderUrl=`,
+`?tokenMintUrl=` or `?botUrl=`, is used only when it names this machine
+(`localhost`, `127.0.0.1`, `[::1]`) or a host under `moqt.research.skyway.io`.
+A page sends its token to the URLs it uses, so it ignores a URL on any other
+host (`urlFromQuery` in `utils/serviceUrl.ts`).
+
 ## Safari
 
 Playwright's WebKit has no WebTransport, so check Safari on a Mac by hand.

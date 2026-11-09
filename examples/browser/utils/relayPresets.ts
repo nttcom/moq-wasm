@@ -1,3 +1,5 @@
+import { urlFromQuery } from './serviceUrl'
+
 const DEFAULT_CLOUD_RELAY_URL = 'https://relay-1.moqt.research.skyway.io:443'
 const DEFAULT_LOCAL_RELAY_A_URL = 'https://127.0.0.1:4433'
 const DEFAULT_LOCAL_RELAY_B_URL = 'https://127.0.0.1:4434'
@@ -33,12 +35,16 @@ export const LOAD_BALANCED_RELAY_PRESET: RelayPreset = {
   helper: 'Load-balanced cloud relay'
 }
 
-export const RELAY_URL_PARAM_NAMES = ['relayUrl', 'moqtUrl', 'url', 'relay']
+const RELAY_URL_PARAM_NAMES = ['relayUrl', 'moqtUrl', 'url', 'relay']
+
+export function relayUrlFromQuery(): string | undefined {
+  return urlFromQuery(window.location.search, RELAY_URL_PARAM_NAMES)
+}
 
 function getLocalRelayUrls(): { relayAUrl: string; relayBUrl: string } {
   return {
-    relayAUrl: firstSearchParam(['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL,
-    relayBUrl: firstSearchParam(['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
+    relayAUrl: urlFromQuery(window.location.search, ['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL,
+    relayBUrl: urlFromQuery(window.location.search, ['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
   }
 }
 
@@ -76,7 +82,7 @@ export function buildRelayPresets(): RelayPreset[] {
 }
 
 export function setUpRelayUrlControls(input: HTMLInputElement, presets: HTMLElement): void {
-  input.value = firstSearchParam(RELAY_URL_PARAM_NAMES) ?? (input.value.trim() || DEFAULT_CLOUD_RELAY_URL)
+  input.value = relayUrlFromQuery() ?? (input.value.trim() || DEFAULT_CLOUD_RELAY_URL)
   const { relayAUrl, relayBUrl } = getLocalRelayUrls()
   const buttons = [
     ...[LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS].map((preset) => ({

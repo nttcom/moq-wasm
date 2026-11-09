@@ -1,5 +1,6 @@
 import { MoqSession, type ReceivedObject } from 'moq-wasm'
 import { bearerToken } from '../../utils/access'
+import { urlFromQuery } from '../../utils/serviceUrl'
 import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { readLocHeader } from 'moq-wasm/media/internal/loc'
 import { VideoPlayout } from 'moq-wasm/media/player/videoPlayout'
@@ -46,7 +47,7 @@ const openDialog = element('open-dialog')
 const openError = element('open-error')
 const sidebar = element('sidebar')
 const params = new URLSearchParams(location.search)
-recorder.value = params.get('recorder') ?? recorder.value
+recorder.value = urlFromQuery(location.search, ['recorder']) ?? recorder.value
 recording.value = params.get('id') ?? ''
 token.value ||= bearerToken() ?? ''
 setUpRelayUrlControls(relay, element('relayPresets'))

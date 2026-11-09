@@ -284,7 +284,9 @@ cause, as `recorder serve` does:
 The page derives the bot service URL from the relay URL, as the meeting page
 does for the recorder (`resolveRecorderUrl`): a local relay means a local
 `serve` on a fixed port, and any other relay means the deployed service. A
-`botUrl` query parameter overrides it.
+`botUrl` query parameter overrides it when it names this machine or a host
+under `moqt.research.skyway.io`; the page ignores any other host, since it
+hands the bot service its token (`urlFromQuery`).
 
 The bot always connects to the relay its server is configured with
 (relay-1 in the deployment). A page that picked relay-2 or relay-3 reaches it
