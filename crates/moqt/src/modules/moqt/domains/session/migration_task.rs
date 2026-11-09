@@ -1742,6 +1742,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn moved_past_the_first_connection_resolves_once_the_session_reconnects() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-moved-past");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        let (moved, _second) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(client.moved_past(0), async {
+                first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+                next_session(&mut sessions).await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(moved);
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn moved_past_is_false_once_the_session_ends_without_moving() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-not-moved");
+        let client = connect_with(port, "jwt".to_string().into()).await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let moved = tokio::time::timeout(DISCONNECT_TIMEOUT, client.moved_past(0)).await;
+
+        // Assert
+        assert_eq!(moved, Ok(false));
+    }
+
+    #[tokio::test]
     async fn a_session_that_cannot_reconnect_ends_after_the_reconnect_limit() {
         // Arrange
         let (port, mut sessions, accept) = spawn_reconnectable_server("session-reconnect-limit");

@@ -158,6 +158,14 @@ impl Session {
         self.inner.connection().generation
     }
 
+    /// Resolves `true` once the session runs on a connection later than
+    /// `generation` (from `connection_generation`), and `false` once it will
+    /// not move again. Stays pending on a session that does not follow
+    /// GOAWAY (`ClientConfig::follow_go_away`).
+    pub async fn moved_past(&self, generation: u64) -> bool {
+        self.inner.moved_past(generation).await
+    }
+
     pub fn transport_stats(&self) -> TransportStats {
         self.inner.connection().transport.stats()
     }
