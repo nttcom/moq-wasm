@@ -4,8 +4,8 @@ const AUDIO_SUFFIX = '_audio'
 /// Suffixes `broadcast` gives the tracks it derives from a source's tracks.
 const DERIVED_SUFFIXES = [AUDIO_SUFFIX, '_cmaf', '_timeline']
 const CHAT_TRACK_NAME = 'chat'
-/// The video and audio tracks `publish()` and `crates/broadcast` publish
-/// without a source name, read as the source `video`.
+/// The video and audio tracks a broadcast publishes without a source name,
+/// such as `crates/broadcast`'s, read as the source `video`.
 const DEFAULT_VIDEO_TRACK = 'video'
 const DEFAULT_AUDIO_TRACK = 'audio'
 

@@ -1,34 +1,42 @@
 # moq-wasm
 
 Media over QUIC Transport in the browser: a `MoqSession` to a relay,
-`publish()` for a `MediaStream`, and `LivePlayer` for what others publish.
+`createBroadcast()` to publish sources, and `watchBroadcasts()` /
+`RemoteBroadcast` / `LivePlayer` for what others publish.
 `docs/architecture/wasm/browser-sdk.md` is the design.
 
 ```ts
 import { MoqSession } from 'moq-wasm'
-import { LivePlayer, publish } from 'moq-wasm/media'
+import { createBroadcast, watchBroadcasts } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 
 const session = await MoqSession.connect('https://relay.example:4433', { token })
-await publish(session, ['room', 'alice'], await navigator.mediaDevices.getUserMedia({ video: true, audio: true }))
+const audioContext = new AudioContext()
 
-const player = new LivePlayer({
-  container: document.querySelector<HTMLElement>('#bob')!,
-  callbacks: { onStateChange() {}, onLiveFrame() {}, onLog: console.log }
-})
-await player.start(session, ['room', 'bob'])
+joinButton.onclick = async () => {
+  await audioContext.resume()
+  const local = await createBroadcast(session, ['room', 'alice'])
+  const camera = await local.addSource('camera', { video: true, audio: true })
+  preview.srcObject = camera.stream
+
+  await watchBroadcasts(session, ['room'], {
+    audioContext,
+    onAdd: (remote) => remote.listen({ onSourceAdd: (view) => document.querySelector('#grid')!.append(view.element) }),
+    onRemove: () => {}
+  })
+}
 ```
 
 `moq-wasm/media` stays below 1.0 whatever the package version: any minor
 version may change it.
 
-| Entry point                   | Contents                                                                                             |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `moq-wasm`                    | `MoqSession` and the track-level API: subscribe, fetch, publish tracks, watch namespaces             |
-| `moq-wasm/media`              | `publish()` for a `MediaStream`, `LivePlayer`, `PlayerControls`, `PlaybackGroup` and the MSF catalog |
-| `moq-wasm/recording`          | `openRecording()`, which has `services/recorder` replay a recording                                  |
-| `moq-wasm/media/player.css`   | Styles of `LivePlayer`'s picture                                                                     |
-| `moq-wasm/media/controls.css` | Styles of `PlayerControls`                                                                           |
+| Entry point                   | Contents                                                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `moq-wasm`                    | `MoqSession` and the track-level API: subscribe, fetch, publish tracks, watch namespaces                                         |
+| `moq-wasm/media`              | `createBroadcast()`, `watchBroadcasts()`, `RemoteBroadcast`, `LivePlayer`, `PlayerControls`, `PlaybackGroup` and the MSF catalog |
+| `moq-wasm/recording`          | `openRecording()`, which has `services/recorder` replay a recording                                                              |
+| `moq-wasm/media/player.css`   | Styles of `LivePlayer`'s picture                                                                                                 |
+| `moq-wasm/media/controls.css` | Styles of `PlayerControls`                                                                                                       |
 
 ## Installing
 
@@ -90,35 +98,50 @@ The SDK counts them itself, since Chrome has no `WebTransport.getStats()`:
   WebSocket and TLS framing.
 - They say nothing about round-trip time or loss.
 
-## Publishing a camera and microphone
+## Publishing: `createBroadcast`
 
-`publish()` encodes the stream's first video track (H.264 by default) and
-first audio track (Opus) and publishes them as an MSF broadcast in
-`namespace`, with its catalog.
+`createBroadcast()` announces a namespace at once. Each `addSource(name)` publishes a
+source in the tracks `name`, `name_audio` and `name_<rendition>`, listed in the
+broadcast's one MSF catalog. The video is H.264 by default and the audio Opus.
 
 ```ts
-import { publish } from 'moq-wasm/media'
+import { createBroadcast } from 'moq-wasm/media'
 
-const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-const publication = await publish(session, ['room', 'alice'], stream, {
-  videoLabel: 'Camera',
+const local = await createBroadcast(session, ['room', 'alice'], { onError: console.error })
+
+// The SDK captures the devices: true, or constraints such as a deviceId.
+const camera = await local.addSource('camera', {
+  label: 'Camera',
+  video: { deviceId: cameraId },
+  audio: true,
   // Replaces the encoder's defaults: H.264, at most 1280x720, 1 Mbps, 30 fps.
   videoEncoderConfig: { codec: 'av01.0.08M.08', bitrate: 2_500_000 },
-  // Each rendition is the track `video_<name>`, encoded from the same frames.
-  renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 }],
-  onError: (error) => console.error(error)
+  // Each rendition is the track `camera_<name>`, encoded from the same frames.
+  renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 }]
 })
+preview.srcObject = camera.stream // the tracks the source publishes
 
-await publication.setMuted('audio', true)
-publication.replaceTrack('video', otherStream.getVideoTracks()[0])
+await camera.setVideo({ deviceId: otherCameraId }) // switch the device
+await camera.setMuted('audio', true) // stop sending, keep the device
+await camera.setVideo(false) // stop sending and release the device
 
-// A second source in the same broadcast: tracks `screen` and `screen_audio`.
-const screen = publication.addSource('screen', await navigator.mediaDevices.getDisplayMedia())
+// A track the page processed itself, such as a blurred camera; the SDK does not stop it.
+await camera.setVideo(blurredTrack)
 
-await publication.close() // PUBLISH_DONE on every track; the session stays open
+// The screen, from a user gesture. The browser's "Stop sharing" removes the source.
+const screen = await local.addSource('screen', { display: { audio: true } })
+screen.listen({ onEnded: () => showShareButton() })
+
+await local.removeSource('screen')
+await local.close() // PUBLISH_DONE on every track; the session stays open
 ```
 
-`stats()` on the publication and on each added source returns what that
+`video` and `audio` take `true` or `MediaTrackConstraints`, which the SDK captures
+in one `getUserMedia` call, or a `MediaStreamTrack` of the page; `stream` takes the
+first video and audio tracks of a `MediaStream`. The SDK stops only the tracks it
+captured. A refused permission rejects with the `getUserMedia` error.
+
+`stats()` on each source returns what that
 source's encoders output over the last second, `encodedKbps` and
 `encodedFramesPerSecond`, and their `encoderErrors` since it was published.
 `video` also has the encoded `frameSize`, the `droppedFrames` the encoder
@@ -130,6 +153,56 @@ kind the source has no track of is `undefined`.
 const { video, audio } = screen.stats()
 console.log(video?.encodedKbps, video?.frameSize, video?.droppedFrames, audio?.encoderErrors)
 ```
+
+## Playing the people in a room: `watchBroadcasts` and `RemoteBroadcast`
+
+`watchBroadcasts()` plays every broadcast published under a prefix, those published
+before the call included, except the ones the session published itself. Each is a
+`RemoteBroadcast`, which subscribes to its catalog once and creates a view per
+source the catalog lists.
+
+```ts
+import { watchBroadcasts } from 'moq-wasm/media'
+
+const room = await watchBroadcasts(session, ['room'], {
+  filter: (namespace) => namespace.at(-1) !== 'transcriber',
+  onAdd: (remote) => {
+    const tile = newTile(remote.namespace.at(-1)!) // the page's own element
+    remote.listen({
+      // Called for the sources there are when `listen` is called too.
+      onSourceAdd: (view) => {
+        tile.append(view.element) // created and removed by the SDK
+        view.listen({ onChange: () => tile.show(view.name, view.state) })
+      },
+      onAudioLevel: (view, level) => tile.speaking(level)
+    })
+  },
+  onRemove: (remote) => removeTile(remote.namespace.at(-1)!)
+})
+// ...
+await room.close()
+```
+
+- `view.state` is `{ video: 'waiting' | 'playing' | 'off', audio: 'playing' | 'off', videoSize? }`,
+  also on `view.element` as `data-video` and `data-audio`. A camera whose video is
+  muted keeps its view, with `video: 'off'`.
+- `view.element` fills the box the page gives it; `--moq-object-fit` sets how the
+  picture fits (`contain` by default). The page may move it to another parent within
+  one task without the picture stopping.
+- A view subscribes its video only while its element is on screen, and keeps the
+  audio; `{ pauseHiddenVideo: false }` turns that off.
+- `view.setVolume()`, `view.stats()` and `view.setVideoEnabled()` act on the source;
+  `view.player` is its `LivePlayer` for the rest.
+
+A page that shows one broadcast uses `new RemoteBroadcast(session, namespace)` directly.
+
+## Audio output
+
+Pass the page's `AudioContext` as `audioContext` to `watchBroadcasts` or
+`RemoteBroadcast`, as to a `LivePlayer`: every view plays its live LOC sound
+through it. Resume it from a user gesture, such as the join button, so that the
+views of someone who joins after the click are heard too, and pick the speaker
+with `audioContext.setSinkId(deviceId)`.
 
 ## Playing a broadcast: `LivePlayer`
 
@@ -159,10 +232,10 @@ const controls = new PlayerControls(container, player, (level, message) => conso
 watchButton.onclick = () => player.start(session, ['room', 'alice'])
 ```
 
-Call `start` from a click: the player creates its AudioContext on first use,
-and the browser's autoplay policy keeps a context created without a user
-gesture silent. `start` resolves once the tracks are subscribed or, when
-nobody publishes the namespace yet, once the player waits for the publisher;
+Call `start` from a click, or `unlockAudio()` before: the browser's autoplay
+policy keeps an AudioContext opened without a user gesture silent. `start`
+resolves once the tracks are subscribed or, when nobody publishes the namespace
+yet, once the player waits for the publisher;
 it starts playing when the publisher appears. `stop()` unsubscribes; the
 session stays the caller's to close. `dispose()` also releases the player's
 decoder workers, audio contexts and pictures, for a page that creates a player

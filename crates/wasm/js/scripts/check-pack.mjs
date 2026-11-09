@@ -48,13 +48,13 @@ writeFileSync(join(projectDir, 'index.html'), '<script type="module" src="./main
 writeFileSync(
   join(projectDir, 'main.ts'),
   `import { MoqSession } from 'moq-wasm'
-import { LivePlayer, publish } from 'moq-wasm/media'
+import { LivePlayer, createBroadcast } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
 import { openRecording } from 'moq-wasm/recording'
 
 const session: MoqSession = await MoqSession.connect('https://relay.example:4433')
-await publish(session, ['demo'], new MediaStream())
+await createBroadcast(session, ['demo'])
 console.log(LivePlayer)
 const recording = await openRecording(session, 'https://recorder.example', 'id', { token: async () => 'jwt' })
 await session.watchNamespaces(recording.prefix)

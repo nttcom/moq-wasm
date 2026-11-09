@@ -70,7 +70,7 @@ test('a source whose video is muted lasts through its audio', () => {
 })
 
 test('the unnamed video and audio tracks are the source video', () => {
-  // Arrange: a broadcast of `publish()` or `crates/broadcast`
+  // Arrange: a broadcast of `crates/broadcast`
   const video = [track('video', 1), track('video_low', 1)]
   const audio = [track('audio')]
 

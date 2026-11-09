@@ -20,7 +20,7 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 | --- | --- | --- |
 | 接続 | `MoqSession.connect(url, { token, versions })`。`versions` は提示する draft（`draft-14` / `draft-18`）を優先順に並べ、省略すると draft-14 のみ | `connect(url, options)` が `Session` を返す |
 | namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })`、`start(session, namespace)` | 同じ形で、`Session` の上で動く |
-| メディアの配信 | `moq-wasm/media` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
+| メディアの配信 | `moq-wasm/media` の `createBroadcast(session, namespace)` と `addSource(name, input)`（「相手ごとに再生し、source を名前で扱う」）。meeting の `mediaPublisher.ts` もこれで配信する | 同じ |
 | track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `MoqFetch` / `TrackWriter` の handle と async iteration | `Subscription` / `TrackWriter` の handle と async iteration |
 | パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 
@@ -103,7 +103,7 @@ for await (const event of await session.watchNamespaces(['room-1'])) {
 
 ```
 moq-wasm            core: init, connect, Session, Subscription, TrackWriter, 型
-moq-wasm/media      publish(), MediaBroadcast, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
+moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
 moq-wasm/recording  openRecording, Recording, RecorderError
@@ -133,7 +133,7 @@ recorder の HTTP API だけを持ち、wasm も `media` も引き込まない�
 | `examples/browser/lib/player/*` | `media/player/*` | `LivePlayer`、playout、review。テストも一緒に移す |
 | `examples/browser/lib/player/ui` | `media/controls/*` | `PlayerControls`。React に依存しない DOM 部品なので、そのまま移せる |
 | `examples/browser/utils/media/decoders/*`、`loc.ts`、`mseSink.ts`、jitter buffer | `media/internal/*` | export しない |
-| `examples/browser/utils/media/encoders/*` | `media/internal/encoders/*` | `publish()` が使う |
+| `examples/browser/utils/media/encoders/*` | `media/internal/encoders/*` | `createBroadcast()` が使う |
 | `examples/browser/lib/ui/*`（React） | `examples/browser` に残す | ページの UI |
 | `utils/media/fetchReplay.ts`、`lib/moqt/subgroupWriter.ts`、`examples/media/serveSubscribes.ts` | 削除 | wasm の `broadcast` に置き換わる（下記） |
 
@@ -226,8 +226,7 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    フィールドではなく、MSF の `label`、`role` に入れる。
 8. **CMAF の opt-in。** 今の `broadcast` は、すべての media track に `_cmaf` の兄弟
    track を作る。`SourceTracks` に CMAF を作るかどうかのフラグを足す。既定は今のまま
-   にして live-ingest などは変えず、`publish()` だけ既定で切る。
-   `publish(..., { cmaf: true })` で有効にする。
+   にして live-ingest などは変えず、ブラウザの配信だけ既定で切る。
 
 ## Safari 対応
 
@@ -255,12 +254,12 @@ Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がい�
 `MediaBroadcast`（wasm）は `Mp4Broadcast` を一般化したものである。`Session` と
 namespace から作り、`addSource` でソースごとに `MediaSource` を作る。
 `MediaSource` は `BroadcastWriter` を1つ持ち、onvif-ingest がカメラの profile
-ごとにそうしているのと同じく、`SourceTracks` で、カメラとマイクを `video`/`audio`、
-画面共有を `screen`/`screen_audio` と名付ける。どのソースの track も、broadcast の
+ごとにそうしているのと同じく、`SourceTracks` で、source `<name>` の映像と音声を
+`<name>`/`<name>_audio` と名付ける。どのソースの track も、broadcast の
 1つの catalog に載る。`MediaSource` が公開するのは `configureVideo`・`pushVideo`、
 `configureAudio`・`pushAudio`、`addRendition`・`configureRendition`・
-`pushRenditionVideo`、`removeTrack`。JS の `publish()` は
-`MediaStream` をカメラのソースにつなぎ、画面共有は `addSource` で足す。
+`pushRenditionVideo`、`removeTrack`。JS の `createBroadcast()` は、`addSource` ごとに
+`MediaSource` を1つ作る。
 
 メディアを使わない配信（チャット、データ）には `broadcast` は要らない。
 `moqt::Origin` を直接使う `Session.publishTrack` で行う。catalog がすでに載せて
@@ -514,7 +513,7 @@ relay に残るのは、ブラウザが接続を閉じられないとき（ク�
 `pagehide` で閉じることもできない。
 
 ### 移行の手順
-1手順を1 PR にする。
+1手順を1 PR にする。手順 1 から 7 は実装した。
 
 1. **feat(recorder): source 名で録画する source を選ぶ。** 今の `SourceChoice::Main` は
    名前が `video`・`audio`・`video_<rendition>` の track を持つ source を選ぶ。これに
@@ -1002,19 +1001,18 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 1.0 の範囲として決めたもの。
 
 1. **codec: 映像は H.264、VP8、VP9、AV1、音声は Opus と AAC。** 既定は
-   `avc1.640028` と `opus`。`publish()` の `codec` で選び、ブラウザが encode できない
+   `avc1.640028` と `opus`。`addSource` の `videoEncoderConfig.codec` で選び、ブラウザが encode できない
    codec を指定したら reject する（「配信を `crates/broadcast` に寄せる」の変更6）。
 2. **認証トークン: 文字列か、更新用の非同期関数。** 関数は、接続、GOAWAY による移動、
    再接続のたびに呼ぶ（「core API」の「認証トークン」）。
 3. **再接続: 自動。** GOAWAY 無しの切断でも session が接続し直し、handle はそのまま
    使える。relay のキャッシュにある範囲は FETCH で埋め、上限（既定60秒）を過ぎたら
    諦める（「core API」の「再接続」）。
-4. **catalog: `publish()` で指定できる。** track ごとの label、role、rendition を
+4. **catalog: `addSource` で指定できる。** track ごとの label、role、rendition を
    渡せる。独自フィールドは、使う用途が出るまで見送る（変更7）。
-5. **Audio Level: 含める。** `publish()` は音声の object ごとにレベルを計算し、LOC の
+5. **Audio Level: 含める。** `createBroadcast()` は音声の object ごとにレベルを計算し、LOC の
    Audio Level property として送る（変更5）。
-6. **CMAF の兄弟 track: opt-in。** `publish()` は既定で CMAF を作らず、
-   `{ cmaf: true }` で作る。他の publisher（live-ingest など）の既定は変えない
+6. **CMAF の兄弟 track: 作らない。** ブラウザの配信は CMAF を作らない。他の publisher（live-ingest など）の既定は変えない
    （変更8）。
 7. **パッケージ名: `moq-wasm`。** `package.json` の `name` と import パスに使う。
    `docs/architecture/moqt/sdk.md` は3言語の SDK の名前を `moqt` に揃えると決めたので、

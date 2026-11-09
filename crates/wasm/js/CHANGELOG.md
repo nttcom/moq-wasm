@@ -2,18 +2,30 @@
 
 ## Unreleased
 
+- `createBroadcast()` replaces `publish()`, which is removed with `Publication`,
+  `PublishOptions` and `SourcePublication`. It announces a namespace, and `addSource(name, input)` publishes each source, a camera
+  included, in the tracks `name`, `name_audio` and `name_<rendition>`. A source
+  takes devices the SDK captures, the page's tracks, a stream or the screen;
+  `LocalSource` switches or releases a device, mutes it, shows the published
+  tracks as `stream` and reports encoder `stats()`.
+- `watchBroadcasts()` plays every broadcast under a prefix but the session's
+  own, as a `RemoteBroadcast`: one catalog subscription and one view per source
+  the catalog lists, with an element the SDK owns, its `state`, volume and
+  stats. A view subscribes its video only while its element is on screen.
+- `RemoteBroadcastOptions.audioContext`, which `watchBroadcasts` passes on,
+  plays every view's live sound through the page's `AudioContext`.
+- A player limited to a source plays the alternates of its audio too, such as
+  translated audio.
 - `MoqSession.transportStats()` returns the bytes the session has sent and
   received over all its connections (`sentBytes`, `receivedBytes`), so a page
   can show its send and receive rate next to `encodedKbps`. Over WebTransport
   the SDK counts them itself; they are the bytes the browser accepted, with
   no round-trip time or loss.
-- `stats()` on a `publish()` result and on each `addSource()` source returns
+- `stats()` on each source returns
   the video and audio that source's encoders output over the last second
   (`encodedKbps`, `encodedFramesPerSecond`), the encoded video `frameSize`
   and that of each rendition, and, since it was published, the frames
   dropped before encoding and the encoder failures.
-- An audio encoder failure now reaches `PublishOptions.onError`, as a video
-  encoder failure already did.
 - `LivePlayer` plays a broadcast with audio and no video, such as a member
   who joined with the camera off: `LiveTracks.video` is optional, the playback
   status names the audio track, and the PUBLISH_DONE of the audio takes the

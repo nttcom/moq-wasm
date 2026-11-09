@@ -33,24 +33,6 @@ export type Rendition = {
 
 export type MediaKind = 'video' | 'audio'
 
-export type SourcePublication = {
-  /// A muted kind is not encoded and its track leaves the catalog with
-  /// PUBLISH_DONE; unmuting publishes it again from a new group.
-  setMuted(kind: MediaKind, muted: boolean): Promise<void>
-  /// A muted kind stays muted. Does nothing once the publication is closed.
-  replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
-  /// Restarts the video encoder with `config` and the renditions' encoders
-  /// with its codec. A muted video takes it when unmuted. The catalog keeps the
-  /// bitrate the source was published with. Does nothing once the publication
-  /// is closed.
-  setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void
-  /// What the source's encoders output over the last second, and the frames
-  /// they dropped and their failures since it was published.
-  stats(): SourcePublicationStats
-  /// Ends the tracks with PUBLISH_DONE. The session stays open.
-  close(): Promise<void>
-}
-
 const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
 
 type ChunkMessage<Chunk, Metadata> = {
@@ -65,9 +47,22 @@ type Encoder = { stop: () => void }
 
 type Encoding = { track?: MediaStreamTrack; muted: boolean; encoder?: Encoder }
 
-/// `publishSource`'s handle; `createBroadcast` uses all of it, `publish()`
-/// the `SourcePublication` part.
-export type SourceEncoding = SourcePublication & {
+export type SourceEncoding = {
+  /// A muted kind is not encoded and its track leaves the catalog with
+  /// PUBLISH_DONE; unmuting publishes it again from a new group.
+  setMuted(kind: MediaKind, muted: boolean): Promise<void>
+  /// A muted kind stays muted. Does nothing once the source is closed.
+  replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
+  /// Restarts the video encoder with `config` and the renditions' encoders
+  /// with its codec. A muted video takes it when unmuted. The catalog keeps the
+  /// bitrate the source was published with. Does nothing once the source
+  /// is closed.
+  setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void
+  /// What the source's encoders output over the last second, and the frames
+  /// they dropped and their failures since it was published.
+  stats(): SourcePublicationStats
+  /// Ends the tracks with PUBLISH_DONE. The session stays open.
+  close(): Promise<void>
   /// Stops encoding `kind` and ends its track with PUBLISH_DONE, keeping
   /// whether it is muted; `replaceTrack` publishes it again. With `track`,
   /// does nothing once `kind` encodes another track.
