@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
@@ -13,6 +14,7 @@ pub struct SubscribeNamespace {
     pub request_id: u64,
     pub track_namespace_prefix: Vec<String>,
     pub authorization_token: Vec<AuthorizationToken>,
+    pub trace_context: Option<TraceContext>,
 }
 
 impl SubscribeNamespace {
@@ -25,6 +27,7 @@ impl SubscribeNamespace {
             request_id,
             track_namespace_prefix,
             authorization_token,
+            trace_context: None,
         }
     }
 
@@ -35,11 +38,13 @@ impl SubscribeNamespace {
         let authorization_token = odd_values(&parameters, 0x03)
             .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
+        let trace_context = TraceContext::find(&parameters);
 
         Ok(Self {
             request_id,
             track_namespace_prefix,
             authorization_token,
+            trace_context,
         })
     }
 
@@ -51,6 +56,7 @@ impl SubscribeNamespace {
             .authorization_token
             .iter()
             .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
         payload
@@ -60,6 +66,7 @@ impl SubscribeNamespace {
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::{TEST_TRACEPARENT, TraceContext};
         use crate::modules::moqt::control_plane::control_messages::messages::subscribe_namespace::SubscribeNamespace;
         use bytes::BytesMut;
 
@@ -110,6 +117,24 @@ mod tests {
                 SubscribeNamespace::new(request_id, track_namespace_prefix, parameters);
 
             assert_eq!(subscribe_announces, expected_subscribe_announces);
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let message = SubscribeNamespace {
+                trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+                ..SubscribeNamespace::new(1, vec!["room".to_string()], vec![])
+            };
+
+            // Act
+            let bytes = message.encode();
+            let decoded =
+                SubscribeNamespace::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context.is_some());
+            assert_eq!(decoded.trace_context, message.trace_context);
         }
     }
 }

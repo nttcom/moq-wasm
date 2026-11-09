@@ -13,7 +13,8 @@ use std::env;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure,
+    Session,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
         ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
@@ -32,10 +33,8 @@ async fn new_session() -> anyhow::Result<Session> {
     let relay_url =
         env::var("MOQT_E2E_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        port: 0,
-        verify_certificate: false,
-        authorization_token: None,
-        follow_go_away: true,
+        certificate_verification: CertificateVerification::Disabled,
+        ..ClientConfig::default()
     })?;
     let connecting = endpoint.connect(&relay_url).await?;
     connecting.await

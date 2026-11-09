@@ -1,12 +1,10 @@
-import { MediaTransportState } from '../../../../utils/media/transportState'
-import { sendVideoChunkViaMoqt } from '../../../../utils/media/videoTransport'
-import type { PublisherSession } from './publisherSession'
+import type { MoqSession } from 'moq-wasm'
+import { type Publication, publish } from 'moq-wasm/media'
 import { type CameraId, type VideoSource } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
 const KEYFRAME_INTERVAL_FRAMES = 30 // 30fps × 1s = 1 GoP per second
-const BITRATE_LOG_INTERVAL_CHUNKS = 900 // ~30 seconds at 30fps
 const VIDEO_CONFIG = {
   codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
   width: 1280,
@@ -24,22 +22,17 @@ const CAM_COLORS: Record<CameraId, string> = {
 }
 
 export class CameraPublisher {
-  private worker: Worker | null = null
   private stream: MediaStream | null = null
   private videoEl: HTMLVideoElement | null = null
-  private readonly transportState = new MediaTransportState()
-  private readonly activeAliases = new Set<string>()
-  private sendQueue: Promise<void> = Promise.resolve()
-  private chunkCount = 0
+  private publication: Publication | null = null
   private rafId: number | null = null
 
   constructor(
-    private readonly session: PublisherSession,
     private readonly camId: CameraId,
     private readonly source: VideoSource
   ) {}
 
-  async start(): Promise<MediaStream> {
+  async start(session: MoqSession, namespace: string[]): Promise<MediaStream> {
     let encoderConfig: typeof VIDEO_CONFIG | typeof this.SYNTHETIC_CONFIG = VIDEO_CONFIG
 
     if (this.source.type === 'synthetic') {
@@ -52,45 +45,15 @@ export class CameraPublisher {
       this.stream = await this.startVideoFileCamera(url)
     }
 
-    const track = this.stream.getVideoTracks()[0]
-
-    this.worker = new Worker(new URL('../../../../utils/media/encoders/videoEncoder.ts', import.meta.url), {
-      type: 'module'
+    // A video file's captured stream carries its sound too; the monitor shows video only.
+    this.publication = await publish(session, namespace, new MediaStream(this.stream.getVideoTracks()), {
+      videoLabel: this.camId,
+      keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
+      videoEncoderConfig: encoderConfig,
+      onError: (err) => console.error('[pub][camera] publish error', { camId: this.camId, err })
     })
-    this.worker.postMessage({ type: 'keyframeInterval', keyframeInterval: KEYFRAME_INTERVAL_FRAMES })
-    this.worker.postMessage({ type: 'encoderConfig', config: encoderConfig })
-    this.worker.onmessage = (e) => {
-      if (e.data.type === 'chunk') {
-        const { chunk, metadata, captureTimestampMicros } = e.data
-        if (this.chunkCount === 0) {
-          log('encoder ready, first chunk produced', { camId: this.camId, source: this.source.type, type: chunk.type })
-        }
-        this.chunkCount++
-        this.enqueueChunk(chunk, metadata, captureTimestampMicros)
-      } else if (e.data.type === 'bitrate') {
-        if (this.chunkCount % BITRATE_LOG_INTERVAL_CHUNKS === 0 && this.chunkCount > 0) {
-          log('bitrate', { camId: this.camId, kbps: e.data.kbps })
-        }
-      } else if (e.data.type === 'configError') {
-        console.error('[pub][camera] encoder config error', { camId: this.camId, ...e.data })
-      }
-    }
-
-    const processor = new (window as any).MediaStreamTrackProcessor({ track })
-    const videoStream: ReadableStream<VideoFrame> = processor.readable
-    this.worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
-
+    log('publishing', { camId: this.camId, source: this.source.type, namespace })
     return this.stream
-  }
-
-  private enqueueChunk(
-    chunk: EncodedVideoChunk,
-    metadata: EncodedVideoChunkMetadata | undefined,
-    captureTimestampMicros?: number
-  ): void {
-    this.sendQueue = this.sendQueue
-      .then(() => this.sendChunk(chunk, metadata, captureTimestampMicros))
-      .catch((err) => console.error('[pub][camera] sendChunk error', { camId: this.camId, err }))
   }
 
   // Canvas outputs BGRA frames. Switch to prefer-software to avoid HW encoder issues with BGRA.
@@ -187,48 +150,11 @@ export class CameraPublisher {
     })
   }
 
-  private async sendChunk(
-    chunk: EncodedVideoChunk,
-    metadata: EncodedVideoChunkMetadata | undefined,
-    captureTimestampMicros?: number
-  ): Promise<void> {
-    const aliases = this.collectVideoAliases()
-    if (aliases.length === 0) return
-
-    await sendVideoChunkViaMoqt({
-      chunk,
-      metadata,
-      captureTimestampMicros,
-      trackAliases: aliases,
-      publisherPriority: 0,
-      client: this.session.sender,
-      transportState: this.transportState
-    })
-  }
-
-  private collectVideoAliases(): bigint[] {
-    const aliases = this.session.getVideoTrackAliases()
-    const latestKeys = new Set(aliases.map((alias) => alias.toString()))
-
-    for (const key of this.activeAliases) {
-      if (!latestKeys.has(key)) {
-        this.transportState.resetAlias(key)
-      }
-    }
-
-    this.activeAliases.clear()
-    for (const alias of aliases) {
-      this.activeAliases.add(alias.toString())
-    }
-
-    return aliases
-  }
-
   stop(): void {
     log('stopping', { camId: this.camId })
     if (this.rafId !== null) clearInterval(this.rafId)
-    this.worker?.terminate()
-    this.worker = null
+    this.publication?.close().catch((err) => console.warn('[pub][camera] close failed', { camId: this.camId, err }))
+    this.publication = null
     this.stream?.getTracks().forEach((t) => t.stop())
     this.stream = null
     if (this.videoEl) {
@@ -236,6 +162,5 @@ export class CameraPublisher {
       this.videoEl.src = ''
       this.videoEl = null
     }
-    this.activeAliases.clear()
   }
 }

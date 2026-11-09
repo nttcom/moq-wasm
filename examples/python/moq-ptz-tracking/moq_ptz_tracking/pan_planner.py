@@ -3,7 +3,7 @@ import math
 from dataclasses import dataclass
 
 from moq_ptz_tracking.ptz import Heading, PtzCalibration, PtzMove
-from moq_ptz_tracking.vision import Answer, Position
+from moq_ptz_tracking.vision import Answer, Position, Sighting
 
 # After losing the target the camera first turns the way the target was heading for this long.
 PREDICT_SECONDS = 3.0
@@ -33,7 +33,7 @@ class Sweeping:
 
 @dataclass(frozen=True)
 class Halt:
-    """The target is in the picture."""
+    """The targets are in the picture."""
 
 
 @dataclass(frozen=True)
@@ -52,10 +52,10 @@ class Phase(enum.Enum):
 
 
 class PanPlanner:
-    """Picks the camera's next action per located picture: step toward a visible target; for a lost
-    one, sweep its last heading, then search sideways from (0, 0), turning back half a turn either side.
-    A target held off center by a pan limit is reached the other way round (the camera turns at most
-    360 degrees)."""
+    """Picks the camera's next action per located picture: step so every box of the visible targets
+    fits the picture; for lost targets, sweep the way their boxes last headed, then search sideways from
+    (0, 0), turning back half a turn either side. Boxes held off center by a pan limit are reached the
+    other way round (the camera turns at most 360 degrees)."""
 
     def __init__(self, calibration: PtzCalibration):
         self._calibration = calibration
@@ -70,12 +70,12 @@ class PanPlanner:
         self._search_offset = 0.0
         self._swept_until: float | None = None
 
-    def decide(self, answer: Position | Answer, now: float) -> Decision:
+    def decide(self, answer: Sighting | Answer, now: float) -> Decision:
         if self._phase is Phase.GOING_AROUND:
             decision = self._go_around(answer, now)
             if decision is not None:
                 return decision
-        if isinstance(answer, Position):
+        if isinstance(answer, Sighting):
             return self._track(answer, now)
         if self._phase is Phase.TRACKING:
             return self._predict(now)
@@ -85,23 +85,25 @@ class PanPlanner:
             return self._home(now, side_of(self._heading.pan))
         return self._search(now)
 
-    def _track(self, answer: Position, now: float) -> Decision:
+    def _track(self, sighting: Sighting, now: float) -> Decision:
         if self._phase is not Phase.TRACKING:
             self._phase = Phase.TRACKING
             self._forget_target()
             return Halt()
-        move = self._calibration.toward(answer)
-        self._stuck_steps = self._stuck_steps + 1 if self._did_not_shift(answer.x, move) else 0
+        union = sighting.union()
+        move = self._calibration.toward(union)
+        center = union.center
+        self._stuck_steps = self._stuck_steps + 1 if self._did_not_shift(center.x, move) else 0
         if self._stuck_steps == STUCK_STEPS:
             self._forget_target()
             self._start(Phase.GOING_AROUND, now, Heading(-side_of(move.pan_seconds), 0.0))
             return Sweeping(self._heading)
         if self._previous is not None:
             self._motion = (
-                answer.x - self._previous.x + self._last_step.pan_seconds * self._calibration.pan_per_second,
-                answer.y - self._previous.y - self._last_step.tilt_seconds * self._calibration.tilt_per_second,
+                center.x - self._previous.x + self._last_step.pan_seconds * self._calibration.pan_per_second,
+                center.y - self._previous.y - self._last_step.tilt_seconds * self._calibration.tilt_per_second,
             )
-        self._previous = answer
+        self._previous = center
         self._last_step = move
         return move
 
@@ -143,7 +145,7 @@ class PanPlanner:
             self._heading = Heading(-self._heading.pan, 0.0)
         return Sweeping(self._heading)
 
-    def _go_around(self, answer: Position | Answer, now: float) -> Decision | None:
+    def _go_around(self, answer: Sighting | Answer, now: float) -> Decision | None:
         if answer is Answer.NOT_VISIBLE:
             self._lost_while_around = True
         elif self._lost_while_around:

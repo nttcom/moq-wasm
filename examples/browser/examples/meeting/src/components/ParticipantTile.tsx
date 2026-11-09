@@ -14,9 +14,13 @@ interface ParticipantTileProps {
   /// The member's newest transcribed utterance, while it is fresh.
   caption?: string
   footer?: ReactNode
+  /// Echoed back to `onHeight` so the parent can pass one stable callback to
+  /// every tile; a new callback per render would reconnect the ResizeObserver.
+  heightKey?: string
   /// Called with the shown height in device pixels whenever it changes.
-  onHeight?: (heightPx: number) => void
-  onOpenDetails: () => void
+  onHeight?: (heightKey: string, heightPx: number) => void
+  /// When set, the tile shows a details button that calls it.
+  onOpenDetails?: () => void
   menuTestId?: string
 }
 
@@ -29,6 +33,7 @@ export function ParticipantTile({
   speaking,
   caption,
   footer,
+  heightKey,
   onHeight,
   onOpenDetails,
   menuTestId
@@ -37,15 +42,15 @@ export function ParticipantTile({
   const rootRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     const root = rootRef.current
-    if (!root || !onHeight) {
+    if (!root || heightKey === undefined || !onHeight) {
       return
     }
     const observer = new ResizeObserver(([entry]) => {
-      onHeight(Math.round(entry.contentRect.height * window.devicePixelRatio))
+      onHeight(heightKey, Math.round(entry.contentRect.height * window.devicePixelRatio))
     })
     observer.observe(root)
     return () => observer.disconnect()
-  }, [onHeight])
+  }, [heightKey, onHeight])
   return (
     <div
       ref={rootRef}
@@ -72,16 +77,18 @@ export function ParticipantTile({
       <div className="pointer-events-none absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/60 px-2 py-0.5 text-xs font-medium text-white">
         {label ? `${name} · ${label}` : name}
       </div>
-      <button
-        type="button"
-        aria-label={`Details of ${name}`}
-        title="Details"
-        data-testid={menuTestId}
-        onClick={onOpenDetails}
-        className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5 text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
-      >
-        <MoreHorizontal className="h-4 w-4" />
-      </button>
+      {onOpenDetails && (
+        <button
+          type="button"
+          aria-label={`Details of ${name}`}
+          title="Details"
+          data-testid={menuTestId}
+          onClick={onOpenDetails}
+          className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5 text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+      )}
       {footer && (
         <div className="pointer-events-none absolute bottom-2 right-2 max-w-[60%] truncate rounded bg-black/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-200 opacity-0 transition group-hover:opacity-100">
           {footer}

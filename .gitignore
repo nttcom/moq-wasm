@@ -10,9 +10,13 @@ target/
 *.pdb
 
 node_modules/
+__pycache__/
 examples/browser/.vite/
 examples/browser/dist/*
-examples/browser/pkg/*
+crates/wasm/js/pkg/*
+crates/wasm/js/test-results/
+crates/wasm/js/dist/
+crates/wasm/js/types/
 examples/browser/examples/*/dist/*
 
 *.log
@@ -25,7 +29,8 @@ examples/browser/examples/*/dist/*
 log/*
 
 /.env
-crates/vts/apps.json
+/.env.live-translate
+services/vts/apps.json
 test-results
 
 cargo-flamegraph.trace/*
