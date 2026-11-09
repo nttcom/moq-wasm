@@ -63,7 +63,17 @@ type ChunkMessage<Chunk, Metadata> = {
 /// Stops one kind's encoder worker and what feeds it.
 type Encoder = { stop: () => void }
 
-type Encoding = { track: MediaStreamTrack; muted: boolean; encoder?: Encoder }
+type Encoding = { track?: MediaStreamTrack; muted: boolean; encoder?: Encoder }
+
+/// `publishSource`'s handle; `createBroadcast` uses all of it, `publish()`
+/// the `SourcePublication` part.
+export type SourceEncoding = SourcePublication & {
+  /// Stops encoding `kind` and ends its track with PUBLISH_DONE, keeping
+  /// whether it is muted; `replaceTrack` publishes it again. With `track`,
+  /// does nothing once `kind` encodes another track.
+  removeTrack(kind: MediaKind, track?: MediaStreamTrack): Promise<void>
+  isMuted(kind: MediaKind): boolean
+}
 
 export function videoBitrate(options: SourceOptions): number | undefined {
   return videoEncoderConfig(options.videoEncoderConfig).bitrate
@@ -75,7 +85,7 @@ export function publishSource(
   initialOptions: SourceOptions,
   startedAtMs: number,
   report: (error: unknown) => void
-): SourcePublication {
+): SourceEncoding {
   let options = initialOptions
   const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
     source.addRendition(name, label, bitrate)
@@ -101,7 +111,8 @@ export function publishSource(
     }
   }
   // An unmute that publishes the track before the mute's removal finishes
-  // would leave it removed, so mutes, unmutes and the close run one at a time.
+  // would leave it removed, so mutes, unmutes, removals and the close run one
+  // at a time.
   let closed = false
 
   // A source without audio removes the `audio` placeholder the catalog lists
@@ -120,14 +131,18 @@ export function publishSource(
   return {
     setMuted: (kind, muted) =>
       serialized(async () => {
-        const encoding = kinds.get(kind)
-        if (closed || !encoding || encoding.muted === muted) {
+        if (closed) {
+          return
+        }
+        const encoding = kinds.get(kind) ?? { muted: false }
+        kinds.set(kind, encoding)
+        if (encoding.muted === muted) {
           return
         }
         encoding.muted = muted
         if (muted) {
           await stop(kind)
-        } else {
+        } else if (encoding.track) {
           encoding.encoder = encode(kind, encoding.track)
         }
       }),
@@ -135,7 +150,7 @@ export function publishSource(
       if (closed) {
         return
       }
-      const encoding = kinds.get(kind) ?? { track, muted: false }
+      const encoding = kinds.get(kind) ?? { muted: false }
       encoding.track = track
       kinds.set(kind, encoding)
       if (!encoding.muted) {
@@ -149,14 +164,24 @@ export function publishSource(
       }
       options = { ...options, videoEncoderConfig: config }
       const encoding = kinds.get('video')
-      if (encoding && !encoding.muted) {
+      if (encoding?.track && !encoding.muted) {
         encoding.encoder?.stop()
         encoding.encoder = encode('video', encoding.track)
       }
     },
+    removeTrack: (kind, track) =>
+      serialized(async () => {
+        const encoding = kinds.get(kind)
+        if (closed || !encoding || (track && encoding.track !== track)) {
+          return
+        }
+        await stop(kind)
+        encoding.track = undefined
+      }),
+    isMuted: (kind) => kinds.get(kind)?.muted ?? false,
     stats: () => ({
-      video: kinds.has('video') ? videoStats.stats() : undefined,
-      audio: kinds.has('audio') ? audioStats.stats() : undefined
+      video: kinds.get('video')?.track ? videoStats.stats() : undefined,
+      audio: kinds.get('audio')?.track ? audioStats.stats() : undefined
     }),
     close: () => {
       closed = true

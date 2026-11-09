@@ -11,6 +11,15 @@ export {
   publish
 } from './publish'
 export {
+  type LocalBroadcast,
+  type LocalBroadcastOptions,
+  type LocalSource,
+  type LocalSourceListener,
+  type SourceInput,
+  type TrackInput,
+  createBroadcast
+} from './localBroadcast'
+export {
   type LivePlayerCallbacks,
   type LivePlayerOptions,
   type LivePlayerState,

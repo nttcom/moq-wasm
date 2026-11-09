@@ -53,7 +53,7 @@ async function subscribeForPlayback(subscriber: SubscriberPageModel): Promise<vo
   await expect(subscriber.catalogStatus).toContainText('Catalog loaded: video=2')
 
   // Act: 映像には source と同じフレームから作る rendition を選ぶ。
-  await subscriber.videoTrackSelect.selectOption('video_low')
+  await subscriber.videoTrackSelect.selectOption('camera_low')
 
   // Act: 映像トラックの subscribe を開始する。
   await subscriber.trackSubscribeButton.click()
