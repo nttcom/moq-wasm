@@ -222,6 +222,9 @@ class View implements SourceView {
     })
     this.showState()
     if (pauseHiddenVideo) {
+      // No video until the element shows, so a view the page never places subscribes none.
+      this.shown = false
+      void this.player.setVideoEnabled(false)
       this.visibility = new IntersectionObserver(([entry]) => void this.setShown(entry.isIntersecting))
       this.visibility.observe(this.element)
     }
