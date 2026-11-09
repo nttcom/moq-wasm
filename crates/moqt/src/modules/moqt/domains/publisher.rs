@@ -115,7 +115,7 @@ impl Publisher {
         for connection in self.session.live_connections() {
             connection
                 .control
-                .notify(Notification::PublishNamespaceDone(
+                .notify_end(Notification::PublishNamespaceDone(
                     PublishNamespaceDone::new(vec_namespace.clone()),
                 ))
                 .await?;

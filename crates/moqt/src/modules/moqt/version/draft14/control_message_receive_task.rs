@@ -425,7 +425,7 @@ fn error_response(
 #[cfg(test)]
 mod tests {
     use crate::{
-        SessionEvent,
+        SessionEvent, Version,
         modules::test_support::{
             DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
             spawn_connected_native_sessions, subscribed_track, subscription, within,
@@ -461,7 +461,7 @@ mod tests {
     #[tokio::test]
     async fn a_draft14_update_of_an_ended_subscription_reaches_the_application() {
         // Arrange
-        let track = subscribed_track("update-ended-subscription").await;
+        let track = subscribed_track("update-ended-subscription", Version::Draft14).await;
         track
             .client
             .subscriber()

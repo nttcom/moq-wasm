@@ -17,6 +17,9 @@
 - `init({ telemetry: { redact } })` rewrites the fields of each log and span
   before they are sent, so a page can mask or drop a `track_namespace` that
   holds a user id.
+- `MoqSubscription.close()`, `MoqNamespaceWatch.close()` and
+  `Announcement.close()` resolve instead of rejecting with "connection lost"
+  when the session has already ended.
 
 ## 0.3.0
 
