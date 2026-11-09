@@ -70,6 +70,12 @@ export type LivePlayerOptions = {
   /// Plays only this source of the catalog; without it, every video and audio
   /// track is a choice.
   source?: LiveSource
+  /// Plays the live LOC sound through this context instead of one the player
+  /// opens, so players on a page can share one context and output device.
+  /// The page owns it: it resumes it after a user gesture, and the player
+  /// only disconnects its nodes and never suspends or closes it. Review and
+  /// CMAF sound do not play through it.
+  audioContext?: AudioContext
 }
 
 export type PlayerStatus = { text: string; state: StatusState }
@@ -199,7 +205,7 @@ export class LivePlayer {
       this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
     })
     this.resizeObserver.observe(options.container)
-    this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
+    this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options, {
       onPresented: (picture) => this.notePresentedFrame(picture),
       onFrameShown: (ids, captureMicros) => {
         const trackAlias = this.subscriptions.get('video')?.id

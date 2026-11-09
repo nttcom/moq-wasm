@@ -52,6 +52,7 @@ type Scheduled = {
 type Concealment = { period: Channels; played: number }
 
 /// Plays decoded audio through an AudioContext running at the stream's sample
+/// rate, or through the one it is given, which resamples a stream at another
 /// rate. Chunks are appended whole at a write head so the waveform stays
 /// continuous, and how far the write head sits from the time the clock asked
 /// for is reported as drift, which lets the clock follow the audio device: a
@@ -91,7 +92,8 @@ export class AudioPlayout {
   concealedMs = 0
 
   /// Without `givenContext` the playout opens and closes an AudioContext of
-  /// its own.
+  /// its own. A given context belongs to the caller: the playout only
+  /// disconnects its nodes from it and never suspends or closes it.
   constructor(
     private readonly onDrift: (driftMs: number, captureMicros: number) => void,
     private readonly givenContext?: (sampleRate: number) => AudioContext
@@ -175,11 +177,15 @@ export class AudioPlayout {
   /// Suspending freezes the context clock, so what is scheduled resumes in
   /// place; the caller flushes first when it should not.
   async suspend(): Promise<void> {
-    await this.output?.context.suspend()
+    if (!this.givenContext) {
+      await this.output?.context.suspend()
+    }
   }
 
   async resume(): Promise<void> {
-    await this.output?.context.resume()
+    if (!this.givenContext) {
+      await this.output?.context.resume()
+    }
   }
 
   close(): void {

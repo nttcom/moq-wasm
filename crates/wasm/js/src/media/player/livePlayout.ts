@@ -49,7 +49,7 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 export class LivePlayout {
   private readonly clock = new PlayoutClock()
   private readonly jitterBuffer = new JitterBuffer(DEFAULT_BUFFER_POLICY)
-  private readonly audio = new AudioPlayout((driftMs, captureMicros) => this.shiftClock(driftMs, captureMicros))
+  private readonly audio: AudioPlayout
   private readonly video: VideoPlayout
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
   private newestAudioCaptureMicros: number | undefined
@@ -65,7 +65,15 @@ export class LivePlayout {
   droppedLateAudio = 0
   droppedLateVideo = 0
 
-  constructor(showVideo: (frame: VideoFrame) => void, onTimeline?: (origin: PlayoutOrigin | undefined) => void) {
+  constructor(
+    showVideo: (frame: VideoFrame) => void,
+    onTimeline?: (origin: PlayoutOrigin | undefined) => void,
+    audioContext?: AudioContext
+  ) {
+    this.audio = new AudioPlayout(
+      (driftMs, captureMicros) => this.shiftClock(driftMs, captureMicros),
+      audioContext && (() => audioContext)
+    )
     this.video = new VideoPlayout(showVideo)
     if (onTimeline) {
       this.clock.setOriginListener(onTimeline)

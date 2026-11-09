@@ -123,6 +123,25 @@ test('an input opened on a playout plays in its context and leaves its clock alo
   expect(host.positionMicrosAt(environment.nowMs)).toBeDefined()
 })
 
+test('a given context is left running and open when the playout pauses and closes', async () => {
+  // Arrange
+  const context = new AudioContext({ sampleRate: SAMPLE_RATE }) as FakeAudioContext
+  const playout = new AudioPlayout(
+    () => undefined,
+    () => context
+  )
+  playout.play(fakeAudioData(SAMPLE_RATE, CHUNK_FRAMES), 1_000_000, (nowMs) => nowMs)
+
+  // Act
+  await playout.suspend()
+  await playout.resume()
+  playout.close()
+
+  // Assert
+  expect(context.bufferSampleRates).toEqual([SAMPLE_RATE])
+  expect(context.lifecycleCalls).toEqual([])
+})
+
 test('a repetition on a given context at another rate is made at the rate of the stream it repeats', () => {
   // Arrange: a 44.1 kHz context, and a 48 kHz chunk due 100 ms from now that runs out with nothing after it
   const context = new AudioContext({ sampleRate: 44_100 }) as FakeAudioContext

@@ -11,7 +11,10 @@ const FAKED_GLOBALS = [
 
 type Timer = { id: number; dueMs: number; callback: () => void }
 
-export type FakeAudioContext = AudioContext & { readonly bufferSampleRates: number[] }
+export type FakeAudioContext = AudioContext & {
+  readonly lifecycleCalls: string[]
+  readonly bufferSampleRates: number[]
+}
 
 export class FakeMediaEnvironment {
   nowMs = 1_000
@@ -72,6 +75,7 @@ export class FakeMediaEnvironment {
         readonly destination = {}
         readonly outputLatency = environment.outputLatencySeconds
         readonly sampleRate: number
+        readonly lifecycleCalls: string[] = []
         readonly bufferSampleRates: number[] = []
 
         constructor({ sampleRate }: { sampleRate: number }) {
@@ -85,6 +89,18 @@ export class FakeMediaEnvironment {
         createBuffer(_channelCount: number, length: number, sampleRate: number) {
           this.bufferSampleRates.push(sampleRate)
           return { duration: length / sampleRate, copyToChannel() {} }
+        }
+
+        async suspend(): Promise<void> {
+          this.lifecycleCalls.push('suspend')
+        }
+
+        async resume(): Promise<void> {
+          this.lifecycleCalls.push('resume')
+        }
+
+        async close(): Promise<void> {
+          this.lifecycleCalls.push('close')
         }
       },
       GainNode: class {

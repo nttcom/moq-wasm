@@ -154,6 +154,24 @@ Options of `new LivePlayer`:
 | `source`                 | Plays only this source of the catalog, `{ video: 'screen', audio: 'screen_audio' }`; without it every video and audio track is a choice     |
 | `keepLiveWhileReviewing` | Keeps the live tracks playing behind a rewind, so `goLive()` shows the live picture at once, at the cost of the live bandwidth and decoding |
 | `callbacks.onAudioLevel` | Receives the LOC Audio Level of each live audio object that carries one                                                                     |
+| `audioContext`           | Plays the live LOC sound through the page's context; see below                                                                              |
+
+Players on one page can share one `AudioContext` through `audioContext`, so
+they mix into one output stream and the page picks the speaker with
+`audioContext.setSinkId(deviceId)`. The context stays the page's: a player
+disconnects its nodes from it and never suspends or closes it, so resume it
+after a user gesture and close it when the page is done. A stream at another
+sample rate is resampled by the context. Only the live LOC sound plays through
+it: the sound of a rewind or a recording (`state.mode === 'review'`, a
+`PlaybackGroup`) plays through a context the player opens, and CMAF plays
+through a `<video>` element, so neither follows the context's `setSinkId`.
+
+```ts
+const audioContext = new AudioContext()
+const players = members.map((member) => new LivePlayer({ container: member.view, callbacks, audioContext }))
+joinButton.onclick = () => void audioContext.resume()
+speakerSelect.onchange = () => void audioContext.setSinkId(speakerSelect.value)
+```
 
 To play tracks the page already knows instead of the catalog's, pass them as
 the third argument of `start`: `player.start(session, namespace, { video: [track], audio: [track] })`.
