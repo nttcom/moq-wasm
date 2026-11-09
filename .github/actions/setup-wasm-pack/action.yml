@@ -25,7 +25,7 @@ runs:
         mkdir -p "${dest}"
         echo "Installing prebuilt wasm-pack ${version}..."
         curl -fsSL \
-          "https://github.com/rustwasm/wasm-pack/releases/download/${version}/${archive}.tar.gz" \
+          "https://github.com/wasm-bindgen/wasm-pack/releases/download/${version}/${archive}.tar.gz" \
           -o "${archive_file}"
         echo "${sha256}  ${archive_file}" | sha256sum -c -
         tar -xzf "${archive_file}" --strip-components=1 -C "${dest}" "${archive}/wasm-pack"
