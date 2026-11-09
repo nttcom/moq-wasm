@@ -443,8 +443,8 @@ mod tests {
                 version::{DEFAULT_VERSIONS, application_protocols},
             },
             test_support::{
-                HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, native_client,
-                native_client_with_config, self_signed_server_config, slow_udp_path,
+                DRAFTS, HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, connected_sessions,
+                native_client, native_client_with_config, self_signed_server_config, slow_udp_path,
                 spawn_connected_native_sessions, spawn_native_server,
                 spawn_native_server_handshake, udp_blocked_server, within,
             },
@@ -727,30 +727,26 @@ mod tests {
 
     #[tokio::test]
     async fn client_request_ids_are_even_from_zero_and_server_ids_odd_from_one() {
-        // Arrange
-        let (client, server) = spawn_connected_native_sessions("request-id-parity").await;
-        let client_context = client.publisher().session;
-        let server_context = server.publisher().session;
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("request-id-parity", version).await;
+            let client_context = client.publisher().session;
+            let server_context = server.publisher().session;
 
-        // Act
-        let client_id = client_context
-            .connection()
-            .control
-            .reserve_request_id()
-            .await
-            .unwrap()
-            .request_id();
-        let server_id = server_context
-            .connection()
-            .control
-            .reserve_request_id()
-            .await
-            .unwrap()
-            .request_id();
+            // Act
+            let client_ids = [
+                client_context.connection().control.take_request_id().await,
+                client_context.connection().control.take_request_id().await,
+            ];
+            let server_ids = [
+                server_context.connection().control.take_request_id().await,
+                server_context.connection().control.take_request_id().await,
+            ];
 
-        // Assert
-        assert_eq!(client_id, 0);
-        assert_eq!(server_id, 1);
+            // Assert
+            assert_eq!(client_ids, [0, 2]);
+            assert_eq!(server_ids, [1, 3]);
+        }
     }
 
     async fn connect_to_a_rejecting_server(name: &str) -> anyhow::Error {
