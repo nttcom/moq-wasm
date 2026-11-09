@@ -119,7 +119,8 @@ again in every catalog (`track_selection::SourceChoice`):
 
 - The main source (`Content::Camera`) is the one `broadcast` and the browser
   SDK publish by default: the source listing a media track named `video`,
-  `audio` or `video_<rendition>`. While none is listed, as for a participant
+  `audio` or `video_<rendition>`, or `camera` or `camera_<suffix>`, the
+  tracks of the source the browser SDK names `camera`. While none is listed, as for a participant
   with the camera and the microphone off, there is no main source; a catalog
   without an event timeline, a broadcast outside a meeting such as
   `onvif-ingest`'s, takes its first source.
