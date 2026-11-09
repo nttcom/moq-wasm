@@ -28,7 +28,7 @@ import {
   liveViewerPath,
   waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
+import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";
 const srtAddress = process.env.LIVE_VIEWER_E2E_SRT_ADDR ?? "127.0.0.1:9000";
@@ -68,7 +68,7 @@ async function main() {
     childProcesses.push(vts);
     const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
       cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayAuthEnv() },
+      env: { ...process.env, ...nativeRelayEnv() },
     });
     const vite = spawnViteServer(webPort);
 
