@@ -34,6 +34,7 @@ use crate::{
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::DataStreamResetCode,
+                handler::publish_done_handler::PublishDoneHandler,
             },
             data_plane::stream::stream_sender::StreamSender,
             domains::{connection::Connection, session_context::SessionContext},
@@ -54,7 +55,7 @@ use message_stream::{MessageDecoder, MessageReceiver};
 /// control receiver starts.
 struct Binding {
     session: Weak<SessionContext>,
-    publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
+    publish_done_sender: tokio::sync::mpsc::UnboundedSender<PublishDoneHandler>,
 }
 
 /// A request task's connection and the session it belongs to.
@@ -248,7 +249,7 @@ impl ControlChannel {
     fn bind(
         &self,
         session: Weak<SessionContext>,
-        publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
+        publish_done_sender: tokio::sync::mpsc::UnboundedSender<PublishDoneHandler>,
     ) {
         let _ = self.binding.set(Binding {
             session,
@@ -256,7 +257,9 @@ impl ControlChannel {
         });
     }
 
-    fn publish_done_sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RequestId>> {
+    fn publish_done_sender(
+        &self,
+    ) -> Option<&tokio::sync::mpsc::UnboundedSender<PublishDoneHandler>> {
         self.binding
             .get()
             .map(|binding| &binding.publish_done_sender)

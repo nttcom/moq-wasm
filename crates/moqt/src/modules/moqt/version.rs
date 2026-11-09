@@ -49,6 +49,7 @@ use crate::{
                 error_codes::{
                     DataStreamResetCode, PublishDoneCode, RequestErrorCode, RequestKind,
                 },
+                handler::publish_done_handler::PublishDoneHandler,
                 namespace_interest::NamespaceInterest,
             },
             data_plane::{
@@ -958,13 +959,13 @@ pub(crate) enum ControlReceiver {
 
 impl ControlReceiver {
     /// Spawns the task that reads the peer's control messages into session
-    /// events and responses; the Request ID of every PUBLISH_DONE also goes to
+    /// events and responses; every PUBLISH_DONE also goes to
     /// `publish_done_sender`.
     pub(crate) fn spawn(
         self,
         session: Weak<SessionContext>,
         connection: Weak<Connection>,
-        publish_done_sender: UnboundedSender<RequestId>,
+        publish_done_sender: UnboundedSender<PublishDoneHandler>,
         span: Span,
     ) -> JoinHandle {
         match self {

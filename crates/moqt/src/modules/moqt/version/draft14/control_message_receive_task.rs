@@ -57,7 +57,7 @@ impl ControlMessageReceiveTask {
         mut receive_stream: BiStreamReceiver,
         session_context: Weak<SessionContext>,
         connection: Weak<Connection>,
-        publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
+        publish_done_sender: tokio::sync::mpsc::UnboundedSender<PublishDoneHandler>,
         session_span: Span,
     ) -> JoinHandle {
         executor::spawn(
@@ -110,7 +110,7 @@ impl ControlMessageReceiveTask {
                             match Self::resolve_message(&session, &connection, received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
                                     if let SessionEvent::PublishDone(handler) = &event {
-                                        let _ = publish_done_sender.send(handler.request_id());
+                                        let _ = publish_done_sender.send(handler.clone());
                                     }
                                     if let Err(error) = connection.event_sender.send(event) {
                                         tracing::error!(?error, "failed to send a control message");

@@ -7,24 +7,26 @@ use tracing::{Instrument, Span};
 use crate::modules::{
     executor::{self, JoinHandle},
     moqt::{
-        control_plane::enums::RequestId,
+        control_plane::handler::publish_done_handler::PublishDoneHandler,
         domains::{connection::Connection, session_context::SessionContext},
     },
 };
 
 /// draft-14 §9.12: PUBLISH_DONE travels on the control stream and can arrive
-/// before the subscription's last data streams, so the subscription stays open
-/// for this period after PUBLISH_DONE.
+/// before the subscription's last data streams. When they do not all arrive (a
+/// Stream Count of 2^62-1, a stream reset before its header), or the Stream
+/// Count is 0, the subscription ends this period after PUBLISH_DONE.
 pub(crate) const PUBLISH_DONE_GRACE_PERIOD: Duration = Duration::from_secs(10);
 
-/// Cancels a subscription `PUBLISH_DONE_GRACE_PERIOD` after its PUBLISH_DONE,
-/// like an unsubscribe but without sending UNSUBSCRIBE. Its `TrackReader` then
-/// returns `Ok(None)` once the streams it already accepted are drained.
+/// Cancels a subscription once the streams its PUBLISH_DONE counts have
+/// arrived, or `PUBLISH_DONE_GRACE_PERIOD` after it, like an unsubscribe but
+/// without sending UNSUBSCRIBE. Its `TrackReader` then returns `Ok(None)` once
+/// the streams it already accepted are drained.
 pub(crate) struct PublishDoneExpiryTask;
 
 impl PublishDoneExpiryTask {
     pub(crate) fn run(
-        mut publish_done_receiver: mpsc::UnboundedReceiver<RequestId>,
+        mut publish_done_receiver: mpsc::UnboundedReceiver<PublishDoneHandler>,
         session_context: Weak<SessionContext>,
         connection: Weak<Connection>,
         session_span: Span,
@@ -35,9 +37,29 @@ impl PublishDoneExpiryTask {
                 let mut expiries = FuturesUnordered::new();
                 loop {
                     tokio::select! {
-                        Some(request_id) = publish_done_receiver.recv() => {
+                        Some(publish_done) = publish_done_receiver.recv() => {
+                            let request_id = publish_done.request_id();
+                            let arrived_streams = match connection.upgrade() {
+                                // A datagram track sends 0, and its datagrams can still
+                                // follow PUBLISH_DONE, so 0 waits the grace period.
+                                Some(connection) if publish_done.stream_count() > 0 => {
+                                    connection.arrived_streams(request_id).await
+                                }
+                                _ => None,
+                            };
                             expiries.push(async move {
-                                executor::sleep(PUBLISH_DONE_GRACE_PERIOD).await;
+                                let _ = executor::timeout(PUBLISH_DONE_GRACE_PERIOD, async {
+                                    match arrived_streams {
+                                        Some(mut arrived_streams) => {
+                                            // Fails once the sink is gone, which ends the wait too.
+                                            let _ = arrived_streams
+                                                .wait_for(|count| *count >= publish_done.stream_count())
+                                                .await;
+                                        }
+                                        None => std::future::pending().await,
+                                    }
+                                })
+                                .await;
                                 request_id
                             });
                         }
@@ -67,31 +89,29 @@ mod tests {
 
     use super::PUBLISH_DONE_GRACE_PERIOD;
     use crate::{
-        Session, SessionEvent, Version,
+        Session, SessionEvent, Subscription, Version,
         modules::{
             moqt::{
                 control_plane::error_codes::PublishDoneCode,
-                runtime::dispatch::incoming_object::IncomingObjectReceiver,
+                runtime::dispatch::incoming_object::{IncomingObject, IncomingObjectReceiver},
             },
-            test_support::{DRAFTS, connected_sessions, take_data_receiver, within},
+            test_support::{
+                DRAFTS, connected_sessions, open_subgroup, send_payload, take_data_receiver, within,
+            },
         },
         object::ContentExists,
         subscribe::SubscribeOption,
     };
 
-    struct EndedSubscription {
-        _client: Session,
-        _server: Session,
+    /// A subscription the server made to the client's `ns/track`.
+    struct ServedSubscription {
+        client: Session,
+        server: Session,
+        served: Subscription,
         object_receiver: IncomingObjectReceiver,
-        /// Taken before PUBLISH_DONE is sent, so the grace period ends at least
-        /// `PUBLISH_DONE_GRACE_PERIOD` after this instant.
-        publish_done_sent_at: Instant,
     }
 
-    /// The server subscribes to the client, which ends the subscription with
-    /// PUBLISH_DONE. Returns with tokio time paused, so the test's sleeps
-    /// advance the clock without waiting.
-    async fn subscription_ended_by_publish_done(name: &str, version: Version) -> EndedSubscription {
+    async fn served_subscription(name: &str, version: Version) -> ServedSubscription {
         let (client, server) = connected_sessions(name, version).await;
         let mut subscriber = server.subscriber();
         let (subscribed, served) = within(async {
@@ -110,35 +130,72 @@ mod tests {
         .await;
         let object_receiver =
             take_data_receiver(&subscriber.session, subscribed.unwrap().track_alias()).await;
-        let publish_done_sent_at = Instant::now();
-        client
+        ServedSubscription {
+            client,
+            server,
+            served,
+            object_receiver,
+        }
+    }
+
+    /// Returns once the server has received the PUBLISH_DONE.
+    async fn end_with_publish_done(subscription: &ServedSubscription, stream_count: u64) {
+        subscription
+            .client
             .publisher()
-            .publish_done(&served, PublishDoneCode::TrackEnded, 0, String::new())
+            .publish_done(
+                &subscription.served,
+                PublishDoneCode::TrackEnded,
+                stream_count,
+                String::new(),
+            )
             .await
             .unwrap();
-        let SessionEvent::PublishDone(_) = server.receive_event().await.unwrap() else {
+        let SessionEvent::PublishDone(_) =
+            within(subscription.server.receive_event()).await.unwrap()
+        else {
             panic!("expected PUBLISH_DONE from the client");
         };
-        tokio::time::pause();
-        EndedSubscription {
-            _client: client,
-            _server: server,
-            object_receiver,
-            publish_done_sent_at,
+    }
+
+    #[tokio::test]
+    async fn subscription_ends_once_the_streams_publish_done_counts_have_arrived() {
+        for version in DRAFTS {
+            // Arrange
+            let mut subscription =
+                served_subscription("publish-done-streams-arrived", version).await;
+            let factory = subscription
+                .client
+                .publisher()
+                .create_stream(&subscription.served);
+            let mut group = open_subgroup(&factory, 0).await;
+            send_payload(&mut group, b"object").await;
+            let arrived = within(subscription.object_receiver.recv()).await;
+            assert!(matches!(arrived, Some(IncomingObject::Subgroup(_))));
+
+            // Act
+            end_with_publish_done(&subscription, 1).await;
+            let ended =
+                tokio::time::timeout(Duration::from_secs(1), subscription.object_receiver.recv())
+                    .await;
+
+            // Assert: it ends well before the grace period
+            assert!(matches!(ended, Ok(None)), "{version:?}");
         }
     }
 
     #[tokio::test]
-    async fn subscription_stays_open_during_the_grace_period() {
+    async fn subscription_stays_open_while_a_counted_stream_has_not_arrived() {
         for version in DRAFTS {
             // Arrange
-            let mut subscription =
-                subscription_ended_by_publish_done("publish-done-grace", version).await;
+            let mut subscription = served_subscription("publish-done-grace", version).await;
+            let publish_done_sent_at = Instant::now();
+            end_with_publish_done(&subscription, 1).await;
+            tokio::time::pause();
 
             // Act
             tokio::time::sleep_until(
-                subscription.publish_done_sent_at + PUBLISH_DONE_GRACE_PERIOD
-                    - Duration::from_millis(1),
+                publish_done_sent_at + PUBLISH_DONE_GRACE_PERIOD - Duration::from_millis(1),
             )
             .await;
 
@@ -152,11 +209,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscription_ends_after_the_grace_period() {
+    async fn subscription_with_a_stream_count_of_0_stays_open_for_the_grace_period() {
+        for version in DRAFTS {
+            // Arrange: a datagram track ends with Stream Count 0
+            let mut subscription = served_subscription("publish-done-zero-streams", version).await;
+            let publish_done_sent_at = Instant::now();
+            end_with_publish_done(&subscription, 0).await;
+            tokio::time::pause();
+
+            // Act
+            tokio::time::sleep_until(
+                publish_done_sent_at + PUBLISH_DONE_GRACE_PERIOD - Duration::from_millis(1),
+            )
+            .await;
+
+            // Assert
+            assert!(matches!(
+                subscription.object_receiver.try_recv(),
+                Err(TryRecvError::Empty)
+            ));
+            tokio::time::resume();
+        }
+    }
+
+    #[tokio::test]
+    async fn subscription_ends_after_the_grace_period_without_its_counted_streams() {
         for version in DRAFTS {
             // Arrange
-            let mut subscription =
-                subscription_ended_by_publish_done("publish-done-expiry", version).await;
+            let mut subscription = served_subscription("publish-done-expiry", version).await;
+            end_with_publish_done(&subscription, 1).await;
+            tokio::time::pause();
 
             // Act
             tokio::time::sleep(PUBLISH_DONE_GRACE_PERIOD).await;

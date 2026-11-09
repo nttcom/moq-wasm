@@ -510,7 +510,7 @@ all named and all aborted when `ConnectionTasks` is dropped:
 | `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. Headers are read concurrently, so a stream whose header has not arrived does not block the streams accepted after it. |
 | `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. This is also how a close this side requested with any code other than PROTOCOL_VIOLATION is reported; `close_with_error(ProtocolViolation, ..)` emits `SessionEvent::ProtocolViolation` at once instead. |
-| `PublishDoneExpiryTask` | receives the Request ID of every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription of its connection 10 s later (see *Key invariants*). Holds only `Weak` references. |
+| `PublishDoneExpiryTask` | receives every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription of its connection once the streams its Stream Count counts have arrived, or 10 s later (see *Key invariants*). Holds only `Weak` references. |
 
 A client session with `ClientConfig::follow_go_away` (the default) follows
 the server's GOAWAY by itself (draft-14 §3.5; see
@@ -1170,13 +1170,17 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   (10 s) ends; an object arriving later is buffered as one of an unknown
   alias, bounded and expiring like any other. It is not released on
   PUBLISH_DONE because late streams may follow it (§9.12).
-- **PUBLISH_DONE ends the subscription after a grace period** (draft-14
-  §9.12): the event still reaches the application, and 10 s later
+- **PUBLISH_DONE ends the subscription once its streams have arrived**
+  (draft-14 §9.12): the event still reaches the application, and
   `PublishDoneExpiryTask` cancels the subscription as an unsubscribe would,
-  without sending UNSUBSCRIBE. Streams that arrive within the 10 s are
-  delivered; afterwards the data receiver ends, and `TrackReader` returns
-  `Ok(None)` once the streams it already accepted are drained. Stream Count is
-  not used to end it earlier, and no STOP_SENDING is sent.
+  without sending UNSUBSCRIBE, once the sink has taken Stream Count subgroup
+  streams. When they do not all arrive (a Stream Count of 2^62-1, a stream
+  reset before its header) it cancels 10 s after PUBLISH_DONE instead (the
+  draft's SHOULD for a timeout). A Stream Count of 0 waits the 10 s too: a
+  datagram track sends 0 and its datagrams can still follow PUBLISH_DONE. The data receiver then ends, and
+  `TrackReader` returns `Ok(None)` once the streams it already accepted are
+  drained. A stream beyond the Stream Count is not a PROTOCOL_VIOLATION (a
+  MAY not taken), and no STOP_SENDING is sent.
 - **Duplicate track alias**: if SUBSCRIBE_OK carries a track alias that already
   has a registered receiver, the subscriber closes the session with
   `DuplicateTrackAlias` (draft-14 §9.8). A cancelled subscription's alias does

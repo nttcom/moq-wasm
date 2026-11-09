@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::{
     RequestFailure, SessionEvent,
@@ -124,6 +124,9 @@ pub(crate) struct SinkReceiver {
     pub(crate) cutover: Option<SinkCutover>,
     pub(crate) open_subgroups: OpenSubgroups,
     pub(crate) default_publisher_priority: u8,
+    /// How many subgroup streams reached the sink, compared with the Stream
+    /// Count of PUBLISH_DONE (draft-14 §9.12).
+    pub(crate) arrived_streams: watch::Sender<u64>,
 }
 
 /// What the sink on the new connection takes from the previous one when a
@@ -180,6 +183,9 @@ impl SinkCutover {
 
 impl SinkReceiver {
     fn deliver(&mut self, mut object: IncomingObject) -> IncomingObjectNotification {
+        if let IncomingObject::Subgroup(_) = object {
+            self.arrived_streams.send_modify(|count| *count += 1);
+        }
         let location = location_of(&object);
         if self
             .cutover
@@ -518,6 +524,17 @@ impl Connection {
         Some((receiver.newest_group, receiver.open_subgroups.clone()))
     }
 
+    /// Watches the count of subgroup streams that reached the sink of the
+    /// subscription `wire_request_id`. `None` when no such sink is installed.
+    pub(crate) async fn arrived_streams(
+        &self,
+        wire_request_id: RequestId,
+    ) -> Option<watch::Receiver<u64>> {
+        let mut sinks = self.object_sinks.lock().await;
+        let (_, receiver) = sinks.receiver_mut(wire_request_id)?;
+        Some(receiver.arrived_streams.subscribe())
+    }
+
     /// Starts a cutover for the sink of the subscription `wire_request_id`,
     /// which becomes its previous side; the current side delivers whole
     /// groups from `current_start`. `None` when no such sink is installed.
@@ -599,6 +616,8 @@ impl fmt::Debug for Connection {
 mod tests {
     use std::time::Duration;
 
+    use tokio::sync::watch;
+
     use super::{
         IncomingObjectNotification, MAX_PENDING_OBJECTS, MAX_PENDING_OBJECTS_PER_TRACK_ALIAS,
         ObjectSinks, SinkReceiver, UNKNOWN_TRACK_ALIAS_PERIOD,
@@ -648,6 +667,7 @@ mod tests {
             cutover: None,
             default_publisher_priority: 128,
             open_subgroups: OpenSubgroups::new(),
+            arrived_streams: watch::Sender::new(0),
         }
     }
 
