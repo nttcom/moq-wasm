@@ -1,5 +1,6 @@
 import type { MoqSubscription, PublishDone } from '../../core/session'
 import { type TrackContext, observedObjectHandler, sessionOf, streamId } from './trackContext'
+import { getErrorMessage } from '../internal/status'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 
@@ -11,8 +12,10 @@ export type TextTrackOptions = {
   onEnded?: (done: PublishDone) => void
 }
 
+type TextSubscription = { id: bigint; name: string; handle: MoqSubscription }
+
 export class TextTracks {
-  private readonly subscribed: { id: bigint; handle: MoqSubscription }[] = []
+  private readonly subscribed: TextSubscription[] = []
 
   constructor(private readonly context: TrackContext) {}
 
@@ -22,7 +25,7 @@ export class TextTracks {
     const handle = options.currentGroup
       ? await session.subscribeCurrentGroup(namespace, name)
       : await session.subscribe(namespace, name)
-    const subscription = { id: streamId(), handle }
+    const subscription = { id: streamId(), name, handle }
     this.subscribed.push(subscription)
     const observed = observedObjectHandler(this.context, subscription.id, name, (groupId, object) =>
       deliverText(object.objectPayload, groupId, onText)
@@ -40,7 +43,7 @@ export class TextTracks {
 
   private end(
     name: string,
-    subscription: { id: bigint; handle: MoqSubscription },
+    subscription: TextSubscription,
     done: PublishDone,
     onEnded: ((done: PublishDone) => void) | undefined
   ): void {
@@ -53,11 +56,15 @@ export class TextTracks {
     onEnded?.(done)
   }
 
+  /// Never rejects: a failed UNSUBSCRIBE is logged and the other tracks are
+  /// still unsubscribed.
   async unsubscribeAll(): Promise<void> {
-    for (const { id, handle } of this.subscribed.splice(0)) {
+    for (const { id, name, handle } of this.subscribed.splice(0)) {
       this.context.observer.forget(id)
       if (this.context.session?.isOpen) {
-        await handle.close()
+        await handle.close().catch((error: unknown) => {
+          this.context.log('warn', `unsubscribe ${name}: ${getErrorMessage(error)}`)
+        })
       }
     }
   }

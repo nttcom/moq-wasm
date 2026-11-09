@@ -89,3 +89,19 @@ test('audio is subscribed with a lower subscriber priority value than video, so 
     ['audio', 0]
   ])
 })
+
+test('a failed UNSUBSCRIBE resolves, so the other tracks are still unsubscribed', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
+  session.failedClose = new Error('connection lost')
+
+  // Act
+  await subscriptions.unsubscribe('video')
+  await subscriptions.unsubscribe('audio')
+
+  // Assert
+  expect(session.updates).toEqual(['close video', 'close audio'])
+})

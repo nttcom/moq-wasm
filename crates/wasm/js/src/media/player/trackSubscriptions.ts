@@ -127,10 +127,17 @@ export class TrackSubscriptions {
     await this.close(subscription)
   }
 
+  /// Never rejects: a failed UNSUBSCRIBE is logged, so a teardown goes on to
+  /// the other tracks.
   async close(subscription: TrackSubscription): Promise<void> {
     this.forget(subscription)
     if (sessionOf(this.context).isOpen) {
-      await subscription.handle.close()
+      try {
+        await subscription.handle.close()
+      } catch (error) {
+        this.context.log('warn', `unsubscribe ${subscription.name}: ${getErrorMessage(error)}`)
+        return
+      }
     }
     this.context.log('info', `unsubscribed ${subscription.name}`)
   }

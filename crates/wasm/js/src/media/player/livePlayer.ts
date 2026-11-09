@@ -309,6 +309,8 @@ export class LivePlayer {
     }
   }
 
+  /// Resolves even when an UNSUBSCRIBE fails, which is logged, so the caller
+  /// can go on to close the session.
   stop(): Promise<void> {
     return this.queueTrackChange(() => this.stopWatching())
   }
@@ -926,9 +928,7 @@ export class LivePlayer {
       return
     }
     this.videoSwitch = undefined
-    this.subscriptions.retire(pending.outgoing).catch((error) => {
-      this.context.log('error', `unsubscribe ${pending.outgoing.name}: ${getErrorMessage(error)}`)
-    })
+    void this.subscriptions.retire(pending.outgoing)
   }
 
   /// Settles a switch in progress: one that has handed over keeps the new
@@ -946,9 +946,7 @@ export class LivePlayer {
     this.videoSwitch = undefined
     this.selected.video = pending.previousName
     if (pending.next) {
-      this.subscriptions.close(pending.next).catch((error) => {
-        this.context.log('error', `unsubscribe ${pending.next?.name}: ${getErrorMessage(error)}`)
-      })
+      void this.subscriptions.close(pending.next)
     }
   }
 
