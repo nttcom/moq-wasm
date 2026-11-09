@@ -374,6 +374,9 @@ export class LivePlayer {
 
   /// Also resets the catalog, so the next catalog subscribes its tracks anew.
   private async forgetPublisher(catalogText: string, playbackText: string): Promise<void> {
+    // Before the review ends, so going live sends no SUBSCRIBE_UPDATE to the
+    // subscriptions being unsubscribed.
+    const unsubscribing = this.subscriptions.unsubscribeAll()
     this.timeline.reset()
     this.endReview()
     this.cmafLive.close()
@@ -381,10 +384,7 @@ export class LivePlayer {
     this.stallWatch.clear()
     this.stage.show(this.locLive.picture.element)
     this.abandonVideoSwitch()
-    for (const [kind] of this.subscriptions.entries()) {
-      await this.subscriptions.unsubscribe(kind)
-    }
-    await this.subscriptions.retireAll()
+    await unsubscribing
     this.newestVideoGroup = undefined
     await this.textTracks.unsubscribeAll()
     this.catalog.reset()

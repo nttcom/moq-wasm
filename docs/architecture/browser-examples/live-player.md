@@ -316,7 +316,8 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
   timeline does not cover they are estimated from the arrival lag of the last
   live object and drift ahead while the main thread is busy.
   `LIVE` restores Forward 1; the relay resumes from the next group it opens,
-  so the live picture takes up to one GOP to move. Against a relay that does
+  so the live picture takes up to one GOP to move. `stop` during a review
+  unsubscribes instead, with no SUBSCRIBE_UPDATE. Against a relay that does
   not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
 
 ### VOD

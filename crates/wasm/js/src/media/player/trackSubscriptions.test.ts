@@ -105,3 +105,22 @@ test('a failed UNSUBSCRIBE resolves, so the other tracks are still unsubscribed'
   // Assert
   expect(session.updates).toEqual(['close video', 'close audio'])
 })
+
+test('unsubscribing every track while forwarding is paused sends no SUBSCRIBE_UPDATE to resume it', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
+  subscriptions.pauseForward()
+  const unsubscribing = subscriptions.unsubscribeAll()
+
+  // Act
+  const resumed = subscriptions.resumeForward()
+  await unsubscribing
+
+  // Assert
+  expect(resumed).toBe(false)
+  expect(session.updates.filter((update) => update.startsWith('setForward') && update.endsWith('true'))).toEqual([])
+  expect(session.updates.filter((update) => update.startsWith('close'))).toEqual(['close video', 'close audio'])
+})

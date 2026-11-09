@@ -112,9 +112,16 @@ export class TrackSubscriptions {
     }
   }
 
-  async retireAll(): Promise<void> {
-    for (const subscription of [...this.retiring.values()]) {
-      await this.retire(subscription)
+  /// Lets go of every subscription, retiring ones included, before it awaits
+  /// anything. Forwarding is no longer paused, and no SUBSCRIBE_UPDATE is sent
+  /// to resume it.
+  async unsubscribeAll(): Promise<void> {
+    const subscriptions = [...this.subscriptions.values(), ...this.retiring]
+    this.subscriptions.clear()
+    this.retiring.clear()
+    this.forwardPaused = false
+    for (const subscription of subscriptions) {
+      await this.close(subscription)
     }
   }
 
