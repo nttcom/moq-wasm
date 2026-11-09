@@ -26,7 +26,8 @@ use crate::{
     token_refresh_task::{TokenRefreshTask, TokenRenewal, read_token_file},
     track_list::track_table,
     track_selection::{
-        AudioChoice, Selection, VideoChoice, select_audio, select_tracks, select_video,
+        AudioChoice, Choice, Selection, SourceChoice, VideoChoice, keeps, select_audio,
+        select_tracks, select_video,
     },
     upload_task::{UploadQueue, UploadTask},
 };
@@ -80,12 +81,13 @@ pub(crate) struct BroadcastOptions {
     pub(crate) upload: Option<UploadTarget>,
 }
 
-/// What a recording of a broadcast reads.
+/// Which source of a broadcast a recording reads (see `SourceChoice`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Content {
-    /// The camera, or whatever video the broadcast has, and the audio.
+    /// `SourceChoice::Main`, such as a meeting participant's camera and
+    /// microphone.
     Camera,
-    /// A meeting participant's screen share alone.
+    /// `SourceChoice::Other`, such as a meeting participant's screen share.
     ScreenShare,
 }
 
@@ -275,7 +277,7 @@ async fn wait_for_selection(
     options: &BroadcastOptions,
 ) -> Result<Option<Selection>> {
     while let Some(catalog) = catalog.next().await? {
-        let selection = select_tracks(&catalog, video_choice(options), audio_choice(options))?;
+        let selection = select_tracks(&catalog, choice(options))?;
         if selection.is_some() {
             return Ok(selection);
         }
@@ -289,19 +291,24 @@ async fn wait_for_selection(
     Ok(None)
 }
 
-pub(crate) fn video_choice(options: &BroadcastOptions) -> VideoChoice<'_> {
-    match (options.content, &options.video_track) {
-        (Content::ScreenShare, _) => VideoChoice::ScreenShare,
-        (Content::Camera, Some(name)) => VideoChoice::Named(name),
-        (Content::Camera, None) => VideoChoice::MaxHeight(options.max_video_height),
-    }
-}
-
-pub(crate) fn audio_choice(options: &BroadcastOptions) -> AudioChoice<'_> {
-    match (options.content, &options.audio_track) {
-        (Content::ScreenShare, _) => AudioChoice::None,
-        (Content::Camera, Some(name)) => AudioChoice::Named(name),
-        (Content::Camera, None) => AudioChoice::HighestBitrate,
+/// A track named in the options is recorded only by the main source's
+/// recording.
+pub(crate) fn choice(options: &BroadcastOptions) -> Choice<'_> {
+    let (source, video_track, audio_track) = match options.content {
+        Content::Camera => (
+            SourceChoice::Main,
+            options.video_track.as_deref(),
+            options.audio_track.as_deref(),
+        ),
+        Content::ScreenShare => (SourceChoice::Other, None, None),
+    };
+    Choice {
+        source,
+        video: video_track.map_or(
+            VideoChoice::MaxHeight(options.max_video_height),
+            VideoChoice::Named,
+        ),
+        audio: audio_track.map_or(AudioChoice::HighestBitrate, AudioChoice::Named),
     }
 }
 
@@ -397,11 +404,12 @@ async fn record_live(
     Ok(())
 }
 
-/// Drops each track `catalog` no longer lists, then adds a listed video or
-/// audio track where the recording reads none. A meeting participant who
-/// mutes or turns the camera off unlists the track before sending
-/// PUBLISH_DONE, and `moqt` reports the track end 10 s later; without the
-/// drop, turning it back on within those 10 s would go unnoticed.
+/// Drops each track `catalog` no longer lists in the recording's source (see
+/// `keeps`), then adds a listed video or audio track where the recording
+/// reads none. A meeting participant who mutes or turns the camera off
+/// unlists the track before sending PUBLISH_DONE, and `moqt` reports the
+/// track end 10 s later; without the drop, turning it back on within those
+/// 10 s would go unnoticed.
 async fn follow_catalog(
     session: &Session,
     namespace: &str,
@@ -413,7 +421,7 @@ async fn follow_catalog(
     if tracks
         .video
         .as_ref()
-        .is_some_and(|video| !lists(catalog, video))
+        .is_some_and(|video| !keeps(catalog, choice(options), video.subscription.track_name()))
     {
         tracing::info!(
             "catalog no longer lists the video track; recording audio until it lists one"
@@ -424,7 +432,7 @@ async fn follow_catalog(
     if tracks
         .audio
         .as_ref()
-        .is_some_and(|audio| !lists(catalog, audio))
+        .is_some_and(|audio| !keeps(catalog, choice(options), audio.subscription.track_name()))
     {
         tracing::info!(
             "catalog no longer lists the audio track; recording video until it lists one"
@@ -446,11 +454,6 @@ async fn follow_catalog(
     Ok(())
 }
 
-fn lists(catalog: &Catalog, track: &Track) -> bool {
-    let name = track.subscription.track_name();
-    catalog.loc_tracks().any(|listed| listed.name == name)
-}
-
 async fn add_listed_video(
     session: &Session,
     namespace: &str,
@@ -458,7 +461,7 @@ async fn add_listed_video(
     options: &BroadcastOptions,
     recording: &mut Recording,
 ) -> Result<Option<Track>> {
-    let Some(video) = select_video(catalog, video_choice(options))? else {
+    let Some(video) = select_video(catalog, choice(options))? else {
         return Ok(None);
     };
     let track =
@@ -475,7 +478,7 @@ async fn add_listed_audio(
     options: &BroadcastOptions,
     recording: &mut Recording,
 ) -> Result<Option<Track>> {
-    let Some(audio) = select_audio(catalog, audio_choice(options))? else {
+    let Some(audio) = select_audio(catalog, choice(options))? else {
         return Ok(None);
     };
     let track = relay::subscribe_audio(session, namespace, &audio.name).await?;

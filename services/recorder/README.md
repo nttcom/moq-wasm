@@ -41,8 +41,8 @@ cargo run -p recorder -- \
 | `--relay` (`MOQT_URL`) | — | `moqt://` for QUIC, `https://` for WebTransport |
 | `--namespace` | — | Namespace of the broadcast |
 | `--video-track` | by `--max-video-height` | LOC video track to record (`video_720p`, `video_480p`, ...); H.264, VP8, VP9 or AV1, as the catalog's `codec` names it |
-| `--max-video-height` | `480` | Without `--video-track`, the tallest video track at most this high, or the shortest one when all are taller |
-| `--audio-track` | highest bitrate | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
+| `--max-video-height` | `720` | Without `--video-track`, the main source's tallest video track at most this high, or the shortest one when all are taller |
+| `--audio-track` | the main source's highest bitrate | LOC audio track to record; AAC, Opus, G.711 A-law and MP3 |
 | `--list-tracks` | off | Print the catalog's LOC tracks (name, role, codec, size, bitrate, sample rate) and exit |
 | `--output` | `<namespace>-<Unix seconds>.mp4` | Output file; an existing file is never overwritten |
 | `--layout` | `combined` | `combined` writes the video and the audio into one file; `per-track` writes each track to `<stem>-<track>.mp4` (a `/` in the name becomes `_`) |
@@ -75,10 +75,12 @@ cargo run -p recorder -- serve \
 
 Every namespace under the prefix (one per meeting participant) is recorded
 from the moment it is published, with the tracks picked from its catalog
-(`--max-video-height`, 480 by default). The objects go to
-`<store>/<recording id>/<namespace>/<track>/`, with `manifest.json` and
-`composite.mp4` in `<store>/<recording id>/`; compositing needs the GStreamer
-plugins listed in the [transcode README](../../crates/transcode/README.md#compositing).
+(`--max-video-height`, 720 by default): the main source, the camera and
+the microphone, and apart from it the screen share (see Behaviour). The
+objects go to `<store>/<recording id>/<namespace>/<track>/`, with
+`manifest.json` and `composite.mp4` in `<store>/<recording id>/`; compositing
+needs the GStreamer plugins listed in the
+[transcode README](../../crates/transcode/README.md#compositing).
 
 An experimental `"format": "moq"` records participant camera, audio,
 screen-share and chat tracks, and the meeting transcriber's transcript, as
@@ -162,16 +164,21 @@ CPU as the composite should take, and both a writable `--output-dir`.
 
 ## Behaviour
 
-- Without `--video-track`, the recorder takes the catalog's LOC track with
+- A source is the LOC tracks of one catalog `renderGroup`. The recorder
+  records the main source, the one holding a track the chat (an event
+  timeline) lists in `depends`, or the first source of a catalog without an
+  event timeline. A room recording records the first other source, the
+  screen share, apart from it. Track names are not read.
+- Without `--video-track`, the recorder takes the source's LOC track with
   role `video` and a codec it can record whose `height` is the largest at or
   below `--max-video-height` (the smallest when every track is taller), and
-  of those the lowest `bitrate`; without `--audio-track`, the LOC track with
-  role `audio` and the highest `bitrate` among those it can decode. A
-  remaining tie goes to the track listed first. A light default matters
-  because a meeting participant encodes a rendition only while someone
-  subscribes to it, the recorder included. The choice is made once, from
-  the catalog at start, and logged as `catalog resolved`; only a track
-  missing at start, or one that ended, is added later (see below).
+  of those the lowest `bitrate`; without `--audio-track`, the source's LOC
+  track with role `audio` and the highest `bitrate` among those it can
+  decode. A remaining tie goes to the track listed first. A meeting
+  participant encodes a rendition only while someone subscribes to it, the
+  recorder included. The choice is made once, from the catalog at start,
+  and logged as `catalog resolved`; only a track missing at start, or one
+  that ended, is added later (see below).
 - Recording starts at the next group, i.e. the next keyframe, or with
   `--from-cache` at the oldest keyframe still cached, and ends on
   Ctrl-C, when the relay closes the session, or 10 s after the publisher ends
