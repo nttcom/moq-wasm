@@ -8,10 +8,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "paths": {
-      "@moqt/*": ["./lib/moqt/*"],
-      "@player/*": ["./lib/player/*"]
-    },
+    "customConditions": ["source"],
     "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom", "vite/client"],
     "lib": ["esnext", "webworker", "dom"]
   },
@@ -20,8 +17,8 @@
     "examples/**/*.tsx",
     "examples/media/publisher/files/decoder.js",
     "lib/**/*.ts",
-    "pkg/**/*.d.ts",
-    "utils/**/*.ts"
+    "utils/**/*.ts",
+    "tests/playback-group/*.ts"
   ],
   "exclude": ["node_modules"]
 }

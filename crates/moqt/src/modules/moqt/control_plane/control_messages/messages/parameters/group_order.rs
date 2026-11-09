@@ -1,10 +1,12 @@
-use num_enum::{IntoPrimitive, TryFromPrimitive};
-#[derive(Debug, Clone, PartialEq, Eq, TryFromPrimitive, IntoPrimitive, Copy)]
-#[repr(u8)]
-pub enum GroupOrder {
-    Publisher = 0x0,
-    Ascending = 0x1,
-    Descending = 0x2,
+use crate::modules::extensions::wire_enum::wire_enum;
+
+wire_enum! {
+    #[derive(Debug, Clone, PartialEq, Eq, Copy)]
+    pub enum GroupOrder: u8 {
+        Publisher = 0x0,
+        Ascending = 0x1,
+        Descending = 0x2,
+    }
 }
 
 impl GroupOrder {

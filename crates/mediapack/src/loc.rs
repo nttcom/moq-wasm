@@ -9,5 +9,5 @@ pub use demuxer::{Demuxer, VideoCodec};
 pub use extension_headers::{from_extension_headers, to_extension_headers};
 pub use muxer::Muxer;
 pub use object::{
-    AUDIO_LEVEL_ID, LocExtension, LocObject, LocValue, TIMESTAMP_ID, VIDEO_CONFIG_ID,
+    AUDIO_LEVEL_ID, LocExtension, LocObject, LocValue, TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID,
 };

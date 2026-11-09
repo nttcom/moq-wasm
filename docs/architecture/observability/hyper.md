@@ -32,7 +32,7 @@ request body.
 
 ## Decision
 
-Use `hyper` the way `crates/vts` already does: the three crates are in the
+Use `hyper` the way `services/vts` already does: the three crates are in the
 workspace lock at the same versions, so no new crate enters the dependency
 tree, and the server follows the existing accept loop and JSON response
 helpers.

@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
@@ -25,6 +26,7 @@ pub struct Publish {
     pub authorization_tokens: Vec<AuthorizationToken>,
     pub delivery_timeout: Option<u64>,
     pub max_duration: Option<u64>,
+    pub trace_context: Option<TraceContext>,
 }
 
 impl Publish {
@@ -45,6 +47,7 @@ impl Publish {
             .collect();
         let delivery_timeout = find_even(&parameters, 0x02);
         let max_duration = find_even(&parameters, 0x04);
+        let trace_context = TraceContext::find(&parameters);
         Ok(Self {
             request_id,
             track_namespace_tuple,
@@ -56,6 +59,7 @@ impl Publish {
             authorization_tokens,
             delivery_timeout,
             max_duration,
+            trace_context,
         })
     }
 
@@ -83,6 +87,7 @@ impl Publish {
                 .into_iter()
                 .flatten(),
             )
+            .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
 
@@ -93,6 +98,7 @@ impl Publish {
 #[cfg(test)]
 mod tests {
     mod success {
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::{TEST_TRACEPARENT, TraceContext};
         use bytes::Bytes;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
         use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
@@ -119,6 +125,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 max_duration: None,
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -170,6 +177,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 max_duration: None,
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -221,6 +229,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 max_duration: None,
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -247,6 +256,7 @@ mod tests {
                 }],
                 delivery_timeout: None,
                 max_duration: None,
+                trace_context: None,
             };
 
             let buf = publish_message.encode();
@@ -284,6 +294,32 @@ mod tests {
                 publish_message.max_duration,
                 depacketized_message.max_duration
             );
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let message = Publish {
+                request_id: 1,
+                track_namespace_tuple: vec!["room".to_string()],
+                track_name: "video".to_string(),
+                track_alias: 2,
+                group_order: GroupOrder::Ascending,
+                content_exists: ContentExists::False,
+                forward: true,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+                max_duration: None,
+                trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+            };
+
+            // Act
+            let bytes = message.encode();
+            let decoded = Publish::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context.is_some());
+            assert_eq!(decoded.trace_context, message.trace_context);
         }
     }
 }

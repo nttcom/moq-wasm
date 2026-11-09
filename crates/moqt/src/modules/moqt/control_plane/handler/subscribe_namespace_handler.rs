@@ -1,4 +1,5 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -19,35 +20,43 @@ use crate::{
 pub struct SubscribeNamespaceHandler {
     pub track_namespace_prefix: String,
     pub track_namespace_prefix_tuple: Vec<String>,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl SubscribeNamespaceHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(
         connection: Arc<Connection>,
         subscribe_namespace: SubscribeNamespace,
     ) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            subscribe_namespace.request_id,
-            RequestKind::SubscribeNamespace,
+            RequestSummary::new(
+                RequestKind::SubscribeNamespace,
+                subscribe_namespace.request_id,
+                Some(&subscribe_namespace.track_namespace_prefix),
+                None,
+            ),
         );
         Self {
             guard,
+            trace_context: subscribe_namespace.trace_context,
             track_namespace_prefix: subscribe_namespace.track_namespace_prefix.join("/"),
             track_namespace_prefix_tuple: subscribe_namespace.track_namespace_prefix,
         }
     }
 
     pub async fn ok(&self) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let publish_namespace_ok = NamespaceOk {
             request_id: self.guard.request_id(),
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
+            .accept(OutgoingResponse::SubscribeNamespaceOk(publish_namespace_ok))
             .await?;
         Ok(())
     }
@@ -65,13 +74,13 @@ impl SubscribeNamespaceHandler {
 mod tests {
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{connect_sessions, spawn_native_server},
     };
 
     #[tokio::test]
     async fn exposes_track_namespace_prefix_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-namespace-handler-namespace");
+        let (port, accept) = spawn_native_server("subscribe-namespace-handler-namespace");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

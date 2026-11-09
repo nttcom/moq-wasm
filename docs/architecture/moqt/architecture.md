@@ -22,10 +22,10 @@ modules/moqt/runtime      ← background tasks + incoming-object dispatch
 modules/moqt/control_plane← control messages, handlers, session events
 modules/moqt/version      ← per-draft adapter: control channel, SETUP, control receive loop
 modules/moqt/data_plane   ← object formats, stream/datagram send/receive, codecs
-modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/DUAL markers
+modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/NATIVE markers
         │
         ▼
-modules/transport         ← transport abstraction + quinn/web-transport-quinn impls
+modules/transport         ← transport abstraction + quinn/web-transport-quinn impls + QMux over WebSocket
 modules/executor          ← task spawning, yielding, timeouts and the monotonic clock (tokio natively, wasm-bindgen-futures / performance.now on wasm32)
 ```
 
@@ -34,19 +34,19 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
 
   | Path | Contents |
   | --- | --- |
-  | `moqt::` | `Endpoint`, `Session`, `SessionEvent`, `Publisher`, `Subscriber`, `Subscription`, `TrackWriter` / `TrackReader`, the transport markers, session-wide handlers (GOAWAY, MAX_REQUEST_ID, REQUESTS_BLOCKED) and errors not tied to one operation |
+  | `moqt::` | `Endpoint`, `Session`, `SessionEvent`, `Publisher`, `Subscriber`, `Subscription`, `TrackWriter` / `TrackReader`, the transport markers, session-wide handlers (GOAWAY) and errors not tied to one operation |
   | `moqt::subscribe` | SUBSCRIBE, SUBSCRIBE_UPDATE, UNSUBSCRIBE and TRACK_STATUS: options, `FilterType`, handlers |
   | `moqt::publish` | PUBLISH and PUBLISH_DONE: `PublishOption`, handlers |
   | `moqt::fetch` | FETCH and FETCH_CANCEL: options, `FetchParams`, handlers, fetch stream sender/receiver |
   | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, handlers |
   | `moqt::object` | Draft-independent object model (`Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
   | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
-  | `moqt::executor` | `spawn` / `JoinHandle`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
+  | `moqt::executor` | `spawn` / `JoinHandle`, `sleep`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
 
   Implementation files under `modules/` are not arranged by these modules;
   each public module only re-exports.
 - The whole stack compiles for `wasm32` as well; the quinn-based transports
-  and their markers (`QUIC`, `WEBTRANSPORT`, `DUAL`) are `#[cfg(not(target_arch = "wasm32"))]`
+  and their markers (`QUIC`, `WEBTRANSPORT`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
   `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
   API; it also uses the message codecs for the JavaScript message types.
@@ -82,43 +82,152 @@ Four zero-sized markers implement it; the first three are native-only:
 | --- | --- | --- |
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
 | `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
-| `DUAL` | quinn endpoint dispatching on ALPN | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one port. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. |
-| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`) | wasm32 only, client only: `https://` URLs, certificate verification cannot be turned off, `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. |
+| `NATIVE` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
+| `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, only `CertificateVerification::NativeRoots` (the browser's own trust store), `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport that loses the race, to WebSocket or to the hedged second WebTransport, is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
 
 Only `Endpoint<T>` and its `SessionCreator<T>` are generic over
 `T: TransportProtocol`, because the creator's constructors are static
 (`T::ConnectionCreator::client` / `server`). Everything an endpoint produces
 (`Connecting`, `Accepting`, `Handshake`, `Session`, the handlers and the data
 stream types) is a plain type over the boxed transport, so one process can hold
-sessions of different transports in one collection and the `DUAL` creator
+sessions of different transports in one collection and the `NATIVE` creator
 simply boxes a `QUICConnection` or a `WtConnection` per connection.
 
 Client-side helpers shared by the three creators:
 
 - `connect_target.rs` — `ConnectTarget::parse(url)` maps the scheme to a
   transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
-  default port 443) and resolves the host, preferring IPv4 because the client
-  endpoint binds an IPv4 socket. `QUIC` / `WEBTRANSPORT` creators reject a URL
-  for the other transport.
-- `client_crypto.rs` — rustls client config (native roots, skip-verify, or a
-  custom CA file), the `quinn::ClientConfig` per ALPN, and the client
-  `quinn::Endpoint`.
+  default port 443; `wss://` → QMux over WebSocket, default port 443) and
+  resolves the host, preferring IPv4 because the client endpoint binds an IPv4
+  socket. `QUIC` / `WEBTRANSPORT` creators reject a URL for another transport;
+  only `NATIVE` connects over WebSocket. The wasm build parses with the browser's `URL`
+  (`web_sys::Url`) instead of the `url` crate and leaves host and port to
+  `WebTransport`.
+- WebSocket fallback — `SessionCreator::open_transport` (shared by every
+  marker and target) races the transport of a `moqt://` or `https://` URL
+  against `wss://` on the same host and port (`ConnectTarget::web_socket_fallback`;
+  `moqt://` has no path, so `/`), as Happy Eyeballs (RFC 8305) does: the
+  first gets a head start, then `wss://` is dialed alongside it, the first
+  to open is used and the other is dropped. A failure within the head start
+  dials `wss://` at once, so a browser without the WebTransport API does not
+  wait. Only creators with a `WEB_SOCKET_HEAD_START` do this, `NATIVE` (200 ms)
+  and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP;
+  `ClientConfig::web_socket_fallback` turns it off or sets another head
+  start. Which transport won is not remembered: each connect races again,
+  and a session that landed on WebSocket stays there until it ends. The
+  host is resolved once before the head start, so a slow DNS server does
+  not use it up, and both dials go to the same address. Only opening the
+  transport falls back; a failed SETUP is returned as is. A WebSocket that
+  wins is logged at WARN with `url` and `fallback_url`. When both fail, the
+  error names both. `BROWSER` also hedges WebTransport: a second one dials
+  at 500 ms, since a first whose initial packet was lost waits about a
+  second for QUIC to resend it and would lose to WebSocket.
+- `client_crypto.rs` — the rustls client config for
+  `ClientConfig::certificate_verification` (native roots, the certificates of
+  one PEM file, or no verification), the `quinn::ClientConfig` per ALPN, and
+  the client `quinn::Endpoint`. The config is built once per `Endpoint`, so
+  every connection it opens, including those a session opens to follow
+  GOAWAY or to reconnect, verifies the server the same way.
 
 The three creators bind server endpoints to `[::]:port` through
 `bind_dual_stack` (`dual_stack_bind.rs`). On Apple targets it holds
 `0.0.0.0:port` during the bind, because XNU lets `[::]:port` bind while
-another socket holds `0.0.0.0:port`.
+another socket holds `0.0.0.0:port`. XNU picks that IPv4 port without regard
+to sockets bound to a specific IPv6 address, such as a browser's QUIC
+connections, so for port 0 a `[::]:port` already in use draws another number,
+up to `EPHEMERAL_PORT_ATTEMPTS` times.
 
 The creators do not know MoQT versions. Each takes an
 `ApplicationProtocols` (`application_protocol.rs`): the ALPNs a raw QUIC
 connection offers or accepts, and the WebTransport subprotocols a client
 lists in WT-Available-Protocols. A WebTransport server answers with the first
 of its own subprotocols the client also offered (WT-Protocol), or with none.
+A WebSocket client offers the QMux subprotocols derived from the ALPNs
+(`qmux-02.<alpn>`, then the bare `qmux-02`; `qmux/subprotocol.rs`) in
+Sec-WebSocket-Protocol, and the server answers with the first of its own
+the client offered, or fails the upgrade with 400.
 Every connection reports what its handshake settled on through
-`TransportConnection::negotiated_protocol()`.
+`TransportConnection::negotiated_protocol()`; `Version::negotiated` maps the
+`moq-00` ALPN, a WebTransport session without a subprotocol and a WebSocket
+subprotocol naming `moq-00` or nothing to draft-14.
 `BROWSER` sets `WebTransportOptions.protocols` and reads `WebTransport.protocol`
 through `js_sys::Reflect`, since web-sys exposes neither; a browser without
 subprotocol support reports none.
+
+### QMux over WebSocket (`modules/transport/qmux`, `modules/transport/websocket`)
+
+The fallback for clients that cannot use QUIC: UDP-blocked networks and
+browsers without WebTransport. QMux (draft-ietf-quic-qmux-02) carries the
+QUIC version 1 frames — STREAM, RESET_STREAM, STOP_SENDING, MAX_DATA,
+MAX_STREAM_DATA, MAX_STREAMS, the BLOCKED frames, CONNECTION_CLOSE and
+DATAGRAM — over an ordered, reliable transport, so the stream model above the
+`TransportConnection` trait is unchanged. The WebSocket binding
+(draft-lcurley-qmux-websocket-00) makes each binary message one record
+without the `Size` prefix and negotiates the application protocol through
+the subprotocol. `modules/transport/qmux` is written for native and wasm32
+alike; only the message transport under it differs.
+
+- `message_transport.rs` — `MessageSink` / `MessageSource`, the two halves of
+  the transport a `QmuxConnection` runs on. `websocket/tungstenite_transport.rs`
+  implements them on a `tokio_tungstenite::WebSocketStream`; `qmux/in_memory.rs`
+  on channels, for tests.
+- `frame.rs`, `transport_parameters.rs` — the codecs. The first frame each
+  side sends is QX_TRANSPORT_PARAMETERS; the receive task rejects any other
+  first frame, a second one, a prohibited frame, a truncated record, a
+  record above `max_record_size` (16382, never raised) and a forbidden
+  transport parameter with the QUIC error code the draft names.
+- `qmux_connection.rs` — `QmuxConnection::establish` sends the local
+  parameters, spawns the two tasks and resolves once the peer's parameters
+  arrive. Local limits follow quinn's: 1 MiB per stream
+  (`stream_receive_window`), 1000 unidirectional streams
+  (`max_concurrent_uni_streams`), 100 bidirectional streams, 16 MiB for the
+  connection, 30 s idle timeout, datagrams up to one record; outgoing
+  datagrams wait in a 1 MiB buffer (quinn's `datagram_send_buffer_size`)
+  that drops the oldest when full.
+- `tasks/qmux_send_task.rs` — the actor that owns the sink. It builds each
+  record from control frames first, then datagrams, then stream data in
+  `set_priority` order (higher first, equal priorities round-robin), within
+  the peer's credit and record size. Backpressure reaches
+  `TransportSendStream::send` through a 64 KiB queue per stream
+  (`SendQuota`), not through the command channel, so a low-priority stream
+  that fills its queue does not hold a high-priority one. What the peer
+  grants or asks (MAX_DATA, MAX_STREAM_DATA, STOP_SENDING, QX_PING, a freed
+  stream slot) is written to shared state and the task woken at most once
+  per pass (`SessionState::wake`), so a peer that stops reading its socket
+  cannot queue work in the relay. A QX_PING every 5 s is the keep-alive (a
+  browser cannot send WebSocket Ping) and the source of
+  `TransportStats::rtt`.
+- `tasks/qmux_receive_task.rs` — reads records and hands frames to the
+  stream they belong to. **It never waits for the application** (draft §6):
+  data goes into the stream's buffer, bounded by the window this side
+  advertised; MAX_STREAM_DATA and MAX_DATA are raised once half a window has
+  been read (`qmux_receive_stream.rs`, `SessionState::consumed`). A
+  peer-opened stream's MAX_STREAMS slot is returned once the application has
+  dropped its handle and the peer's data has ended, as quinn does, so neither
+  unread streams nor a peer that ignores STOP_SENDING can grow the session
+  past the limit. Nothing
+  received for 30 s ends the session, and so does a record the peer has not
+  taken for 30 s.
+- Close: `TransportConnection::close` sends CONNECTION_CLOSE 0x1d with the
+  MoQT termination code, then the WebSocket Close frame; a peer's 0x1d is
+  reported as `TransportClose { code: Some(..) }`, a transport error (0x1c)
+  or a lost socket as `code: None`, like quinn's `ApplicationClosed`. Dropping
+  a `QmuxSendStream` before `close` resets it with code 0 and dropping a
+  `QmuxReceiveStream` before its end sends STOP_SENDING 0, as quinn does.
+- `websocket/websocket_listener.rs` — binds `[::]:port` (TCP), terminates
+  TLS with the server's certificate (ALPN `http/1.1`), runs the HTTP/1.1
+  upgrade with the subprotocol selection in a task per connection (10 s
+  limit) and answers 503 while the endpoint refuses new connections. The
+  `NATIVE` creator counts every WebSocket session it hands out, accepted or
+  connected, until both its send and receive tasks have returned
+  (`TransportEnded`): the last CONNECTION_CLOSE and WebSocket Close are
+  written and the receive task has drained until the peer's Close, so
+  `wait_idle` does not close a socket with unread bytes, which would answer
+  with RST. `websocket/websocket_client.rs` is the
+  `wss://` client; it fails the handshake when the server selects no
+  offered subprotocol.
+- `Session::url_scheme` is `wss` for a WebSocket session, so a GOAWAY's New
+  Session URI keeps a session that landed on WebSocket there.
 
 ## Version adapter (`modules/moqt/version`)
 
@@ -138,7 +247,8 @@ call through the adapter; a draft never gets a task of its own (see
   instead of a trait object: the set of drafts is closed, the match is
   checked for exhaustiveness when a draft is added, and async methods need no
   object safety or `Send` bounds that wasm32 cannot meet. It offers
-  `next_request_id`, `send_request(OutgoingRequest) -> PendingResponse`,
+  `reserve_request_id`, `send_request(RequestIdReservation, OutgoingRequest)
+  -> PendingResponse`, `send_subscribe_update`,
   `respond(OutgoingResponse)` and `notify(Notification)`. The draft-14
   control message structs serve as the shared model; `draft14::ControlChannel`
   encodes them.
@@ -227,23 +337,36 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   opens the bidirectional control stream, sends CLIENT_SETUP and awaits
   SERVER_SETUP, version `0xff00000e`). `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
-  `USE_VALUE`, Token Type `0`, UTF-8 value). On success a `Session` is
-  created.
+  `USE_VALUE`, Token Type `0`, UTF-8 value). It is an
+  `AuthorizationTokenSource`: a fixed string, or a provider that
+  `SessionCreator::set_up` calls before each CLIENT_SETUP, on the first
+  connection and on every connection a session opens to follow GOAWAY, so a
+  client with short-lived tokens fetches a new one each time. A provider that
+  fails fails that connection. On success a `Session` is created.
 - `refuse_new_connections()` makes every later connection attempt fail at
   the transport level (QUIC CONNECTION_REFUSED, HTTP 503 for WebTransport)
   while `accept()` keeps being polled; established sessions are unaffected.
   A closing server uses it so that clients learn at once instead of waiting
   for their handshake to time out.
 - `accept()` returns `Accepting`, or `AcceptError::EndpointClosing` once the
-  endpoint is closed, which every transport reports the same way. The future
-  of `Accepting` performs the transport handshake and `version::accept`,
-  which for draft-14 accepts the control stream and stops after CLIENT_SETUP
-  is received. It resolves to a
+  endpoint is closed, which every transport reports the same way. `accept()`
+  does not wait on the peer: `TransportConnectionCreator::accept_new_transport`
+  returns the rest of the transport handshake (on `NATIVE`: QUIC, then the
+  WebTransport CONNECT on `h3`) as a `TransportAccepting` future, so a server
+  that spawns each `Accepting` keeps accepting while one peer stalls. A
+  transport handshake that fails therefore fails `Accepting`, not `accept()`.
+  The future of `Accepting` runs that handshake, failing it after 10 s
+  (`TRANSPORT_HANDSHAKE_TIMEOUT`), then `version::accept`, which for draft-14
+  accepts the control stream and stops after CLIENT_SETUP is received. When
+  CLIENT_SETUP does not arrive within another 10 s (`CLIENT_SETUP_TIMEOUT`),
+  the future closes the connection with CONTROL_MESSAGE_TIMEOUT. It resolves
+  to a
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:
-  - `Handshake::accept()` answers the setup (SERVER_SETUP for draft-14) and
-    creates the `Session`.
+  - `Handshake::accept(session_span)` answers the setup (SERVER_SETUP for
+    draft-14) in the current span and creates the `Session`, whose tasks
+    run under `session_span`.
   - `Handshake::reject(code, reason)` closes the transport with the given
     termination code without sending SERVER_SETUP.
 
@@ -268,9 +391,13 @@ events to a `MigrationTask` (`domains/session/migration_task.rs`) instead of
 the application: it forwards them with logical ids, and on GOAWAY it opens
 the next connection through the endpoint's `SessionCreator` (`Reconnect`),
 sends every SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
-made on the session again (`NextGroupStart`, the last Forward state; a
+made on the session again (`NextGroupStart`, or an AbsoluteRange from the
+group after the newest one delivered to its End Group, which is not sent
+again once that group has started; the range, Forward state and priority
+of the last SUBSCRIBE_UPDATE; a
 rejected namespace or SUBSCRIBE is repeated every 500 ms for up to 10 s),
-makes it the current connection, and closes the previous one with NO_ERROR
+makes it the current connection (one of those four requests that a lost
+connection cut off before its answer is sent again there), and closes the previous one with NO_ERROR
 once the server takes no track this side sends there any more and no
 carried subscription has a subgroup stream open there (each sink counts the
 streams it handed out until they end, `OpenSubgroups`), at the latest 5 s
@@ -285,7 +412,9 @@ returned; requests the peer sends, on any connection, carry logical ids. A
 FETCH response stream a migration cuts off is FETCHed again on the current
 connection from the first object not delivered up to the FETCH_OK's End
 Location, and the `FetchDataReceiver` reads on from it; a descending FETCH
-is not sent again. While both
+is not sent again. A Relative Joining FETCH made after the move goes as a
+Standalone FETCH of the same range, since the current connection holds the
+subscription with the filter it was sent again with. While both
 connections deliver a subscription, the sinks of both share a `GroupCutover`
 (see *Key invariants*). A PUBLISH_DONE the previous connection sends for a
 carried subscription is dropped; GOAWAY is never returned; `Disconnected`
@@ -301,7 +430,11 @@ established request take its handle, not its request id:
 `fetch_relative_joining` take the `Subscription`, `Subscriber::fetch_cancel`
 the `FetchHandle`, and `Publisher::publish_done` the `Subscription` it
 publishes on. The request id stays readable as an identifier, but how a
-request is cancelled or updated on the wire is left to moqt. Application
+request is cancelled or updated on the wire is left to moqt.
+`update_forward` and `end_before_group` take the fields they do not set
+from the last SUBSCRIBE_UPDATE sent for the `Subscription`, which its
+clones share, so neither widens a range an earlier update narrowed
+(§9.10). Application
 code consumes inbound control messages through
 `Session::receive_event() -> SessionEvent`. `Session::closed()` awaits the
 transport close itself (the signal `DisconnectWatchTask` turns into
@@ -346,9 +479,26 @@ use these facades instead of the data-plane factories directly:
   bound. Ordering is therefore only guaranteed within a subgroup (draft-14
   §10.4); consumers that need cross-subgroup order sort by the ids themselves.
   It reads the resolved objects `StreamDataReceiver` returns (below);
-  status objects are skipped, a failure inside one stream is returned as `Err`
-  while the other streams keep being read, and `Ok(None)` means the factory
-  has no more streams.
+  status objects are skipped, and `Ok(None)` means the factory has no more
+  streams. A failure inside one stream (a publisher that leaves resets its
+  open group, a GOAWAY cutover cuts the group still open on the retired
+  connection) is logged at DEBUG and ends only that stream, so the only `Err`
+  is a `MalformedTrackError`, after which the track ends.
+- `Subscriber::subscribe_current_group` is how a late joiner reads a track
+  from the start of its current group (draft-14 §9.16.2, the catalog join of
+  draft-ietf-moq-msf-01 §5). It subscribes with Largest Object and writes a
+  Relative Joining FETCH (offset 0) right behind the SUBSCRIBE on the same
+  connection, before SUBSCRIBE_OK, so both are answered within one round
+  trip. The peer handles its requests in order, so the FETCH finds the
+  subscription it joins. It returns a `TrackReader` whose task drains the
+  FETCH into the channel, then accepts the subgroup streams, so the fetched
+  objects come before the live ones even when a live stream arrives first.
+  Until the FETCH ends, the live streams wait in the subscription's channel.
+  For a track without content the peer refuses the FETCH with INVALID_RANGE
+  (§9.16.2); a refused or failed FETCH is logged at DEBUG, and the reader
+  yields only the live objects.
+  `Origin` answers the FETCH, so this works against a moqt publisher as well as
+  a relay.
 
 ### `Origin` — the tracks this endpoint originates
 
@@ -382,9 +532,15 @@ forward from their own cache through the raw stream senders.
   after a stopped stream.
   `write_group` sends one object as a finished group (the MSF catalog layout).
 - `publish(session, …)` sends PUBLISH on that session and writes from the
-  next group; it is a no-op while the session takes the track and after it
-  released a PUBLISH, but publishes a track again whose SUBSCRIBE the peer
-  released; `accept_subscribe`
+  group after the largest one written when PUBLISH_OK arrives; it is a no-op
+  while the session takes the track and after it released a PUBLISH, but
+  publishes a track again whose SUBSCRIBE the peer released. The origin state
+  is not locked while PUBLISH_OK is awaited, so writes and requests on every
+  track go on. A second lock, `publishing`, makes `publish` calls run one at a
+  time across all tracks and is always taken before the state lock. The peer
+  can UNSUBSCRIBE right after its PUBLISH_OK, before `publish` registers the
+  request, so `release` of an unknown request first waits on `publishing`;
+  `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
   largest cached location, the last one FETCH can serve) and writes from its filter's Start Location
   (draft-14 §9.7), computed from the largest object written so far. Objects
@@ -395,10 +551,25 @@ forward from their own cache through the raw stream senders.
   drops the session's writer on UNSUBSCRIBE, resetting its open group with
   CANCELLED rather than finishing it (draft-14 §10.4.3), and returns the
   track so the caller can account it; `is_serving(session)` tells whether
-  that session still takes any track; `serve_fetch` answers a Standalone FETCH from the cache on its
-  own stream (`FetchServeTask`, one per request, aborted by `cancel_fetch` and
-  when the `Origin` is dropped; joining FETCH is NOT_SUPPORTED);
+  that session still takes any track; `serve_fetch` answers a Standalone or
+  Joining FETCH from the cache on its own stream (`FetchServeTask`, one per
+  request, aborted by `cancel_fetch` and when the `Origin` is dropped). Each
+  accepted SUBSCRIBE keeps its `JoinPoint`: the Largest Location its
+  SUBSCRIBE_OK reported, or that its filter is not Largest Object. A Joining
+  FETCH ends right after that location (draft-14 §9.16.2.1), so it meets the
+  live objects without overlap. It is rejected with INVALID_JOINING_REQUEST_ID
+  once the SUBSCRIBE is released, with INVALID_RANGE when the SUBSCRIBE_OK
+  reported no content, and closes the session with PROTOCOL_VIOLATION when the
+  filter is not Largest Object (`FetchHandler::close_for_protocol_violation`);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.
+- `end_track(namespace, name)` ends every outlet of the track with
+  PUBLISH_DONE (TRACK_ENDED, draft-14 §9.12) and keeps its numbering and
+  cache, so a later `publish` or SUBSCRIBE takes it up again at the next
+  group without reusing a location. Each outlet's open group is finished with
+  End of Group before PUBLISH_DONE, which may not precede the close of any
+  stream of the subscription, and its Stream Count is the number of streams
+  the outlet's `TrackWriter` opened. An outlet whose writer a write holds is
+  marked ending and ended when the write puts the writer back.
 - `handle(event)` is the session event loop's shortcut to all of the above:
   it accepts a SUBSCRIBE to a registered track, releases on UNSUBSCRIBE,
   serves FETCH, aborts on FETCH_CANCEL and answers TRACK_STATUS, and hands
@@ -407,18 +578,34 @@ forward from their own cache through the raw stream senders.
 - Left to the application: whether to accept a SUBSCRIBE for a track it
   has not registered yet (`handle` returns it), namespace
   announcements, when to PUBLISH, retention and first group ids, and
-  disconnect handling. The FETCH End Location arithmetic is the free function
-  `resolve_fetch_range` (`domains/fetch_range.rs`), shared with the wasm
-  bindings.
+  disconnect handling. The FETCH range arithmetic is the free functions
+  `resolve_fetch_range` (the Standalone End Location) and
+  `resolve_joining_fetch` (a Joining Fetch's Start and End Location and its
+  `JoiningFetchError`) in `domains/fetch_range.rs`, shared with the relay and
+  the wasm bindings.
+
+### `NamespaceWatchers` — the namespaces a peer publishes
+
+`namespace::NamespaceWatchers` (`domains/namespace_watchers.rs`) is the
+subscribing side's counterpart of `Origin` for namespaces: `watch(prefix)`
+returns a channel of `NamespaceEvent`s, and `handle(event)` in the session
+event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
+PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
+watcher on `Disconnected` and hands every other event back. A watcher is
+registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
+the namespaces it knows right away. The Python bindings and the browser SDK's
+`Session` (`crates/wasm/src/session.rs`), which hand out one iterator per
+namespace subscription, use it.
 
 ### `SessionContext` and `Connection` — shared session state
 
 `Connection` (`domains/connection.rs`) holds what draft-14 scopes to one
 transport connection:
 
-- `transport` — the QUIC or WebTransport connection.
+- `transport` — the QUIC, WebTransport or WebSocket connection.
 - `control: ControlChannel` — the version adapter above; for draft-14 it
-  holds the request id counter and `inflight_requests`.
+  holds this side's next request id, the peer's next request id and
+  `inflight_requests`.
 - `track_alias: AtomicU64` — the track aliases this side assigns, shared by
   `SubscribeHandler::allocate_track_alias` and `Publisher::publish`. Both
   hand the application the logical alias (below); SUBSCRIBE_OK and PUBLISH
@@ -429,7 +616,7 @@ transport connection:
   sees, is `generation << 56 | wire id`, so the first connection's ids are
   their own logical ids and no two connections' ids meet in the session's
   maps.
-- `object_sinks: HashMap<track_alias, ObjectSink>` — the objects arriving on
+- `object_sinks: ObjectSinks` — the sink of each track alias: the objects arriving on
   this connection, keyed by wire alias; a sink sets the logical alias on
   every stream it hands out; see buffering invariant below.
 - `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
@@ -447,12 +634,71 @@ state name the connection:
   Registering a FETCH returns a `PendingFetch` drop-guard that removes both
   FETCH entries unless FETCH_OK arrived.
 - `carried` — for a session that follows GOAWAY, the namespace and track
-  subscriptions and the published namespaces a migration sends again.
+  subscriptions and the published namespaces a migration sends again. A
+  request takes its read lock before it is sent and holds it until it is
+  recorded or fails (through the answer for SUBSCRIBE and PUBLISH), editing
+  the record through an inner mutex, so concurrent requests do not wait for
+  each other's answers. A migration holds the write lock while it sends them
+  again, so none is missed.
 - `publications` — for a session that follows GOAWAY, the tracks PUBLISHed
   on it with every connection each is on (`SendTargets::Publication`); a
   track served for a SUBSCRIBE goes to the connection the SUBSCRIBE arrived
-  on (`SendTargets::Connection`). It is locked while one of them is
-  sent and while a migration sends them all, so none is missed.
+  on (`SendTargets::Connection`). A PUBLISH holds the `carried` read lock
+  until it is added here, so a migration does not miss it.
+
+### Request spans
+
+Each request a client sends and waits on has one INFO span, from writing the
+request to receiving its response. On a GOAWAY migration the span covers every
+attempt; it adds no field for the retry.
+
+| Span | Fields |
+| --- | --- |
+| `moqt.subscriber.subscribe` | `track_namespace`, `track_name`, `subscriber_priority`, `forward`, `request_id`, `outcome` |
+| `moqt.subscriber.subscribe_namespace` | `track_namespace_prefix`, `request_id`, `outcome` |
+| `moqt.subscriber.fetch` | `track_namespace`, `track_name`, `request_id`, `outcome` |
+| `moqt.publisher.publish` | `track_namespace`, `track_name`, `request_id`, `outcome` |
+| `moqt.publisher.publish_namespace` | `track_namespace`, `request_id`, `outcome` |
+| `moqt.session.connect` | `url`, `outcome` |
+
+- `request_id` is the wire Request ID of the last attempt, the one the
+  `*_OK received` / `*_ERROR received` logs print; those logs carry
+  `duration_ms`, the time from writing the request to its response.
+- `outcome` is `ok` when the `*_OK` arrived, `rejected` when the peer answered
+  `*_ERROR`, and `failed` for any other error (transport, protocol violation,
+  session closed).
+- `begin_publish_namespace` returns before the response and has no span; the
+  other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
+- `moqt.session.connect` is one connection attempt of a client endpoint
+  (`Endpoint::connect`, and each GOAWAY reconnect): opening the transport,
+  the authorization token provider, and CLIENT_SETUP until SERVER_SETUP.
+  `outcome` is `rejected` when the server closed the connection before
+  SERVER_SETUP. It roots its own trace and follows the caller's span, which
+  may live as long as the session. The transport is opened outside it,
+  because quinn runs a connection's driver in the span current at connect,
+  and it closes before the session's tasks start, so neither holds it open.
+
+The five requests carry the span's W3C `traceparent` in a `TRACE_CONTEXT`
+parameter (type `0x1fff`, not in draft-14), so the receiver's span joins the
+sender's trace. Draft-14 §9.2 makes a receiver ignore an unknown parameter,
+but from draft-18 an unknown Message Parameter is a PROTOCOL_VIOLATION and an
+extension is agreed through a Setup Option (§6.3.2). So both CLIENT_SETUP and
+SERVER_SETUP always carry a `TRACE_CONTEXT` Setup Option (type `0x1fff`, an
+empty value), and a connection sends the parameter only when the peer's SETUP
+carried it (`ControlChannel::peer_reads_trace_context`). In CLIENT_SETUP the
+option's value is the traceparent of `moqt.session.connect` (read before the
+server's SETUP is known; a server that does not know the option ignores it,
+draft-14 §9.3), and `Handshake::trace_context()` returns it. Setup Options have no
+private range, so publishing the extension would need a provisional
+registration.
+`moqt` has no OpenTelemetry dependency: the application gives it the current
+span's `traceparent` with `set_trace_context_provider` (the relay through
+`telemetry::current_traceparent`, the wasm module and `moq-cli` through
+`client_telemetry::current_traceparent`), and the send functions read it inside the request span. Without a
+provider the parameter is omitted. On receipt, `trace_context()` on
+`SubscribeHandler`, `PublishHandler`, `FetchHandler`,
+`SubscribeNamespaceHandler` and `PublishNamespaceHandler` returns the
+`TraceContext`; a value that is not a traceparent counts as absent.
 
 ## Control plane (`modules/moqt/control_plane`)
 
@@ -495,8 +741,12 @@ state name the connection:
     (`request_error_code_to_wire` / `request_error_code_from_wire`,
     `publish_done_code_from_wire`) for the wasm bindings, whose JavaScript
     API carries draft-14 numbers.
-  - `ResponseGuard` is the one place that encodes and sends a `*_ERROR`, for
-    both the handlers' `error()` and the drop-time NOT_SUPPORTED reply.
+  - `ResponseGuard` is the one place that sends a handler's answer: the
+    `*_OK` of its `ok()`, and the `*_ERROR` of both its `error()` and the
+    drop-time NOT_SUPPORTED reply. It logs each as `*_OK sent` /
+    `*_ERROR sent` with the request's `RequestSummary` (kind, wire Request
+    ID, track), the same summary `ControlChannel::send_request` logs as
+    `* sent`.
 
 The draft-14 `ControlMessageReceiveTask` splits every decoded message into
 one of three paths:
@@ -506,7 +756,13 @@ one of three paths:
 2. **Responses** (`*_OK` / `*_ERROR`) are matched against `inflight_requests` by
    request id and complete the pending `oneshot`. The waiting side holds a
    `PendingResponse` whose drop marks the entry abandoned, so a late response
-   runs its `LateResponseAction` instead of closing the session. When the
+   runs its `LateResponseAction` instead of closing the session. The
+   response itself arrives as a `ReceivedResponse`, which runs the same
+   action when dropped before the caller `accept`s it, whether still in the
+   `oneshot` or held while the caller registers what it established
+   (SUBSCRIBE's receiver). A request future is therefore cancel-safe at any
+   point: dropped after the success response, it still sends UNSUBSCRIBE,
+   FETCH_CANCEL or PUBLISH_DONE. When the
    control stream closes, every entry is failed and later registrations fail
    at once.
 3. **Protocol violations** (a malformed payload, a SETUP after the handshake,
@@ -514,8 +770,7 @@ one of three paths:
    stop the task.
 
 Messages `Session` decodes but does not act on (GOAWAY, unless the session
-follows it, MAX_REQUEST_ID,
-REQUESTS_BLOCKED, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
+follows it, SUBSCRIBE_UPDATE, PUBLISH_DONE, FETCH_CANCEL,
 PUBLISH_NAMESPACE_CANCEL) still take path 1, so the application sees them
 instead of the session dying.
 
@@ -626,6 +881,35 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 ## Key invariants
 
+- **Request IDs reach the peer in order and without gaps** (draft-14 §9.1). A
+  `RequestIdReservation` holds the next Request ID's lock until the request
+  is written, so concurrent requests cannot overtake each other on the
+  control stream. The next Request ID advances only once the request is
+  written, so dropping the reservation or the request future before then
+  leaves the ID for the next request.
+  `ControlMessageReceiveTask` closes the session with INVALID_REQUEST_ID
+  unless a peer's new request uses exactly its previous Request ID plus 2
+  (for its first, 0 from a client and 1 from a server).
+
+- **Request IDs stay below the peer's Maximum Request ID** (draft-14 §9.5).
+  `reserve_request_id` waits while the next ID reaches the limit from the
+  peer's SETUP or MAX_REQUEST_ID, sending one REQUESTS_BLOCKED per limit. A
+  MAX_REQUEST_ID that does not raise the limit closes the session with
+  PROTOCOL_VIOLATION. A received request at or above the advertised limit
+  closes it with TOO_MANY_REQUESTS. The advertised limit follows
+  use, not completion: once the peer has used half of the 1000-ID window,
+  `ControlMessageReceiveTask` sends MAX_REQUEST_ID for a full window past the
+  peer's next ID, so a long-lived session never runs out and the number of
+  concurrent requests is not capped. MAX_REQUEST_ID and REQUESTS_BLOCKED never
+  reach the application.
+
+- **A peer cannot declare an object payload or an extension header block
+  above 16 MiB** (`MAX_WIRE_DECLARED_LENGTH`). A larger Object Payload
+  Length or Extension Headers Length on a subgroup or FETCH stream is a
+  decode error that ends the stream (draft-14 §12.1). The draft sets no
+  limit, and a receiver can hold a declared length in memory until all of
+  it arrives.
+
 - **A carried subscription cuts over at a group boundary.** The first object
   the new connection delivers fixes the cutover group: the group after the
   newest one the previous connection handed out, or that object's group when
@@ -642,18 +926,29 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Buffer-before-subscribe**: objects can arrive before the application
   registers a receiver (data races SUBSCRIBE_OK). `object_sinks` buffers up to
   256 objects per track alias (`MAX_PENDING_OBJECTS_PER_TRACK_ALIAS` in
-  `session_context.rs`), dropping the oldest on overflow.
+  `connection.rs`), dropping the oldest on overflow, and at most 1024 objects
+  across a connection's unknown aliases (`MAX_PENDING_OBJECTS`), dropping a
+  later object. A buffer expires 10 s after its first object
+  (`UNKNOWN_TRACK_ALIAS_PERIOD`, draft-14 §10.3 "a brief period"), which
+  leaves an application time to accept a PUBLISH.
   `register_data_receiver` drains the buffer into the new channel atomically
   under the sinks lock.
+- **Unread datagrams are bounded**: a subscription's channel queues at most
+  1024 datagrams its application has not read (`MAX_QUEUED_DATAGRAMS` in
+  `incoming_object.rs`) and drops a later one, since datagrams take no flow
+  control. Subgroup streams are not counted: an unread stream holds its QUIC
+  stream credit, so the peer's stream limit bounds them.
 - **Cancelled subscriptions discard late objects** (draft-14 §10.1):
   `Subscriber::unsubscribe`, the UNSUBSCRIBE sent for a late SUBSCRIBE_OK and
   `PublishHandler::error` (a PUBLISH with Forward=1 sends objects before its
   answer, §9.13) turn the track alias's sink into `Cancelled`, which drops
   the buffered objects, the channel sender and a receiver not yet taken by
   `accept_data_receiver`. Objects still in flight are then dropped on arrival
-  instead of being buffered as an unknown alias until the session ends. The
-  `Cancelled` marker stays until a new subscription reuses the alias; it is
-  not released on PUBLISH_DONE because late streams may follow it (§9.12).
+  instead of being buffered as an unknown alias. The `Cancelled` marker stays
+  until a new subscription reuses the alias or `UNKNOWN_TRACK_ALIAS_PERIOD`
+  (10 s) ends; an object arriving later is buffered as one of an unknown
+  alias, bounded and expiring like any other. It is not released on
+  PUBLISH_DONE because late streams may follow it (§9.12).
 - **PUBLISH_DONE ends the subscription after a grace period** (draft-14
   §9.12): the event still reaches the application, and 10 s later
   `PublishDoneExpiryTask` cancels the subscription as an unsubscribe would,
@@ -690,8 +985,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   alive. The transport closes (code 0) once the last handle to the context
   (`Session`, `Publisher`, `Subscriber`, stream writers) is gone, but the
   CONNECTION_CLOSE is sent by quinn's background driver: a process must
-  await `Endpoint::wait_idle()` before exiting, or the peer only notices
-  through its idle timeout.
+  await `Session::close()` (or `Endpoint::wait_idle()` after the last handle
+  is gone) before exiting, or the peer only notices through its idle timeout.
+  A client session keeps the endpoint it was opened on. `close` therefore
+  closes the connection with NO_ERROR even while other handles are alive, then
+  waits for that endpoint to be idle. The application need not keep the
+  `Endpoint`.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
   yields, bounds waits and reads the clock only through `modules/executor`
   (`spawn`, `try_spawn`, `yield_now`, `timeout`, `now`, `system_time`); `tokio::sync`
@@ -699,7 +998,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   place that touches tokio I/O. `executor/native.rs` is the tokio
   implementation (`now` is the elapsed time since a process-wide `Instant`),
   `executor/browser.rs` the `spawn_local` one (`now` reads
-  `performance.now()`; `std::time::Instant` panics on wasm32); the executor also defines
+  `performance.now()`; `std::time::Instant` panics on wasm32, and
+  `set_spawn_wrapper` lets the application wrap every task where it is
+  spawned, which the wasm module uses to carry a session's telemetry scope
+  into its tasks); the executor also defines
   `MaybeSend` / `MaybeSync` / `BoxFuture`, which are `Send` / `Sync` bounds
   natively and empty on wasm32 because JavaScript values cannot cross
   threads. The transport traits and `async_trait` attributes use them.
@@ -714,19 +1016,12 @@ draft:
   parses them, in `Version::accept_uni_stream`. Guarded by
   `uni_stream_receive_task::tests::a_stream_without_its_header_does_not_hold_back_later_streams`,
   which writes draft-14 header bytes through `open_subgroup`, so it covers
-  draft-14 only, and by the meeting E2E below, which bounds the longest gap
-  between consecutive audio or video arrivals across audio group boundaries.
+  draft-14 only.
 - **Closing a send stream does not wait for the peer to acknowledge the FIN**
   (`TransportSendStream::close`). quinn and WebTransport call `finish()`; the
   browser transport does not await `writer.close()`. Awaiting the ACK stalls
-  every send queued behind a stream close. Guarded by the meeting E2E
-  `rotating the audio group neither stalls the sender nor gaps the receiver`
-  (`examples/browser/tests/meeting-e2e.spec.ts`), which bounds how long the
-  publisher's audio EndOfGroup and stream close take. On Linux the runner
-  (`tests/browser-e2e/run-meeting-e2e.mjs`) delays every relay reply with
-  `tc netem`, so a close that awaits the ACK exceeds the bound even though CI
-  runs the relays on the same host. The measurement lives in
-  `examples/browser/utils/media/audioTransport.ts`, which every draft shares.
+  every send queued behind a stream close. No test guards the browser
+  transport's close.
 
 ## Testing conventions
 Unit tests live in `#[cfg(test)] mod tests` inside the module under test
