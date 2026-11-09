@@ -223,7 +223,13 @@ function ActivitiesButton({
       </BarButton>
       {menu.open && (
         <MenuPanel align="right">
-          {recording && <RecordingSection recording={recording} onChoose={menu.close} />}
+          {recording && (
+            <>
+              <ReplaySection recording={recording} onChoose={menu.close} />
+              <MenuDivider />
+              <RecordSection recording={recording} onChoose={menu.close} />
+            </>
+          )}
           {recording && captions && <MenuDivider />}
           {captions && <TranscriptionSection captions={captions} onChoose={menu.close} />}
         </MenuPanel>
@@ -232,13 +238,34 @@ function ActivitiesButton({
   )
 }
 
-function RecordingSection({ recording, onChoose }: { recording: RoomRecordingControls; onChoose: () => void }) {
-  const active = recording.active
-  const pending = pendingRecordingLabel(active)
+function ReplaySection({ recording, onChoose }: { recording: RoomRecordingControls; onChoose: () => void }) {
   const latest = recording.replays.at(-1)
   return (
     <>
-      <MenuHeading>Recording</MenuHeading>
+      <MenuHeading>Replay</MenuHeading>
+      {latest ? (
+        <MenuItem
+          testId="record-play"
+          onClick={() => {
+            onChoose()
+            window.open(latest.url, '_blank', 'noopener,noreferrer')
+          }}
+        >
+          Open latest recording
+        </MenuItem>
+      ) : (
+        <MenuNote>No finished recording yet</MenuNote>
+      )}
+    </>
+  )
+}
+
+function RecordSection({ recording, onChoose }: { recording: RoomRecordingControls; onChoose: () => void }) {
+  const active = recording.active
+  const pending = pendingRecordingLabel(active)
+  return (
+    <>
+      <MenuHeading>Record</MenuHeading>
       {active ? (
         <MenuItem
           testId="record-stop"
@@ -266,17 +293,6 @@ function RecordingSection({ recording, onChoose }: { recording: RoomRecordingCon
           </MenuItem>
         ))
       )}
-      {latest && (
-        <MenuItem
-          testId="record-play"
-          onClick={() => {
-            onChoose()
-            window.open(latest.url, '_blank', 'noopener,noreferrer')
-          }}
-        >
-          Open latest recording
-        </MenuItem>
-      )}
       {recording.error && <MenuNote>{recording.error}</MenuNote>}
     </>
   )
@@ -300,7 +316,7 @@ function TranscriptionSection({ captions, onChoose }: { captions: CaptionsContro
     : ASR_CHOICES.map(({ asr, label }) => ({ id: asr, label, onClick: () => captions.start(asr) }))
   return (
     <>
-      <MenuHeading>Transcription</MenuHeading>
+      <MenuHeading>STT</MenuHeading>
       {items.map(({ id, label, checked, onClick }) => (
         <MenuItem
           key={id}
