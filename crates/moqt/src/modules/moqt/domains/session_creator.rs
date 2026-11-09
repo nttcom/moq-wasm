@@ -98,10 +98,17 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>> {
         let creator = self.clone();
         Box::pin(async move {
+            let target = ConnectTarget::parse(&url)?;
             let connect_span = connect_span(&url);
-            let transport_conn = creator.open_transport_for(&url, &connect_span).await?;
+            let transport_conn = creator.open_transport_for(&target, &connect_span).await?;
             let (connection, control_receiver, _) = creator
-                .set_up_in(connect_span, transport_conn, generation, event_sender)
+                .set_up_in(
+                    connect_span,
+                    transport_conn,
+                    &target,
+                    generation,
+                    event_sender,
+                )
                 .await?;
             Ok((connection, control_receiver))
         })
@@ -127,8 +134,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
         self: &Arc<Self>,
         url: &str,
     ) -> anyhow::Result<Connecting> {
+        let target = ConnectTarget::parse(url)?;
         let connect_span = connect_span(url);
-        let transport_conn = self.open_transport_for(url, &connect_span).await?;
+        let transport_conn = self.open_transport_for(&target, &connect_span).await?;
         let creator = self.clone();
         let url = url.to_string();
         let handshake = async move {
@@ -137,7 +145,13 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 let (connection_event_sender, connection_events) =
                     tokio::sync::mpsc::unbounded_channel();
                 let (connection, control_receiver, server_setup) = creator
-                    .set_up_in(connect_span, transport_conn, 0, connection_event_sender)
+                    .set_up_in(
+                        connect_span,
+                        transport_conn,
+                        &target,
+                        0,
+                        connection_event_sender,
+                    )
                     .await?;
                 Session::new(
                     control_receiver,
@@ -154,7 +168,13 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 )
             } else {
                 let (connection, control_receiver, server_setup) = creator
-                    .set_up_in(connect_span, transport_conn, 0, event_sender.clone())
+                    .set_up_in(
+                        connect_span,
+                        transport_conn,
+                        &target,
+                        0,
+                        event_sender.clone(),
+                    )
                     .await?;
                 Session::new(
                     control_receiver,
@@ -181,10 +201,10 @@ impl<T: TransportProtocol> SessionCreator<T> {
     /// because the browser's telemetry attaches a log to the current span.
     async fn open_transport_for(
         &self,
-        url: &str,
+        target: &ConnectTarget,
         connect_span: &Span,
     ) -> anyhow::Result<BoxedConnection> {
-        let opened = self.open_transport(url).await;
+        let opened = self.open_transport(target).await;
         match &opened {
             Ok(connection) => connect_span.in_scope(|| {
                 tracing::info!(
@@ -206,11 +226,12 @@ impl<T: TransportProtocol> SessionCreator<T> {
         &self,
         connect_span: Span,
         transport_conn: BoxedConnection,
+        target: &ConnectTarget,
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
         let set_up = self
-            .set_up(transport_conn, generation, event_sender)
+            .set_up(transport_conn, target, generation, event_sender)
             .instrument(connect_span.clone())
             .await;
         let outcome = match &set_up {
@@ -222,20 +243,19 @@ impl<T: TransportProtocol> SessionCreator<T> {
         set_up
     }
 
-    async fn open_transport(&self, url: &str) -> anyhow::Result<BoxedConnection> {
-        let target = ConnectTarget::parse(url)?;
+    async fn open_transport(&self, target: &ConnectTarget) -> anyhow::Result<BoxedConnection> {
         let head_start = match (
             self.web_socket_fallback,
             T::ConnectionCreator::WEB_SOCKET_HEAD_START,
         ) {
             (WebSocketFallback::Enabled, Some(head_start))
             | (WebSocketFallback::HeadStart(head_start), Some(_)) => head_start,
-            _ => return self.transport_creator.create_new_transport(&target).await,
+            _ => return self.transport_creator.create_new_transport(target).await,
         };
         if target.web_socket_fallback().is_none() {
-            return self.transport_creator.create_new_transport(&target).await;
+            return self.transport_creator.create_new_transport(target).await;
         }
-        let target = target.resolved().await?;
+        let target = target.clone().resolved().await?;
         let web_socket = target
             .web_socket_fallback()
             .expect("a target that falls back still does once resolved");
@@ -318,6 +338,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
     async fn set_up(
         &self,
         transport_conn: BoxedConnection,
+        target: &ConnectTarget,
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
     ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
@@ -331,7 +352,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             None => None,
         };
         let (control, control_receiver, server_setup) =
-            match version::connect(&transport_conn, token.as_deref()).await {
+            match version::connect(&transport_conn, token.as_deref(), target).await {
                 Ok(established) => established,
                 Err(error) => {
                     return Err(Self::explain_rejected_setup(&transport_conn, error).await);

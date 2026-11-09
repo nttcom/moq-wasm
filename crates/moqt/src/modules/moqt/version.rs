@@ -10,7 +10,7 @@
 
 pub(crate) mod draft14;
 
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use bytes::BytesMut;
 
@@ -30,8 +30,8 @@ use crate::{
                     fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk, go_away::GoAway,
                     max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
                     parameters::authorization_token::AuthorizationToken,
-                    parameters::trace_context::TraceContext, publish::Publish,
-                    publish_namespace::PublishNamespace,
+                    parameters::group_order::GroupOrder, parameters::trace_context::TraceContext,
+                    publish::Publish, publish_namespace::PublishNamespace,
                     publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
                     requests_blocked::RequestsBlocked, server_setup::ServerSetup,
                     subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
@@ -56,6 +56,7 @@ use crate::{
         },
         transport::{
             application_protocol::{ApplicationProtocols, NegotiatedProtocol},
+            connect_target::ConnectTarget,
             transport_connection::{BoxedConnection, BoxedReceiveStream},
             transport_send_stream::TransportSendError,
         },
@@ -110,12 +111,6 @@ impl Version {
         }
     }
 
-    pub(crate) fn encode_fetch_object(self, object: &Object) -> BytesMut {
-        match self {
-            Self::Draft14 => draft14::objects::encode_fetch_object(object),
-        }
-    }
-
     pub(crate) fn encode_datagram(
         self,
         track_alias: u64,
@@ -126,10 +121,14 @@ impl Version {
         }
     }
 
-    /// Returns `(track alias, object)`.
-    pub(crate) fn decode_datagram(self, data: &mut BytesMut) -> anyhow::Result<(u64, Object)> {
+    /// Returns `(track alias, object)`, or `None` for a datagram that carries
+    /// no object.
+    pub(crate) fn decode_datagram(
+        self,
+        data: &mut BytesMut,
+    ) -> anyhow::Result<Option<(u64, Object)>> {
         match self {
-            Self::Draft14 => draft14::objects::decode_datagram(data),
+            Self::Draft14 => draft14::objects::decode_datagram(data).map(Some),
         }
     }
 
@@ -186,6 +185,8 @@ pub(crate) enum FetchReader {
 }
 
 impl FetchReader {
+    pub(crate) fn set_group_order(&mut self, _group_order: GroupOrder) {}
+
     /// `Ok(None)` means the peer finished the stream (FIN).
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self {
@@ -233,6 +234,42 @@ impl SubgroupEncoder {
     ) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object_head(object, payload_len),
+        }
+    }
+}
+
+/// The Object ID Delta of a subgroup object after `prev_object_id`, or its id
+/// when it is the first.
+fn object_id_delta(prev_object_id: Option<u64>, object_id: u64) -> anyhow::Result<u64> {
+    match prev_object_id {
+        None => Some(object_id),
+        Some(prev) => prev
+            .checked_add(1)
+            .and_then(|next| object_id.checked_sub(next)),
+    }
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "object {object_id} does not follow object {prev_object_id:?} in its subgroup"
+        )
+    })
+}
+
+/// Encodes the objects of one FETCH response.
+pub(crate) enum FetchEncoder {
+    Draft14,
+}
+
+impl FetchEncoder {
+    pub(crate) fn new(version: Version) -> Self {
+        match version {
+            Version::Draft14 => Self::Draft14,
+        }
+    }
+
+    /// `Ok(None)` for an object the draft cannot carry in a FETCH response.
+    pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
+        match self {
+            Self::Draft14 => Ok(Some(draft14::objects::encode_fetch_object(object))),
         }
     }
 }
@@ -530,6 +567,7 @@ impl ControlChannel {
     /// Dropping the returned `PendingResponse` abandons the request.
     pub(crate) async fn send_request(
         &self,
+        _connection: &Arc<Connection>,
         reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
@@ -617,6 +655,7 @@ pub(crate) fn negotiated_version(
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
+    _target: &ConnectTarget,
 ) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
     match negotiated_version(transport_connection)? {
         Version::Draft14 => {
@@ -671,7 +710,10 @@ impl ServerHandshake {
     }
 
     /// Answers the client's setup and opens the session's control channel.
-    pub(crate) async fn accept(self) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
+    pub(crate) async fn accept(
+        self,
+        _transport_connection: &BoxedConnection,
+    ) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
         match self {
             Self::Draft14(handshake) => {
                 let (channel, receiver) = handshake.accept().await?;

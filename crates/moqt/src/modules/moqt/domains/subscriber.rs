@@ -278,7 +278,6 @@ impl Subscriber {
             trace_context: None,
         };
         let response = connection
-            .control
             .send_request(reservation, OutgoingRequest::TrackStatus(track_status))
             .await?
             .response()
@@ -459,7 +458,6 @@ impl Subscriber {
             trace_context: current_trace_context(&connection.control),
         };
         let response = connection
-            .control
             .send_request(reservation, OutgoingRequest::Fetch(fetch))
             .await?;
         Ok(SentFetch {
@@ -751,6 +749,7 @@ impl Subscriber {
             .recv()
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to receive fetch stream"))?;
+        receiver.set_group_order(fetch_handle.group_order);
         if let Some(remainder) = fetch_handle.remainder.clone() {
             receiver.carry_with(
                 self.session.clone(),
@@ -842,7 +841,7 @@ fn repeated_update(subscription: &Subscription, forward: bool) -> SubscribeUpdat
 }
 
 pub(crate) async fn send_subscribe_namespace(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     namespace: String,
 ) -> Result<RequestId, RequestFailure> {
     let (request_id, pending) = begin_subscribe_namespace(connection, &namespace).await?;
@@ -850,14 +849,13 @@ pub(crate) async fn send_subscribe_namespace(
 }
 
 async fn begin_subscribe_namespace(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     namespace: &str,
 ) -> Result<(RequestId, PendingResponse), RequestFailure> {
     let vec_namespace = namespace_tuple(namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let pending = connection
-        .control
         .send_request(
             reservation,
             OutgoingRequest::SubscribeNamespace(SubscribeNamespace {
@@ -943,7 +941,7 @@ pub(crate) fn joining_remainder(
 /// The SUBSCRIBE_OK, with `connection`'s wire ids, and its
 /// `ReceivedResponse`: dropping that before `accept` sends UNSUBSCRIBE.
 pub(crate) async fn send_subscribe(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     track_namespace: &str,
     track_name: &str,
     option: &SubscribeOption,
@@ -960,7 +958,7 @@ struct SentSubscribe {
 }
 
 async fn send_subscribe_request(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     track_namespace: &str,
     track_name: &str,
     option: &SubscribeOption,
@@ -980,7 +978,6 @@ async fn send_subscribe_request(
         trace_context: current_trace_context(&connection.control),
     };
     let pending = connection
-        .control
         .send_request(reservation, OutgoingRequest::Subscribe(subscribe))
         .await?;
     Ok(SentSubscribe {

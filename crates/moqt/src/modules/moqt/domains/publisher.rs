@@ -295,14 +295,13 @@ impl Publisher {
 }
 
 pub(crate) async fn send_publish_namespace(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     namespace: String,
 ) -> Result<PendingPublishNamespace, RequestFailure> {
     let vec_namespace = namespace_tuple(&namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
     let pending = connection
-        .control
         .send_request(
             reservation,
             OutgoingRequest::PublishNamespace(PublishNamespace {
@@ -323,7 +322,7 @@ pub(crate) async fn send_publish_namespace(
 /// The PUBLISH_OK and the track alias this side chose, with `connection`'s
 /// wire ids.
 pub(crate) async fn send_publish(
-    connection: &Connection,
+    connection: &Arc<Connection>,
     track_namespace: &str,
     track_name: &str,
     option: &PublishOption,
@@ -345,7 +344,6 @@ pub(crate) async fn send_publish(
         trace_context: current_trace_context(&connection.control),
     };
     let pending = connection
-        .control
         .send_request(reservation, OutgoingRequest::Publish(publish))
         .await?;
     let sent_at = now();

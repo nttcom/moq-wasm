@@ -41,7 +41,7 @@ impl Handshake {
     /// under `session_span`, so the current span can close once SERVER_SETUP
     /// is sent.
     pub async fn accept(self, session_span: &Span) -> anyhow::Result<Session> {
-        let (control, control_receiver) = self.setup.accept().await?;
+        let (control, control_receiver) = self.setup.accept(&self.transport_connection).await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(
             Connection::new(
