@@ -142,6 +142,8 @@ struct Serving {
     request_languages: HashMap<u64, &'static str>,
     source_text: Option<SourceText>,
     source_audio: Option<SourceAudio>,
+    /// Languages whose engine gave up report their code here.
+    language_ended_sender: mpsc::UnboundedSender<&'static str>,
 }
 
 enum LanguageTrack {
@@ -171,6 +173,7 @@ async fn serve(
     .context("source catalog did not list Opus audio in time")??;
     let source_track = source_audio_track(&source_catalog)
         .context("source catalog has no Opus audio to translate")?;
+    let (language_ended_sender, mut language_ended_receiver) = mpsc::unbounded_channel();
     let mut serving = Serving {
         session: session.clone(),
         engine,
@@ -185,6 +188,7 @@ async fn serve(
         request_languages: HashMap::new(),
         source_text: None,
         source_audio: None,
+        language_ended_sender,
     };
     let namespace = translated_namespace(broadcast_namespace);
     session
@@ -210,6 +214,9 @@ async fn serve(
             catalog = catalog_receiver.recv() => if let Some(catalog) = catalog {
                 serving.update_catalog(&catalog)?;
             },
+            Some(code) = language_ended_receiver.recv() => {
+                serving.end_language(code, "translation unavailable").await;
+            }
             _ = sleep_until(idle_deadline) => serving.stop_idle_languages().await,
         }
     }
@@ -364,6 +371,7 @@ impl Serving {
             language,
             source_audio.subscribe(),
             capacity_permit,
+            self.language_ended_sender.clone(),
         )
         .map_err(StartRefusal::Failed)?;
         self.languages.insert(

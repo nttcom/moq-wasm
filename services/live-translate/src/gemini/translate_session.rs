@@ -5,7 +5,10 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::{net::TcpStream, sync::mpsc, task::JoinHandle, time::Instant};
 use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
-    tungstenite::{Message, client::IntoClientRequest, http::header::AUTHORIZATION},
+    tungstenite::{
+        Message, client::IntoClientRequest, http::header::AUTHORIZATION,
+        protocol::frame::coding::CloseCode,
+    },
 };
 
 use super::{
@@ -23,6 +26,10 @@ type GeminiSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 enum ConnectionEnd {
     InputClosed,
     Reconnect,
+    /// Gemini closed the connection with a policy violation: the API is
+    /// disabled, the account may not use it, or the request is malformed.
+    /// Reconnecting cannot change that.
+    Refused(String),
 }
 
 pub(crate) struct GeminiTranslation {
@@ -78,11 +85,25 @@ async fn translate(
                     "Gemini connection ending, reconnecting"
                 );
             }
+            Ok(ConnectionEnd::Refused(reason)) => {
+                tracing::error!(target_language_code, reason, "Gemini refused the session");
+                return;
+            }
             Err(error) => {
                 // A connection that lasted a while worked; only quick failures
-                // in a row, such as an expired credential, back off.
+                // in a row, such as an expired credential, back off. Once the
+                // delay reaches its maximum the language is given up: returning
+                // drops `translated_sender`, which ends it.
                 if connected_at.elapsed() >= MAX_RECONNECT_DELAY {
                     reconnect_delay = RECONNECT_DELAY;
+                }
+                if reconnect_delay >= MAX_RECONNECT_DELAY {
+                    tracing::error!(
+                        target_language_code,
+                        ?error,
+                        "Gemini connection keeps failing, giving up"
+                    );
+                    return;
                 }
                 tracing::warn!(
                     target_language_code,
@@ -136,6 +157,9 @@ async fn translate_over_one_connection(
                 let text = match message {
                     Some(Ok(Message::Text(text))) => text.to_string(),
                     Some(Ok(Message::Binary(bytes))) => String::from_utf8(bytes.to_vec()).context("Gemini sent non-UTF-8 binary")?,
+                    Some(Ok(Message::Close(Some(frame)))) if frame.code == CloseCode::Policy => {
+                        return Ok(ConnectionEnd::Refused(frame.reason.to_string()));
+                    }
                     Some(Ok(Message::Close(frame))) => bail!("Gemini closed the connection: {frame:?}"),
                     Some(Ok(_)) => continue,
                     Some(Err(error)) => return Err(error).context("receive from Gemini"),

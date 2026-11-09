@@ -179,6 +179,11 @@ async fn main() -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
     let app = app_access(&args);
+    let policy = Arc::new(TranslationPolicy {
+        open_hours: args.open_hours.clone(),
+        language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
+        always_on,
+    });
     let namespaces = BroadcastNamespaces::new(
         app.as_ref()
             .map(|app| app.app_id.clone())
@@ -196,6 +201,7 @@ async fn main() -> Result<()> {
                     static_files: args.static_dir.clone().map(StaticFiles::new),
                     app: app.clone(),
                     namespaces: namespaces.clone(),
+                    policy: policy.clone(),
                     public_relay_url: args
                         .public_relay_url
                         .clone()
@@ -235,11 +241,7 @@ async fn main() -> Result<()> {
         namespaces,
         engine,
         capacity: Arc::new(Semaphore::new(args.max_sessions)),
-        policy: Arc::new(TranslationPolicy {
-            open_hours: args.open_hours.clone(),
-            language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
-            always_on,
-        }),
+        policy,
         broadcasts: HashMap::new(),
     };
     router.route_events().await

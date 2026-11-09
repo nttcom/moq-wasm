@@ -21,7 +21,10 @@ use static_files::StaticFiles;
 use tokio::{net::TcpListener, task::JoinHandle, time::Interval};
 use tracing::Instrument;
 
-use crate::{app_access::AppAccess, broadcast_namespace::BroadcastNamespaces};
+use crate::{
+    app_access::AppAccess, broadcast_namespace::BroadcastNamespaces,
+    translation_policy::TranslationPolicy,
+};
 
 const STREAMER_PAGE: &str = "/examples/live-translate/streamer/";
 const EVENTS_HEARTBEAT: Duration = Duration::from_secs(15);
@@ -42,6 +45,7 @@ pub(crate) struct PageServerState {
     pub(crate) static_files: Option<StaticFiles>,
     pub(crate) app: Option<Arc<AppAccess>>,
     pub(crate) namespaces: BroadcastNamespaces,
+    pub(crate) policy: Arc<TranslationPolicy>,
     /// The relay URL the pages connect to, which may differ from the
     /// translator's own.
     pub(crate) public_relay_url: String,
@@ -109,8 +113,10 @@ async fn handle(
 
 /// `GET /token?id=<broadcast id>&role=streamer|viewer`: a token to publish
 /// (streamer) or subscribe (viewer) the broadcast, with the namespace it lives
-/// in and the relay to connect to. Refused without an app, where the
-/// broadcasts are public and need no token.
+/// in and the relay to connect to. It also carries the open hours (`null`
+/// when unlimited) and whether they are open now, so a page can say so before
+/// a viewer picks a language. Refused without an app, where the broadcasts
+/// are public and need no token.
 fn issue_token(state: &PageServerState, query: Option<&str>, headers: &HeaderMap) -> PageResponse {
     let Some(app) = &state.app else {
         return error_response(StatusCode::NOT_FOUND, "no_app");
@@ -144,6 +150,8 @@ fn issue_token(state: &PageServerState, query: Option<&str>, headers: &HeaderMap
             "token": token,
             "namespace": format!("{}/{broadcast_id}", state.namespaces.root()),
             "relayUrl": state.public_relay_url,
+            "openHours": state.policy.open_hours.as_ref().map(ToString::to_string),
+            "open": state.policy.is_open(),
         }),
     )
 }
@@ -270,7 +278,7 @@ mod tests {
 
     use super::*;
 
-    async fn serve(app: Option<Arc<AppAccess>>) -> u16 {
+    async fn serve(app: Option<Arc<AppAccess>>, open_hours: Option<&str>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let server = PageServer::run(
@@ -279,6 +287,11 @@ mod tests {
                 static_files: None,
                 app,
                 namespaces: BroadcastNamespaces::new("app-1".to_string()),
+                policy: Arc::new(TranslationPolicy {
+                    open_hours: open_hours.map(|text| text.parse().unwrap()),
+                    language_time_limit: Duration::from_secs(3600),
+                    always_on: Vec::new(),
+                }),
                 public_relay_url: "https://relay.example:443".to_string(),
             },
         );
@@ -286,11 +299,14 @@ mod tests {
         port
     }
 
+    fn app() -> Arc<AppAccess> {
+        Arc::new(AppAccess::new("app-1".to_string(), "s3cret".to_string()))
+    }
+
     #[tokio::test]
     async fn a_viewer_token_subscribes_its_broadcast_under_the_app() {
         // Arrange
-        let app = Arc::new(AppAccess::new("app-1".to_string(), "s3cret".to_string()));
-        let port = serve(Some(app)).await;
+        let port = serve(Some(app()), None).await;
 
         // Act
         let body: serde_json::Value = reqwest::get(format!(
@@ -311,12 +327,34 @@ mod tests {
         assert!(payload.get("publish").is_none());
         assert_eq!(body["namespace"], "app-1/brave-otter");
         assert_eq!(body["relayUrl"], "https://relay.example:443");
+        assert!(body["openHours"].is_null());
+        assert_eq!(body["open"], true);
+    }
+
+    #[tokio::test]
+    async fn a_token_carries_the_open_hours() {
+        // Arrange
+        let port = serve(Some(app()), Some("Mon-Fri 09:00-17:30 +09:00")).await;
+
+        // Act
+        let body: serde_json::Value = reqwest::get(format!(
+            "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
+        ))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+        // Assert: the text as given; `open` depends on the clock, so only its type
+        assert_eq!(body["openHours"], "Mon-Fri 09:00-17:30 +09:00");
+        assert!(body["open"].is_boolean());
     }
 
     #[tokio::test]
     async fn without_an_app_no_token_is_issued() {
         // Arrange
-        let port = serve(None).await;
+        let port = serve(None, None).await;
 
         // Act
         let response = reqwest::get(format!(

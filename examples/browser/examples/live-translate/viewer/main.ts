@@ -136,7 +136,9 @@ function renderLanguages(): void {
   }
   setStatusText(
     'language-status',
-    player.pendingLanguage ? `${player.pendingLanguage} に切り替えています` : `聞いている言語: ${player.language}`
+    player.languageNotice ??
+      access?.closedNotice ??
+      (player.pendingLanguage ? `${player.pendingLanguage} に切り替えています` : `聞いている言語: ${player.language}`)
   )
 }
 

@@ -50,7 +50,10 @@ async function startBroadcast(): Promise<void> {
       videoEncoderConfig: buildVideoEncoderConfig(mediaStream),
       onError: (error) => setStatusText('streamer-status', `Publish failed: ${getErrorMessage(error)}`)
     })
-    setStatusText('streamer-status', `Broadcasting ${namespace.join('/')}`)
+    setStatusText(
+      'streamer-status',
+      [`Broadcasting ${namespace.join('/')}`, access.closedNotice].filter((text) => text !== undefined).join(' / ')
+    )
     showViewerLink(viewerUrl(broadcastId, url))
   } catch (error) {
     access?.release()
