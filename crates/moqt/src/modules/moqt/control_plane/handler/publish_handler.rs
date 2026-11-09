@@ -1,8 +1,9 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
-    PublisherInitiatedSubscription, Subscription, TrackProperties,
+    LastSubscribeUpdate, PublisherInitiatedSubscription, Subscription, TrackProperties,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -36,17 +37,30 @@ pub struct PublishHandler {
     /// What the PUBLISH said about the track.
     pub track_properties: TrackProperties,
     pub delivery_timeout: Option<u64>,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl PublishHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(
         session_context: Arc<SessionContext>,
         connection: Arc<Connection>,
         publish_message: Publish,
     ) -> Self {
-        let guard =
-            ResponseGuard::new(connection, publish_message.request_id, RequestKind::Publish);
+        let guard = ResponseGuard::new(
+            connection,
+            RequestSummary::new(
+                RequestKind::Publish,
+                publish_message.request_id,
+                Some(&publish_message.track_namespace_tuple),
+                Some(&publish_message.track_name),
+            ),
+        );
         let request_id = guard
             .connection()
             .logical_request_id(publish_message.request_id);
@@ -69,6 +83,7 @@ impl PublishHandler {
             content_exists: publish_message.content_exists,
             forward: publish_message.forward,
             track_properties: publish_message.track_properties,
+            trace_context: publish_message.trace_context,
             delivery_timeout: None,
         }
     }
@@ -78,7 +93,6 @@ impl PublishHandler {
         subscriber_priority: u8,
         filter_type: FilterType,
     ) -> Result<Subscription, TransportSendError> {
-        self.guard.mark_responded();
         let publish_ok = PublishOk {
             request_id: self.guard.request_id(),
             forward: self.forward,
@@ -88,9 +102,7 @@ impl PublishHandler {
             delivery_timeout: self.delivery_timeout,
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::PublishOk(publish_ok))
+            .accept(OutgoingResponse::PublishOk(publish_ok))
             .await?;
 
         Ok(Subscription::PublisherInitiated(
@@ -106,6 +118,7 @@ impl PublishHandler {
                 filter_type,
                 delivery_timeout: self.delivery_timeout,
                 track_properties: self.track_properties.clone(),
+                last_update: LastSubscribeUpdate::default(),
             },
         ))
     }
@@ -133,7 +146,7 @@ impl PublishHandler {
             );
             return;
         }
-        tracing::info!(
+        tracing::debug!(
             track_alias = self.track_alias,
             "publish handler registered incoming object receiver"
         );
@@ -163,7 +176,7 @@ mod tests {
         modules::{
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
-                notify_datagram, register_and_take_data_receiver, spawn_connected_dual_sessions,
+                notify_datagram, register_and_take_data_receiver, spawn_connected_native_sessions,
             },
         },
     };
@@ -174,7 +187,7 @@ mod tests {
     async fn publish_hands_its_max_cache_duration_to_both_subscriptions() {
         // Arrange
         let (client, server) =
-            spawn_connected_dual_sessions("publish-handler-max-cache-duration").await;
+            spawn_connected_native_sessions("publish-handler-max-cache-duration").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()
@@ -215,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-handler-namespace").await;
+        let (client, server) = spawn_connected_native_sessions("publish-handler-namespace").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()
@@ -241,7 +254,8 @@ mod tests {
     #[tokio::test]
     async fn publish_error_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("publish-handler-error-buffer").await;
+        let (client, server) =
+            spawn_connected_native_sessions("publish-handler-error-buffer").await;
         let request = tokio::spawn(async move {
             client
                 .publisher()

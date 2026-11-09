@@ -29,13 +29,17 @@ use crate::{
         executor,
         moqt::{
             control_plane::{
-                control_messages::messages::parameters::group_order::GroupOrder,
+                control_messages::messages::{
+                    parameters::group_order::GroupOrder, subscribe_update::SubscribeUpdate,
+                },
                 enums::{RequestId, ResponseMessage},
                 error_codes::DataStreamResetCode,
             },
             data_plane::stream::stream_sender::StreamSender,
             domains::{connection::Connection, session_context::SessionContext},
-            version::{self, Notification, OutgoingRequest, OutgoingResponse},
+            version::{
+                self, Notification, OutgoingRequest, OutgoingResponse, RequestIdReservation,
+            },
         },
         transport::{
             transport_connection::{BoxedReceiveStream, BoxedSendStream},
@@ -172,7 +176,8 @@ const FIRST_SYNTHETIC_REQUEST_ID: RequestId = u64::MAX;
 
 pub(crate) struct ControlChannel {
     control: StreamSender,
-    request_id: AtomicU64,
+    /// The Request ID of this side's next request (§10.1).
+    next_request_id: tokio::sync::Mutex<RequestId>,
     synthetic_request_id: AtomicU64,
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
@@ -212,7 +217,7 @@ impl ControlChannel {
     fn new(control: StreamSender, first_request_id: RequestId) -> Self {
         Self {
             control,
-            request_id: AtomicU64::new(first_request_id),
+            next_request_id: tokio::sync::Mutex::new(first_request_id),
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
@@ -251,8 +256,13 @@ impl ControlChannel {
             .expect("draft-18 request registry poisoned")
     }
 
-    pub(crate) fn next_request_id(&self) -> RequestId {
-        self.request_id.fetch_add(2, Ordering::SeqCst)
+    /// draft-18 has no Maximum Request ID (the QUIC stream limit bounds
+    /// requests instead), so the reservation never waits on the peer.
+    pub(super) async fn reserve_request_id(&self) -> RequestIdReservation<'_> {
+        RequestIdReservation(tokio::sync::MutexGuard::map(
+            self.next_request_id.lock().await,
+            |next| next,
+        ))
     }
 
     /// The Request ID after the largest one the peer has used, for GOAWAY.
@@ -536,9 +546,12 @@ impl ControlChannel {
     // On wasm32 the browser transport is !Send, but the context is shared with
     // the native build, where the tasks run on a multi-threaded executor.
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    /// Writes the request before releasing `reservation`, so the Request ID
+    /// stays unused when the request is not written.
     pub(super) async fn send_request(
         &self,
         connection: &Arc<Connection>,
+        reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let encoding_failed = |error: anyhow::Error| {
@@ -628,7 +641,10 @@ impl ControlChannel {
                 .map_err(|_| RequestFailure::SessionClosed)?,
         };
         let sender = Arc::new(StreamSender::new(send_stream));
+        debug_assert_eq!(request_id, reservation.request_id());
         sender.send(&message).await?;
+        let RequestIdReservation(mut next_request_id) = reservation;
+        *next_request_id += 2;
         let stream = RequestStream::new(kind, sender);
         self.requests().outgoing.insert(request_id, stream.clone());
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
@@ -643,8 +659,35 @@ impl ControlChannel {
         .run();
         Ok(PendingResponse {
             receiver,
-            cancel: Some((Arc::downgrade(connection), request_id)),
+            cancel: RequestCancel(Some((Arc::downgrade(connection), request_id))),
         })
+    }
+
+    /// Sends REQUEST_UPDATE on the stream of the subscription it updates
+    /// (§10.10).
+    pub(super) async fn send_subscribe_update(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        update: SubscribeUpdate,
+    ) -> Result<(), TransportSendError> {
+        debug_assert_eq!(update.request_id, reservation.request_id());
+        let stream = {
+            let requests = self.requests();
+            requests
+                .outgoing
+                .get(&update.subscription_request_id)
+                .or_else(|| requests.incoming.get(&update.subscription_request_id))
+                .cloned()
+        };
+        let Some(stream) = stream else {
+            return Err(TransportSendError::ClosedStream);
+        };
+        let message =
+            messages::encode_request_update(update.request_id, &update).map_err(encode_error)?;
+        stream.sender.send(&message).await?;
+        let RequestIdReservation(mut next_request_id) = reservation;
+        *next_request_id += 2;
+        Ok(())
     }
 
     /// A response to a synthetic Request ID goes nowhere.
@@ -729,22 +772,6 @@ impl ControlChannel {
                         .or_else(|| self.take_incoming(unsubscribe.request_id)),
                 )
                 .await
-            }
-            Notification::SubscribeUpdate(update) => {
-                let stream = {
-                    let requests = self.requests();
-                    requests
-                        .outgoing
-                        .get(&update.subscription_request_id)
-                        .or_else(|| requests.incoming.get(&update.subscription_request_id))
-                        .cloned()
-                };
-                let Some(stream) = stream else {
-                    return Err(TransportSendError::ClosedStream);
-                };
-                let message = messages::encode_request_update(update.request_id, &update)
-                    .map_err(encode_error)?;
-                stream.sender.send(&message).await
             }
             Notification::PublishDone {
                 request_id,
@@ -892,14 +919,16 @@ fn end_outgoing(connection: &Weak<Connection>, request_id: RequestId, finished: 
 
 pub(crate) struct PendingResponse {
     receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
-    /// The request whose stream is reset when the caller stops waiting
-    /// before a success response; that withdraws the request (§3.3.2).
-    cancel: Option<(Weak<Connection>, RequestId)>,
+    cancel: RequestCancel,
 }
 
-impl Drop for PendingResponse {
+/// The request whose stream is reset when this is dropped armed; that
+/// withdraws the request (§3.3.2).
+struct RequestCancel(Option<(Weak<Connection>, RequestId)>);
+
+impl Drop for RequestCancel {
     fn drop(&mut self) {
-        if let Some((connection, request_id)) = self.cancel.take() {
+        if let Some((connection, request_id)) = self.0.take() {
             end_outgoing(&connection, request_id, false);
         }
     }
@@ -912,28 +941,48 @@ impl PendingResponse {
         let _ = sender.send(response);
         Self {
             receiver,
-            cancel: None,
+            cancel: RequestCancel(None),
         }
     }
 
     /// Waits at most `CONTROL_MESSAGE_RESPONSE_TIMEOUT`; a timeout or an
     /// error response resets the request stream.
-    pub(super) async fn response(mut self) -> Result<ResponseMessage, RequestFailure> {
+    pub(super) async fn response(mut self) -> Result<ReceivedResponse, RequestFailure> {
         match executor::timeout(
             version::CONTROL_MESSAGE_RESPONSE_TIMEOUT,
             &mut self.receiver,
         )
         .await
         {
-            Ok(Ok(response)) => {
-                if is_success(&response) {
-                    self.cancel = None;
-                }
-                Ok(response)
+            Ok(Ok(message)) => {
+                let cancel = if is_success(&message) {
+                    RequestCancel(self.cancel.0.take())
+                } else {
+                    RequestCancel(None)
+                };
+                Ok(ReceivedResponse { message, cancel })
             }
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
             Err(_) => Err(RequestFailure::Timeout),
         }
+    }
+}
+
+/// A response whose request stream is reset when this is dropped before
+/// `accept`, as for one the caller stopped waiting for.
+pub(crate) struct ReceivedResponse {
+    message: ResponseMessage,
+    cancel: RequestCancel,
+}
+
+impl ReceivedResponse {
+    pub(super) fn message(&self) -> &ResponseMessage {
+        &self.message
+    }
+
+    pub(super) fn accept(mut self) -> ResponseMessage {
+        self.cancel.0 = None;
+        self.message
     }
 }
 
@@ -1975,7 +2024,7 @@ mod tests {
         let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = StreamSender::new(send_stream);
         let fetch = messages::encode_fetch(&FetchMessage {
-            request_id: connection.control.next_request_id(),
+            request_id: connection.control.take_request_id().await,
             subscriber_priority: 128,
             group_order: GroupOrder::Ascending,
             fetch_params: FetchParams::Standalone {
@@ -1992,6 +2041,7 @@ mod tests {
             },
             authorization_tokens: vec![],
             fill_timeout: None,
+            trace_context: None,
         })
         .unwrap();
         sender.send(&fetch).await.unwrap();
@@ -2029,7 +2079,7 @@ mod tests {
         let connection = client.publisher().session.connection();
         let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
         let fetch = messages::encode_fetch(&FetchMessage {
-            request_id: connection.control.next_request_id(),
+            request_id: connection.control.take_request_id().await,
             subscriber_priority: 128,
             group_order: GroupOrder::Ascending,
             fetch_params: FetchParams::Standalone {
@@ -2046,6 +2096,7 @@ mod tests {
             },
             authorization_tokens: vec![],
             fill_timeout: Some(0),
+            trace_context: None,
         })
         .unwrap();
 
@@ -2114,7 +2165,7 @@ mod tests {
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = StreamSender::new(send_stream);
         let message = messages::encode_subscribe_tracks(&messages::SubscribeTracksMessage {
-            request_id: connection.control.next_request_id(),
+            request_id: connection.control.take_request_id().await,
             track_namespace_prefix: vec![prefix.to_string()],
             authorization_tokens: vec![],
             forward,
@@ -2639,7 +2690,7 @@ mod tests {
         let connection = publisher.publisher().session.connection();
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let mut payload = BytesMut::new();
-        codec::put_vi64(&mut payload, connection.control.next_request_id());
+        codec::put_vi64(&mut payload, connection.control.take_request_id().await);
         codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
         codec::put_vi64(&mut payload, track_alias);
         parameters::put_parameters(&mut payload, &[]).unwrap();
@@ -3064,13 +3115,9 @@ mod tests {
         };
         let subscription = subscribed(&client, &server, option).await;
         let stream = outgoing_stream(&client, subscription.request_id());
+        let connection = client.publisher().session.connection();
         let update = request_update(
-            client
-                .publisher()
-                .session
-                .connection()
-                .control
-                .next_request_id(),
+            connection.control.take_request_id().await,
             &[parameters::Parameter::Forward(false)],
         );
 
@@ -3101,7 +3148,8 @@ mod tests {
                 .session
                 .connection()
                 .control
-                .next_request_id(),
+                .take_request_id()
+                .await,
             &[parameters::Parameter::SubscriptionFilter(
                 FilterType::NextGroupStart,
             )],
@@ -3129,7 +3177,7 @@ mod tests {
         let sender = StreamSender::new(send_stream);
         let receiver = MessageReceiver::new(receive_stream, MessageDecoder);
         let subscribe = messages::encode_subscribe(&Subscribe {
-            request_id: connection.control.next_request_id(),
+            request_id: connection.control.take_request_id().await,
             track_namespace: vec!["ns".to_string()],
             track_name: "track".to_string(),
             subscriber_priority: 128,
@@ -3138,6 +3186,7 @@ mod tests {
             filter_type: FilterType::LargestObject,
             authorization_tokens: vec![],
             delivery_timeout: None,
+            trace_context: None,
         })
         .unwrap();
         sender.send(&subscribe).await.unwrap();
@@ -3173,7 +3222,8 @@ mod tests {
             .session
             .connection()
             .control
-            .next_request_id();
+            .take_request_id()
+            .await;
         stream
             .send(&request_update(
                 request_id,
@@ -3401,7 +3451,7 @@ mod tests {
         let (send_stream, _receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = StreamSender::new(send_stream);
         let track_status = messages::encode_track_status(&Subscribe {
-            request_id: connection.control.next_request_id(),
+            request_id: connection.control.take_request_id().await,
             track_namespace: vec!["ns".to_string()],
             track_name: "track".to_string(),
             subscriber_priority: 128,
@@ -3410,6 +3460,7 @@ mod tests {
             filter_type: FilterType::LargestObject,
             authorization_tokens: vec![],
             delivery_timeout: None,
+            trace_context: None,
         })
         .unwrap();
         sender.send(&track_status).await.unwrap();
@@ -3418,7 +3469,7 @@ mod tests {
         };
 
         // Act
-        let update = request_update(connection.control.next_request_id(), &[]);
+        let update = request_update(connection.control.take_request_id().await, &[]);
         sender.send(&update).await.unwrap();
         let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
             .await
@@ -3457,7 +3508,7 @@ mod tests {
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = StreamSender::new(send_stream);
         let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
-        let request_id = connection.control.next_request_id();
+        let request_id = connection.control.take_request_id().await;
         let prefix = vec!["live".to_string()];
         let request = if tracks {
             messages::encode_subscribe_tracks(&messages::SubscribeTracksMessage {
@@ -3471,6 +3522,7 @@ mod tests {
                 request_id,
                 track_namespace_prefix: prefix,
                 authorization_token: vec![],
+                trace_context: None,
             })
         };
         sender.send(&request.unwrap()).await.unwrap();
@@ -3499,7 +3551,8 @@ mod tests {
             .session
             .connection()
             .control
-            .next_request_id();
+            .take_request_id()
+            .await;
         let prefix = prefix.iter().map(|field| field.to_string()).collect();
         stream
             .send(&request_update(
@@ -3651,7 +3704,8 @@ mod tests {
             .session
             .connection()
             .control
-            .next_request_id();
+            .take_request_id()
+            .await;
 
         // Act
         sender.send(&request_update(request_id, &[])).await.unwrap();

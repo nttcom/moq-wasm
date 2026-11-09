@@ -2,7 +2,6 @@ use anyhow::{Result, bail, ensure};
 use bytes::Bytes;
 
 use crate::{
-    h264::AvcDecoderConfigurationRecord,
     mp4::{
         held_video::HeldVideo,
         isobmff::{self, TrackInit},
@@ -35,8 +34,8 @@ enum Track {
 }
 
 impl Fmp4TrackMuxer {
-    pub fn video(config: AvcDecoderConfigurationRecord) -> Self {
-        Self::new(Track::Video(VideoConfig::Avc(config)))
+    pub fn video(config: VideoConfig) -> Self {
+        Self::new(Track::Video(config))
     }
 
     pub fn audio(config: AudioConfig) -> Self {
@@ -160,7 +159,7 @@ mod tests {
     #[test]
     fn init_segment_describes_exactly_one_track() {
         // Arrange
-        let muxer = Fmp4TrackMuxer::video(fixture_record());
+        let muxer = Fmp4TrackMuxer::video(VideoConfig::Avc(fixture_record()));
 
         // Act
         let init = muxer.init_segment().unwrap();
@@ -176,7 +175,7 @@ mod tests {
     #[test]
     fn video_fragments_lag_one_sample_and_flag_the_keyframe() {
         // Arrange
-        let mut muxer = Fmp4TrackMuxer::video(fixture_record());
+        let mut muxer = Fmp4TrackMuxer::video(VideoConfig::Avc(fixture_record()));
 
         // Act
         let first = muxer.push(&video_event(0, true)).unwrap();
@@ -212,7 +211,7 @@ mod tests {
     #[test]
     fn rejects_samples_of_the_other_track_kind() {
         // Arrange
-        let mut video_muxer = Fmp4TrackMuxer::video(fixture_record());
+        let mut video_muxer = Fmp4TrackMuxer::video(VideoConfig::Avc(fixture_record()));
         let mut audio_muxer = Fmp4TrackMuxer::audio(AudioConfig::Aac(mono_48k()));
 
         // Act / Assert

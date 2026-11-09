@@ -1,10 +1,12 @@
+use tracing::Span;
+
 use crate::modules::transport::transport_connection::BoxedConnection;
 
 #[cfg(test)]
 use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
 
 use crate::{
-    AuthorizationToken, Session, TerminationErrorCode,
+    AuthorizationToken, Session, TerminationErrorCode, TraceContext,
     modules::moqt::{
         domains::{connection::Connection, session_context::SessionContext},
         version::ServerHandshake,
@@ -23,6 +25,12 @@ impl Handshake {
         self.setup.authorization_tokens()
     }
 
+    /// The traceparent of the client's `moqt.session.connect` span, carried in
+    /// CLIENT_SETUP's TRACE_CONTEXT Setup Option.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.setup.trace_context()
+    }
+
     #[cfg(test)]
     pub(crate) fn client_setup(&self) -> &ClientSetup {
         let ServerHandshake::Draft14(handshake) = &self.setup else {
@@ -31,7 +39,10 @@ impl Handshake {
         &handshake.client_setup
     }
 
-    pub async fn accept(self) -> anyhow::Result<Session> {
+    /// Sends SERVER_SETUP in the current span and starts the session's tasks
+    /// under `session_span`, so the current span can close once SERVER_SETUP
+    /// is sent.
+    pub async fn accept(self, session_span: &Span) -> anyhow::Result<Session> {
         let (control, control_receiver) = self.setup.accept(&self.transport_connection).await?;
         let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
         let context = SessionContext::new(
@@ -45,13 +56,15 @@ impl Handshake {
             event_sender,
             false,
         );
-        tracing::info!("Session established");
+        tracing::debug!("session established");
         Ok(Session::new(
             control_receiver,
             context,
             event_receiver,
             None,
             None,
+            None,
+            session_span.clone(),
         ))
     }
 
@@ -73,16 +86,16 @@ mod tests {
         TerminationErrorCode,
         modules::{
             moqt::control_plane::constants::MOQ_TRANSPORT_VERSION,
-            test_support::{HANDSHAKE_TIMEOUT, dual_client, spawn_dual_server_handshake},
+            test_support::{HANDSHAKE_TIMEOUT, native_client, spawn_native_server_handshake},
         },
     };
 
     #[tokio::test]
     async fn client_setup_is_exposed_before_server_setup() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("handshake-client-setup");
+        let (port, accept) = spawn_native_server_handshake("handshake-client-setup");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
 
         // Act
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
@@ -103,16 +116,16 @@ mod tests {
     #[tokio::test]
     async fn accept_establishes_session() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("handshake-accept");
+        let (port, accept) = spawn_native_server_handshake("handshake-accept");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
             .await
             .unwrap()
             .unwrap();
 
         // Act
-        let server = handshake.accept().await;
+        let server = handshake.accept(&tracing::Span::current()).await;
         let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, client)
             .await
             .unwrap()
@@ -126,9 +139,9 @@ mod tests {
     #[tokio::test]
     async fn reject_closes_connection_before_server_setup() {
         // Arrange
-        let (port, accept) = spawn_dual_server_handshake("handshake-reject");
+        let (port, accept) = spawn_native_server_handshake("handshake-reject");
         let url = format!("moqt://127.0.0.1:{port}");
-        let client = tokio::spawn(async move { dual_client().connect(&url).await?.await });
+        let client = tokio::spawn(async move { native_client().connect(&url).await?.await });
         let handshake = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
             .await
             .unwrap()

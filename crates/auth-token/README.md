@@ -26,7 +26,8 @@ AUTH_TOKEN_SECRET="$(jq -r '.[] | select(.appId == "ac8adbc8-...") | .secret' ap
 ```
 
 `--ttl` takes `15s`, `30m`, `12h` or `365d`; omitting `--publish` or
-`--subscribe` leaves that operation out of the token.
+`--subscribe` leaves that operation out of the token. A relay's own token
+(`AUTH_RELAY_TOKEN`) also takes `--relay-id` with that relay's `RELAY_ID`.
 
 ## Design
 

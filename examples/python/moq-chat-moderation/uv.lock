@@ -818,7 +818,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "moq-bot-rooms" },
-    { name = "moq-d3-flash-bot" },
+    { name = "moq-system-one-bot" },
     { name = "moqt" },
     { name = "pipecat-ai" },
 ]
@@ -833,7 +833,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
-    { name = "moq-d3-flash-bot", editable = "../moq-d3-flash-bot" },
+    { name = "moq-system-one-bot", editable = "../moq-system-one-bot" },
     { name = "moqt", directory = "../../../crates/python" },
     { name = "pipecat-ai", specifier = ">=1.12" },
 ]
@@ -845,9 +845,9 @@ dev = [
 ]
 
 [[package]]
-name = "moq-d3-flash-bot"
+name = "moq-system-one-bot"
 version = "0.1.0"
-source = { editable = "../moq-d3-flash-bot" }
+source = { editable = "../moq-system-one-bot" }
 dependencies = [
     { name = "aiohttp" },
     { name = "moq-bot-rooms" },

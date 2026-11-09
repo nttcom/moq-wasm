@@ -1,0 +1,613 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use bytes::Bytes;
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
+use tracing::Span;
+
+use crate::modules::{
+    data_plane::{
+        cache::{
+            cached_object::CacheStamp,
+            subgroup_key::SubgroupKey,
+            track_cache::{NextObject, SubgroupRun, TrackCache},
+        },
+        egress::{
+            fetch_delivery::{EgressFetchRequest, FetchWait, deliver_fetch},
+            runner::EgressRunner,
+        },
+        ingress::{ingest_task::TrackIngest, stream_reader::read_stream, track_reader::read_track},
+    },
+    domain::{
+        delivery_control::DeliveryControl,
+        delivery_stats::{DeliveryCounters, DeliveryStats},
+        publish_done_reason::PublishDoneReason,
+        runner_signals::DownstreamRunnerSignals,
+        track_key::TrackKey,
+    },
+    session::{
+        data_object::DataObject, data_receiver::receiver::DataReceiver, session_event::SessionEvent,
+    },
+};
+
+pub(crate) mod fixtures;
+mod mocks;
+
+pub(crate) use self::mocks::downstream_client::{
+    FetchSent, MockFetchSender, MockPublisher, MockPublisherObservers, Sent, UnknownRangeDraft,
+};
+pub(crate) use self::mocks::upstream_client::{
+    FailingUpstream, UpstreamSubgroupStream, UpstreamTrack,
+};
+
+pub(crate) use self::fixtures::data_object::ordered_payload;
+
+use self::{
+    fixtures::{location, subscription::make_subscription},
+    mocks::downstream_client::SentPublishDone,
+};
+
+pub(crate) const OBJECT_COUNT: usize = 50;
+const RECV_TIMEOUT: Duration = Duration::from_secs(3);
+
+pub(crate) struct RelayHarness {
+    ingest: TrackIngest,
+    publisher_mailbox_receiver: mpsc::UnboundedReceiver<SessionEvent>,
+    stop_sender: watch::Sender<bool>,
+}
+
+pub(crate) struct EgressRunnerHandle {
+    sent: mpsc::UnboundedReceiver<Sent>,
+    priorities: mpsc::UnboundedReceiver<moqt::object::StreamPriority>,
+    publish_done: mpsc::UnboundedReceiver<SentPublishDone>,
+    delivery_control_sender: watch::Sender<DeliveryControl>,
+    stop_sender: Option<oneshot::Sender<PublishDoneReason>>,
+    delivery_stats: Arc<DeliveryStats>,
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl EgressRunnerHandle {
+    pub(crate) fn delivery_counters(&self) -> DeliveryCounters {
+        self.delivery_stats.counters()
+    }
+
+    pub(crate) fn end_upstream(&mut self, end: PublishDoneReason) {
+        let stop_sender = self.stop_sender.take().expect("upstream ends once");
+        let _ = stop_sender.send(end);
+    }
+
+    /// Applies a SUBSCRIBE_UPDATE the way the directory registration does.
+    pub(crate) fn apply_subscribe_update(&self, update: DeliveryControl) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(update);
+        });
+    }
+
+    /// An update that turns Forward to 0 and keeps the range.
+    pub(crate) fn pause(&self) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(control.requested(false, None, None));
+        });
+    }
+
+    /// An update that turns Forward to 1 while the track's Largest Object is
+    /// `largest`, and keeps the range.
+    pub(crate) fn resume(&self, largest: Option<moqt::object::Location>) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(control.requested(true, None, largest));
+        });
+    }
+
+    pub(crate) async fn expect_publish_done(&mut self) -> SentPublishDone {
+        tokio::time::timeout(RECV_TIMEOUT, self.publish_done.recv())
+            .await
+            .expect("egress should send PUBLISH_DONE")
+            .expect("egress dropped its publisher before PUBLISH_DONE")
+    }
+
+    pub(crate) async fn assert_nothing_sent_within(&mut self, window: Duration) {
+        let sent = tokio::time::timeout(window, self.sent.recv()).await;
+        assert!(
+            sent.is_err(),
+            "egress must not open or close a downstream stream: {sent:?}"
+        );
+    }
+
+    /// Call after PUBLISH_DONE; the runner sends it only once its streams are done.
+    pub(crate) fn assert_nothing_more_sent(&mut self) {
+        let sent = self.sent.try_recv();
+        assert!(sent.is_err(), "nothing may follow PUBLISH_DONE: {sent:?}");
+    }
+
+    pub(crate) async fn expect_stream_priority(&mut self) -> moqt::object::StreamPriority {
+        tokio::time::timeout(RECV_TIMEOUT, self.priorities.recv())
+            .await
+            .expect("egress should open a downstream stream")
+            .expect("egress dropped its publisher before opening a stream")
+    }
+
+    pub(crate) async fn expect_sent(&mut self) -> Sent {
+        tokio::time::timeout(RECV_TIMEOUT, self.sent.recv())
+            .await
+            .expect("egress should send downstream")
+            .expect("egress dropped its publisher")
+    }
+
+    pub(crate) async fn expect_sent_object(&mut self) -> DataObject {
+        match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+            Ok(Some(Sent::Object(object))) => object,
+            other => panic!("egress should send an object downstream, got {other:?}"),
+        }
+    }
+
+    pub(crate) async fn assert_no_publish_done_within(&mut self, window: Duration) {
+        let publish_done = tokio::time::timeout(window, self.publish_done.recv()).await;
+        assert!(
+            publish_done.is_err(),
+            "no PUBLISH_DONE should be sent: {publish_done:?}"
+        );
+    }
+
+    pub(crate) fn assert_no_publish_done(&mut self) {
+        assert!(
+            self.publish_done.try_recv().is_err(),
+            "no PUBLISH_DONE should have been sent"
+        );
+    }
+}
+
+impl Drop for EgressRunnerHandle {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
+}
+
+pub(crate) struct FetchDeliveryHandle {
+    sent: mpsc::UnboundedReceiver<FetchSent>,
+    join_handle: tokio::task::JoinHandle<()>,
+}
+
+impl FetchDeliveryHandle {
+    pub(crate) async fn expect_objects(&mut self, expected: &[(u64, u64)]) {
+        for &(group_id, object_id) in expected {
+            match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+                Ok(Some(FetchSent::Object(object))) => assert_eq!(
+                    (object.location.group_id, object.location.object_id),
+                    (group_id, object_id),
+                    "fetch objects must arrive in range order"
+                ),
+                other => panic!("expected fetch object {{{group_id}, {object_id}}}, got {other:?}"),
+            }
+        }
+    }
+
+    pub(crate) async fn expect_object(&mut self) -> moqt::object::Object {
+        match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+            Ok(Some(FetchSent::Object(object))) => object,
+            other => panic!("expected a fetch object, got {other:?}"),
+        }
+    }
+
+    pub(crate) async fn expect_end(&mut self) -> FetchSent {
+        match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
+            Ok(Some(end @ (FetchSent::Closed | FetchSent::Reset(_)))) => end,
+            other => panic!("expected the fetch stream to end, got {other:?}"),
+        }
+    }
+
+    /// Everything sent, once the delivery has finished.
+    pub(crate) async fn finished(mut self) -> Vec<FetchSent> {
+        tokio::time::timeout(RECV_TIMEOUT, &mut self.join_handle)
+            .await
+            .expect("the fetch delivery should finish")
+            .unwrap();
+        let mut sent = Vec::new();
+        while let Ok(step) = self.sent.try_recv() {
+            sent.push(step);
+        }
+        sent
+    }
+
+    pub(crate) async fn assert_nothing_sent_within(&mut self, window: Duration) {
+        let sent = tokio::time::timeout(window, self.sent.recv()).await;
+        assert!(
+            sent.is_err(),
+            "fetch delivery must wait for the open group: {sent:?}"
+        );
+    }
+}
+
+impl Drop for FetchDeliveryHandle {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
+}
+
+impl RelayHarness {
+    pub(crate) fn new() -> Self {
+        Self::with_max_cache_duration(None)
+    }
+
+    pub(crate) fn with_max_cache_duration(max_cache_duration: Option<Duration>) -> Self {
+        Self::with_cache(
+            Arc::new(TrackCache::new()),
+            CacheStamp {
+                max_cache_duration,
+                persist: false,
+                ..CacheStamp::default()
+            },
+        )
+    }
+
+    /// Ingests into `cache`, a store's cache when the test needs its disk.
+    pub(crate) fn with_cache(cache: Arc<TrackCache>, stamp: CacheStamp) -> Self {
+        let (publisher_mailbox_sender, publisher_mailbox_receiver) = mpsc::unbounded_channel();
+        let (stop_sender, stop_receiver) = watch::channel(false);
+        Self {
+            ingest: TrackIngest {
+                track_key: TrackKey::new("ns", "track"),
+                cache,
+                publisher_mailbox_sender,
+                stop_receiver,
+                stamp,
+            },
+            publisher_mailbox_receiver,
+            stop_sender,
+        }
+    }
+
+    pub(crate) fn track_key(&self) -> &TrackKey {
+        &self.ingest.track_key
+    }
+
+    pub(crate) fn cache(&self) -> &TrackCache {
+        &self.ingest.cache
+    }
+
+    pub(crate) async fn expect_session_event(&mut self) -> SessionEvent {
+        tokio::time::timeout(RECV_TIMEOUT, self.publisher_mailbox_receiver.recv())
+            .await
+            .expect("a session event should be reported")
+            .expect("the publisher mailbox should stay open")
+    }
+
+    pub(crate) fn open_upstream_stream(&self) -> UpstreamSubgroupStream {
+        UpstreamSubgroupStream::open(|receiver| {
+            tokio::spawn(read_stream(self.ingest.clone(), receiver, Span::none()))
+        })
+    }
+
+    /// Ingests an upstream subscription until the returned track is dropped.
+    pub(crate) fn start_track_ingest(&self) -> UpstreamTrack {
+        self.start_ingest_of(UpstreamTrack::channel())
+    }
+
+    /// `start_track_ingest` of a draft-18 subscription.
+    pub(crate) fn start_draft18_track_ingest(&self) -> UpstreamTrack {
+        self.start_ingest_of(UpstreamTrack::draft18_channel())
+    }
+
+    fn start_ingest_of(
+        &self,
+        (upstream, receiver): (UpstreamTrack, Box<dyn DataReceiver>),
+    ) -> UpstreamTrack {
+        tokio::spawn(read_track(
+            self.ingest.clone(),
+            receiver,
+            tracing::Span::none(),
+        ));
+        upstream
+    }
+
+    pub(crate) async fn run_ingest(&self, upstream: FailingUpstream) {
+        tokio::time::timeout(
+            RECV_TIMEOUT,
+            read_track(
+                self.ingest.clone(),
+                Box::new(upstream),
+                tracing::Span::none(),
+            ),
+        )
+        .await
+        .expect("ingest should end");
+    }
+
+    pub(crate) fn is_track_malformed(&self) -> bool {
+        self.ingest.cache.is_malformed()
+    }
+
+    pub(crate) fn ingest_conflicting_duplicate(&self) -> [UpstreamSubgroupStream; 2] {
+        let first_stream = self.open_upstream_stream();
+        first_stream.header(0);
+        first_stream.object(0);
+        let second_stream = self.open_upstream_stream();
+        second_stream.header(0);
+        second_stream.object_with_payload(Bytes::from_static(b"conflicting"));
+        [first_stream, second_stream]
+    }
+
+    pub(crate) fn stop_ingest(&self) {
+        self.stop_sender
+            .send(true)
+            .expect("stream readers should hold the stop receiver");
+    }
+
+    pub(crate) fn subscribe_subgroup_opened(&self) -> broadcast::Receiver<SubgroupRun> {
+        self.ingest.cache.subscribe_subgroup_opened()
+    }
+
+    pub(crate) async fn cached_object_ids(
+        &self,
+        key: SubgroupKey,
+    ) -> Vec<(u64, moqt::object::ObjectStatus)> {
+        let mut objects = Vec::new();
+        let mut cursor = 0;
+        while let NextObject::Object(object) = self
+            .ingest
+            .cache
+            .next_subgroup_object_or_wait(key, 0, cursor)
+            .await
+            .unwrap()
+        {
+            objects.push((object.object.location.object_id, object.object.status));
+            cursor = object.object.location.object_id + 1;
+        }
+        objects
+    }
+
+    pub(crate) async fn subgroup_end_after(
+        &self,
+        key: SubgroupKey,
+        last_object_id: u64,
+    ) -> NextObject {
+        tokio::time::timeout(
+            RECV_TIMEOUT,
+            self.ingest
+                .cache
+                .next_subgroup_object_or_wait(key, 0, last_object_id + 1),
+        )
+        .await
+        .expect("subgroup should be closed, not waiting for more objects")
+        .unwrap()
+    }
+
+    pub(crate) async fn start_egress(
+        &self,
+        largest_location: Option<moqt::object::Location>,
+    ) -> EgressRunnerHandle {
+        self.start_egress_with_filter(moqt::subscribe::FilterType::LargestObject, largest_location)
+            .await
+    }
+
+    pub(crate) async fn start_egress_with_filter(
+        &self,
+        filter_type: moqt::subscribe::FilterType,
+        largest_location: Option<moqt::object::Location>,
+    ) -> EgressRunnerHandle {
+        let (publisher, observers) = MockPublisher::channel();
+        let (ready_sender, ready_receiver) = oneshot::channel();
+        let (delivery_control_sender, delivery_control_receiver) =
+            watch::channel(DeliveryControl::new(true, &filter_type, largest_location));
+        let (stop_sender, stop_receiver) = oneshot::channel();
+        let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
+        let delivery_stats = Arc::new(DeliveryStats::default());
+        let runner = EgressRunner::new(
+            self.ingest.track_key.clone(),
+            self.ingest.cache.clone(),
+            Box::new(publisher),
+            make_subscription(filter_type),
+            ready_sender,
+            largest_location,
+            DownstreamRunnerSignals {
+                stop_receiver,
+                delivery_control_receiver,
+                delivery_stats: delivery_stats.clone(),
+            },
+        );
+        let join_handle = tokio::spawn(async move {
+            runner.run(subscribe_ok_receiver).await;
+        });
+        tokio::time::timeout(RECV_TIMEOUT, ready_receiver)
+            .await
+            .expect("egress runner should signal readiness")
+            .expect("egress readiness should not be dropped")
+            .expect("egress runner should start");
+        let _ = subscribe_ok_sender.send(());
+        EgressRunnerHandle {
+            sent: observers.sent,
+            priorities: observers.priorities,
+            publish_done: observers.publish_done,
+            delivery_control_sender,
+            stop_sender: Some(stop_sender),
+            delivery_stats,
+            join_handle,
+        }
+    }
+
+    pub(crate) fn start_fetch(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Unlimited,
+            UnknownRangeDraft::Draft18,
+        )
+    }
+
+    /// A draft-18 fetch in `group_order` that waits for objects until
+    /// `deadline`, then reports the rest as unknown.
+    pub(crate) fn start_fetch_waiting_until(
+        &self,
+        range: std::ops::Range<moqt::object::Location>,
+        group_order: moqt::object::GroupOrder,
+        deadline: tokio::time::Instant,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            range,
+            group_order,
+            FetchWait::Until(deadline),
+            UnknownRangeDraft::Draft18,
+        )
+    }
+
+    /// A fetch that reports what the cache lacks as unknown, as a session of
+    /// `draft` can.
+    pub(crate) fn start_fetch_reporting_unknown(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        draft: UnknownRangeDraft,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Never,
+            draft,
+        )
+    }
+
+    /// `range.end` is the FETCH_OK End Location.
+    fn spawn_fetch(
+        &self,
+        range: std::ops::Range<moqt::object::Location>,
+        group_order: moqt::object::GroupOrder,
+        wait: FetchWait,
+        draft: UnknownRangeDraft,
+    ) -> FetchDeliveryHandle {
+        let (sender, sent) = MockFetchSender::new(draft);
+        let request = EgressFetchRequest {
+            subscriber_session_id: 2,
+            request_id: 0,
+            cache: self.ingest.cache.clone(),
+            start_location: range.start,
+            end_location: range.end,
+            group_order,
+            wait,
+        };
+        let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
+        FetchDeliveryHandle { sent, join_handle }
+    }
+
+    pub(crate) async fn wait_group_closed(&self, group_id: u64) {
+        let cache = &self.ingest.cache;
+        let whole_group = location(group_id, 0);
+        let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
+        while !cache.covers(whole_group, whole_group) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "group {group_id} never closed"
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    }
+
+    pub(crate) async fn wait_track_malformed(&self) {
+        let cache = &self.ingest.cache;
+        tokio::time::timeout(RECV_TIMEOUT, cache.malformed_track_detected())
+            .await
+            .expect("track should be marked malformed");
+    }
+
+    pub(crate) async fn wait_largest_location(
+        &self,
+        expected: moqt::object::Location,
+    ) -> moqt::object::Location {
+        wait_largest_location(&self.ingest.cache, expected).await
+    }
+}
+
+pub(crate) async fn wait_largest_location(
+    cache: &TrackCache,
+    expected: moqt::object::Location,
+) -> moqt::object::Location {
+    let deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
+    loop {
+        if let Some(largest) = cache.largest_location()
+            && largest >= expected
+        {
+            return largest;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "cache never reached largest location {{{}, {}}}",
+            expected.group_id,
+            expected.object_id
+        );
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+pub(crate) async fn receive_objects_until_close(
+    egress: &mut EgressRunnerHandle,
+) -> Vec<DataObject> {
+    let (objects, end) = receive_objects_until_end(egress).await;
+    assert!(
+        matches!(end, Sent::Closed),
+        "downstream stream should end with a FIN, got {end:?}"
+    );
+    objects
+}
+
+pub(crate) async fn receive_objects_until_end(
+    egress: &mut EgressRunnerHandle,
+) -> (Vec<DataObject>, Sent) {
+    let mut objects = Vec::new();
+    loop {
+        match tokio::time::timeout(RECV_TIMEOUT, egress.sent.recv()).await {
+            Ok(Some(Sent::Object(object))) => objects.push(object),
+            Ok(Some(end)) => return (objects, end),
+            Ok(None) => panic!(
+                "egress dropped its sender after sending {} objects",
+                objects.len()
+            ),
+            Err(_) => panic!(
+                "egress stalled without closing after sending {} objects",
+                objects.len()
+            ),
+        }
+    }
+}
+
+pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
+    assert!(
+        matches!(
+            objects.first(),
+            Some(DataObject::SubgroupHeader(header)) if header.group_id == 0
+        ),
+        "downstream stream should start with the group 0 subgroup header"
+    );
+    let payloads = payloads_of(objects);
+    let expected: Vec<Bytes> = (0..OBJECT_COUNT).map(ordered_payload).collect();
+    assert_eq!(
+        payloads.len(),
+        expected.len(),
+        "downstream stream closed before receiving {OBJECT_COUNT} objects (got {})",
+        payloads.len()
+    );
+    assert_eq!(payloads, expected, "objects must arrive in publish order");
+}
+
+pub(crate) fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
+    objects
+        .iter()
+        .filter_map(|object| match object {
+            DataObject::SubgroupObject(object) if !object.payload.is_empty() => {
+                Some(object.payload.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn downstream_object_ids(objects: &[DataObject]) -> Vec<u64> {
+    objects
+        .iter()
+        .filter_map(|object| match object {
+            DataObject::SubgroupObject(object) => Some(object.location.object_id),
+            _ => None,
+        })
+        .collect()
+}

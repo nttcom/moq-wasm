@@ -1,4 +1,5 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -35,10 +36,16 @@ pub struct SubscribeHandler {
     pub filter_type: FilterType,
     /// Sent in the SUBSCRIBE_OK.
     pub track_properties: TrackProperties,
+    trace_context: Option<TraceContext>,
     guard: ResponseGuard,
 }
 
 impl SubscribeHandler {
+    /// The TRACE_CONTEXT the request carried, if the peer sent a valid one.
+    pub fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace_context.as_ref()
+    }
+
     pub(crate) fn new(
         session_context: Arc<SessionContext>,
         connection: Arc<Connection>,
@@ -46,8 +53,12 @@ impl SubscribeHandler {
     ) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            subscribe_message.request_id,
-            RequestKind::Subscribe,
+            RequestSummary::new(
+                RequestKind::Subscribe,
+                subscribe_message.request_id,
+                Some(&subscribe_message.track_namespace),
+                Some(&subscribe_message.track_name),
+            ),
         );
         let request_id = guard
             .connection()
@@ -64,6 +75,7 @@ impl SubscribeHandler {
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
             track_properties: TrackProperties::default(),
+            trace_context: subscribe_message.trace_context,
         }
     }
 
@@ -86,7 +98,6 @@ impl SubscribeHandler {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let subscribe_ok = SubscribeOk {
             request_id: self.guard.request_id(),
             track_alias: wire_part(track_alias),
@@ -96,9 +107,7 @@ impl SubscribeHandler {
             track_properties: self.track_properties.clone(),
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::SubscribeOk(subscribe_ok))
+            .accept(OutgoingResponse::SubscribeOk(subscribe_ok))
             .await?;
         if self.session_context.follows_go_away() {
             self.guard.connection().serve(self.request_id);
@@ -156,14 +165,14 @@ mod tests {
     use crate::subscribe::SubscribeOption;
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_dual_server},
+        modules::test_support::{connect_sessions, spawn_native_server},
         object::{ContentExists, GroupOrder},
     };
 
     #[tokio::test]
     async fn subscribe_ok_states_ascending_when_the_subscriber_leaves_the_order_to_the_publisher() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-group-order");
+        let (port, accept) = spawn_native_server("subscribe-handler-group-order");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -195,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_ok_hands_its_max_cache_duration_to_the_subscriber() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-max-cache-duration");
+        let (port, accept) = spawn_native_server("subscribe-handler-max-cache-duration");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -228,7 +237,7 @@ mod tests {
     #[tokio::test]
     async fn exposes_track_namespace_as_tuple_and_joined_string() {
         // Arrange
-        let (port, accept) = spawn_dual_server("subscribe-handler-namespace");
+        let (port, accept) = spawn_native_server("subscribe-handler-namespace");
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

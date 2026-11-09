@@ -1,4 +1,4 @@
-// Development VTS backed by crates/vts/apps.example.json, run natively by
+// Development VTS backed by services/vts/apps.example.json, run natively by
 // the browser e2e runners. tests/compose-relays.sh starts the same binary,
 // port and apps file for the relay suites.
 
@@ -10,7 +10,7 @@ import { spawnProcess } from "./process.mjs";
 import { repoRoot } from "../../scripts/dev-env.mjs";
 import { waitForHttpOk } from "./helpers.mjs";
 
-export const vtsAppsFile = "crates/vts/apps.example.json";
+export const vtsAppsFile = "services/vts/apps.example.json";
 export const relayAppId = "11111111-2222-3333-4444-555555555555";
 export const experimentAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
 export const vtsPort = Number(process.env.VTS_PORT ?? 8081);

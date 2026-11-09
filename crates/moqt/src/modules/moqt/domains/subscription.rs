@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use crate::{
     TrackProperties,
     modules::moqt::control_plane::control_messages::messages::{
         parameters::content_exists::ContentExists, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
     object::GroupOrder,
-    subscribe::{FilterType, SubscribeHandler},
+    subscribe::{FilterType, SubscribeHandler, SubscribeUpdateOption},
 };
 
 #[derive(Clone, Debug)]
@@ -83,6 +85,35 @@ impl Subscription {
             Self::SubscriberInitiated(subscription) => subscription.subscriber_priority,
         }
     }
+
+    pub(crate) fn last_update(&self) -> &LastSubscribeUpdate {
+        match self {
+            Self::PublisherInitiated(subscription) => &subscription.last_update,
+            Self::SubscriberInitiated(subscription) => &subscription.last_update,
+        }
+    }
+}
+
+/// The last SUBSCRIBE_UPDATE sent for a subscription, shared by its clones,
+/// so a later update repeats its range instead of widening it back to the
+/// subscription's filter (draft-14 §9.10).
+#[derive(Clone, Debug, Default)]
+pub struct LastSubscribeUpdate(Arc<std::sync::Mutex<Option<SubscribeUpdateOption>>>);
+
+impl LastSubscribeUpdate {
+    pub(crate) fn get(&self) -> Option<SubscribeUpdateOption> {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn set(&self, option: SubscribeUpdateOption) {
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(option);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +129,7 @@ pub struct SubscriberInitiatedSubscription {
     pub filter_type: FilterType,
     /// What the SUBSCRIBE_OK said about the track.
     pub track_properties: TrackProperties,
+    pub last_update: LastSubscribeUpdate,
 }
 
 impl SubscriberInitiatedSubscription {
@@ -119,6 +151,7 @@ impl SubscriberInitiatedSubscription {
             subscriber_priority,
             filter_type,
             track_properties: subscribe_ok.track_properties,
+            last_update: LastSubscribeUpdate::default(),
         }
     }
 
@@ -134,6 +167,7 @@ impl SubscriberInitiatedSubscription {
             subscriber_priority: handler.subscriber_priority,
             filter_type: handler.filter_type,
             track_properties: handler.track_properties.clone(),
+            last_update: LastSubscribeUpdate::default(),
         }
     }
 }
@@ -152,6 +186,7 @@ pub struct PublisherInitiatedSubscription {
     pub delivery_timeout: Option<u64>,
     /// What the PUBLISH said about the track.
     pub track_properties: TrackProperties,
+    pub last_update: LastSubscribeUpdate,
 }
 
 impl PublisherInitiatedSubscription {
@@ -174,6 +209,7 @@ impl PublisherInitiatedSubscription {
             filter_type: publish_ok.filter_type,
             delivery_timeout: None,
             track_properties,
+            last_update: LastSubscribeUpdate::default(),
         }
     }
 

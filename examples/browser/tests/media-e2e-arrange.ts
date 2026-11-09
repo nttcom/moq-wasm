@@ -1,16 +1,52 @@
-import type { Browser, Page } from '@playwright/test'
+import type { Browser, BrowserContext, Page } from '@playwright/test'
 import { MEDIA_PUBLISHER_PATH, MEDIA_SUBSCRIBER_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const namespace = process.env.MEDIA_E2E_NAMESPACE ?? 'anon/e2e/moqt-media'
-const videoCodec = process.env.MEDIA_E2E_VIDEO_CODEC ?? 'vp8'
+const videoCodec = process.env.MEDIA_E2E_VIDEO_CODEC ?? 'avc1.42001F'
 const videoEncoderHardwareAcceleration = process.env.MEDIA_E2E_VIDEO_HARDWARE_ACCELERATION ?? 'prefer-software'
+// `run-media-e2e.mjs --through-tcp-proxy` sets `websocket`.
+const expectedTransport = process.env.MEDIA_E2E_EXPECTED_TRANSPORT ?? 'webtransport'
 
 export const mediaE2EConfig = {
   moqtUrl,
   namespace,
   videoCodec,
-  videoEncoderHardwareAcceleration
+  videoEncoderHardwareAcceleration,
+  expectedTransport
+}
+
+const SESSION_TRANSPORT_LOG = /^\[moq-wasm::core::session\] session established transport=(\w+) /
+
+/** Fills as `MoqSession` logs each established session. */
+function recordSessionTransports(page: Page): string[] {
+  const transports: string[] = []
+  page.on('console', (message) => {
+    const match = SESSION_TRANSPORT_LOG.exec(message.text())
+    if (match) {
+      transports.push(match[1])
+    }
+  })
+  return transports
+}
+
+type TelemetryReport = {
+  page: string
+  logs: { timeMs: number; level: string; target: string; message: string; fields: Record<string, unknown> }[]
+}
+
+/** Prints the pages' client telemetry logs, the wasm module's included, and answers 202 in place of the observability server, which the E2E does not run. */
+async function printClientTelemetry(context: BrowserContext): Promise<void> {
+  await context.route('**/api/client-telemetry', async (route) => {
+    const report = JSON.parse(route.request().postData() ?? '{}') as TelemetryReport
+    for (const { timeMs, level, target, message, fields } of report.logs ?? []) {
+      const values = Object.entries(fields).map(([key, value]) => ` ${key}=${value}`)
+      console.log(
+        `[telemetry ${report.page}] ${new Date(timeMs).toISOString()} ${level} [${target}] ${message}${values.join('')}`
+      )
+    }
+    await route.fulfill({ status: 202 })
+  })
 }
 
 function buildPagePath(path: string): string {
@@ -29,31 +65,30 @@ async function openExamplePage(page: Page, path: string): Promise<void> {
 
 function createPublisherPageModel(page: Page) {
   return {
+    sessionTransports: recordSessionTransports(page),
     urlInput: page.getByTestId('publisher-url-input'),
     namespaceInput: page.getByTestId('publisher-namespace-input'),
     connectButton: page.getByTestId('publisher-connect-button'),
     connectionStatus: page.getByTestId('publisher-connection-status'),
-    setupButton: page.getByTestId('publisher-setup-button'),
-    setupStatus: page.getByTestId('publisher-setup-status'),
-    announceButton: page.getByTestId('publisher-announce-button'),
-    announceStatus: page.getByTestId('publisher-announce-status'),
     getUserMediaButton: page.getByTestId('publisher-get-user-media-button'),
     captureStatus: page.getByTestId('publisher-capture-status'),
     sendButton: page.getByTestId('publisher-send-button'),
+    muteVideoButton: page.getByTestId('publisher-mute-video-button'),
+    shareScreenButton: page.getByTestId('publisher-share-screen-button'),
     sendStatus: page.getByTestId('publisher-send-status')
   }
 }
 
 function createSubscriberPageModel(page: Page) {
   return {
+    sessionTransports: recordSessionTransports(page),
     urlInput: page.getByTestId('subscriber-url-input'),
     namespaceInput: page.getByTestId('subscriber-namespace-input'),
     connectButton: page.getByTestId('subscriber-connect-button'),
     connectionStatus: page.getByTestId('subscriber-connection-status'),
-    setupButton: page.getByTestId('subscriber-setup-button'),
-    setupStatus: page.getByTestId('subscriber-setup-status'),
     catalogSubscribeButton: page.getByTestId('subscriber-catalog-subscribe-button'),
     catalogStatus: page.getByTestId('subscriber-catalog-status'),
+    videoTrackSelect: page.getByTestId('subscriber-video-track-select'),
     trackSubscribeButton: page.getByTestId('subscriber-track-subscribe-button'),
     receiveStatus: page.getByTestId('subscriber-receive-status'),
     playbackStatus: page.getByTestId('subscriber-playback-status'),
@@ -69,6 +104,7 @@ export async function arrangeMediaE2ESession(browser: Browser) {
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']
   })
+  await printClientTelemetry(context)
   const publisherPage = await context.newPage()
   const subscriberPage = await context.newPage()
 

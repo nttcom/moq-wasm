@@ -195,7 +195,7 @@ mod tests {
                 },
                 version::Version,
             },
-            test_support::{spawn_connected_draft18_sessions, spawn_connected_dual_sessions},
+            test_support::{spawn_connected_draft18_sessions, spawn_connected_native_sessions},
             transport::transport_send_stream::MockTransportSendStream,
         },
     };
@@ -259,7 +259,7 @@ mod tests {
         for (version, (client, server)) in [
             (
                 Version::Draft14,
-                spawn_connected_dual_sessions("fetch-sender-dropped-14").await,
+                spawn_connected_native_sessions("fetch-sender-dropped-14").await,
             ),
             (
                 Version::Draft18,
@@ -290,7 +290,7 @@ mod tests {
         for (version, (client, server), wire_code) in [
             (
                 Version::Draft14,
-                spawn_connected_dual_sessions("fetch-sender-unknown-14").await,
+                spawn_connected_native_sessions("fetch-sender-unknown-14").await,
                 0x0,
             ),
             (

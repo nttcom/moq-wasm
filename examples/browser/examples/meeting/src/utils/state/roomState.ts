@@ -72,8 +72,6 @@ function buildRemoteMember({ existingMember, announcedUser, trackNamespace }: Bu
     id: announcedUser,
     name: announcedUser,
     trackNamespace,
-    // subscribeId is left undefined until the track is actually subscribed; the
-    // id is then taken from subscribe()'s return value (issued by moqtClient).
     subscribedTracks: createFreshSubscribedTracks()
   }
 }

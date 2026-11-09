@@ -43,7 +43,7 @@ Timestamps are `Timestamp` values in microseconds with conversions to and from
 | `mp4::Fmp4TrackMuxer` | One track per muxer with the init segment returned apart from the fragments, the shape draft-ietf-moq-cmsf-01 §3.1/§3.3 gives a MoQT track |
 | `loc` | `Muxer`, `Demuxer`, and transport-independent `LocObject` with typed extensions |
 | `rtp` | `Demuxer` / `Muxer` over RTP datagrams, `packet::Header` (RFC 3550), the H.264 (RFC 6184), AAC `MPEG4-GENERIC` (RFC 3640), G.711 A-law (RFC 3551) and Opus (RFC 7587) payload formats, and the `sdp::SessionDescription` subset that describes a plain RTP session |
-| `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions) |
+| `h264` | Annex-B/AVCC conversion, NAL unit types, SPS parsing (codec string, dimensions), and `ElementaryStreamDemuxer`, which splits a raw Annex-B stream read in chunks into access units stamped with their arrival time |
 | `vp8` / `vp9` / `av1` | Keyframe detection and the configuration a keyframe carries: the VP8 frame size, the VP9 uncompressed header, the AV1 sequence header |
 | `aac` | AudioSpecificConfig and ADTS parsing |
 | `transmux` | `Transmuxer` (push API) and `transmux()` (Read/Write API) |

@@ -1,0 +1,8 @@
+[package]
+name = "static-files"
+version = "0.1.0"
+edition = "2024"
+description = "Serves the built files of a web page from a directory: path checks, content types and cache hints"
+
+[dependencies]
+tokio = { version = "1.52.3", features = ["fs"] }

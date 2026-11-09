@@ -18,7 +18,7 @@ use crate::{
                 connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
-                session_creator::Reconnect,
+                session_creator::{Reconnect, SetupRejected},
                 subscriber::{send_subscribe, send_subscribe_namespace},
             },
             runtime::tasks::connection_tasks::ConnectionTasks,
@@ -26,6 +26,7 @@ use crate::{
         },
         transport::transport_connection::TransportClose,
     },
+    object::Location,
     subscribe::UnsubscribeHandler,
     subscribe::{FilterType, SubscribeOption},
 };
@@ -36,6 +37,13 @@ const MIGRATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Publishers move on the same GOAWAY as their subscribers, so a request the
 /// new server rejects is sent again at this interval.
 const RETRY_INTERVAL: Duration = Duration::from_millis(500);
+/// About as long as a relay keeps a track in its cache.
+#[cfg(not(test))]
+const RECONNECT_LIMIT: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const RECONNECT_LIMIT: Duration = Duration::from_secs(2);
+const RECONNECT_FIRST_DELAY: Duration = Duration::from_millis(500);
+const RECONNECT_MAX_DELAY: Duration = Duration::from_secs(10);
 /// How long the previous connection waits for a subscription that has not
 /// cut over, such as one that delivers nothing on the new connection.
 const CUTOVER_LIMIT: Duration = Duration::from_secs(10);
@@ -49,7 +57,7 @@ const PREVIOUS_CONNECTION_GRACE: Duration = Duration::from_millis(300);
 /// What a client session that follows GOAWAY needs to open its next
 /// connection.
 pub(crate) struct Follow {
-    pub(crate) reconnect: Box<dyn Reconnect>,
+    pub(crate) reconnect: Arc<dyn Reconnect>,
     pub(crate) url: String,
     /// The events of the first connection.
     pub(crate) connection_events: mpsc::UnboundedReceiver<SessionEvent>,
@@ -59,6 +67,7 @@ pub(crate) struct Follow {
 /// `Session::receive_event` with logical ids, and moves the session to the
 /// connection a GOAWAY names (draft-14 §3.5).
 pub(crate) struct MigrationTask {
+    session: Arc<SessionContext>,
     join_handle: JoinHandle,
 }
 
@@ -76,13 +85,14 @@ impl MigrationTask {
             _tasks: first_tasks,
         };
         let router = Router {
-            session,
+            session: session.clone(),
             reconnect: follow.reconnect,
             url: follow.url,
             closed_sender,
             session_span,
         };
         Self {
+            session,
             join_handle: executor::spawn("Session Migration", router.route(current)),
         }
     }
@@ -91,6 +101,7 @@ impl MigrationTask {
 impl Drop for MigrationTask {
     fn drop(&mut self) {
         self.join_handle.abort();
+        self.session.end_moves();
     }
 }
 
@@ -103,9 +114,12 @@ struct Live {
 
 struct Previous {
     live: Live,
-    /// Resolves once no carried subscription has a subgroup stream open on
-    /// this connection, or `PREVIOUS_CONNECTION_GRACE` after every one cut
-    /// over (waiting at most `CUTOVER_LIMIT`).
+    /// Resolves once both hold:
+    /// - no moved subscription has a subgroup stream open on this
+    ///   connection, or `PREVIOUS_CONNECTION_GRACE` has passed after every
+    ///   one cut over (waiting at most `CUTOVER_LIMIT`);
+    /// - no subscription that ends on this connection has a stream open, or
+    ///   `CUTOVER_LIMIT` has passed.
     released: BoxFuture<()>,
     cutovers: Vec<Arc<std::sync::Mutex<SharedCutover>>>,
 }
@@ -119,7 +133,7 @@ struct Migrated {
 
 struct Router {
     session: Arc<SessionContext>,
-    reconnect: Box<dyn Reconnect>,
+    reconnect: Arc<dyn Reconnect>,
     url: String,
     closed_sender: watch::Sender<Option<TransportClose>>,
     session_span: Span,
@@ -129,6 +143,7 @@ impl Router {
     async fn route(mut self, mut current: Live) {
         let mut previous: Option<Previous> = None;
         let mut migration: Option<BoxFuture<anyhow::Result<Migrated>>> = None;
+        let mut reconnecting = false;
         let mut current_closed = false;
         loop {
             tokio::select! {
@@ -158,8 +173,20 @@ impl Router {
                     Some(SessionEvent::Disconnected()) | None => {
                         current_closed = true;
                         if migration.is_none() {
-                            self.finish(&current).await;
-                            return;
+                            let close = current.connection.transport.closed().await;
+                            if !self.reconnects(&current.connection, &close) {
+                                self.finish(&current).await;
+                                return;
+                            }
+                            tracing::info!(%close, url = %self.url, "connection lost; reconnecting");
+                            reconnecting = true;
+                            migration = Some(Box::pin(reconnect(
+                                self.session.clone(),
+                                self.reconnect.clone(),
+                                self.url.clone(),
+                                current.connection.generation + 1,
+                                self.session_span.clone(),
+                            )));
                         }
                     }
                     Some(SessionEvent::PublishDone(handler)) => {
@@ -174,14 +201,14 @@ impl Router {
                 signal = previous_signal(previous.as_mut()) => match signal {
                     PreviousSignal::Released => {
                         if let Some(previous) = previous.take() {
-                            tracing::info!("closing the previous connection");
+                            tracing::debug!("closing the previous connection");
                             self.retire(previous);
                         }
                     }
                     PreviousSignal::Event(Some(SessionEvent::GoAway(_) | SessionEvent::ProtocolViolation())) => {}
                     PreviousSignal::Event(Some(SessionEvent::Disconnected()) | None) => {
                         if let Some(previous) = previous.take() {
-                            tracing::info!("the previous connection was closed");
+                            tracing::debug!("the previous connection was closed");
                             self.retire(previous);
                         }
                     }
@@ -211,15 +238,23 @@ impl Router {
                                 self.retire(older);
                             }
                             self.url = migrated.url;
-                            previous = Some(Previous {
+                            let moved_from = Previous {
                                 live: std::mem::replace(&mut current, migrated.live),
                                 released: migrated.released,
                                 cutovers: migrated.cutovers,
-                            });
+                            };
+                            if std::mem::take(&mut reconnecting) {
+                                // A lost connection delivers nothing more.
+                                self.retire(moved_from);
+                                tracing::info!("reconnected");
+                            } else {
+                                previous = Some(moved_from);
+                                tracing::info!("moved to the new connection");
+                            }
                             current_closed = false;
-                            tracing::info!("moved to the new connection");
                         }
                         Err(error) => {
+                            reconnecting = false;
                             tracing::warn!(error = format!("{error:#}"), "migration failed; staying on the current connection");
                             if current_closed {
                                 self.finish(&current).await;
@@ -228,6 +263,23 @@ impl Router {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn reconnects(&self, connection: &Connection, close: &TransportClose) -> bool {
+        if connection.closed_locally() {
+            return false;
+        }
+        match close.code {
+            None => true,
+            Some(code) => {
+                self.reconnect.refreshes_token()
+                    && code
+                        == connection
+                            .control
+                            .version()
+                            .termination_code(TerminationErrorCode::ExpiredAuthToken)
             }
         }
     }
@@ -276,14 +328,16 @@ impl Router {
 
     async fn finish(&self, current: &Live) {
         let close = current.connection.transport.closed().await;
+        self.session.end_moves();
         self.closed_sender.send_replace(Some(close));
         self.forward(SessionEvent::Disconnected());
     }
 }
 
-// Returned once per event and matched at once, never stored: boxing the event
-// would allocate for every one.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a select! result that is matched right away, never stored"
+)]
 enum PreviousSignal {
     Event(Option<SessionEvent>),
     Released,
@@ -304,6 +358,61 @@ async fn optional<F: Future + Unpin>(future: Option<&mut F>) -> F::Output {
         Some(future) => future.await,
         None => std::future::pending().await,
     }
+}
+
+async fn reconnect(
+    session: Arc<SessionContext>,
+    reconnect: Arc<dyn Reconnect>,
+    url: String,
+    generation: u64,
+    session_span: Span,
+) -> anyhow::Result<Migrated> {
+    let deadline = executor::now() + RECONNECT_LIMIT;
+    let mut delay = RECONNECT_FIRST_DELAY;
+    let mut token_retried = false;
+    loop {
+        let (event_sender, events) = mpsc::unbounded_channel();
+        let connecting = reconnect.connect(url.clone(), generation, event_sender);
+        let attempt = migrate(
+            session.clone(),
+            connecting,
+            events,
+            url.clone(),
+            session_span.clone(),
+        );
+        let remaining = deadline.saturating_sub(executor::now());
+        let error = match executor::timeout(remaining, attempt).await {
+            Ok(Ok(migrated)) => return Ok(migrated),
+            Ok(Err(error)) => error,
+            Err(()) => anyhow::anyhow!("gave up reconnecting to {url}"),
+        };
+        if rejects_token(&session, &error) {
+            if token_retried {
+                return Err(error);
+            }
+            token_retried = true;
+        }
+        if executor::now() + delay >= deadline {
+            return Err(error.context("gave up reconnecting"));
+        }
+        tracing::debug!(error = format!("{error:#}"), "reconnect attempt failed");
+        executor::sleep(delay).await;
+        delay = (delay * 2).min(RECONNECT_MAX_DELAY);
+    }
+}
+
+fn rejects_token(session: &SessionContext, error: &anyhow::Error) -> bool {
+    let version = session.connection().control.version();
+    error
+        .downcast_ref::<SetupRejected>()
+        .is_some_and(|rejected| {
+            [
+                TerminationErrorCode::Unauthorized,
+                TerminationErrorCode::ExpiredAuthToken,
+            ]
+            .into_iter()
+            .any(|code| version.termination_code(code) == rejected.code)
+        })
 }
 
 /// Opens the next connection, sends the namespace and track subscriptions
@@ -328,18 +437,25 @@ async fn migrate(
         .carried
         .as_ref()
         .context("a session that follows GOAWAY carries its requests")?;
-    let mut carried = carried.lock().await;
+    let mut migrating = carried.write().await;
+    let carried = migrating
+        .get_mut()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let moved_from = session.connection();
-    for (namespace, interest) in &carried.namespaces {
-        retry_until(deadline, || {
-            send_subscribe_namespace(&connection, namespace, *interest)
-        })
-        .await
-        .with_context(|| {
-            format!("SUBSCRIBE_NAMESPACE {namespace} ({interest:?}) on the new connection failed")
-        })?;
+    for (namespace, interest) in carried.namespaces.values() {
+        for request in connection.control.namespace_requests(*interest) {
+            retry_until(deadline, || {
+                send_subscribe_namespace(&connection, namespace.clone(), request)
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "SUBSCRIBE_NAMESPACE {namespace} ({request:?}) on the new connection failed"
+                )
+            })?;
+        }
     }
-    for namespace in &carried.published_namespaces {
+    for namespace in carried.published_namespaces.values() {
         retry_until(deadline, || async {
             send_publish_namespace(&connection, namespace.clone())
                 .await?
@@ -382,6 +498,7 @@ async fn migrate(
     let mut cut_overs = Vec::new();
     let mut cutovers = Vec::new();
     let mut previous_open_subgroups = Vec::new();
+    let mut ending_open_subgroups = Vec::new();
     for (request_id, outcome) in carried_over {
         match outcome {
             Carried::Moved {
@@ -393,6 +510,7 @@ async fn migrate(
                 previous_open_subgroups.push((cutover.clone(), previous_open));
                 cutovers.push(cutover);
             }
+            Carried::Ends { previous_open } => ending_open_subgroups.push(previous_open),
             Carried::Stays => {}
             Carried::Gone => {
                 carried.subscriptions.remove(&request_id);
@@ -400,7 +518,7 @@ async fn migrate(
         }
     }
     session.move_to(connection.clone());
-    drop(carried);
+    drop(migrating);
     Ok(Migrated {
         live: Live {
             connection,
@@ -420,10 +538,17 @@ async fn migrate(
                     .iter()
                     .map(|(cutover, open)| release_when_idle(&moved_from, cutover, open)),
             );
-            tokio::select! {
-                () = grace => {}
-                _ = idle => {}
-            }
+            let moving = async {
+                tokio::select! {
+                    () = grace => {}
+                    _ = idle => {}
+                }
+            };
+            let ending = executor::timeout(
+                CUTOVER_LIMIT,
+                join_all(ending_open_subgroups.iter().map(OpenSubgroups::all_ended)),
+            );
+            let _ = tokio::join!(moving, ending);
             session.unserved(&moved_from).await;
         }),
         cutovers,
@@ -470,6 +595,9 @@ enum Carried {
         cutover: Arc<std::sync::Mutex<SharedCutover>>,
         previous_open: OpenSubgroups,
     },
+    /// The previous connection has started the subscription's End Group;
+    /// the subscription is not sent again and ends on the previous connection.
+    Ends { previous_open: OpenSubgroups },
     /// The new server did not accept it; it stays on the previous connection.
     Stays,
     /// It no longer has a receiver.
@@ -486,8 +614,16 @@ async fn carry_subscription(
     let Some(previous_request_id) = moved_from.wire_request_id(request_id) else {
         return (request_id, Carried::Gone);
     };
+    let Some((newest_group, previous_open)) =
+        moved_from.receiver_progress(previous_request_id).await
+    else {
+        return (request_id, Carried::Gone);
+    };
+    let Some(filter_type) = resumed_filter(subscription.option.filter_type, newest_group) else {
+        return (request_id, Carried::Ends { previous_open });
+    };
     let option = SubscribeOption {
-        filter_type: FilterType::NextGroupStart,
+        filter_type,
         ..subscription.option.clone()
     };
     let subscribed = retry_until(deadline, || {
@@ -500,7 +636,10 @@ async fn carry_subscription(
     })
     .await;
     let subscribe_ok = match subscribed {
-        Ok(subscribe_ok) => subscribe_ok,
+        Ok((subscribe_ok, response)) => {
+            response.accept();
+            subscribe_ok
+        }
         Err(error) => {
             tracing::warn!(
                 namespace = %subscription.track_namespace,
@@ -523,7 +662,11 @@ async fn carry_subscription(
         shared: cutover,
         previous_open_subgroups,
     }) = moved_from
-        .start_cutover(previous_request_id, start.group_id, cut_over)
+        .start_cutover(
+            previous_request_id,
+            cut_over,
+            first_whole_group(&filter_type, &subscribe_ok.content_exists),
+        )
         .await
     else {
         let _ = connection
@@ -571,6 +714,50 @@ async fn carry_subscription(
     )
 }
 
+/// The filter a subscription is sent again with, after the previous
+/// connection handed out groups up to `newest` (draft-14 §9.7):
+/// - an AbsoluteRange starts at the group after `newest`, or at its own
+///   start if later, and keeps its End Group;
+/// - any other filter becomes NextGroupStart.
+///
+/// `None` once the previous connection has started the End Group.
+fn resumed_filter(filter_type: FilterType, newest: Option<u64>) -> Option<FilterType> {
+    match filter_type {
+        FilterType::AbsoluteRange { end_group, .. }
+            if newest.is_some_and(|newest| newest >= end_group) =>
+        {
+            None
+        }
+        FilterType::AbsoluteRange {
+            location,
+            end_group,
+        } => Some(FilterType::AbsoluteRange {
+            location: newest.map_or(location, |newest| {
+                location.max(Location {
+                    group_id: newest + 1,
+                    object_id: 0,
+                })
+            }),
+            end_group,
+        }),
+        _ => Some(FilterType::NextGroupStart),
+    }
+}
+
+/// The first group a subscription delivers from object 0. It starts at
+/// its filter start, but not before the object after the Largest Object
+/// of its SUBSCRIBE_OK (draft-14 §9.7); a group it starts inside is
+/// joined mid-way.
+fn first_whole_group(filter_type: &FilterType, content_exists: &ContentExists) -> u64 {
+    let largest = match content_exists {
+        ContentExists::True { location } => Some(*location),
+        ContentExists::False => None,
+    };
+    let start = filter_type.start_location(largest);
+    let first = largest.map_or(start, |largest| start.max(largest.next()));
+    first.group_id + u64::from(first.object_id != 0)
+}
+
 async fn retry_until<T, F, R>(deadline: Duration, mut request: F) -> Result<T, RequestFailure>
 where
     F: FnMut() -> R,
@@ -590,16 +777,21 @@ where
 mod tests {
     use bytes::Bytes;
 
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use crate::{
-        ClientConfig, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
+        AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig,
+        Endpoint, NATIVE, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
         TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::{
             moqt::version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, draft18_client_with_config,
-                dual_client_with_config, open_subgroup, send_payload, spawn_draft18_server,
-                spawn_dual_server, spawn_dual_server_offering, subscribed_track_reader,
+                native_client_with_config, open_subgroup, self_signed_server_config, send_payload,
+                spawn_draft18_server, spawn_native_server, spawn_native_server_handshake,
+                spawn_native_server_offering, subscribe_namespace_accepted,
+                subscribed_track_reader,
             },
             transport::application_protocol::ApplicationProtocols,
         },
@@ -619,25 +811,23 @@ mod tests {
 
     fn following_go_away() -> ClientConfig {
         ClientConfig {
-            port: 0,
-            verify_certificate: false,
-            authorization_token: None,
+            certificate_verification: CertificateVerification::Disabled,
             follow_go_away: true,
+            ..ClientConfig::default()
         }
     }
 
     async fn connect(port: u16) -> Session {
-        connect_from(dual_client_with_config(following_go_away()), port).await
+        connect_offering(port, APPLICATION_PROTOCOLS).await
     }
 
     async fn connect_offering(port: u16, protocols: ApplicationProtocols) -> Session {
         let client =
-            crate::Endpoint::<crate::DUAL>::create_client_offering(&following_go_away(), protocols)
-                .unwrap();
+            Endpoint::<NATIVE>::create_client_offering(&following_go_away(), protocols).unwrap();
         connect_from(client, port).await
     }
 
-    async fn connect_from(client: crate::Endpoint<crate::DUAL>, port: u16) -> Session {
+    async fn connect_from(client: Endpoint<NATIVE>, port: u16) -> Session {
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             client
                 .connect(&format!("moqt://127.0.0.1:{port}"))
@@ -654,11 +844,10 @@ mod tests {
     async fn serve_subscribe(
         server: &Session,
     ) -> (StreamDataSenderFactory, FilterType, Subscription) {
-        serve_subscribe_with(server, ContentExists::False).await
+        serve_subscribe_with_content(server, ContentExists::False).await
     }
 
-    /// `serve_subscribe`, answering with `content_exists`.
-    async fn serve_subscribe_with(
+    async fn serve_subscribe_with_content(
         server: &Session,
         content_exists: ContentExists,
     ) -> (StreamDataSenderFactory, FilterType, Subscription) {
@@ -678,12 +867,33 @@ mod tests {
         client: &Session,
         server: &Session,
     ) -> (Subscription, StreamDataSenderFactory, Subscription) {
+        subscribe_with(client, server, SubscribeOption::default()).await
+    }
+
+    async fn subscribe_with(
+        client: &Session,
+        server: &Session,
+        option: SubscribeOption,
+    ) -> (Subscription, StreamDataSenderFactory, Subscription) {
         let mut subscriber = client.subscriber();
         let (subscription, (sender, _, served)) = tokio::join!(
-            subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            subscriber.subscribe("ns".into(), "track".into(), option),
             serve_subscribe(server)
         );
         (subscription.unwrap(), sender, served)
+    }
+
+    fn absolute_range(start_group: u64, end_group: u64) -> SubscribeOption {
+        SubscribeOption {
+            filter_type: FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: start_group,
+                    object_id: 0,
+                },
+                end_group,
+            },
+            ..SubscribeOption::default()
+        }
     }
 
     async fn next_payload(reader: &mut TrackReader) -> (u64, Bytes) {
@@ -702,8 +912,8 @@ mod tests {
     #[tokio::test]
     async fn go_away_moves_a_subscription_to_the_named_server_at_a_group_boundary() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -753,8 +963,8 @@ mod tests {
         name: &str,
         protocols: ApplicationProtocols,
     ) -> Option<FilterType> {
-        let (port_a, accept_a) = spawn_dual_server_offering(&format!("{name}-a"), protocols);
-        let (port_b, accept_b) = spawn_dual_server_offering(&format!("{name}-b"), protocols);
+        let (port_a, accept_a) = spawn_native_server_offering(&format!("{name}-a"), protocols);
+        let (port_b, accept_b) = spawn_native_server_offering(&format!("{name}-b"), protocols);
         let client = connect_offering(port_a, protocols).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, _, _) = subscribe(&client, &server_a).await;
@@ -769,7 +979,7 @@ mod tests {
                 object_id: 3,
             },
         };
-        let _ = serve_subscribe_with(&server_b, largest).await;
+        let _ = serve_subscribe_with_content(&server_b, largest).await;
         let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
         assert!(closed.is_ok(), "the migration ends once A is closed");
 
@@ -818,10 +1028,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn go_away_moves_an_absolute_range_from_the_cutover_group_to_its_end_group() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-range-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-range-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) =
+            subscribe_with(&client, &server_a, absolute_range(1, 3)).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (_, filter_b, _) = serve_subscribe(&server_b).await;
+
+        // Assert: B starts after the group A delivered and keeps the End Group
+        assert_eq!(
+            filter_b,
+            FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 2,
+                    object_id: 0
+                },
+                end_group: 3
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn go_away_keeps_the_end_group_a_subscribe_update_narrowed_to() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-update-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-update-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+        client
+            .subscriber()
+            .end_before_group(&subscription, 4, true)
+            .await
+            .unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (_, filter_b, _) = serve_subscribe(&server_b).await;
+
+        // Assert: B starts after the group A delivered and ends at the updated End Group
+        assert_eq!(
+            filter_b,
+            FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 2,
+                    object_id: 0
+                },
+                end_group: 3
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_absolute_range_whose_end_group_arrives_on_the_old_server_stays_there() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-range-end-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-range-end-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let (subscription, sender_a, _) =
+            subscribe_with(&client, &server_a, absolute_range(1, 1)).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut reader = subscribed_track_reader(&client, &subscription).await;
+        assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let subscribe_on_b = tokio::time::timeout(NO_EVENT_TIMEOUT, server_b.receive_event()).await;
+        send_payload(&mut group_1_a, b"a1-1").await;
+        let previous_tail = next_payload(&mut reader).await;
+        group_1_a.close().await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
+
+        // Assert: B gets no SUBSCRIBE; A delivers the rest of the End Group, then closes
+        assert!(subscribe_on_b.is_err(), "{subscribe_on_b:?}");
+        assert_eq!(previous_tail, payload(1, b"a1-1"));
+        assert_eq!(close.expect("A closed once group 1 ended").code, Some(0));
+    }
+
+    #[tokio::test]
     async fn a_subscription_with_no_group_arriving_lets_the_old_server_go_at_once() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-quiet-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-quiet-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-quiet-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-quiet-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -853,8 +1169,8 @@ mod tests {
     #[tokio::test]
     async fn the_old_server_is_kept_until_the_group_arriving_there_ends() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-open-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-open-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-open-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-open-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -889,8 +1205,8 @@ mod tests {
     async fn the_old_server_is_kept_for_the_groups_before_the_new_servers_start() {
         // Arrange: group 1 has ended on A; B already holds group 2, so its
         // SUBSCRIBE starts at group 3 and group 2 can only come from A
-        let (port_a, accept_a) = spawn_dual_server("session-migration-owed-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-owed-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-owed-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-owed-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -912,7 +1228,7 @@ mod tests {
                 object_id: 0,
             },
         };
-        let (sender_b, _, _) = serve_subscribe_with(&server_b, largest_on_b).await;
+        let (sender_b, _, _) = serve_subscribe_with_content(&server_b, largest_on_b).await;
         let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, server_a.closed()).await;
         let mut group_2_a = open_subgroup(&sender_a, 2, SubgroupId::None).await;
         send_payload(&mut group_2_a, b"a2-0").await;
@@ -934,8 +1250,8 @@ mod tests {
     #[tokio::test]
     async fn publish_done_keeps_the_ids_the_application_knows_and_drops_the_drained_one() {
         // Arrange: a group still arriving on A keeps A open after the migration
-        let (port_a, accept_a) = spawn_dual_server("session-migration-done-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-done-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-done-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-done-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, served_a) = subscribe(&client, &server_a).await;
@@ -978,23 +1294,11 @@ mod tests {
     #[tokio::test]
     async fn go_away_subscribes_the_namespaces_again_and_forwards_the_new_events() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-namespace-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-namespace-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-namespace-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-namespace-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
-        let subscriber = client.subscriber();
-        let (subscribed, ()) = tokio::join!(
-            subscriber.subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
-            async {
-                let SessionEvent::SubscribeNameSpace(handler) =
-                    server_a.receive_event().await.unwrap()
-                else {
-                    panic!("expected SUBSCRIBE_NAMESPACE");
-                };
-                handler.ok().await.unwrap();
-            }
-        );
-        subscribed.unwrap();
+        subscribe_namespace_accepted(&client, &server_a, "room").await;
 
         // Act
         server_a
@@ -1066,10 +1370,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn go_away_does_not_subscribe_again_to_an_unsubscribed_namespace() {
+        // Arrange: "room" is subscribed before "lobby", so a renewed "room" would reach server B first
+        let (port_a, accept_a) = spawn_native_server("session-migration-unsubscribed-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-unsubscribed-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        subscribe_namespace_accepted(&client, &server_a, "room").await;
+        subscribe_namespace_accepted(&client, &server_a, "lobby").await;
+        client
+            .subscriber()
+            .unsubscribe_namespace("room".into())
+            .await
+            .unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        let SessionEvent::SubscribeNameSpace(handler) = event else {
+            panic!("expected SUBSCRIBE_NAMESPACE on the new connection, got {event:?}");
+        };
+        assert_eq!(handler.track_namespace_prefix, "lobby");
+    }
+
+    #[tokio::test]
     async fn requests_of_the_new_server_get_ids_apart_from_those_of_the_first() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-ids-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-ids-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-ids-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-ids-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let first = async {
@@ -1124,8 +1461,8 @@ mod tests {
     #[tokio::test]
     async fn tracks_served_for_the_new_server_get_aliases_apart_from_those_of_the_first() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-aliases-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-aliases-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-aliases-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-aliases-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let mut subscriber_a = server_a.subscriber();
@@ -1193,8 +1530,8 @@ mod tests {
     async fn go_away_publishes_on_the_new_server_and_sends_to_both_until_the_old_one_unsubscribes()
     {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-publish-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-publish-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-publish-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-publish-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (published, accepted_a) = publish(&client, &server_a).await;
@@ -1238,8 +1575,8 @@ mod tests {
     #[tokio::test]
     async fn a_subscription_served_on_the_old_server_ends_when_that_server_closes() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-served-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-served-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-served-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-served-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let mut subscriber_a = server_a.subscriber();
@@ -1300,8 +1637,8 @@ mod tests {
     #[tokio::test]
     async fn a_fetch_cut_off_by_the_old_server_continues_on_the_new_one() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-fetch-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-fetch-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-fetch-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-fetch-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let end = Location {
@@ -1472,8 +1809,8 @@ mod tests {
     #[tokio::test]
     async fn an_object_received_before_go_away_is_still_compared_after_it() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-ledger-a");
-        let (port_b, accept_b) = spawn_dual_server("session-migration-ledger-b");
+        let (port_a, accept_a) = spawn_native_server("session-migration-ledger-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-ledger-b");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -1536,9 +1873,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_joining_fetch_after_go_away_asks_the_new_server_for_the_joined_range() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-joining-a");
+        let (port_b, accept_b) = spawn_native_server("session-migration-joining-b");
+        let client = connect(port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let largest = Location {
+            group_id: 3,
+            object_id: 2,
+        };
+        let mut subscriber = client.subscriber();
+        let (subscription, _) = tokio::join!(
+            subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+            serve_subscribe_with_content(&server_a, ContentExists::True { location: largest })
+        );
+        let subscription = subscription.unwrap();
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let (_, filter_b, _) = serve_subscribe(&server_b).await;
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            while client.connection_generation() == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the session moves to B");
+
+        // Act
+        let (handle, fetch_params) = tokio::join!(
+            subscriber.fetch_relative_joining(&subscription, 0, FetchOption::default()),
+            async {
+                let SessionEvent::Fetch(handler) = server_b.receive_event().await.unwrap() else {
+                    panic!("expected FETCH");
+                };
+                handler.ok(false, largest.next()).await.unwrap();
+                handler.fetch.fetch_params
+            }
+        );
+
+        // Assert: a Joining FETCH may not join B's Next Group Start subscription
+        assert_eq!(filter_b, FilterType::NextGroupStart);
+        handle.unwrap();
+        assert_eq!(
+            fetch_params,
+            FetchParams::Standalone {
+                track_namespace: vec!["ns".to_string()],
+                track_name: "track".to_string(),
+                start_location: Location {
+                    group_id: 3,
+                    object_id: 0,
+                },
+                end_location: largest.next(),
+            }
+        );
+    }
+
+    #[tokio::test]
     async fn a_go_away_to_an_unreachable_server_keeps_the_current_connection() {
         // Arrange
-        let (port_a, accept_a) = spawn_dual_server("session-migration-unreachable");
+        let (port_a, accept_a) = spawn_native_server("session-migration-unreachable");
         let client = connect(port_a).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
@@ -1565,5 +1962,367 @@ mod tests {
             event.unwrap().unwrap(),
             SessionEvent::Disconnected()
         ));
+    }
+
+    #[tokio::test]
+    async fn go_away_asks_the_token_provider_again_for_the_new_server() {
+        // Arrange
+        let (port_a, accept_a) = spawn_native_server("session-migration-token-a");
+        let (port_b, handshake_b) = spawn_native_server_handshake("session-migration-token-b");
+        let calls = Arc::new(AtomicU64::new(0));
+        let provider_calls = calls.clone();
+        let endpoint = native_client_with_config(ClientConfig {
+            certificate_verification: CertificateVerification::Disabled,
+            authorization_token: Some(AuthorizationTokenSource::provider(move || {
+                let call = provider_calls.fetch_add(1, Ordering::SeqCst);
+                async move { Ok(format!("token-{call}")) }
+            })),
+            ..ClientConfig::default()
+        });
+        let _client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            endpoint
+                .connect(&format!("moqt://127.0.0.1:{port_a}"))
+                .await?
+                .await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let server_a = accept_a.await.unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let handshake_b = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake_b)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!(
+            handshake_b.authorization_tokens(),
+            [AuthorizationToken::use_value_utf8("token-1")]
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    type AcceptedSessions = mpsc::UnboundedReceiver<(Vec<AuthorizationToken>, Session)>;
+
+    fn spawn_reconnectable_server(
+        name: &str,
+    ) -> (u16, AcceptedSessions, tokio::task::JoinHandle<()>) {
+        let server = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
+        let port = server.local_port().unwrap();
+        let (session_sender, sessions) = mpsc::unbounded_channel();
+        let accept = tokio::spawn(async move {
+            while let Ok(accepting) = server.accept().await {
+                let Ok(handshake) = accepting.await else {
+                    continue;
+                };
+                let tokens = handshake.authorization_tokens().to_vec();
+                if let Ok(session) = handshake.accept(&tracing::Span::current()).await {
+                    let _ = session_sender.send((tokens, session));
+                }
+            }
+        });
+        (port, sessions, accept)
+    }
+
+    fn numbered_tokens(calls: Arc<AtomicU64>) -> AuthorizationTokenSource {
+        AuthorizationTokenSource::provider(move || {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(format!("token-{call}")) }
+        })
+    }
+
+    async fn connect_with(port: u16, token: AuthorizationTokenSource) -> Session {
+        let endpoint = native_client_with_config(ClientConfig {
+            certificate_verification: CertificateVerification::Disabled,
+            authorization_token: Some(token),
+            ..ClientConfig::default()
+        });
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            endpoint
+                .connect(&format!("moqt://127.0.0.1:{port}"))
+                .await?
+                .await
+        })
+        .await
+        .unwrap()
+        .unwrap()
+    }
+
+    async fn next_session(sessions: &mut AcceptedSessions) -> (Vec<AuthorizationToken>, Session) {
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, sessions.recv())
+            .await
+            .expect("a connection within timeout")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_close_for_an_expired_token_reconnects_with_a_new_token_and_resubscribes() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-reconnect");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let (subscription, _, _) = subscribe(&client, &first).await;
+        let mut reader = client.subscriber().track_reader(&subscription);
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let (tokens, second) = next_session(&mut sessions).await;
+        let (sender, filter_type, _) = serve_subscribe(&second).await;
+        let mut group_5 = open_subgroup(&sender, 5, SubgroupId::None).await;
+        send_payload(&mut group_5, b"b5-0").await;
+        let delivered = next_payload(&mut reader).await;
+
+        // Assert
+        assert_eq!(tokens, [AuthorizationToken::use_value_utf8("token-1")]);
+        assert_eq!(filter_type, FilterType::NextGroupStart);
+        assert_eq!(delivered, payload(5, b"b5-0"));
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_close_for_an_expired_token_ends_a_session_with_a_fixed_token() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-no-reconnect");
+        let client = connect_with(port, "jwt".to_string().into()).await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed()).await;
+        let reconnected = tokio::time::timeout(NO_EVENT_TIMEOUT, sessions.recv()).await;
+
+        // Assert
+        assert!(close.expect("session closed").code.is_some());
+        assert!(reconnected.is_err(), "the session must not reconnect");
+    }
+
+    #[tokio::test]
+    async fn moved_past_the_first_connection_resolves_once_the_session_reconnects() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-moved-past");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        let (moved, _second) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(client.moved_past(0), async {
+                first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+                next_session(&mut sessions).await
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(moved);
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn moved_past_is_false_once_the_session_ends_without_moving() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-not-moved");
+        let client = connect_with(port, "jwt".to_string().into()).await;
+        let (_, first) = next_session(&mut sessions).await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let moved = tokio::time::timeout(DISCONNECT_TIMEOUT, client.moved_past(0)).await;
+
+        // Assert
+        assert_eq!(moved, Ok(false));
+    }
+
+    #[tokio::test]
+    async fn a_session_that_cannot_reconnect_ends_after_the_reconnect_limit() {
+        // Arrange
+        let (port, mut sessions, accept) = spawn_reconnectable_server("session-reconnect-limit");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        accept.abort();
+        let _ = accept.await;
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let still_open = tokio::time::timeout(NO_EVENT_TIMEOUT, client.closed()).await;
+        let close =
+            tokio::time::timeout(RECONNECT_LIMIT + DISCONNECT_TIMEOUT, client.closed()).await;
+        let event = tokio::time::timeout(DISCONNECT_TIMEOUT, client.receive_event()).await;
+
+        // Assert
+        assert!(
+            still_open.is_err(),
+            "the session must try to reconnect first"
+        );
+        assert!(
+            close.is_ok(),
+            "the session must end once reconnecting gives up"
+        );
+        assert!(matches!(
+            event.unwrap().unwrap(),
+            SessionEvent::Disconnected()
+        ));
+    }
+
+    /// Leaves the client's next request on `first` unanswered and closes
+    /// `first`; returns the server session the client reconnects with.
+    async fn lose_after_request(first: Session, sessions: &mut AcceptedSessions) -> Session {
+        let unanswered = first.receive_event().await.unwrap();
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        drop(unanswered);
+        let (_, second) = next_session(sessions).await;
+        second
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_namespace_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-namespace");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let subscriber = client.subscriber();
+
+        // Act
+        let (subscribed, (_second, prefix)) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(
+                subscriber
+                    .subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
+                async {
+                    let second = lose_after_request(first, &mut sessions).await;
+                    let SessionEvent::SubscribeNameSpace(handler) =
+                        second.receive_event().await.unwrap()
+                    else {
+                        panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
+                    };
+                    handler.ok().await.unwrap();
+                    let prefix = handler.track_namespace_prefix.clone();
+                    (second, prefix)
+                }
+            )
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(subscribed.is_ok());
+        assert_eq!(prefix, "room");
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-subscribe");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let mut subscriber = client.subscriber();
+
+        // Act
+        let (subscribed, _second) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(
+                subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
+                async {
+                    let second = lose_after_request(first, &mut sessions).await;
+                    serve_subscribe(&second).await;
+                    second
+                }
+            )
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(subscribed.is_ok());
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_publish_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-publish");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let publisher = client.publisher();
+
+        // Act
+        let (published, _second) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(
+                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                async {
+                    let second = lose_after_request(first, &mut sessions).await;
+                    accept_publish(&second).await;
+                    second
+                }
+            )
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(published.is_ok());
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_publish_namespace_cut_off_by_a_lost_connection_is_sent_on_the_new_one() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-announce");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let publisher = client.publisher();
+
+        // Act
+        let (announced, (_second, namespace)) = tokio::time::timeout(RECONNECT_LIMIT, async {
+            tokio::join!(publisher.publish_namespace("room/alice".into()), async {
+                let second = lose_after_request(first, &mut sessions).await;
+                let SessionEvent::PublishNamespace(handler) = second.receive_event().await.unwrap()
+                else {
+                    panic!("expected PUBLISH_NAMESPACE on the new connection");
+                };
+                handler.ok().await.unwrap();
+                let namespace = handler.track_namespace.clone();
+                (second, namespace)
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(announced.is_ok());
+        assert_eq!(namespace, "room/alice");
+        assert_eq!(client.connection_generation(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_request_cut_off_by_a_session_that_does_not_reconnect_fails() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("resend-no-reconnect");
+        let client = connect_with(port, "jwt".to_string().into()).await;
+        let (_, first) = next_session(&mut sessions).await;
+        let subscriber = client.subscriber();
+
+        // Act
+        let (subscribed, _first) = tokio::time::timeout(DISCONNECT_TIMEOUT, async {
+            tokio::join!(
+                subscriber
+                    .subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
+                async {
+                    let unanswered = first.receive_event().await.unwrap();
+                    first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+                    (unanswered, first)
+                }
+            )
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        assert!(matches!(subscribed, Err(RequestFailure::SessionClosed)));
     }
 }

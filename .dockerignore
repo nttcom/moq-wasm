@@ -6,7 +6,7 @@ target
 .DS_Store
 *.log
 logs
-crates/relay/logs
+services/relay/logs
 
 node_modules
 **/node_modules
