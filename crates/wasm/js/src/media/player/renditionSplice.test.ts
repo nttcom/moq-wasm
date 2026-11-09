@@ -21,10 +21,10 @@ test('an incoming group the outgoing rendition has not reached takes over from i
   // Act
   const verdict = splice.acceptIncoming(11n, 0n)
 
-  // Assert: the outgoing rendition retires once it reaches the same group
+  // Assert: the outgoing rendition plays the group before the start and drops the start group
   expect(verdict).toEqual({ play: true, start: { groupId: 11n, aligned: true }, retireOutgoing: false })
   expect(splice.acceptOutgoing(10n)).toBe('play')
-  expect(splice.acceptOutgoing(11n)).toBe('retire')
+  expect(splice.acceptOutgoing(11n)).toBe('drop')
 })
 
 test('the outgoing rendition keeps playing groups it starts before the incoming one delivers', () => {

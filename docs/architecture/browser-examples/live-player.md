@@ -356,9 +356,12 @@ decoder worker receives the groups before it from the outgoing rendition and
 the rest from the incoming one, one continuous track, and the seek timeline is
 kept. At the hand-over the player sends the outgoing subscription a
 SUBSCRIBE_UPDATE ending it before the start group, so the publisher sends the
-rest of the current group and ends it with PUBLISH_DONE; the outgoing
-subscription is unsubscribed instead once it delivers an object at or past the
-start group, or once the incoming one has moved past it.
+rest of the current group and ends it with PUBLISH_DONE. An object at or past
+the start group it sent before it processed the update (draft-ietf-moq-transport-14
+§9.10) is dropped, and the relay resets the stream of that group, so the
+subscription is still ended by PUBLISH_DONE. The player unsubscribes it only
+once the incoming rendition has moved past the start group, or when the
+SUBSCRIBE_UPDATE could not be sent.
 
 An incoming first group more than one group away from the outgoing one means
 the ids are not aligned; the incoming rendition then starts at once and the
