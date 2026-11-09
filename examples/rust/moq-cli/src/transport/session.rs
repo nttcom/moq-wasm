@@ -26,6 +26,7 @@ pub async fn connect_relay(relay: &RelayArgs, app_id: &str) -> Result<RelayConne
             !relay.insecure,
         ),
         authorization_token: auth_token.clone().map(Into::into),
+        versions: relay.offered_versions(),
         ..ClientConfig::default()
     };
     let endpoint = Endpoint::<QUIC>::create_client(&config)?;

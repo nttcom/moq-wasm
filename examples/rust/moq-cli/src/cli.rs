@@ -81,6 +81,20 @@ pub struct RelayArgs {
     /// rewritten token is sent to the relay before the current one expires
     #[arg(long, env = "MOQT_AUTH_TOKEN_FILE")]
     pub auth_token_file: Option<PathBuf>,
+    /// MoQT drafts offered to the relay, comma-separated and most preferred
+    /// first, each draft-14 or draft-18; draft-14 only when omitted
+    #[arg(long, env = "MOQT_VERSIONS", value_delimiter = ',')]
+    pub versions: Vec<moqt::Version>,
+}
+
+impl RelayArgs {
+    pub fn offered_versions(&self) -> Vec<moqt::Version> {
+        if self.versions.is_empty() {
+            moqt::DEFAULT_VERSIONS.to_vec()
+        } else {
+            self.versions.clone()
+        }
+    }
 }
 
 #[derive(Args, Debug)]
@@ -102,9 +116,45 @@ pub struct SubscribeArgs {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
     use url::Url;
 
-    use super::TelemetryArgs;
+    use super::{Cli, Command, TelemetryArgs};
+
+    fn offered_versions(args: &[&str]) -> Vec<moqt::Version> {
+        let cli = Cli::try_parse_from(
+            [
+                "moq-cli",
+                "subscribe",
+                "--relay",
+                "moqt://localhost:4433",
+                "--track",
+                "a/b",
+            ]
+            .into_iter()
+            .chain(args.iter().copied()),
+        )
+        .unwrap();
+        let Command::Subscribe(subscribe) = cli.command else {
+            panic!("expected the subscribe command");
+        };
+        subscribe.relay.offered_versions()
+    }
+
+    #[test]
+    fn the_relay_is_offered_the_versions_given_in_their_order() {
+        // Act / Assert
+        assert_eq!(
+            offered_versions(&["--versions", "draft-18,draft-14"]),
+            [moqt::Version::Draft18, moqt::Version::Draft14]
+        );
+    }
+
+    #[test]
+    fn without_versions_the_default_is_offered() {
+        // Act / Assert
+        assert_eq!(offered_versions(&[]), moqt::DEFAULT_VERSIONS);
+    }
 
     fn endpoint(telemetry: Option<&str>, no_telemetry: bool, relay: &str) -> Option<String> {
         let args = TelemetryArgs {
