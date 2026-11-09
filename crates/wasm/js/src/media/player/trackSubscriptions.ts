@@ -1,0 +1,202 @@
+import type { MoqSubscription, PublishDone } from '../../core/session'
+import {
+  type MediaKind,
+  type ObjectHandler,
+  type PlayedTrack,
+  type TrackContext,
+  observedObjectHandler,
+  readGroups,
+  readJoinedObjects,
+  sessionOf,
+  streamId
+} from './trackContext'
+import { getErrorMessage } from '../internal/status'
+import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
+
+/// draft-14 §7.2: the relay sends the lower subscriber priority value first,
+/// so audio takes the downlink ahead of video.
+const SUBSCRIBER_PRIORITY: Record<MediaKind, number> = { video: 128, audio: 0 }
+
+export type TrackSubscription = PlayedTrack & {
+  id: bigint
+  handle: MoqSubscription
+  /// Set once the player let go of it, so objects still in flight are dropped.
+  forgotten: boolean
+}
+
+/// Review plays what FETCH brings, so the live subscriptions stop forwarding
+/// for its duration and deliver again, from the next group, on the way back.
+export class TrackSubscriptions {
+  private readonly subscriptions = new Map<MediaKind, TrackSubscription>()
+  private readonly retiring = new Set<TrackSubscription>()
+  private forwardPaused = false
+  private forwardUpdate = Promise.resolve()
+
+  constructor(
+    private readonly context: TrackContext,
+    private readonly onPublishDone: (kind: MediaKind, done: PublishDone) => void
+  ) {}
+
+  get(kind: MediaKind): TrackSubscription | undefined {
+    return this.subscriptions.get(kind)
+  }
+
+  entries(): [MediaKind, TrackSubscription][] {
+    return [...this.subscriptions]
+  }
+
+  get paused(): boolean {
+    return this.forwardPaused
+  }
+
+  /// `currentGroup` starts the subscription at the first object of the group
+  /// the largest object is in, through a joining FETCH (draft-14 §9.16.2).
+  /// While forwarding is paused the subscription starts with the next group
+  /// instead.
+  async subscribe(
+    kind: MediaKind,
+    wireName: string,
+    track: MediaCatalogTrack,
+    handler: ObjectHandler,
+    currentGroup = false
+  ): Promise<void> {
+    this.subscriptions.set(kind, await this.open(kind, wireName, track, handler, currentGroup))
+  }
+
+  /// Subscribes without making the subscription the one of its kind, so a
+  /// rendition switch can receive the next rendition while the current one
+  /// still plays; `handOver` gives it the kind.
+  async open(
+    kind: MediaKind,
+    wireName: string,
+    track: MediaCatalogTrack,
+    handler: ObjectHandler,
+    currentGroup = false
+  ): Promise<TrackSubscription> {
+    const namespace = catalogTrackNamespace(track, this.context.namespace)
+    const session = sessionOf(this.context)
+    const joining = currentGroup && !this.forwardPaused
+    const handle = joining
+      ? await session.subscribeCurrentGroup(namespace, wireName)
+      : await session.subscribe(namespace, wireName, {
+          forward: !this.forwardPaused,
+          priority: SUBSCRIBER_PRIORITY[kind]
+        })
+    const subscription: TrackSubscription = { id: streamId(), handle, name: wireName, track, forgotten: false }
+    const observed = observedObjectHandler(this.context, subscription.id, wireName, handler)
+    const read = joining ? readJoinedObjects : readGroups
+    void read(this.context, subscription.id, handle, (groupId, object, cached) => {
+      if (!subscription.forgotten) {
+        observed(groupId, object, cached)
+      }
+    })
+    void handle.done.then((done) => done && this.end(kind, subscription, done))
+    this.context.log('info', `subscribed ${namespace.join('/')}/${wireName}`)
+    return subscription
+  }
+
+  /// Makes `next` the subscription of its kind. The one it replaces keeps
+  /// delivering until `retire` unsubscribes it or its publisher ends it.
+  handOver(kind: MediaKind, next: TrackSubscription): TrackSubscription | undefined {
+    const previous = this.subscriptions.get(kind)
+    this.subscriptions.set(kind, next)
+    if (previous) {
+      this.retiring.add(previous)
+    }
+    return previous
+  }
+
+  async retire(subscription: TrackSubscription): Promise<void> {
+    if (this.retiring.delete(subscription)) {
+      await this.close(subscription)
+    }
+  }
+
+  async retireAll(): Promise<void> {
+    for (const subscription of [...this.retiring.values()]) {
+      await this.retire(subscription)
+    }
+  }
+
+  async unsubscribe(kind: MediaKind): Promise<void> {
+    const subscription = this.subscriptions.get(kind)
+    if (!subscription) {
+      return
+    }
+    this.subscriptions.delete(kind)
+    await this.close(subscription)
+  }
+
+  async close(subscription: TrackSubscription): Promise<void> {
+    this.forget(subscription)
+    if (sessionOf(this.context).isOpen) {
+      await subscription.handle.close()
+    }
+    this.context.log('info', `unsubscribed ${subscription.name}`)
+  }
+
+  /// Delivers the groups before `groupId` and lets the publisher end the
+  /// subscription with PUBLISH_DONE once they are sent.
+  async endBeforeGroup(subscription: TrackSubscription, groupId: bigint): Promise<void> {
+    if (sessionOf(this.context).isOpen) {
+      await subscription.handle.endBeforeGroup(groupId, !this.forwardPaused)
+    }
+  }
+
+  private end(kind: MediaKind, subscription: TrackSubscription, done: PublishDone): void {
+    if (this.retiring.delete(subscription)) {
+      this.forget(subscription)
+      this.context.log('info', `${subscription.name} ended by the publisher (status ${done.code})`)
+      return
+    }
+    if (this.subscriptions.get(kind) !== subscription) {
+      return
+    }
+    this.subscriptions.delete(kind)
+    this.context.observer.forget(subscription.id)
+    this.context.log('info', `${subscription.name} ended by the publisher (status ${done.code})`)
+    this.onPublishDone(kind, done)
+  }
+
+  private forget(subscription: TrackSubscription): void {
+    subscription.forgotten = true
+    this.context.observer.forget(subscription.id)
+  }
+
+  pauseForward(): void {
+    if (this.forwardPaused) {
+      return
+    }
+    this.forwardPaused = true
+    this.updateForward(false)
+  }
+
+  resumeForward(): boolean {
+    if (!this.forwardPaused) {
+      return false
+    }
+    this.forwardPaused = false
+    this.updateForward(true)
+    return true
+  }
+
+  /// A pause and a resume in quick succession must reach every subscription in
+  /// that order, so the updates are chained rather than sent concurrently.
+  private updateForward(forward: boolean): void {
+    this.forwardUpdate = this.forwardUpdate.then(() => this.setForward(forward))
+  }
+
+  private async setForward(forward: boolean): Promise<void> {
+    if (!this.context.session?.isOpen) {
+      return
+    }
+    for (const subscription of this.subscriptions.values()) {
+      try {
+        await subscription.handle.setForward(forward)
+      } catch (error) {
+        this.context.log('error', `forward ${subscription.name}: ${getErrorMessage(error)}`)
+      }
+    }
+    this.context.log('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)
+  }
+}

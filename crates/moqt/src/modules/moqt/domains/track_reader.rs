@@ -4,10 +4,14 @@ use tokio::sync::mpsc;
 
 use crate::{
     Subscriber, Subscription,
-    modules::executor::{self, JoinHandle, MaybeSend},
+    fetch::{Fetch, FetchOption},
+    modules::{
+        executor::{self, JoinHandle, MaybeSend},
+        moqt::domains::subscriber::{SentFetch, joining_remainder},
+    },
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, ObjectStatus,
-        StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, Object,
+        ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
     },
 };
 
@@ -22,6 +26,26 @@ pub struct TrackObject {
     pub object_id: u64,
     pub extension_headers: ExtensionHeaders,
     pub payload: Bytes,
+}
+
+impl TrackObject {
+    /// `None` for a status object or an empty payload.
+    pub fn from_object(object: Object) -> Option<Self> {
+        if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+            return None;
+        }
+        let subgroup_id = match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => 0,
+        };
+        Some(Self {
+            group_id: object.location.group_id,
+            subgroup_id,
+            object_id: object.location.object_id,
+            extension_headers: object.extension_headers,
+            payload: object.payload,
+        })
+    }
 }
 
 /// Reads every subgroup stream of one track concurrently, inside one task, and
@@ -47,12 +71,34 @@ impl TrackReader {
 
     pub(crate) fn of(subscriber: Subscriber, subscription: Subscription) -> Self {
         let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        Self {
+            object_receiver,
+            _stream_accept_task: SubgroupStreamAcceptTask::run(
+                stream_factory(subscriber, subscription),
+                object_sender,
+            ),
+        }
+    }
+
+    /// Subgroup streams are accepted only after the FETCH ends, so the fetched
+    /// objects come first. `joining_fetch` is the Joining FETCH written behind
+    /// the SUBSCRIBE; `None` reads the live objects only.
+    pub(crate) fn joining_current_group(
+        subscriber: Subscriber,
+        subscription: Subscription,
+        joining_fetch: Option<SentFetch>,
+    ) -> Self {
+        let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        let fetch_sender = object_sender.clone();
         let factory = async move {
             let mut subscriber = subscriber;
-            match subscriber.accept_data_receiver(&subscription).await? {
-                DataReceiver::Stream(factory) => Ok(factory),
-                DataReceiver::Datagram(_) => Err(MalformedTrackError.into()),
+            if let Err(error) =
+                send_current_group(&mut subscriber, &subscription, joining_fetch, fetch_sender)
+                    .await
+            {
+                tracing::debug!(%error, "joining FETCH of the current group failed");
             }
+            stream_factory(subscriber, subscription).await
         };
         Self {
             object_receiver,
@@ -61,12 +107,47 @@ impl TrackReader {
     }
 
     /// Returns `Ok(None)` once the track has no more subgroup streams. A
-    /// failure inside one subgroup stream is returned as `Err`; the other
-    /// streams keep being read. A `MalformedTrackError` ends the track after
-    /// the streams already accepted are drained.
+    /// failed subgroup stream only ends that stream. The only `Err` is a
+    /// `MalformedTrackError`, which ends the track after the streams already
+    /// accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
         self.object_receiver.recv().await.transpose()
     }
+}
+
+async fn stream_factory(
+    mut subscriber: Subscriber,
+    subscription: Subscription,
+) -> anyhow::Result<StreamDataReceiverFactory> {
+    match subscriber.accept_data_receiver(&subscription).await? {
+        DataReceiver::Stream(factory) => Ok(factory),
+        DataReceiver::Datagram(_) => Err(MalformedTrackError.into()),
+    }
+}
+
+/// For a track without content the peer refuses the FETCH with INVALID_RANGE
+/// (draft-14 §9.16.2), which leaves the reader with the live objects only.
+async fn send_current_group(
+    subscriber: &mut Subscriber,
+    subscription: &Subscription,
+    joining_fetch: Option<SentFetch>,
+    object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
+) -> anyhow::Result<()> {
+    let Some(sent) = joining_fetch else {
+        return Ok(());
+    };
+    let option = FetchOption::default();
+    let remainder = joining_remainder(subscription, 0, &option);
+    let handle = subscriber.fetch_answered(sent, &option, remainder).await?;
+    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+    while let Fetch::Object(object) = receiver.receive().await? {
+        if let Some(object) = TrackObject::from_object(object)
+            && object_sender.send(Ok(object)).await.is_err()
+        {
+            break;
+        }
+    }
+    Ok(())
 }
 
 struct SubgroupStreamAcceptTask {
@@ -127,7 +208,7 @@ async fn read_subgroup(
     object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
 ) {
     if let Err(error) = read_subgroup_objects(&mut receiver, &object_sender).await {
-        let _ = object_sender.send(Err(error)).await;
+        tracing::debug!(%error, "subgroup stream failed; the track goes on");
     }
 }
 
@@ -138,18 +219,8 @@ async fn read_subgroup_objects(
     loop {
         match receiver.receive().await? {
             Some(Subgroup::Object(object)) => {
-                if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+                let Some(object) = TrackObject::from_object(object) else {
                     continue;
-                }
-                let ForwardingPreference::Subgroup { subgroup_id } = object.forwarding else {
-                    unreachable!("a subgroup stream carries subgroup objects")
-                };
-                let object = TrackObject {
-                    group_id: object.location.group_id,
-                    subgroup_id,
-                    object_id: object.location.object_id,
-                    extension_headers: object.extension_headers,
-                    payload: object.payload,
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
                     return Ok(());
@@ -173,7 +244,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
-        object::MalformedTrackError,
+        object::{DataStreamResetCode, MalformedTrackError},
         wire::{SubgroupId, SubgroupObject},
     };
 
@@ -326,6 +397,28 @@ mod tests {
         // Assert
         assert_eq!(objects[0].payload, Bytes::from_static(b"g0-o0"));
         assert!(nothing_more.is_err(), "reader must wait for further groups");
+    }
+
+    #[tokio::test]
+    async fn a_reset_subgroup_stream_is_skipped_and_the_next_group_is_read() {
+        // Arrange
+        let track = published_track("reader-reset").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
+        send_payload(&mut group_0, b"g0-o0").await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
+        collect_objects(&mut reader, 1).await;
+
+        // Act
+        group_0.reset(DataStreamResetCode::Cancelled).await.unwrap();
+        let mut group_1 = open_subgroup(&factory, 1, SubgroupId::None).await;
+        send_payload(&mut group_1, b"g1-o0").await;
+        let next = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            .await
+            .expect("object within timeout");
+
+        // Assert
+        assert_eq!(next.unwrap().unwrap().payload, Bytes::from_static(b"g1-o0"));
     }
 
     #[tokio::test]

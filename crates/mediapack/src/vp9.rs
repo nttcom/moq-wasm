@@ -6,6 +6,31 @@ const FRAME_MARKER: u64 = 2;
 const SYNC_CODE: u64 = 0x49_83_42;
 const CS_RGB: u64 = 7;
 
+/// VP9 levels by the largest luma picture size each allows (VP9 bitstream
+/// specification Annex A).
+const LEVELS: [(u32, u8); 9] = [
+    (36_864, 10),
+    (73_728, 11),
+    (122_880, 20),
+    (245_760, 21),
+    (552_960, 30),
+    (983_040, 31),
+    (2_228_224, 40),
+    (8_912_896, 50),
+    (35_651_584, 60),
+];
+
+/// The bitstream carries no level and the frame rate is unknown, so this is
+/// the lowest level whose picture size fits, which is how ffmpeg derives it
+/// without a rate.
+pub(crate) fn level(width: u32, height: u32) -> u8 {
+    let picture_size = width.saturating_mul(height);
+    LEVELS
+        .iter()
+        .find(|(max_picture_size, _)| picture_size <= *max_picture_size)
+        .map_or(62, |(_, level)| *level)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vp9Config {
     pub profile: u8,
@@ -15,6 +40,19 @@ pub struct Vp9Config {
     pub full_range: bool,
     pub width: u32,
     pub height: u32,
+}
+
+impl Vp9Config {
+    /// `vp09.PP.LL.DD` without the optional fields; the level is estimated by
+    /// `level`.
+    pub fn codec_string(&self) -> String {
+        format!(
+            "vp09.{:02}.{:02}.{:02}",
+            self.profile,
+            level(self.width, self.height),
+            self.bit_depth
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -93,6 +131,23 @@ pub fn parse_frame(data: &[u8]) -> Result<Vp9Frame> {
 mod tests {
     use super::*;
     use crate::test_support::{FIXTURE_VP9_IVF, ivf_frames};
+
+    #[test]
+    fn the_codec_string_takes_the_lowest_level_that_fits_the_picture() {
+        // Arrange
+        let config = Vp9Config {
+            profile: 0,
+            bit_depth: 8,
+            subsampling_x: true,
+            subsampling_y: true,
+            full_range: false,
+            width: 1280,
+            height: 720,
+        };
+
+        // Act / Assert
+        assert_eq!(config.codec_string(), "vp09.00.31.08");
+    }
 
     #[test]
     fn reads_the_configuration_of_a_keyframe() {

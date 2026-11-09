@@ -4,8 +4,9 @@ from datetime import datetime
 
 from aiohttp import web
 
+from moq_bot_rooms.app_token import IssuedToken, TokenRejected
 from moq_bot_rooms.open_hours import OpenHours
-from moq_bot_rooms.rooms import Rooms
+from moq_bot_rooms.rooms import BotRoom, Rooms
 
 SHORT_GRACE_SECONDS = 0.05
 SETTLE_SECONDS = 0.15
@@ -21,6 +22,8 @@ class FakeBots:
 
     def __init__(self, failing: set[str] | None = None):
         self.started: list[str] = []
+        self.roots: list[str] = []
+        self.tokens: list[str | None] = []
         self.running: set[str] = set()
         self._failing = failing or set()
         self._emptied: dict[str, asyncio.Event] = {}
@@ -28,8 +31,11 @@ class FakeBots:
     def empty(self, room_id: str) -> None:
         self._emptied[room_id].set()
 
-    async def run(self, room_id: str) -> None:
+    async def run(self, room: BotRoom) -> None:
+        room_id = room.room_id
         self.started.append(room_id)
+        self.roots.append(room.namespace_root)
+        self.tokens.append(room.relay_token)
         if room_id in self._failing:
             raise RuntimeError("bot failed")
         self.running.add(room_id)
@@ -78,3 +84,24 @@ class FakeMetadataServer:
     async def handle(self, request: web.Request) -> web.Response:
         self.requests.append((request.headers.get("Metadata-Flavor"), request.query.get("audience")))
         return web.Response(text="metadata-token")
+
+
+class FakeIssuer:
+    """Refreshes the tokens in `apps`, a token to its app ID, into `<token>+`, and refuses others;
+    raises `failure` instead while it is set."""
+
+    def __init__(self, apps: dict[str, str] | None = None, expires_at: float = 2**40):
+        self.apps = dict(apps or {})
+        self.expires_at = expires_at
+        self.failure: Exception | None = None
+        self.refreshed: list[str] = []
+
+    async def refresh(self, token: str) -> IssuedToken:
+        self.refreshed.append(token)
+        if self.failure is not None:
+            raise self.failure
+        app_id = self.apps.get(token)
+        if app_id is None:
+            raise TokenRejected("invalid_token")
+        self.apps[f"{token}+"] = app_id
+        return IssuedToken(f"{token}+", app_id, self.expires_at)

@@ -1,4 +1,4 @@
-use crate::modules::moqt::version::OutgoingResponse;
+use crate::modules::moqt::version::{OutgoingResponse, RequestSummary};
 use std::sync::Arc;
 
 use crate::{
@@ -39,8 +39,12 @@ impl TrackStatusHandler {
     pub(crate) fn new(connection: Arc<Connection>, track_status: Subscribe) -> Self {
         let guard = ResponseGuard::new(
             connection,
-            track_status.request_id,
-            RequestKind::TrackStatus,
+            RequestSummary::new(
+                RequestKind::TrackStatus,
+                track_status.request_id,
+                Some(&track_status.track_namespace),
+                Some(&track_status.track_name),
+            ),
         );
         Self {
             request_id: guard
@@ -64,7 +68,6 @@ impl TrackStatusHandler {
         expires: u64,
         content_exists: ContentExists,
     ) -> Result<(), TransportSendError> {
-        self.guard.mark_responded();
         let track_status_ok = SubscribeOk {
             request_id: self.guard.request_id(),
             track_alias: 0,
@@ -75,9 +78,7 @@ impl TrackStatusHandler {
             max_duration: None,
         };
         self.guard
-            .connection()
-            .control
-            .respond(OutgoingResponse::TrackStatusOk(track_status_ok))
+            .accept(OutgoingResponse::TrackStatusOk(track_status_ok))
             .await
     }
 
@@ -133,7 +134,7 @@ mod tests {
         RequestFailure, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
-            test_support::{connect_sessions, rejection, spawn_dual_server},
+            test_support::{connect_sessions, rejection, spawn_native_server},
         },
         object::{ContentExists, Location},
         wire::TrackStatusOk,
@@ -148,7 +149,7 @@ mod tests {
     }
 
     async fn track_status_exchange(name: &str) -> TrackStatusExchange {
-        let (port, accept) = spawn_dual_server(name);
+        let (port, accept) = spawn_native_server(name);
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();

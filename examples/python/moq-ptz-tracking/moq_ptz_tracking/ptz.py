@@ -6,9 +6,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from moq_d3_flash_bot.publication import Publication
+from moq_system_one_bot.publication import Publication
 
-from moq_ptz_tracking.vision import Position
+from moq_ptz_tracking.vision import Box
 
 MOVE_VELOCITY = 0.5
 # A sweep stops by itself when the tracker stops renewing it, e.g. once the target is cleared.
@@ -29,20 +29,25 @@ class PtzMove:
 class PtzCalibration:
     """`pan_per_second` and `tilt_per_second` are the fractions of the picture width and height the
     view shifts per second of a positive ContinuousMove at MOVE_VELOCITY; negative for a camera that
-    pans left or tilts down."""
+    pans left or tilts down. An axis turns only when the box reaches the `margin` at either end of it,
+    and then centers the box unless its center is within `dead_zone`: a box wider than the picture
+    inside the margins never fits, and a Tapo camera has no optical zoom to shrink it."""
 
     pan_per_second: float
     tilt_per_second: float
+    margin: float
     dead_zone: float
 
-    def toward(self, position: Position) -> PtzMove:
+    def toward(self, box: Box) -> PtzMove:
+        center = box.center
         return PtzMove(
-            self._seconds(position.x - 0.5, self.pan_per_second),
-            self._seconds(0.5 - position.y, self.tilt_per_second),
+            self._seconds(box.left, box.right, center.x - 0.5, self.pan_per_second),
+            self._seconds(box.top, box.bottom, 0.5 - center.y, self.tilt_per_second),
         )
 
-    def _seconds(self, offset: float, per_second: float) -> float:
-        if abs(offset) < self.dead_zone:
+    def _seconds(self, low: float, high: float, offset: float, per_second: float) -> float:
+        inside = self.margin <= low and high <= 1 - self.margin
+        if inside or abs(offset) < self.dead_zone:
             return 0.0
         return round(offset / per_second, 2)
 

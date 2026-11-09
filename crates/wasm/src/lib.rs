@@ -1,21 +1,23 @@
-#[cfg(target_arch = "wasm32")]
-mod client;
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod client_state;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod loc;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod messages;
+#[cfg(target_arch = "wasm32")]
+mod log_sink;
+#[cfg(target_arch = "wasm32")]
+mod media_broadcast;
 mod mp4;
 #[cfg(target_arch = "wasm32")]
 mod mp4_broadcast;
 mod msf_catalog;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod request_rejection;
-
 #[cfg(target_arch = "wasm32")]
-pub use client::MOQTClient;
-pub use messages::*;
+mod session;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod session_routes;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[cfg(target_arch = "wasm32")]
+pub use log_sink::set_log_sink;
 #[cfg(target_arch = "wasm32")]
 pub use mp4_broadcast::{Mp4Broadcast, PublishedStream};
 pub use msf_catalog::*;
@@ -28,11 +30,12 @@ fn main() {
     console_error_panic_hook::set_once();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[wasm_bindgen]
-pub struct MOQTClient;
-
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub(crate) fn js_error(message: impl Into<String>) -> JsValue {
     js_sys::Error::new(&message.into()).into()
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn anyhow_error(error: anyhow::Error) -> JsValue {
+    js_error(format!("{error:#}"))
 }

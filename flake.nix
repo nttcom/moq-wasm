@@ -54,10 +54,6 @@
             ++ darwinPackages;
 
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
-
-          shellHook = ''
-            export RUSTFLAGS="--cfg tokio_unstable --cfg web_sys_unstable_apis --remap-path-prefix=$(pwd)=."
-          '';
         };
       }
     );

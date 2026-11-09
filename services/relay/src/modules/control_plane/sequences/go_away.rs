@@ -1,0 +1,183 @@
+use std::sync::Arc;
+
+use crate::modules::{
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder,
+        sequences::{
+            session_peer,
+            subscribe::pending_producer_task::{PendingProducerDeps, subscribe_publishers},
+        },
+        upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
+    },
+    data_plane::cache::store::TrackCacheStore,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer},
+};
+
+pub(crate) struct GoAway;
+
+impl GoAway {
+    /// draft-14 §3.5: an upstream relay that is going away will close its
+    /// session. Before that happens, every track it feeds is offered to the
+    /// other publishers the resolver knows (local client publishers and the
+    /// relays still active in the route registry); a publisher that already
+    /// feeds the track is left alone. A client sending GOAWAY only announces
+    /// that it leaves; nothing is resolved for it.
+    pub(crate) async fn handle(
+        &self,
+        session_id: SessionId,
+        table: &Arc<InMemoryLocalPubSubDirectory>,
+        forwarder: &ControlMessageForwarder,
+        cache_store: &Arc<TrackCacheStore>,
+        upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
+    ) {
+        if session_peer(session_id, forwarder).await == SessionPeer::Client {
+            tracing::info!("client announced that it is leaving");
+            return;
+        }
+        let fed_tracks = table.tracks_fed_by(session_id);
+        tracing::info!(
+            tracks = fed_tracks.len(),
+            "upstream relay is going away; subscribing the other publishers of its tracks"
+        );
+        let join_deps = PendingProducerDeps {
+            table: table.clone(),
+            forwarder: forwarder.clone(),
+            cache_store: cache_store.clone(),
+            resolver: upstream_publisher_resolver.clone(),
+        };
+        for track_key in fed_tracks {
+            let feeding = table
+                .track_state(&track_key)
+                .map(|track| track.producers.keys().copied().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let publishers: Vec<UpstreamPublisher> = upstream_publisher_resolver
+                .resolve(
+                    table,
+                    &track_key.track_namespace,
+                    &track_key.track_name,
+                    SessionPeer::Client,
+                )
+                .await
+                .into_iter()
+                .filter(|publisher| {
+                    !matches!(publisher, UpstreamPublisher::Session(id) if feeding.contains(id))
+                })
+                .collect();
+            if publishers.is_empty() {
+                tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "no other publisher for a track of the departing relay");
+                continue;
+            }
+            tracing::debug!(
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                publishers = publishers.len(),
+                "subscribing other publishers"
+            );
+            subscribe_publishers(&join_deps, &track_key, session_id, publishers);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use super::GoAway;
+    use crate::modules::{
+        auth::verified_token::VerifiedToken,
+        control_plane::control_message_forwarder::ControlMessageForwarder,
+        data_plane::cache::store::TrackCacheStore,
+        directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
+        domain::{session_id::SessionId, session_peer::SessionPeer},
+        session::session_repository::NewSession,
+        test_support::{
+            directory_fixtures::{local_publisher_resolver, producer, track_key},
+            mock_session::{
+                RecordedControlMessages, detached_session_repository, mock_new_session,
+                recorded_session_answering_subscribe,
+            },
+        },
+    };
+
+    const DEPARTING_RELAY: SessionId = 9;
+    const OTHER_PUBLISHER: SessionId = 3;
+
+    /// `DEPARTING_RELAY` with the given peer feeding `ns/track`, and client
+    /// `OTHER_PUBLISHER` publishing the namespace and answering SUBSCRIBE.
+    async fn context(
+        departing_peer: SessionPeer,
+    ) -> (
+        Arc<InMemoryLocalPubSubDirectory>,
+        ControlMessageForwarder,
+        RecordedControlMessages,
+    ) {
+        let mut repository = detached_session_repository();
+        let (mut departing, _) = mock_new_session(DEPARTING_RELAY, VerifiedToken::full_access());
+        departing.peer = departing_peer;
+        repository.add(departing);
+        let (other, recorded) =
+            recorded_session_answering_subscribe(|| moqt::object::ContentExists::False);
+        repository.add(NewSession {
+            session_id: OTHER_PUBLISHER,
+            session: other,
+            session_span: tracing::Span::none(),
+            peer: SessionPeer::Client,
+            verified_token: VerifiedToken::full_access(),
+        });
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_upstream_subscription(
+            track_key(),
+            DEPARTING_RELAY,
+            producer(ProducerOrigin::Subscribe),
+        );
+        table.register_publish_namespace(OTHER_PUBLISHER, "ns".to_string(), SessionPeer::Client);
+        let forwarder = ControlMessageForwarder {
+            repository: Arc::new(tokio::sync::Mutex::new(repository)),
+        };
+        (table, forwarder, recorded)
+    }
+
+    async fn wait_for_unsubscribe(recorded: &RecordedControlMessages) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while recorded.unsubscribed_request_ids().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    #[tokio::test]
+    async fn go_away_from_an_upstream_relay_subscribes_the_other_publishers_of_its_tracks() {
+        // Arrange
+        let (table, forwarder, recorded) = context(SessionPeer::Relay).await;
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let resolver = Arc::new(local_publisher_resolver());
+
+        // Act
+        GoAway
+            .handle(DEPARTING_RELAY, &table, &forwarder, &cache_store, &resolver)
+            .await;
+
+        // Assert: the other publisher was subscribed; nobody watches the track,
+        // so the join released that subscription again
+        assert!(wait_for_unsubscribe(&recorded).await);
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_client_resolves_nothing() {
+        // Arrange
+        let (table, forwarder, recorded) = context(SessionPeer::Client).await;
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let resolver = Arc::new(local_publisher_resolver());
+
+        // Act
+        GoAway
+            .handle(DEPARTING_RELAY, &table, &forwarder, &cache_store, &resolver)
+            .await;
+
+        // Assert
+        assert!(!wait_for_unsubscribe(&recorded).await);
+    }
+}

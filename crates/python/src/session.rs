@@ -1,59 +1,70 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use moqt::{
-    ClientConfig, DUAL, Endpoint, RequestErrorCode, SessionEvent, TerminationErrorCode,
+    AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
+    NATIVE, RequestErrorCode, SessionEvent,
     executor::{self, JoinHandle},
+    namespace::NamespaceWatchers,
     publish::{Origin, Retention},
 };
-use pyo3::prelude::*;
+use pyo3::{exceptions::PyRuntimeError, prelude::*};
 
-use crate::{
-    namespaces::{NamespaceEvents, NamespaceWatchers},
-    publication::TrackPublication,
-    track::Track,
-};
+use crate::{namespaces::NamespaceEvents, publication::TrackPublication, track::Track};
+
+/// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
+/// token refresh; it reads neither the namespace `[app id]` nor this name.
+const REFRESH_TRACK_NAME: &str = "update_auth_token";
 
 /// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport.
-/// The session follows the relay's GOAWAY by itself.
+/// The session follows the relay's GOAWAY by itself, presenting the latest
+/// token given to `connect` or `refresh_token`.
 #[pyfunction]
-#[pyo3(signature = (url, *, verify_certificate = true))]
+#[pyo3(signature = (url, *, verify_certificate = true, token = None))]
 pub fn connect(
     py: Python<'_>,
     url: String,
     verify_certificate: bool,
+    token: Option<String>,
 ) -> PyResult<Bound<'_, PyAny>> {
+    let token = token.map(|token| Arc::new(Mutex::new(token)));
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let authorization_token = token.clone().map(|current| {
+            AuthorizationTokenSource::provider(move || {
+                let token = current.lock().unwrap().clone();
+                async move { Ok(token) }
+            })
+        });
         // quinn binds the endpoint's socket through the ambient runtime, which this future runs on.
-        let endpoint = Endpoint::<DUAL>::create_client(&ClientConfig {
-            port: 0,
-            verify_certificate,
-            authorization_token: None,
-            follow_go_away: true,
+        let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                verify_certificate,
+            ),
+            authorization_token,
+            ..ClientConfig::default()
         })?;
         let session = Arc::new(endpoint.connect(&url).await?.await?);
         let origin = Origin::default();
-        let watchers = Arc::new(NamespaceWatchers::default());
+        let watchers = NamespaceWatchers::default();
         let event_loop = executor::spawn(
             "python-session-events",
             route_events(session.clone(), origin.clone(), watchers.clone()),
         );
         Ok(Session {
             session,
-            endpoint: Arc::new(endpoint),
             origin,
             watchers,
             event_loop,
+            token,
         })
     })
 }
 
 /// A session has one event receiver: the origin answers what concerns the
 /// tracks this session publishes, and namespace events go to the iterators.
-async fn route_events(
-    session: Arc<moqt::Session>,
-    origin: Origin,
-    watchers: Arc<NamespaceWatchers>,
-) {
+async fn route_events(session: Arc<moqt::Session>, origin: Origin, watchers: NamespaceWatchers) {
     loop {
         let event = match session.receive_event().await {
             Ok(event) => event,
@@ -65,16 +76,10 @@ async fn route_events(
         let Some(event) = origin.handle(event).await else {
             continue;
         };
+        let Some(event) = watchers.handle(event).await else {
+            continue;
+        };
         match event {
-            SessionEvent::PublishNamespace(handler) => {
-                if let Err(err) = handler.ok().await {
-                    tracing::warn!(namespace = %handler.track_namespace, ?err, "failed to ack PUBLISH_NAMESPACE");
-                }
-                watchers.notify(handler.track_namespace_tuple.clone(), true);
-            }
-            SessionEvent::PublishNamespaceDone(handler) => {
-                watchers.notify(handler.track_namespace_tuple, false);
-            }
             SessionEvent::SubscribeNameSpace(handler) => {
                 if let Err(err) = handler.ok().await {
                     tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
@@ -105,10 +110,11 @@ async fn route_events(
 #[pyclass(module = "moqt")]
 pub struct Session {
     session: Arc<moqt::Session>,
-    endpoint: Arc<Endpoint<DUAL>>,
     origin: Origin,
-    watchers: Arc<NamespaceWatchers>,
+    watchers: NamespaceWatchers,
     event_loop: JoinHandle,
+    /// The token the session presents when it follows a GOAWAY.
+    token: Option<Arc<Mutex<String>>>,
 }
 
 // The event loop holds the session, so a Session dropped without `close` would
@@ -129,7 +135,7 @@ impl Session {
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         // Registered before the request, since the relay answers with the namespaces it knows at once.
-        let events: NamespaceEvents = self.watchers.watch(prefix.clone());
+        let events = NamespaceEvents::from(self.watchers.watch(prefix.clone()));
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
                 .subscriber()
@@ -200,6 +206,39 @@ impl Session {
         })
     }
 
+    /// Sends `token` to the relay as the session's new authorization token
+    /// (docs/architecture/relay/architecture.md "Token refresh"), and presents
+    /// it on the connections the session opens from now on. Fails for a
+    /// session connected without a token, or when the relay rejects `token`;
+    /// the relay then keeps the session's current token.
+    #[pyo3(signature = (token, *, app_id))]
+    fn refresh_token<'py>(
+        &self,
+        py: Python<'py>,
+        token: String,
+        app_id: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let Some(current) = self.token.clone() else {
+            return Err(PyRuntimeError::new_err(
+                "the session was connected without a token",
+            ));
+        };
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            session
+                .subscriber()
+                .track_status(
+                    app_id,
+                    REFRESH_TRACK_NAME.to_string(),
+                    vec![AuthorizationToken::use_value_utf8(&token)],
+                )
+                .await
+                .map_err(anyhow::Error::from)?;
+            *current.lock().unwrap() = token;
+            Ok(())
+        })
+    }
+
     /// Waits until the relay closes the session.
     fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
@@ -214,10 +253,8 @@ impl Session {
         self.event_loop.abort();
         self.watchers.close();
         let session = self.session.clone();
-        let endpoint = self.endpoint.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            session.close_with_error(TerminationErrorCode::NoError, "");
-            endpoint.wait_idle().await;
+            session.close().await;
             Ok(())
         })
     }

@@ -112,6 +112,7 @@ mod tests {
     use super::*;
     use crate::test_support::{
         IDR_SLICE, delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb,
+        keyframe_sample,
     };
 
     #[test]
@@ -192,15 +193,7 @@ mod tests {
 
         // Assert
         assert_eq!(events[0], MediaEvent::VideoConfig(fixture_video_config()));
-        assert_eq!(
-            events[1],
-            MediaEvent::Video(VideoSample {
-                data: keyframe_annexb(),
-                is_keyframe: true,
-                pts,
-                dts: pts,
-            })
-        );
+        assert_eq!(events[1], MediaEvent::Video(keyframe_sample(pts)));
     }
 
     #[test]

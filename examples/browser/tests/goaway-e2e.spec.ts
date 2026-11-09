@@ -45,7 +45,7 @@ async function presentedFrameWindow(page: Page, from: number, to: number): Promi
 function nextGroupStart(page: Page): Promise<void> {
   return new Promise((resolve) => {
     const onConsole = (message: { text(): string }) => {
-      if (message.text().startsWith('[moqt] received subgroup header')) {
+      if (message.text().startsWith('[moq-wasm::core::session] subgroup header received')) {
         page.off('console', onConsole)
         resolve()
       }

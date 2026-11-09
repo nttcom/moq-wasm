@@ -21,6 +21,8 @@ use bytes::BytesMut;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing::Span;
 
+use crate::modules::moqt::control_plane::control_messages::messages::fetch::FetchParams;
+
 use crate::{
     RequestFailure,
     modules::{
@@ -29,27 +31,16 @@ use crate::{
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
-                    fetch::Fetch,
-                    fetch_cancel::FetchCancel,
-                    fetch_ok::FetchOk,
-                    go_away::GoAway,
-                    max_request_id::MaxRequestId,
-                    namespace_ok::NamespaceOk,
-                    parameters::{
-                        authorization_token::AuthorizationToken, group_order::GroupOrder,
-                    },
-                    publish::Publish,
-                    publish_namespace::PublishNamespace,
-                    publish_namespace_done::PublishNamespaceDone,
-                    publish_ok::PublishOk,
-                    requests_blocked::RequestsBlocked,
-                    server_setup::ServerSetup,
-                    subscribe::Subscribe,
-                    subscribe_namespace::SubscribeNamespace,
-                    subscribe_ok::SubscribeOk,
-                    subscribe_update::SubscribeUpdate,
-                    unsubscribe::Unsubscribe,
-                    unsubscribe_namespace::UnsubscribeNamespace,
+                    fetch::Fetch, fetch_cancel::FetchCancel, fetch_ok::FetchOk, go_away::GoAway,
+                    max_request_id::MaxRequestId, namespace_ok::NamespaceOk,
+                    parameters::authorization_token::AuthorizationToken,
+                    parameters::group_order::GroupOrder, parameters::trace_context::TraceContext,
+                    publish::Publish, publish_namespace::PublishNamespace,
+                    publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
+                    requests_blocked::RequestsBlocked, server_setup::ServerSetup,
+                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
+                    subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate,
+                    unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{
@@ -110,6 +101,10 @@ impl Version {
         match protocol {
             NegotiatedProtocol::Quic { alpn } if alpn == DRAFT14_ALPN => Ok(Self::Draft14),
             NegotiatedProtocol::WebTransport { protocol: None } => Ok(Self::Draft14),
+            NegotiatedProtocol::WebSocket { alpn: None } => Ok(Self::Draft14),
+            NegotiatedProtocol::WebSocket { alpn: Some(alpn) } if alpn == DRAFT14_ALPN => {
+                Ok(Self::Draft14)
+            }
             other => anyhow::bail!("no supported MoQT version negotiated: {other:?}"),
         }
     }
@@ -292,6 +287,207 @@ pub(crate) enum OutgoingRequest {
     SubscribeNamespace(SubscribeNamespace),
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RequestSummary {
+    kind: RequestKind,
+    request_id: RequestId,
+    track_namespace: Option<String>,
+    track_name: Option<String>,
+}
+
+impl RequestSummary {
+    /// `track_namespace` is the prefix for SUBSCRIBE_NAMESPACE; a joining
+    /// FETCH names no track.
+    pub(crate) fn new(
+        kind: RequestKind,
+        request_id: RequestId,
+        track_namespace: Option<&[String]>,
+        track_name: Option<&str>,
+    ) -> Self {
+        Self {
+            kind,
+            request_id,
+            track_namespace: track_namespace.map(|tuple| tuple.join("/")),
+            track_name: track_name.map(str::to_string),
+        }
+    }
+
+    fn of(request: &OutgoingRequest) -> Self {
+        match request {
+            OutgoingRequest::Subscribe(subscribe) => Self::new(
+                RequestKind::Subscribe,
+                subscribe.request_id,
+                Some(&subscribe.track_namespace),
+                Some(&subscribe.track_name),
+            ),
+            OutgoingRequest::TrackStatus(track_status) => Self::new(
+                RequestKind::TrackStatus,
+                track_status.request_id,
+                Some(&track_status.track_namespace),
+                Some(&track_status.track_name),
+            ),
+            OutgoingRequest::Fetch(fetch) => Self::of_fetch(fetch),
+            OutgoingRequest::Publish(publish) => Self::new(
+                RequestKind::Publish,
+                publish.request_id,
+                Some(&publish.track_namespace_tuple),
+                Some(&publish.track_name),
+            ),
+            OutgoingRequest::PublishNamespace(publish_namespace) => Self::new(
+                RequestKind::PublishNamespace,
+                publish_namespace.request_id,
+                Some(&publish_namespace.track_namespace),
+                None,
+            ),
+            OutgoingRequest::SubscribeNamespace(subscribe_namespace) => Self::new(
+                RequestKind::SubscribeNamespace,
+                subscribe_namespace.request_id,
+                Some(&subscribe_namespace.track_namespace_prefix),
+                None,
+            ),
+        }
+    }
+
+    pub(crate) fn of_fetch(fetch: &Fetch) -> Self {
+        match &fetch.fetch_params {
+            FetchParams::Standalone {
+                track_namespace,
+                track_name,
+                ..
+            } => Self::new(
+                RequestKind::Fetch,
+                fetch.request_id,
+                Some(track_namespace),
+                Some(track_name),
+            ),
+            FetchParams::RelativeJoining { .. } | FetchParams::AbsoluteJoining { .. } => {
+                Self::new(RequestKind::Fetch, fetch.request_id, None, None)
+            }
+        }
+    }
+
+    pub(crate) fn kind(&self) -> RequestKind {
+        self.kind
+    }
+
+    pub(crate) fn request_id(&self) -> RequestId {
+        self.request_id
+    }
+
+    fn log_sent(&self) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
+            RequestKind::Subscribe => {
+                tracing::info!(request_id, track_namespace, track_name, "SUBSCRIBE sent")
+            }
+            RequestKind::TrackStatus => {
+                tracing::info!(request_id, track_namespace, track_name, "TRACK_STATUS sent")
+            }
+            RequestKind::Fetch => {
+                tracing::info!(request_id, track_namespace, track_name, "FETCH sent")
+            }
+            RequestKind::Publish => {
+                tracing::info!(request_id, track_namespace, track_name, "PUBLISH sent")
+            }
+            RequestKind::PublishNamespace => {
+                tracing::info!(request_id, track_namespace, "PUBLISH_NAMESPACE sent")
+            }
+            RequestKind::SubscribeNamespace => tracing::info!(
+                request_id,
+                track_namespace_prefix = track_namespace,
+                "SUBSCRIBE_NAMESPACE sent"
+            ),
+        }
+    }
+
+    pub(crate) fn log_ok_sent(&self) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
+            RequestKind::Subscribe => {
+                tracing::info!(request_id, track_namespace, track_name, "SUBSCRIBE_OK sent")
+            }
+            RequestKind::TrackStatus => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                "TRACK_STATUS_OK sent"
+            ),
+            RequestKind::Fetch => {
+                tracing::info!(request_id, track_namespace, track_name, "FETCH_OK sent")
+            }
+            RequestKind::Publish => {
+                tracing::info!(request_id, track_namespace, track_name, "PUBLISH_OK sent")
+            }
+            RequestKind::PublishNamespace => {
+                tracing::info!(request_id, track_namespace, "PUBLISH_NAMESPACE_OK sent")
+            }
+            RequestKind::SubscribeNamespace => tracing::info!(
+                request_id,
+                track_namespace_prefix = track_namespace,
+                "SUBSCRIBE_NAMESPACE_OK sent"
+            ),
+        }
+    }
+
+    pub(crate) fn log_error_sent(&self, error_code: RequestErrorCode, reason_phrase: &str) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
+            RequestKind::Subscribe => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "SUBSCRIBE_ERROR sent"
+            ),
+            RequestKind::TrackStatus => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "TRACK_STATUS_ERROR sent"
+            ),
+            RequestKind::Fetch => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "FETCH_ERROR sent"
+            ),
+            RequestKind::Publish => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                ?error_code,
+                %reason_phrase,
+                "PUBLISH_ERROR sent"
+            ),
+            RequestKind::PublishNamespace => tracing::info!(
+                request_id,
+                track_namespace,
+                ?error_code,
+                %reason_phrase,
+                "PUBLISH_NAMESPACE_ERROR sent"
+            ),
+            RequestKind::SubscribeNamespace => tracing::info!(
+                request_id,
+                track_namespace_prefix = track_namespace,
+                ?error_code,
+                %reason_phrase,
+                "SUBSCRIBE_NAMESPACE_ERROR sent"
+            ),
+        }
+    }
+}
+
 pub(crate) enum OutgoingResponse {
     SubscribeOk(SubscribeOk),
     TrackStatusOk(SubscribeOk),
@@ -310,7 +506,6 @@ pub(crate) enum OutgoingResponse {
 /// A control message that neither waits on nor answers a request.
 pub(crate) enum Notification {
     Unsubscribe(Unsubscribe),
-    SubscribeUpdate(SubscribeUpdate),
     PublishDone {
         request_id: RequestId,
         code: PublishDoneCode,
@@ -330,6 +525,15 @@ pub(crate) enum Notification {
     RequestsBlocked(RequestsBlocked),
 }
 
+/// The Request ID of this side's next request (draft-14 §9.1).
+pub(crate) struct RequestIdReservation<'a>(tokio::sync::MappedMutexGuard<'a, RequestId>);
+
+impl RequestIdReservation<'_> {
+    pub(crate) fn request_id(&self) -> RequestId {
+        *self.0
+    }
+}
+
 /// How a session's control messages reach the peer.
 pub(crate) enum ControlChannel {
     Draft14(draft14::ControlChannel),
@@ -342,9 +546,24 @@ impl ControlChannel {
         }
     }
 
-    pub(crate) fn next_request_id(&self) -> RequestId {
+    /// Whether the peer's SETUP declared the TRACE_CONTEXT Setup Option.
+    pub(crate) fn peer_reads_trace_context(&self) -> bool {
         match self {
-            Self::Draft14(channel) => channel.next_request_id(),
+            Self::Draft14(channel) => channel.peer_reads_trace_context,
+        }
+    }
+
+    /// Blocks other requests on this channel until the reservation is
+    /// passed to `send_request` or `send_subscribe_update`, or dropped.
+    /// Dropping it, or the send future before the request is written, leaves
+    /// the Request ID unused. Fails with `RequestFailure::Timeout` when the
+    /// peer does not raise its Maximum Request ID within the control message
+    /// timeout.
+    pub(crate) async fn reserve_request_id(
+        &self,
+    ) -> Result<RequestIdReservation<'_>, RequestFailure> {
+        match self {
+            Self::Draft14(channel) => channel.reserve_request_id().await,
         }
     }
 
@@ -353,12 +572,30 @@ impl ControlChannel {
     pub(crate) async fn send_request(
         &self,
         _connection: &Arc<Connection>,
+        reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
+        let sent = RequestSummary::of(&request);
+        let pending = match self {
+            Self::Draft14(channel) => {
+                PendingResponse::Draft14(channel.send_request(reservation, request).await?)
+            }
+        };
+        sent.log_sent();
+        Ok(pending)
+    }
+
+    pub(crate) async fn send_subscribe_update(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscribe_update: SubscribeUpdate,
+    ) -> Result<(), TransportSendError> {
         match self {
-            Self::Draft14(channel) => Ok(PendingResponse::Draft14(
-                channel.send_request(request).await?,
-            )),
+            Self::Draft14(channel) => {
+                channel
+                    .send_subscribe_update(reservation, subscribe_update)
+                    .await
+            }
         }
     }
 
@@ -409,7 +646,9 @@ impl ControlReceiver {
     }
 }
 
-fn negotiated_version(transport_connection: &BoxedConnection) -> anyhow::Result<Version> {
+pub(crate) fn negotiated_version(
+    transport_connection: &BoxedConnection,
+) -> anyhow::Result<Version> {
     let protocol = transport_connection.negotiated_protocol();
     let version = Version::negotiated(&protocol)?;
     tracing::debug!(?protocol, ?version, "MoQT version negotiated");
@@ -466,6 +705,14 @@ impl ServerHandshake {
         }
     }
 
+    pub(crate) fn trace_context(&self) -> Option<&TraceContext> {
+        match self {
+            Self::Draft14(handshake) => {
+                handshake.client_setup.setup_parameters.traceparent.as_ref()
+            }
+        }
+    }
+
     /// Answers the client's setup and opens the session's control channel.
     pub(crate) async fn accept(
         self,
@@ -492,9 +739,32 @@ impl PendingResponse {
     /// Fails with `RequestFailure::Timeout` after 10 s (the session stays
     /// open), or with `RequestFailure::SessionClosed` when the control stream
     /// closes first.
-    pub(crate) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
+    pub(crate) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
         match self {
-            Self::Draft14(pending) => pending.response().await,
+            Self::Draft14(pending) => Ok(ReceivedResponse::Draft14(pending.response().await?)),
+        }
+    }
+}
+
+/// Dropping this before `accept` withdraws the request at the peer
+/// (UNSUBSCRIBE, FETCH_CANCEL, ...), as for a response that arrives after the
+/// caller stopped waiting.
+#[must_use = "dropping this withdraws the request"]
+pub(crate) enum ReceivedResponse {
+    Draft14(draft14::ReceivedResponse),
+}
+
+impl ReceivedResponse {
+    pub(crate) fn message(&self) -> &ResponseMessage {
+        match self {
+            Self::Draft14(response) => response.message(),
+        }
+    }
+
+    /// The caller takes over what the response established at the peer.
+    pub(crate) fn accept(self) -> ResponseMessage {
+        match self {
+            Self::Draft14(response) => response.accept(),
         }
     }
 }
