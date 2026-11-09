@@ -1,6 +1,6 @@
 import type { TrackWriter } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
-import { publish } from 'moq-wasm/media'
+import { createBroadcast } from 'moq-wasm/media'
 import { pageRoomId } from '../../utils/botRoom'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
@@ -64,7 +64,10 @@ setUpSystemOneBotPage({
     preview.srcObject = mediaStream
   },
   onConnect: async (session) => {
-    await publish(session, CAMERA_NAMESPACE, mediaStream!, {
+    const broadcast = await createBroadcast(session, CAMERA_NAMESPACE)
+    await broadcast.addSource('camera', {
+      label: 'Camera',
+      stream: mediaStream!,
       keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
       videoEncoderConfig: VIDEO_ENCODER_CONFIG
     })

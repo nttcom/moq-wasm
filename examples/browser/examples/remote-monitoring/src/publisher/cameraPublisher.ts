@@ -1,5 +1,5 @@
 import type { MoqSession } from 'moq-wasm'
-import { type Publication, publish } from 'moq-wasm/media'
+import { type LocalBroadcast, createBroadcast } from 'moq-wasm/media'
 import { type CameraId, type VideoSource } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
@@ -24,7 +24,7 @@ const CAM_COLORS: Record<CameraId, string> = {
 export class CameraPublisher {
   private stream: MediaStream | null = null
   private videoEl: HTMLVideoElement | null = null
-  private publication: Publication | null = null
+  private broadcast: LocalBroadcast | null = null
   private rafId: number | null = null
 
   constructor(
@@ -46,11 +46,14 @@ export class CameraPublisher {
     }
 
     // A video file's captured stream carries its sound too; the monitor shows video only.
-    this.publication = await publish(session, namespace, new MediaStream(this.stream.getVideoTracks()), {
-      videoLabel: this.camId,
-      keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
-      videoEncoderConfig: encoderConfig,
+    this.broadcast = await createBroadcast(session, namespace, {
       onError: (err) => console.error('[pub][camera] publish error', { camId: this.camId, err })
+    })
+    await this.broadcast.addSource('camera', {
+      label: this.camId,
+      video: this.stream.getVideoTracks()[0],
+      keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
+      videoEncoderConfig: encoderConfig
     })
     log('publishing', { camId: this.camId, source: this.source.type, namespace })
     return this.stream
@@ -153,8 +156,8 @@ export class CameraPublisher {
   stop(): void {
     log('stopping', { camId: this.camId })
     if (this.rafId !== null) clearInterval(this.rafId)
-    this.publication?.close().catch((err) => console.warn('[pub][camera] close failed', { camId: this.camId, err }))
-    this.publication = null
+    this.broadcast?.close().catch((err) => console.warn('[pub][camera] close failed', { camId: this.camId, err }))
+    this.broadcast = null
     this.stream?.getTracks().forEach((t) => t.stop())
     this.stream = null
     if (this.videoEl) {
