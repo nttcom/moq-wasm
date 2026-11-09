@@ -217,7 +217,8 @@ mod tests {
         CertificateVerification, ClientConfig, SessionEvent, TerminationErrorCode,
         modules::test_support::{
             DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, connect_sessions, native_client_with_config,
-            receive_disconnected, spawn_connected_native_sessions, spawn_native_server,
+            published_track, published_track_between, receive_disconnected,
+            spawn_connected_draft18_sessions, spawn_connected_native_sessions, spawn_native_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
@@ -357,6 +358,29 @@ mod tests {
 
         // Assert
         receive_disconnected(&server).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_a_session_closes_it_while_one_of_its_streams_is_held() {
+        let (client, server) =
+            spawn_connected_draft18_sessions("session-drop-held-stream-draft18", "moqt").await;
+        for track in [
+            published_track("session-drop-held-stream").await,
+            published_track_between(client, server).await,
+        ] {
+            // Arrange: a data stream outlives the session and keeps the connection referenced
+            let factory = track.client.publisher().create_stream(&track.published);
+            let _stream = factory.next().await.unwrap();
+
+            // Act
+            drop((factory, track.published, track.client));
+            let close = tokio::time::timeout(DISCONNECT_TIMEOUT, track.server.closed())
+                .await
+                .unwrap();
+
+            // Assert
+            assert_eq!(close.code, Some(0x0), "{close:?}");
+        }
     }
 
     #[tokio::test]

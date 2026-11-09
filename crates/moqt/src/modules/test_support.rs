@@ -44,6 +44,7 @@ use crate::{
         },
         domains::{connection::IncomingObjectNotification, session_context::SessionContext},
         runtime::dispatch::incoming_object::{IncomingObject, IncomingObjectReceiver},
+        version::DRAFT18_PROTOCOLS,
     },
     object::{
         DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
@@ -106,14 +107,48 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
     .unwrap()
 }
 
+/// More than quinn's default limit of 100 concurrent bidirectional streams.
+const OPEN_STREAMS: usize = 150;
+
+/// Opens [`OPEN_STREAMS`] bidirectional streams and keeps every one open.
+async fn open_bi_streams(connection: &BoxedConnection) -> anyhow::Result<Vec<impl Sized>> {
+    let mut streams = Vec::with_capacity(OPEN_STREAMS);
+    for _ in 0..OPEN_STREAMS {
+        streams.push(connection.open_bi().await?);
+    }
+    Ok(streams)
+}
+
+/// Asserts that both sides open [`OPEN_STREAMS`] bidirectional streams at
+/// once within [`HANDSHAKE_TIMEOUT`].
+pub(crate) async fn assert_both_sides_open_bi_streams(
+    client: &BoxedConnection,
+    server: &BoxedConnection,
+) {
+    let opened = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        tokio::join!(open_bi_streams(client), open_bi_streams(server))
+    })
+    .await;
+    let (from_client, from_server) = opened.expect("every stream opens in time");
+    assert!(from_client.is_ok(), "{:?}", from_client.err());
+    assert!(from_server.is_ok(), "{:?}", from_server.err());
+}
+
 /// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
 pub(crate) fn spawn_native_server_handshake(
     name: &str,
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
+    spawn_native_server_handshake_offering(name, APPLICATION_PROTOCOLS)
+}
+
+fn spawn_native_server_handshake_offering(
+    name: &str,
+    protocols: ApplicationProtocols,
+) -> (u16, tokio::task::JoinHandle<Handshake>) {
     let server_config = self_signed_server_config(name);
-    let server = Endpoint::<NATIVE>::create_server(&server_config).unwrap();
+    let server = Endpoint::<NATIVE>::create_server_offering(&server_config, protocols).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
@@ -380,6 +415,34 @@ pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Ses
         .unwrap()
 }
 
+/// Connects a NATIVE client and server that offer only draft-18, over raw
+/// QUIC for `moqt` or WebTransport for `https`.
+pub(crate) async fn spawn_connected_draft18_sessions(
+    name: &str,
+    scheme: &str,
+) -> (Session, Session) {
+    let (port, handshake) = spawn_native_server_handshake_offering(name, DRAFT18_PROTOCOLS);
+    let accept = tokio::spawn(async move {
+        handshake
+            .await
+            .unwrap()
+            .accept(&tracing::Span::current())
+            .await
+            .unwrap()
+    });
+    let client =
+        Endpoint::<NATIVE>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
+            .unwrap();
+    let path = if scheme == "https" { "/moq" } else { "" };
+    connect_sessions_from(
+        &client,
+        &format!("{scheme}://127.0.0.1:{port}{path}"),
+        accept,
+    )
+    .await
+    .unwrap()
+}
+
 pub(crate) async fn spawn_connected_native_sessions_following_go_away(
     name: &str,
 ) -> (Session, Session) {
@@ -427,6 +490,11 @@ pub(crate) struct PublishedTrack {
 
 pub(crate) async fn published_track(name: &str) -> PublishedTrack {
     let (client, server) = spawn_connected_native_sessions(name).await;
+    published_track_between(client, server).await
+}
+
+/// The client publishes `ns/track` and the server accepts it.
+pub(crate) async fn published_track_between(client: Session, server: Session) -> PublishedTrack {
     let publisher = client.publisher();
     let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         tokio::join!(

@@ -12,7 +12,6 @@ use std::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 
 use bytes::BytesMut;
@@ -46,8 +45,6 @@ use crate::{
         transport::transport_send_stream::TransportSendError,
     },
 };
-
-const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The SETUP MAX_REQUEST_ID this side sends, and how far past the peer's next
 /// Request ID every later MAX_REQUEST_ID reaches. Request IDs step by 2, so it
@@ -144,16 +141,21 @@ impl ControlChannel {
     }
 
     fn of(connection: &Connection) -> &Self {
-        let version::ControlChannel::Draft14(channel) = &connection.control;
+        let version::ControlChannel::Draft14(channel) = &connection.control else {
+            unreachable!("draft-14 tasks run only on draft-14 connections")
+        };
         channel
     }
 
     pub(super) async fn reserve_request_id(
         &self,
     ) -> Result<RequestIdReservation<'_>, RequestFailure> {
-        executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.wait_for_request_id())
-            .await
-            .map_err(|()| RequestFailure::Timeout)
+        executor::timeout(
+            version::CONTROL_MESSAGE_RESPONSE_TIMEOUT,
+            self.wait_for_request_id(),
+        )
+        .await
+        .map_err(|()| RequestFailure::Timeout)
     }
 
     /// Waits while the next Request ID reaches the peer's Maximum Request
@@ -494,7 +496,7 @@ impl PendingResponse {
     /// (inter-relay) session survives one slow request; the entry stays
     /// `Abandoned` and a late response goes to `handle_late_response`.
     pub(super) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
-        match executor::timeout(CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
+        match executor::timeout(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
             Err(_) => Err(RequestFailure::Timeout),

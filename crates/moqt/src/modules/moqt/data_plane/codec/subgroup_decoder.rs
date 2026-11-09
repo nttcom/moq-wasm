@@ -3,11 +3,9 @@ use std::time::Duration;
 use bytes::{Buf, Bytes, BytesMut};
 use tokio_util::codec::Decoder;
 
+use super::payload_splitter::{PayloadSplit, PayloadSplitter};
 use crate::{
-    modules::{
-        executor,
-        moqt::data_plane::object::{decode_error::DecodeError, subgroup::SubgroupObjectHead},
-    },
+    modules::moqt::data_plane::object::{decode_error::DecodeError, subgroup::SubgroupObjectHead},
     wire::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
 };
 
@@ -34,12 +32,8 @@ pub(crate) enum SubgroupFrame {
 
 #[derive(Debug)]
 pub(crate) struct SubgroupDecoder {
-    subgroup_header_type: Option<SubgroupHeaderType>,
-    /// Payload bytes of the current object not yet handed out.
-    payload_remaining: usize,
-    /// When the first byte of the next object was buffered, on the
-    /// `executor::now` clock.
-    object_buffered_at: Option<Duration>,
+    /// Set once the header is decoded.
+    objects: Option<(SubgroupHeaderType, PayloadSplitter)>,
 }
 
 impl Decoder for SubgroupDecoder {
@@ -48,16 +42,37 @@ impl Decoder for SubgroupDecoder {
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if self.subgroup_header_type.is_none() {
+        let Some((message_type, splitter)) = &mut self.objects else {
             let mut cursor_buf = std::io::Cursor::new(&src[..]);
             let subgroup = self.decode_header(&mut cursor_buf)?;
             let pos = cursor_buf.position() as usize;
             let _ = src.split_to(pos);
-            self.object_buffered_at = (!src.is_empty()).then(executor::now);
-            Ok(subgroup)
-        } else {
-            self.decode_object_field(src)
-        }
+            if let Some(SubgroupFrame::Header(header)) = &subgroup {
+                self.objects = Some((header.message_type, PayloadSplitter::after_header(src)));
+            }
+            return Ok(subgroup);
+        };
+        let message_type = *message_type;
+        let split = splitter.decode(src, |src| {
+            Ok::<_, std::io::Error>(Self::decode_head(message_type, src)?.map(|head| {
+                let payload_len = head.payload_len();
+                (head, payload_len)
+            }))
+        })?;
+        Ok(split.map(|split| match split {
+            PayloadSplit::Object {
+                head,
+                payload,
+                receive_time,
+            } => SubgroupFrame::Object {
+                field: head.with_payload(message_type, payload),
+                receive_time,
+            },
+            PayloadSplit::Head { head, .. } => SubgroupFrame::ObjectHead(head),
+            PayloadSplit::Payload { data, completed_in } => {
+                SubgroupFrame::Payload { data, completed_in }
+            }
+        }))
     }
 
     /// A stream that ends inside an object is an error, also when its head
@@ -65,7 +80,11 @@ impl Decoder for SubgroupDecoder {
     fn decode_eof(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         match self.decode(src)? {
             Some(frame) => Ok(Some(frame)),
-            None if src.is_empty() && self.payload_remaining == 0 => Ok(None),
+            None if src.is_empty()
+                && !matches!(&self.objects, Some((_, splitter)) if splitter.inside_payload()) =>
+            {
+                Ok(None)
+            }
             None => Err(std::io::Error::other("bytes remaining on stream")),
         }
     }
@@ -73,11 +92,7 @@ impl Decoder for SubgroupDecoder {
 
 impl SubgroupDecoder {
     pub(crate) fn new() -> Self {
-        Self {
-            subgroup_header_type: None,
-            payload_remaining: 0,
-            object_buffered_at: None,
-        }
+        Self { objects: None }
     }
 
     fn decode_header(
@@ -102,47 +117,7 @@ impl SubgroupDecoder {
                 }
             }
         };
-        self.subgroup_header_type = Some(subgroup_header.message_type);
         Ok(Some(SubgroupFrame::Header(subgroup_header)))
-    }
-
-    fn decode_object_field(
-        &mut self,
-        src: &mut BytesMut,
-    ) -> Result<Option<SubgroupFrame>, std::io::Error> {
-        if src.is_empty() {
-            return Ok(None);
-        }
-        let buffered_at = *self.object_buffered_at.get_or_insert_with(executor::now);
-        if self.payload_remaining > 0 {
-            let data = src.split_to(self.payload_remaining.min(src.len())).freeze();
-            self.payload_remaining -= data.len();
-            let completed_in =
-                (self.payload_remaining == 0).then(|| self.complete_object(buffered_at, src));
-            return Ok(Some(SubgroupFrame::Payload { data, completed_in }));
-        }
-        let message_type = self.subgroup_header_type.unwrap();
-        let Some(head) = Self::decode_head(message_type, src)? else {
-            return Ok(None);
-        };
-        if src.len() < head.payload_len() {
-            self.payload_remaining = head.payload_len();
-            return Ok(Some(SubgroupFrame::ObjectHead(head)));
-        }
-        let payload = Bytes::copy_from_slice(&src[..head.payload_len()]);
-        src.advance(head.payload_len());
-        Ok(Some(SubgroupFrame::Object {
-            field: head.with_payload(message_type, payload),
-            receive_time: self.complete_object(buffered_at, src),
-        }))
-    }
-
-    /// Returns how long the object took to arrive.
-    fn complete_object(&mut self, buffered_at: Duration, src: &BytesMut) -> Duration {
-        let decoded_at = executor::now();
-        // Bytes left over arrived with this object's last bytes.
-        self.object_buffered_at = (!src.is_empty()).then_some(decoded_at);
-        decoded_at.saturating_sub(buffered_at)
     }
 
     fn decode_head(

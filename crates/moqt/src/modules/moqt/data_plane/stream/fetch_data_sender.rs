@@ -30,9 +30,10 @@ impl FetchDataSender {
         })
     }
 
-    /// Sends `object` on this FETCH response. A datagram object is sent with
-    /// its Object ID as the Subgroup ID (draft-14 §10.4.4), and a zero-length
-    /// object as its status.
+    /// Sends `object` on this FETCH response. draft-14 sends a datagram
+    /// object with its Object ID as the Subgroup ID (§10.4.4) and a
+    /// zero-length object as its status; draft-18 carries only Normal
+    /// objects and skips the others.
     pub async fn send_object(&self, object: &Object) -> anyhow::Result<()> {
         let mut encoder = self.encoder.lock().await;
         match encoder.object(object)? {

@@ -120,10 +120,15 @@ impl TransportConnectionCreator for QUICConnectionCreator {
 #[cfg(test)]
 mod tests {
     use super::QUICConnectionCreator;
+    use crate::CertificateVerification;
     use crate::modules::{
-        test_support::{HANDSHAKE_TIMEOUT, server_transport_creator},
+        moqt::version::APPLICATION_PROTOCOLS,
+        test_support::{
+            HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, server_transport_creator,
+        },
         transport::{
-            accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
+            accept_error::AcceptError, connect_target::ConnectTarget,
+            transport_connection_creator::TransportConnectionCreator,
         },
     };
 
@@ -138,5 +143,31 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Ok(Err(AcceptError::EndpointClosing))));
+    }
+
+    #[tokio::test]
+    async fn either_side_keeps_more_than_a_hundred_bidirectional_streams_open() {
+        // Arrange
+        let server: QUICConnectionCreator = server_transport_creator("quic-bidi-streams");
+        let client = QUICConnectionCreator::client(
+            0,
+            &CertificateVerification::Disabled,
+            APPLICATION_PROTOCOLS,
+        )
+        .unwrap();
+        let target = ConnectTarget::parse(&format!(
+            "moqt://127.0.0.1:{}",
+            server.local_port().unwrap()
+        ))
+        .unwrap();
+        let (client_connection, server_connection) =
+            tokio::join!(client.create_new_transport(&target), async {
+                server.accept_new_transport().await.unwrap().await
+            });
+        let (client_connection, server_connection) =
+            (client_connection.unwrap(), server_connection.unwrap());
+
+        // Act / Assert
+        assert_both_sides_open_bi_streams(&client_connection, &server_connection).await;
     }
 }
