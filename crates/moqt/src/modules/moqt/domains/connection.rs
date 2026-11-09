@@ -123,6 +123,7 @@ pub(crate) struct SinkReceiver {
     /// Set while the subscription is read on two connections.
     pub(crate) cutover: Option<SinkCutover>,
     pub(crate) open_subgroups: OpenSubgroups,
+    pub(crate) default_publisher_priority: u8,
 }
 
 /// What the sink on the new connection takes from the previous one when a
@@ -153,7 +154,10 @@ pub(crate) struct SharedCutover {
 fn location_of(object: &IncomingObject) -> (u64, u64) {
     match object {
         IncomingObject::Subgroup(receiver) => (receiver.group_id(), 0),
-        IncomingObject::Datagram(object) => (object.location.group_id, object.location.object_id),
+        IncomingObject::Datagram(datagram) => (
+            datagram.object.location.group_id,
+            datagram.object.location.object_id,
+        ),
     }
 }
 
@@ -192,6 +196,7 @@ impl SinkReceiver {
             receiver.track_alias = self.logical_alias;
             receiver.count_in(&self.open_subgroups);
         }
+        object.inherit_priority(self.default_publisher_priority);
         match self.sender.send(object) {
             Ok(()) => IncomingObjectNotification::Notified,
             Err(IncomingObjectSendError::Full) => IncomingObjectNotification::ReceiverFull,
@@ -595,7 +600,9 @@ mod tests {
     use crate::modules::{
         moqt::{
             data_plane::stream::open_subgroups::OpenSubgroups,
-            runtime::dispatch::incoming_object::{IncomingObject, incoming_object_channel},
+            runtime::dispatch::incoming_object::{
+                IncomingDatagram, IncomingObject, incoming_object_channel,
+            },
         },
         test_support::datagram_object,
     };
@@ -611,7 +618,7 @@ mod tests {
     ) -> IncomingObjectNotification {
         sinks.notify(
             track_alias,
-            IncomingObject::Datagram(datagram_object()),
+            IncomingObject::Datagram(IncomingDatagram::new(datagram_object())),
             now,
         )
     }
@@ -633,6 +640,7 @@ mod tests {
             logical_alias: 100,
             newest_group: None,
             cutover: None,
+            default_publisher_priority: 128,
             open_subgroups: OpenSubgroups::new(),
         }
     }

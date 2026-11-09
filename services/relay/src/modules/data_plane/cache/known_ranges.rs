@@ -11,9 +11,29 @@ pub(crate) struct KnownRanges {
     ranges: BTreeMap<Location, Location>,
 }
 
+/// The position right after `at` in Location order, for the half-open
+/// ranges of `insert_until` and `covers_until`.
+pub(crate) fn following(at: Location) -> Location {
+    match at.object_id.checked_add(1) {
+        Some(object_id) => Location {
+            group_id: at.group_id,
+            object_id,
+        },
+        None => Location {
+            group_id: at.group_id.saturating_add(1),
+            object_id: 0,
+        },
+    }
+}
+
 impl KnownRanges {
-    pub(crate) fn insert(&mut self, mut start: Location, end: Location) {
-        let mut end = Self::exclusive_end(end);
+    pub(crate) fn insert(&mut self, start: Location, end: Location) {
+        self.insert_until(start, Self::exclusive_end(end));
+    }
+
+    /// `insert` for the half-open range `start..end`, where `{group, 0}` is
+    /// that group's first object rather than the whole group.
+    pub(crate) fn insert_until(&mut self, mut start: Location, mut end: Location) {
         if start >= end {
             return;
         }
@@ -50,11 +70,16 @@ impl KnownRanges {
 
     pub(crate) fn contains_range(&self, start: Location, end: Location) -> bool {
         let end = Self::exclusive_end(end);
-        if start >= end {
-            return false;
-        }
-        self.end_of_range_containing(start)
-            .is_some_and(|range_end| end <= range_end)
+        start < end && self.covers_until(start, end)
+    }
+
+    /// Whether every position of the half-open range `start..end` is known;
+    /// an empty range is.
+    pub(crate) fn covers_until(&self, start: Location, end: Location) -> bool {
+        start >= end
+            || self
+                .end_of_range_containing(start)
+                .is_some_and(|range_end| end <= range_end)
     }
 
     /// Positions below that end are fully decided: an absent object there is

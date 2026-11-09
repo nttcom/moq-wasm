@@ -331,12 +331,12 @@ impl Subscriber {
         end_location: Location,
         option: FetchOption,
     ) -> Result<FetchHandle, RequestFailure> {
-        let remainder = FetchRemainder {
-            track_namespace: track_namespace.clone(),
-            track_name: track_name.clone(),
-            start: start_location,
-            subscriber_priority: option.subscriber_priority,
-        };
+        let remainder = FetchRemainder::new(
+            track_namespace.clone(),
+            track_name.clone(),
+            start_location,
+            &option,
+        );
         let fetch_params = FetchParams::Standalone {
             track_namespace: namespace_tuple(&track_namespace),
             track_name,
@@ -455,6 +455,9 @@ impl Subscriber {
             group_order: option.group_order,
             fetch_params,
             authorization_tokens: vec![],
+            fill_timeout: option
+                .fill_timeout
+                .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
             trace_context: current_trace_context(&connection.control),
         };
         let response = connection
@@ -836,11 +839,9 @@ impl Subscriber {
             IncomingObject::Subgroup(first) => Ok(DataReceiver::Stream(
                 StreamDataReceiverFactory::new(first, receiver),
             )),
-            IncomingObject::Datagram(object) => Ok(DataReceiver::Datagram(DatagramReceiver::new(
-                track_alias,
-                object,
-                receiver,
-            ))),
+            IncomingObject::Datagram(datagram) => Ok(DataReceiver::Datagram(
+                DatagramReceiver::new(track_alias, datagram.object, receiver),
+            )),
         }
     }
 }
@@ -954,15 +955,15 @@ pub(crate) fn joining_remainder(
     option: &FetchOption,
 ) -> Option<FetchRemainder> {
     match subscription.content_exists() {
-        ContentExists::True { location } => Some(FetchRemainder {
-            track_namespace: subscription.track_namespace().to_string(),
-            track_name: subscription.track_name().to_string(),
-            start: Location {
+        ContentExists::True { location } => Some(FetchRemainder::new(
+            subscription.track_namespace().to_string(),
+            subscription.track_name().to_string(),
+            Location {
                 group_id: location.group_id.saturating_sub(joining_start),
                 object_id: 0,
             },
-            subscriber_priority: option.subscriber_priority,
-        }),
+            option,
+        )),
         ContentExists::False => None,
     }
 }

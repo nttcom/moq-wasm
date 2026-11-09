@@ -53,7 +53,7 @@ impl UniStreamReceiveTask {
     }
 
     #[tracing::instrument(level = "debug", name = "on_stream_received", skip_all)]
-    async fn on_stream_received(connection: &Connection, stream: BoxedReceiveStream) -> bool {
+    async fn on_stream_received(connection: &Arc<Connection>, stream: BoxedReceiveStream) -> bool {
         let incoming = match connection.control.version().accept_uni_stream(stream).await {
             Ok(Some(incoming)) => incoming,
             Ok(None) => {

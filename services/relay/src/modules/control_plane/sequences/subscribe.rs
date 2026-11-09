@@ -54,11 +54,14 @@ pub(super) fn existing_track_largest(
     track_key: &TrackKey,
     upstream_track: &TrackState,
 ) -> Option<moqt::object::Location> {
-    let upstream_largest = match upstream_track.content_exists() {
-        ContentExists::True { location } => Some(location),
-        ContentExists::False => None,
-    };
-    cached_largest(cache_store, track_key).max(upstream_largest)
+    cached_largest(cache_store, track_key).max(upstream_track.largest_location())
+}
+
+/// draft-18 §2.4.2: once latched, the whole track is malformed.
+pub(super) fn is_latched_malformed(cache_store: &TrackCacheStore, track_key: &TrackKey) -> bool {
+    cache_store
+        .get(track_key)
+        .is_some_and(|cache| cache.is_malformed())
 }
 
 /// The track as found or created for a SUBSCRIBE, held wanting its producers
@@ -126,6 +129,10 @@ impl Subscribe {
             track_name = %track_name,
             "SUBSCRIBE received"
         );
+        if is_latched_malformed(cache_store, &TrackKey::new(track_namespace, track_name)) {
+            self.response_malformed(session_id, handler.as_ref()).await;
+            return;
+        }
         let requester = super::session_peer(session_id, forwarder).await;
 
         for _ in 0..UPSTREAM_ATTEMPTS {
@@ -227,6 +234,14 @@ impl Subscribe {
     ) -> Result<UpstreamTrackAccess, CreationFailure> {
         let track_key = TrackKey::new(track_namespace, track_name);
         loop {
+            // A refusal as malformed removes the track, so a SUBSCRIBE that
+            // waited for its creation finds it latched instead.
+            if is_latched_malformed(cache_store, &track_key) {
+                return Err(CreationFailure {
+                    code: RequestErrorCode::MalformedTrack,
+                    reason: "malformed track".to_string(),
+                });
+            }
             let (mut receiver, reservation, cache_before_subscribe) =
                 match table.track_or_begin_creation(&track_key, requester) {
                     TrackLookup::Ready(upstream_track, reservation) => {
@@ -370,18 +385,10 @@ impl Subscribe {
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) -> Acceptance {
-        if cache_store
-            .get(&track_key)
-            .is_some_and(|cache| cache.is_malformed())
-        {
-            let _ = self
-                .response_error(
-                    session_id,
-                    handler,
-                    RequestErrorCode::TrackDoesNotExist,
-                    "malformed track".to_string(),
-                )
-                .await;
+        // The track may have been latched while the upstream SUBSCRIBE was
+        // in flight.
+        if is_latched_malformed(cache_store, &track_key) {
+            self.response_malformed(session_id, handler).await;
             return Acceptance::Answered;
         }
 
@@ -482,6 +489,17 @@ impl Subscribe {
         Acceptance::Answered
     }
 
+    async fn response_malformed(&self, session_id: SessionId, handler: &dyn SubscribeHandler) {
+        let _ = self
+            .response_error(
+                session_id,
+                handler,
+                RequestErrorCode::MalformedTrack,
+                "malformed track".to_string(),
+            )
+            .await;
+    }
+
     async fn response_track_gone(&self, session_id: SessionId, handler: &dyn SubscribeHandler) {
         let _ = self
             .response_error(
@@ -543,8 +561,9 @@ mod tests {
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, MockUpstreamSession, RecordedControlMessages,
         detached_session_repository, mock_session_answering_subscribe,
-        mock_session_never_answering_subscribe, recorded_session_answering_subscribe,
-        session_repository_with_session, session_repository_with_sessions,
+        mock_session_never_answering_subscribe, mock_session_refusing_subscribe,
+        recorded_session_answering_subscribe, recorded_session_answering_subscribe_after,
+        session_repository_with_session, session_repository_with_sessions, wait_until,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::{
@@ -669,15 +688,26 @@ mod tests {
         Arc<InMemoryLocalPubSubDirectory>,
         Result<UpstreamTrackAccess, CreationFailure>,
     ) {
+        subscribe_to_publishers_with_cache(publishers, &Arc::new(TrackCacheStore::new())).await
+    }
+
+    async fn subscribe_to_publishers_with_cache(
+        publishers: Vec<(SessionId, Box<dyn crate::modules::session::Session>)>,
+        cache_store: &Arc<TrackCacheStore>,
+    ) -> (
+        Arc<InMemoryLocalPubSubDirectory>,
+        Result<UpstreamTrackAccess, CreationFailure>,
+    ) {
         let publisher_session_ids = publishers.iter().map(|(id, _)| *id).collect();
         let repository =
             session_repository_with_sessions(publishers, VerifiedToken::full_access()).await;
-        subscribe_through(repository, publisher_session_ids).await
+        subscribe_through(repository, publisher_session_ids, cache_store).await
     }
 
     async fn subscribe_through(
         repository: Arc<tokio::sync::Mutex<SessionRepository>>,
         publisher_session_ids: Vec<SessionId>,
+        cache_store: &Arc<TrackCacheStore>,
     ) -> (
         Arc<InMemoryLocalPubSubDirectory>,
         Result<UpstreamTrackAccess, CreationFailure>,
@@ -693,7 +723,6 @@ mod tests {
         }
         let forwarder = ControlMessageForwarder { repository };
         let resolver = Arc::new(local_publisher_resolver());
-        let cache_store = Arc::new(TrackCacheStore::new());
         let created = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             Subscribe.get_or_create_upstream_subscription(
@@ -704,7 +733,7 @@ mod tests {
                 &table,
                 &forwarder,
                 &resolver,
-                &cache_store,
+                cache_store,
             ),
         )
         .await
@@ -765,6 +794,80 @@ mod tests {
         assert_eq!(
             wait_track_publishers(&table, vec![NEW_PUBLISHER_SESSION]).await,
             vec![NEW_PUBLISHER_SESSION]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_refused_as_malformed_latches_the_track_and_answers_malformed_track() {
+        // Arrange
+        let cache_store = Arc::new(TrackCacheStore::new());
+        let publishers = vec![(
+            DEAD_PUBLISHER_SESSION,
+            mock_session_refusing_subscribe(RequestErrorCode::MalformedTrack),
+        )];
+
+        // Act
+        let (_table, created) = subscribe_to_publishers_with_cache(publishers, &cache_store).await;
+
+        // Assert: draft-18 §2.4.2, §12.7
+        let Err(failure) = created else {
+            panic!("a malformed track must not be subscribed");
+        };
+        assert_eq!(failure.code, RequestErrorCode::MalformedTrack);
+        assert!(is_latched_malformed(
+            &cache_store,
+            &TrackKey::new("ns", "track")
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_refusal_ends_the_subscribe_without_waiting_for_other_publishers() {
+        // Arrange
+        let publishers = vec![
+            (
+                DEAD_PUBLISHER_SESSION,
+                mock_session_refusing_subscribe(RequestErrorCode::MalformedTrack),
+            ),
+            (
+                NEW_PUBLISHER_SESSION,
+                mock_session_never_answering_subscribe(),
+            ),
+        ];
+
+        // Act
+        let (_table, created) = subscribe_to_publishers(publishers).await;
+
+        // Assert: draft-18 §2.4.2, the track is malformed whoever else publishes it
+        assert_eq!(
+            created.err().map(|failure| failure.code),
+            Some(RequestErrorCode::MalformedTrack)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_publisher_answering_after_a_malformed_refusal_is_unsubscribed() {
+        // Arrange
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let (late_publisher, recorded) = recorded_session_answering_subscribe_after(gate.clone());
+        let publishers = vec![
+            (
+                DEAD_PUBLISHER_SESSION,
+                mock_session_refusing_subscribe(RequestErrorCode::MalformedTrack),
+            ),
+            (NEW_PUBLISHER_SESSION, late_publisher),
+        ];
+        let (_table, created) = subscribe_to_publishers(publishers).await;
+        assert!(created.is_err());
+
+        // Act
+        gate.notify_one();
+        let unsubscribed = wait_until(|| !recorded.unsubscribed_request_ids().is_empty()).await;
+
+        // Assert: draft-18 §2.4.2, the latched track takes no publisher, and
+        // the one that accepted is not left subscribed
+        assert!(
+            unsubscribed.is_ok(),
+            "the late SUBSCRIBE_OK is unsubscribed"
         );
     }
 
@@ -867,7 +970,12 @@ mod tests {
         let _ = cell.set(repository.clone());
 
         // Act
-        let (table, created) = subscribe_through(repository, vec![DEAD_PUBLISHER_SESSION]).await;
+        let (table, created) = subscribe_through(
+            repository,
+            vec![DEAD_PUBLISHER_SESSION],
+            &Arc::new(TrackCacheStore::new()),
+        )
+        .await;
 
         // Assert
         assert!(matches!(
@@ -980,6 +1088,14 @@ mod tests {
         table: &InMemoryLocalPubSubDirectory,
         handler: &MockSubscribeHandler,
     ) -> Acceptance {
+        accept_downstream_with_cache(table, handler, &Arc::new(TrackCacheStore::new())).await
+    }
+
+    async fn accept_downstream_with_cache(
+        table: &InMemoryLocalPubSubDirectory,
+        handler: &MockSubscribeHandler,
+        cache_store: &Arc<TrackCacheStore>,
+    ) -> Acceptance {
         Subscribe
             .accept_downstream_subscription(
                 2,
@@ -991,10 +1107,70 @@ mod tests {
                 &ControlMessageForwarder {
                     repository: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
                 },
-                &Arc::new(TrackCacheStore::new()),
+                cache_store,
                 handler,
             )
             .await
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_to_a_latched_track_is_answered_malformed_track() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+        let cache_store = Arc::new(TrackCacheStore::new());
+        cache_store.get_or_create(&track_key()).mark_malformed();
+        let handler = MockSubscribeHandler::default();
+
+        // Act
+        let acceptance = accept_downstream_with_cache(&table, &handler, &cache_store).await;
+
+        // Assert: draft-18 §2.4.2, the track is malformed, not missing
+        assert!(matches!(acceptance, Acceptance::Answered));
+        assert_eq!(
+            *handler.subscribe_errors.lock().unwrap(),
+            vec![RequestErrorCode::MalformedTrack]
+        );
+        assert!(table.get_downstream_subscription(2, 0).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_to_a_latched_track_sends_no_upstream_subscribe() {
+        // Arrange
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(PUBLISHER_SESSION, "ns".to_string(), SessionPeer::Client);
+        let (publisher, recorded) = recorded_session_answering_subscribe(|| ContentExists::False);
+        let repository = session_repository_with_sessions(
+            vec![(PUBLISHER_SESSION, publisher)],
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let cache_store = Arc::new(TrackCacheStore::new());
+        cache_store.get_or_create(&track_key()).mark_malformed();
+        let handler = MockSubscribeHandler::default();
+
+        // Act
+        Subscribe
+            .handle(
+                2,
+                &table,
+                &ControlMessageForwarder { repository },
+                &Arc::new(local_publisher_resolver()),
+                &cache_store,
+                Box::new(handler.clone()),
+            )
+            .await;
+
+        // Assert: draft-18 §2.4.2, the latch answers it before going upstream
+        assert_eq!(
+            *handler.subscribe_errors.lock().unwrap(),
+            vec![RequestErrorCode::MalformedTrack]
+        );
+        assert!(recorded.subscribed_track_names().is_empty());
     }
 
     fn assert_unanswered(handler: &MockSubscribeHandler) {

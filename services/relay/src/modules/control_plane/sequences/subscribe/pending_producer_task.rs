@@ -8,7 +8,10 @@ use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::{
-            IngestRequest, session_peer, start_ingest, subscribe::UpstreamSubscriptionError,
+            IngestRequest,
+            malformed_track::{MalformedTrackCleanup, refused_as_malformed},
+            session_peer, start_ingest,
+            subscribe::UpstreamSubscriptionError,
         },
         upstream_publisher_resolver::{UpstreamPublisher, UpstreamPublisherResolver},
     },
@@ -69,7 +72,10 @@ pub(crate) fn subscribe_initiated(
 /// One upstream SUBSCRIBE in flight, counted among the track's pending
 /// producers. SUBSCRIBE_OK starts the ingest and adds the producer; the first
 /// producer completes the track's creation. A publisher the track no longer
-/// takes is unsubscribed.
+/// takes is unsubscribed. A refusal as malformed latches the track
+/// (draft-18 §2.4.2): its creation fails with MALFORMED_TRACK, every
+/// producer is released, and a publisher answering later finds no track to
+/// feed and is unsubscribed.
 pub(crate) struct PendingProducerTask {
     _join_handle: JoinHandle<()>,
 }
@@ -85,7 +91,15 @@ impl PendingProducerTask {
             async move {
                 let failure =
                     Self::answer(&deps, &track_key, subscriber_session_id, &publisher).await;
+                let malformed = failure
+                    .as_ref()
+                    .is_some_and(|failure| failure.code == RequestErrorCode::MalformedTrack);
                 deps.table.pending_producer_ended(&track_key, failure);
+                if malformed {
+                    MalformedTrackCleanup
+                        .handle(&track_key, &deps.table, &deps.forwarder)
+                        .await;
+                }
             }
             .instrument(Span::current()),
         );
@@ -120,13 +134,18 @@ impl PendingProducerTask {
         {
             Ok(subscription) => subscription,
             Err(error) => {
+                let malformed = refused_as_malformed(&error);
                 tracing::warn!(
                     %error,
+                    malformed,
                     publisher_session_id = %publisher_session_id,
                     track_namespace = %track_key.track_namespace,
                     track_name = %track_key.track_name,
                     "upstream SUBSCRIBE failed"
                 );
+                if malformed {
+                    deps.cache_store.get_or_create(track_key).mark_malformed();
+                }
                 return Some(UpstreamSubscriptionError::SubscribeFailed(error).failure());
             }
         };

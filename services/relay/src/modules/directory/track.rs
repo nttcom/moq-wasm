@@ -302,6 +302,14 @@ pub(crate) struct TrackState {
 
 impl TrackState {
     pub(crate) fn content_exists(&self) -> ContentExists {
+        self.largest_location()
+            .map_or(ContentExists::False, |location| ContentExists::True {
+                location,
+            })
+    }
+
+    /// The largest Largest Location of its producers.
+    pub(crate) fn largest_location(&self) -> Option<Location> {
         self.producers
             .values()
             .filter_map(|producer| match producer.content_exists {
@@ -309,9 +317,6 @@ impl TrackState {
                 ContentExists::False => None,
             })
             .max()
-            .map_or(ContentExists::False, |location| ContentExists::True {
-                location,
-            })
     }
 
     pub(crate) fn expires(&self) -> Option<u64> {

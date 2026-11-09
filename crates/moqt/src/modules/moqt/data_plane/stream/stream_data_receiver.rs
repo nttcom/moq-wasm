@@ -66,6 +66,10 @@ impl StreamDataReceiver {
         self.reader.group_id()
     }
 
+    pub(crate) fn inherit_priority(&mut self, default_publisher_priority: u8) {
+        self.reader.inherit_priority(default_publisher_priority);
+    }
+
     /// Counts this stream in `open_subgroups` until it ends or is dropped.
     pub(crate) fn count_in(&mut self, open_subgroups: &OpenSubgroups) {
         self.open = Some(open_subgroups.open());

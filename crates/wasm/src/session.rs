@@ -593,6 +593,9 @@ impl FetchStream {
                                 return Ok(Some(object.into()));
                             }
                         }
+                        // Only draft-18 has unknown ranges, and the browser offers
+                        // draft-14 alone.
+                        Fetch::UnknownRange { .. } => {}
                         Fetch::End => return Ok(None),
                     }
                 }

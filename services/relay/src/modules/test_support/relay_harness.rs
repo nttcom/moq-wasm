@@ -13,7 +13,7 @@ use crate::modules::{
             track_cache::{NextObject, SubgroupRun, TrackCache},
         },
         egress::{
-            fetch_delivery::{EgressFetchRequest, deliver_fetch},
+            fetch_delivery::{EgressFetchRequest, FetchWait, deliver_fetch},
             runner::EgressRunner,
         },
         ingress::{
@@ -36,7 +36,7 @@ pub(crate) mod fixtures;
 mod mocks;
 
 pub(crate) use self::mocks::downstream_client::{
-    FetchSent, MockPublisher, MockPublisherObservers, Sent,
+    FetchSent, MockFetchSender, MockPublisher, MockPublisherObservers, Sent, UnknownRangeDraft,
 };
 pub(crate) use self::mocks::upstream_client::{FailingUpstream, UpstreamSubgroupStream};
 
@@ -44,7 +44,7 @@ pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
     fixtures::{location, subscription::make_subscription},
-    mocks::downstream_client::{MockFetchSender, SentPublishDone},
+    mocks::downstream_client::SentPublishDone,
 };
 
 pub(crate) const OBJECT_COUNT: usize = 50;
@@ -186,6 +186,19 @@ impl FetchDeliveryHandle {
             Ok(Some(end @ (FetchSent::Closed | FetchSent::Reset(_)))) => end,
             other => panic!("expected the fetch stream to end, got {other:?}"),
         }
+    }
+
+    /// Everything sent, once the delivery has finished.
+    pub(crate) async fn finished(mut self) -> Vec<FetchSent> {
+        tokio::time::timeout(RECV_TIMEOUT, &mut self.join_handle)
+            .await
+            .expect("the fetch delivery should finish")
+            .unwrap();
+        let mut sent = Vec::new();
+        while let Ok(step) = self.sent.try_recv() {
+            sent.push(step);
+        }
+        sent
     }
 
     pub(crate) async fn assert_nothing_sent_within(&mut self, window: Duration) {
@@ -395,14 +408,63 @@ impl RelayHarness {
         start_location: moqt::object::Location,
         end_location: moqt::object::Location,
     ) -> FetchDeliveryHandle {
-        let (sender, sent) = MockFetchSender::channel();
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Unlimited,
+            UnknownRangeDraft::Draft18,
+        )
+    }
+
+    /// A draft-18 fetch in `group_order` that waits for objects until
+    /// `deadline`, then reports the rest as unknown.
+    pub(crate) fn start_fetch_waiting_until(
+        &self,
+        range: std::ops::Range<moqt::object::Location>,
+        group_order: moqt::object::GroupOrder,
+        deadline: tokio::time::Instant,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            range,
+            group_order,
+            FetchWait::Until(deadline),
+            UnknownRangeDraft::Draft18,
+        )
+    }
+
+    /// A fetch that reports what the cache lacks as unknown, as a session of
+    /// `draft` can.
+    pub(crate) fn start_fetch_reporting_unknown(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+        draft: UnknownRangeDraft,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Never,
+            draft,
+        )
+    }
+
+    /// `range.end` is the FETCH_OK End Location.
+    fn spawn_fetch(
+        &self,
+        range: std::ops::Range<moqt::object::Location>,
+        group_order: moqt::object::GroupOrder,
+        wait: FetchWait,
+        draft: UnknownRangeDraft,
+    ) -> FetchDeliveryHandle {
+        let (sender, sent) = MockFetchSender::new(draft);
         let request = EgressFetchRequest {
             subscriber_session_id: 2,
             request_id: 0,
             cache: self.ingest.cache.clone(),
-            start_location,
-            end_location,
-            group_order: moqt::object::GroupOrder::Ascending,
+            start_location: range.start,
+            end_location: range.end,
+            group_order,
+            wait,
         };
         let join_handle = tokio::spawn(async move { deliver_fetch(&request, &sender).await });
         FetchDeliveryHandle { sent, join_handle }

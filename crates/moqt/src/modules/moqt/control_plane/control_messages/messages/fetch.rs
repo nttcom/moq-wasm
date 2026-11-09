@@ -151,6 +151,8 @@ pub struct Fetch {
     pub group_order: GroupOrder,
     pub fetch_params: FetchParams,
     pub authorization_tokens: Vec<AuthorizationToken>,
+    /// FILL_TIMEOUT in milliseconds (draft-18 §10.2.5); draft-14 has none.
+    pub fill_timeout: Option<u64>,
     pub trace_context: Option<TraceContext>,
 }
 
@@ -172,6 +174,7 @@ impl Fetch {
             group_order,
             fetch_params,
             authorization_tokens,
+            fill_timeout: None,
             trace_context,
         })
     }
@@ -218,6 +221,7 @@ mod tests {
                     },
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             let buf = fetch.encode();
@@ -245,6 +249,7 @@ mod tests {
                     },
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             let result = fetch.encode();
@@ -300,6 +305,7 @@ mod tests {
                     },
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             assert_eq!(result, expected);
@@ -316,6 +322,7 @@ mod tests {
                     joining_start: 2,
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             let result = fetch.encode();
@@ -353,6 +360,7 @@ mod tests {
                     joining_start: 2,
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             assert_eq!(result, expected);
@@ -369,6 +377,7 @@ mod tests {
                     joining_start: 100,
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             let result = fetch.encode();
@@ -406,6 +415,7 @@ mod tests {
                     joining_start: 100,
                 },
                 authorization_tokens: vec![],
+                fill_timeout: None,
                 trace_context: None,
             };
             assert_eq!(result, expected);
@@ -424,6 +434,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+                fill_timeout: None,
             };
 
             // Act
