@@ -183,6 +183,12 @@ impl TransportConnection for QmuxConnection {
         Ok((send_stream, Box::new(receive_stream)))
     }
 
+    /// QMux carries only draft-14, whose requests open no stream of their
+    /// own, so this waits as `open_bi` does.
+    async fn try_open_bi(&self) -> anyhow::Result<Option<(BoxedSendStream, BoxedReceiveStream)>> {
+        self.open_bi().await.map(Some)
+    }
+
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         self.incoming_bidirectional
             .lock()

@@ -28,10 +28,12 @@ use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     connect_target::ConnectTarget,
-    transport_connection::BoxedConnection,
+    server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
+    transport_connection::{BoxedConnection, BoxedReceiveStream, BoxedSendStream},
     transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
     websocket::websocket_listener::WebSocketListener,
 };
+use crate::namespace::NamespaceInterest;
 
 use crate::{
     CertificateVerification, ClientConfig, Endpoint, NATIVE, RequestFailure, Session, SessionEvent,
@@ -344,6 +346,11 @@ pub(crate) fn native_client_with_config(config: ClientConfig) -> Endpoint<NATIVE
     Endpoint::<NATIVE>::create_client(&config).unwrap()
 }
 
+/// `native_client_with_config`, offering only draft-18.
+pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<NATIVE> {
+    Endpoint::<NATIVE>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
+}
+
 pub(crate) fn insecure_client_config() -> ClientConfig {
     ClientConfig {
         certificate_verification: CertificateVerification::Disabled,
@@ -437,9 +444,7 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     scheme: &str,
 ) -> (Session, Session) {
     let (port, accept) = spawn_draft18_server(name);
-    let client =
-        Endpoint::<NATIVE>::create_client_offering(&insecure_client_config(), DRAFT18_PROTOCOLS)
-            .unwrap();
+    let client = draft18_client_with_config(insecure_client_config());
     let path = if scheme == "https" { "/moq" } else { "" };
     connect_sessions_from(
         &client,
@@ -448,6 +453,20 @@ pub(crate) async fn spawn_connected_draft18_sessions(
     )
     .await
     .unwrap()
+}
+
+/// Opens on `session` every bidirectional stream the peer allows, so that
+/// the peer's stream limit is reached; the streams stay open while the
+/// returned value lives.
+pub(crate) async fn use_up_bidi_streams(
+    session: &Session,
+) -> Vec<(BoxedSendStream, BoxedReceiveStream)> {
+    let connection = session.publisher().session.connection();
+    let mut streams = Vec::new();
+    for _ in 0..MAX_CONCURRENT_BIDI_STREAMS {
+        streams.push(connection.transport.open_bi().await.unwrap());
+    }
+    streams
 }
 
 pub(crate) async fn spawn_connected_native_sessions_following_go_away(
@@ -466,14 +485,17 @@ pub(crate) async fn spawn_connected_native_sessions_following_go_away(
 
 pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Session, prefix: &str) {
     let subscriber = client.subscriber();
-    let (subscribed, ()) = tokio::join!(subscriber.subscribe_namespace(prefix.into()), async {
-        let SessionEvent::SubscribeNameSpace(handler) =
-            within(server.receive_event()).await.unwrap()
-        else {
-            panic!("expected SUBSCRIBE_NAMESPACE");
-        };
-        handler.ok().await.unwrap();
-    });
+    let (subscribed, ()) = tokio::join!(
+        subscriber.subscribe_namespace(prefix.into(), NamespaceInterest::NamespacesAndTracks),
+        async {
+            let SessionEvent::SubscribeNameSpace(handler) =
+                within(server.receive_event()).await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_NAMESPACE");
+            };
+            handler.ok().await.unwrap();
+        }
+    );
     subscribed.unwrap();
 }
 

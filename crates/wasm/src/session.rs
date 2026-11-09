@@ -8,6 +8,7 @@ use moqt::{
     Session as MoqtSession, Subscription as MoqtSubscription, TerminationErrorCode, TrackObject,
     TrackReader, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
+    namespace::NamespaceInterest,
     object::{
         ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, Location,
         MalformedTrackError, Object, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
@@ -206,7 +207,7 @@ impl Session {
                 let events = self.routes.watch(prefix.clone());
                 self.session
                     .subscriber()
-                    .subscribe_namespace(prefix.join("/"))
+                    .subscribe_namespace(prefix.join("/"), NamespaceInterest::NamespacesAndTracks)
                     .await
                     .map_err(|error| request_error(RequestKind::SubscribeNamespace, &error))?;
                 Ok(NamespaceWatch {

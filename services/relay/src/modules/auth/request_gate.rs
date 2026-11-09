@@ -103,7 +103,8 @@ mod tests {
     use std::time::Duration;
 
     use moqt::{
-        fetch::FetchOption, object::Location, publish::PublishOption, subscribe::SubscribeOption,
+        fetch::FetchOption, namespace::NamespaceInterest, object::Location, publish::PublishOption,
+        subscribe::SubscribeOption,
     };
 
     use moqt::namespace::PublishNamespaceDoneHandler;
@@ -222,9 +223,10 @@ mod tests {
         // Act
         let result = tokio::time::timeout(
             REQUEST_TIMEOUT,
-            client
-                .subscriber()
-                .subscribe_namespace("APP/site1".to_string()),
+            client.subscriber().subscribe_namespace(
+                "APP/site1".to_string(),
+                NamespaceInterest::NamespacesAndTracks,
+            ),
         )
         .await
         .unwrap();
@@ -241,9 +243,10 @@ mod tests {
         // Act
         let result = tokio::time::timeout(
             REQUEST_TIMEOUT,
-            client
-                .subscriber()
-                .subscribe_namespace("OTHER/site1".to_string()),
+            client.subscriber().subscribe_namespace(
+                "OTHER/site1".to_string(),
+                NamespaceInterest::NamespacesAndTracks,
+            ),
         )
         .await
         .unwrap();

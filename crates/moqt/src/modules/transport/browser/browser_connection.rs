@@ -105,6 +105,12 @@ impl TransportConnection for BrowserConnection {
         Self::split_bi(stream)
     }
 
+    /// The browser's WebTransport API cannot tell whether the peer's stream
+    /// limit allows a stream now, so this waits as `open_bi` does.
+    async fn try_open_bi(&self) -> anyhow::Result<Option<(BoxedSendStream, BoxedReceiveStream)>> {
+        self.open_bi().await.map(Some)
+    }
+
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let stream = read_next(&self.incoming_bi_streams)
             .await

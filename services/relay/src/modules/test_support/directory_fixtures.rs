@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::{CertificateVerification, object::ContentExists};
+use moqt::{CertificateVerification, namespace::NamespaceInterest, object::ContentExists};
 
 use crate::modules::{
     auth::verified_token::VerifiedToken,
@@ -16,7 +16,10 @@ use crate::modules::{
     data_plane::{cache::store::TrackCacheStore, ingress::ingest_task::IngestTask},
     directory::{
         InMemoryLocalPubSubDirectory,
-        track::{DownstreamSubscription, Producer, ProducerOrigin, ProducerState, TrackState},
+        track::{
+            DownstreamSubscription, NamespaceSubscription, Producer, ProducerOrigin, ProducerState,
+            TrackState,
+        },
     },
     domain::{
         delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
@@ -36,6 +39,26 @@ use crate::modules::{
 pub(crate) const PUBLISHER_SESSION: SessionId = 1;
 pub(crate) const NAMESPACE_SUBSCRIBER_SESSION: SessionId = 2;
 pub(crate) const UPSTREAM_REQUEST_ID: u64 = 42;
+
+/// A namespace subscription as draft-14 makes it: namespaces and tracks,
+/// Forward State 1, the subscriber's own tracks echoed back.
+pub(crate) fn namespaces_and_tracks(peer: SessionPeer) -> NamespaceSubscription {
+    NamespaceSubscription {
+        interest: NamespaceInterest::NamespacesAndTracks,
+        peer,
+        forward: true,
+    }
+}
+
+/// A draft-18 SUBSCRIBE_NAMESPACE (`Namespaces`) or SUBSCRIBE_TRACKS
+/// (`Tracks`, Forward State 1) of a client.
+pub(crate) fn client_subscription(interest: NamespaceInterest) -> NamespaceSubscription {
+    NamespaceSubscription {
+        interest,
+        peer: SessionPeer::Client,
+        forward: true,
+    }
+}
 
 pub(crate) fn track_key() -> TrackKey {
     TrackKey::new("ns", "track")

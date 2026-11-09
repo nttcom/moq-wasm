@@ -24,7 +24,8 @@ use clap::Parser;
 use metadata_token::MetadataToken;
 use moqt::{
     AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, QUIC,
-    RequestErrorCode, Session, SessionEvent, subscribe::SubscribeHandler,
+    RequestErrorCode, Session, SessionEvent, namespace::NamespaceInterest,
+    subscribe::SubscribeHandler,
 };
 use static_files::StaticFiles;
 use tokio::{net::TcpListener, sync::Semaphore};
@@ -229,7 +230,7 @@ async fn main() -> Result<()> {
     tracing::info!(relay = %args.relay, "connected to relay");
     session
         .subscriber()
-        .subscribe_namespace(namespaces.root().to_string())
+        .subscribe_namespace(namespaces.root().to_string(), NamespaceInterest::Namespaces)
         .await
         .context("subscribe to the broadcasts' namespace")?;
     tracing::info!(

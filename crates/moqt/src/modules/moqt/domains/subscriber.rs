@@ -15,9 +15,9 @@ use crate::{
                 parameters::content_exists::ContentExists, subscribe::Subscribe,
                 subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
                 subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
-                unsubscribe_namespace::UnsubscribeNamespace,
             },
             enums::{RequestId, ResponseMessage},
+            namespace_interest::NamespaceInterest,
         },
         data_plane::stream::{
             fetch_data_receiver::FetchDataReceiver,
@@ -49,27 +49,74 @@ pub struct Subscriber {
 }
 
 impl Subscriber {
+    /// Asks the peer for the namespaces and/or tracks under `namespace`, as
+    /// `interest` says. On draft-18 `NamespacesAndTracks` takes both
+    /// SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS (§6.1): when either fails,
+    /// the other is withdrawn and the failure returned.
     #[tracing::instrument(
         level = "info",
         name = "moqt.subscriber.subscribe_namespace",
         skip_all,
         fields(
             track_namespace_prefix = %namespace,
+            interest = ?interest,
             request_id = tracing::field::Empty,
             outcome = tracing::field::Empty,
         )
     )]
-    pub async fn subscribe_namespace(&self, namespace: String) -> Result<(), RequestFailure> {
-        let result = self.subscribe_namespace_answered(namespace).await;
+    pub async fn subscribe_namespace(
+        &self,
+        namespace: String,
+        interest: NamespaceInterest,
+    ) -> Result<(), RequestFailure> {
+        let result = self.subscribe_namespace_answered(namespace, interest).await;
         record_outcome(&result);
         result
     }
 
-    async fn subscribe_namespace_answered(&self, namespace: String) -> Result<(), RequestFailure> {
+    /// Sends the requests `interest` takes on the current connection's draft
+    /// and waits for all of them; when one fails, those accepted are
+    /// withdrawn.
+    async fn subscribe_namespace_answered(
+        &self,
+        namespace: String,
+        interest: NamespaceInterest,
+    ) -> Result<(), RequestFailure> {
+        let requests = self
+            .session
+            .connection()
+            .control
+            .namespace_requests(interest);
+        let results = futures::future::join_all(
+            requests
+                .iter()
+                .map(|&request| self.subscribe_namespace_request(namespace.clone(), request)),
+        )
+        .await;
+        let (accepted, failed): (Vec<_>, Vec<_>) = requests
+            .into_iter()
+            .zip(results)
+            .partition(|(_, result)| result.is_ok());
+        let Some((_, Err(failure))) = failed.into_iter().next() else {
+            return Ok(());
+        };
+        for (request, _) in accepted {
+            if let Err(error) = self.withdraw_namespace_request(&namespace, request).await {
+                tracing::debug!(%error, ?request, "could not withdraw a namespace subscription");
+            }
+        }
+        Err(failure)
+    }
+
+    async fn subscribe_namespace_request(
+        &self,
+        namespace: String,
+        interest: NamespaceInterest,
+    ) -> Result<(), RequestFailure> {
         let (connection, request_id, pending) = loop {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
-            match begin_subscribe_namespace(&connection, &namespace).await {
+            match begin_subscribe_namespace(&connection, &namespace, interest).await {
                 Ok((request_id, pending)) => {
                     // Recorded under the lock it was sent with, before its answer: a
                     // migration sends it again, and an UNSUBSCRIBE_NAMESPACE sent
@@ -77,7 +124,9 @@ impl Subscriber {
                     if let Some(carried) = &carried {
                         let request_id = logical_id(connection.generation, request_id);
                         carried.update(|carried| {
-                            carried.namespaces.insert(request_id, namespace.clone())
+                            carried
+                                .namespaces
+                                .insert(request_id, (namespace.clone(), interest))
                         });
                     }
                     break (connection, request_id, pending);
@@ -671,6 +720,8 @@ impl Subscriber {
         Ok(())
     }
 
+    /// Withdraws every namespace subscription for `namespace`, whatever its
+    /// interest.
     #[tracing::instrument(
         level = "debug",
         name = "moqt.subscriber.unsubscribe_namespace",
@@ -682,16 +733,44 @@ impl Subscriber {
             carried.update(|carried| {
                 carried
                     .namespaces
-                    .retain(|_, carried| *carried != namespace)
+                    .retain(|_, (carried, _)| *carried != namespace)
             });
         }
         let vec_namespace = namespace_tuple(&namespace);
         for connection in self.session.live_connections() {
             connection
                 .control
-                .notify(Notification::UnsubscribeNamespace(
-                    UnsubscribeNamespace::new(vec_namespace.clone()),
-                ))
+                .notify(Notification::UnsubscribeNamespace {
+                    track_namespace_prefix: vec_namespace.clone(),
+                    interest: NamespaceInterest::NamespacesAndTracks,
+                })
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Withdraws the namespace subscription `interest` for `namespace` that
+    /// one of the requests of a `subscribe_namespace` made.
+    async fn withdraw_namespace_request(
+        &self,
+        namespace: &str,
+        interest: NamespaceInterest,
+    ) -> anyhow::Result<()> {
+        if let Some(carried) = self.session.read_carried().await {
+            carried.update(|carried| {
+                carried.namespaces.retain(|_, (carried, carried_interest)| {
+                    !(carried == namespace && *carried_interest == interest)
+                })
+            });
+        }
+        let vec_namespace = namespace_tuple(namespace);
+        for connection in self.session.live_connections() {
+            connection
+                .control
+                .notify(Notification::UnsubscribeNamespace {
+                    track_namespace_prefix: vec_namespace.clone(),
+                    interest,
+                })
                 .await?;
         }
         Ok(())
@@ -870,30 +949,36 @@ fn repeated_update(subscription: &Subscription, forward: bool) -> SubscribeUpdat
     }
 }
 
+/// One namespace request, of an `interest` `ControlChannel::namespace_requests`
+/// returned for `connection`.
 pub(crate) async fn send_subscribe_namespace(
     connection: &Arc<Connection>,
     namespace: String,
+    interest: NamespaceInterest,
 ) -> Result<RequestId, RequestFailure> {
-    let (request_id, pending) = begin_subscribe_namespace(connection, &namespace).await?;
+    let (request_id, pending) = begin_subscribe_namespace(connection, &namespace, interest).await?;
     subscribe_namespace_ok(request_id, &namespace, pending).await
 }
 
 async fn begin_subscribe_namespace(
     connection: &Arc<Connection>,
     namespace: &str,
+    interest: NamespaceInterest,
 ) -> Result<(RequestId, PendingResponse), RequestFailure> {
     let vec_namespace = namespace_tuple(namespace);
     let reservation = connection.control.reserve_request_id().await?;
     let request_id = reservation.request_id();
-    let pending = connection
-        .send_request(
-            reservation,
-            OutgoingRequest::SubscribeNamespace(SubscribeNamespace {
-                trace_context: current_trace_context(&connection.control),
-                ..SubscribeNamespace::new(request_id, vec_namespace, vec![])
-            }),
-        )
-        .await?;
+    let message = SubscribeNamespace {
+        trace_context: current_trace_context(&connection.control),
+        ..SubscribeNamespace::new(request_id, vec_namespace, vec![])
+    };
+    let request = match interest {
+        NamespaceInterest::Tracks => OutgoingRequest::SubscribeTracks(message),
+        NamespaceInterest::Namespaces | NamespaceInterest::NamespacesAndTracks => {
+            OutgoingRequest::SubscribeNamespace(message)
+        }
+    };
+    let pending = connection.send_request(reservation, request).await?;
     Ok((request_id, pending))
 }
 
@@ -1070,6 +1155,8 @@ async fn subscribe_ok(
 mod tests {
     use bytes::Bytes;
     use futures::FutureExt;
+
+    use crate::namespace::NamespaceInterest;
 
     use tokio::task::JoinHandle;
 
@@ -2317,7 +2404,11 @@ mod tests {
         )
         .await;
         let subscriber = client.subscriber();
-        let first = tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await });
+        let first = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
+                .await
+        });
         let SessionEvent::SubscribeNameSpace(_first_handler) =
             within(server.receive_event()).await.unwrap()
         else {
@@ -2341,8 +2432,11 @@ mod tests {
                 .await;
         let subscriber = client.subscriber();
         let session = subscriber.session.clone();
-        let subscribed =
-            tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await });
+        let subscribed = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
+                .await
+        });
         let SessionEvent::SubscribeNameSpace(handler) =
             within(server.receive_event()).await.unwrap()
         else {
@@ -2372,8 +2466,11 @@ mod tests {
             spawn_connected_native_sessions_following_go_away("carried-rejected-namespace").await;
         let subscriber = client.subscriber();
         let session = subscriber.session.clone();
-        let subscribed =
-            tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await });
+        let subscribed = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
+                .await
+        });
         let SessionEvent::SubscribeNameSpace(handler) =
             within(server.receive_event()).await.unwrap()
         else {
@@ -2408,7 +2505,11 @@ mod tests {
                 .await;
         let session = client.subscriber().session.clone();
         let subscribe = |subscriber: super::Subscriber| {
-            tokio::spawn(async move { subscriber.subscribe_namespace("a".into()).await })
+            tokio::spawn(async move {
+                subscriber
+                    .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
+                    .await
+            })
         };
         let rejected = subscribe(client.subscriber());
         let SessionEvent::SubscribeNameSpace(first) = within(server.receive_event()).await.unwrap()
@@ -2442,7 +2543,10 @@ mod tests {
             .await
             .unwrap()
             .update(|carried| carried.namespaces.values().cloned().collect::<Vec<_>>());
-        assert_eq!(carried, ["a"]);
+        assert_eq!(
+            carried,
+            [("a".to_string(), NamespaceInterest::NamespacesAndTracks)]
+        );
     }
 
     #[tokio::test]

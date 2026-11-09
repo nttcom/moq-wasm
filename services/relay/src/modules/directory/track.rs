@@ -5,6 +5,7 @@ use std::{
 
 use moqt::{
     RequestErrorCode,
+    namespace::NamespaceInterest,
     object::{ContentExists, Location},
     subscribe::FilterType,
 };
@@ -23,6 +24,15 @@ use crate::modules::{
     },
     session::subscription::UpstreamSubscription,
 };
+
+/// One session's subscription to a namespace prefix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NamespaceSubscription {
+    pub(crate) interest: NamespaceInterest,
+    pub(crate) peer: SessionPeer,
+    /// The Forward State of the PUBLISH messages it receives.
+    pub(crate) forward: bool,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProducerOrigin {

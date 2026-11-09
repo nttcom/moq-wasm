@@ -110,13 +110,18 @@ mod tests {
         },
         data_plane::cache::store::TrackCacheStore,
         directory::InMemoryLocalPubSubDirectory,
+        directory::track::NamespaceSubscription,
         domain::{session_id::SessionId, session_peer::SessionPeer},
         session::{moqt_session_event::MoqtSessionEvent, session_repository::SessionRepository},
-        test_support::mock_session::{
-            MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
-            RecordedControlMessages, mock_new_session, session_repository,
+        test_support::{
+            directory_fixtures::{client_subscription, namespaces_and_tracks},
+            mock_session::{
+                MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
+                RecordedControlMessages, SentPublish, mock_new_session, session_repository,
+            },
         },
     };
+    use moqt::namespace::NamespaceInterest;
 
     const WAIT_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -190,13 +195,40 @@ mod tests {
             session_id: SessionId,
             track_namespace_prefix: &str,
         ) -> RecordedControlMessages {
+            self.register_namespace_subscription(
+                session_id,
+                track_namespace_prefix,
+                namespaces_and_tracks(SessionPeer::Client),
+            )
+            .await
+        }
+
+        async fn register_namespace_subscription(
+            &self,
+            session_id: SessionId,
+            track_namespace_prefix: &str,
+            subscription: NamespaceSubscription,
+        ) -> RecordedControlMessages {
             let recorded = self.register_session(session_id).await;
             self.local_pub_sub_directory.register_subscribe_namespace(
                 session_id,
                 track_namespace_prefix.to_string(),
-                SessionPeer::Client,
+                subscription,
             );
             recorded
+        }
+
+        /// Waits until `session_id`'s worker has handled every earlier event,
+        /// by queueing its disconnection behind them.
+        async fn wait_until_handled(
+            &self,
+            session_id: SessionId,
+            recorded: &RecordedControlMessages,
+        ) {
+            recorded.send_event(MoqtSessionEvent::Disconnected());
+            self.session_leaves(session_id)
+                .await
+                .expect("the session should leave after its earlier events");
         }
 
         /// Every worker holds a clone of `WorkerDeps`, so the cache store's
@@ -237,6 +269,127 @@ mod tests {
         MoqtSessionEvent::PublishNamespace(Box::new(MockPublishNamespaceHandler::new(
             track_namespace,
         )))
+    }
+
+    fn publish(track_namespace: &str, track_name: &str) -> MoqtSessionEvent {
+        MoqtSessionEvent::Publish(Box::new(MockPublishHandler::new(
+            track_namespace,
+            track_name,
+            0,
+        )))
+    }
+
+    async fn wait_for_publishes(
+        recorded: &RecordedControlMessages,
+        count: usize,
+    ) -> Result<Vec<SentPublish>, tokio::time::error::Elapsed> {
+        tokio::time::timeout(WAIT_TIMEOUT, async {
+            loop {
+                let publishes = recorded.publishes();
+                if publishes.len() >= count {
+                    return publishes;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn publish_reaches_the_track_subscribers_with_their_forward_state() {
+        // Arrange
+        let workers = RunningSessionWorkers::start();
+        let paused = workers
+            .register_namespace_subscription(
+                2,
+                "ns",
+                NamespaceSubscription {
+                    forward: false,
+                    ..client_subscription(NamespaceInterest::Tracks)
+                },
+            )
+            .await;
+        let draft14 = workers.register_namespace_subscriber(3, "ns").await;
+        let publisher = workers.register_session(1).await;
+
+        // Act
+        publisher.send_event(publish("ns", "track"));
+
+        // Assert: draft-18 §10.19 gives the PUBLISH the FORWARD of the SUBSCRIBE_TRACKS
+        let paused = wait_for_publishes(&paused, 1).await.unwrap();
+        let draft14 = wait_for_publishes(&draft14, 1).await.unwrap();
+        assert!(!paused[0].forward);
+        assert!(draft14[0].forward);
+    }
+
+    #[tokio::test]
+    async fn publish_skips_a_publisher_whose_subscription_leaves_out_its_own_tracks() {
+        // Arrange
+        let workers = RunningSessionWorkers::start();
+        let publisher = workers
+            .register_namespace_subscription(
+                1,
+                "ns",
+                client_subscription(NamespaceInterest::Tracks),
+            )
+            .await;
+        let other = workers.register_namespace_subscriber(2, "ns").await;
+
+        // Act
+        publisher.send_event(publish("ns", "track"));
+        wait_for_publishes(&other, 1).await.unwrap();
+        workers.wait_until_handled(1, &publisher).await;
+
+        // Assert: draft-18 §6.1 leaves out the tracks published by the subscriber
+        assert!(publisher.publishes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn publish_is_echoed_to_a_publisher_whose_subscription_echoes_its_tracks() {
+        // Arrange
+        let workers = RunningSessionWorkers::start();
+        let publisher = workers.register_namespace_subscriber(1, "ns").await;
+
+        // Act
+        publisher.send_event(publish("ns", "track"));
+
+        // Assert: draft-14 §6.1 echoes PUBLISH back to the endpoint that sent it
+        wait_for_publishes(&publisher, 1)
+            .await
+            .expect("the publisher should receive its own PUBLISH");
+    }
+
+    #[tokio::test]
+    async fn publish_and_publish_namespace_go_only_to_the_subscriptions_asking_for_them() {
+        // Arrange
+        let workers = RunningSessionWorkers::start();
+        let namespaces = workers
+            .register_namespace_subscription(
+                2,
+                "ns",
+                client_subscription(NamespaceInterest::Namespaces),
+            )
+            .await;
+        let tracks = workers
+            .register_namespace_subscription(
+                3,
+                "ns",
+                client_subscription(NamespaceInterest::Tracks),
+            )
+            .await;
+        let publisher = workers.register_session(1).await;
+
+        // Act
+        publisher.send_event(publish_namespace("ns/a"));
+        publisher.send_event(publish("ns", "track"));
+        let published = wait_for_publishes(&tracks, 1).await.unwrap();
+        workers.wait_until_handled(1, &publisher).await;
+
+        // Assert: draft-18 §6.1 answers SUBSCRIBE_NAMESPACE with namespaces and SUBSCRIBE_TRACKS with PUBLISH
+        assert_eq!(namespaces.publish_namespaces(), ["ns/a"]);
+        assert!(namespaces.publishes().is_empty());
+        assert!(tracks.publish_namespaces().is_empty());
+        assert_eq!(published.len(), 1);
     }
 
     async fn wait_for_publish_namespaces(

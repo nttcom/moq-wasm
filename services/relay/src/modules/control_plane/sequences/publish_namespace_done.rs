@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use moqt::namespace::NamespaceInterest;
+
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
@@ -76,7 +78,10 @@ impl PublishNamespaceDone {
             );
             return;
         }
-        for subscriber_session_id in table.get_namespace_subscribers(track_namespace) {
+        for subscriber_session_id in table
+            .get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces)
+            .into_keys()
+        {
             if subscriber_session_id == publisher_session_id {
                 continue;
             }
@@ -158,10 +163,13 @@ mod tests {
         cascading::route_registry::NoopRelayRouteRegistry,
         domain::session_peer::SessionPeer,
         session::session_repository::NewSession,
-        test_support::mock_session::{
-            RecordedControlMessages, detached_session_repository,
-            mock_session_with_transport_stats, recorded_session_answering_subscribe,
-            session_repository_with_sessions,
+        test_support::{
+            directory_fixtures::{client_subscription, namespaces_and_tracks},
+            mock_session::{
+                RecordedControlMessages, detached_session_repository,
+                mock_session_with_transport_stats, recorded_session_answering_subscribe,
+                session_repository_with_sessions,
+            },
         },
     };
 
@@ -224,7 +232,7 @@ mod tests {
         table.register_subscribe_namespace(
             NAMESPACE_SUBSCRIBER,
             "room".to_string(),
-            SessionPeer::Client,
+            namespaces_and_tracks(SessionPeer::Client),
         );
         table
     }
@@ -299,5 +307,27 @@ mod tests {
             recorded.publish_namespace_dones(),
             vec![NAMESPACE.to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn a_tracks_subscription_is_not_told_done() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(
+            LEAVING_PUBLISHER,
+            NAMESPACE.to_string(),
+            SessionPeer::Client,
+        );
+        table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER,
+            "room".to_string(),
+            client_subscription(NamespaceInterest::Tracks),
+        );
+
+        // Act
+        let recorded = withdraw(&table, SessionPeer::Client).await;
+
+        // Assert: draft-18 §6.1 sends NAMESPACE_DONE for SUBSCRIBE_NAMESPACE only
+        assert!(recorded.publish_namespace_dones().is_empty());
     }
 }

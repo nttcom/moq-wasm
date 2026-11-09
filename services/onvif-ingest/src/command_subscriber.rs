@@ -2,6 +2,7 @@ use std::sync::{mpsc::Sender, Arc};
 
 use anyhow::{bail, Context, Result};
 use moqt::{
+    namespace::NamespaceInterest,
     object::{DataReceiver, GroupOrder},
     publish::PublishHandler,
     subscribe::{FilterType, SubscribeOption},
@@ -42,7 +43,10 @@ impl CommandSubscriber {
         let session = Arc::new(connecting.await.context("establish command session")?);
         session
             .subscriber()
-            .subscribe_namespace(command_track.namespace.clone())
+            .subscribe_namespace(
+                command_track.namespace.clone(),
+                NamespaceInterest::NamespacesAndTracks,
+            )
             .await
             .context("subscribe command namespace")?;
         tracing::info!(

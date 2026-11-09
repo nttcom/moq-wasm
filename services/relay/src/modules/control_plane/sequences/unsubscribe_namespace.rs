@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use moqt::namespace::NamespaceInterest;
+
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
@@ -22,18 +24,22 @@ impl UnsubscribeNamespace {
         forwarder: &ControlMessageForwarder,
         cascading_relay_context: CascadingRelayContext<'_>,
         track_namespace_prefix: &str,
+        interest: NamespaceInterest,
     ) {
         tracing::info!(
             session_id = %session_id,
             track_namespace_prefix = %track_namespace_prefix,
+            ?interest,
             "UNSUBSCRIBE_NAMESPACE received"
         );
 
         let no_clients_remain =
-            table.unregister_subscribe_namespace(session_id, track_namespace_prefix);
-        forwarder
-            .forget_announced_namespaces(session_id, track_namespace_prefix)
-            .await;
+            table.unregister_subscribe_namespace(session_id, track_namespace_prefix, interest);
+        if interest.includes_namespaces() {
+            forwarder
+                .forget_announced_namespaces(session_id, track_namespace_prefix)
+                .await;
+        }
         if !super::is_origin_client(session_id, forwarder).await {
             return;
         }

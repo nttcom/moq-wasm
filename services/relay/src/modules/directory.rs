@@ -1,18 +1,19 @@
 pub(crate) mod track;
 
 use std::{
-    collections::{BTreeSet, HashSet, btree_map},
-    sync::{Arc, OnceLock, PoisonError, RwLock},
+    collections::{BTreeSet, HashMap, HashSet, btree_map},
+    sync::{Arc, Mutex, OnceLock, PoisonError, RwLock},
 };
 
-use dashmap::{DashMap, DashSet, Entry};
-use moqt::object::Location;
+use dashmap::{DashMap, Entry};
+use moqt::{namespace::NamespaceInterest, object::Location};
 
 use crate::modules::{
     directory::track::{
         Consumer, CreationFailure, CreationState, DownstreamSubscription, MatchingPublication,
-        Producer, ProducerOrigin, ProducerState, ReleasedUpstreamSubscription,
-        RemovedDownstreamSubscription, RemovedSessionSubscriptions, Track, TrackState,
+        NamespaceSubscription, Producer, ProducerOrigin, ProducerState,
+        ReleasedUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
+        Track, TrackState,
     },
     domain::{
         delivery_control::DeliveryControl,
@@ -87,7 +88,7 @@ pub(crate) struct RegisteredPublish {
     handler: Arc<dyn PublishHandler>,
 }
 
-// Client subscriptions own the Redis route for their prefix, so the
+// Client publishers own the Redis route for their namespace, so the
 // directory tracks the peer to detect when the last client leaves.
 type PeersByNamespace = DashMap<String, DashMap<SessionId, SessionPeer>>;
 
@@ -118,6 +119,23 @@ fn remove_peer_from_namespaces(
         namespaces.remove(&namespace);
     }
     last_client_left
+}
+
+/// The subscriptions to one prefix, one per session and interest: a draft-18
+/// session holds its SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS apart. As with
+/// publishers, client subscriptions own the prefix's Redis route.
+type NamespaceSubscriptions = DashMap<(SessionId, NamespaceInterest), NamespaceSubscription>;
+
+fn has_client_subscription(subscriptions: &NamespaceSubscriptions) -> bool {
+    subscriptions
+        .iter()
+        .any(|subscription| subscription.peer == SessionPeer::Client)
+}
+
+/// Whether a subscription of `interest` receives any of what `wanted` asks for.
+fn covers(interest: NamespaceInterest, wanted: NamespaceInterest) -> bool {
+    (wanted.includes_namespaces() && interest.includes_namespaces())
+        || (wanted.includes_tracks() && interest.includes_tracks())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,13 +173,17 @@ fn unregister_peer(
 
 pub(crate) struct InMemoryLocalPubSubDirectory {
     pub(crate) publisher_namespaces: DashMap<TrackNamespace, DashMap<SessionId, SessionPeer>>,
-    pub(crate) subscriber_namespaces:
-        DashMap<TrackNamespacePrefix, DashMap<SessionId, SessionPeer>>,
+    pub(crate) subscriber_namespaces: DashMap<TrackNamespacePrefix, NamespaceSubscriptions>,
     pub(crate) published_handlers: RwLock<Vec<RegisteredPublish>>,
     pub(crate) upstream_tracks: DashMap<TrackKey, Track>,
     /// The track of each consumer, keyed like `Track::consumers`. A track
     /// entry is locked before this index.
     consumer_tracks: DashMap<(SessionId, u64), TrackKey>,
+    /// Tracks whose PUBLISH a session's track subscription answered with
+    /// PUBLISH_BLOCKED (draft-18 §6.1), kept until that subscription ends.
+    /// Track subscriptions of a session do not overlap, so the session and
+    /// the track name the subscription.
+    blocked_publishes: Mutex<HashSet<(SessionId, TrackKey)>>,
     /// Unix milliseconds of the start of the drain.
     draining_since_ms: OnceLock<u64>,
 }
@@ -174,6 +196,7 @@ impl InMemoryLocalPubSubDirectory {
             published_handlers: RwLock::new(Vec::new()),
             upstream_tracks: DashMap::new(),
             consumer_tracks: DashMap::new(),
+            blocked_publishes: Mutex::new(HashSet::new()),
             draining_since_ms: OnceLock::new(),
         }
     }
@@ -251,10 +274,7 @@ impl InMemoryLocalPubSubDirectory {
                 &self.publisher_namespaces,
                 session_id,
             ),
-            subscribe_namespace_prefixes: remove_peer_from_namespaces(
-                &self.subscriber_namespaces,
-                session_id,
-            ),
+            subscribe_namespace_prefixes: self.remove_namespace_subscriptions(session_id),
             ..Default::default()
         };
 
@@ -349,7 +369,7 @@ impl InMemoryLocalPubSubDirectory {
             // Keep namespaces that another client-subscribed prefix still covers.
             let covered = self.subscriber_namespaces.iter().any(|prefix_entry| {
                 namespace_has_prefix(entry.key(), prefix_entry.key())
-                    && has_client(prefix_entry.value())
+                    && has_client_subscription(prefix_entry.value())
             });
             if covered {
                 continue;
@@ -384,15 +404,15 @@ impl InMemoryLocalPubSubDirectory {
         level = "debug",
         name = "relay.local_pub_sub_directory.register_subscribe_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, session_peer = peer.kind())
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, subscription = ?subscription)
     )]
     pub(crate) fn register_subscribe_namespace(
         &self,
         session_id: SessionId,
         track_namespace_prefix: String,
-        peer: SessionPeer,
+        subscription: NamespaceSubscription,
     ) -> bool {
-        let sessions = self
+        let subscriptions = self
             .subscriber_namespaces
             .entry(track_namespace_prefix.clone())
             .or_insert_with(|| {
@@ -403,22 +423,27 @@ impl InMemoryLocalPubSubDirectory {
                 );
                 DashMap::new()
             });
-        let had_client = has_client(&sessions);
-        sessions.insert(session_id, peer);
-        peer == SessionPeer::Client && !had_client
+        let had_client = has_client_subscription(&subscriptions);
+        subscriptions.insert((session_id, subscription.interest), subscription);
+        subscription.peer == SessionPeer::Client && !had_client
     }
 
-    /// Whether `session_id` has an active SUBSCRIBE_NAMESPACE whose prefix is a
-    /// prefix of, equal to or an extension of `track_namespace_prefix`, compared
-    /// field by field (draft-14 §9.28).
-    pub(crate) fn has_overlapping_subscribe_namespace(
+    /// Whether `session_id` already holds a subscription overlapping this one:
+    /// either prefix is a field-wise prefix of the other and both want
+    /// namespaces or both want tracks (draft-14 §9.28, draft-18 §10.18 /
+    /// §10.19).
+    pub(crate) fn has_overlapping_namespace_subscription(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        interest: NamespaceInterest,
     ) -> bool {
         self.subscriber_namespaces.iter().any(|entry| {
-            entry.value().contains_key(&session_id)
-                && namespace_prefixes_overlap(entry.key(), track_namespace_prefix)
+            namespace_prefixes_overlap(entry.key(), track_namespace_prefix)
+                && entry.value().iter().any(|subscription| {
+                    let (subscriber, held) = *subscription.key();
+                    subscriber == session_id && covers(held, interest)
+                })
         })
     }
 
@@ -428,25 +453,56 @@ impl InMemoryLocalPubSubDirectory {
         level = "debug",
         name = "relay.local_pub_sub_directory.unregister_subscribe_namespace",
         skip_all,
-        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+        fields(session_id = %session_id, track_namespace_prefix = %track_namespace_prefix, interest = ?interest)
     )]
     pub(crate) fn unregister_subscribe_namespace(
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        interest: NamespaceInterest,
     ) -> bool {
-        match unregister_peer(
-            &self.subscriber_namespaces,
-            session_id,
-            track_namespace_prefix,
-        ) {
-            PeerRemoval::ClientsRemain => false,
-            PeerRemoval::NoClientsRemain => true,
-            PeerRemoval::NotRegistered => self
-                .subscriber_namespaces
-                .get(track_namespace_prefix)
-                .is_none_or(|peers| !has_client(&peers)),
+        let Some(subscriptions) = self.subscriber_namespaces.get(track_namespace_prefix) else {
+            return true;
+        };
+        subscriptions.remove(&(session_id, interest));
+        if interest.includes_tracks() {
+            self.blocked_publishes().retain(|(subscriber, track_key)| {
+                *subscriber != session_id
+                    || !namespace_has_prefix(&track_key.track_namespace, track_namespace_prefix)
+            });
         }
+        let no_clients_remain = !has_client_subscription(&subscriptions);
+        let is_empty = subscriptions.is_empty();
+        drop(subscriptions);
+        if is_empty {
+            self.subscriber_namespaces.remove(track_namespace_prefix);
+        }
+        no_clients_remain
+    }
+
+    /// Returns the prefixes whose last client subscription was the removed
+    /// session's; relay peers don't own Redis routes.
+    fn remove_namespace_subscriptions(&self, session_id: SessionId) -> Vec<String> {
+        self.blocked_publishes()
+            .retain(|(subscriber, _)| *subscriber != session_id);
+        let mut last_client_left = Vec::new();
+        let mut empty_prefixes = Vec::new();
+        for entry in self.subscriber_namespaces.iter() {
+            let had_client = has_client_subscription(entry.value());
+            entry
+                .value()
+                .retain(|(subscriber, _), _| *subscriber != session_id);
+            if had_client && !has_client_subscription(entry.value()) {
+                last_client_left.push(entry.key().clone());
+            }
+            if entry.value().is_empty() {
+                empty_prefixes.push(entry.key().clone());
+            }
+        }
+        for prefix in empty_prefixes {
+            self.subscriber_namespaces.remove(&prefix);
+        }
+        last_client_left
     }
 
     #[tracing::instrument(
@@ -471,23 +527,33 @@ impl InMemoryLocalPubSubDirectory {
             });
     }
 
+    /// The sessions with a subscription to a prefix of `track_namespace` that
+    /// asks for what `wanted` does, each with that subscription. A session has
+    /// at most one of them, since overlapping ones are refused.
     #[tracing::instrument(
         level = "debug",
         name = "relay.local_pub_sub_directory.get_namespace_subscribers",
         skip_all,
-        fields(track_namespace = %track_namespace)
+        fields(track_namespace = %track_namespace, wanted = ?wanted)
     )]
-    pub(crate) fn get_namespace_subscribers(&self, track_namespace: &str) -> DashSet<SessionId> {
-        let combined = DashSet::new();
-        self.subscriber_namespaces
-            .iter()
-            .filter(|entry| namespace_has_prefix(track_namespace, entry.key()))
-            .for_each(|entry| {
-                entry.value().iter().for_each(|session| {
-                    combined.insert(*session.key());
-                })
-            });
-        combined
+    pub(crate) fn get_namespace_subscribers(
+        &self,
+        track_namespace: &str,
+        wanted: NamespaceInterest,
+    ) -> HashMap<SessionId, NamespaceSubscription> {
+        let mut subscribers = HashMap::new();
+        for entry in self.subscriber_namespaces.iter() {
+            if !namespace_has_prefix(track_namespace, entry.key()) {
+                continue;
+            }
+            for subscription in entry.value().iter() {
+                let (session_id, interest) = *subscription.key();
+                if covers(interest, wanted) {
+                    subscribers.insert(session_id, *subscription.value());
+                }
+            }
+        }
+        subscribers
     }
 
     #[tracing::instrument(
@@ -521,6 +587,51 @@ impl InMemoryLocalPubSubDirectory {
             }
         }
         matching
+    }
+
+    /// draft-18 §6.1: after PUBLISH_BLOCKED no PUBLISH for the track goes to
+    /// the session's track subscription that covers it (MUST NOT).
+    pub(crate) fn block_publish(&self, session_id: SessionId, track_key: &TrackKey) {
+        self.blocked_publishes()
+            .insert((session_id, track_key.clone()));
+    }
+
+    pub(crate) fn is_publish_blocked(&self, session_id: SessionId, track_key: &TrackKey) -> bool {
+        self.blocked_publishes()
+            .contains(&(session_id, track_key.clone()))
+    }
+
+    fn blocked_publishes(&self) -> std::sync::MutexGuard<'_, HashSet<(SessionId, TrackKey)>> {
+        self.blocked_publishes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the PUBLISH of the track goes to `session_id`'s namespace
+    /// `subscription`: one that asks for tracks, and leaves out its session's
+    /// own tracks (draft-18 §6.1) unless it echoes them (draft-14 §6.1).
+    pub(crate) fn offers_track(
+        &self,
+        session_id: SessionId,
+        subscription: &NamespaceSubscription,
+        track_key: &TrackKey,
+    ) -> bool {
+        // draft-14 §6.1 echoes PUBLISH; only draft-14 asks for both.
+        subscription.interest.includes_tracks()
+            && (subscription.interest == NamespaceInterest::NamespacesAndTracks
+                || !self.publishes_track(session_id, track_key))
+    }
+
+    fn publishes_track(&self, session_id: SessionId, track_key: &TrackKey) -> bool {
+        self.published_handlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|published| {
+                published.publisher_session_id == session_id
+                    && published.handler.track_namespace() == track_key.track_namespace
+                    && published.handler.track_name() == track_key.track_name
+            })
     }
 
     #[tracing::instrument(
@@ -1074,11 +1185,12 @@ impl InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::test_support::directory_fixtures::delivery_control;
-    use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, producer, producer_with,
         table_with_upstream, track_key,
+    };
+    use crate::modules::test_support::directory_fixtures::{
+        client_subscription, delivery_control, downstream_subscription, namespaces_and_tracks,
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
@@ -1115,9 +1227,21 @@ mod tests {
 
         table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Client);
         table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(1, "solo".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
+        table.register_subscribe_namespace(
+            1,
+            "solo".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
         table.register_publish(
             1,
             SessionPeer::Client,
@@ -1133,9 +1257,10 @@ mod tests {
             vec![2]
         );
 
-        let room_subscribers = table.get_namespace_subscribers("room/member");
-        assert!(room_subscribers.contains(&2));
-        assert!(!room_subscribers.contains(&1));
+        let room_subscribers =
+            table.get_namespace_subscribers("room/member", NamespaceInterest::NamespacesAndTracks);
+        assert!(room_subscribers.contains_key(&2));
+        assert!(!room_subscribers.contains_key(&1));
 
         assert!(table.subscriber_namespaces.get("solo").is_none());
         assert_eq!(
@@ -1147,19 +1272,157 @@ mod tests {
     }
 
     #[test]
-    fn a_subscribe_namespace_overlaps_the_session_s_own_prefixes_field_by_field() {
+    fn a_namespace_prefix_matches_whole_fields_only() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "app/room".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        table.register_publish_namespace(2, "room1/member".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(3, "room/member".to_string(), SessionPeer::Client);
 
         // Act
-        let overlaps = ["app/room", "app", "app/room/alice", "app/room1"]
-            .map(|prefix| table.has_overlapping_subscribe_namespace(1, prefix));
-        let other_session = table.has_overlapping_subscribe_namespace(2, "app/room");
+        let subscribers =
+            table.get_namespace_subscribers("room1/member", NamespaceInterest::NamespacesAndTracks);
+        let matching = table.matching_publications("room");
 
-        // Assert: `app/room1` differs in its second field; another session never overlaps
-        assert_eq!(overlaps, [true, true, true, false]);
-        assert!(!other_session);
+        // Assert
+        assert!(subscribers.is_empty());
+        assert_eq!(
+            matching,
+            HashSet::from([MatchingPublication::Namespace("room/member".to_string())])
+        );
+    }
+
+    #[test]
+    fn namespace_subscribers_are_found_by_what_they_ask_for() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            client_subscription(NamespaceInterest::Tracks),
+        );
+        table.register_subscribe_namespace(
+            3,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+
+        // Act
+        let namespaces =
+            table.get_namespace_subscribers("room/alice", NamespaceInterest::Namespaces);
+        let tracks = table.get_namespace_subscribers("room/alice", NamespaceInterest::Tracks);
+
+        // Assert
+        assert_eq!(
+            namespaces.into_keys().collect::<BTreeSet<_>>(),
+            [1, 3].into()
+        );
+        assert_eq!(tracks.into_keys().collect::<BTreeSet<_>>(), [2, 3].into());
+    }
+
+    #[test]
+    fn a_session_ends_its_namespace_and_track_subscriptions_apart() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        for interest in [NamespaceInterest::Namespaces, NamespaceInterest::Tracks] {
+            table.register_subscribe_namespace(
+                1,
+                "room".to_string(),
+                client_subscription(interest),
+            );
+        }
+
+        // Act
+        let no_clients_remain =
+            table.unregister_subscribe_namespace(1, "room", NamespaceInterest::Tracks);
+
+        // Assert
+        assert!(!no_clients_remain);
+        assert!(
+            table
+                .get_namespace_subscribers("room/alice", NamespaceInterest::Tracks)
+                .is_empty()
+        );
+        assert!(
+            table
+                .get_namespace_subscribers("room/alice", NamespaceInterest::Namespaces)
+                .contains_key(&1)
+        );
+    }
+
+    #[test]
+    fn a_namespace_subscription_overlaps_the_prefixes_of_its_session_on_either_side() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room/alice".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        let overlaps = |session_id, prefix| {
+            table.has_overlapping_namespace_subscription(
+                session_id,
+                prefix,
+                NamespaceInterest::NamespacesAndTracks,
+            )
+        };
+
+        // Act / Assert: draft-14 §9.28
+        assert!(overlaps(1, "room"));
+        assert!(overlaps(1, "room/alice"));
+        assert!(overlaps(1, "room/alice/camera"));
+        assert!(overlaps(1, ""));
+        assert!(!overlaps(1, "room/bob"));
+        assert!(!overlaps(1, "room/alice2"));
+        assert!(!overlaps(2, "room"));
+    }
+
+    #[test]
+    fn a_tuple_suffix_of_a_held_prefix_does_not_overlap_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room/alice".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+
+        // Act
+        let overlaps = table.has_overlapping_namespace_subscription(
+            1,
+            "alice",
+            NamespaceInterest::NamespacesAndTracks,
+        );
+
+        // Assert: draft-14 §9.28 compares prefixes from the first tuple field
+        assert!(!overlaps);
+    }
+
+    #[test]
+    fn subscribe_namespace_and_subscribe_tracks_overlap_only_their_own_kind() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            client_subscription(NamespaceInterest::Namespaces),
+        );
+        let overlaps =
+            |prefix, interest| table.has_overlapping_namespace_subscription(1, prefix, interest);
+
+        // Act / Assert: draft-18 §10.18 / §10.19
+        assert!(!overlaps("room", NamespaceInterest::Tracks));
+        assert!(overlaps("room/alice", NamespaceInterest::Namespaces));
+        assert!(overlaps("room", NamespaceInterest::NamespacesAndTracks));
     }
 
     #[test]
@@ -1168,12 +1431,21 @@ mod tests {
         let table = InMemoryLocalPubSubDirectory::new();
 
         // Act: Register a relay subscriber and then two client subscribers.
-        let relay_is_first =
-            table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Relay);
-        let first_client =
-            table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Client);
-        let second_client =
-            table.register_subscribe_namespace(3, "room".to_string(), SessionPeer::Client);
+        let relay_is_first = table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
+        let first_client = table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        let second_client = table.register_subscribe_namespace(
+            3,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
 
         // Assert: Only the first client registration requests route registration.
         assert!(!relay_is_first);
@@ -1185,12 +1457,22 @@ mod tests {
     fn unregister_subscribe_namespace_reports_when_last_client_leaves() {
         // Arrange: Register two client subscribers for the same namespace prefix.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
 
         // Act: Remove subscribers one by one.
-        let still_has_clients = table.unregister_subscribe_namespace(1, "room");
-        let clients_became_empty = table.unregister_subscribe_namespace(2, "room");
+        let still_has_clients =
+            table.unregister_subscribe_namespace(1, "room", NamespaceInterest::NamespacesAndTracks);
+        let clients_became_empty =
+            table.unregister_subscribe_namespace(2, "room", NamespaceInterest::NamespacesAndTracks);
 
         // Assert: Only the final unsubscribe reports that no client remains.
         assert!(!still_has_clients);
@@ -1202,32 +1484,49 @@ mod tests {
     fn unregister_subscribe_namespace_ignores_remaining_relay_subscribers() {
         // Arrange: Register a client subscriber alongside a relay subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
 
         // Act: Remove the final client subscriber while the relay subscriber remains.
-        let clients_became_empty = table.unregister_subscribe_namespace(1, "room");
+        let clients_became_empty =
+            table.unregister_subscribe_namespace(1, "room", NamespaceInterest::NamespacesAndTracks);
 
         // Assert: The client-origin route can be cleaned up independently of relay subscribers.
         assert!(clients_became_empty);
-        let room_subscribers = table.get_namespace_subscribers("room/member");
-        assert!(room_subscribers.contains(&2));
-        assert!(!room_subscribers.contains(&1));
+        let room_subscribers =
+            table.get_namespace_subscribers("room/member", NamespaceInterest::NamespacesAndTracks);
+        assert!(room_subscribers.contains_key(&2));
+        assert!(!room_subscribers.contains_key(&1));
     }
 
     #[test]
     fn namespace_subscribers_match_the_prefix_field_by_field() {
         // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "APP/site1".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(
+            1,
+            "APP/site1".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        let subscribers = |track_namespace| {
+            table.get_namespace_subscribers(track_namespace, NamespaceInterest::NamespacesAndTracks)
+        };
 
         // Act
-        let same_field = table.get_namespace_subscribers("APP/site1/cam1");
-        let longer_field = table.get_namespace_subscribers("APP/site10");
-        let under_longer_field = table.get_namespace_subscribers("APP/site10/cam1");
+        let same_field = subscribers("APP/site1/cam1");
+        let longer_field = subscribers("APP/site10");
+        let under_longer_field = subscribers("APP/site10/cam1");
 
         // Assert
-        assert!(same_field.contains(&1));
+        assert!(same_field.contains_key(&1));
         assert!(longer_field.is_empty());
         assert!(under_longer_field.is_empty());
     }
@@ -1262,8 +1561,16 @@ mod tests {
     fn remove_session_reports_empty_client_prefix_even_when_relay_subscriber_remains() {
         // Arrange: Register one client-origin subscriber and one relay-origin subscriber.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Client);
-        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
 
         // Act: Disconnect the client-origin subscriber.
         let removed = table.remove_session(1);
@@ -1273,25 +1580,35 @@ mod tests {
             removed.subscribe_namespace_prefixes,
             vec!["room".to_string()]
         );
-        let room_subscribers = table.get_namespace_subscribers("room/member");
-        assert!(room_subscribers.contains(&2));
-        assert!(!room_subscribers.contains(&1));
+        let room_subscribers =
+            table.get_namespace_subscribers("room/member", NamespaceInterest::NamespacesAndTracks);
+        assert!(room_subscribers.contains_key(&2));
+        assert!(!room_subscribers.contains_key(&1));
     }
 
     #[test]
     fn remove_session_does_not_report_relay_only_prefixes() {
         // Arrange: Register only relay-origin subscribers for the prefix.
         let table = InMemoryLocalPubSubDirectory::new();
-        table.register_subscribe_namespace(1, "room".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(2, "room".to_string(), SessionPeer::Relay);
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
 
         // Act: Disconnect one relay subscriber.
         let removed = table.remove_session(1);
 
         // Assert: No Redis cleanup is requested because no client ever owned the route.
         assert!(removed.subscribe_namespace_prefixes.is_empty());
-        let room_subscribers = table.get_namespace_subscribers("room/member");
-        assert!(room_subscribers.contains(&2));
+        let room_subscribers =
+            table.get_namespace_subscribers("room/member", NamespaceInterest::NamespacesAndTracks);
+        assert!(room_subscribers.contains_key(&2));
     }
 
     #[test]
@@ -1352,7 +1669,11 @@ mod tests {
         // Arrange: A relay-origin namespace still watched via another client prefix.
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(10, "research/ghost".to_string(), SessionPeer::Relay);
-        table.register_subscribe_namespace(2, "research".to_string(), SessionPeer::Client);
+        table.register_subscribe_namespace(
+            2,
+            "research".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
 
         // Act: Purge for the same prefix while the client subscriber remains.
         table.purge_relay_publish_namespaces("research");

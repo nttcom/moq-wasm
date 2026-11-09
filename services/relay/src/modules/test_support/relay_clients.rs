@@ -3,6 +3,7 @@ use std::time::Duration;
 use moqt::{
     Session, SessionEvent, Subscription,
     fetch::{Fetch, FetchOption},
+    namespace::NamespaceInterest,
     object::Object,
     publish::{Origin, Retention},
     subscribe::SubscribeOption,
@@ -26,9 +27,13 @@ pub(crate) async fn next_event(session: &Session) -> SessionEvent {
 }
 
 pub(crate) async fn subscribe_namespace(session: &Session, prefix: &str) {
-    within(session.subscriber().subscribe_namespace(prefix.to_string()))
-        .await
-        .unwrap();
+    within(
+        session
+            .subscriber()
+            .subscribe_namespace(prefix.to_string(), NamespaceInterest::NamespacesAndTracks),
+    )
+    .await
+    .unwrap();
 }
 
 pub(crate) async fn publish_namespace(session: &Session, namespace: &str) {

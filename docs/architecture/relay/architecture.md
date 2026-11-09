@@ -330,18 +330,27 @@ Each sequence owns the relay-side protocol logic for one message
   keeps PUBLISH_NAMESPACE ordered before a later PUBLISH_NAMESPACE_DONE for
   the same subscriber. The fan-out includes the originating session when it
   subscribed to a matching prefix (draft-14 §6.1 echoes PUBLISH_NAMESPACE back
-  to its sender).
+  to its sender; draft-18 §6.1 echoes NAMESPACE too).
 - `InMemoryLocalPubSubDirectory` (`directory.rs`) — the relay's in-memory
   registry of publish/subscribe namespaces and tracks. Namespaces and
   prefixes are kept `/`-joined, and a prefix matches a namespace field by
   field (`domain::track_key::namespace_has_prefix`, draft-14 §9.28), the way
-  `authorize` matches the granted path: `a/b` covers `a/b/c`, not `a/bc`. The
+  `authorize` matches the granted path: `a/b` covers `a/b/c`, not `a/bc`, and
+  the empty prefix covers every namespace. The
   join keeps field boundaries because `authorize` rejects a field containing
   `/`. Each namespace entry
   carries its sessions' `SessionPeer`: client-owned Redis routes are cleaned
   up when the last *client* leaves, while local namespace subscribers get
   PUBLISH_NAMESPACE_DONE only once no client or relay session publishes the
-  namespace. `unregister_publish_namespace` returns a `PeerRemoval`
+  namespace. Namespace subscriptions are keyed by
+  session and `NamespaceInterest` (`NamespaceSubscription`: the interest, the
+  peer and the Forward State of the PUBLISH messages it receives), and
+  `get_namespace_subscribers(namespace, wanted)` returns those that ask for
+  `wanted`: a draft-18 session's SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS for
+  one prefix are two entries, and a draft-14 SUBSCRIBE_NAMESPACE is one
+  `NamespacesAndTracks` entry. Each version's semantics come from the moqt
+  handler, so a draft-14 and a draft-18 session are fanned out to by the same
+  rules. `unregister_publish_namespace` returns a `PeerRemoval`
   (`NotRegistered`, `ClientsRemain`, `NoClientsRemain`): a
   PUBLISH_NAMESPACE_DONE from a client that did not publish the namespace is
   ignored, so it neither reaches the subscribers nor withdraws the Redis
@@ -448,10 +457,15 @@ to the track the same way.
    origin `Publish` (it survives without consumers), which replaces and
    unsubscribes a SUBSCRIBE-initiated producer of the same publisher, and
    register the PUBLISH for namespace lookups.
-3. Forward PUBLISH to every local session whose SUBSCRIBE_NAMESPACE prefix
-   matches (draft-14 §8.4) and, for a client-origin PUBLISH, to every remote
-   relay holding a namespace-subscriber route, dialled via
-   `InterRelayConnectionManager`.
+3. Forward PUBLISH to every local session whose namespace subscription for a
+   matching prefix asks for tracks (draft-14 §8.4, draft-18 §9.5: a
+   SUBSCRIBE_TRACKS, not a SUBSCRIBE_NAMESPACE), with that subscription's
+   Forward State (draft-18 §10.19), and, for a client-origin PUBLISH, to every
+   remote relay holding a namespace-subscriber route, dialled via
+   `InterRelayConnectionManager` (Forward State 1: the remote relay applies
+   its own subscribers'). A subscription that leaves out its session's own
+   tracks (draft-18 §6.1) gets no PUBLISH for a track that session
+   PUBLISHed; a draft-14 one is echoed it (draft-14 §6.1).
 4. PUBLISH_OK to the publisher.
 
 Each forward in step 3 is a `DownstreamPublish`
@@ -462,6 +476,11 @@ establishes a subscription):
   from the PUBLISH of an earlier publisher of it, or a PUBLISH for it still
   on its way (`begin_forwarded_publish`, released when the answer is in),
   gets no second PUBLISH;
+- a PUBLISH moqt answers with `RequestFailure::PublishBlocked` (the
+  subscriber's stream limit left no stream, so moqt sent PUBLISH_BLOCKED on
+  its SUBSCRIBE_TRACKS) registers nothing, and the directory keeps the
+  session and track until that track subscription ends, so no PUBLISH for
+  the track goes to it again (draft-18 §6.1 MUST NOT);
 - the PUBLISH advertises the Largest Location resolved like a fresh
   SUBSCRIBE (max of the cache and the track's Content Exists), and the egress
   runner starts from the same location;
@@ -485,12 +504,21 @@ subscribers' forwards. A publisher that ends the track meanwhile is covered by
 the PUBLISH_DONE TRACK_ENDED answer above.
 
 ### SUBSCRIBE_NAMESPACE sequence
-Register the prefix (and, for the first client subscriber of the prefix, its
-Redis route), reply SUBSCRIBE_NAMESPACE_OK, and only then forward what already
-matches: PUBLISH_NAMESPACE for published namespaces (reply handled by a
-`PublishNamespaceResponseTask`), a `DownstreamPublish` for each published
-track (one per publisher session), then PUBLISH_NAMESPACE for remote
-namespace-publisher routes. The OK goes first because draft-14 §9.28 forwards
+Also handles draft-18 SUBSCRIBE_TRACKS, which moqt raises as the same event
+with `NamespaceInterest::Tracks`. Refuse with PREFIX_OVERLAP a subscription
+whose prefix is a prefix of, equal to or an extension of one the session
+already holds for an overlapping interest (draft-14 §9.28; draft-18 §10.18 /
+§10.19 compare SUBSCRIBE_NAMESPACE and SUBSCRIBE_TRACKS only with their own
+kind). Otherwise register the prefix under the session and interest (and,
+for the first client subscriber of the prefix, its Redis route), reply
+SUBSCRIBE_NAMESPACE_OK, and only then forward what already
+matches and the subscription asks for: for namespaces, PUBLISH_NAMESPACE for
+published namespaces (reply handled by a `PublishNamespaceResponseTask`) and
+then for remote namespace-publisher routes not sent already; for tracks, a `DownstreamPublish`
+with the subscription's Forward State for each published track (one per
+publisher session), except those its own session PUBLISHed when it leaves
+them out. PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go to the subscriptions
+that ask for namespaces only. The OK goes first because draft-14 §9.28 forwards
 the existing messages once the subscription succeeded; a subscriber that
 handles PUBLISH only after its SUBSCRIBE_NAMESPACE_OK would otherwise never
 answer the PUBLISH before the request timeout.

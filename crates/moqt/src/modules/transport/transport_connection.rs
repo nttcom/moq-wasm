@@ -38,6 +38,9 @@ pub(crate) trait TransportConnection: MaybeSend + MaybeSync + Debug {
     async fn closed(&self) -> TransportClose;
     fn close(&self, code: u32, reason: &str);
     async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)>;
+    /// `open_bi` without waiting for the peer to raise its stream limit:
+    /// `None` when the limit allows no stream now.
+    async fn try_open_bi(&self) -> anyhow::Result<Option<(BoxedSendStream, BoxedReceiveStream)>>;
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)>;
     async fn open_uni(&self) -> anyhow::Result<BoxedSendStream>;
     async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream>;

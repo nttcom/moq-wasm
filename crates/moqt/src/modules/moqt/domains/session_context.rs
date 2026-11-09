@@ -11,7 +11,10 @@ use crate::{
     modules::{
         executor,
         moqt::{
-            control_plane::{constants::TerminationErrorCode, enums::RequestId},
+            control_plane::{
+                constants::TerminationErrorCode, enums::RequestId,
+                namespace_interest::NamespaceInterest,
+            },
             data_plane::stream::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
             },
@@ -90,7 +93,7 @@ pub(crate) struct CarriedRequests {
     /// Keyed by the logical id of the request that sent the namespace, so a
     /// failed request removes only its own record, not another request's for
     /// the same namespace.
-    pub(crate) namespaces: BTreeMap<u64, String>,
+    pub(crate) namespaces: BTreeMap<u64, (String, NamespaceInterest)>,
     /// Keyed as `namespaces`.
     pub(crate) published_namespaces: BTreeMap<u64, String>,
     /// Keyed by logical request id.

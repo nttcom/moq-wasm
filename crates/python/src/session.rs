@@ -7,7 +7,7 @@ use moqt::{
     AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
     NATIVE, RequestErrorCode, SessionEvent,
     executor::{self, JoinHandle},
-    namespace::NamespaceWatchers,
+    namespace::{NamespaceInterest, NamespaceWatchers},
     publish::{Origin, Retention},
 };
 use pyo3::{exceptions::PyRuntimeError, prelude::*};
@@ -139,7 +139,7 @@ impl Session {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
                 .subscriber()
-                .subscribe_namespace(prefix.join("/"))
+                .subscribe_namespace(prefix.join("/"), NamespaceInterest::Namespaces)
                 .await
                 .map_err(anyhow::Error::from)?;
             Ok(events)

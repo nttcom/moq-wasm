@@ -26,6 +26,7 @@ use crate::{
                 track_status_handler::TrackStatusHandler, unsubscribe_handler::UnsubscribeHandler,
                 unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
             },
+            namespace_interest::NamespaceInterest,
         },
         data_plane::stream::{
             received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
@@ -267,8 +268,10 @@ impl ControlMessageReceiveTask {
                 ResponseMessage::SubscribeNameSpaceError,
             ),
             ReceivedMessage::UnsubscribeNamespace(unsubscribe_namespace) => {
-                let unsubscribe_namespace_handler =
-                    UnsubscribeNamespaceHandler::new(unsubscribe_namespace);
+                let unsubscribe_namespace_handler = UnsubscribeNamespaceHandler::new(
+                    unsubscribe_namespace,
+                    NamespaceInterest::NamespacesAndTracks,
+                );
                 DepacketizeResult::SessionEvent(SessionEvent::UnsubscribeNamespace(
                     unsubscribe_namespace_handler,
                 ))

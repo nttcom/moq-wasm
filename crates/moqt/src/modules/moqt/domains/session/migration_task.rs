@@ -442,12 +442,18 @@ async fn migrate(
         .get_mut()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let moved_from = session.connection();
-    for namespace in carried.namespaces.values() {
-        retry_until(deadline, || {
-            send_subscribe_namespace(&connection, namespace.clone())
-        })
-        .await
-        .with_context(|| format!("SUBSCRIBE_NAMESPACE {namespace} on the new connection failed"))?;
+    for (namespace, interest) in carried.namespaces.values() {
+        for request in connection.control.namespace_requests(*interest) {
+            retry_until(deadline, || {
+                send_subscribe_namespace(&connection, namespace.clone(), request)
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "SUBSCRIBE_NAMESPACE {namespace} ({request:?}) on the new connection failed"
+                )
+            })?;
+        }
     }
     for namespace in carried.published_namespaces.values() {
         retry_until(deadline, || async {
@@ -781,13 +787,15 @@ mod tests {
         modules::{
             moqt::version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, native_client_with_config,
-                open_subgroup, self_signed_server_config, send_payload, spawn_draft18_server,
-                spawn_native_server, spawn_native_server_handshake, spawn_native_server_offering,
-                subscribe_namespace_accepted, subscribed_track_reader,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, draft18_client_with_config,
+                native_client_with_config, open_subgroup, self_signed_server_config, send_payload,
+                spawn_draft18_server, spawn_native_server, spawn_native_server_handshake,
+                spawn_native_server_offering, subscribe_namespace_accepted,
+                subscribed_track_reader,
             },
             transport::application_protocol::ApplicationProtocols,
         },
+        namespace::NamespaceInterest,
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
             StreamDataSenderFactory,
@@ -801,17 +809,25 @@ mod tests {
 
     use super::*;
 
+    fn following_go_away() -> ClientConfig {
+        ClientConfig {
+            certificate_verification: CertificateVerification::Disabled,
+            follow_go_away: true,
+            ..ClientConfig::default()
+        }
+    }
+
     async fn connect(port: u16) -> Session {
         connect_offering(port, APPLICATION_PROTOCOLS).await
     }
 
     async fn connect_offering(port: u16, protocols: ApplicationProtocols) -> Session {
-        let config = ClientConfig {
-            certificate_verification: CertificateVerification::Disabled,
-            follow_go_away: true,
-            ..ClientConfig::default()
-        };
-        let client = Endpoint::<NATIVE>::create_client_offering(&config, protocols).unwrap();
+        let client =
+            Endpoint::<NATIVE>::create_client_offering(&following_go_away(), protocols).unwrap();
+        connect_from(client, port).await
+    }
+
+    async fn connect_from(client: Endpoint<NATIVE>, port: u16) -> Session {
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             client
                 .connect(&format!("moqt://127.0.0.1:{port}"))
@@ -1314,6 +1330,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn go_away_subscribes_each_namespace_interest_again() {
+        // Arrange
+        let (port_a, accept_a) = spawn_draft18_server("session-migration-interest-a");
+        let (port_b, accept_b) = spawn_draft18_server("session-migration-interest-b");
+        let client = connect_from(draft18_client_with_config(following_go_away()), port_a).await;
+        let server_a = accept_a.await.unwrap();
+        let subscriber = client.subscriber();
+        let (subscribed, ()) = tokio::join!(
+            subscriber.subscribe_namespace("room".into(), NamespaceInterest::Tracks),
+            async {
+                let SessionEvent::SubscribeNameSpace(handler) =
+                    server_a.receive_event().await.unwrap()
+                else {
+                    panic!("expected SUBSCRIBE_TRACKS");
+                };
+                handler.ok().await.unwrap();
+            }
+        );
+        subscribed.unwrap();
+
+        // Act
+        server_a
+            .go_away(format!("moqt://127.0.0.1:{port_b}"))
+            .await
+            .unwrap();
+        let server_b = accept_b.await.unwrap();
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        let SessionEvent::SubscribeNameSpace(handler) = event else {
+            panic!("expected SUBSCRIBE_TRACKS on the new connection, got {event:?}");
+        };
+        assert_eq!(handler.interest, NamespaceInterest::Tracks);
+        assert_eq!(handler.track_namespace_prefix, "room");
+    }
+
+    #[tokio::test]
     async fn go_away_does_not_subscribe_again_to_an_unsubscribed_namespace() {
         // Arrange: "room" is subscribed before "lobby", so a renewed "room" would reach server B first
         let (port_a, accept_a) = spawn_native_server("session-migration-unsubscribed-a");
@@ -1670,24 +1726,7 @@ mod tests {
     ) -> (Option<Duration>, Duration) {
         let (port_a, accept_a) = spawn_draft18_server(&format!("{name}-a"));
         let (port_b, accept_b) = spawn_draft18_server(&format!("{name}-b"));
-        let client = Endpoint::<NATIVE>::create_client_offering(
-            &ClientConfig {
-                certificate_verification: CertificateVerification::Disabled,
-                follow_go_away: true,
-                ..ClientConfig::default()
-            },
-            DRAFT18_PROTOCOLS,
-        )
-        .unwrap();
-        let client = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            client
-                .connect(&format!("moqt://127.0.0.1:{port_a}"))
-                .await?
-                .await
-        })
-        .await
-        .unwrap()
-        .unwrap();
+        let client = connect_from(draft18_client_with_config(following_go_away()), port_a).await;
         let server_a = accept_a.await.unwrap();
         let end = Location {
             group_id: 1,
@@ -2085,17 +2124,21 @@ mod tests {
 
         // Act
         let (subscribed, (_second, prefix)) = tokio::time::timeout(RECONNECT_LIMIT, async {
-            tokio::join!(subscriber.subscribe_namespace("room".into()), async {
-                let second = lose_after_request(first, &mut sessions).await;
-                let SessionEvent::SubscribeNameSpace(handler) =
-                    second.receive_event().await.unwrap()
-                else {
-                    panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
-                };
-                handler.ok().await.unwrap();
-                let prefix = handler.track_namespace_prefix.clone();
-                (second, prefix)
-            })
+            tokio::join!(
+                subscriber
+                    .subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
+                async {
+                    let second = lose_after_request(first, &mut sessions).await;
+                    let SessionEvent::SubscribeNameSpace(handler) =
+                        second.receive_event().await.unwrap()
+                    else {
+                        panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
+                    };
+                    handler.ok().await.unwrap();
+                    let prefix = handler.track_namespace_prefix.clone();
+                    (second, prefix)
+                }
+            )
         })
         .await
         .unwrap();
@@ -2200,11 +2243,15 @@ mod tests {
 
         // Act
         let (subscribed, _first) = tokio::time::timeout(DISCONNECT_TIMEOUT, async {
-            tokio::join!(subscriber.subscribe_namespace("room".into()), async {
-                let unanswered = first.receive_event().await.unwrap();
-                first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
-                (unanswered, first)
-            })
+            tokio::join!(
+                subscriber
+                    .subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
+                async {
+                    let unanswered = first.receive_event().await.unwrap();
+                    first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+                    (unanswered, first)
+                }
+            )
         })
         .await
         .unwrap();

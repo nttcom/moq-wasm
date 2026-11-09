@@ -259,6 +259,7 @@ impl SessionWorker {
                             verified_token,
                             handler.track_namespace_prefix(),
                         ),
+                        handler.interest,
                     )
                     .instrument(event_span)
                     .await;
@@ -397,6 +398,13 @@ impl SessionWorker {
                     )
                     .instrument(event_span)
                     .await;
+            }
+            MoqtSessionEvent::PublishBlocked(..) => {
+                // §6.1: a downstream SUBSCRIBE for the track still reaches it
+                // through an upstream SUBSCRIBE.
+                event_span.in_scope(|| {
+                    tracing::info!(session_id, "upstream peer sends no PUBLISH for the track");
+                });
             }
             MoqtSessionEvent::PublishNamespaceCancel(..) | MoqtSessionEvent::FetchCancel(..) => {
                 event_span.in_scope(|| {
