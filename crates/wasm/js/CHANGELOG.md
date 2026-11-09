@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `MoqSession.transportStats()` returns the bytes the session's current
+  connection has sent and received (`sentBytes`, `receivedBytes`), so a page
+  can show its send and receive rate next to `encodedKbps`. Over WebTransport
+  the SDK counts them itself; they are the bytes the browser accepted, with
+  no round-trip time or loss.
 - `stats()` on a `publish()` result and on each `addSource()` source returns
   the video and audio that source's encoders output over the last second
   (`encodedKbps`, `encodedFramesPerSecond`), the encoded video `frameSize`

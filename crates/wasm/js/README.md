@@ -68,6 +68,30 @@ session.close()
 throws a `RequestError` whose `errorCode` is the draft-14 error code
 (`RequestErrorCode`) and whose `reasonPhrase` is the relay's reason.
 
+`session.transportStats()` returns the bytes the session's current connection
+has sent and received since it opened. Sample it twice for a send and receive
+rate, for example next to a source's `encodedKbps`:
+
+```ts
+const before = session.transportStats()
+await new Promise((resolve) => setTimeout(resolve, 1000))
+const after = session.transportStats()
+const sentKbps = ((after.sentBytes - before.sentBytes) * 8) / 1000
+```
+
+The SDK counts them itself, since Chrome has no `WebTransport.getStats()`:
+
+- `sentBytes` counts a write once the browser accepted it, not once the relay
+  acknowledged it. The browser accepts writes more slowly while its send
+  buffer is full, so a sending rate below `encodedKbps` means the connection
+  cannot keep up.
+- Over WebTransport they are the bytes of streams and datagrams, without QUIC
+  and HTTP/3 framing; over the WebSocket fallback, the QMux frames, without
+  WebSocket and TLS framing.
+- They restart from 0 when the session moves to another connection (GOAWAY or
+  a reconnect).
+- They say nothing about round-trip time or loss.
+
 ## Publishing a camera and microphone
 
 `publish()` encodes the stream's first video track (H.264 by default) and

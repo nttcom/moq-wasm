@@ -25,6 +25,8 @@ export type CloseInfo = { readonly code: number | undefined; readonly reason: st
 
 export type MoqVersion = 'draft-14' | 'draft-18'
 
+export type TransportStats = { readonly sentBytes: number; readonly receivedBytes: number }
+
 export type MoqConnectOptions = {
   /// Called before each CLIENT_SETUP, a reconnect or a GOAWAY move included.
   token?: string | (() => Promise<string>)
@@ -55,6 +57,7 @@ export type NamespaceEvent = { readonly kind: 'announced' | 'withdrawn'; readonl
 type WasmSession = Pick<
   Moqt.Session,
   | 'closed'
+  | 'transportStats'
   | 'subscribe'
   | 'subscribeCurrentGroup'
   | 'fetch'
@@ -108,6 +111,15 @@ export class MoqSession {
 
   get isOpen(): boolean {
     return this.open
+  }
+
+  /// Bytes sent and received on the session's current connection. A GOAWAY
+  /// move or reconnect resets them to 0.
+  transportStats(): TransportStats {
+    const stats = this.inner.transportStats()
+    const copy = { sentBytes: stats.sentBytes, receivedBytes: stats.receivedBytes }
+    stats.free()
+    return copy
   }
 
   async subscribe(namespace: string[], track: string, options: MoqSubscribeOptions = {}): Promise<MoqSubscription> {
