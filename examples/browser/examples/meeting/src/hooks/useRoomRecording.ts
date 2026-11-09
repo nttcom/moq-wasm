@@ -43,7 +43,10 @@ export function useRoomRecording(
     try {
       const recordings = await listRecordings(recorder, namespacePrefix)
       setActive(activeRecording(recordings))
-      const latest = recordings.filter((recording) => recording.state === 'finished').at(-1)
+      const latest = recordings
+        // The recorder replays only the MoQ archive format.
+        .filter((recording) => recording.state === 'finished' && recording.format === 'moq')
+        .at(-1)
       const url = new URL('../recording-player/', window.location.href)
       if (latest) {
         url.searchParams.set('recorder', recorderUrl)
