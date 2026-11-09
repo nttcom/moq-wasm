@@ -177,6 +177,8 @@ pub(crate) struct QmuxReceiveStream {
     stream_id: u64,
     session: Arc<SessionState>,
     shared: Arc<ReceiveShared>,
+    /// Set once STOP_SENDING was sent, so `Drop` does not send it again.
+    stop_sent: bool,
 }
 
 impl QmuxReceiveStream {
@@ -189,7 +191,24 @@ impl QmuxReceiveStream {
             stream_id,
             session,
             shared,
+            stop_sent: false,
         }
+    }
+
+    fn ended(&self) -> bool {
+        let state = self.shared.state.lock().expect("receive stream lock");
+        state.reset_code.is_some() || state.final_size == Some(state.received)
+    }
+
+    fn send_stop_sending(&mut self, error_code: u64) {
+        self.stop_sent = true;
+        let _ = self
+            .session
+            .commands
+            .send(Command::Frame(Frame::StopSending {
+                stream_id: self.stream_id,
+                error_code,
+            }));
     }
 }
 
@@ -242,6 +261,12 @@ impl TransportReceiveStream for QmuxReceiveStream {
         self.session.consumed(length as u64);
         Poll::Ready(Ok(()))
     }
+
+    fn stop(&mut self, error_code: u64) {
+        if !self.stop_sent && !self.ended() {
+            self.send_stop_sending(error_code);
+        }
+    }
 }
 
 /// A new MAX_STREAM_DATA once half the window has been read.
@@ -274,13 +299,9 @@ impl Drop for QmuxReceiveStream {
             self.session.consumed(discarded);
         }
         if !ended {
-            let _ = self
-                .session
-                .commands
-                .send(Command::Frame(Frame::StopSending {
-                    stream_id: self.stream_id,
-                    error_code: 0,
-                }));
+            if !self.stop_sent {
+                self.send_stop_sending(0);
+            }
         } else if !self.session.role.opened_by_me(self.stream_id) {
             self.session
                 .release_peer_stream(StreamKind::of(self.stream_id));

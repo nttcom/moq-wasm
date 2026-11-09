@@ -11,6 +11,7 @@ use crate::modules::moqt::control_plane::{
         publish_namespace_done_handler::PublishNamespaceDoneHandler,
         publish_namespace_handler::PublishNamespaceHandler, subscribe_handler::SubscribeHandler,
         subscribe_namespace_handler::SubscribeNamespaceHandler,
+        subscribe_namespace_update_handler::SubscribeNamespaceUpdateHandler,
         subscribe_update_handler::SubscribeUpdateHandler, track_status_handler::TrackStatusHandler,
         unsubscribe_handler::UnsubscribeHandler,
         unsubscribe_namespace_handler::UnsubscribeNamespaceHandler,
@@ -22,13 +23,18 @@ pub type RequestId = u64;
 
 pub(crate) type ErrorPhrase = String;
 
+/// What the peer asked of the session. Dropping an event's handler
+/// unanswered gives the answer that handler documents, so an application
+/// may drop the events it does not handle.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum SessionEvent {
     GoAway(GoAwayHandler),
     PublishNamespace(PublishNamespaceHandler),
     PublishNamespaceDone(PublishNamespaceDoneHandler),
     PublishNamespaceCancel(PublishNamespaceCancelHandler),
     SubscribeNameSpace(SubscribeNamespaceHandler),
+    SubscribeNamespaceUpdate(SubscribeNamespaceUpdateHandler),
     UnsubscribeNamespace(UnsubscribeNamespaceHandler),
     PublishBlocked(PublishBlockedHandler),
     Publish(PublishHandler),

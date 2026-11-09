@@ -16,4 +16,9 @@ pub(crate) trait TransportReceiveStream:
         cx: &mut std::task::Context<'a>,
         buf: &mut ReadBuf<'b>,
     ) -> Poll<Result<(), ReadError>>;
+
+    /// Sends STOP_SENDING with `error_code`: the peer stops sending and the
+    /// data not read yet is discarded. Does nothing once the stream has
+    /// ended or was stopped before.
+    fn stop(&mut self, error_code: u64);
 }

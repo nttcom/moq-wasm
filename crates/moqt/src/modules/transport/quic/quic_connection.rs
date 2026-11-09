@@ -36,9 +36,7 @@ fn boxed_bi(
     receiver: quinn::RecvStream,
 ) -> (BoxedSendStream, BoxedReceiveStream) {
     (
-        Box::new(QUICSendStream {
-            send_stream: sender,
-        }),
+        Box::new(QUICSendStream::new(sender)),
         Box::new(QUICReceiveStream {
             recv_stream: receiver,
         }),
@@ -88,9 +86,7 @@ impl TransportConnection for QUICConnection {
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (sender, receiver) = self.connection.accept_bi().await?;
         Ok((
-            Box::new(QUICSendStream {
-                send_stream: sender,
-            }),
+            Box::new(QUICSendStream::new(sender)),
             Box::new(QUICReceiveStream {
                 recv_stream: receiver,
             }),
@@ -99,7 +95,7 @@ impl TransportConnection for QUICConnection {
 
     async fn open_uni(&self) -> anyhow::Result<BoxedSendStream> {
         let send_stream = self.connection.open_uni().await?;
-        Ok(Box::new(QUICSendStream { send_stream }))
+        Ok(Box::new(QUICSendStream::new(send_stream)))
     }
 
     async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream> {

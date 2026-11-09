@@ -457,6 +457,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_reaches_the_sender_with_its_code() {
+        // Arrange
+        let (client, server) = connected().await;
+        let mut send_stream = client.open_uni().await.unwrap();
+        send_stream.send(&payload(10)).await.unwrap();
+        let mut receive_stream = within(server.accept_uni()).await.unwrap();
+
+        // Act
+        receive_stream.stop(7);
+        let stopped = within(std::future::poll_fn(|cx| send_stream.poll_stopped(cx))).await;
+
+        // Assert
+        assert_eq!(stopped, Some(7));
+    }
+
+    #[tokio::test]
+    async fn a_closed_sender_can_no_longer_be_stopped() {
+        // Arrange
+        let (client, _server) = connected().await;
+        let mut send_stream = client.open_uni().await.unwrap();
+
+        // Act
+        send_stream.close().unwrap();
+        let stopped = within(std::future::poll_fn(|cx| send_stream.poll_stopped(cx))).await;
+
+        // Assert
+        assert_eq!(stopped, None);
+    }
+
+    #[tokio::test]
     async fn close_carries_the_application_code_to_the_peer() {
         // Arrange
         let (client, server) = connected().await;

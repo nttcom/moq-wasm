@@ -1,6 +1,9 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    task::{Context, Poll},
 };
 
 use async_trait::async_trait;
@@ -14,6 +17,11 @@ use crate::modules::transport::transport_send_stream::{TransportSendError, Trans
 /// waits: the task drains queues by priority, so this, not the command
 /// channel, is where backpressure reaches the application.
 const STREAM_SEND_QUEUE_LIMIT: usize = 64 * 1024;
+
+#[cfg(not(target_arch = "wasm32"))]
+type Stopped = std::pin::Pin<Box<dyn Future<Output = Option<u64>> + Send + Sync>>;
+#[cfg(target_arch = "wasm32")]
+type Stopped = std::pin::Pin<Box<dyn Future<Output = Option<u64>>>>;
 
 /// What a send stream handle, the receive task and the send task share
 /// about one outgoing stream.
@@ -68,6 +76,19 @@ impl SendQuota {
         self.notify.notify_waiters();
     }
 
+    /// The peer's STOP_SENDING code, or `None` once the connection is lost.
+    async fn stopped_or_lost(&self) -> Option<u64> {
+        wait_until(&self.notify, || {
+            let state = self.state.lock().expect("send quota lock");
+            match (state.stopped, state.connection_lost) {
+                (Some(code), _) => Some(Some(code)),
+                (None, true) => Some(None),
+                (None, false) => None,
+            }
+        })
+        .await
+    }
+
     /// Reserves up to `wanted` bytes of queue space once some is free.
     async fn reserve(&self, wanted: usize) -> Result<usize, TransportSendError> {
         wait_until(&self.notify, || {
@@ -96,6 +117,8 @@ pub(crate) struct QmuxSendStream {
     quota: Arc<SendQuota>,
     /// Set once `close` or `reset` ran, so `Drop` does not reset the stream.
     ended: bool,
+    /// The wait `poll_stopped` keeps between polls.
+    stopped: Option<Stopped>,
 }
 
 impl QmuxSendStream {
@@ -105,6 +128,7 @@ impl QmuxSendStream {
             session,
             quota,
             ended: false,
+            stopped: None,
         }
     }
 
@@ -169,6 +193,26 @@ impl TransportSendStream for QmuxSendStream {
             stream_id: self.stream_id,
             priority,
         })
+    }
+
+    /// The byte stream under QMux is reliable, so a FIN reaches the peer
+    /// once written: after `close`, the stream can no longer be stopped.
+    fn poll_stopped(&mut self, cx: &mut Context<'_>) -> Poll<Option<u64>> {
+        if let Some(code) = self.quota.stopped_code() {
+            return Poll::Ready(Some(code));
+        }
+        if self.ended {
+            return Poll::Ready(None);
+        }
+        let stopped = self.stopped.get_or_insert_with(|| {
+            let quota = self.quota.clone();
+            Box::pin(async move { quota.stopped_or_lost().await })
+        });
+        let polled = stopped.as_mut().poll(cx);
+        if polled.is_ready() {
+            self.stopped = None;
+        }
+        polled
     }
 }
 

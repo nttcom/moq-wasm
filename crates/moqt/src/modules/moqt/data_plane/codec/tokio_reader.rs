@@ -16,6 +16,10 @@ impl Reader {
     pub(crate) fn new(receive_stream: BoxedReceiveStream) -> Self {
         Self { receive_stream }
     }
+
+    pub(crate) fn stop(&mut self, error_code: u64) {
+        self.receive_stream.stop(error_code);
+    }
 }
 
 impl AsyncRead for Reader {

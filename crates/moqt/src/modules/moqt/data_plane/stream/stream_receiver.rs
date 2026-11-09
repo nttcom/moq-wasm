@@ -35,6 +35,10 @@ impl<const U: usize, D: Decoder<Error = std::io::Error>> StreamReceiver<U, D> {
         Self { framed_read }
     }
 
+    pub(crate) fn stop(&mut self, error_code: u64) {
+        self.framed_read.get_mut().stop(error_code);
+    }
+
     pub async fn receive(&mut self) -> Result<Option<D::Item>, StreamReceiveError> {
         let item = self.framed_read.next().await;
         match item {

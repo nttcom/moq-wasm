@@ -28,6 +28,10 @@ pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, V
             Operation::Subscribe,
             handler.track_namespace_prefix_tuple().to_vec(),
         )),
+        MoqtSessionEvent::SubscribeNamespaceUpdate(handler) => Some((
+            Operation::Subscribe,
+            handler.new_track_namespace_prefix_tuple().to_vec(),
+        )),
         MoqtSessionEvent::Fetch(handler) => match handler.fetch_params() {
             FetchParams::Standalone {
                 track_namespace, ..
@@ -84,6 +88,10 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
         MoqtSessionEvent::SubscribeNamespace(handler) => {
             handler.error(RequestErrorCode::Unauthorized, reason).await
         }
+        MoqtSessionEvent::SubscribeNamespaceUpdate(handler) => {
+            handler.error(RequestErrorCode::Unauthorized, reason).await;
+            Ok(())
+        }
         MoqtSessionEvent::Fetch(handler) => {
             handler.error(RequestErrorCode::Unauthorized, reason).await
         }
@@ -116,6 +124,7 @@ mod tests {
             verified_token::VerifiedToken,
         },
         session::moqt_session_event::MoqtSessionEvent,
+        test_support::mock_session::MockSubscribeNamespaceUpdateHandler,
     };
 
     const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -407,5 +416,27 @@ mod tests {
             request_error_code(result.unwrap_err()),
             RequestErrorCode::Unauthorized
         );
+    }
+
+    #[test]
+    fn a_namespace_prefix_update_needs_access_to_the_new_prefix() {
+        // Arrange
+        let update = |new_prefix| {
+            MoqtSessionEvent::SubscribeNamespaceUpdate(Box::new(
+                MockSubscribeNamespaceUpdateHandler::new(
+                    "APP/site1",
+                    new_prefix,
+                    NamespaceInterest::Namespaces,
+                ),
+            ))
+        };
+
+        // Act
+        let inside = authorize_request(Some(&site1_token()), &update("APP/site1/room"));
+        let outside = authorize_request(Some(&site1_token()), &update("OTHER/site1"));
+
+        // Assert: draft-18 §10.18 authorizes the namespace subscription it becomes
+        assert!(inside.is_ok(), "{inside:?}");
+        assert!(outside.is_err());
     }
 }

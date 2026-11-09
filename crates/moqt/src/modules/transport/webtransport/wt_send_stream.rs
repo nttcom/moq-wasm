@@ -1,5 +1,8 @@
+use std::task::{Context, Poll};
+
 use async_trait::async_trait;
 use bytes::BytesMut;
+use web_transport_quinn::generic::poll::SendStream as _;
 
 use crate::modules::transport::transport_send_stream::{TransportSendError, TransportSendStream};
 
@@ -37,6 +40,15 @@ impl TransportSendStream for WtSendStream {
         self.send_stream
             .set_priority(priority)
             .map_err(|_| TransportSendError::ClosedStream)
+    }
+
+    /// `poll_closed` keeps the wait it starts inside the stream.
+    fn poll_stopped(&mut self, cx: &mut Context<'_>) -> Poll<Option<u64>> {
+        self.send_stream.poll_closed(cx).map(|closed| match closed {
+            Err(web_transport_quinn::WriteError::Stopped(code)) => Some(u64::from(code)),
+            Err(web_transport_quinn::WriteError::InvalidStopped(code)) => Some(code.into_inner()),
+            Ok(()) | Err(_) => None,
+        })
     }
 }
 

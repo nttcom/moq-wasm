@@ -1,62 +1,19 @@
-use std::{
-    sync::{Arc, Mutex, PoisonError, Weak},
-    time::Duration,
-};
-
-use tokio::sync::oneshot;
-
 use crate::{
-    modules::{
-        executor,
-        moqt::{
-            control_plane::control_messages::messages::{
+    modules::moqt::{
+        control_plane::{
+            control_messages::messages::{
                 parameters::filter_type::FilterType, subscribe_update::SubscribeUpdate,
             },
-            domains::connection::Connection,
-            version::Version,
+            handler::update_answer::{self, SlotOutcome, UpdateAnswerSlot},
         },
+        domains::connection::Connection,
+        version::Version,
     },
     object::Location,
 };
 
-/// The answer of a draft-18 REQUEST_UPDATE, shared by the handler's clones.
-/// Dropping every clone drops the sender, which answers without a
-/// LARGEST_OBJECT.
-#[derive(Debug)]
-enum AnswerSlot {
-    Waiting(oneshot::Sender<Option<Location>>),
-    Answered,
-    /// Answered REQUEST_ERROR because the application did not answer in time.
-    TimedOut,
-}
-
-type SharedAnswerSlot = Arc<Mutex<AnswerSlot>>;
-
 /// The LARGEST_OBJECT a draft-18 REQUEST_UPDATE is answered with.
-pub(crate) struct UpdateAnswerReceiver {
-    receiver: oneshot::Receiver<Option<Location>>,
-    slot: Weak<Mutex<AnswerSlot>>,
-}
-
-impl UpdateAnswerReceiver {
-    /// `Some(largest)` once the application answers, `Some(None)` if every
-    /// handler clone was dropped unanswered, `None` if it did not answer
-    /// within `timeout`; a later `ok` then returns `UpdateAnswer::Failed`.
-    pub(crate) async fn within(mut self, timeout: Duration) -> Option<Option<Location>> {
-        if let Ok(answer) = executor::timeout(timeout, &mut self.receiver).await {
-            return Some(answer.unwrap_or(None));
-        }
-        if let Some(slot) = self.slot.upgrade() {
-            let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-            if matches!(*slot, AnswerSlot::Waiting(_)) {
-                *slot = AnswerSlot::TimedOut;
-                return None;
-            }
-        }
-        // Answered, or every clone dropped, as the timeout fired.
-        Some(self.receiver.try_recv().unwrap_or(None))
-    }
-}
+pub(crate) type UpdateAnswerReceiver = update_answer::UpdateAnswerReceiver<Option<Location>>;
 
 /// How `SubscribeUpdateHandler::ok` answered the update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,7 +34,7 @@ pub enum UpdateAnswer {
 #[derive(Clone, Debug)]
 pub struct SubscribeUpdateHandler {
     /// `None` for draft-14, whose SUBSCRIBE_UPDATE has no answer.
-    answer_slot: Option<SharedAnswerSlot>,
+    answer_slot: Option<UpdateAnswerSlot<Option<Location>>>,
     version: Version,
     request_id: u64,
     subscription_request_id: u64,
@@ -109,12 +66,7 @@ impl SubscribeUpdateHandler {
         subscribe_update: SubscribeUpdate,
         filter: Option<FilterType>,
     ) -> (Self, UpdateAnswerReceiver) {
-        let (answer_sender, receiver) = oneshot::channel();
-        let slot = Arc::new(Mutex::new(AnswerSlot::Waiting(answer_sender)));
-        let answer_receiver = UpdateAnswerReceiver {
-            receiver,
-            slot: Arc::downgrade(&slot),
-        };
+        let (slot, answer_receiver) = UpdateAnswerSlot::new();
         let handler = Self {
             answer_slot: Some(slot),
             ..Self::with_filter(connection, subscribe_update, filter)
@@ -194,19 +146,12 @@ impl SubscribeUpdateHandler {
                 largest_told: false,
             };
         };
-        let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
-        if matches!(*slot, AnswerSlot::TimedOut) {
-            return UpdateAnswer::Failed;
-        }
-        let AnswerSlot::Waiting(answer_sender) =
-            std::mem::replace(&mut *slot, AnswerSlot::Answered)
-        else {
-            return UpdateAnswer::Accepted {
+        match slot.answer(largest) {
+            SlotOutcome::Delivered => UpdateAnswer::Accepted { largest_told: true },
+            SlotOutcome::AlreadyAnswered | SlotOutcome::Undelivered => UpdateAnswer::Accepted {
                 largest_told: false,
-            };
-        };
-        UpdateAnswer::Accepted {
-            largest_told: answer_sender.send(largest).is_ok(),
+            },
+            SlotOutcome::TimedOut => UpdateAnswer::Failed,
         }
     }
 }
