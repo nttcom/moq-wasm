@@ -1,39 +1,58 @@
-import { MoqSession, type ReceivedObject } from 'moq-wasm'
-import { bearerToken } from '../../utils/access'
-import { urlFromQuery } from '../../utils/serviceUrl'
-import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
-import { readLocHeader } from 'moq-wasm/media/internal/loc'
-import { VideoPlayout } from 'moq-wasm/media/player/videoPlayout'
+import { MoqSession } from 'moq-wasm'
 import {
-  eventRecords,
-  keyframeDetector,
-  mergeEvents,
-  chunkIndexAt,
-  type TimelineEvent,
-  type IndexedChunk
-} from './timeline'
+  CATALOG_TRACK_NAME,
+  type DeliveryObserver,
+  LivePlayer,
+  PlaybackGroup,
+  extractCatalogTracks,
+  parseCatalog
+} from 'moq-wasm/media'
+import { type Recording, openRecording } from 'moq-wasm/recording'
+import 'moq-wasm/media/player.css'
+import { bearerToken } from '../../utils/access'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
+import { urlFromQuery } from '../../utils/serviceUrl'
+import { EVENT_KINDS, type TimelineEvent, captionAt, eventRecords, mergeEvents } from './timeline'
 
-type Track = {
-  namespace: string
-  source_namespace: string
+/// One replay namespace, `<prefix>/<participant>/<content>/<session>`: a
+/// participant's camera or screen share for one of the times they joined.
+type Source = {
+  player: LivePlayer
+  container: HTMLElement
+  /// The capture timestamp of the frame the player showed last.
+  shownMicros: number | undefined
+}
+
+/// One participant's camera or screen share; it shows the one of its sources
+/// whose range covers the position.
+type Tile = {
+  participant: string
   content: string
-  name: string
-  chunks: IndexedChunk[]
+  element: HTMLElement
+  caption: HTMLElement
+  state: HTMLOutputElement
+  sources: Source[]
 }
-type Frame = { at: number; data: Uint8Array; key: boolean; groupId: bigint; objectId: bigint }
-type Media = {
-  descriptor: Track
-  config: MediaCatalogTrack
-  chunks: IndexedChunk[]
-  canvas?: HTMLCanvasElement
-  tile?: HTMLElement
-  caption?: HTMLElement
-  enabled?: HTMLInputElement
-  playout?: VideoPlayout
-  state?: HTMLOutputElement
+
+type OpenedRecording = {
+  session: MoqSession
+  recording: Recording
+  group: PlaybackGroup
+  tiles: Map<string, Tile>
+  /// Keyed by namespace: a renewed answer announces the namespaces again.
+  sources: Map<string, Source>
+  events: TimelineEvent[]
+  /// Set by the first play or seek; until then the position waits at the
+  /// start, so that every source has its range by the time it plays.
+  started: boolean
 }
+
+const RENDER_INTERVAL_MS = 250
+/// The recorder stops every track of a recording at once, so the sources that
+/// lasted until then end within this of each other.
+const RECORDING_END_SLACK_US = 1_000_000
+
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 const status = element<HTMLOutputElement>('status')
 const play = element<HTMLButtonElement>('play')
@@ -43,6 +62,7 @@ const recorder = element<HTMLInputElement>('recorder')
 const relay = element<HTMLInputElement>('relay')
 const recording = element<HTMLInputElement>('recording')
 const token = element<HTMLInputElement>('token')
+const load = element<HTMLButtonElement>('load')
 const openDialog = element('open-dialog')
 const openError = element('open-error')
 const sidebar = element('sidebar')
@@ -51,99 +71,13 @@ recorder.value = urlFromQuery(location.search, ['recorder']) ?? recorder.value
 recording.value = params.get('id') ?? ''
 token.value ||= bearerToken() ?? ''
 setUpRelayUrlControls(relay, element('relayPresets'))
-let session: MoqSession | undefined
 startPageTelemetry('recording-player', () => relay.value)
-/// The recorder keeps a replay running while a `publish` answer to it is open.
-type Lease = {
-  replay: { tracks: Track[]; namespace_prefix: string; renew_after_seconds: number }
-  reader: ReadableStreamDefaultReader<Uint8Array>
-}
-let lease: Lease | undefined
-let renewal: ReturnType<typeof setTimeout> | undefined
-let publish: { url: string; headers: HeadersInit } | undefined
-let generation = 0
-let media: Media[] = []
-let events: TimelineEvent[] = []
-let origin = 0
-let end = 0
-let playing = false
-let target = 0
-let anchorMs = 0
-let audioContext: AudioContext | undefined
-let audioAnchor = 0
-let tick: ReturnType<typeof setInterval> | undefined
-const sources = new Set<AudioBufferSourceNode>()
-const decoders = new Set<VideoDecoder | AudioDecoder>()
-const fetchWaiters: (() => void)[] = []
-const idleWaiters: (() => void)[] = []
-let activeFetches = 0
-
-async function acquireFetch(): Promise<() => void> {
-  if (activeFetches < 3) activeFetches++
-  else await new Promise<void>((resolve) => fetchWaiters.push(resolve))
-  return () => {
-    const next = fetchWaiters.shift()
-    if (next) next()
-    else if (--activeFetches === 0) for (const waiter of idleWaiters.splice(0)) waiter()
-  }
-}
-
-function whenFetchesIdle(action: () => void): void {
-  if (activeFetches === 0) action()
-  else idleWaiters.push(action)
-}
-
-async function openLease(): Promise<Lease> {
-  const response = await fetch(publish!.url, { method: 'POST', headers: publish!.headers })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error(body.error ?? `Recorder returned ${response.status}`)
-  }
-  const reader = response.body!.getReader()
-  const decoder = new TextDecoder()
-  let text = ''
-  while (!text.includes('\n')) {
-    const { value, done } = await reader.read()
-    if (done) throw new Error('The recorder closed the replay')
-    text += decoder.decode(value, { stream: true })
-  }
-  return { replay: JSON.parse(text.slice(0, text.indexOf('\n'))), reader }
-}
-
-/// Reads `held` until it ends; if it is still the current lease then, takes a new one.
-async function hold(held: Lease): Promise<void> {
-  try {
-    while (!(await held.reader.read()).done);
-  } catch {
-    // A cancelled or broken answer counts as ended.
-  }
-  if (held === lease) await renew().catch(failure)
-}
-
-/// Takes a new lease, then cancels the previous one once no FETCH is in flight:
-/// the relay sends new FETCHes to the newest replay first, so a replay that only
-/// the previous lease kept can end without cutting a FETCH off.
-async function renew(): Promise<void> {
-  clearTimeout(renewal)
-  const next = await openLease()
-  const previous = lease
-  lease = next
-  void hold(next)
-  renewal = setTimeout(() => void renew().catch(failure), next.replay.renew_after_seconds * 1000)
-  if (previous) whenFetchesIdle(() => void previous.reader.cancel())
-}
-
-function releaseLease(): void {
-  clearTimeout(renewal)
-  const held = lease
-  lease = undefined
-  void held?.reader.cancel()
-}
-
-/// How long a transcribed utterance stays on its speaker's tile.
-const CAPTION_US = 4_000_000
-
-const memberName = (track: Track) => track.source_namespace.split('/').at(-1)!
+let opened: OpenedRecording | undefined
+let errorText: string | undefined
+/// Set while the seek bar is dragged, so that render does not reset it to the playing position.
+let seeking = false
+let renderQueued = false
+setInterval(requestRender, RENDER_INTERVAL_MS)
 
 function clock(seconds: number): string {
   const whole = Math.floor(seconds)
@@ -172,22 +106,6 @@ function avatar(name: string, size: string): HTMLElement {
   return chip
 }
 
-function showRoom(prefix: string): void {
-  element('room-name').textContent = prefix.split('/recordings/')[0].split('/').at(-1) || 'Recording'
-  element('recorded-at').textContent = new Date(origin / 1000).toLocaleString()
-  const members = [...new Set(media.map((track) => memberName(track.descriptor)))]
-  element('participants').textContent = `${members.length} participants`
-  element('member-chips').replaceChildren(
-    ...members.map((name) => {
-      const chip = avatar(name, 'h-6 w-6 text-[11px]')
-      chip.classList.add('ring-2', 'ring-slate-950')
-      return chip
-    })
-  )
-  const tiles = media.filter((track) => track.tile).length
-  element('videos').style.gridTemplateColumns = `repeat(${Math.ceil(Math.sqrt(tiles))}, minmax(0, 1fr))`
-}
-
 function showNotice(text: string, kind: 'progress' | 'error'): void {
   const notice = element('stage-notice')
   notice.textContent = text
@@ -201,295 +119,320 @@ function hideNotice(): void {
 }
 
 function failure(error: unknown): void {
-  status.value = error instanceof Error ? error.message : String(error)
-  showNotice(status.value, 'error')
-}
-function stop(): void {
-  generation++
-  playing = false
-  clearInterval(tick)
-  tick = undefined
-  for (const decoder of decoders) if (decoder.state !== 'closed') decoder.close()
-  decoders.clear()
-  for (const source of sources) {
-    source.onended = null
-    source.stop()
-  }
-  sources.clear()
-  for (const track of media) track.playout?.flush()
-  showPlaying(false)
-  hideNotice()
+  errorText = error instanceof Error ? error.message : String(error)
+  status.value = errorText
+  showNotice(errorText, 'error')
 }
 
-async function readRange(
-  track: Track,
-  range: IndexedChunk,
-  consume: (object: ReceivedObject) => void,
-  current = generation
-): Promise<void> {
-  const connected = session!
-  const release = await acquireFetch()
+/// Failures of a recording that has since been closed are not shown.
+function failureOf(current: OpenedRecording): (error: unknown) => void {
+  return (error) => {
+    if (opened === current) {
+      failure(error)
+    }
+  }
+}
+
+/// The newest object of a catalog, through SUBSCRIBE with a joining FETCH
+/// (draft-ietf-moq-msf-01 §5).
+async function currentCatalog(session: MoqSession, namespace: string[]): Promise<unknown> {
+  const subscription = await session.subscribeCurrentGroup(namespace, CATALOG_TRACK_NAME)
   try {
-    if (current !== generation || !range.first || !range.last) return
-    const stream = await connected.fetch(
-      track.namespace.split('/'),
-      track.name,
-      { groupId: BigInt(range.first.group), objectId: BigInt(range.first.object) },
-      { groupId: BigInt(range.last.group), objectId: BigInt(range.last.object) + 1n }
-    )
-    for await (const object of stream) {
-      if (current !== generation) break
-      if (object.objectPayloadLength) consume(object)
-      else if (object.objectStatus === 1) throw new Error('The recording contains a missing object')
+    for await (const object of subscription) {
+      return parseCatalog(new TextDecoder().decode(object.objectPayload))
     }
+    throw new Error(`${namespace.join('/')} has no catalog`)
   } finally {
-    release()
+    await subscription.close()
   }
 }
 
-async function readTrack(track: Track, consume: (object: ReceivedObject) => void): Promise<void> {
-  for (const chunk of track.chunks) await readRange(track, chunk, consume)
-}
-
-async function loadFrames(
-  track: Media,
-  chunk: number,
-  detectKeyframe: (data: Uint8Array) => boolean,
-  current: number
-): Promise<Frame[]> {
-  const frames: Frame[] = []
-  await readRange(
-    track.descriptor,
-    track.chunks[chunk],
-    (object) => {
-      const at = readLocHeader(object.locHeader).captureTimestampMicros
-      if (at === undefined || !Number.isSafeInteger(at))
-        throw new Error(`No capture clock for ${track.descriptor.name}`)
-      frames.push({
-        at,
-        data: object.objectPayload,
-        key: track.config.role !== 'video' || detectKeyframe(object.objectPayload),
-        groupId: object.groupId,
-        objectId: object.objectId
-      })
-    },
-    current
+/// Every object of a track that is not live. The relay answers TRACK_STATUS
+/// only for a track it is subscribed to, so the SUBSCRIBE_OK of a SUBSCRIBE
+/// tells where the track ends.
+async function fetchTrack(session: MoqSession, namespace: string[], name: string): Promise<Uint8Array[]> {
+  const subscription = await session.subscribe(namespace, name)
+  const largest = subscription.largest
+  await subscription.close()
+  if (!largest) {
+    return []
+  }
+  const objects = await session.fetch(
+    namespace,
+    name,
+    { groupId: 0n, objectId: 0n },
+    { groupId: largest.groupId, objectId: largest.objectId + 1n }
   )
-  return frames
-}
-
-type PreparedTrack = {
-  track: Media
-  chunk: number
-  frames: Frame[]
-  startIndex: number
-  detectKeyframe: (data: Uint8Array) => boolean
-}
-
-async function prepareTrack(track: Media, current: number, at: number): Promise<PreparedTrack | undefined> {
-  if (track.enabled && !track.enabled.checked) {
-    track.state!.value = 'Hidden'
-    return
-  }
-  const detectKeyframe = keyframeDetector(track.config.codec!)
-  let chunk = chunkIndexAt(track.chunks, at)
-  const requestedChunk = chunk
-  if (track.config.role !== 'video') {
-    const frames = await loadFrames(track, chunk, detectKeyframe, current)
-    return {
-      track,
-      chunk,
-      frames,
-      startIndex: Math.max(
-        0,
-        frames.findIndex((frame) => frame.at >= at - 100_000)
-      ),
-      detectKeyframe
+  const payloads: Uint8Array[] = []
+  for await (const object of objects) {
+    if (object.objectPayloadLength > 0) {
+      payloads.push(object.objectPayload)
     }
   }
-  for (; chunk >= 0 && current === generation; chunk--) {
-    const frames = await loadFrames(track, chunk, detectKeyframe, current)
-    let startIndex = frames.findLastIndex((frame) => frame.key && frame.at <= at)
-    if (startIndex < 0 && chunk === 0) startIndex = frames.findIndex((frame) => frame.key)
-    if (startIndex >= 0) return { track, chunk, frames, startIndex, detectKeyframe }
-  }
-  for (chunk = requestedChunk + 1; chunk < track.chunks.length && current === generation; chunk++) {
-    const frames = await loadFrames(track, chunk, detectKeyframe, current)
-    const startIndex = frames.findIndex((frame) => frame.key)
-    if (startIndex >= 0) return { track, chunk, frames, startIndex, detectKeyframe }
-  }
-  if (track.state) track.state.value = 'No decodable access point'
+  return payloads
 }
 
-function addVideo(track: Media): void {
-  const name = memberName(track.descriptor)
+/// The chat and the transcript of one replay namespace: the event timelines
+/// (draft-ietf-moq-msf-01 §8) its catalog lists.
+async function readEvents(session: MoqSession, namespace: string[], participant: string): Promise<TimelineEvent[]> {
+  const events: TimelineEvent[] = []
+  for (const { name, packaging, eventType } of extractCatalogTracks(await currentCatalog(session, namespace))) {
+    const kind = packaging === 'eventtimeline' ? EVENT_KINDS[eventType ?? ''] : undefined
+    if (kind) {
+      for (const payload of await fetchTrack(session, namespace, name)) {
+        events.push(...eventRecords(payload, kind, participant))
+      }
+    }
+  }
+  return events
+}
+
+/// Notes the capture timestamp of each review frame a player shows.
+function shownFrames(onShown: (captureMicros: number) => void): DeliveryObserver {
+  const ignore = () => {}
+  return {
+    label: ignore,
+    opened: ignore,
+    object: ignore,
+    fetchObject: ignore,
+    fetchFinished: ignore,
+    forget: ignore,
+    clearPlayhead: ignore,
+    setPlayhead: ({ kind, captureMicros }) => {
+      if (kind === 'fetch') {
+        onShown(captureMicros)
+      }
+    }
+  }
+}
+
+function tileFor(current: OpenedRecording, participant: string, content: string): Tile {
+  const key = `${participant}/${content}`
+  const existing = current.tiles.get(key)
+  if (existing) {
+    return existing
+  }
   const tile = document.createElement('div')
   tile.className =
     'group relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-2 ring-white/5 transition'
+  tile.dataset.participant = participant
+  tile.dataset.content = content
   const placeholder = document.createElement('div')
   placeholder.className = 'absolute inset-0 flex items-center justify-center'
-  placeholder.append(avatar(name, 'h-16 w-16 text-2xl'))
-  const canvas = document.createElement('canvas')
-  canvas.className = 'absolute inset-0 h-full w-full object-contain'
-  canvas.width = track.config.width ?? 640
-  canvas.height = track.config.height ?? 360
-  canvas.dataset.source = track.descriptor.source_namespace
-  canvas.dataset.content = track.descriptor.content
+  placeholder.append(avatar(participant, 'h-16 w-16 text-2xl'))
   const caption = document.createElement('div')
   caption.className =
     'pointer-events-none absolute bottom-9 left-1/2 hidden max-w-[90%] -translate-x-1/2 rounded-md bg-black/70 px-3 py-1 text-center text-sm text-white'
   const label = document.createElement('div')
   label.className =
     'pointer-events-none absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/60 px-2 py-0.5 text-xs font-medium text-white'
-  label.textContent = track.descriptor.content === 'camera' ? name : `${name} · ${track.descriptor.content}`
+  label.textContent = content === 'camera' ? participant : `${participant} · ${content}`
   const state = document.createElement('output')
   state.className =
     'pointer-events-none absolute bottom-2 right-2 max-w-[60%] truncate rounded bg-black/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-200 opacity-0 transition group-hover:opacity-100'
-  const toggle = document.createElement('label')
-  toggle.className =
-    'absolute right-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white opacity-0 transition focus-within:opacity-100 group-hover:opacity-100'
-  const enabled = document.createElement('input')
-  enabled.type = 'checkbox'
-  enabled.className = 'accent-blue-500'
-  enabled.checked = media.filter((entry) => entry.canvas).length < 8
-  toggle.append(enabled, 'Show')
-  tile.append(placeholder, canvas, caption, label, state, toggle)
-  element('videos').append(tile)
-  track.canvas = canvas
-  track.tile = tile
-  track.caption = caption
-  track.enabled = enabled
-  track.state = state
-  track.playout = new VideoPlayout((frame) => {
-    canvas.width = frame.displayWidth
-    canvas.height = frame.displayHeight
-    canvas.getContext('2d')!.drawImage(frame, 0, 0)
-    canvas.dataset.captureUs = String(frame.timestamp)
-    state.value = 'Playing'
-    frame.close()
+  tile.append(placeholder, caption, label, state)
+  const created: Tile = { participant, content, element: tile, caption, state, sources: [] }
+  current.tiles.set(key, created)
+  const keys = [...current.tiles.keys()].sort()
+  element('videos').replaceChildren(...keys.map((sorted) => current.tiles.get(sorted)!.element))
+  return created
+}
+
+async function addSource(current: OpenedRecording, namespace: string[]): Promise<void> {
+  const key = namespace.join('/')
+  if (current.sources.has(key)) {
+    return
+  }
+  const rest = namespace.slice(current.recording.prefix.length)
+  const participant = rest.slice(0, -2).join('/')
+  const tile = tileFor(current, participant, rest.at(-2) ?? '')
+  const container = document.createElement('div')
+  container.className = 'source absolute inset-0'
+  container.hidden = true
+  container.dataset.namespace = key
+  tile.caption.before(container)
+  const player = new LivePlayer({
+    container,
+    callbacks: {
+      onStateChange: requestRender,
+      onLiveFrame: () => {},
+      onLog: (level, message) => {
+        if (level === 'error' || level === 'warn') {
+          console[level](`[${key}] ${message}`)
+        }
+      }
+    },
+    deliveryObserver: shownFrames((captureMicros) => {
+      source.shownMicros = captureMicros
+    })
   })
-  enabled.addEventListener('change', () => {
-    if (playing) void start().catch(failure)
+  const source: Source = { player, container, shownMicros: undefined }
+  current.sources.set(key, source)
+  tile.sources.push(source)
+  // Read the catalog for the events before the player starts, which follows the catalog from then
+  // on, so that the session does not subscribe to it twice at once.
+  const events = await readEvents(current.session, namespace, participant).catch((error: unknown) => {
+    failureOf(current)(error)
+    return []
+  })
+  if (opened !== current) {
+    return
+  }
+  current.events = mergeEvents([...current.events, ...events])
+  current.group.add(player)
+  await player.start(current.session, namespace)
+}
+
+/// From the earliest start to the latest end of the sources' ranges; undefined
+/// until one source has its range.
+function recordingSpan(current: OpenedRecording): { startMicros: number; endMicros: number } | undefined {
+  const axes = [...current.sources.values()].map(({ player }) => player.state.seek).filter((axis) => axis.seekable)
+  if (axes.length === 0) {
+    return undefined
+  }
+  return {
+    startMicros: Math.min(...axes.map((axis) => axis.replayableStartSeconds)) * 1_000_000,
+    endMicros: Math.max(...axes.map((axis) => axis.liveEdgeSeconds)) * 1_000_000
+  }
+}
+
+function requestRender(): void {
+  if (renderQueued) {
+    return
+  }
+  renderQueued = true
+  requestAnimationFrame(() => {
+    renderQueued = false
+    render()
   })
 }
 
-element<HTMLFormElement>('open').addEventListener('submit', async (event) => {
-  event.preventDefault()
-  stop()
-  releaseLease()
-  session?.close()
-  media = []
-  events = []
-  element('videos').replaceChildren()
-  element('chat').replaceChildren()
-  element('transcript').replaceChildren()
-  delete element('chat').dataset.position
-  delete element('transcript').dataset.position
-  play.disabled = seek.disabled = true
-  openError.classList.add('hidden')
-  element<HTMLButtonElement>('load').disabled = true
-  status.value = 'Opening recording'
-  try {
-    publish = {
-      url: `${recorder.value.replace(/\/$/, '')}/recordings/${encodeURIComponent(recording.value)}/publish`,
-      headers: token.value ? { Authorization: `Bearer ${token.value}` } : {}
-    }
-    await renew()
-    const replay = lease!.replay
-    session = await MoqSession.connect(relay.value, { token: token.value || undefined })
-    const tracks = replay.tracks
-    const catalogs = new Map<string, MediaCatalogTrack[]>()
-    for (const track of tracks.filter((track) => track.name === 'catalog')) {
-      const definitions: MediaCatalogTrack[] = []
-      await readTrack(track, (object) =>
-        definitions.push(...extractCatalogTracks(JSON.parse(new TextDecoder().decode(object.objectPayload))))
-      )
-      catalogs.set(track.namespace, definitions)
-    }
-    for (const descriptor of tracks.filter((track) => track.name !== 'catalog')) {
-      status.value = `Reading ${descriptor.source_namespace} / ${descriptor.name}`
-      if (descriptor.name === 'chat' || descriptor.name === 'transcript') {
-        await readTrack(descriptor, (object) =>
-          events.push(...eventRecords(object.objectPayload, descriptor.source_namespace, descriptor.name))
-        )
-        continue
-      }
-      const definitions = catalogs.get(descriptor.namespace)?.filter((track) => track.name === descriptor.name) ?? []
-      const config = definitions.at(-1)
-      if (!config?.codec || !['video', 'audio'].includes(config.role ?? ''))
-        throw new Error(`No media configuration for ${descriptor.name}`)
-      if (
-        definitions.some(
-          (track) =>
-            track.codec !== config.codec || track.samplerate !== config.samplerate || track.initData !== config.initData
-        )
-      ) {
-        throw new Error(`Configuration changes in ${descriptor.name} require segmented playback`)
-      }
-      if (
-        descriptor.chunks.some(
-          (chunk) => BigInt(chunk.data_size) > 0n && (chunk.capture_start_us === null || chunk.capture_end_us === null)
-        )
-      )
-        throw new Error(`No capture clock for ${descriptor.name}`)
-      const chunks = descriptor.chunks
-        .filter(
-          (chunk) => chunk.first && chunk.last && chunk.capture_start_us !== null && chunk.capture_end_us !== null
-        )
-        .sort((a, b) =>
-          BigInt(a.first!.group) < BigInt(b.first!.group)
-            ? -1
-            : BigInt(a.first!.group) > BigInt(b.first!.group)
-              ? 1
-              : Number(BigInt(a.first!.object) - BigInt(b.first!.object))
-        )
-      if (!chunks.length) continue
-      for (const chunk of chunks)
-        if (
-          !Number.isSafeInteger(Number(chunk.capture_start_us)) ||
-          !Number.isSafeInteger(Number(chunk.capture_end_us))
-        )
-          throw new Error(`Invalid capture clock for ${descriptor.name}`)
-      const track: Media = { descriptor, config, chunks }
-      if (config.role === 'video') addVideo(track)
-      media.push(track)
-    }
-    events = mergeEvents(events)
-    if (!media.length) throw new Error('No recorded media with source timestamps')
-    origin = media.reduce(
-      (earliest, track) =>
-        track.chunks.reduce((value, chunk) => Math.min(value, Number(chunk.capture_start_us)), earliest),
-      Infinity
-    )
-    end = media.reduce(
-      (latest, track) => track.chunks.reduce((value, chunk) => Math.max(value, Number(chunk.capture_end_us)), latest),
-      -Infinity
-    )
-    seek.max = String((end - origin) / 1_000_000)
-    seek.value = '0'
-    showPosition()
-    showRoom(replay.namespace_prefix)
-    renderEvents(origin)
-    status.value = 'Ready'
-    openDialog.classList.add('hidden')
-    play.disabled = seek.disabled = false
-  } catch (error) {
-    releaseLease()
-    session?.close()
-    failure(error)
-    openError.textContent = status.value
-    openError.classList.remove('hidden')
-  } finally {
-    element<HTMLButtonElement>('load').disabled = false
+function render(): void {
+  const current = opened
+  if (!current) {
+    return
   }
-})
+  const span = recordingSpan(current)
+  const { paused, ended, positionMicros } = current.group.state
+  const at = positionMicros ?? span?.startMicros
+  play.disabled = seek.disabled = !span
+  showPlaying(!paused)
+  if (span) {
+    seek.max = String((span.endMicros - span.startMicros) / 1_000_000)
+    seek.dataset.startUs = String(span.startMicros)
+    if (!seeking && at !== undefined) {
+      seek.value = String((at - span.startMicros) / 1_000_000)
+    }
+    element('recorded-at').textContent = new Date(span.startMicros / 1000).toLocaleString()
+  }
+  showPosition()
+  const shown = renderTiles(current, at, span, positionMicros !== undefined)
+  renderParticipants(current)
+  renderEvents(current, at ?? Number.NEGATIVE_INFINITY)
+  const loading = [...current.sources.values()].some(
+    ({ player }) => !player.state.seek.seekable && player.state.catalogStatus.state !== 'error'
+  )
+  const buffering = !paused && shown.some(({ player }) => player.state.stalled)
+  if (errorText) {
+    showNotice(errorText, 'error')
+  } else if (!span || buffering) {
+    showNotice(span ? 'Buffering…' : 'Loading recording…', 'progress')
+  } else {
+    hideNotice()
+  }
+  status.value =
+    errorText ??
+    (ended
+      ? 'Finished'
+      : !span || loading
+        ? 'Loading'
+        : !current.started
+          ? 'Ready'
+          : paused
+            ? 'Paused'
+            : buffering
+              ? 'Buffering'
+              : 'Playing')
+}
 
-function renderEvents(at: number): void {
+/// Whether the source plays at `at`: from its start to its end, or, for a
+/// source that lasted until the recording's end, also past that end, keeping
+/// its last frame as a media element does at its end.
+function covers(source: Source, at: number, endMicros: number): boolean {
+  const { seekable, replayableStartSeconds, liveEdgeSeconds } = source.player.state.seek
+  const sourceEndMicros = liveEdgeSeconds * 1_000_000
+  return (
+    seekable &&
+    at >= replayableStartSeconds * 1_000_000 &&
+    (at <= sourceEndMicros || sourceEndMicros >= endMicros - RECORDING_END_SLACK_US)
+  )
+}
+
+/// Shows each tile's source that plays at `at`, and returns the shown sources.
+/// A screen share tile is visible only while one of its sources plays; a
+/// camera tile is also visible, with its avatar, before the position is known.
+function renderTiles(
+  current: OpenedRecording,
+  at: number | undefined,
+  span: { endMicros: number } | undefined,
+  positioned: boolean
+): Source[] {
+  const shown: Source[] = []
+  let visible = 0
+  for (const tile of current.tiles.values()) {
+    const source =
+      at === undefined || !span ? undefined : tile.sources.find((candidate) => covers(candidate, at, span.endMicros))
+    for (const candidate of tile.sources) {
+      candidate.container.hidden = candidate !== source
+    }
+    if (source) {
+      shown.push(source)
+    }
+    if (source?.shownMicros !== undefined) {
+      tile.element.dataset.captureUs = String(source.shownMicros)
+    } else {
+      delete tile.element.dataset.captureUs
+    }
+    tile.element.hidden = !source && (positioned || tile.content !== 'camera')
+    visible += tile.element.hidden ? 0 : 1
+    const failed = tile.sources.find(({ player }) => player.state.catalogStatus.state === 'error')?.player.state
+    tile.state.value =
+      source?.player.state.playbackStatus.text ?? failed?.catalogStatus.text ?? 'Not recorded at this time'
+    const utterance =
+      tile.content === 'camera' && at !== undefined ? captionAt(current.events, tile.participant, at) : undefined
+    tile.caption.textContent = utterance?.text ?? ''
+    tile.caption.classList.toggle('hidden', !utterance)
+    tile.element.classList.toggle('ring-emerald-400', !!utterance)
+    tile.element.classList.toggle('ring-white/5', !utterance)
+  }
+  element('videos').style.gridTemplateColumns = `repeat(${Math.ceil(Math.sqrt(visible))}, minmax(0, 1fr))`
+  return shown
+}
+
+function renderParticipants(current: OpenedRecording): void {
+  const participants = [...new Set([...current.tiles.values()].map(({ participant }) => participant))]
+  const chips = element('member-chips')
+  if (chips.dataset.participants === participants.join('\n')) {
+    return
+  }
+  chips.dataset.participants = participants.join('\n')
+  element('participants').textContent = `${participants.length} participants`
+  chips.replaceChildren(
+    ...participants.map((name) => {
+      const chip = avatar(name, 'h-6 w-6 text-[11px]')
+      chip.classList.add('ring-2', 'ring-slate-950')
+      return chip
+    })
+  )
+}
+
+function renderEvents(current: OpenedRecording, at: number): void {
   for (const kind of ['chat', 'transcript']) {
-    const visible = events.filter((event) => event.kind === kind && event.at <= at)
+    const visible = current.events.filter((event) => event.kind === kind && event.at <= at)
     const list = element<HTMLOListElement>(kind)
-    if (list.dataset.position === String(visible.length)) continue
-    list.dataset.position = String(visible.length)
+    const shown = visible.map((event) => `${event.at} ${event.text}`).join('\n')
+    if (list.dataset.shown === shown) continue
+    list.dataset.shown = shown
     list.replaceChildren(
       ...visible.map((event) => {
         const item = document.createElement('li')
@@ -512,184 +455,122 @@ function renderEvents(at: number): void {
     )
     list.scrollTop = list.scrollHeight
   }
-  for (const track of media) {
-    if (!track.tile || !track.caption) continue
-    const name = memberName(track.descriptor)
-    const utterance = events.findLast(
-      (event) => event.kind === 'transcript' && event.speaker === name && event.at <= at && at - event.at < CAPTION_US
-    )
-    track.caption.textContent = utterance?.text ?? ''
-    track.caption.classList.toggle('hidden', !utterance)
-    track.tile.classList.toggle('ring-emerald-400', !!utterance)
-    track.tile.classList.toggle('ring-white/5', !utterance)
-  }
 }
 
-function playAudio(data: AudioData, current: number): void {
-  try {
-    if (generation !== current || !audioContext) return
-    const at = audioAnchor + (data.timestamp - target) / 1_000_000
-    const offset = Math.max(0, audioContext.currentTime - at)
-    const duration = data.numberOfFrames / data.sampleRate
-    if (offset >= duration) return
-    const buffer = audioContext.createBuffer(data.numberOfChannels, data.numberOfFrames, data.sampleRate)
-    for (let channel = 0; channel < data.numberOfChannels; channel++)
-      data.copyTo(buffer.getChannelData(channel), { planeIndex: channel, format: 'f32-planar' })
-    const source = audioContext.createBufferSource()
-    source.buffer = buffer
-    source.connect(audioContext.destination)
-    source.onended = () => sources.delete(source)
-    sources.add(source)
-    source.start(Math.max(audioContext.currentTime, at), offset)
-  } finally {
-    data.close()
-  }
+function showRoom(prefix: string[]): void {
+  element('room-name').textContent = prefix.at(-3) ?? 'Recording'
+  element('recorded-at').textContent = ''
+  element('participants').textContent = ''
+  element('member-chips').replaceChildren()
+  delete element('member-chips').dataset.participants
 }
 
-async function decodeTrack(prepared: PreparedTrack, current: number): Promise<void> {
-  const { track, detectKeyframe } = prepared
-  const onError = (error: DOMException) => {
-    if (track.state) track.state.value = error.message
-    failure(error)
+async function closeRecording(): Promise<void> {
+  const current = opened
+  opened = undefined
+  if (!current) {
+    return
   }
-  const decoder =
-    track.config.role === 'video'
-      ? new VideoDecoder({
-          output: (frame) => {
-            if (current !== generation || frame.timestamp < target) {
-              frame.close()
-              return
-            }
-            track.playout!.present(frame, anchorMs + (frame.timestamp - target) / 1000)
-          },
-          error: onError
-        })
-      : new AudioDecoder({ output: (data) => playAudio(data, current), error: onError })
-  decoders.add(decoder)
-  try {
-    if (decoder instanceof VideoDecoder) decoder.configure({ codec: track.config.codec! })
-    else
-      decoder.configure({
-        codec: track.config.codec!,
-        sampleRate: track.config.samplerate!,
-        numberOfChannels: track.config.channelConfig === 'mono' ? 1 : 2,
-        description: track.config.initData
-          ? Uint8Array.from(atob(track.config.initData), (value) => value.charCodeAt(0))
-          : undefined
-      })
-    let frames = prepared.frames
-    prepared.frames = []
-    let startIndex = prepared.startIndex
-    let last: { groupId: bigint; objectId: bigint } | undefined
-    for (let chunk = prepared.chunk; chunk < track.chunks.length && current === generation; chunk++) {
-      if (chunk !== prepared.chunk) {
-        const end = track.chunks[chunk].last!
-        if (
-          last &&
-          (BigInt(end.group) < last.groupId ||
-            (BigInt(end.group) === last.groupId && BigInt(end.object) <= last.objectId))
-        )
-          continue
-        frames = await loadFrames(track, chunk, detectKeyframe, current)
-        startIndex = 0
-      }
-      for (let index = startIndex; index < frames.length && current === generation; index++) {
-        const frame = frames[index]
-        if (
-          last &&
-          (frame.groupId < last.groupId || (frame.groupId === last.groupId && frame.objectId <= last.objectId))
-        )
-          continue
-        while (
-          current === generation &&
-          (frame.at > target + (performance.now() - anchorMs + 2000) * 1000 ||
-            decoder.decodeQueueSize + (track.playout?.queued ?? 0) > 30)
-        ) {
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        }
-        if (current !== generation || decoder.state === 'closed') return
-        if (decoder instanceof VideoDecoder)
-          decoder.decode(
-            new EncodedVideoChunk({ type: frame.key ? 'key' : 'delta', timestamp: frame.at, data: frame.data })
-          )
-        else decoder.decode(new EncodedAudioChunk({ type: 'key', timestamp: frame.at, data: frame.data }))
-        last = frame
-      }
-      frames = []
-    }
-    if (decoder.state !== 'closed') await decoder.flush()
-  } finally {
-    decoders.delete(decoder)
-    if (decoder.state !== 'closed') decoder.close()
-  }
+  current.group.pause()
+  current.recording.close()
+  await Promise.allSettled([...current.sources.values()].map(({ player }) => player.stop()))
+  current.session.close()
 }
 
-async function start(): Promise<void> {
-  stop()
-  const current = generation
-  target = origin + Number(seek.value) * 1_000_000
-  audioContext ??= new AudioContext()
-  await audioContext.resume()
-  if (generation !== current) return
-  playing = true
-  showPlaying(true)
-  status.value = 'Buffering'
-  showNotice('Buffering…', 'progress')
-  const prepared: PreparedTrack[] = []
-  for (const track of media) {
-    const input = await prepareTrack(track, current, target)
-    if (generation !== current) return
-    if (input) prepared.push(input)
-  }
-  anchorMs = performance.now() + 200
-  audioAnchor = audioContext.currentTime + 0.2
-  for (const track of media) {
-    if (track.canvas) {
-      track.canvas.getContext('2d')!.clearRect(0, 0, track.canvas.width, track.canvas.height)
-      delete track.canvas.dataset.captureUs
-    }
-  }
-  showPlaying(true)
-  status.value = 'Playing'
+async function open(): Promise<void> {
+  load.disabled = true
+  openError.classList.add('hidden')
+  await closeRecording()
+  errorText = undefined
   hideNotice()
-  tick = setInterval(() => {
-    const at = Math.min(end, target + Math.max(0, performance.now() - anchorMs) * 1000)
-    seek.value = String((at - origin) / 1_000_000)
-    showPosition()
-    renderEvents(at)
-    for (const track of media) {
-      if (track.canvas && track.enabled?.checked && at > Number(track.canvas.dataset.captureUs ?? at) + 1_000_000)
-        track.state!.value = 'No recorded video at this time'
+  element('videos').replaceChildren()
+  for (const kind of ['chat', 'transcript']) {
+    element(kind).replaceChildren()
+    delete element(kind).dataset.shown
+  }
+  play.disabled = seek.disabled = true
+  seek.max = seek.value = '0'
+  showPosition()
+  showPlaying(false)
+  status.value = 'Opening recording'
+  const accessToken = token.value || undefined
+  let session: MoqSession | undefined
+  try {
+    session = await MoqSession.connect(relay.value, { token: accessToken })
+    const replay = await openRecording(session, recorder.value, recording.value, { token: accessToken })
+    const watch = await session.watchNamespaces(replay.prefix)
+    const group = new PlaybackGroup({ onStateChange: requestRender })
+    group.pause()
+    const current: OpenedRecording = {
+      session,
+      recording: replay,
+      group,
+      tiles: new Map(),
+      sources: new Map(),
+      events: [],
+      started: false
     }
-    if (at >= end) {
-      stop()
-      status.value = 'Finished'
-    }
-  }, 50)
-  await Promise.all(
-    prepared.map((input) =>
-      decodeTrack(input, current).catch((error) => {
-        if (generation === current) {
-          if (input.track.state) input.track.state.value = String(error)
-          failure(error)
+    opened = current
+    showRoom(replay.prefix)
+    openDialog.classList.add('hidden')
+    const failed = failureOf(current)
+    void replay.closed.then((error) => error && failed(error))
+    void (async () => {
+      for await (const { kind, namespace } of watch) {
+        if (kind === 'announced') {
+          void addSource(current, namespace).catch(failed)
         }
-      })
-    )
-  )
+      }
+    })().catch(failed)
+    requestRender()
+  } catch (error) {
+    session?.close()
+    failure(error)
+    openError.textContent = status.value
+    openError.classList.remove('hidden')
+  } finally {
+    load.disabled = false
+  }
 }
 
-play.addEventListener('click', () => {
-  if (playing) stop()
-  else void start().catch(failure)
+element<HTMLFormElement>('open').addEventListener('submit', (event) => {
+  event.preventDefault()
+  void open()
 })
-seek.addEventListener('input', showPosition)
+play.addEventListener('click', () => {
+  const current = opened
+  const span = current && recordingSpan(current)
+  if (!current || !span) {
+    return
+  }
+  if (!current.group.state.paused) {
+    current.group.pause()
+    return
+  }
+  if (!current.started) {
+    current.started = true
+    current.group.seek(span.startMicros)
+  }
+  current.group.play()
+})
+seek.addEventListener('input', () => {
+  seeking = true
+  showPosition()
+})
 seek.addEventListener('change', () => {
-  renderEvents(origin + Number(seek.value) * 1_000_000)
-  void start().catch(failure)
+  seeking = false
+  const current = opened
+  const span = current && recordingSpan(current)
+  if (!current || !span) {
+    return
+  }
+  current.started = true
+  current.group.seek(span.startMicros + Number(seek.value) * 1_000_000)
+  requestRender()
 })
 element('reopen').addEventListener('click', () => openDialog.classList.remove('hidden'))
 openDialog.addEventListener('click', (event) => {
-  if (event.target === openDialog && media.length) openDialog.classList.add('hidden')
+  if (event.target === openDialog && opened) openDialog.classList.add('hidden')
 })
 element('toggle-sidebar').addEventListener('click', (event) => {
   const open = sidebar.classList.toggle('hidden') === false
@@ -705,8 +586,6 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.sidebar-tab')) 
   })
 }
 window.addEventListener('pagehide', () => {
-  stop()
-  releaseLease()
-  session?.close()
-  void audioContext?.close()
+  opened?.recording.close()
+  opened?.session.close()
 })

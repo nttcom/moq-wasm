@@ -39,6 +39,10 @@
     @apply cursor-pointer rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300 transition hover:bg-slate-700 hover:text-white;
   }
 
+  .source > .live-player-picture {
+    @apply h-full object-contain;
+  }
+
   #seek {
     accent-color: var(--color-blue-500);
   }

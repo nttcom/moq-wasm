@@ -433,8 +433,9 @@ member's namespace elements after the room, a meeting participant's name,
 member's archives of that content, one per time they joined. With every
 element rather than the last, and the last two always content and index, two
 members never share one. The transcriber's namespace is not announced (see
-below). The
-answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
+below), nor one that recorded no media its catalog lists, such as the screen
+share of a participant who never shared their screen: it has nothing to play.
+The answer is an NDJSON stream (`replay_stream::ReplayStream`) that stays open: one
 line with `namespace_prefix` (`<room>/recordings/<id>`) and
 `renew_after_seconds`, then an empty line every 15 s. A player finds the
 namespaces with SUBSCRIBE_NAMESPACE and reads each as it reads a live
@@ -507,7 +508,10 @@ cancellation; the writer already rejected conflicting duplicates. Data and
 index checksums are verified before FETCH_OK so damaged data is rejected with a
 control response rather than an unreadable stream reset. This reads selected
 payload chunks twice, once for validation and once for sending. Four FETCH
-requests can run at once per replay.
+requests run at once per replay, which bounds the chunks held in memory; a
+later one waits for a slot before its FETCH_OK instead of failing, since a
+player of a meeting fetches every participant's video and audio, and the next
+window of each while the current one plays.
 
 A SUBSCRIBE with the Largest Object filter is answered with the track's last
 object and delivers nothing; other filters are refused. A Joining Fetch of such
@@ -540,9 +544,13 @@ without the player closing it. The number of active publications per instance
 is capped by `--max-recordings`; recording jobs remain independent and their
 stored state stays shared.
 
-`examples/recording-player` read the track list and chunk ranges from the
-answer this replaced, and cannot play a replay until it moves to `LivePlayer`
-(「録画を `LivePlayer` で再生する」, step 9).
+`examples/recording-player` plays a replay with the SDK alone: `openRecording`
+holds the answer and gives the prefix, SUBSCRIBE_NAMESPACE on the prefix finds
+each participant's camera and screen share namespaces, and each plays in a
+`LivePlayer`, all in one `PlaybackGroup` on one position. The page puts a
+participant's sessions in one tile, showing the one whose range covers the
+position, and reads the chat and transcript event timelines each catalog lists
+with FETCH (docs/architecture/wasm/browser-sdk.md, 「録画を `LivePlayer` で再生する」).
 
 The recorder subscribes through the relay rather than reading the relay's disk
 cache, which is optional, drops data under pressure and loses its index on

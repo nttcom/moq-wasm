@@ -1,17 +1,45 @@
-import { expect } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { test } from './recorder-e2e-arrange'
+import { recordingPlayerPath, test } from './recorder-e2e-arrange'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 import { arrangeMeetingClient, enableMedia, joinRoom, sendChatMessage, startScreenShare } from './meeting-e2e-arrange'
 
-test.setTimeout(120_000)
+test.setTimeout(180_000)
+
+const SCREEN_SHARE_SETTLE_MS = 3_000
 
 type Track = { name: string; isLive: boolean; trackDuration?: number; role?: string }
 type TimelineRecord = [number, [number, number], number]
 
-test('records a room and replays it through the relay as a VOD broadcast', async ({ recorderServe, page }) => {
+/// Seeks the recording player as a viewer letting go of the seek bar would.
+async function seekTo(page: Page, seconds: number): Promise<void> {
+  await page.locator('#seek').evaluate((element: HTMLInputElement, value) => {
+    element.value = String(value)
+    element.dispatchEvent(new Event('change', { bubbles: true }))
+  }, seconds)
+}
+
+/// Seeks to a capture timestamp, which the seek bar counts from the recording's start.
+async function seekToCapture(page: Page, captureMicros: number): Promise<void> {
+  const startMicros = Number(await page.locator('#seek').getAttribute('data-start-us'))
+  await seekTo(page, (captureMicros - startMicros) / 1_000_000)
+}
+
+/// The capture timestamp of the frame a tile showed last, NaN before one.
+async function shownMicros(tile: Locator): Promise<number> {
+  return Number((await tile.getAttribute('data-capture-us')) ?? Number.NaN)
+}
+
+/// Returns once every replayed broadcast is loaded.
+async function openInPlayer(page: Page, recorderUrl: string, id: string): Promise<void> {
+  await page.goto(recordingPlayerPath(recorderUrl, id))
+  await page.locator('#load').click()
+  await expect(page.locator('#status')).toHaveText('Ready', { timeout: 30_000 })
+}
+
+test('records a room and plays its VOD replay through the relay to the end', async ({ recorderServe, page }) => {
   // Arrange: the live-viewer runner publishes a broadcast under anon/live
   const recording = await recorderServe.start('anon/live', 'combined', false, 'moq')
   expect(recording.format).toBe('moq')
@@ -59,15 +87,51 @@ test('records a room and replays it through the relay as a VOD broadcast', async
   } finally {
     await replay.close()
   }
+
+  // Arrange: a sound with a sample above silence marks the page as having played audio
+  await page.addInitScript(() => {
+    const start = AudioBufferSourceNode.prototype.start
+    AudioBufferSourceNode.prototype.start = function (...args) {
+      if (this.buffer?.getChannelData(0).some((sample) => Math.abs(sample) > 0.001))
+        document.documentElement.dataset.audioPlayed = 'true'
+      return start.apply(this, args)
+    }
+  })
+  await openInPlayer(page, recorderServe.url, recording.id)
+  const tile = page.locator('#videos [data-participant="e2e"][data-content="camera"]')
+
+  // Act
+  await page.locator('#play').click()
+
+  // Assert: frames and sound play
+  await expect.poll(() => shownMicros(tile), { timeout: 20_000 }).toBeGreaterThan(0)
+  await expect(page.locator('html')).toHaveAttribute('data-audio-played', 'true', { timeout: 15_000 })
+  await expect(page.locator('#status')).toHaveText('Playing')
+
+  // Act
+  const beforeSeek = await shownMicros(tile)
+  await seekTo(page, 32)
+
+  // Assert: the frames jump to the position
+  await expect.poll(() => shownMicros(tile), { timeout: 15_000 }).toBeGreaterThan(beforeSeek + 25_000_000)
+
+  // Act
+  await seekTo(page, Number(await page.locator('#seek').getAttribute('max')) - 3)
+
+  // Assert: playback stops, paused, at the end
+  await expect(page.locator('#status')).toHaveText('Finished', { timeout: 20_000 })
+  await expect(page.locator('#play')).toHaveAttribute('aria-label', 'Play')
+  const max = Number(await page.locator('#seek').getAttribute('max'))
+  expect(Number(await page.locator('#seek').inputValue())).toBeGreaterThan(max - 1)
 })
 
-test('records participants, screen share, chat and transcript and replays the transcript with the speaker', async ({
+test('records participants, screen share, chat and transcript and replays them in the recording player', async ({
   recorderServe,
-  browser
+  browser,
+  page
 }) => {
   // Arrange
   const roomName = `archive-${Date.now()}`
-  const recording = await recorderServe.start(`anon/${roomName}`, 'combined', false, 'moq')
   const alice = await arrangeMeetingClient(browser, { params: { recorderUrl: recorderServe.url } })
   const bob = await arrangeMeetingClient(browser, { params: { recorderUrl: recorderServe.url } })
   try {
@@ -76,6 +140,11 @@ test('records participants, screen share, chat and transcript and replays the tr
     await joinRoom(bob.page, roomName, 'bob', 'a')
     await enableMedia(bob.page)
     await startScreenShare(alice.page)
+    // Start recording once the screen share settles: it lists its 720p rendition only after its first
+    // group, and a replay of a recording that switched renditions is not played whole
+    // (docs/todos/high/recorder-replay-rendition-switch.md).
+    await sleep(SCREEN_SHARE_SETTLE_MS)
+    const recording = await recorderServe.start(`anon/${roomName}`, 'combined', false, 'moq')
     await sleep(5_000)
     await sendChatMessage(alice.page, 'archive chat message')
     await alice.page.page.evaluate(
@@ -156,6 +225,52 @@ test('records participants, screen share, chat and transcript and replays the tr
     await alice.page.page.getByTestId('activities-button').click()
     await expect(alice.page.page.getByTestId('record-moq')).toBeVisible()
     await expect(alice.page.page.getByTestId('record-play')).toBeVisible()
+
+    // Act
+    await openInPlayer(page, recorderServe.url, recording.id)
+
+    // Assert: one tile per participant's camera and screen share, and nothing said yet at the start
+    const tiles = page.locator('#videos [data-participant]')
+    await expect(tiles).toHaveCount(3)
+    const aliceCamera = page.locator('#videos [data-participant="alice"][data-content="camera"]')
+    const bobCamera = page.locator('#videos [data-participant="bob"][data-content="camera"]')
+    const aliceShare = page.locator('#videos [data-participant="alice"][data-content="screen_share"]')
+    await expect(page.locator('#chat li')).toHaveCount(0)
+    await expect(page.locator('#transcript li')).toHaveCount(0)
+
+    // Act
+    await seekTo(page, Number(await page.locator('#seek').getAttribute('max')) - 1)
+
+    // Assert: the chat and the transcript up to the end
+    await expect(page.locator('#chat')).toContainText('archive chat message')
+    await expect(page.locator('#transcript')).toContainText('archived transcript')
+    const chatMicros = Number(await page.locator('#chat li').first().getAttribute('data-time-us'))
+    const transcriptMicros = Number(await page.locator('#transcript li').first().getAttribute('data-time-us'))
+
+    // Act / Assert: each appears once the position reaches its time
+    await seekToCapture(page, chatMicros - 1_000_000)
+    await expect(page.locator('#chat li')).toHaveCount(0)
+    await seekToCapture(page, chatMicros + 500_000)
+    await expect(page.locator('#chat li')).toHaveCount(1)
+    await seekToCapture(page, transcriptMicros + 1_000_000)
+    await expect(page.locator('#transcript li')).toHaveCount(1)
+    await expect(aliceCamera.getByText('archived transcript')).toBeVisible()
+    await expect(bobCamera.getByText('archived transcript')).toBeHidden()
+
+    // Act
+    await page.locator('#play').click()
+
+    // Assert: every participant's pictures play from the position
+    for (const tile of [aliceCamera, bobCamera, aliceShare]) {
+      await expect.poll(() => shownMicros(tile), { timeout: 20_000 }).toBeGreaterThan(transcriptMicros)
+    }
+    for (const tile of [aliceCamera, bobCamera]) {
+      const shown = await shownMicros(tile)
+      await expect.poll(() => shownMicros(tile), { timeout: 5_000 }).toBeGreaterThan(shown + 500_000)
+    }
+
+    // Assert: playback stops at the end
+    await expect(page.locator('#status')).toHaveText('Finished', { timeout: 30_000 })
   } finally {
     await alice.context.close()
     await bob.context.close()
