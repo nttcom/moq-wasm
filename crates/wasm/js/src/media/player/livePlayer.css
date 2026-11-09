@@ -13,3 +13,16 @@
   height: 100%;
   object-fit: contain;
 }
+
+.moq-source {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.moq-source > .live-player-picture {
+  width: 100%;
+  height: 100%;
+  object-fit: var(--moq-object-fit, contain);
+}
