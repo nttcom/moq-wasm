@@ -8,8 +8,6 @@ import { arrangeMeetingClient, enableMedia, joinRoom, sendChatMessage, startScre
 
 test.setTimeout(180_000)
 
-const SCREEN_SHARE_SETTLE_MS = 3_000
-
 type Track = { name: string; isLive: boolean; trackDuration?: number; role?: string }
 type TimelineRecord = [number, [number, number], number]
 
@@ -139,12 +137,9 @@ test('records participants, screen share, chat and transcript and replays them i
     await enableMedia(alice.page)
     await joinRoom(bob.page, roomName, 'bob', 'a')
     await enableMedia(bob.page)
-    await startScreenShare(alice.page)
-    // Start recording once the screen share settles: it lists its 720p rendition only after its first
-    // group, and a replay of a recording that switched renditions is not played whole
-    // (docs/todos/high/recorder-replay-rendition-switch.md).
-    await sleep(SCREEN_SHARE_SETTLE_MS)
     const recording = await recorderServe.start(`anon/${roomName}`, 'combined', false, 'moq')
+    // The screen share lists its 720p rendition only after its first group, so its recording switches renditions.
+    await startScreenShare(alice.page)
     await sleep(5_000)
     await sendChatMessage(alice.page, 'archive chat message')
     await alice.page.page.evaluate(
@@ -192,8 +187,13 @@ test('records participants, screen share, chat and transcript and replays them i
     const archive = JSON.parse(await readFile(join('/', aliceMember.camera[0]), 'utf8'))
     const names = archive.tracks.map((track: { name: string }) => track.name)
     expect(names).toContain('video_timeline')
-    const share = JSON.parse(await readFile(join('/', aliceMember.screen_share[0]), 'utf8'))
-    expect(share.tracks.map((track: { name: string }) => track.name)).toContain('screenshare_timeline')
+    // A switch of renditions starts the next archive, and the first can end before the timeline arrives.
+    const shareNames = []
+    for (const key of aliceMember.screen_share) {
+      const share = JSON.parse(await readFile(join('/', key), 'utf8'))
+      shareNames.push(...share.tracks.map((track: { name: string }) => track.name))
+    }
+    expect(shareNames).toContain('screenshare_timeline')
     const chat = archive.tracks.find((track: { name: string }) => track.name === 'chat')
     expect(chat).toBeTruthy()
     const payloads = []
