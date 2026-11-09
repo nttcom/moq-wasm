@@ -507,8 +507,11 @@ resume し、スピーカーは `audioContext.setSinkId(deviceId)` で選ぶ。`
 SDK は context を1つも持たずに済む。
 
 ### session の後始末
-`MoqSession.connect` の option `closeOnPageHide`（既定は有効）で、`pagehide` のときに
-session を閉じる。リロードした人の古い session が relay に残る時間を短くする。
+`pagehide` で session を閉じる option は足さない。Chrome はページを閉じるときもリロード
+するときも WebTransport を自分で閉じ、relay はその session の namespace をすぐ withdraw する
+（`remote-broadcast-e2e.spec.ts` で publisher のページを閉じて確かめた）。古い session が
+relay に残るのは、ブラウザが接続を閉じられないとき（クラッシュ、通信断）で、そのときは
+`pagehide` で閉じることもできない。
 
 ### 移行の手順
 1手順を1 PR にする。
@@ -517,15 +520,14 @@ session を閉じる。リロードした人の古い session が relay に残�
    名前が `video`・`audio`・`video_<rendition>` の track を持つ source を選ぶ。これに
    `camera` の命名（`camera`、`camera_audio`、`camera_<rendition>`）を足す。ブラウザが
    `camera` で配信する前に入れる。
-2. **feat(wasm): `createBroadcast` と `LocalSource`。** `publish()` は手順8で消すまで残す。
+2. **feat(wasm): `createBroadcast` と `LocalSource`。** `publish()` は手順7で消すまで残す。
 3. **feat(wasm): `RemoteBroadcast`。** catalog から source を読む規則、`listen`、
    `view.element` と CSS、`state`、`setVolume`、`stats`。
 4. **feat(wasm): 画面外の view の映像を自動で止める。** 要素を移しても止まらないことの
    テストも足す。
 5. **feat(wasm): `watchBroadcasts`。** `filter` と、自分の配信を除くこと。
 6. **feat(wasm): `RemoteBroadcast` の `audioContext`。**
-7. **feat(wasm): `closeOnPageHide`。**
-8. **refactor(browser): meeting を `createBroadcast` と `watchBroadcasts` に移す。**
+7. **refactor(browser): meeting を `createBroadcast` と `watchBroadcasts` に移す。**
    `remotePlayers.ts` と、`publish()` の呼び出しを消す。ブラウザ E2E
    （`run-meeting-e2e.mjs`）で守る。そのあと残りの example を移し、`publish()` を消して
    README を書き直す。
