@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import { type Publication, publish } from 'moq-wasm/media'
+import { type LocalBroadcast, createBroadcast } from 'moq-wasm/media'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../../utils/relayPresets'
@@ -14,7 +14,7 @@ const broadcastId = generateBroadcastId()
 const urlInput = element<HTMLInputElement>('url')
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
-let publication: Publication | undefined
+let broadcast: LocalBroadcast | undefined
 let access: BroadcastAccess | undefined
 
 startPageTelemetry('live-translate-streamer', () => urlInput.value)
@@ -47,9 +47,13 @@ async function startBroadcast(): Promise<void> {
     element<HTMLVideoElement>('preview').srcObject = mediaStream
     session = await MoqSession.connect(url, { token: access.token, versions: offeredVersions() })
     const namespace = access.namespace
-    publication = await publish(session, namespace, mediaStream, {
-      videoEncoderConfig: buildVideoEncoderConfig(mediaStream),
+    broadcast = await createBroadcast(session, namespace, {
       onError: (error) => setStatusText('streamer-status', `Publish failed: ${getErrorMessage(error)}`)
+    })
+    await broadcast.addSource('camera', {
+      label: 'Camera',
+      stream: mediaStream,
+      videoEncoderConfig: buildVideoEncoderConfig(mediaStream)
     })
     setStatusText(
       'streamer-status',
@@ -64,9 +68,9 @@ async function startBroadcast(): Promise<void> {
 }
 
 async function stopBroadcast(): Promise<void> {
-  const stopped = publication !== undefined || session !== undefined
-  await publication?.close()
-  publication = undefined
+  const stopped = broadcast !== undefined || session !== undefined
+  await broadcast?.close()
+  broadcast = undefined
   session?.close()
   session = undefined
   access?.release()

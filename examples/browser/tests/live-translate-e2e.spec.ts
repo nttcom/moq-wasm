@@ -111,7 +111,7 @@ test('a viewer who joins after the translation started hears the original audio'
 
     // Assert
     await expect
-      .poll(async () => (await viewerStats(lateViewer)).forwardedAudioObjects['audio'] ?? 0, { timeout: 30_000 })
+      .poll(async () => (await viewerStats(lateViewer)).forwardedAudioObjects['camera_audio'] ?? 0, { timeout: 30_000 })
       .toBeGreaterThan(100)
     await expect
       .poll(async () => (await viewerStats(lateViewer)).playingAudioMicros !== undefined, { timeout: 10_000 })
