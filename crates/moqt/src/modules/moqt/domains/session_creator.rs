@@ -10,7 +10,7 @@ use crate::modules::moqt::domains::endpoint::AuthorizationTokenSource;
 use crate::modules::moqt::domains::session::{Follow, Session};
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::protocol::TransportProtocol;
-use crate::modules::moqt::version::{self, ControlReceiver};
+use crate::modules::moqt::version::{self, ControlReceiver, Version};
 use crate::modules::transport::accept_error::AcceptError;
 use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
@@ -55,6 +55,8 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) authorization_token: Option<AuthorizationTokenSource>,
     pub(crate) follow_go_away: bool,
     web_socket_fallback: WebSocketFallback,
+    /// The drafts the endpoint offers (a client) or accepts (a server).
+    pub(crate) versions: Vec<Version>,
 }
 
 /// Opens another connection of a session that follows GOAWAY, on the same
@@ -121,12 +123,14 @@ impl<T: TransportProtocol> SessionCreator<T> {
         authorization_token: Option<AuthorizationTokenSource>,
         follow_go_away: bool,
         web_socket_fallback: WebSocketFallback,
+        versions: Vec<Version>,
     ) -> Self {
         Self {
             transport_creator,
             authorization_token,
             follow_go_away,
             web_socket_fallback,
+            versions,
         }
     }
 
@@ -352,7 +356,8 @@ impl<T: TransportProtocol> SessionCreator<T> {
             None => None,
         };
         let (control, control_receiver, server_setup) =
-            match version::connect(&transport_conn, token.as_deref(), target).await {
+            match version::connect(&transport_conn, &self.versions, token.as_deref(), target).await
+            {
                 Ok(established) => established,
                 Err(error) => {
                     return Err(Self::explain_rejected_setup(&transport_conn, error).await);
@@ -383,12 +388,13 @@ impl<T: TransportProtocol> SessionCreator<T> {
 
     pub(crate) async fn accept_new_connection(&self) -> Result<Accepting, AcceptError> {
         let transport_accepting = self.transport_creator.accept_new_transport().await?;
+        let versions = self.versions.clone();
         let handshake = async move {
             let transport_conn =
                 executor::timeout(TRANSPORT_HANDSHAKE_TIMEOUT, transport_accepting)
                     .await
                     .map_err(|()| anyhow::anyhow!("the transport handshake timed out"))??;
-            let setup = accept_setup(&transport_conn).await?;
+            let setup = accept_setup(&transport_conn, &versions).await?;
             Ok(Handshake {
                 transport_connection: transport_conn,
                 setup,
@@ -402,13 +408,17 @@ impl<T: TransportProtocol> SessionCreator<T> {
 
 async fn accept_setup(
     transport_conn: &BoxedConnection,
+    accepted: &[Version],
 ) -> anyhow::Result<version::ServerHandshake> {
-    if let Ok(setup) =
-        executor::timeout(CLIENT_SETUP_TIMEOUT, version::accept(transport_conn)).await
+    if let Ok(setup) = executor::timeout(
+        CLIENT_SETUP_TIMEOUT,
+        version::accept(transport_conn, accepted),
+    )
+    .await
     {
         return setup;
     }
-    let code = version::negotiated_version(transport_conn)?
+    let code = version::negotiated_version(transport_conn, accepted)?
         .termination_code(TerminationErrorCode::ControlMessageTimeout);
     transport_conn.close(code, "CLIENT_SETUP timed out");
     // WebTransport sends the code only while the connection outlives the
@@ -430,7 +440,7 @@ mod tests {
                     constants::MOQ_TRANSPORT_VERSION,
                     control_messages::messages::parameters::authorization_token::AuthorizationToken,
                 },
-                version::APPLICATION_PROTOCOLS,
+                version::{DEFAULT_VERSIONS, application_protocols},
             },
             test_support::{
                 HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, native_client,
@@ -896,7 +906,11 @@ mod tests {
                 .unwrap();
         let port = server.local_port().unwrap();
         let accepting = tokio::spawn(async move { server.accept().await.unwrap().await.err() });
-        let silent = within(silent_quic_peer(port, APPLICATION_PROTOCOLS.quic_alpns[0])).await;
+        let silent = within(silent_quic_peer(
+            port,
+            application_protocols(DEFAULT_VERSIONS).unwrap().quic_alpns[0],
+        ))
+        .await;
         within(async {
             while telemetry.events("MoQT version negotiated").is_empty() {
                 tokio::time::sleep(Duration::from_millis(10)).await;

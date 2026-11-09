@@ -173,7 +173,7 @@ impl MessageSource for BrowserWebSocketSource {
 /// server selects no subprotocol this side offered (§5).
 pub(crate) async fn connect(
     target: &ConnectTarget,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<QmuxConnection> {
     let offered = protocols.web_socket_subprotocols();
     let (socket, mut events) = Socket::open(&target.url, &offered)?;

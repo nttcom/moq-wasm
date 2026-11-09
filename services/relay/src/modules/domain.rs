@@ -4,4 +4,5 @@ pub(crate) mod publish_done_reason;
 pub(crate) mod runner_signals;
 pub(crate) mod session_id;
 pub(crate) mod session_peer;
+pub(crate) mod single_preference;
 pub(crate) mod track_key;

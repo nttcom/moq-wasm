@@ -133,7 +133,7 @@ impl TransportConnectionCreator for NativeConnectionCreator {
                 quic.local_addr()?.port(),
                 cert_path,
                 key_path,
-                protocols,
+                protocols.clone(),
                 refusing.clone(),
             ) {
                 Ok(web_socket) => break (quic, web_socket),
@@ -174,14 +174,14 @@ impl TransportConnectionCreator for NativeConnectionCreator {
                 let connection = target
                     .connect_quic(&client.endpoint, client.web_transport_config.clone())
                     .await?;
-                let session = connect_session(connection, target, self.protocols).await?;
+                let session = connect_session(connection, target, &self.protocols).await?;
                 Ok(Box::new(WtConnection::new(session)))
             }
             ClientTransport::WebSocket => {
                 let connection = websocket_client::connect(
                     target,
                     client.web_socket_crypto.clone(),
-                    self.protocols,
+                    &self.protocols,
                 )
                 .await?;
                 self.web_socket_sessions.track(connection.transport_ended());
@@ -205,7 +205,7 @@ impl TransportConnectionCreator for NativeConnectionCreator {
                         incoming.refuse();
                         continue;
                     }
-                    return Ok(Box::pin(accept_quic(incoming, self.protocols)));
+                    return Ok(Box::pin(accept_quic(incoming, self.protocols.clone())));
                 }
                 accepted = server.web_socket.accept() => {
                     let connection = accepted?;
@@ -241,7 +241,7 @@ async fn accept_quic(
 
     if alpn == web_transport_quinn::ALPN {
         let request = web_transport_quinn::Request::accept(connection).await?;
-        let session = accept_session(request, protocols).await?;
+        let session = accept_session(request, &protocols).await?;
         Ok(Box::new(WtConnection::new(session)))
     } else if protocols.quic_alpns.contains(&alpn.as_str()) {
         Ok(Box::new(QUICConnection::new(connection)))
@@ -255,7 +255,7 @@ mod tests {
     use super::NativeConnectionCreator;
     use crate::CertificateVerification;
     use crate::modules::{
-        moqt::version::APPLICATION_PROTOCOLS,
+        moqt::version::{DEFAULT_VERSIONS, application_protocols},
         test_support::{
             HANDSHAKE_TIMEOUT, connect_sessions, native_client, self_signed_server_config,
             server_transport_creator, spawn_native_server,
@@ -311,12 +311,12 @@ mod tests {
             "moqt",
             "",
             ApplicationProtocols {
-                quic_alpns: &["moqt-b", "moqt-a"],
-                web_transport: &[],
+                quic_alpns: vec!["moqt-b", "moqt-a"],
+                web_transport: vec![],
             },
             ApplicationProtocols {
-                quic_alpns: &["moqt-a"],
-                web_transport: &[],
+                quic_alpns: vec!["moqt-a"],
+                web_transport: vec![],
             },
         )
         .await;
@@ -337,12 +337,12 @@ mod tests {
             "https",
             "/moq",
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-b", "moqt-a"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-b", "moqt-a"],
             },
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-a", "moqt-b"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-a", "moqt-b"],
             },
         )
         .await;
@@ -363,12 +363,12 @@ mod tests {
             "https",
             "/moq",
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-a"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-a"],
             },
             ApplicationProtocols {
-                quic_alpns: &[],
-                web_transport: &["moqt-b"],
+                quic_alpns: vec![],
+                web_transport: vec!["moqt-b"],
             },
         )
         .await;
@@ -411,12 +411,12 @@ mod tests {
             "wss",
             "/moq",
             ApplicationProtocols {
-                quic_alpns: &["moq-00"],
-                web_transport: &[],
+                quic_alpns: vec!["moq-00"],
+                web_transport: vec![],
             },
             ApplicationProtocols {
-                quic_alpns: &["moq-00"],
-                web_transport: &[],
+                quic_alpns: vec!["moq-00"],
+                web_transport: vec![],
             },
         )
         .await;
@@ -463,7 +463,7 @@ mod tests {
             &config.key_path,
             0,
             config.keep_alive_interval_sec,
-            APPLICATION_PROTOCOLS,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
         )
         .unwrap();
         let port = server.local_port().unwrap();
@@ -476,7 +476,7 @@ mod tests {
             &config.key_path,
             port,
             config.keep_alive_interval_sec,
-            APPLICATION_PROTOCOLS,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
         );
 
         // Assert
@@ -492,7 +492,7 @@ mod tests {
         let client = NativeConnectionCreator::client(
             0,
             &CertificateVerification::Disabled,
-            APPLICATION_PROTOCOLS,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
         )
         .unwrap();
         let target = ConnectTarget::parse(&format!("wss://127.0.0.1:{port}/moq")).unwrap();

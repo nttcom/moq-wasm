@@ -206,6 +206,7 @@ pub(crate) fn unused_inter_relay_client_config() -> InterRelayClientConfig {
     InterRelayClientConfig {
         relay_token: "unused-relay-token".to_string(),
         certificate_verification: CertificateVerification::NativeRoots,
+        versions: moqt::DEFAULT_VERSIONS.to_vec(),
     }
 }
 

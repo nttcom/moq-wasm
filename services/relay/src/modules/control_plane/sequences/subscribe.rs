@@ -391,6 +391,18 @@ impl Subscribe {
             self.response_malformed(session_id, handler).await;
             return Acceptance::Answered;
         }
+        let track_properties = upstream_track.track_properties();
+        if !handler.understands(&track_properties) {
+            let _ = self
+                .response_error(
+                    session_id,
+                    handler,
+                    RequestErrorCode::UnsupportedExtension,
+                    "mandatory track property not understood".to_string(),
+                )
+                .await;
+            return Acceptance::Answered;
+        }
 
         let subscriber_track_alias = handler.allocate_track_alias();
 
@@ -465,7 +477,7 @@ impl Subscribe {
                 subscriber_track_alias,
                 upstream_track.expires().unwrap_or(0),
                 content_exists,
-                upstream_track.track_properties(),
+                track_properties,
             )
             .await
             .is_err()
@@ -1232,6 +1244,36 @@ mod tests {
         assert_eq!(
             *handler.subscribe_oks.lock().unwrap(),
             vec![track_properties]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_that_cannot_carry_the_track_is_refused_before_it_is_registered() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+        let handler = MockSubscribeHandler {
+            understands_track_properties: false,
+            ..Default::default()
+        };
+
+        // Act
+        let acceptance = accept_downstream(&table, &handler).await;
+
+        // Assert: draft-18 §2.5.1; nothing is registered for it
+        assert!(matches!(acceptance, Acceptance::Answered));
+        assert_eq!(
+            *handler.subscribe_errors.lock().unwrap(),
+            vec![RequestErrorCode::UnsupportedExtension]
+        );
+        assert!(
+            table
+                .get_downstream_subscription(2, handler.subscribe_id())
+                .is_none()
         );
     }
 

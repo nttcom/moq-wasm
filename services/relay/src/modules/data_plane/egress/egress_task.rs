@@ -10,7 +10,7 @@ use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     data_plane::{
         cache::track_cache::TrackCache,
-        egress::runner::{EgressRunner, RunnerExit},
+        egress::runner::{Downstream, EgressRunner, RunnerExit},
     },
     domain::{runner_signals::DownstreamRunnerSignals, session_id::SessionId, track_key::TrackKey},
     session::{
@@ -64,8 +64,11 @@ impl EgressTask {
         let runner = EgressRunner::new(
             start.track_key,
             start.cache,
-            start.publisher,
-            start.downstream_subscription,
+            Downstream {
+                session_id: start.subscriber_session_id,
+                publisher: Arc::from(start.publisher),
+                subscription: start.downstream_subscription,
+            },
             start.ready_sender,
             start.largest_location,
             start.runner_signals,

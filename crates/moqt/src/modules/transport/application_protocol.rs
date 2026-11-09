@@ -6,10 +6,12 @@
 use crate::modules::transport::qmux::subprotocol;
 
 /// What a client offers and a server accepts, most preferred first.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ApplicationProtocols {
-    pub(crate) quic_alpns: &'static [&'static str],
-    pub(crate) web_transport: &'static [&'static str],
+    // wasm32 has no raw QUIC transport.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) quic_alpns: Vec<&'static str>,
+    pub(crate) web_transport: Vec<&'static str>,
 }
 
 impl ApplicationProtocols {
@@ -79,15 +81,17 @@ impl NegotiatedProtocol {
 mod tests {
     use super::ApplicationProtocols;
 
-    const PROTOCOLS: ApplicationProtocols = ApplicationProtocols {
-        quic_alpns: &[],
-        web_transport: &["moqt-b", "moqt-a"],
-    };
+    fn protocols() -> ApplicationProtocols {
+        ApplicationProtocols {
+            quic_alpns: Vec::new(),
+            web_transport: vec!["moqt-b", "moqt-a"],
+        }
+    }
 
     #[test]
     fn the_server_preference_decides_among_offered_subprotocols() {
         // Act
-        let selected = PROTOCOLS.select_web_transport(&["moqt-a".into(), "moqt-b".into()]);
+        let selected = protocols().select_web_transport(&["moqt-a".into(), "moqt-b".into()]);
 
         // Assert
         assert_eq!(selected, Some("moqt-b"));
@@ -97,8 +101,8 @@ mod tests {
     fn web_socket_subprotocols_pair_qmux_with_each_alpn_and_prefer_the_alpn_form() {
         // Arrange
         let protocols = ApplicationProtocols {
-            quic_alpns: &["moq-00"],
-            web_transport: &[],
+            quic_alpns: vec!["moq-00"],
+            web_transport: vec![],
         };
 
         // Act
@@ -115,7 +119,7 @@ mod tests {
     #[test]
     fn no_subprotocol_is_selected_when_none_is_shared() {
         // Act
-        let selected = PROTOCOLS.select_web_transport(&["moqt-c".into()]);
+        let selected = protocols().select_web_transport(&["moqt-c".into()]);
 
         // Assert
         assert_eq!(selected, None);

@@ -117,6 +117,7 @@ async fn accept_loop(
         let acceptor = acceptor.clone();
         let refusing = refusing.clone();
         let accepted_sender = accepted_sender.clone();
+        let protocols = protocols.clone();
         executor::spawn("WebSocket Handshake", async move {
             let handshake = handshake(tcp, acceptor, protocols, refusing);
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake).await {

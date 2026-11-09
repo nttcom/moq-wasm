@@ -100,6 +100,7 @@ mod tests {
                 request_id: 2,
                 bytes_sent: 4,
                 streams_reset: 0,
+                datagrams_dropped: 0,
                 lag_behind_newest_received_us: 6,
             }],
             ..snapshot(1)

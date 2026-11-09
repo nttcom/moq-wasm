@@ -1,4 +1,4 @@
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use futures::future::join_all;
@@ -26,6 +26,7 @@ use crate::{
         },
         transport::transport_connection::TransportClose,
     },
+    namespace::NamespaceInterest,
     object::Location,
     subscribe::UnsubscribeHandler,
     subscribe::{FilterType, SubscribeOption},
@@ -442,8 +443,17 @@ async fn migrate(
         .get_mut()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let moved_from = session.connection();
+    // A draft-18 subscription of namespaces and tracks is carried as two
+    // requests, which a draft-14 connection takes as one.
+    let mut namespace_interests: BTreeMap<&String, NamespaceInterest> = BTreeMap::new();
     for (namespace, interest) in carried.namespaces.values() {
-        for request in connection.control.namespace_requests(*interest) {
+        namespace_interests
+            .entry(namespace)
+            .and_modify(|carried| *carried = carried.with(*interest))
+            .or_insert(*interest);
+    }
+    for (namespace, interest) in namespace_interests {
+        for request in connection.control.namespace_requests(interest) {
             retry_until(deadline, || {
                 send_subscribe_namespace(&connection, namespace.clone(), request)
             })
@@ -785,7 +795,7 @@ mod tests {
         TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::{
-            moqt::version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
+            moqt::version::{DEFAULT_VERSIONS, Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, draft18_client_with_config,
                 native_client_with_config, open_subgroup, self_signed_server_config, send_payload,
@@ -793,12 +803,11 @@ mod tests {
                 spawn_native_server_offering, subscribe_namespace_accepted,
                 subscribed_track_reader,
             },
-            transport::application_protocol::ApplicationProtocols,
         },
         namespace::NamespaceInterest,
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, MalformedTrackError,
-            Object, ObjectStatus, StreamDataSenderFactory,
+            Object, ObjectStatus, StreamDataSenderFactory, SubgroupStart,
         },
         publish::{PublishDoneCode, PublishOption},
         subscribe::{FilterType, SubscribeOption},
@@ -818,12 +827,14 @@ mod tests {
     }
 
     async fn connect(port: u16) -> Session {
-        connect_offering(port, APPLICATION_PROTOCOLS).await
+        connect_offering(port, DEFAULT_VERSIONS).await
     }
 
-    async fn connect_offering(port: u16, protocols: ApplicationProtocols) -> Session {
-        let client =
-            Endpoint::<NATIVE>::create_client_offering(&following_go_away(), protocols).unwrap();
+    async fn connect_offering(port: u16, versions: &[Version]) -> Session {
+        let client = native_client_with_config(ClientConfig {
+            versions: versions.to_vec(),
+            ..following_go_away()
+        });
         connect_from(client, port).await
     }
 
@@ -837,6 +848,75 @@ mod tests {
         .await
         .unwrap()
         .unwrap()
+    }
+
+    /// The drafts of a GOAWAY's hop: those the first server accepts, those
+    /// of the server it names, and those the client offers.
+    #[derive(Clone, Copy)]
+    struct Hop {
+        from: &'static [Version],
+        to: &'static [Version],
+        client: &'static [Version],
+    }
+
+    const SAME_DRAFT: Hop = Hop {
+        from: DEFAULT_VERSIONS,
+        to: DEFAULT_VERSIONS,
+        client: DEFAULT_VERSIONS,
+    };
+    const BOTH_DRAFTS: &[Version] = &[Version::Draft18, Version::Draft14];
+    const DRAFT18_TO_DRAFT14: Hop = Hop {
+        from: &[Version::Draft18],
+        to: &[Version::Draft14],
+        client: BOTH_DRAFTS,
+    };
+    const DRAFT14_TO_DRAFT18: Hop = Hop {
+        from: &[Version::Draft14],
+        to: &[Version::Draft18],
+        client: BOTH_DRAFTS,
+    };
+
+    /// A client following GOAWAY connected to server A, and server B, which
+    /// A's GOAWAY is to name.
+    struct Migration {
+        client: Session,
+        server_a: Session,
+        server_b: NextServer,
+    }
+
+    struct NextServer {
+        port: u16,
+        accept: tokio::task::JoinHandle<Session>,
+    }
+
+    impl Migration {
+        async fn connect(name: &str, hop: Hop) -> Self {
+            let (port_a, accept_a) = spawn_native_server_offering(&format!("{name}-a"), hop.from);
+            let (port, accept) = spawn_native_server_offering(&format!("{name}-b"), hop.to);
+            let client = native_client_with_config(ClientConfig {
+                versions: hop.client.to_vec(),
+                ..following_go_away()
+            });
+            let client = connect_from(client, port_a).await;
+            let server_a = accept_a.await.unwrap();
+            Self {
+                client,
+                server_a,
+                server_b: NextServer { port, accept },
+            }
+        }
+    }
+
+    impl NextServer {
+        /// `server_a` sends GOAWAY naming this server; returns its session
+        /// once the client connected to it.
+        async fn named_by(self, server_a: &Session) -> Session {
+            server_a
+                .go_away(format!("moqt://127.0.0.1:{}", self.port))
+                .await
+                .unwrap();
+            self.accept.await.unwrap()
+        }
     }
 
     /// Answers the next SUBSCRIBE: where to send its objects, the filter it
@@ -909,42 +989,85 @@ mod tests {
         (group_id, Bytes::from_static(payload))
     }
 
-    #[tokio::test]
-    async fn go_away_moves_a_subscription_to_the_named_server_at_a_group_boundary() {
+    /// Subgroup 0 of a group, sent in the session's draft, its objects
+    /// numbered from 0.
+    struct Group {
+        sender: crate::object::SubgroupObjectSender,
+        group_id: u64,
+        next_object_id: u64,
+    }
+
+    impl Group {
+        async fn open(factory: &StreamDataSenderFactory, group_id: u64) -> Self {
+            let sender = factory
+                .next()
+                .await
+                .unwrap()
+                .start(SubgroupStart {
+                    group_id,
+                    subgroup_id: 0,
+                    publisher_priority: 128,
+                    ends_group: false,
+                })
+                .await
+                .unwrap();
+            Self {
+                sender,
+                group_id,
+                next_object_id: 0,
+            }
+        }
+
+        async fn send(&mut self, payload: &'static [u8]) {
+            let object = Object {
+                location: Location {
+                    group_id: self.group_id,
+                    object_id: self.next_object_id,
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                publisher_priority: 128,
+                status: ObjectStatus::Normal,
+                extension_headers: ExtensionHeaders::default(),
+                payload: Bytes::from_static(payload),
+                ends_group: false,
+            };
+            self.sender.send_object(&object).await.unwrap();
+            self.next_object_id += 1;
+        }
+    }
+
+    async fn assert_moves_a_subscription_at_a_group_boundary(name: &str, hop: Hop) {
         // Arrange
-        let (port_a, accept_a) = spawn_native_server("session-migration-a");
-        let (port_b, accept_b) = spawn_native_server("session-migration-b");
-        let client = connect(port_a).await;
-        let server_a = accept_a.await.unwrap();
+        let Migration {
+            client,
+            server_a,
+            server_b,
+        } = Migration::connect(name, hop).await;
         let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
-        let mut group_1_a = open_subgroup(&sender_a, 1, SubgroupId::None).await;
-        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut group_1_a = Group::open(&sender_a, 1).await;
+        group_1_a.send(b"a1-0").await;
         let mut reader = subscribed_track_reader(&client, &subscription).await;
         assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
 
         // Act
-        server_a
-            .go_away(format!("moqt://127.0.0.1:{port_b}"))
-            .await
-            .unwrap();
-        let server_b = accept_b.await.unwrap();
+        let server_b = server_b.named_by(&server_a).await;
         let (sender_b, filter_b, _) = serve_subscribe(&server_b).await;
-        send_payload(&mut group_1_a, b"a1-1").await;
+        group_1_a.send(b"a1-1").await;
         let previous_tail = next_payload(&mut reader).await;
-        let mut group_1_b = open_subgroup(&sender_b, 1, SubgroupId::None).await;
-        send_payload(&mut group_1_b, b"b1-0").await;
-        let mut group_2_b = open_subgroup(&sender_b, 2, SubgroupId::None).await;
-        send_payload(&mut group_2_b, b"b2-0").await;
+        let mut group_1_b = Group::open(&sender_b, 1).await;
+        group_1_b.send(b"b1-0").await;
+        let mut group_2_b = Group::open(&sender_b, 2).await;
+        group_2_b.send(b"b2-0").await;
         let cutover = next_payload(&mut reader).await;
-        send_payload(&mut group_1_a, b"a1-2").await;
+        group_1_a.send(b"a1-2").await;
         let late_previous_tail = next_payload(&mut reader).await;
-        let mut group_2_a = open_subgroup(&sender_a, 2, SubgroupId::None).await;
-        send_payload(&mut group_2_a, b"a2-0").await;
-        send_payload(&mut group_2_b, b"b2-1").await;
+        let mut group_2_a = Group::open(&sender_a, 2).await;
+        group_2_a.send(b"a2-0").await;
+        group_2_b.send(b"b2-1").await;
         let after_cutover = next_payload(&mut reader).await;
         let previous_close = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
 
-        // Assert: B's group 1 and A's group 2 are dropped; A is closed with NO_ERROR
+        // Assert: draft-14 §3.5, draft-18 §3.6: B's group 1 and A's group 2 are dropped; A is closed with NO_ERROR
         assert_eq!(filter_b, FilterType::NextGroupStart);
         assert_eq!(previous_tail, payload(1, b"a1-1"));
         assert_eq!(cutover, payload(2, b"b2-0"));
@@ -961,11 +1084,11 @@ mod tests {
     /// the filter of the update the new server receives.
     async fn filter_of_an_update_after_go_away(
         name: &str,
-        protocols: ApplicationProtocols,
+        versions: &[Version],
     ) -> Option<FilterType> {
-        let (port_a, accept_a) = spawn_native_server_offering(&format!("{name}-a"), protocols);
-        let (port_b, accept_b) = spawn_native_server_offering(&format!("{name}-b"), protocols);
-        let client = connect_offering(port_a, protocols).await;
+        let (port_a, accept_a) = spawn_native_server_offering(&format!("{name}-a"), versions);
+        let (port_b, accept_b) = spawn_native_server_offering(&format!("{name}-b"), versions);
+        let client = connect_offering(port_a, versions).await;
         let server_a = accept_a.await.unwrap();
         let (subscription, _, _) = subscribe(&client, &server_a).await;
         server_a
@@ -1011,7 +1134,7 @@ mod tests {
     async fn a_draft14_update_after_go_away_repeats_the_start_the_new_server_resolved() {
         // Act
         let filter =
-            filter_of_an_update_after_go_away("migration-update-14", APPLICATION_PROTOCOLS).await;
+            filter_of_an_update_after_go_away("migration-update-14", &[Version::Draft14]).await;
 
         // Assert: draft-14 §9.10 forbids moving the Start Location back
         assert_eq!(filter, Some(START_ON_B));
@@ -1021,10 +1144,33 @@ mod tests {
     async fn a_draft18_update_after_go_away_repeats_the_start_the_new_server_resolved() {
         // Act
         let filter =
-            filter_of_an_update_after_go_away("migration-update-18", DRAFT18_PROTOCOLS).await;
+            filter_of_an_update_after_go_away("migration-update-18", &[Version::Draft18]).await;
 
         // Assert: draft-18 §10.9.1 serves an earlier Start Location as a restart
         assert_eq!(filter, Some(START_ON_B));
+    }
+
+    #[tokio::test]
+    async fn go_away_moves_a_subscription_to_the_named_server_at_a_group_boundary() {
+        assert_moves_a_subscription_at_a_group_boundary("session-migration", SAME_DRAFT).await;
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_draft18_server_moves_a_subscription_to_a_draft14_server() {
+        assert_moves_a_subscription_at_a_group_boundary(
+            "session-migration-18-14",
+            DRAFT18_TO_DRAFT14,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_draft14_server_moves_a_subscription_to_a_draft18_server() {
+        assert_moves_a_subscription_at_a_group_boundary(
+            "session-migration-14-18",
+            DRAFT14_TO_DRAFT18,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1291,26 +1437,43 @@ mod tests {
         assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
     }
 
-    #[tokio::test]
-    async fn go_away_subscribes_the_namespaces_again_and_forwards_the_new_events() {
+    /// Accepts the namespace subscription a server receives for one
+    /// NamespacesAndTracks interest: draft-18 sends it as SUBSCRIBE_NAMESPACE
+    /// and SUBSCRIBE_TRACKS (§6.1), draft-14 as one SUBSCRIBE_NAMESPACE.
+    async fn accept_namespace_subscription(server: &Session, versions: &[Version]) -> Vec<String> {
+        let requests = if versions == [Version::Draft18] { 2 } else { 1 };
+        let mut prefixes = Vec::new();
+        for _ in 0..requests {
+            let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server.receive_event())
+                .await
+                .expect("the namespace subscription arrives")
+                .unwrap();
+            let SessionEvent::SubscribeNameSpace(handler) = event else {
+                panic!("expected a namespace subscription, got {event:?}");
+            };
+            handler.ok().await.unwrap();
+            prefixes.push(handler.track_namespace_prefix.clone());
+        }
+        prefixes
+    }
+
+    async fn assert_subscribes_the_namespaces_again(name: &str, hop: Hop) {
         // Arrange
-        let (port_a, accept_a) = spawn_native_server("session-migration-namespace-a");
-        let (port_b, accept_b) = spawn_native_server("session-migration-namespace-b");
-        let client = connect(port_a).await;
-        let server_a = accept_a.await.unwrap();
-        subscribe_namespace_accepted(&client, &server_a, "room").await;
+        let Migration {
+            client,
+            server_a,
+            server_b,
+        } = Migration::connect(name, hop).await;
+        let subscriber = client.subscriber();
+        let (subscribed, _) = tokio::join!(
+            subscriber.subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
+            accept_namespace_subscription(&server_a, hop.from)
+        );
+        subscribed.unwrap();
 
         // Act
-        server_a
-            .go_away(format!("moqt://127.0.0.1:{port_b}"))
-            .await
-            .unwrap();
-        let server_b = accept_b.await.unwrap();
-        let SessionEvent::SubscribeNameSpace(handler) = server_b.receive_event().await.unwrap()
-        else {
-            panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
-        };
-        handler.ok().await.unwrap();
+        let server_b = server_b.named_by(&server_a).await;
+        let prefixes_b = accept_namespace_subscription(&server_b, hop.to).await;
         let _pending = server_b
             .publisher()
             .begin_publish_namespace("room/alice".into())
@@ -1321,12 +1484,38 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Assert: the GOAWAY itself is not returned
-        assert_eq!(handler.track_namespace_prefix, "room");
+        // Assert: draft-14 §3.5, draft-18 §3.6: the GOAWAY itself is not returned
+        assert!(
+            prefixes_b.iter().all(|prefix| prefix == "room"),
+            "{prefixes_b:?}"
+        );
         let SessionEvent::PublishNamespace(announced) = event else {
             panic!("expected PUBLISH_NAMESPACE, got {event:?}");
         };
         assert_eq!(announced.track_namespace, "room/alice");
+    }
+
+    #[tokio::test]
+    async fn go_away_subscribes_the_namespaces_again_and_forwards_the_new_events() {
+        assert_subscribes_the_namespaces_again("session-migration-namespace", SAME_DRAFT).await;
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_draft18_server_subscribes_the_namespaces_again_on_a_draft14_server() {
+        assert_subscribes_the_namespaces_again(
+            "session-migration-namespace-18-14",
+            DRAFT18_TO_DRAFT14,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_draft14_server_subscribes_the_namespaces_again_on_a_draft18_server() {
+        assert_subscribes_the_namespaces_again(
+            "session-migration-namespace-14-18",
+            DRAFT14_TO_DRAFT18,
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -1526,23 +1715,18 @@ mod tests {
             .payload
     }
 
-    #[tokio::test]
-    async fn go_away_publishes_on_the_new_server_and_sends_to_both_until_the_old_one_unsubscribes()
-    {
+    async fn assert_publishes_on_the_new_server(name: &str, hop: Hop) {
         // Arrange
-        let (port_a, accept_a) = spawn_native_server("session-migration-publish-a");
-        let (port_b, accept_b) = spawn_native_server("session-migration-publish-b");
-        let client = connect(port_a).await;
-        let server_a = accept_a.await.unwrap();
+        let Migration {
+            client,
+            server_a,
+            server_b,
+        } = Migration::connect(name, hop).await;
         let (published, accepted_a) = publish(&client, &server_a).await;
         let mut writer = TrackWriter::new(client.publisher().create_stream(&published), 0);
 
         // Act
-        server_a
-            .go_away(format!("moqt://127.0.0.1:{port_b}"))
-            .await
-            .unwrap();
-        let server_b = accept_b.await.unwrap();
+        let server_b = server_b.named_by(&server_a).await;
         accept_namespace(&server_b).await;
         let accepted_b = accept_publish(&server_b).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1570,6 +1754,24 @@ mod tests {
         );
         assert_eq!(close.expect("A closed once it unsubscribed").code, Some(0));
         assert!(unsubscribe_seen.is_err(), "{unsubscribe_seen:?}");
+    }
+
+    #[tokio::test]
+    async fn go_away_publishes_on_the_new_server_and_sends_to_both_until_the_old_one_unsubscribes()
+    {
+        assert_publishes_on_the_new_server("session-migration-publish", SAME_DRAFT).await;
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_draft18_server_publishes_on_a_draft14_server() {
+        assert_publishes_on_the_new_server("session-migration-publish-18-14", DRAFT18_TO_DRAFT14)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn go_away_from_a_draft14_server_publishes_on_a_draft18_server() {
+        assert_publishes_on_the_new_server("session-migration-publish-14-18", DRAFT14_TO_DRAFT18)
+            .await;
     }
 
     #[tokio::test]
@@ -1634,13 +1836,13 @@ mod tests {
         (start_location, sender)
     }
 
-    #[tokio::test]
-    async fn a_fetch_cut_off_by_the_old_server_continues_on_the_new_one() {
+    async fn assert_continues_a_cut_off_fetch(name: &str, hop: Hop) {
         // Arrange
-        let (port_a, accept_a) = spawn_native_server("session-migration-fetch-a");
-        let (port_b, accept_b) = spawn_native_server("session-migration-fetch-b");
-        let client = connect(port_a).await;
-        let server_a = accept_a.await.unwrap();
+        let Migration {
+            client,
+            server_a,
+            server_b,
+        } = Migration::connect(name, hop).await;
         let end = Location {
             group_id: 1,
             object_id: 3,
@@ -1673,11 +1875,7 @@ mod tests {
             let fetched = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.receive()).await;
             assert!(matches!(fetched.unwrap().unwrap(), Fetch::Object(_)));
         }
-        server_a
-            .go_away(format!("moqt://127.0.0.1:{port_b}"))
-            .await
-            .unwrap();
-        let server_b = accept_b.await.unwrap();
+        let server_b = server_b.named_by(&server_a).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Act: A closes after delivering objects 0 and 1
@@ -1713,6 +1911,21 @@ mod tests {
             }
         );
         assert_eq!(rest.unwrap(), vec![Bytes::from("o2")]);
+    }
+
+    #[tokio::test]
+    async fn a_fetch_cut_off_by_the_old_server_continues_on_the_new_one() {
+        assert_continues_a_cut_off_fetch("session-migration-fetch", SAME_DRAFT).await;
+    }
+
+    #[tokio::test]
+    async fn a_fetch_cut_off_by_a_draft18_server_continues_on_a_draft14_server() {
+        assert_continues_a_cut_off_fetch("session-migration-fetch-18-14", DRAFT18_TO_DRAFT14).await;
+    }
+
+    #[tokio::test]
+    async fn a_fetch_cut_off_by_a_draft14_server_continues_on_a_draft18_server() {
+        assert_continues_a_cut_off_fetch("session-migration-fetch-14-18", DRAFT14_TO_DRAFT18).await;
     }
 
     /// The FILL_TIMEOUT of the FETCH a draft-18 session sends again on the

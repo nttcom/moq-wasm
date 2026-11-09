@@ -62,7 +62,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
         match target.transport {
             ClientTransport::WebTransport => {}
             ClientTransport::WebSocket => {
-                let connection = browser_web_socket::connect(target, self.protocols).await?;
+                let connection = browser_web_socket::connect(target, &self.protocols).await?;
                 return Ok(Box::new(connection));
             }
             ClientTransport::Quic => anyhow::bail!(
@@ -107,7 +107,7 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
 
 impl BrowserConnectionCreator {
     async fn open_web_transport(&self, url: &str) -> anyhow::Result<WebTransport> {
-        let options = web_transport_options(self.protocols.web_transport)?;
+        let options = web_transport_options(&self.protocols.web_transport)?;
         // A browser without WebTransport throws here, so the fallback starts at once.
         let transport = WebTransport::new_with_options(url, &options).map_err(js_error)?;
         let pending = CloseUnlessReady(Some(transport));

@@ -25,6 +25,7 @@ impl FakePublisher {
             cert_path,
             key_path,
             keep_alive_interval_sec: 5,
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
         })
         .unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());

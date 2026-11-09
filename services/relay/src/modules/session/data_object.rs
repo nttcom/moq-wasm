@@ -1,3 +1,7 @@
+/// What a subgroup stream carries; datagrams go through `DatagramSender`.
+// Every variant is a piece of a subgroup stream, and the prefix says so at
+// the call sites.
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub(crate) enum DataObject {
     SubgroupHeader(moqt::object::SubgroupStart),
@@ -13,5 +17,4 @@ pub(crate) enum DataObject {
         data: bytes::Bytes,
         last: bool,
     },
-    Datagram(moqt::object::Object),
 }

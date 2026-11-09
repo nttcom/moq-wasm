@@ -122,7 +122,7 @@ mod tests {
     use super::QUICConnectionCreator;
     use crate::CertificateVerification;
     use crate::modules::{
-        moqt::version::APPLICATION_PROTOCOLS,
+        moqt::version::{DEFAULT_VERSIONS, application_protocols},
         test_support::{
             HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, server_transport_creator,
         },
@@ -152,7 +152,7 @@ mod tests {
         let client = QUICConnectionCreator::client(
             0,
             &CertificateVerification::Disabled,
-            APPLICATION_PROTOCOLS,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
         )
         .unwrap();
         let target = ConnectTarget::parse(&format!(

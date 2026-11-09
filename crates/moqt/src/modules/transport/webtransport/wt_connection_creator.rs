@@ -52,7 +52,7 @@ impl WtConnectionCreator {
 pub(crate) async fn connect_session(
     connection: quinn::Connection,
     target: &ConnectTarget,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<web_transport_quinn::Session> {
     let request = ConnectRequest::new(target.url.clone()).with_protocols(
         protocols
@@ -65,7 +65,7 @@ pub(crate) async fn connect_session(
 
 pub(crate) async fn accept_session(
     request: web_transport_quinn::Request,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<web_transport_quinn::Session> {
     let mut response = ConnectResponse::OK;
     response.protocol = protocols
@@ -134,7 +134,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let connection = target
             .connect_quic(&self.quic_endpoint, client_config.clone())
             .await?;
-        let session = connect_session(connection, target, self.protocols).await?;
+        let session = connect_session(connection, target, &self.protocols).await?;
 
         Ok(Box::new(WtConnection::new(session)))
     }
@@ -157,9 +157,9 @@ impl TransportConnectionCreator for WtConnectionCreator {
                     .await;
                 continue;
             }
-            let protocols = self.protocols;
+            let protocols = self.protocols.clone();
             return Ok(Box::pin(async move {
-                let session = accept_session(request, protocols).await?;
+                let session = accept_session(request, &protocols).await?;
                 Ok(Box::new(WtConnection::new(session)) as BoxedConnection)
             }));
         }
@@ -184,7 +184,7 @@ mod tests {
     use crate::{
         CertificateVerification, Endpoint, WEBTRANSPORT,
         modules::{
-            moqt::version::APPLICATION_PROTOCOLS,
+            moqt::version::{DEFAULT_VERSIONS, application_protocols},
             test_support::{
                 HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions_from,
                 insecure_client_config, server_transport_creator, spawn_native_server,
@@ -217,7 +217,7 @@ mod tests {
         let client = WtConnectionCreator::client(
             0,
             &CertificateVerification::Disabled,
-            APPLICATION_PROTOCOLS,
+            application_protocols(DEFAULT_VERSIONS).unwrap(),
         )
         .unwrap();
         let target = ConnectTarget::parse(&format!(

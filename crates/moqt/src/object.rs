@@ -25,4 +25,5 @@ pub use crate::modules::moqt::data_plane::stream::stream_data_sender::Uninitiali
 pub use crate::modules::moqt::data_plane::stream::stream_data_sender_factory::StreamDataSenderFactory;
 pub use crate::modules::moqt::data_plane::stream::stream_receiver::StreamReceiveError;
 pub use crate::modules::transport::read_error::ReadError;
+pub use crate::modules::transport::transport_connection::DatagramDelivery;
 pub use crate::modules::moqt::data_plane::stream_priority::StreamPriority;

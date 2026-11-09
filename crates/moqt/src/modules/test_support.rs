@@ -23,7 +23,6 @@ use tracing_subscriber::{
 };
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
-use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
@@ -48,7 +47,7 @@ use crate::{
         runtime::dispatch::incoming_object::{
             IncomingDatagram, IncomingObject, IncomingObjectReceiver,
         },
-        version::DRAFT18_PROTOCOLS,
+        version::{DEFAULT_VERSIONS, Version, server_application_protocols},
     },
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
@@ -61,6 +60,14 @@ use crate::{
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateHandler},
     wire::{SubgroupId, SubgroupObject},
 };
+
+/// Key 0x4000 is in draft-18's Mandatory Track Property range (§2.5.1).
+pub(crate) fn mandatory_track_properties() -> crate::TrackProperties {
+    crate::TrackProperties::from_pairs(vec![KeyValuePair {
+        key: 0x4000,
+        value: VariantType::Even(1),
+    }])
+}
 
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const PUBLISHER_PRIORITY: u8 = 128;
@@ -96,6 +103,7 @@ pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
         cert_path,
         key_path,
         keep_alive_interval_sec: 5,
+        versions: DEFAULT_VERSIONS.to_vec(),
     }
 }
 
@@ -106,7 +114,7 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
         &config.key_path,
         0,
         config.keep_alive_interval_sec,
-        APPLICATION_PROTOCOLS,
+        server_application_protocols(&config.versions).unwrap(),
     )
     .unwrap()
 }
@@ -144,15 +152,18 @@ pub(crate) async fn assert_both_sides_open_bi_streams(
 pub(crate) fn spawn_native_server_handshake(
     name: &str,
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    spawn_native_server_handshake_offering(name, APPLICATION_PROTOCOLS)
+    spawn_native_server_handshake_offering(name, DEFAULT_VERSIONS)
 }
 
 fn spawn_native_server_handshake_offering(
     name: &str,
-    protocols: ApplicationProtocols,
+    versions: &[Version],
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    let server_config = self_signed_server_config(name);
-    let server = Endpoint::<NATIVE>::create_server_offering(&server_config, protocols).unwrap();
+    let server_config = ServerConfig {
+        versions: versions.to_vec(),
+        ..self_signed_server_config(name)
+    };
+    let server = Endpoint::<NATIVE>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
@@ -161,15 +172,20 @@ fn spawn_native_server_handshake_offering(
 /// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
 pub(crate) fn spawn_native_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    spawn_native_server_offering(name, APPLICATION_PROTOCOLS)
+    spawn_native_server_offering(name, DEFAULT_VERSIONS)
 }
 
-/// `spawn_native_server` offering only `protocols`.
+/// `spawn_native_server`, offering only draft-18.
+pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    spawn_native_server_offering(name, &[Version::Draft18])
+}
+
+/// `spawn_native_server`, offering `versions`.
 pub(crate) fn spawn_native_server_offering(
     name: &str,
-    protocols: ApplicationProtocols,
+    versions: &[Version],
 ) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_native_server_handshake_offering(name, protocols);
+    let (port, handshake) = spawn_native_server_handshake_offering(name, versions);
     let accept = tokio::spawn(async move {
         handshake
             .await
@@ -348,7 +364,11 @@ pub(crate) fn native_client_with_config(config: ClientConfig) -> Endpoint<NATIVE
 
 /// `native_client_with_config`, offering only draft-18.
 pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<NATIVE> {
-    Endpoint::<NATIVE>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
+    Endpoint::<NATIVE>::create_client(&ClientConfig {
+        versions: vec![Version::Draft18],
+        ..config
+    })
+    .unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
@@ -430,11 +450,6 @@ pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Ses
     connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
         .await
         .unwrap()
-}
-
-/// `spawn_native_server`, offering only draft-18.
-pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    spawn_native_server_offering(name, DRAFT18_PROTOCOLS)
 }
 
 /// Connects a NATIVE client and server that offer only draft-18, over raw

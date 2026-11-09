@@ -23,6 +23,11 @@ pub enum RequestFailure {
     Send(#[from] TransportSendError),
     #[error("protocol violation: {0}")]
     ProtocolViolation(&'static str),
+    /// The track carries a Mandatory Track Property the peer's draft cannot
+    /// carry (draft-14 has no Track Properties; draft-18 §2.5.1), so the
+    /// request was not sent.
+    #[error("the peer cannot understand the track's Mandatory Track Properties")]
+    TrackNotUnderstood,
     /// A PUBLISH for a track the peer's SUBSCRIBE_TRACKS covers found the
     /// peer's stream limit reached, so PUBLISH_BLOCKED went on that
     /// SUBSCRIBE_TRACKS instead, and no PUBLISH for the track may follow on

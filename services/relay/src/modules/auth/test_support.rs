@@ -96,6 +96,36 @@ pub(crate) async fn spawn_relay(
     token: VerifiedToken,
     route_registry: Arc<dyn RelayRouteRegistry>,
 ) -> RunningRelay {
+    let OfferingRelay {
+        server,
+        cert_path,
+        cert_dir,
+    } = relay_server_offering(token, route_registry, moqt::DEFAULT_VERSIONS);
+    let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
+    RunningRelay {
+        port: handler.local_port,
+        server,
+        handler,
+        cert_path,
+        _cert_dir: cert_dir,
+    }
+}
+
+/// A relay with no transport spawned yet; the certificate lives as long as
+/// `cert_dir`.
+pub(crate) struct OfferingRelay {
+    pub(crate) server: RelayServer,
+    /// Self-signed for `localhost` and `127.0.0.1`.
+    pub(crate) cert_path: PathBuf,
+    pub(crate) cert_dir: TempDir,
+}
+
+/// A relay accepting `versions` whose verifier takes every token as `token`.
+pub(crate) fn relay_server_offering(
+    token: VerifiedToken,
+    route_registry: Arc<dyn RelayRouteRegistry>,
+    versions: &[moqt::Version],
+) -> OfferingRelay {
     let cert_dir = TempDir::new("auth-test");
     let CertificateFiles {
         cert_path,
@@ -113,6 +143,7 @@ pub(crate) async fn spawn_relay(
                 verifier: Arc::new(StubVerifier(StubOutcome::Verified(token))),
             },
             inter_relay_client: unused_inter_relay_client_config(),
+            versions: versions.to_vec(),
             data_plane: DataPlaneConfig {
                 cache: CacheConfig::default(),
                 disk_cache: None,
@@ -120,13 +151,10 @@ pub(crate) async fn spawn_relay(
             },
         },
     );
-    let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
-    RunningRelay {
-        port: handler.local_port,
+    OfferingRelay {
         server,
-        handler,
         cert_path: PathBuf::from(&cert_path),
-        _cert_dir: cert_dir,
+        cert_dir,
     }
 }
 

@@ -25,6 +25,8 @@ pub(crate) struct InterRelayClientConfig {
     /// whose certificate passes `certificate_verification`.
     pub(crate) relay_token: String,
     pub(crate) certificate_verification: CertificateVerification,
+    /// The drafts offered to another relay's inner transport.
+    pub(crate) versions: Vec<moqt::Version>,
 }
 
 pub(crate) struct InterRelayConnectionManager {
@@ -80,6 +82,7 @@ impl InterRelayConnectionManager {
                 certificate_verification: self.client_config.certificate_verification.clone(),
                 authorization_token: Some(self.client_config.relay_token.clone().into()),
                 follow_go_away: false,
+                versions: self.client_config.versions.clone(),
                 ..moqt::ClientConfig::default()
             })
         })?;
@@ -124,7 +127,10 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        auth::test_support::{RunningRelay, app_token, spawn_relay_with_verifier},
+        auth::test_support::{
+            RunningRelay, app_token, relay_server_offering, spawn_relay_with_verifier,
+        },
+        cascading::route_registry::NoopRelayRouteRegistry,
         test_support::{
             closed_spans::ClosedSpans, mock_session::detached_session_repository,
             relay_harness::fixtures::disk_cache::TempDir,
@@ -132,6 +138,13 @@ mod tests {
     };
 
     fn manager_trusting(trusted_cert_path: PathBuf) -> InterRelayConnectionManager {
+        manager_offering(trusted_cert_path, moqt::DEFAULT_VERSIONS)
+    }
+
+    fn manager_offering(
+        trusted_cert_path: PathBuf,
+        versions: &[moqt::Version],
+    ) -> InterRelayConnectionManager {
         InterRelayConnectionManager::new(
             Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
             InterRelayClientConfig {
@@ -139,6 +152,7 @@ mod tests {
                 certificate_verification: CertificateVerification::TrustedCertificates(
                     trusted_cert_path,
                 ),
+                versions: versions.to_vec(),
             },
         )
     }
@@ -197,5 +211,35 @@ mod tests {
         let error = format!("{:#}", result.unwrap_err());
         assert!(error.contains("invalid peer certificate"), "{error}");
         assert!(manager.dialed_relay_ids().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_relay_dials_another_in_the_drafts_it_is_configured_with() {
+        // Arrange: the other relay accepts draft-18 only
+        let other = relay_server_offering(
+            VerifiedToken::full_access(),
+            Arc::new(NoopRelayRouteRegistry),
+            &[moqt::Version::Draft18],
+        );
+        let inner = other.server.spawn_inner_transport::<moqt::QUIC>(0).unwrap();
+        let manager = manager_offering(
+            other.cert_path.clone(),
+            &[moqt::Version::Draft18, moqt::Version::Draft14],
+        );
+
+        // Act
+        let dialed = tokio::time::timeout(
+            Duration::from_secs(5),
+            manager.get_or_connect(&RelayInfo {
+                relay_id: "relay-b".to_string(),
+                host: "127.0.0.1".to_string(),
+                port: inner.local_port,
+            }),
+        )
+        .await
+        .expect("the dial should end");
+
+        // Assert
+        assert!(dialed.is_ok(), "{:?}", dialed.err());
     }
 }

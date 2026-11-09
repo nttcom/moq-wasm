@@ -400,6 +400,7 @@ pub(crate) async fn connected_sessions() -> ConnectedSessions {
         cert_path,
         key_path,
         keep_alive_interval_sec: 5,
+        versions: moqt::DEFAULT_VERSIONS.to_vec(),
     })
     .unwrap();
     let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
@@ -435,6 +436,7 @@ impl FakePublisher {
             cert_path,
             key_path,
             keep_alive_interval_sec: 5,
+            versions: moqt::DEFAULT_VERSIONS.to_vec(),
         })
         .unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
@@ -474,6 +476,7 @@ pub(crate) fn datagram_publisher(objects: Vec<moqt::object::Object>) -> String {
         cert_path,
         key_path,
         keep_alive_interval_sec: 5,
+        versions: moqt::DEFAULT_VERSIONS.to_vec(),
     })
     .unwrap();
     let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
@@ -523,6 +526,7 @@ pub(crate) fn reset_stream_publisher(
         cert_path,
         key_path,
         keep_alive_interval_sec: 5,
+        versions: moqt::DEFAULT_VERSIONS.to_vec(),
     })
     .unwrap();
     let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());

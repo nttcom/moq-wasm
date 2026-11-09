@@ -24,7 +24,7 @@ use crate::modules::transport::{
 pub(crate) async fn connect(
     target: &ConnectTarget,
     crypto: Arc<rustls::ClientConfig>,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<QmuxConnection> {
     tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(target, crypto, protocols))
         .await
@@ -34,7 +34,7 @@ pub(crate) async fn connect(
 async fn handshake(
     target: &ConnectTarget,
     crypto: Arc<rustls::ClientConfig>,
-    protocols: ApplicationProtocols,
+    protocols: &ApplicationProtocols,
 ) -> anyhow::Result<QmuxConnection> {
     let remote_address = target.resolve_remote_address().await?;
     let tcp = TcpStream::connect(remote_address)

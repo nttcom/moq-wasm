@@ -5,10 +5,14 @@ use crate::{
     executor::{MaybeSend, MaybeSync},
     modules::{
         executor::BoxFuture,
-        moqt::{domains::session_creator::SessionCreator, version::APPLICATION_PROTOCOLS},
+        moqt::{
+            domains::session_creator::SessionCreator,
+            version::{
+                DEFAULT_VERSIONS, Version, application_protocols, server_application_protocols,
+            },
+        },
         transport::{
-            accept_error::AcceptError, application_protocol::ApplicationProtocols,
-            transport_connection_creator::TransportConnectionCreator,
+            accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
         },
     },
     server::Accepting,
@@ -103,6 +107,9 @@ pub struct ClientConfig {
     /// GOAWAY arrives as a `SessionEvent` and the session stays on its connection.
     pub follow_go_away: bool,
     pub web_socket_fallback: WebSocketFallback,
+    /// The drafts offered to the server, most preferred first; the server
+    /// picks one of them. `create_client` fails when it is empty.
+    pub versions: Vec<Version>,
 }
 
 impl Default for ClientConfig {
@@ -113,6 +120,7 @@ impl Default for ClientConfig {
             authorization_token: None,
             follow_go_away: true,
             web_socket_fallback: WebSocketFallback::default(),
+            versions: DEFAULT_VERSIONS.to_vec(),
         }
     }
 }
@@ -139,7 +147,12 @@ pub struct ServerConfig {
     pub cert_path: String,
     pub key_path: String,
     pub keep_alive_interval_sec: u64,
-    // log_level: String,
+    /// The drafts accepted from clients, most preferred first: of those a
+    /// client offers, the first one listed here is chosen. A WebTransport
+    /// session without a subprotocol is draft-14, so with draft-14 listed
+    /// first every WebTransport session is draft-14. `create_server` fails
+    /// when it is empty.
+    pub versions: Vec<Version>,
 }
 
 pub struct Endpoint<T: TransportProtocol> {
@@ -148,20 +161,17 @@ pub struct Endpoint<T: TransportProtocol> {
 
 impl<T: TransportProtocol> Endpoint<T> {
     pub fn create_client(config: &ClientConfig) -> anyhow::Result<Self> {
-        Self::create_client_offering(config, APPLICATION_PROTOCOLS)
-    }
-
-    pub(crate) fn create_client_offering(
-        config: &ClientConfig,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        let client =
-            T::ConnectionCreator::client(config.port, &config.certificate_verification, protocols)?;
+        let client = T::ConnectionCreator::client(
+            config.port,
+            &config.certificate_verification,
+            application_protocols(&config.versions)?,
+        )?;
         let session_creator = SessionCreator::new(
             client,
             config.authorization_token.clone(),
             config.follow_go_away,
             config.web_socket_fallback,
+            config.versions.clone(),
         );
         Ok(Self {
             session_creator: Arc::new(session_creator),
@@ -169,21 +179,20 @@ impl<T: TransportProtocol> Endpoint<T> {
     }
 
     pub fn create_server(server_config: &ServerConfig) -> anyhow::Result<Self> {
-        Self::create_server_offering(server_config, APPLICATION_PROTOCOLS)
-    }
-
-    pub(crate) fn create_server_offering(
-        server_config: &ServerConfig,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
         let server = T::ConnectionCreator::server(
             &server_config.cert_path,
             &server_config.key_path,
             server_config.port,
             server_config.keep_alive_interval_sec,
-            protocols,
+            server_application_protocols(&server_config.versions)?,
         )?;
-        let session_creator = SessionCreator::new(server, None, false, WebSocketFallback::Disabled);
+        let session_creator = SessionCreator::new(
+            server,
+            None,
+            false,
+            WebSocketFallback::Disabled,
+            server_config.versions.clone(),
+        );
         Ok(Self {
             session_creator: Arc::new(session_creator),
         })
@@ -231,13 +240,147 @@ impl<T: TransportProtocol> Endpoint<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CertificateVerification, ClientConfig, Endpoint, NATIVE,
-        modules::moqt::domains::endpoint::ServerConfig,
+        CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, Version,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, native_client, native_client_with_config, receive_disconnected,
-            self_signed_server_config, spawn_native_server,
+            HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config, native_client,
+            native_client_with_config, receive_disconnected, self_signed_server_config,
+            spawn_native_server,
         },
+        server::ServerConfig,
     };
+
+    /// `url_of(port)` names the server's port in a `moqt` or `https` URL.
+    async fn session_version(
+        server_versions: &[Version],
+        client_versions: &[Version],
+        url_of: fn(u16) -> String,
+    ) -> Version {
+        let server = Endpoint::<NATIVE>::create_server(&ServerConfig {
+            versions: server_versions.to_vec(),
+            ..self_signed_server_config("versions")
+        })
+        .unwrap();
+        let port = server.local_port().unwrap();
+        let accept: tokio::task::JoinHandle<Session> = tokio::spawn(async move {
+            server
+                .accept()
+                .await
+                .unwrap()
+                .await
+                .unwrap()
+                .accept(&tracing::Span::current())
+                .await
+                .unwrap()
+        });
+        let client = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            versions: client_versions.to_vec(),
+            ..insecure_client_config()
+        })
+        .unwrap();
+        let (client, _server) = connect_sessions_from(&client, &url_of(port), accept)
+            .await
+            .unwrap();
+        client.context().connection().control.version()
+    }
+
+    fn quic_url(port: u16) -> String {
+        format!("moqt://127.0.0.1:{port}")
+    }
+
+    fn web_transport_url(port: u16) -> String {
+        format!("https://127.0.0.1:{port}/moq")
+    }
+
+    #[tokio::test]
+    async fn a_server_accepting_both_drafts_speaks_the_one_each_client_offers() {
+        // Arrange
+        let both = [Version::Draft14, Version::Draft18];
+
+        // Act
+        let draft14 = session_version(&both, &[Version::Draft14], quic_url).await;
+        let draft18 = session_version(&both, &[Version::Draft18], quic_url).await;
+
+        // Assert
+        assert_eq!(draft14, Version::Draft14);
+        assert_eq!(draft18, Version::Draft18);
+    }
+
+    #[tokio::test]
+    async fn the_server_preference_decides_when_the_client_offers_both() {
+        // Act
+        let version = session_version(
+            &[Version::Draft18, Version::Draft14],
+            &[Version::Draft14, Version::Draft18],
+            quic_url,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(version, Version::Draft18);
+    }
+
+    #[tokio::test]
+    async fn the_server_preference_decides_over_web_transport_when_the_client_offers_both() {
+        // Arrange
+        let both = [Version::Draft14, Version::Draft18];
+
+        // Act
+        let draft14_first = session_version(&both, &both, web_transport_url).await;
+        let draft18_first = session_version(
+            &[Version::Draft18, Version::Draft14],
+            &both,
+            web_transport_url,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(draft14_first, Version::Draft14);
+        assert_eq!(draft18_first, Version::Draft18);
+    }
+
+    #[tokio::test]
+    async fn a_draft18_only_server_refuses_a_web_transport_session_without_a_subprotocol() {
+        // Arrange: a WebTransport client offering draft-14 asks for no subprotocol
+        let server = Endpoint::<NATIVE>::create_server(&ServerConfig {
+            versions: vec![Version::Draft18],
+            ..self_signed_server_config("draft18-only-web-transport")
+        })
+        .unwrap();
+        let port = server.local_port().unwrap();
+        let accept = tokio::spawn(async move { server.accept().await.unwrap().await.map(|_| ()) });
+        let client = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            versions: vec![Version::Draft14],
+            ..insecure_client_config()
+        })
+        .unwrap();
+
+        // Act
+        let url = format!("https://127.0.0.1:{port}/moq");
+        let connecting = tokio::spawn(async move {
+            let _session = client.connect(&url).await?.await;
+            anyhow::Ok(())
+        });
+        let accepted = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept)
+            .await
+            .unwrap()
+            .unwrap();
+        connecting.abort();
+
+        // Assert
+        assert!(accepted.is_err());
+    }
+
+    #[test]
+    fn a_client_offering_no_version_is_not_created() {
+        // Act
+        let client = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            versions: Vec::new(),
+            ..insecure_client_config()
+        });
+
+        // Assert
+        assert!(client.is_err());
+    }
 
     async fn connect_trusting(
         server_config: ServerConfig,

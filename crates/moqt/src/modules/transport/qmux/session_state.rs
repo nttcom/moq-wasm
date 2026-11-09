@@ -217,27 +217,30 @@ impl SessionState {
 
     /// The id of a new stream of `kind`, once the peer's MAX_STREAMS allows one.
     pub(crate) async fn allocate_stream_id(&self, kind: StreamKind) -> anyhow::Result<u64> {
-        wait_until(&self.opening_notify, || {
-            if self.is_closed() {
-                return Some(Err(anyhow::anyhow!("QMux session closed")));
-            }
-            let mut opening = self.opening.lock().expect("opening lock");
-            let limit = match kind {
-                StreamKind::Bidirectional => opening.peer_max_bidi,
-                StreamKind::Unidirectional => opening.peer_max_uni,
-            };
-            let next = match kind {
-                StreamKind::Bidirectional => &mut opening.next_bidi,
-                StreamKind::Unidirectional => &mut opening.next_uni,
-            };
-            if *next >= limit {
-                return None;
-            }
-            let index = *next;
-            *next += 1;
-            Some(Ok(self.role.stream_id(kind, index)))
-        })
-        .await
+        wait_until(&self.opening_notify, || self.try_allocate_stream_id(kind)).await
+    }
+
+    /// `allocate_stream_id` without waiting: `None` while the peer's stream
+    /// limit allows no stream of `kind`.
+    pub(crate) fn try_allocate_stream_id(&self, kind: StreamKind) -> Option<anyhow::Result<u64>> {
+        if self.is_closed() {
+            return Some(Err(anyhow::anyhow!("QMux session closed")));
+        }
+        let mut opening = self.opening.lock().expect("opening lock");
+        let limit = match kind {
+            StreamKind::Bidirectional => opening.peer_max_bidi,
+            StreamKind::Unidirectional => opening.peer_max_uni,
+        };
+        let next = match kind {
+            StreamKind::Bidirectional => &mut opening.next_bidi,
+            StreamKind::Unidirectional => &mut opening.next_uni,
+        };
+        if *next >= limit {
+            return None;
+        }
+        let index = *next;
+        *next += 1;
+        Some(Ok(self.role.stream_id(kind, index)))
     }
 
     pub(crate) fn register_send_stream(&self, stream_id: u64) -> Arc<SendQuota> {

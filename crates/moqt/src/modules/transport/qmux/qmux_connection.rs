@@ -22,7 +22,7 @@ use crate::modules::transport::{
     application_protocol::NegotiatedProtocol,
     transport_addresses::TransportAddresses,
     transport_connection::{
-        BoxedReceiveStream, BoxedSendStream, TransportClose, TransportConnection,
+        BoxedReceiveStream, BoxedSendStream, DatagramDelivery, TransportClose, TransportConnection,
     },
     transport_stats::TransportStats,
 };
@@ -129,9 +129,25 @@ impl QmuxConnection {
 
     async fn open(&self, kind: StreamKind) -> anyhow::Result<(u64, BoxedSendStream)> {
         let stream_id = self.session.allocate_stream_id(kind).await?;
+        Ok(self.opened(stream_id))
+    }
+
+    fn opened(&self, stream_id: u64) -> (u64, BoxedSendStream) {
         let quota = self.session.register_send_stream(stream_id);
         let send_stream = QmuxSendStream::new(stream_id, self.session.clone(), quota);
-        Ok((stream_id, Box::new(send_stream)))
+        (stream_id, Box::new(send_stream))
+    }
+
+    fn bidi_halves(
+        &self,
+        (stream_id, send_stream): (u64, BoxedSendStream),
+    ) -> (BoxedSendStream, BoxedReceiveStream) {
+        let shared = self.session.register_receive_stream(
+            stream_id,
+            self.session.local.initial_max_stream_data_bidi_local,
+        );
+        let receive_stream = QmuxReceiveStream::new(stream_id, self.session.clone(), shared);
+        (send_stream, Box::new(receive_stream))
     }
 }
 
@@ -174,19 +190,18 @@ impl TransportConnection for QmuxConnection {
     }
 
     async fn open_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
-        let (stream_id, send_stream) = self.open(StreamKind::Bidirectional).await?;
-        let shared = self.session.register_receive_stream(
-            stream_id,
-            self.session.local.initial_max_stream_data_bidi_local,
-        );
-        let receive_stream = QmuxReceiveStream::new(stream_id, self.session.clone(), shared);
-        Ok((send_stream, Box::new(receive_stream)))
+        let opened = self.open(StreamKind::Bidirectional).await?;
+        Ok(self.bidi_halves(opened))
     }
 
-    /// QMux carries only draft-14, whose requests open no stream of their
-    /// own, so this waits as `open_bi` does.
     async fn try_open_bi(&self) -> anyhow::Result<Option<(BoxedSendStream, BoxedReceiveStream)>> {
-        self.open_bi().await.map(Some)
+        let Some(stream_id) = self
+            .session
+            .try_allocate_stream_id(StreamKind::Bidirectional)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(self.bidi_halves(self.opened(stream_id?))))
     }
 
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
@@ -212,22 +227,21 @@ impl TransportConnection for QmuxConnection {
             .context("QMux session closed")
     }
 
-    fn send_datagram(&self, bytes: BytesMut) -> anyhow::Result<()> {
+    fn send_datagram(&self, bytes: BytesMut) -> anyhow::Result<DatagramDelivery> {
         let peer = self.session.peer_parameters.borrow().clone();
         let peer = peer.context("the peer's transport parameters are unknown")?;
         let max_frame_size = peer
             .max_datagram_frame_size
             .context("the peer does not accept datagrams")?;
         let frame_size = (bytes.len() + datagram_frame_overhead(bytes.len())) as u64;
-        anyhow::ensure!(
-            frame_size <= max_frame_size.min(peer.max_record_size),
-            "datagram of {} bytes exceeds what the peer accepts",
-            bytes.len()
-        );
+        if frame_size > max_frame_size.min(peer.max_record_size) {
+            return Ok(DatagramDelivery::TooLarge);
+        }
         self.session
             .commands
             .send(Command::Datagram(bytes.freeze()))
-            .map_err(|_| anyhow::anyhow!("QMux session closed"))
+            .map_err(|_| anyhow::anyhow!("QMux session closed"))?;
+        Ok(DatagramDelivery::Sent)
     }
 
     async fn receive_datagram(&self) -> anyhow::Result<BytesMut> {
@@ -509,12 +523,14 @@ mod tests {
         let (client, server) = connected().await;
 
         // Act
-        client.send_datagram(payload(1000)).unwrap();
+        let sent = client.send_datagram(payload(1000)).unwrap();
         let received = within(server.receive_datagram()).await.unwrap();
+        let too_large = client.send_datagram(payload(20_000)).unwrap();
 
         // Assert
+        assert_eq!(sent, DatagramDelivery::Sent);
         assert_eq!(received, payload(1000));
-        assert!(client.send_datagram(payload(20_000)).is_err());
+        assert_eq!(too_large, DatagramDelivery::TooLarge);
     }
 
     #[tokio::test]
