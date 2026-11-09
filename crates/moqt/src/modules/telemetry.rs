@@ -24,6 +24,18 @@ pub(crate) fn current_trace_context(control: &ControlChannel) -> Option<TraceCon
     current_traceparent()
 }
 
+/// `false` only in a test that called
+/// `test_support::without_trace_context_declaration`.
+#[cfg(not(all(test, not(target_arch = "wasm32"))))]
+pub(crate) fn server_declares_trace_context() -> bool {
+    true
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn server_declares_trace_context() -> bool {
+    crate::modules::test_support::server_declares_trace_context()
+}
+
 pub(crate) fn current_traceparent() -> Option<TraceContext> {
     let traceparent = TRACE_CONTEXT_PROVIDER.get()?()?;
     TraceContext::parse(traceparent.as_bytes())
