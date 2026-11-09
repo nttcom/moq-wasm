@@ -464,6 +464,7 @@ impl Fetch {
 mod tests {
     use super::*;
     use crate::config::DEFAULT_FETCH_FILL_TIMEOUT;
+    use crate::modules::auth::test_support::RunningRelay;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::{
         auth::{
@@ -478,17 +479,41 @@ mod tests {
                 FetchAnswer, MockFetchHandler, mock_session_answering_fetch,
                 session_repository_with_sessions,
             },
+            relay_clients::{
+                NAMESPACE, TRACK, TrackPublisher, fetch_current_group, subscribe_track,
+            },
             relay_harness::fixtures::{
                 cached_object::{insert_closed_group, open_group},
                 location,
             },
         },
     };
-    use moqt::fetch::JoinPoint;
+    use moqt::{fetch::JoinPoint, subscribe::SubscribeOption};
 
     const FETCH: Fetch = Fetch {
         fill_timeout: DEFAULT_FETCH_FILL_TIMEOUT,
     };
+
+    const CATALOG: &[u8] = b"catalog";
+
+    /// Evicts every cached object of `TRACK`, as TTL eviction does once each
+    /// has outlived the TTL. The newest object is evicted too because no
+    /// object reached the relay over the subscription, so the track does not
+    /// count as live; a catalog sent once is evicted the same way after
+    /// RELAY_CACHE_TTL_SECS.
+    fn evict_every_object(relay: &RunningRelay) {
+        let cache = relay
+            .server
+            .cache_store()
+            .get(&TrackKey::new(NAMESPACE, TRACK))
+            .expect("the relay caches the track");
+        cache.evict(Duration::ZERO);
+        assert!(cache.is_empty(), "the relay kept a cached object");
+    }
+
+    fn payloads(objects: &[moqt::object::Object]) -> Vec<&[u8]> {
+        objects.iter().map(|object| &object.payload[..]).collect()
+    }
 
     fn standalone_fetch_params(
         start_location: moqt::object::Location,
@@ -1281,5 +1306,49 @@ mod tests {
             result,
             Err(FetchError::Joining(JoiningFetchError::StartAfterLargest))
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_joining_fetch_reads_an_object_the_relay_never_received_from_the_publisher() {
+        // Arrange: the publisher writes its only object before the relay subscribes, like a catalog sent once
+        let (relay, subscriber) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let publisher = TrackPublisher::run(&relay).await;
+        publisher
+            .origin
+            .write_group(NAMESPACE, TRACK, bytes::Bytes::from_static(CATALOG))
+            .await
+            .unwrap();
+        let subscription = subscribe_track(&subscriber, SubscribeOption::default()).await;
+
+        // Act
+        let objects = fetch_current_group(&subscriber, &subscription).await;
+
+        // Assert
+        assert_eq!(payloads(&objects), vec![CATALOG]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_joining_fetch_reads_the_newest_object_the_relay_evicted_from_the_publisher() {
+        // Arrange: a first viewer brings the object into the relay cache, then the relay evicts it
+        let (relay, first_viewer) =
+            spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let publisher = TrackPublisher::run(&relay).await;
+        publisher
+            .origin
+            .write_group(NAMESPACE, TRACK, bytes::Bytes::from_static(CATALOG))
+            .await
+            .unwrap();
+        let first_subscription = subscribe_track(&first_viewer, SubscribeOption::default()).await;
+        fetch_current_group(&first_viewer, &first_subscription).await;
+        evict_every_object(&relay);
+        let late_viewer = connect_client(&relay).await;
+        let late_subscription = subscribe_track(&late_viewer, SubscribeOption::default()).await;
+
+        // Act
+        let objects = fetch_current_group(&late_viewer, &late_subscription).await;
+
+        // Assert
+        assert_eq!(payloads(&objects), vec![CATALOG]);
     }
 }

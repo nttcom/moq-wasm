@@ -102,6 +102,11 @@ impl RelayRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn cache_store(&self) -> &Arc<TrackCacheStore> {
+        &self.cache_store
+    }
+
     pub(crate) fn begin_draining(&self) {
         self.local_pub_sub_directory
             .begin_draining(unix_millis_now());

@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use moqt::{
     Session, SessionEvent, Subscription,
+    fetch::{Fetch, FetchOption},
+    object::Object,
     publish::{Origin, Retention},
     subscribe::SubscribeOption,
 };
@@ -40,6 +42,26 @@ pub(crate) async fn subscribe_track(session: &Session, option: SubscribeOption) 
     within(subscriber.subscribe(NAMESPACE.to_string(), TRACK.to_string(), option))
         .await
         .unwrap()
+}
+
+/// The objects of `subscription`'s current group, read the way an MSF catalog
+/// subscriber does: a Joining FETCH with offset 0 (draft-ietf-moq-msf-01 §5).
+pub(crate) async fn fetch_current_group(
+    session: &Session,
+    subscription: &Subscription,
+) -> Vec<Object> {
+    let mut subscriber = session.subscriber();
+    let handle = within(subscriber.fetch_relative_joining(subscription, 0, FetchOption::default()))
+        .await
+        .unwrap();
+    let mut receiver = within(subscriber.accept_fetch_receiver(&handle))
+        .await
+        .unwrap();
+    let mut objects = Vec::new();
+    while let Fetch::Object(object) = within(receiver.receive()).await.unwrap() {
+        objects.push(object);
+    }
+    objects
 }
 
 /// A client that announces `NAMESPACE` and serves `TRACK` from `origin`,

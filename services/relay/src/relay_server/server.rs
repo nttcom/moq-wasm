@@ -3,6 +3,9 @@ use std::{sync::Arc, time::Duration};
 use moqt::server::ServerConfig;
 use tokio::sync::mpsc;
 
+#[cfg(test)]
+use crate::modules::data_plane::cache::store::TrackCacheStore;
+
 use crate::{
     RelayConfig,
     modules::{
@@ -173,6 +176,11 @@ impl RelayServer {
     pub async fn drain(&self, timeout: Duration) {
         self.runtime.begin_draining();
         drain_client_sessions(&self.repo, self.route_registry.as_ref(), timeout).await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_store(&self) -> &Arc<TrackCacheStore> {
+        self.runtime.cache_store()
     }
 
     pub fn spawn_stats_exporter(
