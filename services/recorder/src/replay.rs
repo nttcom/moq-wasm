@@ -537,8 +537,9 @@ mod tests {
             forwarding: ForwardingPreference::Subgroup { subgroup_id: 2 },
             publisher_priority: 17,
             status,
+            // Two well-formed Key-Value-Pairs: moqt refuses malformed Immutable Properties.
             extension_headers: ExtensionHeaders::from_immutable_extensions(vec![
-                Bytes::from_static(b"unknown"),
+                Bytes::from_static(&[0x02, 0x05, 0x0D, 0x02, b'a', b'b']),
             ]),
             payload,
             ends_group: false,

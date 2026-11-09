@@ -10,12 +10,11 @@ use crate::logging::{link_span, relay_hostname};
 use crate::modules::{
     data_plane::{
         cache::{cached_object::CacheStamp, track_cache::TrackCache},
-        ingress::{datagram_reader::read_datagrams, stream_reader::accept_streams},
+        ingress::track_reader::read_track,
     },
     domain::{session_id::SessionId, track_key::TrackKey},
     session::{
-        data_receiver::receiver::DataReceiver, session_event::SessionEvent, subscriber::Subscriber,
-        subscription::UpstreamSubscription,
+        session_event::SessionEvent, subscriber::Subscriber, subscription::UpstreamSubscription,
     },
 };
 
@@ -102,11 +101,7 @@ impl IngestTask {
                 return;
             }
         };
-        let kind = match &receiver {
-            DataReceiver::Stream(_) => "stream",
-            DataReceiver::Datagram(_) => "datagram",
-        };
-        tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind, "track ingress started");
+        tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, "track ingress started");
         let ingest = TrackIngest {
             track_key: track_key.clone(),
             cache: cache.clone(),
@@ -114,37 +109,20 @@ impl IngestTask {
             stop_receiver,
             stamp,
         };
-        cache.begin_live_ingest();
-        match receiver {
-            DataReceiver::Stream(factory) => {
-                let track_span = tracing::info_span!(
-                    parent: &publisher_session_span,
-                    "relay.dataplane.ingress.track",
-                    subscriber_session_id,
-                    publisher_session_id,
-                    track_alias = subscription.track_alias(),
-                    track_namespace = %track_key.track_namespace,
-                    track_name = %track_key.track_name,
-                );
-                link_span(&track_span, &Span::current());
-                let factory_span = tracing::debug_span!(
-                    parent: &track_span,
-                    "relay.dataplane.ingress.stream_factory",
-                    track_namespace = %track_key.track_namespace, track_name = %track_key.track_name,
-                );
-                // Also instrument with the track span, so the task stays inside it
-                // when the debug factory span is disabled.
-                accept_streams(ingest, factory, track_span.clone())
-                    .instrument(factory_span)
-                    .instrument(track_span)
-                    .await;
-            }
-            DataReceiver::Datagram(datagram_receiver) => {
-                read_datagrams(ingest, datagram_receiver).await
-            }
-        }
-        cache.end_live_ingest();
-        tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, kind, relay_hostname = relay_hostname(), "track ingress stopped");
+        let track_span = tracing::info_span!(
+            parent: &publisher_session_span,
+            "relay.dataplane.ingress.track",
+            subscriber_session_id,
+            publisher_session_id,
+            track_alias = subscription.track_alias(),
+            track_namespace = %track_key.track_namespace,
+            track_name = %track_key.track_name,
+        );
+        link_span(&track_span, &Span::current());
+        read_track(ingest, receiver, track_span.clone())
+            .instrument(track_span)
+            .await;
+        tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, relay_hostname = relay_hostname(), "track ingress stopped");
     }
 }
 

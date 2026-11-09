@@ -11,7 +11,7 @@ use moqt::{
     namespace::NamespaceInterest,
     object::{
         ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, Location,
-        MalformedTrackError, Object, StreamDataReceiver, StreamDataReceiverFactory, Subgroup,
+        MalformedTrackError, Object, StreamDataReceiver, Subgroup, TrackData,
     },
     publish::{GroupBoundary, OutgoingObject, Retention, WriteOutcome},
     subscribe::{FilterType, SubscribeOption},
@@ -415,7 +415,7 @@ pub struct Subscription {
 enum Reading {
     Unstarted,
     Objects(TrackReader),
-    Groups(StreamDataReceiverFactory),
+    Groups(DataReceiver),
 }
 
 impl Subscription {
@@ -490,18 +490,18 @@ impl Subscription {
                 if let Reading::Unstarted = *reading {
                     let mut subscriber = self.session.subscriber();
                     match subscriber.accept_data_receiver(&self.subscription).await {
-                        Ok(DataReceiver::Stream(factory)) => *reading = Reading::Groups(factory),
-                        Ok(DataReceiver::Datagram(_)) => {
-                            return Err(anyhow_error(MalformedTrackError.into()));
-                        }
+                        Ok(receiver) => *reading = Reading::Groups(receiver),
                         Err(_) => return Ok(None),
                     }
                 }
-                let Reading::Groups(factory) = &mut *reading else {
+                let Reading::Groups(data) = &mut *reading else {
                     return Err(js_error("the subscription is read by object"));
                 };
-                let mut receiver = match factory.next().await {
-                    Ok(receiver) => receiver,
+                let mut receiver = match data.next().await {
+                    Ok(TrackData::Subgroup(receiver)) => receiver,
+                    Ok(TrackData::Datagram(_)) => {
+                        return Err(js_error("a datagram arrived on a track read by group"));
+                    }
                     Err(error) if error.is::<MalformedTrackError>() => {
                         return Err(anyhow_error(error));
                     }
@@ -747,9 +747,13 @@ impl MoqObject {
 
 impl From<TrackObject> for MoqObject {
     fn from(object: TrackObject) -> Self {
+        let subgroup_id = match object.forwarding {
+            ForwardingPreference::Subgroup { subgroup_id } => subgroup_id,
+            ForwardingPreference::Datagram => 0,
+        };
         Self {
             group_id: object.group_id,
-            subgroup_id: object.subgroup_id,
+            subgroup_id,
             object_id: object.object_id,
             status: None,
             payload: object.payload,

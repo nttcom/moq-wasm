@@ -3,15 +3,19 @@ use futures::StreamExt;
 use thiserror::Error;
 use tokio_util::codec::{Decoder, FramedRead};
 
-use crate::modules::moqt::data_plane::codec::{
-    control_message_decoder::ControlMessageDecoder, tokio_reader::Reader,
-    uni_stream_decoder::UniStreamDecoder,
+use crate::modules::moqt::data_plane::{
+    codec::{
+        control_message_decoder::ControlMessageDecoder, tokio_reader::Reader,
+        uni_stream_decoder::UniStreamDecoder,
+    },
+    malformed_track_error::MalformedTrackError,
 };
 
 pub(crate) type BiStreamReceiver = StreamReceiver<1024, ControlMessageDecoder>;
 pub(crate) type UniStreamReceiver = StreamReceiver<{ 64 * 1024 }, UniStreamDecoder>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum StreamReceiveError {
     #[error("stream closed: {0}")]
     Closed(ReadError),
@@ -21,6 +25,10 @@ pub enum StreamReceiveError {
     /// Status (draft-14 §10.2.1.1). The caller should close the session.
     #[error("protocol violation: {0}")]
     ProtocolViolation(String),
+    /// An object of the stream makes its track malformed; the object is not
+    /// returned.
+    #[error(transparent)]
+    MalformedTrack(MalformedTrackError),
 }
 
 #[derive(Debug)]

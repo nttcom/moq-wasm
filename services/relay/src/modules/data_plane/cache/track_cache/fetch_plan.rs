@@ -278,6 +278,7 @@ mod tests {
         let expiring = CacheStamp {
             max_cache_duration: Some(Duration::from_millis(10)),
             persist: false,
+            ..CacheStamp::default()
         };
         for object in [
             stream_object(0, 0),

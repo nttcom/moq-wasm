@@ -1,92 +1,33 @@
-use tokio::sync::mpsc;
-
-use crate::modules::{
-    data_plane::{
-        cache::subgroup_key::SubgroupKey,
-        cache::{cached_object::CachedObject, track_cache::OpenSubgroupGuard},
-        ingress::ingest_task::TrackIngest,
-    },
-    domain::track_key::TrackKey,
-    session::{data_receiver::datagram_receiver::DatagramReceiver, session_event::SessionEvent},
+use crate::modules::data_plane::cache::{
+    cached_object::CachedObject,
+    subgroup_key::SubgroupKey,
+    track_cache::{OpenSubgroupGuard, TrackCache, TrackMalformed},
 };
 
-pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn DatagramReceiver>) {
-    let TrackIngest {
-        track_key,
-        cache,
-        publisher_mailbox_sender,
-        mut stop_receiver,
-        stamp,
-    } = ingest;
-    let mut current_group: Option<(u64, OpenSubgroupGuard<'_>)> = None;
-    loop {
-        let receive_result = tokio::select! {
-            _ = stop_receiver.changed() => {
-                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram reader stopped");
-                break;
-            }
-            result = receiver.receive_object() => result,
-        };
+/// The group a track's datagrams are filling: it stays open in the cache
+/// until a datagram of another group arrives or the track's ingest ends.
+pub(crate) struct DatagramGroup<'a> {
+    cache: &'a TrackCache,
+    open: Option<(u64, OpenSubgroupGuard<'a>)>,
+}
 
-        match receive_result {
-            Ok(object) => {
-                let group_id = object.location.group_id;
-                let open = match &mut current_group {
-                    Some((current_group_id, open)) if *current_group_id == group_id => open,
-                    slot => {
-                        if let Some((_, previous)) = slot.take() {
-                            previous.finish();
-                        }
-                        let key = SubgroupKey::Datagram { group_id };
-                        let (_, open) = slot.insert((group_id, cache.open_subgroup(key)));
-                        open
-                    }
-                };
-                let object = stamp.apply(CachedObject::from_object(object));
-                if open.insert(object).is_err() {
-                    report_malformed_track(&publisher_mailbox_sender, &track_key);
-                    break;
-                }
-            }
-            Err(error) if error.is::<moqt::object::MalformedTrackError>() => {
-                cache.mark_malformed();
-                report_malformed_track(&publisher_mailbox_sender, &track_key);
-                break;
-            }
-            Err(_) => {
-                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram receiver ended");
-                break;
-            }
-        }
+impl<'a> DatagramGroup<'a> {
+    pub(crate) fn new(cache: &'a TrackCache) -> Self {
+        Self { cache, open: None }
     }
-}
 
-fn report_malformed_track(
-    publisher_mailbox_sender: &mpsc::UnboundedSender<SessionEvent>,
-    track_key: &TrackKey,
-) {
-    tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; stopping datagram ingest");
-    let _ = publisher_mailbox_sender.send(SessionEvent::MalformedTrackDetected(track_key.clone()));
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::modules::{
-        session::session_event::SessionEvent,
-        test_support::relay_harness::{FailingUpstream, RelayHarness},
-    };
-
-    #[tokio::test]
-    async fn a_subgroup_stream_on_the_datagram_track_reports_the_malformed_track() {
-        // Arrange
-        let mut harness = RelayHarness::new();
-        // Act
-        harness
-            .run_datagram_ingest(FailingUpstream(|| moqt::object::MalformedTrackError.into()))
-            .await;
-        // Assert
-        harness.wait_track_malformed().await;
-        let event = harness.expect_session_event().await;
-        assert!(matches!(event, SessionEvent::MalformedTrackDetected(_)));
+    pub(crate) fn insert(&mut self, object: CachedObject) -> Result<(), TrackMalformed> {
+        let group_id = object.object.location.group_id;
+        let open = match &mut self.open {
+            Some((open_group_id, open)) if *open_group_id == group_id => open,
+            slot => {
+                if let Some((_, previous)) = slot.take() {
+                    previous.finish();
+                }
+                let open = self.cache.open_subgroup(SubgroupKey::Datagram { group_id });
+                &mut slot.insert((group_id, open)).1
+            }
+        };
+        open.insert(object)
     }
 }

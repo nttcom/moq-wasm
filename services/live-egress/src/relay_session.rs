@@ -4,7 +4,6 @@ use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
     ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
-    object::DataReceiver,
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -37,17 +36,13 @@ pub async fn subscribe(
         .with_context(|| format!("subscribe {namespace}/{name}"))
 }
 
-/// Waits for the first data stream of `subscription`.
 pub async fn track_reader(session: &Session, subscription: &Subscription) -> Result<TrackReader> {
     let receiver = session
         .subscriber()
         .accept_data_receiver(subscription)
         .await
         .context("accept data receiver")?;
-    let DataReceiver::Stream(factory) = receiver else {
-        bail!("expected a stream data receiver");
-    };
-    Ok(TrackReader::new(factory))
+    Ok(TrackReader::new(receiver))
 }
 
 /// Reads the first object of the catalog's current group with the SUBSCRIBE and

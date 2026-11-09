@@ -3,7 +3,7 @@ use std::sync::{mpsc::Sender, Arc};
 use anyhow::{bail, Context, Result};
 use moqt::{
     namespace::NamespaceInterest,
-    object::{DataReceiver, GroupOrder},
+    object::GroupOrder,
     publish::PublishHandler,
     subscribe::{FilterType, SubscribeOption},
     ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, SessionEvent, Subscriber,
@@ -293,11 +293,7 @@ impl CommandReceiver {
                     return;
                 }
             };
-            let DataReceiver::Stream(factory) = receiver else {
-                tracing::warn!("command track is not delivered on subgroup streams");
-                return;
-            };
-            let mut reader = TrackReader::new(factory);
+            let mut reader = TrackReader::new(receiver);
             loop {
                 match reader.next_object().await {
                     Ok(Some(object)) => {

@@ -5,7 +5,7 @@ use moqt::{
     Session, Subscription,
     fetch::{Fetch, FetchOption},
     object::ContentExists,
-    object::{DataReceiver, MalformedTrackError, Object, Subgroup, SubgroupStart},
+    object::{MalformedTrackError, Object, Subgroup, SubgroupStart, TrackData},
     subscribe::{FilterType, SubscribeOption},
 };
 use tokio::{
@@ -73,60 +73,47 @@ impl ArchiveTrack {
                     return;
                 }
             };
-            match data {
-                DataReceiver::Datagram(mut datagrams) => loop {
-                    match datagrams.receive().await {
-                        Ok(object) => {
+            let mut data = data;
+            let mut streams = JoinSet::new();
+            loop {
+                tokio::select! {
+                    received = data.next() => match received {
+                        Ok(TrackData::Datagram(object)) => {
                             if sender.send(Ok(Event::Object(object))).await.is_err() {
                                 break;
                             }
                         }
-                        Err(error) => {
-                            if error.is::<MalformedTrackError>() {
-                                let _ = sender.send(Err(error)).await;
-                            }
-                            break;
-                        }
-                    }
-                },
-                DataReceiver::Stream(mut factory) => {
-                    let mut streams = JoinSet::new();
-                    loop {
-                        tokio::select! {
-                            accepted = factory.next() => match accepted {
-                                Ok(mut stream) => {
-                                    let sender = sender.clone();
-                                    streams.spawn(async move {
-                                        let mut started = None;
-                                        loop {
-                                            match stream.receive().await {
-                                                Ok(Some(Subgroup::Header(header))) => {
-                                                    started = Some((header.group_id, header.subgroup_id));
-                                                    if sender.send(Ok(Event::Header(header))).await.is_err() { break }
-                                                },
-                                                Ok(Some(Subgroup::Object(object))) => if sender.send(Ok(Event::Object(object))).await.is_err() { break },
-                                                Ok(None) => {
-                                                    if let Some((group_id, subgroup_id)) = started {
-                                                        let _ = sender.send(Ok(Event::End { group_id, subgroup_id })).await;
-                                                    }
-                                                    break
-                                                },
-                                                // As in moqt's TrackReader, a failed subgroup stream ends only that stream.
-                                                Err(error) => { tracing::debug!(%error, "subgroup stream failed; the track goes on"); break; }
+                        Ok(TrackData::Subgroup(mut stream)) => {
+                            let sender = sender.clone();
+                            streams.spawn(async move {
+                                let mut started = None;
+                                loop {
+                                    match stream.receive().await {
+                                        Ok(Some(Subgroup::Header(header))) => {
+                                            started = Some((header.group_id, header.subgroup_id));
+                                            if sender.send(Ok(Event::Header(header))).await.is_err() { break }
+                                        },
+                                        Ok(Some(Subgroup::Object(object))) => if sender.send(Ok(Event::Object(object))).await.is_err() { break },
+                                        Ok(None) => {
+                                            if let Some((group_id, subgroup_id)) = started {
+                                                let _ = sender.send(Ok(Event::End { group_id, subgroup_id })).await;
                                             }
-                                        }
-                                    });
+                                            break
+                                        },
+                                        // As in moqt's TrackReader, a failed subgroup stream ends only that stream.
+                                        Err(error) => { tracing::debug!(%error, "subgroup stream failed; the track goes on"); break; }
+                                    }
                                 }
-                                Err(error) => { if error.is::<MalformedTrackError>() { let _ = sender.send(Err(error)).await; } break; }
-                            },
-                            Some(result) = streams.join_next(), if !streams.is_empty() => if let Err(error) = result { let _ = sender.send(Err(error.into())).await; break; },
+                            });
                         }
-                    }
-                    while let Some(result) = streams.join_next().await {
-                        if let Err(error) = result {
-                            let _ = sender.send(Err(error.into())).await;
-                        }
-                    }
+                        Err(error) => { if error.is::<MalformedTrackError>() { let _ = sender.send(Err(error)).await; } break; }
+                    },
+                    Some(result) = streams.join_next(), if !streams.is_empty() => if let Err(error) = result { let _ = sender.send(Err(error.into())).await; break; },
+                }
+            }
+            while let Some(result) = streams.join_next().await {
+                if let Err(error) = result {
+                    let _ = sender.send(Err(error.into())).await;
                 }
             }
         });
@@ -168,7 +155,8 @@ mod tests {
     async fn receives_datagrams_and_empty_status_objects_without_losing_fields() {
         // Arrange
         let mut headers = ExtensionHeaders::default();
-        headers.push_immutable_extension(Bytes::from_static(b"extension"));
+        // Two well-formed Key-Value-Pairs: moqt refuses malformed Immutable Properties.
+        headers.push_immutable_extension(Bytes::from_static(&[0x02, 0x05, 0x0D, 0x02, b'a', b'b']));
         let first = Object {
             location: Location {
                 group_id: 7,

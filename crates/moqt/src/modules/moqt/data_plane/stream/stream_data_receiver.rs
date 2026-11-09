@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use bytes::{Bytes, BytesMut};
 
 use crate::modules::moqt::{
     data_plane::{
+        immutable_properties,
         object::canonical_object::{Object, SubgroupStart},
+        object_ledger::{CopySource, ObjectLedger, PayloadHasher},
         stream::{
             open_subgroups::{OpenSubgroup, OpenSubgroups},
             stream_receiver::StreamReceiveError,
@@ -49,6 +53,11 @@ pub struct StreamDataReceiver {
     /// object. Boxed: rare, and inline it would grow every receiver.
     first_part: Option<Box<SubgroupPart>>,
     open: Option<OpenSubgroup>,
+    /// The track's ledger once the stream is handed to the application.
+    ledger: Option<Arc<ObjectLedger>>,
+    /// The object whose payload is arriving, and the payload's hash so far.
+    /// Boxed like `first_part`.
+    arriving: Option<Box<(Object, PayloadHasher)>>,
 }
 
 impl StreamDataReceiver {
@@ -59,7 +68,14 @@ impl StreamDataReceiver {
             header_returned: false,
             first_part: None,
             open: None,
+            ledger: None,
+            arriving: None,
         }
+    }
+
+    /// Checks every object read from here on against the track's `ledger`.
+    pub(crate) fn check_with(&mut self, ledger: Arc<ObjectLedger>) {
+        self.ledger = Some(ledger);
     }
 
     pub(crate) fn group_id(&self) -> u64 {
@@ -79,7 +95,9 @@ impl StreamDataReceiver {
     /// whole payload. `Ok(None)` means the peer finished the stream (FIN). A
     /// header whose subgroup id comes from the first object is returned only
     /// after that object starts to arrive, so a stream that ends before it
-    /// returns `Ok(None)` without a header.
+    /// returns `Ok(None)` without a header. An object that repeats one
+    /// received before with other properties is
+    /// `StreamReceiveError::MalformedTrack`.
     pub async fn receive(&mut self) -> Result<Option<Subgroup>, StreamReceiveError> {
         let Some(part) = self.receive_part().await? else {
             return Ok(None);
@@ -120,11 +138,59 @@ impl StreamDataReceiver {
     }
 
     async fn receive_part(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {
-        let received = self.receive_next().await;
+        let received = self
+            .receive_next()
+            .await
+            .and_then(|received| self.check(received));
         if !matches!(received, Ok(Some(_))) {
             self.open = None;
         }
         received
+    }
+
+    /// Checks an object's Immutable Properties as soon as its head arrives,
+    /// and the object against the ledger once its payload is complete; a
+    /// payload that arrives in pieces is hashed piece by piece.
+    fn check(
+        &mut self,
+        received: Option<SubgroupPart>,
+    ) -> Result<Option<SubgroupPart>, StreamReceiveError> {
+        let version = self.reader.version();
+        if let Some(SubgroupPart::Object(object) | SubgroupPart::ObjectStart { object, .. }) =
+            &received
+        {
+            immutable_properties::check(version, object)
+                .map_err(StreamReceiveError::MalformedTrack)?;
+        }
+        let Some(ledger) = &self.ledger else {
+            return Ok(received);
+        };
+        let source = CopySource::Subscription(version);
+        let checked = match &received {
+            Some(SubgroupPart::Object(object)) => ledger.check(object, source),
+            Some(SubgroupPart::ObjectStart { object, .. }) => {
+                self.arriving = Some(Box::new((object.clone(), ledger.payload_hasher())));
+                Ok(())
+            }
+            Some(SubgroupPart::Payload { data, last }) => {
+                // The decoder yields payload parts only after an object start.
+                let arriving = self
+                    .arriving
+                    .as_mut()
+                    .expect("a payload part follows its object's start");
+                arriving.1.update(data);
+                match self.arriving.take_if(|_| *last) {
+                    Some(arrived) => {
+                        let (object, hasher) = *arrived;
+                        ledger.check_hashed(&object, hasher, source)
+                    }
+                    None => Ok(()),
+                }
+            }
+            Some(SubgroupPart::Header(_)) | None => Ok(()),
+        };
+        checked.map_err(StreamReceiveError::MalformedTrack)?;
+        Ok(received)
     }
 
     async fn receive_next(&mut self) -> Result<Option<SubgroupPart>, StreamReceiveError> {

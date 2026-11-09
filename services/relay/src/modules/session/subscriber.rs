@@ -18,7 +18,7 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
     async fn create_data_receiver(
         &mut self,
         subscription: &UpstreamSubscription,
-    ) -> anyhow::Result<DataReceiver>;
+    ) -> anyhow::Result<Box<dyn DataReceiver>>;
     async fn send_fetch(
         &mut self,
         track_namespace: String,
@@ -81,16 +81,10 @@ impl Subscriber for moqt::Subscriber {
     async fn create_data_receiver(
         &mut self,
         subscription: &UpstreamSubscription,
-    ) -> anyhow::Result<DataReceiver> {
-        let result = self.accept_data_receiver(subscription.as_moqt()).await?;
-        match result {
-            moqt::object::DataReceiver::Stream(factory) => {
-                Ok(DataReceiver::Stream(Box::new(factory)))
-            }
-            moqt::object::DataReceiver::Datagram(inner) => {
-                Ok(DataReceiver::Datagram(Box::new(inner)))
-            }
-        }
+    ) -> anyhow::Result<Box<dyn DataReceiver>> {
+        Ok(Box::new(
+            self.accept_data_receiver(subscription.as_moqt()).await?,
+        ))
     }
 
     #[tracing::instrument(

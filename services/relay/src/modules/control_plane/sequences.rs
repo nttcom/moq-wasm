@@ -196,9 +196,12 @@ pub(crate) async fn start_ingest(
             repository.is_client_session(publisher_session_id),
         )
     };
+    // The data receiver tells whether the upstream compares the status of
+    // duplicates; `read_track` sets it.
     let stamp = CacheStamp {
         max_cache_duration: subscription.max_cache_duration(),
         persist,
+        status_may_change: false,
     };
     Some(IngestTask::run(
         IngestStart {

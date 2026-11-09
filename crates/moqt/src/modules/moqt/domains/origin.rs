@@ -806,10 +806,10 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            accept_publish, read_fetch_objects, rejection, spawn_connected_native_sessions,
-            subscribed_track_reader, within,
+            accept_publish, data_receiver, next_subgroup, read_fetch_objects, rejection,
+            spawn_connected_native_sessions, subscribed_track_reader, within,
         },
-        object::{DataReceiver, GroupOrder, Object, ObjectStatus, Subgroup},
+        object::{GroupOrder, Object, ObjectStatus, Subgroup},
         subscribe::{FilterType, SubscribeOption},
     };
 
@@ -1235,16 +1235,8 @@ mod tests {
             .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
             .await
             .unwrap();
-        let DataReceiver::Stream(mut streams) = peers
-            .server
-            .subscriber()
-            .accept_data_receiver(&subscription)
-            .await
-            .unwrap()
-        else {
-            panic!("expected a subgroup stream receiver");
-        };
-        let mut subgroup = within(streams.next()).await.unwrap();
+        let mut streams = data_receiver(&peers.server, &subscription).await;
+        let mut subgroup = within(next_subgroup(&mut streams)).await;
         assert!(matches!(
             within(subgroup.receive()).await,
             Ok(Some(Subgroup::Header(_)))
@@ -1275,18 +1267,9 @@ mod tests {
                 .await
                 .unwrap();
             if streams.is_none() {
-                let DataReceiver::Stream(receiver) = peers
-                    .server
-                    .subscriber()
-                    .accept_data_receiver(&subscription)
-                    .await
-                    .unwrap()
-                else {
-                    panic!("expected a subgroup stream receiver");
-                };
-                streams = Some(receiver);
+                streams = Some(data_receiver(&peers.server, &subscription).await);
             }
-            let mut subgroup = within(streams.as_mut().unwrap().next()).await.unwrap();
+            let mut subgroup = within(next_subgroup(streams.as_mut().unwrap())).await;
             assert!(matches!(
                 within(subgroup.receive()).await,
                 Ok(Some(Subgroup::Header(_)))

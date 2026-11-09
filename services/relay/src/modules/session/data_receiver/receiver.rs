@@ -1,8 +1,34 @@
-use crate::modules::session::data_receiver::{
-    datagram_receiver::DatagramReceiver, stream_receiver::StreamReceiverFactory,
-};
+use moqt::object::{Object, TrackData};
 
-pub(crate) enum DataReceiver {
-    Datagram(Box<dyn DatagramReceiver>),
-    Stream(Box<dyn StreamReceiverFactory>),
+use crate::modules::session::data_receiver::stream_receiver::StreamReceiver;
+
+/// What an upstream subscription delivers next.
+pub(crate) enum UpstreamData {
+    Subgroup(Box<dyn StreamReceiver>),
+    Datagram(Object),
+}
+
+#[async_trait::async_trait]
+pub(crate) trait DataReceiver: Send + 'static {
+    /// A `moqt::object::MalformedTrackError` reports a malformed track; any
+    /// other error, that the subscription ended.
+    async fn next(&mut self) -> anyhow::Result<UpstreamData>;
+
+    /// `false` for a draft-18 subscription, whose duplicates may differ in
+    /// status.
+    fn compares_duplicate_status(&self) -> bool;
+}
+
+#[async_trait::async_trait]
+impl DataReceiver for moqt::object::DataReceiver {
+    async fn next(&mut self) -> anyhow::Result<UpstreamData> {
+        Ok(match moqt::object::DataReceiver::next(self).await? {
+            TrackData::Subgroup(stream) => UpstreamData::Subgroup(Box::new(stream.into_parts())),
+            TrackData::Datagram(object) => UpstreamData::Datagram(object),
+        })
+    }
+
+    fn compares_duplicate_status(&self) -> bool {
+        moqt::object::DataReceiver::compares_duplicate_status(self)
+    }
 }
