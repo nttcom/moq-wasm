@@ -323,7 +323,9 @@ function render(): void {
     if (!seeking && at !== undefined) {
       seek.value = String((at - span.startMicros) / 1_000_000)
     }
-    element('recorded-at').textContent = new Date(span.startMicros / 1000).toLocaleString()
+    element('recorded-at').textContent = new Date(
+      current.recording.startedAtMs + span.startMicros / 1000
+    ).toLocaleString()
   }
   showPosition()
   const shown = renderTiles(current, at, span, positionMicros !== undefined)
@@ -444,7 +446,7 @@ function renderEvents(current: OpenedRecording, at: number): void {
         speaker.className = 'font-semibold'
         speaker.textContent = event.speaker
         const time = document.createElement('span')
-        time.textContent = new Date(event.at / 1000).toLocaleTimeString()
+        time.textContent = new Date(current.recording.startedAtMs + event.at / 1000).toLocaleTimeString()
         heading.append(speaker, time)
         const text = document.createElement('p')
         text.className = 'mt-2 whitespace-pre-wrap break-words text-base text-white'
