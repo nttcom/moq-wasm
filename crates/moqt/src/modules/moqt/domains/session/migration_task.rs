@@ -704,6 +704,7 @@ async fn carry_subscription(
                 default_publisher_priority: connection
                     .control
                     .default_publisher_priority(subscribe_ok.request_id),
+                arrived_streams: watch::Sender::new(0),
             },
         )
         .await

@@ -81,7 +81,7 @@ fn emit(scope: &Scope, event: SessionEvent) {
     if let SessionEvent::PublishDone(handler) = &event
         && let Some(publish_done_sender) = scope.channel().publish_done_sender()
     {
-        let _ = publish_done_sender.send(handler.request_id());
+        let _ = publish_done_sender.send(handler.clone());
     }
     if let Err(error) = scope.connection.event_sender.send(event) {
         tracing::debug!(?error, "session event dropped: the session is gone");
@@ -169,13 +169,13 @@ async fn receive_unless_cancelled(
 }
 
 /// Reads the peer's control stream and accepts the request streams the
-/// peer opens, until the connection ends. The Request ID of every
-/// PUBLISH_DONE also goes to `publish_done_sender`.
+/// peer opens, until the connection ends. Every PUBLISH_DONE also goes to
+/// `publish_done_sender`.
 pub(crate) fn run_control_receiver(
     control_stream: MessageReceiver,
     session: Weak<SessionContext>,
     connection: Weak<Connection>,
-    publish_done_sender: tokio::sync::mpsc::UnboundedSender<RequestId>,
+    publish_done_sender: tokio::sync::mpsc::UnboundedSender<PublishDoneHandler>,
     span: Span,
 ) -> JoinHandle {
     if let Some(connection) = connection.upgrade() {
