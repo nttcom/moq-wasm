@@ -732,7 +732,7 @@ impl Subscriber {
                 .await;
             connection
                 .control
-                .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
+                .notify_end(Notification::Unsubscribe(Unsubscribe { request_id }))
                 .await?;
         }
         Ok(())
@@ -758,7 +758,7 @@ impl Subscriber {
         for connection in self.session.live_connections() {
             connection
                 .control
-                .notify(Notification::UnsubscribeNamespace {
+                .notify_end(Notification::UnsubscribeNamespace {
                     track_namespace_prefix: vec_namespace.clone(),
                     interest: NamespaceInterest::NamespacesAndTracks,
                 })
@@ -785,7 +785,7 @@ impl Subscriber {
         for connection in self.session.live_connections() {
             connection
                 .control
-                .notify(Notification::UnsubscribeNamespace {
+                .notify_end(Notification::UnsubscribeNamespace {
                     track_namespace_prefix: vec_namespace.clone(),
                     interest,
                 })
@@ -1171,9 +1171,9 @@ mod tests {
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, capture_telemetry,
                 connected_sessions, data_receiver, first_subgroup_stream, location, next_subgroup,
                 notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                send_subgroup_object, send_without_waiting, spawn_connected_native_sessions,
-                spawn_connected_native_sessions_following_go_away, subscribe_namespace_accepted,
-                wait_for_control_delivery, within,
+                receive_disconnected, send_subgroup_object, send_without_waiting,
+                spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
+                subscribe_namespace_accepted, subscribed_track, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2269,6 +2269,28 @@ mod tests {
 
         // Assert
         assert_eq!(cancel.request_id(), handler.request_id);
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_after_the_session_ended_succeeds() {
+        for version in DRAFTS {
+            // Arrange
+            let track = subscribed_track("subscriber-unsubscribe-after-disconnect", version).await;
+            track
+                .server
+                .close_with_error(TerminationErrorCode::NoError, "closing");
+            receive_disconnected(&track.client).await.unwrap();
+
+            // Act
+            let unsubscribed = track
+                .client
+                .subscriber()
+                .unsubscribe(&track.subscription)
+                .await;
+
+            // Assert
+            assert!(unsubscribed.is_ok(), "{version:?}: {unsubscribed:?}");
+        }
     }
 
     #[tokio::test]

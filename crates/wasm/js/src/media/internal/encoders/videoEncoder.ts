@@ -2,6 +2,7 @@ import { createBitrateLogger } from '../bitrate'
 import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
 import { fitEncodeSize } from './encodeSize'
+import { videoEncoderConfig } from './videoEncoderConfig'
 import { workerLog } from '../../../core/log'
 
 const TARGET = 'moq-wasm::media::video_encoder'
@@ -11,13 +12,6 @@ let capturedTrack: MediaStreamTrack | undefined
 // Default keeps periodic keyframes alive even before the first keyframeInterval message.
 let keyframeInterval: number = 30
 let forceNextKeyframe = false
-
-// H264 プロファイル
-// Baseline: 42 Main: 4D High: 64
-// H264 Level
-// 4.0: 28 4.1: 29 4.2: 2A
-// 5.0: 32 5.1: 33 5.2: 34
-// M1 macではHWEncoderがL1T1しかサポートしていない
 
 const videoBitrateLogger = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
@@ -36,7 +30,7 @@ class Rendition {
 
   constructor(
     readonly index: number,
-    public config: VideoEncoderConfig | null
+    public config: VideoEncoderConfig
   ) {}
 
   async initialize(): Promise<boolean> {
@@ -47,7 +41,7 @@ class Rendition {
         self.postMessage({ type: 'encoderError', message: e.message, rendition: this.index })
       }
     }
-    const config = this.config ?? buildDefaultConfig()
+    const config = this.config
     try {
       const supported = await VideoEncoder.isConfigSupported(config)
       if (!supported.supported) {
@@ -82,10 +76,9 @@ class Rendition {
       return false
     }
     this.configuredFrameSize = frameSize
-    const requested = this.config ?? buildDefaultConfig()
     const config = {
-      ...requested,
-      ...fitEncodeSize(requested, { width: frame.displayWidth, height: frame.displayHeight })
+      ...this.config,
+      ...fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight })
     }
     try {
       this.encoder.configure(config)
@@ -120,7 +113,7 @@ class Rendition {
   }
 }
 
-let renditions: Rendition[] = [new Rendition(0, null)]
+let renditions: Rendition[] = [new Rendition(0, videoEncoderConfig())]
 
 function needsEncoder(rendition: Rendition): boolean {
   return !rendition.encoder || rendition.encoder.state === 'closed'
@@ -206,13 +199,13 @@ self.onmessage = async (event) => {
   } else if (event.data.type === 'forceKeyframe') {
     forceNextKeyframe = true
   } else if (event.data.type === 'encoderConfig') {
-    renditions[0].config = buildConfigFromMessage(event.data.config)
+    renditions[0].config = videoEncoderConfig(event.data.config)
     renditions[0].configuredFrameSize = null
   } else if (event.data.type === 'renditionConfigs') {
-    const configs: Parameters<typeof buildConfigFromMessage>[0][] = event.data.configs
+    const configs: Partial<VideoEncoderConfig>[] = event.data.configs
     renditions = [
       renditions[0],
-      ...configs.map((config, index) => new Rendition(index + 1, buildConfigFromMessage(config)))
+      ...configs.map((config, index) => new Rendition(index + 1, videoEncoderConfig(config)))
     ]
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
@@ -229,39 +222,4 @@ self.onmessage = async (event) => {
     capturedTrack?.stop()
     self.close()
   }
-}
-
-function buildConfigFromMessage(config: {
-  codec: string
-  width: number
-  height: number
-  bitrate: number
-  framerate?: number
-  hardwareAcceleration?: HardwareAcceleration
-}): VideoEncoderConfig {
-  return {
-    codec: config.codec,
-    avc: config.codec.startsWith('avc') ? { format: 'annexb' } : undefined,
-    width: config.width,
-    height: config.height,
-    bitrate: config.bitrate,
-    framerate:
-      typeof config.framerate === 'number' && Number.isFinite(config.framerate) && config.framerate > 0
-        ? Math.min(120, Math.max(1, Math.round(config.framerate)))
-        : 30,
-    hardwareAcceleration: config.hardwareAcceleration ?? 'prefer-hardware',
-    scalabilityMode: 'L1T1',
-    latencyMode: 'realtime' as any
-  }
-}
-
-function buildDefaultConfig(): VideoEncoderConfig {
-  return buildConfigFromMessage({
-    codec: 'avc1.640028', // H.264 High Profile Level 4.0
-    width: 1280,
-    height: 720,
-    bitrate: 1_000_000,
-    framerate: 30,
-    hardwareAcceleration: 'prefer-hardware'
-  })
 }

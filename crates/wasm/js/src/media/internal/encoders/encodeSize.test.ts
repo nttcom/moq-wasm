@@ -21,9 +21,12 @@ test('a frame that already matches the request is encoded at the request', () =>
   })
 })
 
-test('a frame smaller than the request is scaled up to fit it', () => {
+test('a frame smaller than the request is encoded at its own size', () => {
   // Act / Assert
-  expect(fitEncodeSize({ width: 640, height: 360 }, { width: 160, height: 90 })).toEqual({ width: 640, height: 360 })
+  expect(fitEncodeSize({ width: 1920, height: 1080 }, { width: 1280, height: 720 })).toEqual({
+    width: 1280,
+    height: 720
+  })
 })
 
 test('an odd scaled size is rounded down to even', () => {

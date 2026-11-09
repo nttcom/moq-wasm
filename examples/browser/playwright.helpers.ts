@@ -27,11 +27,13 @@ export function computeCertificateSpkiBase64(): string {
   return createHash('sha256').update(spkiDer).digest('base64')
 }
 
+/// The encoder never scales a frame up, so the picture is as large as the
+/// largest size a test encodes. Chrome loops the file.
 export function ensureFakeVideoCaptureFile(): string {
-  const width = 160
-  const height = 90
+  const width = 640
+  const height = 360
   const fps = 15
-  const durationSeconds = 60
+  const durationSeconds = 4
   const frameCount = fps * durationSeconds
   const fileName =
     'moqt-meeting-e2e-fake-video-' + width + 'x' + height + '-' + fps + 'fps-' + durationSeconds + 's.y4m'

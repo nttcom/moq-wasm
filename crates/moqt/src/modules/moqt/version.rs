@@ -935,6 +935,19 @@ impl ControlChannel {
             Self::Draft18(channel) => channel.notify(notification).await,
         }
     }
+
+    /// `notify` for a message that ends a request (UNSUBSCRIBE,
+    /// UNSUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE_DONE): a lost connection has
+    /// already ended it, so `ConnectionLost` returns `Ok`.
+    pub(crate) async fn notify_end(
+        &self,
+        notification: Notification,
+    ) -> Result<(), TransportSendError> {
+        match self.notify(notification).await {
+            Err(TransportSendError::ConnectionLost { .. }) => Ok(()),
+            result => result,
+        }
+    }
 }
 
 /// The receiving half of a control channel, consumed when the session starts.

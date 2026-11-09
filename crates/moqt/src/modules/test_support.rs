@@ -607,9 +607,9 @@ pub(crate) struct SubscribedTrack {
     pub(crate) subscription: Subscription,
 }
 
-/// The client subscribes to `ns/track` and the server accepts it.
-pub(crate) async fn subscribed_track(name: &str) -> SubscribedTrack {
-    let (client, server) = spawn_connected_native_sessions(name).await;
+/// The client subscribes to `ns/track` over `version` and the server accepts it.
+pub(crate) async fn subscribed_track(name: &str, version: Version) -> SubscribedTrack {
+    let (client, server) = connected_sessions(name, version).await;
     let mut subscriber = client.subscriber();
     let (subscribed, ()) = within(async {
         tokio::join!(

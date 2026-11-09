@@ -1,0 +1,27 @@
+const DEFAULT_CONFIG: VideoEncoderConfig = {
+  codec: 'avc1.640028', // H.264 High Profile Level 4.0
+  width: 1280,
+  height: 720,
+  bitrate: 1_000_000,
+  framerate: 30,
+  hardwareAcceleration: 'prefer-hardware',
+  // The hardware encoder of an M1 Mac supports only L1T1.
+  scalabilityMode: 'L1T1',
+  latencyMode: 'realtime'
+}
+
+/// `config` over `DEFAULT_CONFIG`, skipping fields set to `undefined`. H.264 is
+/// always Annex B, the form the broadcast reads, and the frame rate is clamped
+/// to 1–120.
+export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): VideoEncoderConfig {
+  const set = Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined))
+  const merged: VideoEncoderConfig = { ...DEFAULT_CONFIG, ...set }
+  return {
+    ...merged,
+    avc: merged.codec.startsWith('avc') ? { format: 'annexb' } : undefined,
+    framerate:
+      typeof merged.framerate === 'number' && Number.isFinite(merged.framerate) && merged.framerate > 0
+        ? Math.min(120, Math.max(1, Math.round(merged.framerate)))
+        : DEFAULT_CONFIG.framerate
+  }
+}

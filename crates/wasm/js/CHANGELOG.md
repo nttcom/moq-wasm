@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- `publish()` passes every field of `videoEncoderConfig` to the encoder and
+  fills the unset ones with the package's defaults, so `latencyMode: 'quality'`
+  now reaches the encoder instead of always `'realtime'`. Renditions take the
+  same fields, with their own size and bitrate.
+- `videoEncoderConfig` and `setVideoEncoderConfig` take a
+  `Partial<VideoEncoderConfig>`, so a page may set only the bitrate and frame
+  rate. `width` and `height` (1280x720 by default) bound the encoded size: a
+  frame smaller than them is encoded at its own size instead of scaled up.
+- `init()` can be called more than once, as React's StrictMode does: a later
+  call returns the first call's promise and ignores its own options, instead
+  of rejecting with "the log sink is already set". A call after the first
+  one rejected starts again.
+- `init({ telemetry: { redact } })` rewrites the fields of each log and span
+  before they are sent, so a page can mask or drop a `track_namespace` that
+  holds a user id.
+- `MoqSubscription.close()`, `MoqNamespaceWatch.close()` and
+  `Announcement.close()` resolve instead of rejecting with "connection lost"
+  when the session has already ended.
+
 ## 0.3.0
 
 - `MoqSession.connect(url, { versions })` offers the MoQT drafts `versions`
