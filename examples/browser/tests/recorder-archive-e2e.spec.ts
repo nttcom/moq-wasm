@@ -219,6 +219,9 @@ test('records participants, screen share, chat and transcript and replays them i
     await alice.page.page.getByTestId('activities-button').click()
     await expect(alice.page.page.getByTestId('record-moq')).toBeVisible()
     await expect(alice.page.page.getByTestId('record-play')).toBeVisible()
+    await alice.page.page.keyboard.press('Escape')
+    await alice.page.page.getByTestId('record-tab').click()
+    await expect(alice.page.page.getByTestId('record-replay-link')).toHaveCount(1)
 
     // Act
     await openInPlayer(page, recorderServe.url, recording.id)
