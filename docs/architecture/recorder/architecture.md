@@ -107,8 +107,8 @@ both tracks into one init segment and one fragment stream.
 ## Sources
 A broadcast can carry several sources: a meeting participant publishes the
 camera with its renditions and the microphone, and the screen share with
-its renditions. The recorder tells them apart by the catalog's
-`renderGroup` (draft-ietf-moq-msf-01 §5.2.11), not by track names: a source
+its renditions. The recorder groups the tracks into sources by the catalog's
+`renderGroup` (draft-ietf-moq-msf-01 §5.2.11): a source
 is the LOC video and audio tracks of one `renderGroup`, and the tracks
 without one form one source. `broadcast` gives a source's renditions one
 `altGroup` (§5.2.12), so the video tracks of a source are the renditions
@@ -117,12 +117,12 @@ catalog: `broadcast` numbers the sources anew in each catalog, and the
 camera's number changes when a screen share starts. So the source is found
 again in every catalog (`track_selection::SourceChoice`):
 
-- The main source (`Content::Camera`) is the one an event timeline applies
-  to: the source of the first track an event timeline lists in `depends`
-  (§8.2). A meeting's chat applies to the camera and the microphone. While
-  the event timelines apply to no listed track, as for a participant with
-  the camera and the microphone off, there is no main source; a catalog
-  without an event timeline takes its first source.
+- The main source (`Content::Camera`) is the one `broadcast` and the browser
+  SDK publish by default: the source listing a media track named `video`,
+  `audio` or `video_<rendition>`. While none is listed, as for a participant
+  with the camera and the microphone off, there is no main source; a catalog
+  without an event timeline, a broadcast outside a meeting such as
+  `onvif-ingest`'s, takes its first source.
 - Another source (`Content::ScreenShare`) is the first one listed besides
   the main one: a meeting participant's screen share.
 - A recorded track stays while the catalog lists it in a source of its
@@ -133,7 +133,8 @@ Neither MSF nor the catalog says which source is a camera and which a
 screen share, and no field of our own was added for it (see 「録画を
 `LivePlayer` で再生する」 in the browser SDK's architecture). The room
 recording still keeps the two apart, for the composite's focus and the
-archive layout, and the event timeline's `depends` stands in for it.
+archive layout, and the default source's track names stand in for it, as
+draft-ietf-moq-msf-02 is to drop the chat's `depends` that did before.
 
 ## Tracks that come and go
 A publisher's first catalog often lacks the audio a later one lists:
@@ -622,13 +623,11 @@ the recorder started with.
 - Video outside H.264, VP8, VP9 and AV1 in the catalog a recording starts
   from ends the recorder with an error before anything is recorded. Listed
   later, it is logged and the recording goes on without it.
-- A screen share is told from the camera only by the chat's `depends` (see
-  "Sources"). `broadcast` lists the default `video` and `audio` there, not
-  their renditions, so a catalog that lists a camera rendition before
-  `video` while the microphone is off shows the camera as another source
-  until the next catalog: the screen share recording subscribes to the
-  rendition and drops it again, and an MP4 recording can keep an empty
-  screen share file from it.
+- A screen share is told from the camera only by the default source's track
+  names (see "Sources"). A meeting participant whose camera is named
+  otherwise has no main source, and the room recording takes its first
+  source as the screen share; a source the SDK adds under a name starting
+  with `video_` counts as the camera.
 - Of more than two sources, the screen share recording takes only the first
   listed besides the main one.
 - A room recording that fails while `composite` was requested is not

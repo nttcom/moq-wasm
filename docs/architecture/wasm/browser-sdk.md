@@ -353,9 +353,9 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
   録画では replay が出す。
 - `LivePlayer` は、ライブか録画かを独自の情報で分けない。catalog の `isLive` と
   timeline で振る舞いを決める。
-- recorder と player は、track の名前の規則に頼らない。ソースは `renderGroup`（§5.2.11）で、
-  rendition は `altGroup`（§5.2.12）で見分ける。カメラか画面共有かを示す独自のフィールドは
-  足さない。表示には `label` を使う。
+- recorder と player は、ソースを `renderGroup`（§5.2.11）で、rendition を `altGroup`（§5.2.12）で
+  見分ける。カメラか画面共有かを示す独自のフィールドは足さず、recorder は既定のソースの track 名
+  （`video`、`audio`、`video_<rendition>`）でカメラを見分ける。表示には `label` を使う。
 - recorder の HTTP API（再 publish の依頼と lease）は `LivePlayer` に入れない。SDK の
   別の subpath（`moq-wasm/recording`）に置き、`LivePlayer` とライブだけ使うアプリの
   バンドルには入れない。

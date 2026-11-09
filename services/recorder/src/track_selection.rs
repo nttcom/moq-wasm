@@ -38,10 +38,12 @@ pub(crate) struct Choice<'a> {
 /// catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SourceChoice {
-    /// The source of the first listed media track an event timeline's
-    /// `depends` names (§8.2), such as the camera and the microphone a meeting
-    /// participant's chat applies to; none while `depends` names no listed
-    /// track; the first source listed when the catalog has no event timeline.
+    /// The source `broadcast` and the browser SDK publish by default, such as
+    /// a meeting participant's camera and microphone: the one listing a media
+    /// track named `video`, `audio` or `video_<rendition>`. None while no such
+    /// track is listed, unless the catalog has no event timeline, as a
+    /// broadcast outside a meeting such as `onvif-ingest`'s: then its first
+    /// source.
     Main,
     /// The first source listed besides the main one, such as a meeting
     /// participant's screen share.
@@ -232,14 +234,15 @@ fn source_tracks(catalog: &Catalog, choice: SourceChoice) -> impl Iterator<Item 
 
 /// `None` while no source is the main one (see `SourceChoice::Main`).
 fn main_source(catalog: &Catalog) -> Option<Source> {
-    let mut timelines = event_timelines(catalog).peekable();
-    if timelines.peek().is_none() {
+    let default = media_tracks(catalog)
+        .find(|track| {
+            matches!(track.name.as_str(), "video" | "audio") || track.name.starts_with("video_")
+        })
+        .map(|track| track.render_group);
+    if default.is_none() && event_timelines(catalog).next().is_none() {
         return sources(catalog).first().copied();
     }
-    timelines
-        .flat_map(|timeline| timeline.depends.iter().flatten())
-        .find_map(|name| media_tracks(catalog).find(|track| track.name == *name))
-        .map(|track| track.render_group)
+    default
 }
 
 /// In the order the catalog lists them.
@@ -358,10 +361,8 @@ mod tests {
         track
     }
 
-    fn chat(depends: &[&str]) -> Track {
-        let mut chat = Track::new("chat", KnownPackaging::EventTimeline, true);
-        chat.depends = Some(depends.iter().map(|name| name.to_string()).collect());
-        chat
+    fn chat() -> Track {
+        Track::new("chat", KnownPackaging::EventTimeline, true)
     }
 
     fn choice(source: SourceChoice, max_height: u32) -> Choice<'static> {
@@ -381,7 +382,7 @@ mod tests {
     }
 
     /// A meeting participant's catalog as `broadcast` numbers it: the screen
-    /// share's `renderGroup` sorts first, and the chat applies to the camera.
+    /// share's `renderGroup` sorts first.
     fn meeting() -> Catalog {
         catalog(vec![
             in_source(
@@ -393,18 +394,21 @@ mod tests {
                 1,
             ),
             in_source(opus_track("share_audio", 64_000), 1),
-            in_source(sized_video("cam", "avc1.640028", 1080, 1_000_000), 2),
-            in_source(sized_video("cam_720p", "avc1.42001F", 720, 500_000), 2),
-            in_source(sized_video("cam_480p", "avc1.42001F", 480, 200_000), 2),
-            in_source(sized_video("cam_hevc", "hvc1.1.6.L93.B0", 480, 100_000), 2),
-            in_source(opus_track("mic_32kbps", 32_000), 2),
-            in_source(opus_track("mic_128kbps", 128_000), 2),
-            chat(&["cam", "mic_128kbps"]),
+            in_source(sized_video("video", "avc1.640028", 1080, 1_000_000), 2),
+            in_source(sized_video("video_720p", "avc1.42001F", 720, 500_000), 2),
+            in_source(sized_video("video_480p", "avc1.42001F", 480, 200_000), 2),
+            in_source(
+                sized_video("video_hevc", "hvc1.1.6.L93.B0", 480, 100_000),
+                2,
+            ),
+            in_source(opus_track("audio", 32_000), 2),
+            in_source(opus_track("audio_128kbps", 128_000), 2),
+            chat(),
         ])
     }
 
     #[test]
-    fn the_main_source_is_the_one_the_event_timeline_applies_to() {
+    fn the_main_source_is_the_one_with_the_default_track_names() {
         // Arrange
         let catalog = meeting();
 
@@ -417,8 +421,8 @@ mod tests {
             .unwrap();
 
         // Assert: each takes its own source's tallest video at most 720 high and its highest bitrate audio
-        assert_eq!(main.video.unwrap().name, "cam_720p");
-        assert_eq!(main.audio.unwrap().name, "mic_128kbps");
+        assert_eq!(main.video.unwrap().name, "video_720p");
+        assert_eq!(main.audio.unwrap().name, "audio_128kbps");
         assert_eq!(other.video.unwrap().name, "share_720p");
         assert_eq!(other.audio.unwrap().name, "share_audio");
     }
@@ -437,17 +441,17 @@ mod tests {
                 "share_1080p_timeline",
                 &["share_1080p", "share_720p", "share_audio"],
             ),
-            timeline("cam_timeline", &["cam", "cam_720p", "cam_480p"]),
-            timeline("mic_timeline", &["mic_32kbps", "mic_128kbps"]),
+            timeline("video_timeline", &["video", "video_720p", "video_480p"]),
+            timeline("audio_timeline", &["audio", "audio_128kbps"]),
         ]);
 
         // Act
-        let names: Vec<&str> = media_timelines(&catalog, &["cam_720p", "mic_128kbps"])
+        let names: Vec<&str> = media_timelines(&catalog, &["video_720p", "audio_128kbps"])
             .map(|track| track.name.as_str())
             .collect();
 
         // Assert
-        assert_eq!(names, ["cam_timeline", "mic_timeline"]);
+        assert_eq!(names, ["video_timeline", "audio_timeline"]);
     }
 
     #[test]
@@ -459,20 +463,20 @@ mod tests {
         let under = select_video(&catalog, choice(SourceChoice::Main, 480)).unwrap();
         let over = select_video(&catalog, choice(SourceChoice::Main, 240)).unwrap();
 
-        // Assert: cam_hevc cannot be recorded, so cam_480p wins both ties at 480 pixels
-        assert_eq!(under.unwrap().name, "cam_480p");
-        assert_eq!(over.unwrap().name, "cam_480p");
+        // Assert: video_hevc cannot be recorded, so video_480p wins both ties at 480 pixels
+        assert_eq!(under.unwrap().name, "video_480p");
+        assert_eq!(over.unwrap().name, "video_480p");
     }
 
     #[test]
-    fn a_catalog_whose_event_timeline_applies_to_no_track_has_no_main_source() {
+    fn a_catalog_without_the_default_tracks_has_no_main_source() {
         // Arrange: a participant who shares the screen with the camera and the microphone off
         let catalog = catalog(vec![
             in_source(
                 sized_video("share_720p", "av01.0.08M.08", 720, 1_200_000),
                 1,
             ),
-            chat(&[]),
+            chat(),
         ]);
 
         // Act
@@ -488,11 +492,14 @@ mod tests {
     }
 
     #[test]
-    fn without_an_event_timeline_the_first_source_is_the_main_one() {
-        // Arrange
+    fn a_camera_rendition_listed_before_the_camera_is_the_main_source() {
+        // Arrange: the microphone off, so only `video_480p` marks the camera
         let catalog = catalog(vec![
-            in_source(sized_video("first", "avc1.42001F", 480, 200_000), 7),
-            in_source(sized_video("second", "avc1.42001F", 480, 200_000), 3),
+            in_source(
+                sized_video("share_720p", "av01.0.08M.08", 720, 1_200_000),
+                1,
+            ),
+            in_source(sized_video("video_480p", "avc1.42001F", 480, 200_000), 2),
         ]);
 
         // Act
@@ -500,8 +507,31 @@ mod tests {
         let other = select_video(&catalog, choice(SourceChoice::Other, 720)).unwrap();
 
         // Assert
-        assert_eq!(main.unwrap().name, "first");
-        assert_eq!(other.unwrap().name, "second");
+        assert_eq!(main.unwrap().name, "video_480p");
+        assert_eq!(other.unwrap().name, "share_720p");
+    }
+
+    #[test]
+    fn without_an_event_timeline_the_first_source_is_the_main_one() {
+        // Arrange: a broadcast outside a meeting, its tracks named as `onvif-ingest` names them
+        let catalog = catalog(vec![
+            in_source(
+                sized_video("video/profile_1", "avc1.42001F", 480, 200_000),
+                7,
+            ),
+            in_source(
+                sized_video("video/profile_2", "avc1.42001F", 480, 200_000),
+                3,
+            ),
+        ]);
+
+        // Act
+        let main = select_video(&catalog, choice(SourceChoice::Main, 720)).unwrap();
+        let other = select_video(&catalog, choice(SourceChoice::Other, 720)).unwrap();
+
+        // Assert
+        assert_eq!(main.unwrap().name, "video/profile_1");
+        assert_eq!(other.unwrap().name, "video/profile_2");
     }
 
     #[test]
@@ -527,14 +557,14 @@ mod tests {
 
     #[test]
     fn keeps_a_track_while_its_source_is_of_the_kind_the_choice_takes() {
-        // Arrange: the camera's rendition listed alone, then with the track the chat applies to
+        // Arrange: a meeting source listed alone, then with `video`, which makes it the camera
         let alone = catalog(vec![
-            in_source(sized_video("cam_480p", "avc1.42001F", 480, 200_000), 1),
-            chat(&[]),
+            in_source(sized_video("extra_480p", "avc1.42001F", 480, 200_000), 1),
+            chat(),
         ]);
         let joined = catalog(vec![
-            in_source(sized_video("cam", "avc1.42001F", 1080, 1_000_000), 1),
-            in_source(sized_video("cam_480p", "avc1.42001F", 480, 200_000), 1),
+            in_source(sized_video("video", "avc1.42001F", 1080, 1_000_000), 1),
+            in_source(sized_video("extra_480p", "avc1.42001F", 480, 200_000), 1),
             in_source(
                 sized_video("share_720p", "av01.0.08M.08", 720, 1_200_000),
                 2,
@@ -543,14 +573,18 @@ mod tests {
                 sized_video("extra_720p", "av01.0.08M.08", 720, 1_200_000),
                 3,
             ),
-            chat(&["cam"]),
+            chat(),
         ]);
         let other = choice(SourceChoice::Other, 720);
 
         // Act / Assert
-        assert!(keeps(&alone, other, "cam_480p"));
-        assert!(!keeps(&joined, other, "cam_480p"));
-        assert!(keeps(&joined, choice(SourceChoice::Main, 720), "cam_480p"));
+        assert!(keeps(&alone, other, "extra_480p"));
+        assert!(!keeps(&joined, other, "extra_480p"));
+        assert!(keeps(
+            &joined,
+            choice(SourceChoice::Main, 720),
+            "extra_480p"
+        ));
         assert!(keeps(&joined, other, "extra_720p"));
         assert!(!keeps(&joined, other, "gone"));
         assert!(keeps(&joined, named("share_720p", "audio"), "share_720p"));
@@ -562,19 +596,19 @@ mod tests {
         let catalog = meeting();
 
         // Act
-        let selection = select_tracks(&catalog, named("share_1080p", "mic_32kbps"))
+        let selection = select_tracks(&catalog, named("share_1080p", "audio"))
             .unwrap()
             .unwrap();
 
         // Assert
         assert_eq!(selection.video.unwrap().name, "share_1080p");
-        assert_eq!(selection.audio.unwrap().name, "mic_32kbps");
+        assert_eq!(selection.audio.unwrap().name, "audio");
     }
 
     #[test]
     fn fails_when_no_video_track_of_the_source_can_be_recorded() {
         // Arrange
-        let catalog = catalog(vec![sized_video("hevc", "hvc1.1.6.L93.B0", 1080, 0)]);
+        let catalog = catalog(vec![sized_video("video", "hvc1.1.6.L93.B0", 1080, 0)]);
 
         // Act
         let error = select_tracks(&catalog, choice(SourceChoice::Main, 720)).unwrap_err();
@@ -582,7 +616,7 @@ mod tests {
         // Assert
         assert_eq!(
             error.to_string(),
-            "no video track in the catalog can be recorded: hevc (hvc1.1.6.L93.B0)"
+            "no video track in the catalog can be recorded: video (hvc1.1.6.L93.B0)"
         );
     }
 
@@ -633,7 +667,7 @@ mod tests {
     #[test]
     fn records_audio_only_while_no_video_track_is_listed() {
         // Arrange: a meeting participant with the camera off
-        let catalog = catalog(vec![in_source(audio_track("opus"), 1), chat(&["audio"])]);
+        let catalog = catalog(vec![in_source(audio_track("opus"), 1)]);
 
         // Act
         let selection = select_tracks(&catalog, choice(SourceChoice::Main, 720))
