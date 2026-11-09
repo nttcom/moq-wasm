@@ -6,7 +6,11 @@ const PAGE_PATH = '/moq-wasm/tests/remote-broadcast/index.html'
 /// Long enough for a 15 fps camera to deliver several video objects.
 const DELIVERY_WAIT_MS = 1_500
 
-async function startPublishing(publisher: PublisherPageModel): Promise<void> {
+/// Publishes under `namespace`, or the namespace the media E2E opens the publisher with.
+async function startPublishing(publisher: PublisherPageModel, namespace?: string[]): Promise<void> {
+  if (namespace) {
+    await publisher.namespaceInput.fill(namespace.join('/'))
+  }
   await publisher.connectButton.click()
   await expect(publisher.connectionStatus).toContainText('Connected:')
   await publisher.getUserMediaButton.click()
@@ -91,6 +95,44 @@ test('a remote broadcast shows each source the catalog lists, in a view the page
     await expect
       .poll(() => page.evaluate(() => window.remoteBroadcastE2E.events()))
       .toEqual(['add camera', 'add screen', 'remove screen attached=false'])
+  } finally {
+    await session.context.close()
+  }
+})
+
+test('watchBroadcasts plays the broadcasts under a prefix but its own and the filtered ones', async ({ browser }) => {
+  // Arrange: the page publishes its own broadcast and a bot's next to the media publisher's, under a prefix of their own
+  // as a session of an earlier test may still hold its namespace
+  const session = await arrangeMediaE2ESession(browser)
+  const page = await session.context.newPage()
+  await page.goto(PAGE_PATH)
+  const prefix = [...mediaE2EConfig.namespace.split('/'), 'watch']
+  const publisher = [...prefix, 'publisher']
+  const own = [...prefix, 'own']
+  const bot = [...prefix, 'bot']
+
+  try {
+    // Act
+    await page.evaluate(({ url, prefix, own, bot }) => window.remoteBroadcastE2E.startWatching(url, prefix, own, bot), {
+      url: mediaE2EConfig.moqtUrl,
+      prefix,
+      own,
+      bot
+    })
+    await startPublishing(session.publisher, publisher)
+
+    // Assert
+    await expect
+      .poll(() => page.evaluate(() => window.remoteBroadcastE2E.watched()), { timeout: 20_000 })
+      .toEqual([`add ${publisher.join('/')}`])
+
+    // Act
+    await session.publisher.closeButton.click()
+
+    // Assert: the closed publisher's namespace is withdrawn and its broadcast removed
+    await expect
+      .poll(() => page.evaluate(() => window.remoteBroadcastE2E.watched()), { timeout: 20_000 })
+      .toEqual([`add ${publisher.join('/')}`, `remove ${publisher.join('/')}`])
   } finally {
     await session.context.close()
   }
