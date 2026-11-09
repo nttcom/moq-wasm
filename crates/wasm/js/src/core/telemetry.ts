@@ -10,7 +10,12 @@ export interface TelemetryOptions {
   url: string
   /// Names the page in each report, at most 128 characters.
   page: string
+  /// Returns the fields a log or span is sent with, to mask or drop a value such as a
+  /// `track_namespace` that holds a user id. Messages and span names are sent as they are.
+  redact?: (fields: Fields) => Fields
 }
+
+type Fields = LogRecord['fields']
 
 type Batch = { logs: LogRecord[]; spans: SpanRecord[] }
 /// Resolves to the response's HTTP status, or `undefined` when there is none to read.
@@ -29,11 +34,11 @@ export class ClientTelemetry {
   ) {}
 
   readonly log = (record: LogRecord, token: string | undefined): void => {
-    keepNewest(this.batch(token).logs, record)
+    keepNewest(this.batch(token).logs, this.redacted(record))
   }
 
   readonly span = (record: SpanRecord, token: string | undefined): void => {
-    keepNewest(this.batch(token).spans, record)
+    keepNewest(this.batch(token).spans, this.redacted(record))
   }
 
   /// Sends one report per token. `beacon` sends with `navigator.sendBeacon`, which outlives the page.
@@ -58,6 +63,11 @@ export class ClientTelemetry {
   start(): void {
     setInterval(() => this.flush(), FLUSH_INTERVAL_MS)
     addEventListener('pagehide', () => this.flush(true))
+  }
+
+  private redacted<T extends { fields: Fields }>(record: T): T {
+    const redact = this.options.redact
+    return redact ? { ...record, fields: redact(record.fields) } : record
   }
 
   private batch(token: string | undefined): Batch {

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { LogRecord, SpanRecord } from './init'
-import { ClientTelemetry } from './telemetry'
+import { ClientTelemetry, type TelemetryOptions } from './telemetry'
 
 type Sent = {
   url: string
@@ -9,10 +9,13 @@ type Sent = {
   beacon: boolean
 }
 
-function telemetry(status = 202): { telemetry: ClientTelemetry; sent: Sent[] } {
+function telemetry(
+  status = 202,
+  options: Partial<TelemetryOptions> = {}
+): { telemetry: ClientTelemetry; sent: Sent[] } {
   const sent: Sent[] = []
   const telemetry = new ClientTelemetry(
-    { url: 'http://observability/', page: 'live-viewer' },
+    { url: 'http://observability/', page: 'live-viewer', ...options },
     async (url, text, beacon) => {
       sent.push({ url, body: JSON.parse(text), text, beacon })
       return status
@@ -137,4 +140,20 @@ test('the records of a token the server rejected are sent without it', async () 
 
   // Assert
   expect(sent.map(({ body }) => body.token)).toEqual(['expired-jwt', undefined])
+})
+
+test('redact rewrites the fields of the logs and spans sent', () => {
+  // Arrange
+  const { telemetry: subject, sent } = telemetry(202, {
+    redact: ({ track_name: _, ...fields }) => ({ ...fields, outcome: 'redacted' })
+  })
+  subject.log(log('SUBSCRIBE_OK received'), undefined)
+  subject.span(span('moqt.subscriber.subscribe'), undefined)
+
+  // Act
+  subject.flush()
+
+  // Assert
+  expect((sent[0].body.logs as LogRecord[])[0].fields).toEqual({ outcome: 'redacted' })
+  expect((sent[0].body.spans as SpanRecord[])[0].fields).toEqual({ outcome: 'redacted' })
 })

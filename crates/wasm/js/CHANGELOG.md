@@ -14,6 +14,9 @@
   call returns the first call's promise and ignores its own options, instead
   of rejecting with "the log sink is already set". A call after the first
   one rejected starts again.
+- `init({ telemetry: { redact } })` rewrites the fields of each log and span
+  before they are sent, so a page can mask or drop a `track_namespace` that
+  holds a user id.
 
 ## 0.3.0
 
