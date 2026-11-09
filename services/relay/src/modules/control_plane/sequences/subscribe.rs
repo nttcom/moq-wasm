@@ -31,9 +31,6 @@ pub(crate) struct Subscribe;
 /// registering on it; each attempt finds or creates it again.
 const UPSTREAM_ATTEMPTS: usize = 3;
 
-/// Clients that leave Forward at 0 in SUBSCRIBE still expect delivery.
-const INITIAL_FORWARD: bool = true;
-
 enum Acceptance {
     Answered,
     UpstreamGone,
@@ -403,7 +400,7 @@ impl Subscribe {
             subscriber_peer,
             track_key.clone(),
             JoinPoint::new(&filter_type, largest_location),
-            DeliveryControl::new(INITIAL_FORWARD, &filter_type, largest_location),
+            DeliveryControl::new(handler.forward(), &filter_type, largest_location),
         ) else {
             tracing::debug!(
                 request_id = handler.subscribe_id(),
@@ -1014,6 +1011,30 @@ mod tests {
         // Assert
         assert!(matches!(acceptance, Acceptance::UpstreamGone));
         assert_unanswered(&handler);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_with_forward_off_registers_its_downstream_subscription_with_forward_off() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+        let handler = MockSubscribeHandler {
+            forward: false,
+            ..Default::default()
+        };
+
+        // Act
+        accept_downstream(&table, &handler).await;
+
+        // Assert
+        let delivery_control = table
+            .downstream_delivery_control(2, handler.subscribe_id())
+            .expect("the SUBSCRIBE registers its downstream subscription");
+        assert!(!delivery_control.forward);
     }
 
     #[tokio::test]
