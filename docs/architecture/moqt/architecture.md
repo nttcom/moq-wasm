@@ -322,8 +322,10 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   transport handshake that fails therefore fails `Accepting`, not `accept()`.
   The future of `Accepting` runs that handshake, failing it after 10 s
   (`TRANSPORT_HANDSHAKE_TIMEOUT`), then `version::accept`, which for draft-14
-  accepts the control stream and stops after CLIENT_SETUP is received. It
-  resolves to a
+  accepts the control stream and stops after CLIENT_SETUP is received. When
+  CLIENT_SETUP does not arrive within another 10 s (`CLIENT_SETUP_TIMEOUT`),
+  the future closes the connection with CONTROL_MESSAGE_TIMEOUT. It resolves
+  to a
   `Handshake` that exposes the CLIENT_SETUP's AUTHORIZATION TOKEN parameters
   (`authorization_tokens()`) so the application can decide before
   SERVER_SETUP is sent:

@@ -39,7 +39,9 @@ where
 
 impl AuthorizationTokenSource {
     /// `provider` is called before every CLIENT_SETUP, including on connections
-    /// opened to follow GOAWAY. An `Err` fails that connection.
+    /// opened to follow GOAWAY. An `Err` fails that connection. `provider` runs
+    /// once the transport is open, and a moqt server closes a connection whose
+    /// CLIENT_SETUP has not arrived 10 s after that.
     pub fn provider<F, Fut>(provider: F) -> Self
     where
         F: Fn() -> Fut + MaybeSend + MaybeSync + 'static,

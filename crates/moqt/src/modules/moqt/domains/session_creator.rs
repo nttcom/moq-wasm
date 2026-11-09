@@ -3,7 +3,6 @@ use std::{pin::pin, sync::Arc};
 use anyhow::Context;
 use tracing::{Instrument, Span};
 
-use crate::SessionEvent;
 use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::domains::connection::Connection;
@@ -17,6 +16,7 @@ use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use crate::modules::transport::transport_connection::TransportClose;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
+use crate::{SessionEvent, TerminationErrorCode};
 use std::time::Duration;
 
 use crate::{Connecting, WebSocketFallback, server::Accepting, server::Handshake};
@@ -25,6 +25,9 @@ const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 /// QUIC's idle timeout does not end the handshake of a peer that answers
 /// keep-alives but withholds the WebTransport CONNECT.
 const TRANSPORT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Nor does it end a connection whose peer never sends CLIENT_SETUP. The wait
+/// includes the client's token provider, which runs once the transport is open.
+const CLIENT_SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 #[error("peer closed the connection before SERVER_SETUP (code {code}: {reason})")]
@@ -364,7 +367,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 executor::timeout(TRANSPORT_HANDSHAKE_TIMEOUT, transport_accepting)
                     .await
                     .map_err(|()| anyhow::anyhow!("the transport handshake timed out"))??;
-            let setup = version::accept(&transport_conn).await?;
+            let setup = accept_setup(&transport_conn).await?;
             Ok(Handshake {
                 transport_connection: transport_conn,
                 setup,
@@ -376,6 +379,23 @@ impl<T: TransportProtocol> SessionCreator<T> {
     }
 }
 
+async fn accept_setup(
+    transport_conn: &BoxedConnection,
+) -> anyhow::Result<version::ServerHandshake> {
+    if let Ok(setup) =
+        executor::timeout(CLIENT_SETUP_TIMEOUT, version::accept(transport_conn)).await
+    {
+        return setup;
+    }
+    let code = version::negotiated_version(transport_conn)?
+        .termination_code(TerminationErrorCode::ControlMessageTimeout);
+    transport_conn.close(code, "CLIENT_SETUP timed out");
+    // WebTransport sends the code only while the connection outlives the
+    // close, as in `Handshake::reject`.
+    let _closed = executor::timeout(CLOSE_REASON_TIMEOUT, transport_conn.closed()).await;
+    anyhow::bail!("the peer sent no CLIENT_SETUP within {CLIENT_SETUP_TIMEOUT:?}")
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -384,9 +404,12 @@ mod tests {
         AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, NATIVE, Session,
         TerminationErrorCode, WebSocketFallback,
         modules::{
-            moqt::control_plane::{
-                constants::MOQ_TRANSPORT_VERSION,
-                control_messages::messages::parameters::authorization_token::AuthorizationToken,
+            moqt::{
+                control_plane::{
+                    constants::MOQ_TRANSPORT_VERSION,
+                    control_messages::messages::parameters::authorization_token::AuthorizationToken,
+                },
+                version::APPLICATION_PROTOCOLS,
             },
             test_support::{
                 HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, native_client,
@@ -398,13 +421,11 @@ mod tests {
         },
     };
 
-    /// Completes a QUIC handshake offering `h3`, then never sends the HTTP/3
-    /// SETTINGS or the WebTransport CONNECT.
-    async fn stalled_web_transport_peer(port: u16) -> quinn::Connection {
+    async fn silent_quic_peer(port: u16, alpn: &str) -> quinn::Connection {
         let endpoint = client_endpoint(0).unwrap();
         let config = quic_client_config(
             client_crypto(&CertificateVerification::Disabled).unwrap(),
-            vec![web_transport_quinn::ALPN.as_bytes().to_vec()],
+            vec![alpn.as_bytes().to_vec()],
         )
         .unwrap();
         let address = (std::net::Ipv4Addr::LOCALHOST, port).into();
@@ -829,7 +850,7 @@ mod tests {
                 });
             }
         });
-        let _stalled = within(stalled_web_transport_peer(port)).await;
+        let _stalled = within(silent_quic_peer(port, web_transport_quinn::ALPN)).await;
 
         // Act
         let session = within(async {
@@ -843,5 +864,43 @@ mod tests {
         // Assert
         session.unwrap();
         within(session_receiver.recv()).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_peer_that_sends_no_client_setup_is_closed_after_the_deadline() {
+        // Arrange: the server waits for the control stream
+        let (telemetry, _guard) = capture_telemetry();
+        let server =
+            Endpoint::<NATIVE>::create_server(&self_signed_server_config("accept-silent-peer"))
+                .unwrap();
+        let port = server.local_port().unwrap();
+        let accepting = tokio::spawn(async move { server.accept().await.unwrap().await.err() });
+        let silent = within(silent_quic_peer(port, APPLICATION_PROTOCOLS.quic_alpns[0])).await;
+        within(async {
+            while telemetry.events("MoQT version negotiated").is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        tokio::time::pause();
+
+        // Act
+        let error =
+            tokio::time::timeout(super::CLIENT_SETUP_TIMEOUT + HANDSHAKE_TIMEOUT, accepting)
+                .await
+                .expect("the server still waits for CLIENT_SETUP")
+                .unwrap();
+        let closed = silent.closed().await;
+
+        // Assert: the peer sees CONTROL_MESSAGE_TIMEOUT (0x11)
+        let error = error.expect("a peer without CLIENT_SETUP was accepted");
+        assert!(
+            format!("{error:#}").contains("no CLIENT_SETUP"),
+            "{error:#}"
+        );
+        let quinn::ConnectionError::ApplicationClosed(close) = closed else {
+            panic!("expected an application close, got {closed:?}");
+        };
+        assert_eq!(close.error_code, quinn::VarInt::from_u32(0x11));
     }
 }
