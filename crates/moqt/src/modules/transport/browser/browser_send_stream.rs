@@ -1,6 +1,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    rc::Rc,
     task::{Context, Poll},
 };
 
@@ -11,7 +12,10 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{WebTransportSendStream, WritableStreamDefaultWriter};
 
-use super::js_value::{is_session_error, js_error, stream_error_code, web_transport_error};
+use super::{
+    browser_stats::BrowserStats,
+    js_value::{is_session_error, js_error, stream_error_code, web_transport_error},
+};
 use crate::modules::transport::transport_send_stream::{TransportSendError, TransportSendStream};
 
 #[derive(Debug)]
@@ -21,15 +25,20 @@ pub struct BrowserSendStream {
     /// `writer.closed` while `poll_stopped` waits on it; a STOP_SENDING
     /// rejects it with its code.
     closed: Option<JsFuture>,
+    stats: Rc<BrowserStats>,
 }
 
 impl BrowserSendStream {
-    pub(crate) fn new(stream: WebTransportSendStream) -> anyhow::Result<Self> {
+    pub(crate) fn new(
+        stream: WebTransportSendStream,
+        stats: Rc<BrowserStats>,
+    ) -> anyhow::Result<Self> {
         let writer = stream.get_writer().map_err(js_error)?;
         Ok(Self {
             stream,
             writer,
             closed: None,
+            stats,
         })
     }
 }
@@ -41,8 +50,9 @@ impl TransportSendStream for BrowserSendStream {
         chunk.copy_from(buffer);
         JsFuture::from(self.writer.write_with_chunk(&chunk))
             .await
-            .map(|_| ())
-            .map_err(send_error)
+            .map_err(send_error)?;
+        self.stats.add_sent(buffer.len());
+        Ok(())
     }
 
     /// `writer.close()` resolves only once the peer has acknowledged the FIN.

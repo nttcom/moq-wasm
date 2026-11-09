@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use anyhow::Context;
 use async_trait::async_trait;
@@ -14,6 +16,7 @@ use web_sys::{
 use super::{
     browser_receive_stream::BrowserReceiveStream,
     browser_send_stream::BrowserSendStream,
+    browser_stats::BrowserStats,
     js_value::{js_error, read_next},
 };
 use crate::modules::transport::{
@@ -30,6 +33,7 @@ pub struct BrowserConnection {
     incoming_uni_streams: ReadableStreamDefaultReader,
     datagram_reader: ReadableStreamDefaultReader,
     datagram_writer: Option<WritableStreamDefaultWriter>,
+    stats: Rc<BrowserStats>,
 }
 
 impl BrowserConnection {
@@ -53,14 +57,16 @@ impl BrowserConnection {
             incoming_uni_streams,
             datagram_reader,
             datagram_writer,
+            stats: Rc::default(),
         })
     }
 
     fn split_bi(
+        &self,
         stream: WebTransportBidirectionalStream,
     ) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
-        let send_stream = BrowserSendStream::new(stream.writable())?;
-        let receive_stream = BrowserReceiveStream::new(&stream.readable())?;
+        let send_stream = BrowserSendStream::new(stream.writable(), self.stats.clone())?;
+        let receive_stream = BrowserReceiveStream::new(&stream.readable(), self.stats.clone())?;
         Ok((Box::new(send_stream), Box::new(receive_stream)))
     }
 }
@@ -102,7 +108,7 @@ impl TransportConnection for BrowserConnection {
                 .await
                 .map_err(js_error)?
                 .unchecked_into();
-        Self::split_bi(stream)
+        self.split_bi(stream)
     }
 
     /// The browser's WebTransport API cannot tell whether the peer's stream
@@ -116,14 +122,17 @@ impl TransportConnection for BrowserConnection {
             .await
             .map_err(js_error)?
             .context("incoming bidirectional streams ended")?;
-        Self::split_bi(stream.unchecked_into())
+        self.split_bi(stream.unchecked_into())
     }
 
     async fn open_uni(&self) -> anyhow::Result<BoxedSendStream> {
         let stream = JsFuture::from(self.transport.create_unidirectional_stream())
             .await
             .map_err(js_error)?;
-        Ok(Box::new(BrowserSendStream::new(stream.unchecked_into())?))
+        Ok(Box::new(BrowserSendStream::new(
+            stream.unchecked_into(),
+            self.stats.clone(),
+        )?))
     }
 
     async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream> {
@@ -133,6 +142,7 @@ impl TransportConnection for BrowserConnection {
             .context("incoming unidirectional streams ended")?;
         Ok(Box::new(BrowserReceiveStream::new(
             &stream.unchecked_into(),
+            self.stats.clone(),
         )?))
     }
 
@@ -143,9 +153,11 @@ impl TransportConnection for BrowserConnection {
             .as_ref()
             .context("this browser exposes no datagram writer")?;
         let write = writer.write_with_chunk(&Uint8Array::from(&bytes[..]));
+        let stats = self.stats.clone();
         spawn_local(async move {
-            if let Err(error) = JsFuture::from(write).await {
-                tracing::warn!(?error, "failed to send datagram");
+            match JsFuture::from(write).await {
+                Ok(_) => stats.add_sent(bytes.len()),
+                Err(error) => tracing::warn!(?error, "failed to send datagram"),
             }
         });
         Ok(DatagramDelivery::Sent)
@@ -156,13 +168,13 @@ impl TransportConnection for BrowserConnection {
             .await
             .map_err(js_error)?
             .context("datagram stream ended")?;
-        Ok(BytesMut::from(Bytes::from(
-            Uint8Array::from(datagram).to_vec(),
-        )))
+        let datagram = Uint8Array::from(datagram).to_vec();
+        self.stats.add_received(datagram.len());
+        Ok(BytesMut::from(Bytes::from(datagram)))
     }
 
     fn stats(&self) -> TransportStats {
-        TransportStats::default()
+        self.stats.snapshot()
     }
 
     fn addresses(&self) -> TransportAddresses {

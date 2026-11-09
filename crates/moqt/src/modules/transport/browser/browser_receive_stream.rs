@@ -2,6 +2,7 @@ use std::{
     fmt::{self, Debug},
     future::Future,
     pin::Pin,
+    rc::Rc,
     task::{Context, Poll},
 };
 
@@ -12,7 +13,10 @@ use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{ReadableStream, ReadableStreamDefaultReader, ReadableStreamReadResult};
 
-use super::js_value::{is_session_error, js_error, stream_error_code, web_transport_error};
+use super::{
+    browser_stats::BrowserStats,
+    js_value::{is_session_error, js_error, stream_error_code, web_transport_error},
+};
 use crate::modules::transport::{
     read_error::ReadError, transport_receive_stream::TransportReceiveStream,
 };
@@ -21,15 +25,17 @@ pub struct BrowserReceiveStream {
     reader: ReadableStreamDefaultReader,
     pending_read: Option<JsFuture>,
     unread: Bytes,
+    stats: Rc<BrowserStats>,
 }
 
 impl BrowserReceiveStream {
-    pub(crate) fn new(stream: &ReadableStream) -> anyhow::Result<Self> {
+    pub(crate) fn new(stream: &ReadableStream, stats: Rc<BrowserStats>) -> anyhow::Result<Self> {
         let reader = ReadableStreamDefaultReader::new(stream).map_err(js_error)?;
         Ok(Self {
             reader,
             pending_read: None,
             unread: Bytes::new(),
+            stats,
         })
     }
 
@@ -46,7 +52,9 @@ impl BrowserReceiveStream {
         if result.get_done() == Some(true) {
             return Poll::Ready(Ok(None));
         }
-        Poll::Ready(Ok(Some(Uint8Array::from(result.get_value()).to_vec())))
+        let chunk = Uint8Array::from(result.get_value()).to_vec();
+        self.stats.add_received(chunk.len());
+        Poll::Ready(Ok(Some(chunk)))
     }
 }
 
