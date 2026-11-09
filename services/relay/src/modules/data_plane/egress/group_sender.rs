@@ -1,5 +1,5 @@
 use moqt::{TransportSendError, object::DataStreamResetCode};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use tokio::{
     sync::{Mutex, mpsc, watch},
@@ -30,6 +30,7 @@ use super::{group_sequence::GroupSequence, scheduler::GroupSendTask};
 /// on the task channel, and its lag scan schedules the missed groups that are
 /// still cached.
 const MAX_CONCURRENT_SEND_TASKS: usize = 256;
+const STREAM_CREDIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 type SharedStreamSenderFactory = Arc<Mutex<Box<dyn StreamSenderFactory>>>;
 
@@ -243,15 +244,20 @@ impl GroupSender {
             transport_priority = priority.transport_priority(),
             "opening egress uni stream"
         );
-        let opened = {
+        let opened = tokio::time::timeout(STREAM_CREDIT_TIMEOUT, async {
             let mut factory = task.factory.lock().await;
             factory.next(priority).await
-        };
+        })
+        .await;
         let mut sender = match opened {
-            Ok(sender) => sender,
-            Err(e) => {
+            Ok(Ok(sender)) => sender,
+            Ok(Err(e)) => {
                 tracing::error!(error = ?e, "failed to open stream sender");
                 return (0, "open_failed");
+            }
+            Err(_elapsed) => {
+                tracing::debug!("no stream credit from the subscriber; giving up on the group");
+                return (0, "no_stream_credit");
             }
         };
         task.delivery_stats.record_stream_opened();
@@ -478,7 +484,10 @@ mod tests {
     use moqt::TransportSendError;
     use tokio::sync::{mpsc, watch};
 
-    use super::{GroupSendTask, GroupSender, MAX_CONCURRENT_SEND_TASKS, send_failure_reason};
+    use super::{
+        GroupSendTask, GroupSender, MAX_CONCURRENT_SEND_TASKS, STREAM_CREDIT_TIMEOUT,
+        send_failure_reason,
+    };
     use crate::modules::{
         data_plane::cache::track_cache::TrackCache,
         domain::track_key::TrackKey,
@@ -543,6 +552,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(Arc::strong_count(&first), 2);
+    }
+
+    #[tokio::test]
+    async fn a_task_without_stream_credit_gives_up_on_its_group() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let _first = open_group(&cache, 0, &[0]);
+        let _second = open_group(&cache, 1, &[0]);
+        let (publisher, MockPublisherObservers { mut priorities, .. }) = MockPublisher::channel();
+        let task_sender = run_group_sender(&cache, publisher.stalling_stream_opens());
+        task_sender.send(send_task(0)).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3), priorities.recv())
+            .await
+            .expect("the task should start opening its stream")
+            .expect("the publisher should stay alive");
+        tokio::time::pause();
+
+        // Act
+        tokio::time::advance(STREAM_CREDIT_TIMEOUT).await;
+        task_sender.send(send_task(1)).await.unwrap();
+
+        // Assert: group 1 starts opening its stream, so group 0's task released the shared factory
+        tokio::time::timeout(Duration::from_secs(3), priorities.recv())
+            .await
+            .expect("group 1 should start opening its stream")
+            .expect("the publisher should stay alive");
     }
 
     #[tokio::test]
