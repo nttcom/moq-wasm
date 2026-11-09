@@ -1,6 +1,6 @@
 # [S] Stop the live viewer E2E from failing when the player retires the outgoing rendition first
 
-Next: read the assertion at `examples/browser/tests/live-viewer-e2e.spec.ts:173` next to `retireOutgoingVideo` in `crates/wasm/js/src/media/player/livePlayer.ts:792`.
+Next: read the assertion at `examples/browser/tests/live-viewer-e2e.spec.ts:176` next to `retireOutgoingVideo` in `crates/wasm/js/src/media/player/livePlayer.ts:792`.
 
 ## Goal
 
