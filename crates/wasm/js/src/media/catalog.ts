@@ -107,13 +107,19 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
 /// screen, named by its video and audio tracks.
 export type LiveSource = { video: string; audio?: string }
 
-/// The audio is returned even when the video track is absent, such as a muted camera's.
+/// The audio is returned even when the video track is absent, such as a muted
+/// camera's. The alternates of the named video and audio (draft-ietf-moq-msf-01
+/// §5.2.12), such as renditions or translated audio, belong to the source too.
 export function sourceTracks(tracks: MediaCatalogTrack[], source: LiveSource): MediaCatalogTrack[] {
-  const altGroup = tracks.find((track) => track.name === source.video)?.altGroup
-  const named = new Set([source.video, source.audio])
+  const named = [source.video, source.audio].flatMap((name) => tracks.find((track) => track.name === name) ?? [])
   const own = tracks.filter(
     (track) =>
-      track.packaging !== 'cmaf' && (named.has(track.name) || (altGroup !== undefined && track.altGroup === altGroup))
+      track.packaging !== 'cmaf' &&
+      named.some(
+        (base) =>
+          base.name === track.name ||
+          (base.altGroup !== undefined && base.altGroup === track.altGroup && base.role === track.role)
+      )
   )
   const cmafNames = new Set(own.map((track) => `${track.name}_cmaf`))
   return [...own, ...tracks.filter((track) => track.packaging === 'cmaf' && cmafNames.has(track.name))]

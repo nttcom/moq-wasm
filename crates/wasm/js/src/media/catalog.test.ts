@@ -187,6 +187,30 @@ test('a source whose video is absent keeps its audio', () => {
   expect(camera.map(({ name }) => name)).toEqual(['audio'])
 })
 
+test('the alternates of a source audio belong to it, apart from video alternates of the same number', () => {
+  // Arrange: a translated broadcast numbers its languages altGroup 1, as the video's renditions are
+  const track = (name: string, role: string, altGroup?: number): MediaCatalogTrack => ({
+    name,
+    label: name,
+    packaging: 'loc',
+    role,
+    altGroup
+  })
+  const tracks = [
+    track('video', 'video', 1),
+    track('video_low', 'video', 1),
+    track('audio', 'audio', 1),
+    track('en', 'audio', 1),
+    track('commentary', 'audio')
+  ]
+
+  // Act
+  const source = sourceTracks(tracks, { video: 'video', audio: 'audio' })
+
+  // Assert
+  expect(source.map(({ name }) => name)).toEqual(['video', 'video_low', 'audio', 'en'])
+})
+
 test('a player finds the media timeline of its own source', () => {
   // Arrange
   const catalog = {
