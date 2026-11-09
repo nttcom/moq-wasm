@@ -364,10 +364,16 @@ impl SessionContext {
         {
             return false;
         }
+        self.moved_past(connection.generation).await
+    }
+
+    /// `true` once the current connection is later than `generation`; `false`
+    /// once the session will not move again.
+    pub(crate) async fn moved_past(&self, generation: u64) -> bool {
         let mut moves = self.moves.subscribe();
         loop {
             let ended = *moves.borrow_and_update();
-            if !Arc::ptr_eq(&self.connection(), connection) {
+            if self.connection().generation > generation {
                 return true;
             }
             if ended || moves.changed().await.is_err() {

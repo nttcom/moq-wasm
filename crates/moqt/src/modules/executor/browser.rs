@@ -78,7 +78,7 @@ pub fn system_time() -> Duration {
     Duration::from_secs_f64(js_sys::Date::now() / 1_000.0)
 }
 
-pub(crate) async fn sleep(duration: Duration) {
+pub async fn sleep(duration: Duration) {
     let millis = i32::try_from(duration.as_millis()).unwrap_or(i32::MAX);
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         let global = js_sys::global();

@@ -41,7 +41,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   | `moqt::namespace` | PUBLISH_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_NAMESPACE_CANCEL, SUBSCRIBE_NAMESPACE and UNSUBSCRIBE_NAMESPACE: `PendingPublishNamespace`, handlers |
   | `moqt::object` | Draft-independent object model (`Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
   | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
-  | `moqt::executor` | `spawn` / `JoinHandle`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
+  | `moqt::executor` | `spawn` / `JoinHandle`, `sleep`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
 
   Implementation files under `modules/` are not arranged by these modules;
   each public module only re-exports.
