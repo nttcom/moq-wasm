@@ -1,13 +1,24 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - `MoqSession.connect(url, { versions })` offers the MoQT drafts `versions`
-  names (`'draft-14'`, `'draft-18'`), most preferred first; without it only
-  draft-14 is offered, as before.
+  names (`MoqVersion`: `'draft-14'`, `'draft-18'`), most preferred first;
+  without it only draft-14 is offered, as before.
 - `MediaCatalogTrack` carries `eventType`, which names the records of an event
   timeline track (draft-ietf-moq-msf-01 §5.2.5), so a page can tell a chat
   from a transcript.
+- `MediaCatalogTrack` carries `namespace`, set when a track is published
+  under another namespace than its catalog's (draft-ietf-moq-msf-01 §5.2.2),
+  and `LivePlayer` subscribes to the track there. It also carries `lang`.
+- The catalog `publish()` sends gives its `version` as the string
+  `"draft-01"` (draft-ietf-moq-msf-01 §5.1.1) instead of the number `1`.
+- `init({ onSpan })` receives the wasm module's closed spans as `SpanRecord`s,
+  and a `LogRecord` logged inside one carries its `traceId` and `spanId`.
+- `RequestError.reasonPhrase` holds the reason phrase of the rejection.
+- `publish()` reports through `onError` an encoder worker that fails to load
+  or throws, and reports a failure whose `String()` equals the previous one
+  only once.
 - `moq-wasm/recording`: `openRecording(session, recorderUrl, id, { token })`
   asks the recorder to replay a finished recording and holds the answer of
   `POST /recordings/{id}/publish`, which keeps the replay running, until
