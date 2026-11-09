@@ -1,0 +1,223 @@
+use std::{path::PathBuf, sync::Arc};
+
+use anyhow::{Context, Result};
+use moqt::{
+    CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
+    fetch::{FetchDataReceiver, FetchOption},
+    object::{ContentExists, Location},
+    subscribe::{FilterType, SubscribeOption},
+};
+
+use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal, read_token_file};
+
+/// The token a recording or a replay presents to the relay.
+#[derive(Debug, Clone)]
+pub(crate) enum ServiceToken {
+    /// The recorder's own: `MOQT_AUTH_TOKEN_FILE`, re-read while connected,
+    /// else `MOQT_AUTH_TOKEN`, else none.
+    Environment,
+    /// The token of the temporary app that owns the room, given by the page
+    /// that asked for the recording or the replay.
+    Temporary(TemporaryToken),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct TemporaryToken {
+    pub(crate) token: String,
+    /// The token mint that renews `token`.
+    pub(crate) issuer_url: String,
+}
+
+/// The session follows the relay's GOAWAY by itself, so a recording outlives
+/// a relay drain.
+pub(crate) struct RelayConnection {
+    pub(crate) session: Arc<Session>,
+    _token_refresh: Option<TokenRefreshTask>,
+}
+
+impl RelayConnection {
+    pub(crate) async fn connect(
+        url: &str,
+        verify_certificate: bool,
+        authorization_token: Option<String>,
+    ) -> Result<Self> {
+        let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
+            certificate_verification: CertificateVerification::native_roots_or_disabled(
+                verify_certificate,
+            ),
+            authorization_token: authorization_token.map(Into::into),
+            ..ClientConfig::default()
+        })?;
+        tracing::info!(relay = url, "connecting to relay");
+        let connecting = endpoint
+            .connect(url)
+            .await
+            .with_context(|| format!("cannot connect to {url}"))?;
+        let session = Arc::new(connecting.await?);
+        Ok(Self {
+            session,
+            _token_refresh: None,
+        })
+    }
+
+    pub(crate) async fn connect_service(
+        url: &str,
+        verify_certificate: bool,
+        namespace: &str,
+        token: &ServiceToken,
+    ) -> Result<Self> {
+        let (token, renewal) = match token {
+            ServiceToken::Environment => {
+                match std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(PathBuf::from) {
+                    Some(path) => (
+                        Some(read_token_file(&path).await?),
+                        Some(TokenRenewal::File(path)),
+                    ),
+                    None => (std::env::var("MOQT_AUTH_TOKEN").ok(), None),
+                }
+            }
+            ServiceToken::Temporary(temporary) => (
+                Some(temporary.token.clone()),
+                Some(TokenRenewal::Issuer(temporary.issuer_url.clone())),
+            ),
+        };
+        let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
+        if let (Some(renewal), Some(token)) = (renewal, token) {
+            connection._token_refresh = Some(TokenRefreshTask::run(
+                connection.session.clone(),
+                renewal,
+                namespace.split('/').next().unwrap_or_default().to_string(),
+                token,
+            ));
+        }
+        Ok(connection)
+    }
+
+    pub(crate) async fn close(&self) {
+        self.session.close().await;
+    }
+}
+
+pub(crate) struct Track {
+    pub(crate) subscription: Subscription,
+    pub(crate) reader: TrackReader,
+}
+
+/// `NextGroupStart` begins a live video recording on a keyframe;
+/// `LargestObject` continues right after what `fetch_cached` returns.
+pub(crate) async fn subscribe(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+    filter_type: FilterType,
+) -> Result<Track> {
+    let option = SubscribeOption {
+        filter_type,
+        ..SubscribeOption::default()
+    };
+    let mut subscriber = session.subscriber();
+    let subscription = subscriber
+        .subscribe(namespace.to_string(), name.to_string(), option)
+        .await
+        .with_context(|| format!("failed to subscribe {namespace}/{name}"))?;
+    Ok(Track {
+        reader: subscriber.track_reader(&subscription),
+        subscription,
+    })
+}
+
+/// An audio object decodes alone, and a meeting participant who sends the
+/// audio as a single stream never starts a new group, so `NextGroupStart`
+/// (draft-ietf-moq-transport-14 §9.7) would deliver none of it. Live or after
+/// `fetch_cached`.
+pub(crate) async fn subscribe_audio(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+) -> Result<Track> {
+    subscribe(session, namespace, name, FilterType::LargestObject).await
+}
+
+/// A standalone FETCH from the track's first location through the largest
+/// object the track's subscription reported (draft-14 §9.16.1: End Location is the last
+/// object plus one), so a `LargestObject` subscription continues where it
+/// ends. The relay serves what it caches and asks the publisher for the
+/// rest. `None` when the subscription reported no content.
+pub(crate) async fn fetch_cached(
+    session: &Session,
+    track: &Track,
+) -> Result<Option<FetchDataReceiver>> {
+    let subscription = &track.subscription;
+    let ContentExists::True { location: largest } = subscription.content_exists() else {
+        return Ok(None);
+    };
+    let mut subscriber = session.subscriber();
+    let handle = subscriber
+        .fetch(
+            subscription.track_namespace().to_string(),
+            subscription.track_name().to_string(),
+            Location {
+                group_id: 0,
+                object_id: 0,
+            },
+            Location {
+                group_id: largest.group_id,
+                object_id: largest.object_id + 1,
+            },
+            FetchOption::default(),
+        )
+        .await?;
+    Ok(Some(subscriber.accept_fetch_receiver(&handle).await?))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bytes::Bytes;
+    use moqt::publish::{GroupBoundary, OutgoingObject, Retention};
+
+    use super::*;
+    use crate::test_support::FakePublisher;
+
+    const NAMESPACE: &str = "anon/room/alice";
+    const AUDIO: &str = "audio_64kbps";
+
+    #[tokio::test]
+    async fn an_audio_subscription_continues_the_group_the_publisher_keeps_open() {
+        // Arrange: like a single-stream audio track, the publisher never starts a second group
+        let mut publisher = FakePublisher::spawn();
+        let origin = publisher.origin.clone();
+        origin
+            .ensure_track(NAMESPACE, AUDIO, 0, Retention::NewestOnly)
+            .await;
+        let write = |group, payload| {
+            origin.write(
+                NAMESPACE,
+                AUDIO,
+                OutgoingObject::plain(group, Bytes::from_static(payload)),
+            )
+        };
+        write(GroupBoundary::Next, b"o0").await.unwrap();
+        let connection = RelayConnection::connect(&publisher.url, false, None)
+            .await
+            .unwrap();
+
+        // Act
+        let mut track = subscribe_audio(&connection.session, NAMESPACE, AUDIO)
+            .await
+            .unwrap();
+        assert_eq!(publisher.served.recv().await.as_deref(), Some(AUDIO));
+        write(GroupBoundary::Within, b"o1").await.unwrap();
+        let object = tokio::time::timeout(Duration::from_secs(5), track.reader.next_object())
+            .await
+            .expect("no audio object arrived")
+            .unwrap()
+            .unwrap();
+
+        // Assert
+        assert_eq!((object.group_id, object.object_id), (0, 1));
+        assert_eq!(object.payload, &b"o1"[..]);
+        connection.close().await;
+    }
+}

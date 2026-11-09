@@ -7,7 +7,9 @@ import { pathToFileURL } from 'node:url'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   type RecordingLayout,
+  type RecordingFormat,
   type RoomRecording,
+  type Recorder,
   listRecordings,
   startRecording,
   stopRecording
@@ -88,6 +90,11 @@ export const test = base.extend<{ recorderServe: RecorderServe }>({
   }
 })
 
+export function recordingPlayerPath(recorderUrl: string, id: string): string {
+  const params = new URLSearchParams({ recorder: recorderUrl, relayUrl: liveViewerE2EConfig.moqtUrl, id })
+  return `/moq-wasm/examples/recording-player/?${params}`
+}
+
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
 
 /// `recorder serve` with a directory store; it runs every recording and composite as a child process.
@@ -106,6 +113,8 @@ async function startRecorderServe() {
       'serve',
       '--listen',
       `127.0.0.1:${RECORDER_SERVE_PORT}`,
+      '--allowed-origin',
+      'http://127.0.0.1:4173',
       '--relay',
       liveViewerE2EConfig.moqtUrl,
       '--insecure-skip-tls-verify',
@@ -134,13 +143,21 @@ async function startRecorderServe() {
     }
     await sleep(POLL_INTERVAL_MS)
   }
+  // The rooms these tests record are under the public root, which needs no token.
+  const api: Recorder = { url, token: () => undefined }
   const current = async (recording: RoomRecording) =>
-    (await listRecordings(url, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
+    (await listRecordings(api, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
   return {
+    url,
     storeDir,
     /// Returns once the recording job has joined the room, so that the recording covers what follows.
-    async start(namespacePrefix: string, layout: RecordingLayout, composite = false): Promise<RoomRecording> {
-      const recording = await startRecording(url, namespacePrefix, layout, composite)
+    async start(
+      namespacePrefix: string,
+      layout: RecordingLayout,
+      composite = false,
+      format: RecordingFormat = 'mp4'
+    ): Promise<RoomRecording> {
+      const recording = await startRecording(api, namespacePrefix, layout, composite, format)
       const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
       while ((await current(recording))?.state === 'starting') {
         if (Date.now() > deadline) {
@@ -152,7 +169,7 @@ async function startRecorderServe() {
     },
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
-      await stopRecording(url, recording.id)
+      await stopRecording(api, recording.id)
       const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
       for (;;) {
         const state = (await current(recording))?.state
@@ -186,6 +203,24 @@ async function startRecorderServe() {
         }
         await sleep(POLL_INTERVAL_MS)
       }
+    },
+    /// Opens a replay of the recording, which runs until `close`, and returns the first line of the answer.
+    async publish(recording: RoomRecording): Promise<{ answer: Record<string, unknown>; close: () => Promise<void> }> {
+      const response = await fetch(`${url}/recordings/${recording.id}/publish`, { method: 'POST' })
+      if (!response.ok || !response.body) {
+        throw new Error(`publish answered ${response.status}: ${await response.text()}`)
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let text = ''
+      while (!text.includes('\n')) {
+        const { value, done } = await reader.read()
+        if (done) {
+          throw new Error(`the publish answer ended before its first line: ${text}`)
+        }
+        text += decoder.decode(value, { stream: true })
+      }
+      return { answer: JSON.parse(text.slice(0, text.indexOf('\n'))), close: () => reader.cancel() }
     },
     async close(): Promise<void> {
       recorder.kill('SIGINT')

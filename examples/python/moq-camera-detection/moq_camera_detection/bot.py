@@ -7,60 +7,56 @@ import aiohttp
 import moqt
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_bot_rooms.rooms import GRACE_SECONDS
+from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
-from moq_d3_flash_bot.d3_flash_status import D3FlashStatus
-from moq_d3_flash_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_d3_flash_bot.namespace import until_room_empty, while_published
+from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
+from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_system_one_bot.namespace import until_room_empty
+from moq_system_one_bot.relay import add_relay_arguments, stay_connected
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from moq_camera_detection.detector import CameraDetector, CameraPicture
-from moq_camera_detection.event_timeline import EventTimeline
+from moq_system_one_bot.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt, parse_prompt
 from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
-from moq_camera_detection.vision import D3FlashVisionClient
+from moq_camera_detection.vision import SystemOneVisionClient
 
-DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8098
-# d3-flash answers one batch at a time, and one camera already sends it a picture every SAMPLE_INTERVAL_SECONDS.
+# system-one-server answers one request at a time, and one camera already sends it a picture every
+# SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
-NAMESPACE_ROOT = ["anon", "moq-camera-detection"]
+DEMO_NAME = "moq-camera-detection"
 VIDEO_TRACK = "video"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
-# The event timeline and the d3-flash status are kept for FETCH as long as a room runs by default
+# The event timeline and the System One status are kept for FETCH as long as a room runs by default
 # (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
-RECONNECT_DELAY_SECONDS = 2.0
 SAMPLE_INTERVAL_SECONDS = 0.1
-# d3-flash scales to zero; a cold start copies 17 GB of weights before it answers.
-VISION_REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10 * 60)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Answer the MoQ camera page's question about its camera, one bot per camera room"
     )
-    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
-    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="skip TLS verification, for a local relay with a self-signed certificate",
+    add_serve_arguments(
+        parser, bot="moq-camera-detection", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS
     )
+    add_relay_arguments(parser)
     parser.add_argument(
-        "--d3-flash-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as d3-flash"
+        "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
     )
     add_identity_token_arguments(parser)
     return parser.parse_args()
 
 
-def room_namespace(room_id: str) -> list[str]:
-    return [*NAMESPACE_ROOT, room_id]
+def room_namespace(room: BotRoom) -> list[str]:
+    return [room.namespace_root, DEMO_NAME, room.room_id]
 
 
 class LatestPrompt:
@@ -75,7 +71,7 @@ class LatestPrompt:
                 if prompt is None:
                     logger.warning(f"ignoring an invalid prompt at {location}")
                     continue
-                logger.info(f"prompt {prompt.location}: {prompt.question} {prompt.choices}")
+                logger.info(f"prompt {prompt.location}: {prompt.questions}")
                 self.prompt = prompt
         except RuntimeError as error:
             logger.info(f"prompt track ended: {error}")
@@ -127,59 +123,26 @@ async def forward_camera(session: moqt.Session, camera_namespace: list[str], wor
 
 
 async def detect_in_session(
-    session: moqt.Session, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
+    session: moqt.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> bool:
     """True once no page has published the room's camera for the grace period; False when the relay session closed."""
-    detector_namespace = [*room_namespace(room_id), "detector"]
+    detector_namespace = [*room_namespace(room), "detector"]
     # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
     for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
         await publisher.publish_on(
             await session.track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
     await session.publish_namespace(detector_namespace)
-    camera_namespace = [*room_namespace(room_id), "camera"]
-    following = asyncio.create_task(
-        while_published(
-            session,
-            camera_namespace,
-            partial(forward_camera, session, camera_namespace, worker),
-            unpublished_seconds=GRACE_SECONDS,
-        )
-    )
-    try:
-        return await until_room_empty(session, following)
-    finally:
-        following.cancel()
-
-
-async def stay_connected(
-    args: argparse.Namespace, room_id: str, timeline: EventTimeline, status: D3FlashStatus, worker: PipelineWorker
-) -> None:
-    while True:
-        try:
-            session = await moqt.connect(args.relay_url, verify_certificate=not args.insecure)
-        except RuntimeError as error:
-            logger.warning(f"room {room_id}: cannot connect to {args.relay_url}: {error}")
-            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
-            continue
-        logger.info(f"room {room_id}: connected to {args.relay_url}")
-        try:
-            if await detect_in_session(session, room_id, timeline, status, worker):
-                return
-            logger.warning(f"room {room_id}: relay session closed")
-        except RuntimeError as error:
-            logger.warning(f"room {room_id}: relay session failed: {error}")
-        finally:
-            await session.close()
-        await asyncio.sleep(RECONNECT_DELAY_SECONDS)
+    camera_namespace = [*room_namespace(room), "camera"]
+    return await until_room_empty(session, camera_namespace, partial(forward_camera, session, camera_namespace, worker))
 
 
 async def detect_in_room(
-    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room_id: str
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
 ) -> None:
     timeline = EventTimeline()
-    status = D3FlashStatus()
-    vision = D3FlashVisionClient(http, args.d3_flash_url, status, identity_token)
+    status = SystemOneStatus()
+    vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
     worker = PipelineWorker(
         Pipeline([CameraDetector(vision, timeline)]),
         enable_rtvi=False,
@@ -190,14 +153,15 @@ async def detect_in_room(
     await runner.add_workers(worker)
     async with asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        await stay_connected(args, room_id, timeline, status, worker)
+        in_session = partial(detect_in_session, room=room, timeline=timeline, status=status, worker=worker)
+        await stay_connected(args, room, in_session)
         await runner.cancel()
 
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=VISION_REQUEST_TIMEOUT) as http:
-        identity_token = identity_token_from_arguments(args, http, args.d3_flash_url)
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
+        identity_token = identity_token_from_arguments(args, http, args.system_one_url)
         await serve_rooms(args, partial(detect_in_room, args, http, identity_token))
 
 

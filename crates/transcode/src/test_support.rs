@@ -1,8 +1,10 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use gstreamer::{self as gst, prelude::*};
-use mediapack::{MediaEvent, Timestamp, mpegts};
+use mediapack::{MediaEvent, Timestamp, VideoSample, loc, mpegts};
 
-use crate::compositor::EventSource;
+use crate::{Rendition, TranscodedEvent, Transcoder, compositor::EventSource};
 
 const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
 pub(crate) const FIXTURE_VP8_IVF: &[u8] =
@@ -20,9 +22,43 @@ pub(crate) fn fixture_events() -> Vec<MediaEvent> {
     events
 }
 
+pub(crate) fn fixture_video_samples() -> Vec<VideoSample> {
+    fixture_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            MediaEvent::Video(sample) => Some(sample),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) async fn transcode_54p(samples: &[VideoSample]) -> Vec<TranscodedEvent> {
+    let mut transcoder = Transcoder::new(&[Rendition {
+        name: "54p".into(),
+        width: 96,
+        height: 54,
+        bitrate_kbps: 100,
+    }])
+    .unwrap();
+    let input = transcoder.input();
+    for sample in samples {
+        input.push(sample).unwrap();
+    }
+    input.finish().unwrap();
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut outputs = Vec::new();
+        while let Some(output) = transcoder.next().await {
+            outputs.push(output.unwrap());
+        }
+        outputs
+    })
+    .await
+    .expect("transcoder finished")
+}
+
 /// The frame payloads of an IVF file: a header whose length is at byte 6,
 /// then frames each prefixed by a 4-byte size and an 8-byte timestamp.
-pub(crate) fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
+fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
     let mut position = u16::from_le_bytes([file[6], file[7]]) as usize;
     let mut frames = Vec::new();
     while position < file.len() {
@@ -32,6 +68,23 @@ pub(crate) fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
         position += size;
     }
     frames
+}
+
+/// Timestamps the frames 30 fps apart.
+pub(crate) fn ivf_events(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<MediaEvent> {
+    let mut demuxer = loc::Demuxer::video(codec);
+    let mut events = Vec::new();
+    for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
+        let object = loc::LocObject {
+            extensions: vec![loc::LocExtension::varint(
+                loc::TIMESTAMP_ID,
+                index as u64 * 33_333,
+            )],
+            payload,
+        };
+        events.extend(demuxer.push(&object).unwrap());
+    }
+    events
 }
 
 /// VideoToolbox, which decodebin prefers on macOS, now and then drops the

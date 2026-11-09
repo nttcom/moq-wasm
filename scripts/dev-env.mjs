@@ -5,7 +5,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export const repoRoot = resolve(__dirname, "..");
-export const serverKeysDir = resolve(repoRoot, "crates", "relay", "keys");
+export const serverKeysDir = resolve(repoRoot, "services", "relay", "keys");
 export const certPath = resolve(serverKeysDir, "cert.pem");
 export const keyPath = resolve(serverKeysDir, "key.pem");
 

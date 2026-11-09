@@ -8,9 +8,10 @@ pub(crate) mod connect_target;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod crypto_provider;
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod dual;
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod dual_stack_bind;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod native;
+pub(crate) mod qmux;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod quic;
 pub(crate) mod read_error;
@@ -22,5 +23,7 @@ pub(crate) mod transport_connection_creator;
 pub(crate) mod transport_receive_stream;
 pub(crate) mod transport_send_stream;
 pub(crate) mod transport_stats;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod websocket;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod webtransport;

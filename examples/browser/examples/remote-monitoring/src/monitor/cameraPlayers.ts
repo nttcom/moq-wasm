@@ -1,9 +1,10 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { LivePlayer } from '@player/livePlayer'
+import { MoqSession } from 'moq-wasm'
+import { connectToken, withNamespaceRoot } from '../../../../utils/access'
+import { LivePlayer } from 'moq-wasm/media'
+import type { StatsSample } from '../../../../utils/clientTelemetry'
+import { reportRelay, sampleCameras } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
-
-const CAMERA_VIDEO_CODEC = 'avc3.640028'
-const AUTH_INFO = 'secret'
+import 'moq-wasm/media/player.css'
 
 const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 
@@ -11,15 +12,22 @@ const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 /// into a host element the page places on the stage or in the strip; the host
 /// moves with the camera, so the player never notices the layout.
 export class CameraPlayers {
-  private readonly client = new MoqtClientWrapper()
-  private readonly players = new Map<CameraId, LivePlayer>()
+  private session: MoqSession | undefined
+  private readonly players = new Map<CameraId, { player: LivePlayer; trackNamespace: string }>()
   private readonly hosts = new Map<CameraId, HTMLDivElement>()
 
   constructor(private readonly onStateChange: (camId: CameraId) => void) {}
 
   async connect(relayUrl: string, onClosed: () => void): Promise<void> {
-    await this.client.connect(relayUrl)
-    this.client.setOnConnectionClosedHandler(onClosed)
+    reportRelay(relayUrl)
+    const session = await MoqSession.connect(relayUrl, { token: connectToken() })
+    this.session = session
+    sampleCameras(() => this.samples())
+    void session.closed.then(() => {
+      if (this.session === session) {
+        onClosed()
+      }
+    })
     log('connected', { relayUrl })
   }
 
@@ -34,15 +42,17 @@ export class CameraPlayers {
   }
 
   get(camId: CameraId): LivePlayer | undefined {
-    return this.players.get(camId)
+    return this.players.get(camId)?.player
   }
 
   async watch(location: string, camId: CameraId): Promise<void> {
     if (this.players.has(camId)) {
       return
     }
+    if (!this.session) {
+      throw new Error('not connected')
+    }
     const player = new LivePlayer({
-      client: this.client,
       container: this.host(camId),
       livePicture: 'canvas',
       keepLiveWhileReviewing: true,
@@ -52,24 +62,30 @@ export class CameraPlayers {
         onLog: (level, message) => log(level, { camId, message })
       }
     })
-    this.players.set(camId, player)
+    const trackNamespace = withNamespaceRoot(['anon', location, camId])
+    this.players.set(camId, { player, trackNamespace: trackNamespace.join('/') })
     try {
-      await player.start(['anon', location, camId], AUTH_INFO, {
-        video: [{ name: 'video', label: camId, codec: CAMERA_VIDEO_CODEC }]
-      })
+      await player.start(this.session, trackNamespace)
     } catch (error) {
       this.players.delete(camId)
       throw error
     }
   }
 
+  private samples(): StatsSample[] {
+    return [...this.players.values()].flatMap(({ player, trackNamespace }) =>
+      player.state.started ? [{ trackNamespace, values: player.stats() }] : []
+    )
+  }
+
   async disconnect(): Promise<void> {
-    this.client.setOnConnectionClosedHandler(null)
-    for (const player of this.players.values()) {
+    const session = this.session
+    this.session = undefined
+    for (const { player } of this.players.values()) {
       await player.stop()
     }
     this.players.clear()
-    await this.client.disconnect()
+    session?.close()
     log('disconnected')
   }
 }

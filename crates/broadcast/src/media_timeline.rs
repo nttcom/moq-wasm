@@ -10,18 +10,10 @@ const MICROS_PER_MILLI: u64 = 1_000;
 #[derive(Default)]
 pub(crate) struct MediaTimeline {
     records: Vec<MediaTimelineRecord>,
-    expected_group_id: Option<u64>,
 }
 
 impl MediaTimeline {
     pub(crate) fn record(&mut self, group_id: u64, presentation_us: u64, encoded_at_ms: u64) {
-        if self
-            .expected_group_id
-            .is_some_and(|expected| expected != group_id)
-        {
-            self.records.clear();
-        }
-        self.expected_group_id = Some(group_id + 1);
         self.records.push(MediaTimelineRecord::new(
             millis_from_micros(presentation_us),
             group_id,
@@ -86,16 +78,18 @@ mod tests {
     }
 
     #[test]
-    fn clears_the_timeline_when_group_numbering_restarts() {
+    fn keeps_the_records_across_a_gap_in_the_group_ids() {
         // Arrange
         let mut timeline = MediaTimeline::default();
         timeline.record(1, 0, 10);
-        timeline.record(2, 2_000_000, 12);
 
-        // Act: a resubscribe reseeds the group id, breaking the §6.1 sequence
-        timeline.record(9_000, 4_000_000, 14);
+        // Act
+        timeline.record(5, 2_000_000, 12);
 
         // Assert
-        assert_eq!(timeline.document().unwrap(), br#"[[4000,[9000,0],14]]"#);
+        assert_eq!(
+            timeline.document().unwrap(),
+            br#"[[0,[1,0],10],[2000,[5,0],12]]"#
+        );
     }
 }

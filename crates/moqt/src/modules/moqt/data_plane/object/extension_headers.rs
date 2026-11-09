@@ -2,7 +2,10 @@ use bytes::{Buf, Bytes};
 
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
-    moqt::control_plane::control_messages::key_value_pair::{KeyValuePair, VariantType},
+    moqt::{
+        control_plane::control_messages::key_value_pair::{KeyValuePair, VariantType},
+        data_plane::object::{declared_length, decode_error::DecodeError},
+    },
 };
 
 pub enum ExtensionHeaderType {
@@ -34,17 +37,22 @@ impl ExtensionHeaders {
         headers
     }
 
-    pub fn decode(cursor: &mut impl Buf) -> Option<Self> {
-        let byte_length = cursor.try_get_varint().ok()? as usize;
+    /// Fails with `NeedMoreData` until the length and the whole block have
+    /// arrived, and with `Fatal` when the length exceeds 16 MiB
+    /// (`MAX_WIRE_DECLARED_LENGTH`) or a Key-Value-Pair ends after the block.
+    pub fn decode(cursor: &mut impl Buf) -> Result<Self, DecodeError> {
+        let byte_length = declared_length(cursor.try_get_varint()?)?;
         if cursor.remaining() < byte_length {
-            return None;
+            return Err(DecodeError::NeedMoreData);
         }
-        let end_remaining = cursor.remaining() - byte_length;
+        let mut block = cursor.copy_to_bytes(byte_length);
         let mut key_value_pairs = Vec::new();
-        while cursor.remaining() > end_remaining {
-            key_value_pairs.push(KeyValuePair::decode(cursor).ok()?);
+        while block.has_remaining() {
+            let kv_pair = KeyValuePair::decode(&mut block)
+                .map_err(|error| DecodeError::Fatal(format!("extension header: {error:#}")))?;
+            key_value_pairs.push(kv_pair);
         }
-        Some(Self { key_value_pairs })
+        Ok(Self { key_value_pairs })
     }
 
     pub fn encode(&self) -> bytes::BytesMut {
@@ -114,6 +122,7 @@ impl ExtensionHeaders {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::moqt::data_plane::object::MAX_WIRE_DECLARED_LENGTH;
 
     #[test]
     fn round_trip_preserves_unsupported_headers_in_order() {
@@ -154,28 +163,54 @@ mod tests {
     }
 
     #[test]
-    fn decode_returns_none_on_truncated_block() {
-        // length claims 4 bytes but only 2 follow
+    fn decode_truncated_block_needs_more_data() {
+        // Arrange: length claims 4 bytes but only 2 follow
         let bytes = [0x04_u8, 0x3c, 0x05];
         let mut cursor = std::io::Cursor::new(&bytes[..]);
 
-        assert!(ExtensionHeaders::decode(&mut cursor).is_none());
+        // Act
+        let result = ExtensionHeaders::decode(&mut cursor);
+
+        // Assert
+        assert_eq!(result, Err(DecodeError::NeedMoreData));
     }
 
     #[test]
-    fn decode_returns_none_on_truncated_inner_kv_pair() {
-        // length (2) + odd key (0x0b) + value length (5) with no value bytes
-        let bytes = [0x02_u8, 0x0b, 0x05];
+    fn decode_kv_pair_overrunning_complete_block_is_fatal() {
+        // Arrange: a 2-byte block (odd key 0x0b, value length 5) whose 5 value bytes follow outside it
+        let bytes = [0x02_u8, 0x0b, 0x05, 1, 2, 3, 4, 5];
         let mut cursor = std::io::Cursor::new(&bytes[..]);
 
-        assert!(ExtensionHeaders::decode(&mut cursor).is_none());
+        // Act
+        let result = ExtensionHeaders::decode(&mut cursor);
+
+        // Assert
+        assert!(matches!(result, Err(DecodeError::Fatal(_))));
     }
 
     #[test]
-    fn decode_returns_none_on_empty_input() {
+    fn decode_empty_input_needs_more_data() {
+        // Arrange
         let bytes: [u8; 0] = [];
         let mut cursor = std::io::Cursor::new(&bytes[..]);
 
-        assert!(ExtensionHeaders::decode(&mut cursor).is_none());
+        // Act
+        let result = ExtensionHeaders::decode(&mut cursor);
+
+        // Assert
+        assert_eq!(result, Err(DecodeError::NeedMoreData));
+    }
+
+    #[test]
+    fn decode_length_over_limit_is_fatal() {
+        // Arrange: no block bytes follow, so without the limit this is NeedMoreData
+        let mut buf = bytes::BytesMut::new();
+        buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1);
+
+        // Act
+        let result = ExtensionHeaders::decode(&mut buf);
+
+        // Assert
+        assert!(matches!(result, Err(DecodeError::Fatal(_))));
     }
 }

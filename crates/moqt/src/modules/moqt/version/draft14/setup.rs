@@ -20,8 +20,9 @@ use crate::modules::moqt::{
 use crate::modules::{
     moqt::{
         data_plane::codec::control_message_decoder::ControlMessageDecoder,
-        version::draft14::ControlChannel,
+        version::draft14::{ControlChannel, REQUEST_ID_WINDOW},
     },
+    telemetry::current_traceparent,
     transport::transport_connection::BoxedConnection,
 };
 
@@ -31,7 +32,7 @@ async fn send_client_setup(
 ) -> anyhow::Result<()> {
     let setup_param = SetupParameter {
         path: None,
-        max_request_id: 1000,
+        max_request_id: REQUEST_ID_WINDOW,
         authorization_token: authorization_token
             .map(AuthorizationToken::use_value_utf8)
             .into_iter()
@@ -39,12 +40,14 @@ async fn send_client_setup(
         max_auth_token_cache_size: None,
         authority: None,
         moq_implementation: Some("MOQ-WASM".to_string()),
+        trace_context: true,
+        traceparent: current_traceparent(),
     };
     let payload = ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode();
     send_stream
         .send(ControlMessageType::ClientSetup, payload)
         .await?;
-    tracing::debug!("Sent client setup.");
+    tracing::info!(supported_versions = ?[constants::MOQ_TRANSPORT_VERSION], "CLIENT_SETUP sent");
     Ok(())
 }
 
@@ -62,9 +65,9 @@ async fn receive_server_setup(
     };
     match received_message {
         ReceivedMessage::ServerSetup(server_setup) => {
-            tracing::debug!(
+            tracing::info!(
                 selected_version = server_setup.selected_version,
-                "Received server setup"
+                "SERVER_SETUP received"
             );
             Ok(server_setup)
         }
@@ -86,9 +89,9 @@ async fn receive_client_setup(
     };
     match received_message {
         ReceivedMessage::ClientSetup(client_setup) => {
-            tracing::debug!(
+            tracing::info!(
                 supported_versions = ?client_setup.supported_versions,
-                "Received client setup"
+                "CLIENT_SETUP received"
             );
             Ok(client_setup)
         }
@@ -96,20 +99,37 @@ async fn receive_client_setup(
     }
 }
 
+#[cfg(not(all(test, not(target_arch = "wasm32"))))]
+fn declares_trace_context() -> bool {
+    true
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn declares_trace_context() -> bool {
+    crate::modules::test_support::server_declares_trace_context()
+}
+
 async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<()> {
     let setup_param = SetupParameter {
         path: None,
-        max_request_id: 1000,
+        max_request_id: REQUEST_ID_WINDOW,
         authorization_token: vec![],
         authority: None,
         max_auth_token_cache_size: None,
         moq_implementation: Some("MOQ-WASM".to_string()),
+        trace_context: declares_trace_context(),
+        traceparent: None,
     };
     let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();
     Ok(send_stream
         .send(ControlMessageType::ServerSetup, payload)
         .await
-        .inspect(|_| tracing::debug!("ServerSetup is sent."))?)
+        .inspect(|_| {
+            tracing::info!(
+                selected_version = MOQ_TRANSPORT_VERSION,
+                "SERVER_SETUP sent"
+            )
+        })?)
 }
 
 /// Opens the control stream and exchanges CLIENT_SETUP / SERVER_SETUP
@@ -124,7 +144,12 @@ pub(crate) async fn connect(
     send_client_setup(&mut send_stream, authorization_token).await?;
     let server_setup = receive_server_setup(&mut receive_stream).await?;
     Ok((
-        ControlChannel::new(send_stream, 0),
+        ControlChannel::new(
+            send_stream,
+            0,
+            server_setup.setup_parameters.max_request_id,
+            server_setup.setup_parameters.trace_context,
+        ),
         receive_stream,
         server_setup,
     ))
@@ -155,7 +180,12 @@ impl ServerHandshake {
     pub(crate) async fn accept(mut self) -> anyhow::Result<(ControlChannel, BiStreamReceiver)> {
         send_server_setup(&mut self.send_stream).await?;
         Ok((
-            ControlChannel::new(self.send_stream, 1),
+            ControlChannel::new(
+                self.send_stream,
+                1,
+                self.client_setup.setup_parameters.max_request_id,
+                self.client_setup.setup_parameters.trace_context,
+            ),
             self.receive_stream,
         ))
     }

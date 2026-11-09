@@ -14,7 +14,7 @@ impl DisconnectWatchTask {
     pub(crate) fn run(
         connection: Arc<Connection>,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-        close_watcher_span: Span,
+        session_span: Span,
     ) -> JoinHandle {
         executor::spawn(
             "Connection Close Watcher",
@@ -29,7 +29,7 @@ impl DisconnectWatchTask {
                     );
                 }
             }
-            .instrument(close_watcher_span),
+            .instrument(session_span),
         )
     }
 }

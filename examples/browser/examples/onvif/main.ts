@@ -1,14 +1,40 @@
-import { MoqtClientWrapper } from '@moqt/moqtClient'
-import { LivePlayer } from '@player/livePlayer'
-import { formatLiveStats } from '@player/locLive'
-import { PlayerControls } from '@player/ui/playerControls'
-import { setUpRelayUrlControls } from '../../utils/relayPresets'
-import { timeSeededGroupId } from '../../utils/media/clock'
-import { element, parseTrackNamespace } from '../../utils/page'
+import { MoqSession } from 'moq-wasm'
+import { connectToken } from '../../utils/access'
+import type { TrackWriter } from 'moq-wasm'
+import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
+import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
+import {
+  CLOUD_RELAY_PRESETS,
+  LOAD_BALANCED_RELAY_PRESET,
+  buildLocalRelayPresets,
+  relayUrlFromQuery,
+  type RelayPreset
+} from '../../utils/relayPresets'
+import { element, getErrorMessage, parseTrackNamespace } from '../../utils/page'
+import 'moq-wasm/media/player.css'
+import 'moq-wasm/media/controls.css'
 
 type CommandKind = 'absolute' | 'relative' | 'continuous' | 'stop' | 'center'
 
 type FieldKey = 'pan' | 'tilt' | 'zoom' | 'speed'
+
+type CommandPayload =
+  | { type: 'stop' }
+  | { type: 'center'; speed: number }
+  | { type: 'absolute' | 'relative' | 'continuous'; pan: number; tilt: number; zoom: number; speed: number }
+
+const MOVES: Record<string, { pan: number; tilt: number }> = {
+  up: { pan: 0, tilt: 1 },
+  down: { pan: 0, tilt: -1 },
+  left: { pan: -1, tilt: 0 },
+  right: { pan: 1, tilt: 0 }
+}
+
+const CONTROLLER_SPEED = 0.5
+
+type RelayTab = 'cloud' | 'local'
+
+const LOCAL_RELAY_PRESETS = buildLocalRelayPresets()
 
 const COMMANDS: Array<{ type: CommandKind; label: string; disabled?: FieldKey[] }> = [
   { type: 'absolute', label: 'AbsoluteMove' },
@@ -32,16 +58,24 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
   speed: 1
 }
 
-const moqtClient = new MoqtClientWrapper()
+let session: MoqSession | undefined
+let relayUrl = relayUrlFromQuery() ?? LOAD_BALANCED_RELAY_PRESET.value
+let relayTab: RelayTab = LOCAL_RELAY_PRESETS.some((preset) => preset.value === relayUrl) ? 'local' : 'cloud'
 const stage = element<HTMLDivElement>('stage')
+const telemetry = startPageTelemetry(
+  'onvif',
+  () => relayUrl,
+  () => playerSamples(player)
+)
 const player = new LivePlayer({
-  client: moqtClient,
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: log }
 })
 const controls = new PlayerControls(stage, player, log)
-let commandTrackAlias: bigint | null = null
-let nextCommandGroupId = timeSeededGroupId()
+let commandWriter: TrackWriter | undefined
+// Commands go out one at a time so a Stop never overtakes the move it ends.
+let commandQueue: Promise<void> = Promise.resolve()
+let activeMove: string | null = null
 
 function renderPlayer(): void {
   const { catalogStatus, playbackStatus, rewindStatus } = player.state
@@ -56,20 +90,28 @@ function renderVideoStats(): void {
 }
 
 function log(level: 'info' | 'warn' | 'error', message: string): void {
+  telemetry.log(level, message)
   console[level](`[onvif] ${message}`)
 }
 
-function updateStatus(label: string, active: boolean): void {
-  const status = element('status')
-  status.innerHTML = `<span></span>${label}`
-  const dot = status.querySelector('span')
+function updateStatus(id: 'status' | 'command-state', label: string, ok: boolean): void {
+  const pill = element(id)
+  pill.innerHTML = `<span></span>${label}`
+  const dot = pill.querySelector('span')
   if (dot instanceof HTMLElement) {
-    dot.style.background = active ? '#2ec4b6' : '#ff9f1c'
+    dot.style.background = ok ? '#2ec4b6' : '#ff9f1c'
   }
 }
 
-function updateCommandAlias(alias: bigint | null): void {
-  element('command-alias').textContent = alias === null ? '-' : alias.toString()
+function showLiveView(live: boolean): void {
+  element<HTMLElement>('connect-view').hidden = live
+  element<HTMLElement>('live-view').hidden = !live
+}
+
+function showConnectError(message: string | null): void {
+  const error = element<HTMLElement>('connect-error')
+  error.textContent = message ?? ''
+  error.hidden = message === null
 }
 
 function inputValue(id: string): string {
@@ -86,28 +128,41 @@ function readField(row: HTMLElement, field: FieldKey): number {
   return rounded
 }
 
-async function sendCommand(command: CommandKind, row: HTMLElement): Promise<void> {
-  if (commandTrackAlias === null) {
-    updateStatus('command track not subscribed', false)
+function enqueueCommand(payload: CommandPayload): void {
+  commandQueue = commandQueue
+    .then(() => sendPayload(payload))
+    .catch((err) => {
+      console.error(err)
+      updateStatus('status', 'command send failed', false)
+    })
+}
+
+async function sendPayload(payload: CommandPayload): Promise<void> {
+  if (!commandWriter) {
+    updateStatus('status', 'not connected', false)
     return
   }
+  const bytes = new TextEncoder().encode(JSON.stringify(payload))
+  if ((await commandWriter.writeGroup(bytes)) === undefined) {
+    updateStatus('command-state', 'camera not subscribed', false)
+    return
+  }
+  updateStatus('status', `sent ${payload.type}`, true)
+}
 
+function sendCommand(command: CommandKind, row: HTMLElement): void {
   const pan = readField(row, 'pan')
   const tilt = readField(row, 'tilt')
   const zoom = readField(row, 'zoom')
   const speed = readField(row, 'speed')
 
-  const payload =
+  const payload: CommandPayload =
     command === 'stop'
       ? { type: 'stop' }
       : command === 'center'
         ? { type: 'center', speed }
         : { type: command, pan, tilt, zoom, speed }
-
-  const bytes = new TextEncoder().encode(JSON.stringify(payload))
-  const groupId = nextCommandGroupId++
-  await moqtClient.sendSingleObjectGroup(commandTrackAlias, groupId, bytes)
-  updateStatus(`sent ${command}`, true)
+  enqueueCommand(payload)
 }
 
 function buildCommandUI(): void {
@@ -128,12 +183,7 @@ function buildCommandUI(): void {
     const button = document.createElement('button')
     button.type = 'button'
     button.textContent = 'Send'
-    button.addEventListener('click', () => {
-      sendCommand(command.type, row).catch((err) => {
-        console.error(err)
-        updateStatus('command send failed', false)
-      })
-    })
+    button.addEventListener('click', () => sendCommand(command.type, row))
 
     header.append(title, button)
 
@@ -163,66 +213,181 @@ function buildCommandUI(): void {
   }
 }
 
-function setupUrlPresets(): void {
-  setUpRelayUrlControls(element('moqt-url'), element('urlPresets'))
+function pressMove(move: string): void {
+  if (activeMove === move || !commandWriter) return
+  activeMove = move
+  enqueueCommand({ type: 'continuous', ...MOVES[move], zoom: 0, speed: CONTROLLER_SPEED })
+}
+
+function releaseMove(move: string | null = activeMove): void {
+  if (activeMove === null || activeMove !== move) return
+  activeMove = null
+  if (commandWriter) enqueueCommand({ type: 'stop' })
+}
+
+function setUpController(): void {
+  document.querySelectorAll<HTMLButtonElement>('[data-move]').forEach((button) => {
+    const move = button.dataset.move ?? ''
+    button.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      button.setPointerCapture(event.pointerId)
+      pressMove(move)
+    })
+    button.addEventListener('lostpointercapture', () => releaseMove(move))
+  })
+
+  element('center-btn').addEventListener('click', () => {
+    releaseMove()
+    enqueueCommand({ type: 'center', speed: CONTROLLER_SPEED })
+  })
+
+  window.addEventListener('blur', () => releaseMove())
+}
+
+function setUpTabs<T extends string>(tablist: HTMLElement, onSelect: (tab: T) => void): (tab: T) => void {
+  const select = (tab: T) => {
+    tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((button) => {
+      button.setAttribute('aria-selected', String(button.dataset.tab === tab))
+    })
+    onSelect(tab)
+  }
+  tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]').forEach((button) => {
+    button.addEventListener('click', () => select(button.dataset.tab as T))
+  })
+  return select
+}
+
+function renderRelayOptions(): void {
+  const container = element('relay-options')
+  container.innerHTML = ''
+
+  if (relayTab === 'local') {
+    container.append(...LOCAL_RELAY_PRESETS.map((preset) => relayOption(preset)))
+    return
+  }
+  const balancer = relayOption(LOAD_BALANCED_RELAY_PRESET)
+  const badge = document.createElement('span')
+  badge.className = 'relay-default-badge'
+  badge.textContent = 'Default'
+  balancer.querySelector('.relay-option-label')?.append(badge)
+  const relays = document.createElement('div')
+  relays.className = 'relay-children'
+  relays.append(...CLOUD_RELAY_PRESETS.map((preset) => relayOption(preset, 'relay-option compact')))
+  container.append(balancer, relays)
+}
+
+function relayOption(preset: RelayPreset, className = 'relay-option'): HTMLLabelElement {
+  const option = document.createElement('label')
+  option.className = className
+
+  const radio = document.createElement('input')
+  radio.type = 'radio'
+  radio.name = 'relay'
+  radio.value = preset.value
+  radio.checked = preset.value === relayUrl
+  radio.addEventListener('change', () => {
+    relayUrl = preset.value
+  })
+
+  const text = document.createElement('div')
+  const label = document.createElement('div')
+  label.className = 'relay-option-label'
+  label.textContent = preset.label
+  const helper = document.createElement('div')
+  helper.className = 'relay-option-helper'
+  helper.textContent = preset.helper
+  text.append(label, helper)
+
+  option.append(radio, text)
+  return option
+}
+
+function setUpRelayPicker(): void {
+  const selectTab = setUpTabs<RelayTab>(element('relay-tabs'), (tab) => {
+    if (tab !== relayTab) relayUrl = tab === 'cloud' ? LOAD_BALANCED_RELAY_PRESET.value : LOCAL_RELAY_PRESETS[0].value
+    relayTab = tab
+    renderRelayOptions()
+  })
+  selectTab(relayTab)
+}
+
+function setUpPtzTabs(): void {
+  setUpTabs<'controller' | 'commands'>(element('ptz-tabs'), (tab) => {
+    releaseMove()
+    element<HTMLElement>('ptz-panel-controller').hidden = tab !== 'controller'
+    element<HTMLElement>('ptz-panel-commands').hidden = tab !== 'commands'
+  })
 }
 
 async function connect(): Promise<void> {
-  const url = inputValue('moqt-url')
+  const url = relayUrl
   const publishNamespace = parseTrackNamespace(inputValue('publish-namespace'))
   const subscribeNamespace = parseTrackNamespace(inputValue('subscribe-namespace'))
-  const publishNamespaceLabel = publishNamespace.join('/')
   const commandTrack = inputValue('command-track')
-  const authInfo = inputValue('auth-info')
-  const maxRequestId = BigInt(inputValue('max-subscribe-id'))
 
   if (!publishNamespace.length || !subscribeNamespace.length) {
-    updateStatus('namespace required', false)
+    showConnectError('Set the namespaces in Advanced settings.')
     return
   }
 
   await disconnect()
-  updateStatus('connecting', true)
-  await moqtClient.connect(url, { maxRequestId })
-  moqtClient.setOnConnectionClosedHandler(() => {
-    updateStatus('disconnected', false)
-  })
-
-  moqtClient.setOnIncomingSubscribeHandler(async ({ subscribe, isSuccess, code, respondOk, respondError }) => {
-    if (!isSuccess) {
-      await respondError(BigInt(code), 'subscribe rejected')
-      return
+  const connected = await MoqSession.connect(url, { token: connectToken() })
+  session = connected
+  void connected.closed.then(() => {
+    if (session === connected) {
+      void disconnect().then(() => showConnectError('The relay closed the connection.'))
     }
-
-    if (subscribe.trackName !== commandTrack || subscribe.trackNamespace.join('/') !== publishNamespaceLabel) {
-      await respondError(404n, 'unknown track')
-      return
-    }
-
-    commandTrackAlias = await respondOk(0n)
-    updateCommandAlias(commandTrackAlias)
   })
+  await connected.announce(publishNamespace)
+  // Only the newest command matters to a camera that subscribes later.
+  const writer = await connected.publishTrack(publishNamespace, commandTrack, { retentionMs: 0 })
+  commandWriter = writer
+  element<HTMLFieldSetElement>('ptz-controls').disabled = false
+  void followCameraSubscriptions(writer)
+  element('live-relay').textContent = url
+  showLiveView(true)
+  updateStatus('status', 'connected', true)
+  await player.start(connected, subscribeNamespace)
+}
 
-  await moqtClient.publishNamespace(publishNamespace, authInfo)
-  updateStatus('connected', true)
-  await player.start(subscribeNamespace, authInfo)
+async function followCameraSubscriptions(writer: TrackWriter): Promise<void> {
+  while (await writer.nextSubscriber()) {
+    if (commandWriter === writer) updateStatus('command-state', 'ready', true)
+  }
 }
 
 async function disconnect(): Promise<void> {
+  releaseMove()
+  await commandQueue
   await player.stop()
-  if (moqtClient.getConnectionStatus()) {
-    await moqtClient.disconnect()
-  }
-  commandTrackAlias = null
-  updateCommandAlias(commandTrackAlias)
-  updateStatus('disconnected', false)
+  const closing = session
+  session = undefined
+  commandWriter = undefined
+  closing?.close()
+  element<HTMLFieldSetElement>('ptz-controls').disabled = true
+  updateStatus('command-state', 'waiting for camera', false)
+  showLiveView(false)
+  showConnectError(null)
 }
 
-element('connect-btn').addEventListener('click', () => {
-  connect().catch((err) => {
+const connectButton = element<HTMLButtonElement>('connect-btn')
+connectButton.addEventListener('click', async () => {
+  connectButton.disabled = true
+  connectButton.textContent = 'Connecting…'
+  try {
+    await connect()
+  } catch (err) {
     console.error(err)
-    updateStatus('connection failed', false)
-  })
+    if (element<HTMLElement>('live-view').hidden) {
+      await disconnect().catch(console.error)
+      showConnectError(`Connection failed: ${getErrorMessage(err)}`)
+    } else {
+      updateStatus('status', 'playback failed', false)
+    }
+  } finally {
+    connectButton.disabled = false
+    connectButton.textContent = 'Connect'
+  }
 })
 
 element('disconnect-btn').addEventListener('click', () => {
@@ -240,4 +405,6 @@ settingsModal.addEventListener('click', (event) => {
 })
 
 buildCommandUI()
-setupUrlPresets()
+setUpRelayPicker()
+setUpPtzTabs()
+setUpController()
