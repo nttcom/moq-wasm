@@ -109,6 +109,7 @@ type LivePlayerCallbacks = {
 class LivePlayer {
   start(session: MoqSession, namespace: string[], tracks?: LiveTracks | BroadcastCatalog): Promise<void>
   stop(): Promise<void>
+  dispose(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
   selectAudioTrack(name: string): Promise<void>
@@ -167,8 +168,12 @@ subscription to one track on a session, so they listen to one SUBSCRIBE. The
 player then only listens to it and leaves it open at `stop`; without one, the
 player creates its own and closes it at `stop`.
 
-One player lives as long as the page; `start` and `stop` bracket one watch,
-and the settings (packaging, volume, buffer policy, catch-up) carry over.
+One player usually lives as long as the page; `start` and `stop` bracket one
+watch, and the settings (packaging, volume, buffer policy, catch-up) carry
+over. A page that creates a player per broadcast, such as the meeting's per
+member and source, calls `dispose` when the broadcast leaves: it releases the
+decoder workers, the audio contexts and the pictures, and the player cannot
+start again.
 
 `PlaybackGroup` plays several players at one position (see *Playback group*):
 

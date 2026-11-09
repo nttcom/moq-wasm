@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `LivePlayer.dispose()` stops the player and releases its decoder workers,
+  audio contexts and pictures, so a page that creates a player per broadcast
+  it shows does not keep them after the broadcast leaves.
 - `LivePlayer.setVideoEnabled(false)` unsubscribes the live video and leaves
   the audio playing, so a page that hides the picture lets the publisher stop
   sending it; `setVideoEnabled(true)` subscribes it again from its current

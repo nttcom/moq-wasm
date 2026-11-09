@@ -134,6 +134,7 @@ export class LivePlayer {
   private readonly subscriptions: TrackSubscriptions
   private readonly timeline = new SeekTimeline()
   private readonly stage: PictureStage
+  private readonly resizeObserver: ResizeObserver
   private readonly locLive: LocLive
   private readonly cmafLive = new CmafLive()
   private readonly reviewClock = new ReviewClock()
@@ -148,6 +149,7 @@ export class LivePlayer {
   private review: ReviewSession | undefined
   private group: GroupLink | undefined
   private started = false
+  private disposed = false
   private givenTracks: LiveTracks | undefined
   /// Incremented by every start and stop; a publisher wait from an earlier
   /// start sees the change and returns.
@@ -192,10 +194,11 @@ export class LivePlayer {
       this.adaptVideo()
     })
     this.stage = new PictureStage(options.container)
-    new ResizeObserver(([entry]) => {
+    this.resizeObserver = new ResizeObserver(([entry]) => {
       const heightPx = entry.contentRect.height * window.devicePixelRatio
       this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
-    }).observe(options.container)
+    })
+    this.resizeObserver.observe(options.container)
     this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options.livePicture, {
       onPresented: (picture) => this.notePresentedFrame(picture),
       onFrameShown: (ids, captureMicros) => {
@@ -297,6 +300,9 @@ export class LivePlayer {
   /// Resolves once the tracks are subscribed or, when nobody publishes the
   /// namespace yet, once the player has started waiting for the publisher.
   async start(session: MoqSession, namespace: string[], tracks?: LiveTracks | BroadcastCatalog): Promise<void> {
+    if (this.disposed) {
+      throw new Error('the player is disposed')
+    }
     const shared = tracks instanceof BroadcastCatalog ? tracks : undefined
     const given = tracks instanceof BroadcastCatalog ? undefined : tracks
     if (shared) {
@@ -334,6 +340,21 @@ export class LivePlayer {
   /// can go on to close the session.
   stop(): Promise<void> {
     return this.queueTrackChange(() => this.stopWatching())
+  }
+
+  /// Stops the watch and releases the decoder workers, the audio contexts and
+  /// the pictures in the container, for a page that creates a player per
+  /// broadcast it shows. Remove a player in a `PlaybackGroup` from it first.
+  /// The player cannot start again.
+  dispose(): Promise<void> {
+    this.disposed = true
+    return this.queueTrackChange(async () => {
+      await this.stopWatching()
+      this.resizeObserver.disconnect()
+      this.locLive.dispose()
+      this.reviewClock.close()
+      this.stage.remove()
+    })
   }
 
   private listenTo(catalog: BroadcastCatalog, owned: boolean): void {
