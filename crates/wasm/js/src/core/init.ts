@@ -49,11 +49,21 @@ export interface InitOptions {
 }
 
 let loading: Promise<MoqtModule> | null = null
+let initializing: Promise<void> | null = null
 
 /// Loads the wasm module and, with `onLog`, `onSpan` or `telemetry`, installs its log sink.
-/// The sink is page-wide, so a second call with any of them rejects. Call it before the first
+/// The sink is page-wide, so only the first call's options take effect: a later call returns
+/// the first call's promise, or starts again once that rejected. Call it before the first
 /// `MoqSession.connect` to override `wasmUrl`: the first load decides the URL.
-export async function init(options: InitOptions = {}): Promise<void> {
+export function init(options: InitOptions = {}): Promise<void> {
+  initializing ??= initialize(options).catch((error) => {
+    initializing = null
+    throw error
+  })
+  return initializing
+}
+
+async function initialize(options: InitOptions): Promise<void> {
   const moqt = await loadMoqt(options.wasmUrl)
   const telemetry = options.telemetry && new ClientTelemetry(options.telemetry)
   const onLog = both(options.onLog, telemetry?.log)

@@ -10,6 +10,10 @@
   `Partial<VideoEncoderConfig>`, so a page may set only the bitrate and frame
   rate. `width` and `height` (1280x720 by default) bound the encoded size: a
   frame smaller than them is encoded at its own size instead of scaled up.
+- `init()` can be called more than once, as React's StrictMode does: a later
+  call returns the first call's promise and ignores its own options, instead
+  of rejecting with "the log sink is already set". A call after the first
+  one rejected starts again.
 
 ## 0.3.0
 
