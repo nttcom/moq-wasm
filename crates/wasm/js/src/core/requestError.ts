@@ -11,9 +11,11 @@ export const RequestErrorCode = {
 /// A request the relay rejected, with the draft-14 error code.
 export class RequestError extends Error {
   readonly errorCode: bigint
+  readonly reasonPhrase: string
 
   constructor(messageType: string, response: { errorCode: bigint; reasonPhrase: string }) {
     super(`${messageType} ${response.errorCode}: ${response.reasonPhrase}`)
     this.errorCode = response.errorCode
+    this.reasonPhrase = response.reasonPhrase
   }
 }
