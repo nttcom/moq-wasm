@@ -1,14 +1,12 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { CameraId, MonitorMode, ALL_CAMERA_IDS } from '../types/monitoring'
+import { CameraId, MonitorMode } from '../types/monitoring'
 import { StageCamera } from './StageCamera'
-import { ThumbStrip } from './ThumbStrip'
+import { PreviewStrip } from './PreviewStrip'
 import { DebugBar } from './DebugBar'
 import { SeekBar } from './SeekBar'
 import { TransportControls } from './TransportControls'
 import { RelayUrlField } from './RelayUrlField'
 import { Button } from '../../../../lib/ui/button'
-import { Input } from '../../../../lib/ui/input'
-import { Label } from '../../../../lib/ui/label'
 import { CameraPlayers } from '../monitor/cameraPlayers'
 import { useUrlSync } from '../hooks/useUrlSync'
 
@@ -22,13 +20,17 @@ type ConnStatus = 'idle' | 'connecting' | 'connected' | 'error'
 const STEP_SECONDS = 1
 const MICROS_PER_SECOND = 1_000_000
 
-export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRelayUrl }: Props) {
-  const [location, setLocation] = useState(defaultLocation)
+export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl)
-  const [stageId, setStageId] = useState<CameraId>('cam01')
   const [connStatus, setConnStatus] = useState<ConnStatus>('idle')
-  const [subscribedCameras, setSubscribedCameras] = useState<Set<CameraId>>(new Set())
-  const [subscribingCameras, setSubscribingCameras] = useState<Set<CameraId>>(new Set())
+  /// In the order the relay announced them; a withdrawn camera leaves the list.
+  const [cameras, setCameras] = useState<CameraId[]>([])
+  const [stageId, setStageId] = useState<CameraId | undefined>()
+  /// The stage's camera was withdrawn; it stays on the stage until another is chosen.
+  const [stageLost, setStageLost] = useState(false)
+  // Read by the camera events, which are not re-created when the state changes.
+  const stageLostRef = useRef(false)
+  stageLostRef.current = stageLost
   const [error, setError] = useState<string | null>(null)
   const [, playerChanged] = useReducer((version: number) => version + 1, 0)
 
@@ -38,9 +40,9 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
   }
   const players = playersRef.current
 
-  const thumbIds = ALL_CAMERA_IDS.filter((id) => id !== stageId)
+  const previewIds = cameras.filter((id) => id !== stageId)
   const isConnected = connStatus === 'connected'
-  const stagePlayer = players.get(stageId)
+  const stagePlayer = stageId ? players.get(stageId) : undefined
   const stageState = stagePlayer?.state
   // A paused live picture is the first still frame of a review, before any skip.
   const mode: MonitorMode = stageState && (stageState.mode === 'review' || stageState.paused) ? 'review' : 'live'
@@ -61,6 +63,22 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
     setError(null)
     try {
       await players.connect(relayUrl, () => setConnStatus('error'))
+      await players.watchCameras(location, ({ kind, camId }) => {
+        if (kind === 'added') {
+          setCameras((prev) => (prev.includes(camId) ? prev : [...prev, camId]))
+          // The first camera, or the one that follows a withdrawn stage, takes the stage.
+          setStageId((current) => (current === undefined || stageLostRef.current ? camId : current))
+          setStageLost(false)
+        } else {
+          setCameras((prev) => prev.filter((id) => id !== camId))
+          setStageId((current) => {
+            if (current === camId) {
+              setStageLost(true)
+            }
+            return current
+          })
+        }
+      })
       setConnStatus('connected')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Connect failed')
@@ -68,24 +86,8 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
     }
   }
 
-  const handleSubscribe = async (camId: CameraId) => {
-    setSubscribingCameras((prev) => new Set([...prev, camId]))
-    try {
-      await players.watch(location, camId)
-      setSubscribedCameras((prev) => new Set([...prev, camId]))
-    } catch (e) {
-      console.error('[mon] watch failed', { camId, error: String(e) })
-    } finally {
-      setSubscribingCameras((prev) => {
-        const s = new Set(prev)
-        s.delete(camId)
-        return s
-      })
-    }
-  }
-
-  const handleStageClick = () => {
-    if (!stagePlayer || !subscribedCameras.has(stageId) || mode === 'review') return
+  const enterReview = () => {
+    if (!stagePlayer || stageLost || mode === 'review') return
     stagePlayer.setPaused(true)
   }
 
@@ -94,17 +96,18 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
   const handleJump = (seconds: number) => stagePlayer?.seek(seconds * MICROS_PER_SECOND)
   const handleReturnToLive = () => stagePlayer?.goLive()
 
-  const handleThumbSelect = (id: CameraId) => {
+  const handlePreviewSelect = (id: CameraId) => {
     if (mode === 'review') {
       stagePlayer?.goLive()
     }
     setStageId(id)
+    setStageLost(false)
   }
-
-  const subButtonForCamera = isConnected ? handleSubscribe : undefined
 
   const canStepBack = mode === 'review' && stageState !== undefined && stageState.seek.seekable
   const canStepForward = stageState?.mode === 'review'
+
+  const publisherHref = `?mode=publisher&location=${encodeURIComponent(location)}&relay=${encodeURIComponent(relayUrl)}`
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 p-4 gap-4">
@@ -112,14 +115,10 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h1 className="text-xl font-bold">MoQT 遠隔監視</h1>
-          {(connStatus === 'idle' || connStatus === 'error') && (
-            <a
-              href={`?mode=publisher&location=${encodeURIComponent(location)}&relay=${encodeURIComponent(relayUrl)}`}
-              className="text-xs text-zinc-500 hover:text-zinc-300 font-mono underline"
-            >
-              Publisher へ →
-            </a>
-          )}
+          <span className="font-mono text-sm text-zinc-400">{location}</span>
+          <a href={publisherHref} className="text-xs text-zinc-500 hover:text-zinc-300 font-mono underline">
+            この location にカメラを追加 →
+          </a>
         </div>
         <div className="flex items-center gap-2">
           {(connStatus === 'idle' || connStatus === 'error') && (
@@ -144,43 +143,31 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
       {/* config form (idle/error only) */}
       {(connStatus === 'idle' || connStatus === 'error') && (
         <div className="rounded-xl bg-zinc-900 px-4 py-4 space-y-3">
-          <div className="grid grid-cols-[1fr_2fr] gap-3 items-end">
-            <div className="space-y-1">
-              <Label className="text-xs text-zinc-400 font-mono">Location</Label>
-              <Input
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                className="bg-zinc-800 border-zinc-700 font-mono text-sm"
-                placeholder="my-building"
-              />
-            </div>
-            <RelayUrlField value={relayUrl} onChange={setRelayUrl} />
-          </div>
+          <RelayUrlField value={relayUrl} onChange={setRelayUrl} />
           {error && <p className="text-red-400 text-xs font-mono">⚠ {error}</p>}
         </div>
       )}
 
       {/* hint */}
-      {subscribedCameras.size > 0 && (
+      {cameras.length > 0 && (
         <p className="text-xs text-zinc-500">
-          主役をクリックすると REVIEW（コマ送りモード）。右サムネをクリックで主役と入替。
+          ステージをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
+          に戻る）。右のプレビューをクリックでステージと入替。
         </p>
       )}
 
       {/* main grid */}
-      <div className={`grid gap-4 items-start ${thumbIds.length > 0 ? 'grid-cols-[1fr_200px]' : 'grid-cols-1'}`}>
+      <div className="grid gap-4 items-start grid-cols-[1fr_200px]">
         {/* stage */}
         <div>
           <StageCamera
             cameraId={stageId}
-            host={players.host(stageId)}
+            host={stageId ? players.host(stageId) : undefined}
             mode={mode}
             connState={isConnected ? 'connected' : 'closed'}
+            lost={stageLost}
             behindSeconds={behindSeconds}
-            onSubscribe={subButtonForCamera ? () => subButtonForCamera(stageId) : undefined}
-            isSubscribed={subscribedCameras.has(stageId)}
-            isSubscribing={subscribingCameras.has(stageId)}
-            onClick={handleStageClick}
+            onClick={enterReview}
           />
           {mode === 'review' && stageState && (
             <div className="mt-3 space-y-2">
@@ -203,25 +190,15 @@ export function MonitoringRoom({ location: defaultLocation, relayUrl: defaultRel
           )}
         </div>
 
-        {/* strip */}
-        {thumbIds.length > 0 && (
-          <ThumbStrip
-            cameraIds={thumbIds}
-            hostOf={(id) => players.host(id)}
-            onSelect={handleThumbSelect}
-            onSubscribe={subButtonForCamera}
-            subscribedCameras={subscribedCameras}
-            subscribingCameras={subscribingCameras}
-          />
-        )}
+        <PreviewStrip cameraIds={previewIds} hostOf={(id) => players.host(id)} onSelect={handlePreviewSelect} />
       </div>
 
       {/* debug bar */}
       <DebugBar
         connState={isConnected ? 'connected' : 'closed'}
         relayUrl={relayUrl}
-        subscribedCameras={[...subscribedCameras]}
-        reviewingCamera={mode === 'review' ? stageId : null}
+        cameras={cameras}
+        reviewingCamera={mode === 'review' && stageId ? stageId : null}
         reviewStatus={stageState?.rewindStatus.text ?? null}
       />
     </div>

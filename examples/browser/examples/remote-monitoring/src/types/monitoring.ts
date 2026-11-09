@@ -1,6 +1,7 @@
 import { buildRelayPresets } from '../../../../utils/relayPresets'
 
-export type CameraId = 'cam01' | 'cam02' | 'cam03' | 'cam04'
+/// The last element of a camera's namespace, `[root, location, camera]`, shown as its name.
+export type CameraId = string
 export type MonitorMode = 'live' | 'review'
 export type ConnState = 'connected' | 'closed'
 export type VideoSourceType = 'synthetic' | 'camera' | 'file'
@@ -10,6 +11,7 @@ export interface VideoSource {
   fileUrl?: string
 }
 
-export const ALL_CAMERA_IDS: CameraId[] = ['cam01', 'cam02', 'cam03', 'cam04']
+/// One namespace element that is also safe in a URL query.
+export const NAME_PATTERN = /^[a-z0-9-]{1,32}$/
 
 export const RELAY_PRESETS = buildRelayPresets()

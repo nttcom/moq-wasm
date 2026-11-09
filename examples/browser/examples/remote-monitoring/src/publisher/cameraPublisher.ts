@@ -10,11 +10,13 @@ const VIDEO_ENCODING = {
 }
 const MAIN_VIDEO = { width: 1280, height: 720, bitrate: 1_000_000, framerate: 30 }
 
-const CAM_COLORS: Record<CameraId, string> = {
-  cam01: '#7a1a1a',
-  cam02: '#1a3a7a',
-  cam03: '#1a6a35',
-  cam04: '#7a4a10'
+/// A dark background that tells the synthetic cameras of a location apart, derived from the name.
+function cameraColor(camId: CameraId): string {
+  let hash = 0
+  for (const ch of camId) {
+    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  }
+  return `hsl(${hash % 360} 60% 22%)`
 }
 
 export class CameraPublisher {
@@ -63,7 +65,7 @@ export class CameraPublisher {
     canvas.width = MAIN_VIDEO.width
     canvas.height = MAIN_VIDEO.height
     const ctx = canvas.getContext('2d')!
-    const bg = CAM_COLORS[this.camId] ?? '#333'
+    const bg = cameraColor(this.camId)
 
     const draw = () => {
       const now = new Date().toISOString().replace('T', ' ').substring(0, 23)

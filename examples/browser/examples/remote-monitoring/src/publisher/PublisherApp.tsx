@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CameraId, VideoSource, VideoSourceType } from '../types/monitoring'
-import { ALL_CAMERA_IDS } from '../types/monitoring'
+import { NAME_PATTERN } from '../types/monitoring'
 import { PublisherSession } from './publisherSession'
 import { CameraPublisher } from './cameraPublisher'
 import { RelayUrlField } from '../components/RelayUrlField'
@@ -19,25 +19,25 @@ const SOURCE_LABELS: Record<VideoSourceType, string> = {
 
 interface Props {
   location: string
-  camId: CameraId | ''
+  camId: CameraId
   relayUrl: string
 }
 
 export function PublisherApp({ location: defaultLocation, camId: defaultCamId, relayUrl: defaultRelayUrl }: Props) {
   const [location, setLocation] = useState(defaultLocation)
-  const [camId, setCamId] = useState<CameraId | ''>(defaultCamId)
+  const [camId, setCamId] = useState<CameraId>(defaultCamId)
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl)
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [sourceType, setSourceType] = useState<VideoSourceType>('synthetic')
-  const defaultFileUrl = (id: CameraId | '') => (id ? `/moq-wasm/videos/${id}.mp4` : '')
+  const defaultFileUrl = (id: CameraId) => (id ? `/moq-wasm/videos/${id}.mp4` : '')
   const [fileUrl, setFileUrl] = useState(() => defaultFileUrl(defaultCamId))
   const videoRef = useRef<HTMLVideoElement>(null)
   const sessionRef = useRef<PublisherSession | null>(null)
   const publisherRef = useRef<CameraPublisher | null>(null)
 
   const isIdle = status === 'idle' || status === 'error'
-  const canConnect = isIdle && !!camId && !!location
+  const canConnect = isIdle && NAME_PATTERN.test(camId) && NAME_PATTERN.test(location)
 
   useUrlSync({ mode: 'publisher', location, relay: relayUrl, cam: camId || null })
 
@@ -56,7 +56,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
     setStatus('connecting')
     setError(null)
     try {
-      const session = new PublisherSession(location, camId as CameraId)
+      const session = new PublisherSession(location, camId)
       await session.connect(relayUrl)
       sessionRef.current = session
       setStatus('connected')
@@ -73,7 +73,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
     setError(null)
     try {
       const source: VideoSource = sourceType === 'file' ? { type: 'file', fileUrl } : { type: sourceType }
-      const publisher = new CameraPublisher(camId as CameraId, source)
+      const publisher = new CameraPublisher(camId, source)
       const stream = await publisher.start(publisherSession.session, publisherSession.namespace)
       publisherRef.current = publisher
       if (videoRef.current) videoRef.current.srcObject = stream
@@ -141,21 +141,13 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
         <div className="rounded-xl bg-zinc-900 px-4 py-4 space-y-3">
           <div className="grid grid-cols-[1fr_1fr_2fr] gap-3 items-end">
             <div className="space-y-1">
-              <Label className="text-xs text-zinc-400 font-mono">カメラ ID</Label>
-              <select
+              <Label className="text-xs text-zinc-400 font-mono">カメラ名</Label>
+              <Input
                 value={camId}
-                onChange={(e) => setCamId(e.target.value as CameraId)}
-                className="w-full rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm font-mono text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="" disabled>
-                  選択してください
-                </option>
-                {ALL_CAMERA_IDS.map((id) => (
-                  <option key={id} value={id}>
-                    {id.toUpperCase()}
-                  </option>
-                ))}
-              </select>
+                onChange={(e) => setCamId(e.target.value.trim())}
+                className="bg-zinc-800 border-zinc-700 font-mono text-sm"
+                placeholder="entrance"
+              />
             </div>
             <div className="space-y-1">
               <Label className="text-xs text-zinc-400 font-mono">Location</Label>
@@ -163,7 +155,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 className="bg-zinc-800 border-zinc-700 font-mono text-sm"
-                placeholder="my-building"
+                placeholder="brave-otter"
               />
             </div>
             <RelayUrlField value={relayUrl} onChange={setRelayUrl} />
@@ -213,7 +205,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
         {status === 'idle' && <p className="font-mono text-zinc-500 text-sm">接続 → 配信開始 で配信を開始します</p>}
         {camId && (
           <div className="absolute bottom-3 left-3 font-mono text-xs text-white bg-black/50 rounded px-2 py-1">
-            {camId.toUpperCase()}
+            {camId}
           </div>
         )}
       </div>
