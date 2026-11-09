@@ -504,7 +504,9 @@ mod tests {
     };
 
     use crate::modules::{
-        auth::test_support::{app_token, connect_client, spawn_relay_and_connect_client},
+        auth::test_support::{
+            RunningRelay, app_token, connect_client, spawn_relay_and_connect_client,
+        },
         test_support::relay_clients::{
             NAMESPACE, TRACK, TrackPublisher, next_event, publish_namespace, subscribe_namespace,
             subscribe_track,
@@ -564,6 +566,61 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE_DONE, got {event:?}");
         };
         assert_eq!(done.track_namespace, "APP/room/x");
+    }
+
+    /// `APP/room/x` is published, then watched under `APP/room`; returns once
+    /// the watcher has received its PUBLISH_NAMESPACE.
+    async fn watched_after_its_publication() -> (RunningRelay, Session, Session) {
+        let (relay, watcher) = spawn_relay_and_connect_client(app_token(Some(""), Some(""))).await;
+        let announcer = connect_client(&relay).await;
+        publish_namespace(&announcer, "APP/room/x").await;
+        subscribe_namespace(&watcher, "APP/room").await;
+        let SessionEvent::PublishNamespace(_) = next_event(&watcher).await else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+        (relay, watcher, announcer)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_namespace_published_before_the_watch_is_withdrawn_and_published_again() {
+        // Arrange
+        let (_relay, watcher, announcer) = watched_after_its_publication().await;
+
+        // Act
+        announcer
+            .publisher()
+            .publish_namespace_done("APP/room/x".to_string())
+            .await
+            .unwrap();
+        let withdrawn = next_event(&watcher).await;
+        publish_namespace(&announcer, "APP/room/x").await;
+        let published_again = next_event(&watcher).await;
+
+        // Assert
+        assert!(
+            matches!(&withdrawn, SessionEvent::PublishNamespaceDone(done) if done.track_namespace == "APP/room/x"),
+            "{withdrawn:?}"
+        );
+        assert!(
+            matches!(&published_again, SessionEvent::PublishNamespace(_)),
+            "{published_again:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_namespace_published_before_the_watch_is_withdrawn_when_its_publisher_leaves() {
+        // Arrange
+        let (_relay, watcher, announcer) = watched_after_its_publication().await;
+
+        // Act
+        drop(announcer);
+        let withdrawn = next_event(&watcher).await;
+
+        // Assert
+        assert!(
+            matches!(&withdrawn, SessionEvent::PublishNamespaceDone(done) if done.track_namespace == "APP/room/x"),
+            "{withdrawn:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
