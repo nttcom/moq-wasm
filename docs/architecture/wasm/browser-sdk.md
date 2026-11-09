@@ -361,7 +361,7 @@ joinButton.onclick = async () => {
   const camera = await local.addSource('camera', { label: 'Camera', video: true, audio: true })
   preview.srcObject = camera.stream
 
-  const remotes = watchBroadcasts(session, ['room'], {
+  const remotes = await watchBroadcasts(session, ['room'], {
     filter: (namespace) => namespace.at(-1) !== 'transcriber',
     onAdd: (remote) => addTile(remote),
     onRemove: (remote) => removeTile(remote)
@@ -457,12 +457,16 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 の上で、公開された namespace ごとに `RemoteBroadcast` を作る。
 
 - ハンドラは呼び出しの引数で受ける。監視の開始と処理の開始を一致させ、作ってから代入する
-  間に届いた配信を取りこぼさない。返り値は `close()` だけを持つ。
+  間に届いた配信を取りこぼさない。relay が SUBSCRIBE_NAMESPACE を受け付けたら resolve し、拒否
+  したらその `RequestError` で reject する。返り値は `close()` だけを持ち、`close()` は全部の
+  `RemoteBroadcast` を片付ける（`onRemove` は呼ばない）。
 - 同じ session が `createBroadcast` した namespace は除く。別の session（別のタブ）が同じ
   namespace で配信していれば除かない。
 - `filter` で、文字起こしボットのような参加者以外の配信を除く。深さではなく関数にするのは、
   参加者と同じ深さにいる配信も除けるようにするため。
 - namespace が withdraw されたら、SDK が view と catalog を片付けてから `onRemove` を呼ぶ。
+  公開中の namespace がもう一度公開されたら（入り直し）、古いものを `onRemove`、新しいものを
+  `onAdd` で知らせる。
 
 `RemoteBroadcast` は1つの `BroadcastCatalog` を持ち、source ごとに view を作る。1人を
 見るだけのページは `new RemoteBroadcast(session, namespace)` を直接使う。

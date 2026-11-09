@@ -2,6 +2,7 @@ import type { MoqSession } from '../core/session'
 import type { MediaBroadcast } from '../../pkg/moqt'
 import { forwardSdkLog, sdkLog } from '../core/log'
 import { audioTrackName, rejectedName, sourceTrackNames } from './sourceNames'
+import { noteOwnBroadcast } from './ownBroadcasts'
 import {
   type MediaKind,
   type SourceEncoding,
@@ -98,6 +99,7 @@ export async function createBroadcast(
 ): Promise<LocalBroadcast> {
   const broadcast = session.broadcast(namespace)
   await broadcast.announce()
+  noteOwnBroadcast(session, namespace)
   if (options.offerChat) {
     await broadcast.offerChat()
   }

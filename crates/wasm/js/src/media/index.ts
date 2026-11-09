@@ -27,6 +27,7 @@ export {
   type SourceViewState,
   RemoteBroadcast
 } from './remoteBroadcast'
+export { type BroadcastWatch, type WatchBroadcastsOptions, watchBroadcasts } from './watchBroadcasts'
 export {
   type LivePlayerCallbacks,
   type LivePlayerOptions,
