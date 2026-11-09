@@ -86,7 +86,7 @@ function enqueueDirectDecode(object: SubgroupObjectWithLoc): void {
     return
   }
   directDecodeQueue = directDecodeQueue
-    .then(() => decode(object.objectPayload, readLocHeader(object.locHeader).captureTimestampMicros))
+    .then(() => decode(object.objectPayload, readLocHeader(object.locHeader).timestampMicros))
     .catch((error) => {
       workerLog('error', TARGET, 'decode failed', { error })
     })

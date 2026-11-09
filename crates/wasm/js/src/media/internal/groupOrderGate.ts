@@ -86,7 +86,7 @@ export class GroupOrderGate {
   }
 
   private releaseAtMs({ heldAtMs, objects }: HeldGroup): number {
-    const captureMicros = readLocHeader(objects[0].locHeader).captureTimestampMicros
+    const captureMicros = readLocHeader(objects[0].locHeader).timestampMicros
     if (this.timeline === undefined || captureMicros === undefined) {
       return heldAtMs + HOLD_MS
     }

@@ -235,12 +235,12 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       const entry: VideoJitterBufferEntry = {
         groupId,
         objectId: object.objectId,
-        captureTimestampMicros: loc.captureTimestampMicros,
+        captureTimestampMicros: loc.timestampMicros,
         receivedAtMs: performance.now(),
         videoConfig: loc.videoConfig,
         chunk: new EncodedVideoChunk({
           type: object.objectId === 0n ? 'key' : 'delta',
-          timestamp: loc.captureTimestampMicros ?? 0,
+          timestamp: loc.timestampMicros ?? 0,
           data: object.objectPayload
         })
       }

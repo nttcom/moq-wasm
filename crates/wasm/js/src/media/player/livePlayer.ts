@@ -998,7 +998,7 @@ export class LivePlayer {
 
   private observeVideoDelivery(object: ReceivedObject): void {
     const arrivedAtMs = monotonicUnixMicros() / 1_000
-    const captureMicros = readLocHeader(object.locHeader).captureTimestampMicros
+    const captureMicros = readLocHeader(object.locHeader).timestampMicros
     this.adaptiveBitrate.observe({
       arrivedAtMs,
       bytes: object.objectPayloadLength,

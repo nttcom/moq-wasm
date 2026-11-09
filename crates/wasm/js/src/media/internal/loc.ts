@@ -15,18 +15,23 @@ export const TIMESTAMP_ID = 0x10
 export type AudioLevel = { level: number; voiceActivity: boolean }
 
 export type LocMetadata = {
-  captureTimestampMicros?: number
+  /// The Timestamp property in µs: wall-clock time since the Unix epoch
+  /// (draft-ietf-moq-loc-04 §2.3.1.1), or media time when `mediaTime` is set (§2.3.1.2).
+  timestampMicros?: number
+  /// Set only by `readLocHeader`: a Timescale property came with the Timestamp.
+  mediaTime?: boolean
   videoConfig?: Uint8Array
   audioLevel?: AudioLevel
 }
 
+const MICROS_PER_SECOND = 1_000_000
 const VOICE_ACTIVITY_BIT = 0x80
 const LEVEL_MASK = 0x7f
 
 export function buildLocHeader(meta: LocMetadata): LocHeader {
   const extensions: LocHeader = []
-  if (typeof meta.captureTimestampMicros === 'number') {
-    extensions.push({ id: TIMESTAMP_ID, value: { varint: meta.captureTimestampMicros } })
+  if (typeof meta.timestampMicros === 'number') {
+    extensions.push({ id: TIMESTAMP_ID, value: { varint: meta.timestampMicros } })
   }
   if (meta.videoConfig) {
     extensions.push({ id: VIDEO_CONFIG_ID, value: { bytes: meta.videoConfig } })
@@ -41,17 +46,19 @@ export function buildLocHeader(meta: LocMetadata): LocHeader {
   return extensions
 }
 
-/// A Timestamp sent with a Timescale property is media time with an
-/// application-defined epoch (draft-ietf-moq-loc-04 §2.3.1.2), not the Unix µs
-/// capture time, so it is not read.
+/// A Timestamp with a Timescale property of 0 is not read.
 export function readLocHeader(header?: LocHeader): LocMetadata {
   const meta: LocMetadata = {}
-  const mediaTime = (header ?? []).some((ext) => ext.id === TIMESCALE_ID && 'varint' in ext.value)
+  const timescale = (header ?? []).find((ext) => ext.id === TIMESCALE_ID && 'varint' in ext.value)
+  const ticksPerSecond = timescale && 'varint' in timescale.value ? timescale.value.varint : undefined
   for (const ext of header ?? []) {
     if (ext.id === VIDEO_CONFIG_ID && 'bytes' in ext.value) {
       meta.videoConfig = ext.value.bytes
-    } else if (ext.id === TIMESTAMP_ID && 'varint' in ext.value && !mediaTime) {
-      meta.captureTimestampMicros = ext.value.varint
+    } else if (ext.id === TIMESTAMP_ID && 'varint' in ext.value && ticksPerSecond === undefined) {
+      meta.timestampMicros = ext.value.varint
+    } else if (ext.id === TIMESTAMP_ID && 'varint' in ext.value && ticksPerSecond) {
+      meta.timestampMicros = (ext.value.varint * MICROS_PER_SECOND) / ticksPerSecond
+      meta.mediaTime = true
     } else if (ext.id === AUDIO_LEVEL_ID && 'varint' in ext.value) {
       meta.audioLevel = {
         level: ext.value.varint & LEVEL_MASK,

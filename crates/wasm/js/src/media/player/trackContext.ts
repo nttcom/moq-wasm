@@ -55,7 +55,7 @@ export function observedObjectHandler(
       object.objectPayloadLength,
       object.objectStatus != null,
       Date.now(),
-      readLocHeader(object.locHeader).captureTimestampMicros
+      readLocHeader(object.locHeader).timestampMicros
     )
     handler(groupId, object, cached)
   }

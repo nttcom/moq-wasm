@@ -167,7 +167,7 @@ export function toReviewFrame(message: {
     groupId: message.groupId,
     objectId: message.objectId,
     data,
-    captureMicros: readLocHeader(message.locHeader).captureTimestampMicros
+    captureMicros: readLocHeader(message.locHeader).timestampMicros
   }
 }
 

@@ -255,7 +255,7 @@ export class MediaSubscriber {
       return
     }
     const arrivedAtMs = nowMs()
-    const captureMicros = readLocHeader(message.locHeader).captureTimestampMicros
+    const captureMicros = readLocHeader(message.locHeader).timestampMicros
     picture.bitrate.observe({
       arrivedAtMs,
       bytes: message.objectPayloadLength,
