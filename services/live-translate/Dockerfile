@@ -11,8 +11,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && rustup target add wasm32-unknown-unknown \
- && curl -fsSL "https://github.com/wasm-bindgen/wasm-pack/releases/download/${WASM_PACK_VERSION}/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
-    | tar -xz --strip-components=1 -C /usr/local/bin "wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack"
+ && curl -fsSL --retry 8 --retry-all-errors --retry-delay 10 -o /tmp/wasm-pack.tar.gz \
+    "https://github.com/wasm-bindgen/wasm-pack/releases/download/${WASM_PACK_VERSION}/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+ && tar -xzf /tmp/wasm-pack.tar.gz --strip-components=1 -C /usr/local/bin "wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" \
+ && rm /tmp/wasm-pack.tar.gz
 COPY . .
 RUN cd crates/wasm/js && wasm-pack build ../ --target web --out-name moqt --out-dir=js/pkg
 
