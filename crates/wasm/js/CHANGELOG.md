@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `BroadcastCatalog` subscribes the catalog of one broadcast once for every
+  reader on the session, and `LivePlayer.start(session, namespace, catalog)`
+  listens to it instead of subscribing the catalog itself. Players that play
+  sources of one broadcast (`LivePlayerOptions.source`) share one, as
+  draft-ietf-moq-transport-14 §9.7 forbids a second subscription to the same
+  track on one session; the page can listen to it as well.
 - `publish()` passes every field of `videoEncoderConfig` to the encoder and
   fills the unset ones with the package's defaults, so `latencyMode: 'quality'`
   now reaches the encoder instead of always `'realtime'`. Renditions take the

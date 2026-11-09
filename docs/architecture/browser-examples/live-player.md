@@ -107,7 +107,7 @@ type LivePlayerCallbacks = {
 }
 
 class LivePlayer {
-  start(session: MoqSession, namespace: string[], tracks?: LiveTracks): Promise<void>
+  start(session: MoqSession, namespace: string[], tracks?: LiveTracks | BroadcastCatalog): Promise<void>
   stop(): Promise<void>
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
@@ -159,6 +159,13 @@ stands in for the catalog of a publisher that announces none: `start`
 subscribes to the tracks given and nothing else, the catalog status reads
 `Tracks given`, and a track redefinition can only come from another `start`.
 
+A `BroadcastCatalog` given to `start` instead is the catalog of one broadcast
+shared by every reader on the session: the players of its sources
+(`LivePlayerOptions.source`) and the page. draft-14 §9.7 forbids a second
+subscription to one track on a session, so they listen to one SUBSCRIBE. The
+player then only listens to it and leaves it open at `stop`; without one, the
+player creates its own and closes it at `stop`.
+
 One player lives as long as the page; `start` and `stop` bracket one watch,
 and the settings (packaging, volume, buffer policy, catch-up) carry over.
 
@@ -206,7 +213,8 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `livePlayer` | Facade: owns the modules below and the state, dispatches commands, decides by packaging |
 | `trackContext` | The client, namespace, auth info, observer and log every request needs |
 | `deliveryObserver` | What the player reports of every object, FETCH and playhead |
-| `catalogFollower` / `textTrack` | Catalog SUBSCRIBE + FETCH, newest group wins; text tracks such as the media timeline |
+| `broadcastCatalog` | The catalog of one broadcast for every listener on the session: SUBSCRIBE + FETCH, newest group wins, waiting for an absent or departed publisher |
+| `textTrack` | Text tracks read whole, such as the catalog and the media timeline |
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order, the hand-over of a kind to another subscription and the retiring one it replaces |
 | `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
@@ -269,8 +277,9 @@ group can span two windows.
   arrives; moqt keeps it open on the wire for the draft-14 §9.12 grace period,
   but the objects arriving meanwhile are dropped.
 - The catalog ending, or the video track when the page gave the tracks, means
-  the publisher left: the player forgets its tracks and SUBSCRIBEs again every
-  2 s until a publisher answers, as it does when started before one publishes.
+  the publisher left: the player forgets its tracks, and the catalog (or the
+  player, for given tracks) SUBSCRIBEs again every 2 s until a publisher
+  answers, as it does when started before one publishes.
   The relay answers a SUBSCRIBE nobody publishes with TRACK_DOES_NOT_EXIST, and
   only a live publisher answers one, so a returning publisher is never
   mistaken for the relay's cache.

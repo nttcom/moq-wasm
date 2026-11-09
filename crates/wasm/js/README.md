@@ -155,6 +155,20 @@ Options of `new LivePlayer`:
 To play tracks the page already knows instead of the catalog's, pass them as
 the third argument of `start`: `player.start(session, namespace, { video: [track], audio: [track] })`.
 
+Players that play sources of one broadcast share its catalog through a
+`BroadcastCatalog`, since one session must not subscribe to a track twice
+(draft-ietf-moq-transport-14 §9.7). Pass it as the third argument of `start`;
+the page can read the catalog from it too:
+
+```ts
+const catalog = new BroadcastCatalog(session, namespace)
+const unlisten = catalog.listen({ onCatalog: (text) => layout(parseCatalog(text)), onPublisherAbsent: () => {} })
+await camera.start(session, namespace, catalog)
+await screen.start(session, namespace, catalog)
+```
+
+`stop()` leaves a shared catalog open; `catalog.close()` unsubscribes it.
+
 ## Playing several broadcasts together: `PlaybackGroup`
 
 `PlaybackGroup` plays its players at one position on one clock. While live,
