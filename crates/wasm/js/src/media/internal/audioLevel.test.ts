@@ -28,7 +28,7 @@ test('the LOC header carries the level and the V bit in one varint', () => {
   const audioLevel = { level: 33, voiceActivity: true }
 
   // Act
-  const header = buildLocHeader({ captureTimestampMicros: 1, audioLevel })
+  const header = buildLocHeader({ timestampMicros: 1, audioLevel })
 
   // Assert
   expect(header).toContainEqual({ id: AUDIO_LEVEL_ID, value: { varint: 0x80 | 33 } })

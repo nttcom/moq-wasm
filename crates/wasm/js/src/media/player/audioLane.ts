@@ -38,7 +38,7 @@ export class AudioLane {
   /// subscription started.
   push(groupId: bigint, object: LocObject, cached = false): void {
     if (cached) {
-      const captureMicros = readLocHeader(object.locHeader).captureTimestampMicros
+      const captureMicros = readLocHeader(object.locHeader).timestampMicros
       if (captureMicros !== undefined) {
         this.cachedUpToMicros = Math.max(this.cachedUpToMicros ?? 0, captureMicros)
       }

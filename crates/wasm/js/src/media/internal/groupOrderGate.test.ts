@@ -23,7 +23,7 @@ function audioObject(objectId: number, captureMicros: number): SubgroupObjectWit
     objectPayloadLength: 1,
     objectPayload: Uint8Array.of(0),
     objectStatus: undefined,
-    locHeader: buildLocHeader({ captureTimestampMicros: captureMicros })
+    locHeader: buildLocHeader({ timestampMicros: captureMicros })
   }
 }
 

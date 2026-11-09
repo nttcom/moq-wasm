@@ -8,11 +8,11 @@ export class ArrivalLag {
   private lagMicros: number | undefined
 
   observe(locHeader: LocHeader | undefined): number | undefined {
-    const captureMicros = readLocHeader(locHeader).captureTimestampMicros
-    if (captureMicros !== undefined) {
-      this.lagMicros = monotonicUnixMicros() - captureMicros
+    const { timestampMicros, mediaTime } = readLocHeader(locHeader)
+    if (timestampMicros !== undefined && !mediaTime) {
+      this.lagMicros = monotonicUnixMicros() - timestampMicros
     }
-    return captureMicros
+    return timestampMicros
   }
 
   liveCaptureMicros(): number | undefined {

@@ -93,7 +93,7 @@ impl Demuxer {
     }
 
     /// Measures presentation time from `capture_origin` instead of the first
-    /// capture timestamp seen on this track, so the demuxers of the tracks of
+    /// Timestamp seen on this track, so the demuxers of the tracks of
     /// one broadcast share one origin and their samples stay aligned.
     pub fn with_capture_origin(mut self, capture_origin: Timestamp) -> Self {
         self.capture_origin = Some(capture_origin);
@@ -161,7 +161,7 @@ impl Demuxer {
     }
 
     fn presentation_timestamp(&mut self, object: &LocObject) -> Timestamp {
-        let Some(capture) = object.capture_timestamp() else {
+        let Some(capture) = object.timestamp() else {
             return self.last_pts;
         };
         let origin = *self.capture_origin.get_or_insert(capture);
@@ -218,7 +218,7 @@ mod tests {
     use super::*;
     use crate::{
         h264::annexb::{annexb_to_avcc, with_start_codes},
-        loc::object::{AUDIO_LEVEL_ID, LocExtension, TIMESTAMP_ID, VIDEO_CONFIG_ID},
+        loc::object::{AUDIO_LEVEL_ID, LocExtension, TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID},
         sample::AudioLevel,
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
@@ -291,6 +291,34 @@ mod tests {
             .unwrap();
 
         // Assert
+        assert_eq!(
+            events,
+            [MediaEvent::Video(VideoSample {
+                data: delta_frame_annexb(),
+                is_keyframe: false,
+                pts: Timestamp::from_millis(40),
+                dts: Timestamp::from_millis(40)
+            })]
+        );
+    }
+
+    #[test]
+    fn measures_timestamps_in_media_time() {
+        // Arrange
+        let object = |timestamp, payload| LocObject {
+            extensions: vec![
+                LocExtension::varint(TIMESCALE_ID, 90_000),
+                LocExtension::varint(TIMESTAMP_ID, timestamp),
+            ],
+            payload,
+        };
+        let mut demuxer = Demuxer::video(VideoCodec::H264);
+        demuxer.push(&object(90_000, keyframe_annexb())).unwrap();
+
+        // Act
+        let events = demuxer.push(&object(93_600, delta_frame_annexb())).unwrap();
+
+        // Assert: 3600 ticks are 40 ms
         assert_eq!(
             events,
             [MediaEvent::Video(VideoSample {

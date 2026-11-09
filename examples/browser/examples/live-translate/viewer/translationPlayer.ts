@@ -438,7 +438,7 @@ export class TranslationPlayer {
     const lane = new CaptionLane(this.locLive.playout, (text) => this.callbacks.onCaption(text))
     try {
       const subscribed = await this.subscribe(track, (_groupId, object) =>
-        lane.push(object.objectPayload, readLocHeader(object.locHeader).captureTimestampMicros)
+        lane.push(object.objectPayload, readLocHeader(object.locHeader).timestampMicros)
       )
       this.captions = { lang: lang!, subscribed, lane }
     } catch (error) {
