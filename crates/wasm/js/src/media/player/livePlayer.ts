@@ -786,6 +786,7 @@ export class LivePlayer {
     }
     this.subscriptions.endBeforeGroup(pending.outgoing, start.groupId).catch((error) => {
       this.context.log('warn', `end ${pending.outgoing.name} before group ${start.groupId}: ${getErrorMessage(error)}`)
+      this.retireOutgoingVideo(pending)
     })
   }
 
@@ -829,8 +830,7 @@ export class LivePlayer {
   ): void {
     if (kind === 'video') {
       const pending = this.videoSwitch
-      if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'retire') {
-        this.retireOutgoingVideo(pending)
+      if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'drop') {
         return
       }
       if (this.newestVideoGroup === undefined || groupId > this.newestVideoGroup) {
