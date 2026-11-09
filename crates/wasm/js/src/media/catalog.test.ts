@@ -18,7 +18,7 @@ test.afterEach(() => {
 
 function catalogWithInitDataList(initDataList: unknown[]): unknown {
   return {
-    version: 1,
+    version: 'draft-01',
     tracks: [
       { name: 'video', packaging: 'loc', role: 'video', isLive: true, codec: 'avc1.640028' },
       { name: 'audio', packaging: 'loc', role: 'audio', isLive: true, codec: 'mp4a.40.2', initRef: 'audio' }
@@ -61,6 +61,14 @@ for (const [reference, initDataList] of [
   })
 }
 
+test('the written catalog names its version as the draft release, a string', () => {
+  // Act
+  const catalog = JSON.parse(buildMsfCatalogJson([{ name: 'video', packaging: 'loc', isLive: true }]))
+
+  // Assert
+  expect(catalog.version).toBe('draft-01')
+})
+
 test('the written catalog puts initDataList after tracks and leaves an empty one out', () => {
   // Arrange
   const audio = { name: 'audio', packaging: 'loc', isLive: true, initRef: 'audio' }
@@ -78,7 +86,7 @@ test('the written catalog puts initDataList after tracks and leaves an empty one
 test('a video track keeps its alternate group and bitrate', () => {
   // Arrange
   const catalog = {
-    version: 1,
+    version: 'draft-01',
     tracks: [
       { name: 'video', packaging: 'loc', role: 'video', isLive: true, altGroup: 1 },
       { name: 'video_480p', packaging: 'loc', role: 'video', isLive: true, altGroup: 1, bitrate: 1_200_000 }
