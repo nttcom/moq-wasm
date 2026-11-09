@@ -17,6 +17,20 @@ await publish(session, ['room', 'alice'], await navigator.mediaDevices.getUserMe
 version may change it. Import
 `moq-wasm/media/controls.css` as well with `PlayerControls`.
 
+## Vite
+
+The package loads its `.wasm` file and its workers with
+`new URL(..., import.meta.url)`. The Vite dev server's dependency pre-bundling
+moves the code to `node_modules/.vite/deps` without those files, so the URLs
+break. Exclude the package from it:
+
+```js
+// vite.config.js
+export default { optimizeDeps: { exclude: ['moq-wasm'] } }
+```
+
+`vite build` needs nothing.
+
 ## Building
 
 ```shell
