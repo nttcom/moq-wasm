@@ -1,5 +1,6 @@
 import { extractCatalogTracks, type MediaCatalogTrack } from 'moq-wasm/media/catalog'
 import { LocReview } from 'moq-wasm/media/player/locReview'
+import { ReviewClock } from 'moq-wasm/media/player/reviewClock'
 import type { ReviewFrame } from 'moq-wasm/media/player/rewind'
 
 type ArchiveObject = {
@@ -26,15 +27,20 @@ let audio: Entry[] = []
 let videoTrack: MediaCatalogTrack | undefined
 let audioTrack: MediaCatalogTrack | undefined
 let origin = 0
-const review = new LocReview(canvas, {
-  onFrameShown: (at) => {
-    seek.value = String((at - origin) / 1_000_000)
-    canvas.dataset.captureUs = String(at)
+const clock = new ReviewClock()
+const review = new LocReview(
+  canvas,
+  {
+    onFrameShown: (at) => {
+      seek.value = String((at - origin) / 1_000_000)
+      canvas.dataset.captureUs = String(at)
+    },
+    onLog: (_level, message) => {
+      status.value = message
+    }
   },
-  onLog: (_level, message) => {
-    status.value = message
-  }
-})
+  clock
+)
 
 function decode(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (c) => c.charCodeAt(0))
@@ -118,6 +124,7 @@ function lowerBound(entries: Entry[], timestamp: number): number {
 file.addEventListener('change', async () => {
   const current = ++generation
   review.playout.stop()
+  clock.reset()
   play.disabled = seek.disabled = true
   try {
     const selected = file.files?.[0]
@@ -161,7 +168,8 @@ async function start(): Promise<void> {
           description: audioTrack.initData ? decode(audioTrack.initData) : undefined
         }
       : undefined
-  review.playout.start(target)
+  clock.anchor(target, false)
+  review.playout.start(clock, target)
   status.value = 'Playing'
   try {
     let index = startIndex

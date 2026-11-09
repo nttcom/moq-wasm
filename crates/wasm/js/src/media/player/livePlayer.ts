@@ -16,8 +16,11 @@ import { CmafReview } from './cmafReview'
 import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
+import { type GroupLink, type GroupMember, registerGroupMember } from './groupMember'
 import { RenditionSplice, type SpliceStart } from './renditionSplice'
+import { ReviewClock } from './reviewClock'
 import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
+import type { GroupMark } from './rewind'
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
@@ -89,6 +92,9 @@ export type LivePlayerState = {
   isLive: boolean
   /// Set once VOD playback has reached the end, which pauses it.
   ended: boolean
+  /// False while the position of the player's `PlaybackGroup` lies outside
+  /// what the player can play; the player then fetches nothing.
+  inRange: boolean
   paused: boolean
   stalled: boolean
   playbackRate: number
@@ -128,6 +134,7 @@ export class LivePlayer {
   private readonly stage: PictureStage
   private readonly locLive: LocLive
   private readonly cmafLive = new CmafLive()
+  private readonly reviewClock = new ReviewClock()
   private readonly locReview: LocReview
   private readonly cmafReview = new CmafReview()
   private readonly stallWatch: StallWatch
@@ -137,6 +144,7 @@ export class LivePlayer {
   private selected: Record<MediaKind, string> = { video: '', audio: '' }
   private packaging: Packaging = 'loc'
   private review: ReviewSession | undefined
+  private group: GroupLink | undefined
   private started = false
   private givenTracks: LiveTracks | undefined
   /// Incremented by every start and stop; a publisher wait from an earlier
@@ -200,17 +208,21 @@ export class LivePlayer {
         this.callbacks.onLiveFrame()
       }
     })
-    this.locReview = new LocReview(this.stage.reviewCanvas, {
-      onFrameShown: (captureMicros, playhead) => {
-        if (playhead) {
-          this.context.observer.setPlayhead(playhead)
-        }
-        this.stage.show(this.locReview.canvas)
-        this.notePresentedFrame(this.locReview.canvas)
-        this.advanceReviewPlayhead(captureMicros)
+    this.locReview = new LocReview(
+      this.stage.reviewCanvas,
+      {
+        onFrameShown: (captureMicros, playhead) => {
+          if (playhead) {
+            this.context.observer.setPlayhead(playhead)
+          }
+          this.stage.show(this.locReview.canvas)
+          this.notePresentedFrame(this.locReview.canvas)
+          this.advanceReviewPlayhead(captureMicros)
+        },
+        onLog: this.context.log
       },
-      onLog: this.context.log
-    })
+      this.reviewClock
+    )
     this.reviewHost = {
       playedTrack: (kind) => this.playedTrack(kind),
       playWindow: (window, session) => this.playReviewWindow(window, session),
@@ -219,8 +231,8 @@ export class LivePlayer {
       fastForwardDrained: () => this.playbackRateAdjustable() && this.playbackRate > 1 && this.cmafReview.drained(),
       observeLiveVideoGroup: (groupId) => this.observeLiveVideoGroup(groupId),
       resumeLiveForward: () => this.resumeLiveForward(),
-      goLive: () => this.goLive(),
-      seek: (captureMicros) => this.seek(captureMicros),
+      goLive: () => this.endReview(),
+      seek: (captureMicros) => (this.group ? this.group.placeAgain() : this.seekAlone(captureMicros)),
       failed: (description) => {
         this.stallWatch.clear()
         this.setRewindStatus(`Rewind failed: ${description}`, 'error')
@@ -230,6 +242,7 @@ export class LivePlayer {
     for (const video of this.stage.videos()) {
       this.watchPresentedFrames(video)
     }
+    registerGroupMember(this, this.groupMember())
   }
 
   get state(): LivePlayerState {
@@ -247,6 +260,7 @@ export class LivePlayer {
       mode: review ? 'review' : 'live',
       isLive: this.timeline.live,
       ended: this.ended,
+      inRange: this.review?.inRange ?? true,
       paused: this.paused,
       stalled: this.stallWatch.stalled,
       playbackRate: this.playbackRate,
@@ -359,7 +373,7 @@ export class LivePlayer {
   /// Also resets the catalog, so the next catalog subscribes its tracks anew.
   private async forgetPublisher(catalogText: string, playbackText: string): Promise<void> {
     this.timeline.reset()
-    this.goLive()
+    this.endReview()
     this.cmafLive.close()
     this.locLive.reset()
     this.stallWatch.clear()
@@ -442,28 +456,48 @@ export class LivePlayer {
   }
 
   /// Skips from the position on screen: the review playhead, the live frame
-  /// shown last, or the live edge before a frame has been shown.
+  /// shown last, or the live edge before a frame has been shown. In a
+  /// `PlaybackGroup`, skips the group.
   skip(seconds: number): void {
-    const latest = this.timeline.groups.latest
-    if (!latest) {
+    if (this.group) {
+      this.group.skip(seconds)
       return
     }
-    const from = this.review?.playheadMicros ?? this.locLive.shownCaptureMicros ?? latest.captureMicros
-    this.seek(from + seconds * MICROS_PER_SECOND)
+    const from = this.positionMicros()
+    if (from !== undefined) {
+      this.seekAlone(from + seconds * MICROS_PER_SECOND)
+    }
+  }
+
+  private positionMicros(): number | undefined {
+    const latest = this.timeline.groups.latest
+    if (!latest) {
+      return undefined
+    }
+    return this.review?.playheadMicros ?? this.locLive.shownCaptureMicros ?? latest.captureMicros
   }
 
   /// A position at or past the live edge goes live. Any other position is
   /// replayed from the closed keyframe group that holds it: the frames before it
   /// are decoded without pacing and only the ones from the position on are shown.
   /// A paused player stays paused on the frame at the position. A position
-  /// before the first group plays from the first group.
+  /// before the first group plays from the first group. In a `PlaybackGroup`,
+  /// seeks the group.
   seek(captureMicros: number): void {
+    if (this.group) {
+      this.group.seek(captureMicros)
+      return
+    }
+    this.seekAlone(captureMicros)
+  }
+
+  private seekAlone(captureMicros: number): void {
     const latest = this.timeline.groups.latest
     if (!latest) {
       return
     }
     if (this.timeline.live && captureMicros >= latest.captureMicros) {
-      this.goLive()
+      this.returnToLive()
       return
     }
     const target = this.timeline.groups.resolveSeekTarget(captureMicros)
@@ -471,7 +505,33 @@ export class LivePlayer {
       this.setRewindStatus('Rewind unavailable: nothing buffered yet', 'error')
       return
     }
+    const session = this.beginReview(target, captureMicros)
+    this.reviewClock.anchor(session.anchorMicros, this.paused)
+    this.playReview(session, this.reviewClock)
+  }
 
+  private align(positionMicros: number): void {
+    const clock = this.group?.clock
+    const target = this.timeline.groups.resolveSeekTarget(positionMicros)
+    if (clock && target) {
+      this.playReview(this.beginReview(target, positionMicros), clock)
+    }
+  }
+
+  /// The group's position lies outside the player's range: nothing is
+  /// fetched, and the live subscriptions do not forward, as in a review.
+  private hold(positionMicros: number): void {
+    this.beginReview(undefined, positionMicros)
+    this.locReview.playout.stop()
+    this.cmafReview.close()
+    this.stallWatch.clear()
+    this.applyVolume()
+    this.playbackStatus = { text: 'Out of range', state: 'idle' }
+    this.changed()
+  }
+
+  /// Without a `target`, the review holds a position outside the player's range.
+  private beginReview(target: GroupMark | undefined, captureMicros: number): ReviewSession {
     this.review?.end()
     this.ended = false
     this.abandonVideoSwitch()
@@ -488,8 +548,12 @@ export class LivePlayer {
       this.subscriptions.pauseForward()
     }
     this.cmafReview.needsOpen = true
-    this.locReview.playout.start(session.anchorMicros, this.paused)
-    this.setPaused(this.paused)
+    return session
+  }
+
+  private playReview(session: ReviewSession, clock: ReviewClock): void {
+    this.locReview.playout.start(clock, session.anchorMicros)
+    this.applyPaused(this.paused)
     this.applyVolume()
     this.playbackStatus = this.timeline.live
       ? { text: 'Reviewing', state: 'review' }
@@ -498,14 +562,28 @@ export class LivePlayer {
     session.start()
   }
 
+  /// Does nothing for a broadcast that is not live, which has no live edge.
+  /// In a `PlaybackGroup`, takes the group live.
+  goLive(): void {
+    if (this.group) {
+      this.group.goLive()
+    } else if (this.timeline.live) {
+      this.returnToLive()
+    }
+  }
+
+  private endReview(): void {
+    if (this.group) {
+      this.group.placeAgain()
+    } else {
+      this.returnToLive()
+    }
+  }
+
   /// The live picture showed nothing while delivery was paused for the review,
   /// so a skip right after going live measures from the live edge until a new
-  /// live frame has been shown. Does nothing for a broadcast that is not live,
-  /// which has no live edge.
-  goLive(): void {
-    if (!this.timeline.live) {
-      return
-    }
+  /// live frame has been shown.
+  private returnToLive(): void {
     this.review?.end()
     this.review = undefined
     this.ended = false
@@ -513,8 +591,9 @@ export class LivePlayer {
     this.resumeLiveForward()
     this.locReview.clearFrameIds()
     this.context.observer.clearPlayhead('fetch')
-    this.setPaused(false)
+    this.applyPaused(false)
     this.locReview.playout.stop()
+    this.reviewClock.reset()
     this.playbackRate = 1
     this.applyVolume()
     this.stage.show(this.livePicture())
@@ -527,13 +606,22 @@ export class LivePlayer {
   /// every other transition (live, packaging or quality change) resumes.
   /// Resuming live CMAF jumps to the end of what is buffered so the picture is
   /// live again; the LOC MediaStream has no backlog to skip. Resuming VOD that
-  /// has ended plays it from the start, as a media element does.
+  /// has ended plays it from the start, as a media element does. In a
+  /// `PlaybackGroup`, pauses or resumes the group.
   setPaused(paused: boolean): void {
-    if (!paused && this.ended) {
-      this.paused = false
-      this.seek(0)
+    if (this.group) {
+      this.group.setPaused(paused)
       return
     }
+    if (!paused && this.ended) {
+      this.paused = false
+      this.seekAlone(0)
+      return
+    }
+    this.applyPaused(paused)
+  }
+
+  private applyPaused(paused: boolean): void {
     this.paused = paused
     if (paused) {
       this.stallWatch.clear()
@@ -550,7 +638,8 @@ export class LivePlayer {
       this.locLive.playout.setPaused(paused)
     }
     if (this.review && this.packaging === 'loc') {
-      this.locReview.playout.setPaused(paused)
+      const clock = this.group?.clock ?? this.reviewClock
+      clock.setPaused(paused)
     }
     const liveEnd = liveSink?.bufferedEnd()
     if (!paused && !this.review && liveSink && liveEnd !== undefined) {
@@ -709,7 +798,7 @@ export class LivePlayer {
       this.newestVideoGroup = undefined
       this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
       this.timeline.groups.reset()
-      this.goLive()
+      this.endReview()
     } else {
       this.timeline.audio.reset()
     }
@@ -1167,8 +1256,12 @@ export class LivePlayer {
   }
 
   /// Stops once the last frame is due, paused like a media element that has
-  /// played to its end.
+  /// played to its end. In a `PlaybackGroup` the last frame stays on screen
+  /// until the group's position passes the end of the player's range.
   private async endPlayback(session: ReviewSession, throughMicros: number | undefined): Promise<void> {
+    if (this.group) {
+      return
+    }
     if (throughMicros !== undefined) {
       await this.locReview.playout.waitUntilDue(throughMicros, session.isCurrent)
     }
@@ -1178,7 +1271,44 @@ export class LivePlayer {
     session.playheadMicros = throughMicros ?? session.playheadMicros
     this.ended = true
     this.playbackStatus = { text: 'Ended', state: 'idle' }
-    this.setPaused(true)
+    this.applyPaused(true)
+  }
+
+  private groupMember(): GroupMember {
+    return {
+      range: () => {
+        const axis = this.timeline.axis()
+        return axis.seekable
+          ? {
+              startMicros: axis.replayableStartSeconds * MICROS_PER_SECOND,
+              endMicros: axis.liveEdgeSeconds * MICROS_PER_SECOND,
+              live: this.timeline.live
+            }
+          : undefined
+      },
+      livePositionMicros: () => this.positionMicros(),
+      join: (link) => {
+        if (this.group) {
+          throw new Error('the player is in a PlaybackGroup already')
+        }
+        this.group = link
+      },
+      leave: (positionMicros) => {
+        this.group = undefined
+        if (!this.review) {
+          return
+        }
+        if (positionMicros !== undefined && this.timeline.groups.resolveSeekTarget(positionMicros)) {
+          this.seekAlone(positionMicros)
+        } else {
+          this.returnToLive()
+        }
+      },
+      goLive: () => this.returnToLive(),
+      align: (positionMicros) => this.align(positionMicros),
+      hold: (positionMicros) => this.hold(positionMicros),
+      setPaused: (paused) => this.applyPaused(paused)
+    }
   }
 
   private playingMedia(): HTMLMediaElement[] {
