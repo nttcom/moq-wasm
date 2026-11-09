@@ -11,7 +11,7 @@ use crate::modules::moqt::control_plane::{
     constants::TerminationErrorCode,
     control_messages::messages::parameters::{
         authorization_token::AuthorizationToken, filter_type::FilterType, group_order::GroupOrder,
-        location::Location,
+        location::Location, trace_context::TraceContext,
     },
 };
 
@@ -28,6 +28,9 @@ pub(super) const SUBSCRIPTION_FILTER: u64 = 0x21;
 pub(super) const GROUP_ORDER: u64 = 0x22;
 pub(super) const NEW_GROUP_REQUEST: u64 = 0x32;
 pub(super) const TRACK_NAMESPACE_PREFIX: u64 = 0x34;
+/// Not in draft-18: a parameter agreed through the TRACE_CONTEXT Setup
+/// Option (§3.2), sent only to a peer whose SETUP declared it.
+pub(super) const TRACE_CONTEXT: u64 = 0x1fff;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Parameter {
@@ -44,6 +47,9 @@ pub(crate) enum Parameter {
     GroupOrder(GroupOrder),
     NewGroupRequest(u64),
     TrackNamespacePrefix(Vec<String>),
+    /// `None` when the value is not a traceparent: it is length-prefixed
+    /// bytes, so the parameter is still well formed.
+    TraceContext(Option<TraceContext>),
 }
 
 impl Parameter {
@@ -62,6 +68,7 @@ impl Parameter {
             Self::GroupOrder(_) => GROUP_ORDER,
             Self::NewGroupRequest(_) => NEW_GROUP_REQUEST,
             Self::TrackNamespacePrefix(_) => TRACK_NAMESPACE_PREFIX,
+            Self::TraceContext(_) => TRACE_CONTEXT,
         }
     }
 
@@ -94,6 +101,11 @@ impl Parameter {
                 }
             }),
             Self::TrackNamespacePrefix(prefix) => put_track_namespace(buf, prefix),
+            Self::TraceContext(trace_context) => {
+                let value = trace_context.as_ref().map_or("", TraceContext::as_str);
+                put_vi64(buf, value.len() as u64);
+                buf.put_slice(value.as_bytes());
+            }
         }
         Ok(())
     }
@@ -130,6 +142,7 @@ fn get_parameter(kind: u64, buf: &mut impl Buf) -> Result<Parameter, DecodeError
         }),
         NEW_GROUP_REQUEST => Parameter::NewGroupRequest(get_vi64(buf)?),
         TRACK_NAMESPACE_PREFIX => Parameter::TrackNamespacePrefix(get_track_namespace(buf)?),
+        TRACE_CONTEXT => Parameter::TraceContext(TraceContext::parse(&get_length_prefixed(buf)?)),
         _ => return Err(DecodeError::protocol_violation("unknown message parameter")),
     })
 }
@@ -314,15 +327,18 @@ mod tests {
     use bytes::{Bytes, BytesMut};
 
     use super::{
-        AUTHORIZATION_TOKEN, FORWARD, GROUP_ORDER, Parameter, SUBSCRIPTION_FILTER, get_parameters,
-        put_parameters,
+        AUTHORIZATION_TOKEN, FORWARD, GROUP_ORDER, Parameter, SUBSCRIPTION_FILTER, TRACE_CONTEXT,
+        get_parameters, put_parameters,
     };
     use crate::modules::moqt::{
         control_plane::{
             constants::TerminationErrorCode,
             control_messages::messages::parameters::{
-                authorization_token::AuthorizationToken, filter_type::FilterType,
-                group_order::GroupOrder, location::Location,
+                authorization_token::AuthorizationToken,
+                filter_type::FilterType,
+                group_order::GroupOrder,
+                location::Location,
+                trace_context::{TEST_TRACEPARENT, TraceContext},
             },
         },
         version::draft18::codec::{put_vi64, tests::violation},
@@ -362,6 +378,7 @@ mod tests {
             Parameter::FillTimeout(5),
             Parameter::NewGroupRequest(0),
             Parameter::TrackNamespacePrefix(vec!["live".to_string()]),
+            Parameter::TraceContext(TraceContext::parse(TEST_TRACEPARENT.as_bytes())),
         ];
         let mut expected = parameters.clone();
         expected.sort_by_key(Parameter::kind);
@@ -472,5 +489,21 @@ mod tests {
             violation(get_parameters(&mut buf.freeze(), &[FORWARD])),
             TerminationErrorCode::ProtocolViolation
         );
+    }
+
+    #[test]
+    fn a_trace_context_that_is_not_a_traceparent_counts_as_absent() {
+        // Arrange: one TRACE_CONTEXT parameter whose value is "abc"
+        let mut buf = BytesMut::new();
+        put_vi64(&mut buf, 1);
+        put_vi64(&mut buf, TRACE_CONTEXT);
+        put_vi64(&mut buf, 3);
+        buf.extend_from_slice(b"abc");
+
+        // Act
+        let parameters = get_parameters(&mut buf.freeze(), &[TRACE_CONTEXT]).unwrap();
+
+        // Assert
+        assert_eq!(parameters, [Parameter::TraceContext(None)]);
     }
 }

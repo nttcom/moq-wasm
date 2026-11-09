@@ -22,7 +22,7 @@ use crate::modules::{
         data_plane::codec::control_message_decoder::ControlMessageDecoder,
         version::draft14::{ControlChannel, REQUEST_ID_WINDOW},
     },
-    telemetry::current_traceparent,
+    telemetry::{current_traceparent, server_declares_trace_context},
     transport::transport_connection::BoxedConnection,
 };
 
@@ -99,16 +99,6 @@ async fn receive_client_setup(
     }
 }
 
-#[cfg(not(all(test, not(target_arch = "wasm32"))))]
-fn declares_trace_context() -> bool {
-    true
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-fn declares_trace_context() -> bool {
-    crate::modules::test_support::server_declares_trace_context()
-}
-
 async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<()> {
     let setup_param = SetupParameter {
         path: None,
@@ -117,7 +107,7 @@ async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<(
         authority: None,
         max_auth_token_cache_size: None,
         moq_implementation: Some("MOQ-WASM".to_string()),
-        trace_context: declares_trace_context(),
+        trace_context: server_declares_trace_context(),
         traceparent: None,
     };
     let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();

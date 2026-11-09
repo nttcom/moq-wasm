@@ -16,6 +16,7 @@ use crate::modules::{
         },
         data_plane::stream::stream_sender::StreamSender,
     },
+    telemetry::{current_traceparent, server_declares_trace_context},
     transport::{connect_target::ConnectTarget, transport_connection::BoxedConnection},
 };
 
@@ -48,6 +49,8 @@ fn client_setup(target: &ConnectTarget, authorization_token: Option<&str>) -> Se
             .collect(),
         max_auth_token_cache_size: 0,
         implementation: Some(IMPLEMENTATION.to_string()),
+        declares_trace_context: true,
+        traceparent: current_traceparent(),
     }
 }
 
@@ -61,7 +64,7 @@ fn server_setup(setup: SetupMessage) -> ServerSetup {
             max_auth_token_cache_size: Some(setup.max_auth_token_cache_size),
             authority: setup.authority,
             moq_implementation: setup.implementation,
-            trace_context: false,
+            trace_context: setup.declares_trace_context,
             traceparent: None,
         },
     )
@@ -80,7 +83,11 @@ pub(crate) async fn connect(
     let mut peer = MessageReceiver::new(transport_connection.accept_uni().await?, MessageDecoder);
     let setup = receive_setup(&mut peer).await?;
     tracing::debug!(?setup.implementation, "Received SETUP");
-    Ok((ControlChannel::new(control, 0), peer, server_setup(setup)))
+    Ok((
+        ControlChannel::new(control, 0, setup.declares_trace_context),
+        peer,
+        server_setup(setup),
+    ))
 }
 
 /// Reads the client's SETUP; the server's waits for `ServerHandshake::accept`.
@@ -106,10 +113,14 @@ impl ServerHandshake {
         let control = StreamSender::new(transport_connection.open_uni().await?);
         let setup = SetupMessage {
             implementation: Some(IMPLEMENTATION.to_string()),
+            declares_trace_context: server_declares_trace_context(),
             ..SetupMessage::default()
         };
         control.send(&encode_setup(&setup)?).await?;
-        Ok((ControlChannel::new(control, 1), self.peer))
+        Ok((
+            ControlChannel::new(control, 1, self.client_setup.declares_trace_context),
+            self.peer,
+        ))
     }
 }
 

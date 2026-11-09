@@ -182,6 +182,8 @@ pub(crate) struct ControlChannel {
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
     requests: std::sync::Mutex<Requests>,
+    /// The peer's SETUP declared the TRACE_CONTEXT Setup Option.
+    pub(super) peer_reads_trace_context: bool,
     /// Held while a NAMESPACE or NAMESPACE_DONE is built and sent, and while
     /// a namespace subscription moves to a new prefix and is answered, so
     /// each suffix is relative to the prefix the subscriber last heard of
@@ -214,9 +216,14 @@ fn encode_error(error: anyhow::Error) -> TransportSendError {
 }
 
 impl ControlChannel {
-    fn new(control: StreamSender, first_request_id: RequestId) -> Self {
+    fn new(
+        control: StreamSender,
+        first_request_id: RequestId,
+        peer_reads_trace_context: bool,
+    ) -> Self {
         Self {
             control,
+            peer_reads_trace_context,
             next_request_id: tokio::sync::Mutex::new(first_request_id),
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
@@ -627,6 +634,7 @@ impl ControlChannel {
                     track_namespace_prefix: subscribe_tracks.track_namespace_prefix,
                     authorization_tokens: subscribe_tracks.authorization_token,
                     forward: true,
+                    trace_context: subscribe_tracks.trace_context,
                 })
                 .map_err(encoding_failed)?,
                 None,
@@ -2169,6 +2177,7 @@ mod tests {
             track_namespace_prefix: vec![prefix.to_string()],
             authorization_tokens: vec![],
             forward,
+            trace_context: None,
         })
         .unwrap();
         sender.send(&message).await.unwrap();
@@ -3550,6 +3559,7 @@ mod tests {
                 track_namespace_prefix: prefix,
                 authorization_tokens: vec![],
                 forward: true,
+                trace_context: None,
             })
         } else {
             messages::encode_subscribe_namespace(&crate::modules::moqt::control_plane::control_messages::messages::subscribe_namespace::SubscribeNamespace {

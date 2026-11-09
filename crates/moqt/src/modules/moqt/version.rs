@@ -744,7 +744,7 @@ impl ControlChannel {
     pub(crate) fn peer_reads_trace_context(&self) -> bool {
         match self {
             Self::Draft14(channel) => channel.peer_reads_trace_context,
-            Self::Draft18(_) => false,
+            Self::Draft18(channel) => channel.peer_reads_trace_context,
         }
     }
 
@@ -1034,7 +1034,7 @@ impl ServerHandshake {
             Self::Draft14(handshake) => {
                 handshake.client_setup.setup_parameters.traceparent.as_ref()
             }
-            Self::Draft18(_) => None,
+            Self::Draft18(handshake) => handshake.client_setup.traceparent.as_ref(),
         }
     }
 

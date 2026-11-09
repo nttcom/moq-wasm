@@ -824,14 +824,20 @@ attempt; it adds no field for the retry.
 The five requests carry the span's W3C `traceparent` in a `TRACE_CONTEXT`
 parameter (type `0x1fff`, not in draft-14), so the receiver's span joins the
 sender's trace. Draft-14 §9.2 makes a receiver ignore an unknown parameter,
-but from draft-18 an unknown Message Parameter is a PROTOCOL_VIOLATION and an
-extension is agreed through a Setup Option (§6.3.2). So both CLIENT_SETUP and
+but in draft-18 an unknown Message Parameter is a PROTOCOL_VIOLATION (§10.2)
+and an extension is agreed through a Setup Option (§3.2). So both CLIENT_SETUP and
 SERVER_SETUP always carry a `TRACE_CONTEXT` Setup Option (type `0x1fff`, an
 empty value), and a connection sends the parameter only when the peer's SETUP
 carried it (`ControlChannel::peer_reads_trace_context`). In CLIENT_SETUP the
 option's value is the traceparent of `moqt.session.connect` (read before the
 server's SETUP is known; a server that does not know the option ignores it,
-draft-14 §9.3), and `Handshake::trace_context()` returns it. Setup Options have no
+draft-14 §9.3), and `Handshake::trace_context()` returns it. Draft-18 negotiates
+the same extension: its SETUP carries the `TRACE_CONTEXT` option under the
+same type, since Setup Options share one namespace across versions (§10.3),
+and the five requests and SUBSCRIBE_TRACKS carry the Message Parameter
+`0x1fff` as length-prefixed bytes. A draft-18 receiver parses the parameter in
+those messages without checking either SETUP, so receiving it never closes
+the session. Setup Options have no
 private range, so publishing the extension would need a provisional
 registration.
 `moqt` has no OpenTelemetry dependency: the application gives it the current
