@@ -40,7 +40,8 @@ pub(crate) struct Choice<'a> {
 pub(crate) enum SourceChoice {
     /// The source `broadcast` and the browser SDK publish by default, such as
     /// a meeting participant's camera and microphone: the one listing a media
-    /// track named `video`, `audio` or `video_<rendition>`. None while no such
+    /// track named `video`, `audio` or `video_<rendition>`, or, as the browser
+    /// SDK names a source `camera`, `camera` or `camera_<suffix>`. None while no such
     /// track is listed, unless the catalog has no event timeline, as a
     /// broadcast outside a meeting such as `onvif-ingest`'s: then its first
     /// source.
@@ -236,7 +237,9 @@ fn source_tracks(catalog: &Catalog, choice: SourceChoice) -> impl Iterator<Item 
 fn main_source(catalog: &Catalog) -> Option<Source> {
     let default = media_tracks(catalog)
         .find(|track| {
-            matches!(track.name.as_str(), "video" | "audio") || track.name.starts_with("video_")
+            matches!(track.name.as_str(), "video" | "audio" | "camera")
+                || track.name.starts_with("video_")
+                || track.name.starts_with("camera_")
         })
         .map(|track| track.render_group);
     if default.is_none() && event_timelines(catalog).next().is_none() {
@@ -489,6 +492,28 @@ mod tests {
         assert_eq!(main, None);
         assert_eq!(other.video.unwrap().name, "share_720p");
         assert_eq!(other.audio, None);
+    }
+
+    #[test]
+    fn a_source_named_camera_is_the_main_source() {
+        // Arrange: the browser SDK names the camera's tracks after the source `camera`
+        let catalog = catalog(vec![
+            in_source(sized_video("screen", "av01.0.08M.08", 720, 1_200_000), 1),
+            in_source(sized_video("camera_360p", "avc1.42001F", 360, 300_000), 2),
+            in_source(opus_track("camera_audio", 64_000), 2),
+            chat(),
+        ]);
+
+        // Act
+        let main = select_tracks(&catalog, choice(SourceChoice::Main, 720))
+            .unwrap()
+            .unwrap();
+        let other = select_video(&catalog, choice(SourceChoice::Other, 720)).unwrap();
+
+        // Assert
+        assert_eq!(main.video.unwrap().name, "camera_360p");
+        assert_eq!(main.audio.unwrap().name, "camera_audio");
+        assert_eq!(other.unwrap().name, "screen");
     }
 
     #[test]
