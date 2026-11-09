@@ -17,8 +17,7 @@ import {
   VideoOff
 } from 'lucide-react'
 import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
-import type { RoomRecordingControls } from '../hooks/useRoomRecording'
-import type { RecordingLayout, RecordingFormat } from '../recording/recorderApi'
+import { RECORDING_CHOICES, type RoomRecordingControls, pendingRecordingLabel } from '../hooks/useRoomRecording'
 import type { StageView } from '../utils/stageLayout'
 
 interface ControlBarProps {
@@ -207,19 +206,6 @@ function DeviceToggle({
   )
 }
 
-const RECORDING_CHOICES: {
-  id: string
-  layout: RecordingLayout
-  composite: boolean
-  label: string
-  format?: RecordingFormat
-}[] = [
-  { id: 'moq', layout: 'combined', composite: false, format: 'moq', label: 'Record meeting with chat and transcript' },
-  { id: 'composite', layout: 'combined', composite: true, label: 'All Track in one file' },
-  { id: 'combined', layout: 'combined', composite: false, label: 'User Track in one file' },
-  { id: 'per-track', layout: 'per-track', composite: false, label: 'Per Track in one file' }
-]
-
 function ActivitiesButton({
   recording,
   captions
@@ -248,12 +234,8 @@ function ActivitiesButton({
 
 function RecordingSection({ recording, onChoose }: { recording: RoomRecordingControls; onChoose: () => void }) {
   const active = recording.active
-  const pending =
-    active?.state === 'starting'
-      ? 'Starting the recording'
-      : active?.state === 'stopping'
-        ? 'Stopping the recording'
-        : null
+  const pending = pendingRecordingLabel(active)
+  const latest = recording.replays.at(-1)
   return (
     <>
       <MenuHeading>Recording</MenuHeading>
@@ -284,12 +266,12 @@ function RecordingSection({ recording, onChoose }: { recording: RoomRecordingCon
           </MenuItem>
         ))
       )}
-      {recording.playbackUrl && (
+      {latest && (
         <MenuItem
           testId="record-play"
           onClick={() => {
             onChoose()
-            window.open(recording.playbackUrl, '_blank', 'noopener,noreferrer')
+            window.open(latest.url, '_blank', 'noopener,noreferrer')
           }}
         >
           Open latest recording
