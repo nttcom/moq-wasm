@@ -1,40 +1,8 @@
-export type CatalogTrackRole = 'video' | 'audio' | 'chat'
 export type CatalogSubscribeRole = 'video' | 'screenshare' | 'audio' | 'chat'
 
-/// The selection of a switchable role that leaves the track to the picture's
-/// adaptation; track names never start with `@`.
+/// The selection of a video role that leaves the rendition to the player's
+/// automatic choice; track names never start with `@`.
 export const AUTO_TRACK_SELECTION = '@auto'
-
-/// The roles whose track can change while subscribed; see `LocalSession.switchTrack`.
-export function isSwitchableRole(role: CatalogSubscribeRole): boolean {
-  return role === 'video' || role === 'screenshare'
-}
-export const CATALOG_SUBSCRIBE_ROLES: CatalogSubscribeRole[] = ['video', 'screenshare', 'audio', 'chat']
-export type CatalogSelections = Partial<Record<CatalogSubscribeRole, string>>
-
-export interface MeetingCatalogTrack {
-  name: string
-  label: string
-  role: CatalogTrackRole
-  codec?: string
-  bitrate?: number
-  width?: number
-  height?: number
-  framerate?: number
-  hardwareAcceleration?: HardwareAcceleration
-  keyframeInterval?: number
-  samplerate?: number
-  channelConfig?: string
-  initData?: string
-  isLive?: boolean
-}
-
-export type TrackMediaConfig = {
-  codec?: string
-  samplerate?: number
-  channelConfig?: string
-  initData?: string
-}
 
 /// In frames: 2 s at 30 fps. A viewer switching to a rendition that the relay
 /// already receives starts at its next keyframe, since the relay does not pass

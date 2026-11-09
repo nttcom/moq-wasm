@@ -844,21 +844,15 @@ named `live-player-*`.
   pacing presets, the jitter-buffer visualizer and the worker-telemetry stats
   the page used to show are gone with it, and the catalog, video and audio are
   subscribed by the player instead of by request ids typed into the page.
-- `examples/meeting`: `LocLive` without `LivePlayer`, since the meeting has its
-  own catalog and subscribes per participant. Each remote member plays through
-  one `LocLive` for the camera and the audio and another for a screen share;
-  the pipeline is replaced when its video track is unsubscribed, so the next
-  video track starts on fresh decoders, and audio joining a running picture
-  (`LocLive.joinAudio`) leaves the clock and the picture running and, for the
-  warm-up's length, drops audio older than the picture, so the relay's cached
-  burst cannot push the clock back as the new master. A video track that starts a picture fetches
-  its current group with a joining FETCH, since a still screen share may not
-  send another keyframe for minutes; `LocLive` shows those cached frames as
-  they decode without anchoring the clock or sizing the buffer on them, and
-  the live objects wait until the FETCH ends. The buffer policy and catch-up
-  are set per member, and the per-member stats line and charts show
-  `LiveStats`. The worker pacing presets, the jitter-buffer visualizer and the
-  worker-telemetry charts are gone with it, as in `examples/onvif`.
+- `examples/meeting`: one player per member and source (`LivePlayerOptions.source`:
+  the camera with the microphone, and the screen share), both listening to the
+  member's `BroadcastCatalog`. A player draws into an element the member's tile
+  places; its video is enabled (`setVideoEnabled`) only while the tile is on the
+  stage, so the camera player's audio plays for every member. The player's
+  rendition choice, ABR under the tile's height and joining FETCH for a still
+  screen share serve the meeting as they serve the viewer. A member who leaves
+  or rejoins has its players disposed. The buffer policy and catch-up are set
+  per member, and the per-member stats line and charts show `LiveStats`.
 - `examples/media/subscriber`: one `LocLive` on the page's own `<video>` and a
   hidden `<canvas>`, configured from the MSF catalog tracks the page selects
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter

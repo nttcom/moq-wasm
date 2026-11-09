@@ -1,9 +1,9 @@
 import { MediaPublisher } from './mediaPublisher'
-import { MediaSubscriber } from './mediaSubscriber'
+import { RemotePlayers } from './remotePlayers'
 
 export class MeetingMediaController {
   readonly publisher: MediaPublisher
-  readonly subscriber = new MediaSubscriber()
+  readonly players = new RemotePlayers()
 
   constructor(trackNamespace: string[]) {
     this.publisher = new MediaPublisher(trackNamespace)
@@ -11,6 +11,6 @@ export class MeetingMediaController {
 
   async dispose(): Promise<void> {
     await this.publisher.dispose()
-    this.subscriber.dispose()
+    this.players.dispose()
   }
 }

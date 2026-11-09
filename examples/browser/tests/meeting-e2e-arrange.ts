@@ -193,13 +193,12 @@ export async function openChat(model: MeetingClientPageModel): Promise<void> {
   }
 }
 
-// Locate the video element inside a remote member card.
 export function getMemberVideo(page: Page, memberName: string): Locator {
-  return page.getByTestId(`member-video-${memberName}`)
+  return page.getByTestId(`member-card-${memberName}`).getByTestId('live-player-video')
 }
 
 export function getMemberScreenShareVideo(page: Page, memberName: string): Locator {
-  return page.getByTestId(`member-screenshare-video-${memberName}`)
+  return page.getByTestId(`member-share-${memberName}`).getByTestId('live-player-video')
 }
 
 export function getLocalScreenShareVideo(page: Page): Locator {

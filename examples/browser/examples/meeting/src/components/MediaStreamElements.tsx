@@ -40,63 +40,35 @@ export function MediaStreamVideo({ stream, muted = false, footer, testId, fill =
 }
 
 interface PictureFrameProps {
-  picture?: HTMLElement | null
+  /// The element a remote source's player draws into.
+  element?: HTMLElement
+  /// The player has shown a frame; the placeholder covers the element until then.
+  shown: boolean
   placeholder: ReactNode
-  footer?: ReactNode
-  /// Fills the parent instead of a 16:9 frame, without media controls.
-  fill?: boolean
 }
 
-/// Shows a picture element the live pipeline owns (a `<video>` fed by a
-/// MediaStreamTrackGenerator, or a `<canvas>` where the generator is missing).
-export function PictureFrame({ picture, placeholder, footer, fill = false }: PictureFrameProps) {
+export function PictureFrame({ element, shown, placeholder }: PictureFrameProps) {
   const frameRef = useRef<HTMLDivElement | null>(null)
-  const [hasFirstFrame, setHasFirstFrame] = useState(false)
 
   useEffect(() => {
     const frame = frameRef.current
-    if (!frame || !picture) {
-      setHasFirstFrame(false)
+    if (!frame || !element) {
       return
     }
-    picture.classList.add('h-full', 'object-contain')
-    frame.appendChild(picture)
-    if (!(picture instanceof HTMLVideoElement)) {
-      setHasFirstFrame(true)
-      return () => {
-        picture.remove()
-      }
-    }
-    const video = picture
-    setHasFirstFrame(video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
-    const handleLoadedData = () => setHasFirstFrame(true)
-    const handleEmptied = () => setHasFirstFrame(false)
-    video.addEventListener('loadeddata', handleLoadedData)
-    video.addEventListener('emptied', handleEmptied)
+    frame.appendChild(element)
     return () => {
-      video.removeEventListener('loadeddata', handleLoadedData)
-      video.removeEventListener('emptied', handleEmptied)
-      video.remove()
+      element.remove()
     }
-  }, [picture])
-
-  useEffect(() => {
-    if (picture instanceof HTMLVideoElement) {
-      picture.controls = !fill && hasFirstFrame
-    }
-  }, [picture, hasFirstFrame, fill])
+  }, [element])
 
   return (
-    <div className={fill ? 'h-full w-full' : 'w-full'}>
-      <div className={`relative w-full overflow-hidden bg-black ${fill ? 'h-full' : 'aspect-video rounded-lg'}`}>
-        <div ref={frameRef} className="h-full w-full" />
-        {!hasFirstFrame && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-slate-300">
-            {placeholder}
-          </div>
-        )}
-      </div>
-      {footer}
+    <div className="relative h-full w-full overflow-hidden bg-black">
+      <div ref={frameRef} className="h-full w-full" />
+      {!shown && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate-800 text-sm text-slate-300">
+          {placeholder}
+        </div>
+      )}
     </div>
   )
 }

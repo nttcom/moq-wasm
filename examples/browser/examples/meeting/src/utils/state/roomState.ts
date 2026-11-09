@@ -1,14 +1,14 @@
 import { RemoteMember, SubscriptionState } from '../../types/member'
 import { Room } from '../../types/room'
-import type { CatalogSubscribeRole } from '../../types/catalog'
-
-export function buildTrackActionKey(memberId: string, role: CatalogSubscribeRole): string {
-  return `${memberId}:${role}`
-}
 
 export function addOrUpdateRemoteMember(room: Room, announcedUser: string, trackNamespace: string[]): Room {
-  const existingMember = room.remoteMembers.get(announcedUser)
-  const updatedMember = buildRemoteMember({ existingMember, announcedUser, trackNamespace })
+  // A rejoin replaces the member, so its chat subscription state starts over.
+  const updatedMember: RemoteMember = {
+    id: announcedUser,
+    name: announcedUser,
+    trackNamespace,
+    chat: { isSubscribing: false, isSubscribed: false }
+  }
 
   const updatedMembers = new Map(room.remoteMembers)
   updatedMembers.set(announcedUser, updatedMember)
@@ -25,53 +25,16 @@ export function removeRemoteMember(room: Room, userId: string): Room {
   return { ...room, remoteMembers: updatedMembers }
 }
 
-export function updateMemberSubscriptionStateByRole(
+export function updateMemberChatState(
   room: Room,
   memberId: string,
-  role: CatalogSubscribeRole,
-  updater: (track: SubscriptionState) => SubscriptionState
+  updater: (chat: SubscriptionState) => SubscriptionState
 ): Room {
   const member = room.remoteMembers.get(memberId)
   if (!member) {
     return room
   }
   const updatedMembers = new Map(room.remoteMembers)
-  updatedMembers.set(memberId, {
-    ...member,
-    subscribedTracks: { ...member.subscribedTracks, [role]: updater(member.subscribedTracks[role]) }
-  })
+  updatedMembers.set(memberId, { ...member, chat: updater(member.chat) })
   return { ...room, remoteMembers: updatedMembers }
-}
-
-interface BuildRemoteMemberOptions {
-  existingMember?: RemoteMember
-  announcedUser: string
-  trackNamespace: string[]
-}
-
-function createFreshSubscribedTracks(): RemoteMember['subscribedTracks'] {
-  return {
-    chat: { isSubscribing: false, isSubscribed: false },
-    audio: { isSubscribing: false, isSubscribed: false },
-    video: { isSubscribing: false, isSubscribed: false },
-    screenshare: { isSubscribing: false, isSubscribed: false }
-  }
-}
-
-function buildRemoteMember({ existingMember, announcedUser, trackNamespace }: BuildRemoteMemberOptions): RemoteMember {
-  if (existingMember) {
-    return {
-      ...existingMember,
-      trackNamespace,
-      // Same-name rejoin is a fresh generation; do not carry stale subscription state forward.
-      subscribedTracks: createFreshSubscribedTracks()
-    }
-  }
-
-  return {
-    id: announcedUser,
-    name: announcedUser,
-    trackNamespace,
-    subscribedTracks: createFreshSubscribedTracks()
-  }
 }
