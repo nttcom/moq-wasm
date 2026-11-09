@@ -718,8 +718,10 @@ owned by the track's `Producer`:
   ledger's `partial_objects` unless `objects` holds that location or another
   stream already publishes it, appends each piece, and on the last one inserts
   the assembled object like any other (§8.1 checks included) before
-  `finish`ing the writer. A writer dropped earlier (reset, stop, decode error)
-  marks the object aborted. Either way it leaves `partial_objects`, so FETCH,
+  `finish`ing the writer. A writer dropped earlier (reset, stop, decode error,
+  or 10 s (`STALLED_PAYLOAD_TIMEOUT`) without a payload piece, which also stops
+  the stream) marks the object aborted, while a stream idle between objects has
+  no deadline. Either way the object leaves `partial_objects`, so FETCH,
   eviction, the disk cache and the largest location only ever see complete
   objects. `next_subgroup_object_or_wait` returns `NextObject::Partial` when
   the next object of the subgroup is arriving and no cached object precedes

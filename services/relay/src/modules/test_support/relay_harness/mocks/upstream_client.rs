@@ -116,6 +116,12 @@ impl UpstreamSubgroupStream {
         self.push(Ok(None));
     }
 
+    pub(crate) async fn reader_runs_for(&mut self, duration: std::time::Duration) -> bool {
+        tokio::time::timeout(duration, &mut self.reader)
+            .await
+            .is_err()
+    }
+
     pub(crate) async fn wait_reader_end(&mut self) {
         tokio::time::timeout(RECV_TIMEOUT, &mut self.reader)
             .await
