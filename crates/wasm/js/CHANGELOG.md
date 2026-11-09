@@ -1,10 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
-- `createBroadcast()` replaces `publish()`, which is removed with `Publication`,
-  `PublishOptions` and `SourcePublication`. It announces a namespace, and `addSource(name, input)` publishes each source, a camera
-  included, in the tracks `name`, `name_audio` and `name_<rendition>`. A source
+- Breaking: `createBroadcast()` replaces `publish()`, which is removed with
+  `Publication`, `PublishOptions` and `SourcePublication`. It announces a
+  namespace, and `addSource(name, input)` publishes each source, a camera
+  included, in the tracks `name`, `name_audio` and `name_<rendition>`, where
+  `publish()` named the first source's tracks `video` and `audio`. A source
   takes devices the SDK captures, the page's tracks, a stream or the screen;
   `LocalSource` switches or releases a device, mutes it, shows the published
   tracks as `stream` and reports encoder `stats()`.
@@ -21,8 +23,8 @@
   can show its send and receive rate next to `encodedKbps`. Over WebTransport
   the SDK counts them itself; they are the bytes the browser accepted, with
   no round-trip time or loss.
-- `stats()` on each source returns
-  the video and audio that source's encoders output over the last second
+- `stats()` on each source returns the video and audio that source's
+  encoders output over the last second
   (`encodedKbps`, `encodedFramesPerSecond`), the encoded video `frameSize`
   and that of each rendition, and, since it was published, the frames
   dropped before encoding and the encoder failures.
@@ -51,7 +53,7 @@
   sources of one broadcast (`LivePlayerOptions.source`) share one, as
   draft-ietf-moq-transport-14 §9.7 forbids a second subscription to the same
   track on one session; the page can listen to it as well.
-- `publish()` passes every field of `videoEncoderConfig` to the encoder and
+- `addSource()` passes every field of `videoEncoderConfig` to the encoder and
   fills the unset ones with the package's defaults, so `latencyMode: 'quality'`
   now reaches the encoder instead of always `'realtime'`. Renditions take the
   same fields, with their own size and bitrate.
