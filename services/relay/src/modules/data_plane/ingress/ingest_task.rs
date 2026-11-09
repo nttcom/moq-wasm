@@ -86,6 +86,11 @@ impl IngestTask {
             publisher_session_span,
             ..
         } = start;
+        let _serving = ServingPublisher::start(
+            &cache,
+            publisher_session_id,
+            subscription.as_moqt().track_properties().clone(),
+        );
         tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "creating upstream data receiver");
         let receiver = tokio::select! {
             _ = stop_receiver.changed() => {
@@ -123,6 +128,33 @@ impl IngestTask {
             .instrument(track_span)
             .await;
         tracing::info!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, publisher_session_id, relay_hostname = relay_hostname(), "track ingress stopped");
+    }
+}
+
+/// The publisher's track properties count in the cache's served set while
+/// its ingest runs (see `TrackCache::publisher_started`).
+struct ServingPublisher<'a> {
+    cache: &'a TrackCache,
+    publisher_session_id: SessionId,
+}
+
+impl<'a> ServingPublisher<'a> {
+    fn start(
+        cache: &'a TrackCache,
+        publisher_session_id: SessionId,
+        track_properties: moqt::TrackProperties,
+    ) -> Self {
+        cache.publisher_started(publisher_session_id, track_properties);
+        Self {
+            cache,
+            publisher_session_id,
+        }
+    }
+}
+
+impl Drop for ServingPublisher<'_> {
+    fn drop(&mut self) {
+        self.cache.publisher_stopped(self.publisher_session_id);
     }
 }
 

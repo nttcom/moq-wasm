@@ -5,6 +5,7 @@ use publish_namespace_response_task::PublishNamespaceResponseTask;
 use std::sync::Arc;
 
 use moqt::{
+    TrackProperties,
     object::{ContentExists, GroupOrder},
     subscribe::{FilterType, SubscribeOption},
 };
@@ -115,7 +116,7 @@ impl ControlMessageForwarder {
         track_namespace: String,
         track_name: String,
         content_exists: ContentExists,
-        max_cache_duration: Option<u64>,
+        track_properties: TrackProperties,
         forward: bool,
     ) -> anyhow::Result<DownstreamSubscription> {
         let publisher = self.publisher(session_id).await?;
@@ -124,7 +125,7 @@ impl ControlMessageForwarder {
                 track_namespace,
                 track_name,
                 content_exists,
-                max_cache_duration,
+                track_properties,
                 forward,
             )
             .await

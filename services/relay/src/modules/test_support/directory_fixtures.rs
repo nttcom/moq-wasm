@@ -32,7 +32,9 @@ use crate::modules::{
             mock_session_answering_publish, session_repository_with_session,
             session_repository_with_upstream_session, wait_until,
         },
-        relay_harness::fixtures::subscription::upstream_subscription,
+        relay_harness::fixtures::subscription::{
+            upstream_subscription, upstream_subscription_with_track_properties,
+        },
     },
 };
 
@@ -88,6 +90,18 @@ pub(crate) fn active_upstream(origin: ProducerOrigin) -> ProducerState {
         content_exists: ContentExists::False,
         origin,
         peer: SessionPeer::Client,
+    }
+}
+
+/// A SUBSCRIBE_OK'd upstream subscription whose answer said
+/// `track_properties`.
+pub(crate) fn upstream_carrying(track_properties: moqt::TrackProperties) -> ProducerState {
+    ProducerState {
+        subscription: upstream_subscription_with_track_properties(
+            UPSTREAM_REQUEST_ID,
+            track_properties,
+        ),
+        ..active_upstream(ProducerOrigin::Subscribe)
     }
 }
 

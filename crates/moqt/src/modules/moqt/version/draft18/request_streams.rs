@@ -26,12 +26,12 @@ use crate::{
         moqt::{
             control_plane::{
                 constants::TerminationErrorCode,
-                control_messages::key_value_pair::KeyValuePair,
                 control_messages::messages::{
                     fetch_cancel::FetchCancel,
                     go_away::GoAway,
                     parameters::{
                         filter_type::FilterType, group_order::GroupOrder, location::Location,
+                        track_properties::TrackProperties,
                     },
                     publish_namespace::PublishNamespace,
                     publish_namespace_done::PublishNamespaceDone,
@@ -118,8 +118,8 @@ fn accept_request_id(scope: &Scope, request_id: RequestId) -> bool {
 }
 
 /// Why the track of a message carrying `properties` is not processed.
-fn refused_track(properties: &[KeyValuePair]) -> Option<(RequestErrorCode, &'static str)> {
-    if messages::has_malformed_immutable_properties(properties) {
+fn refused_track(properties: &TrackProperties) -> Option<(RequestErrorCode, &'static str)> {
+    if messages::has_malformed_immutable_properties(properties.iter()) {
         Some((
             RequestErrorCode::MalformedTrack,
             "malformed Immutable Properties",
@@ -489,16 +489,13 @@ impl IncomingRequestTask {
                     fetch,
                 )),
             ),
-            Message::Publish {
-                publish,
-                track_properties,
-            } => {
-                if let Some((code, reason)) = refused_track(&track_properties) {
+            Message::Publish { publish } => {
+                if let Some((code, reason)) = refused_track(&publish.track_properties) {
                     Self::reject(sender, code, reason).await;
                     return None;
                 }
                 default_publisher_priority =
-                    messages::default_publisher_priority(&track_properties);
+                    messages::default_publisher_priority(&publish.track_properties);
                 (
                     RequestStreamKind::Publish,
                     SessionEvent::Publish(PublishHandler::new(

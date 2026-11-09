@@ -8,7 +8,8 @@ use tokio::sync::Mutex;
 use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
 use crate::{
-    Publisher, Session, SessionEvent, Subscription, TrackWriter, TransportSendError,
+    Publisher, Session, SessionEvent, Subscription, TrackProperties, TrackWriter,
+    TransportSendError,
     fetch::{
         FetchCancelHandler, FetchHandler, FetchParams, JoinPoint, JoiningFetchError, JoiningStart,
         resolve_joining_fetch,
@@ -606,7 +607,12 @@ impl Origin {
             .get(&key)
             .map(|track| track.numbering.largest());
         match largest {
-            Some(largest) => handler.ok(0, content_exists(largest)).await?,
+            // Its SUBSCRIBE_OK carries no Track Properties either.
+            Some(largest) => {
+                handler
+                    .ok(0, content_exists(largest), TrackProperties::default())
+                    .await?
+            }
             None => {
                 handler
                     .error(

@@ -465,7 +465,7 @@ impl Subscribe {
                 subscriber_track_alias,
                 upstream_track.expires().unwrap_or(0),
                 content_exists,
-                upstream_track.max_cache_duration(),
+                upstream_track.track_properties(),
             )
             .await
             .is_err()
@@ -555,8 +555,8 @@ mod tests {
     use crate::modules::session::session_repository::SessionRepository;
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
-        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, local_publisher_resolver, producer, track_key,
-        upstream_track,
+        PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, local_publisher_resolver, producer, producer_with,
+        track_key, upstream_carrying, upstream_track,
     };
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, MockUpstreamSession, RecordedControlMessages,
@@ -566,6 +566,7 @@ mod tests {
         session_repository_with_session, session_repository_with_sessions, wait_until,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
+    use crate::modules::test_support::relay_harness::fixtures::subscription::unknown_track_properties;
     use crate::modules::{
         directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
         domain::session_peer::SessionPeer,
@@ -1175,7 +1176,7 @@ mod tests {
 
     fn assert_unanswered(handler: &MockSubscribeHandler) {
         assert!(handler.subscribe_errors.lock().unwrap().is_empty());
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 0);
+        assert_eq!(handler.subscribe_oks.lock().unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -1190,6 +1191,48 @@ mod tests {
         // Assert
         assert!(matches!(acceptance, Acceptance::UpstreamGone));
         assert_unanswered(&handler);
+    }
+
+    #[tokio::test]
+    async fn subscribe_ok_carries_the_upstream_track_properties() {
+        // Arrange
+        let mut track_properties = unknown_track_properties(1);
+        track_properties.set_max_cache_duration(Some(2_000));
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer_with(upstream_carrying(track_properties.clone())),
+        );
+        let handler = MockSubscribeHandler::default();
+
+        // Act
+        Subscribe
+            .accept_downstream_subscription(
+                2,
+                SessionPeer::Client,
+                track_key(),
+                table.track_state(&track_key()).unwrap(),
+                None,
+                &table,
+                &ControlMessageForwarder {
+                    repository: session_repository_with_session(
+                        2,
+                        Box::new(MockUpstreamSession::new(RecordedControlMessages::default())),
+                        VerifiedToken::full_access(),
+                    )
+                    .await,
+                },
+                &Arc::new(TrackCacheStore::new()),
+                &handler,
+            )
+            .await;
+
+        // Assert
+        assert_eq!(
+            *handler.subscribe_oks.lock().unwrap(),
+            vec![track_properties]
+        );
     }
 
     #[tokio::test]
@@ -1277,7 +1320,7 @@ mod tests {
 
         // Assert
         assert!(handler.subscribe_errors.lock().unwrap().is_empty());
-        assert_eq!(*handler.subscribe_ok_count.lock().unwrap(), 1);
+        assert_eq!(handler.subscribe_oks.lock().unwrap().len(), 1);
         assert!(table.track_state(&track_key()).is_some());
     }
 }

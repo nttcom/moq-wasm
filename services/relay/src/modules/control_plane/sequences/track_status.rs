@@ -38,7 +38,12 @@ impl TrackStatus {
                 };
                 tracing::debug!(?content_exists, "answering TRACK_STATUS");
                 handler
-                    .ok(upstream_track.expires().unwrap_or(0), content_exists)
+                    .ok(
+                        upstream_track.expires().unwrap_or(0),
+                        content_exists,
+                        // draft-18 §10.14: the set SUBSCRIBE_OK carries.
+                        upstream_track.track_properties(),
+                    )
                     .await
             }
             None => {
@@ -67,8 +72,11 @@ mod tests {
         directory::track::ProducerOrigin,
         domain::track_key::TrackKey,
         test_support::{
-            directory_fixtures::table_with_upstream,
-            relay_harness::fixtures::{cached_object::insert_closed_group, location},
+            directory_fixtures::{producer_with, table_with_upstream, upstream_carrying},
+            relay_harness::fixtures::{
+                cached_object::insert_closed_group, location,
+                subscription::unknown_track_properties,
+            },
         },
     };
 
@@ -77,6 +85,7 @@ mod tests {
         Ok {
             expires: u64,
             content_exists: ContentExists,
+            track_properties: moqt::TrackProperties,
         },
         Error(RequestErrorCode),
     }
@@ -118,10 +127,12 @@ mod tests {
             &self,
             expires: u64,
             content_exists: ContentExists,
+            track_properties: moqt::TrackProperties,
         ) -> Result<(), moqt::TransportSendError> {
             self.responses.lock().unwrap().push(Response::Ok {
                 expires,
                 content_exists,
+                track_properties,
             });
             Ok(())
         }
@@ -157,6 +168,7 @@ mod tests {
                 content_exists: ContentExists::True {
                     location: location(5, 0)
                 },
+                track_properties: moqt::TrackProperties::default(),
             }]
         );
     }
@@ -178,6 +190,34 @@ mod tests {
             vec![Response::Ok {
                 expires: 0,
                 content_exists: ContentExists::False,
+                track_properties: moqt::TrackProperties::default(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscribed_track_reports_the_track_properties_its_subscribe_ok_carries() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            TrackKey::new("ns", "track"),
+            1,
+            producer_with(upstream_carrying(unknown_track_properties(1))),
+        );
+        let handler = MockTrackStatusHandler::default();
+
+        // Act
+        TrackStatus
+            .handle(&table, &TrackCacheStore::new(), &handler)
+            .await;
+
+        // Assert: draft-18 §10.14, the Track Properties of a SUBSCRIBE_OK
+        assert_eq!(
+            handler.responses(),
+            vec![Response::Ok {
+                expires: 0,
+                content_exists: ContentExists::False,
+                track_properties: unknown_track_properties(1),
             }]
         );
     }

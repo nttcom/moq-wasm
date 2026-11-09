@@ -464,7 +464,10 @@ impl SessionWorker {
                             expires_at = ?token.expires_at,
                             "authorization token refreshed"
                         );
-                        handler.ok(0, ContentExists::False).await
+                        // The token refresh answers for no track.
+                        handler
+                            .ok(0, ContentExists::False, moqt::TrackProperties::default())
+                            .await
                     }
                     None => {
                         handler

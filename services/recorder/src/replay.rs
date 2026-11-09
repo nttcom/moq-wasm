@@ -267,12 +267,14 @@ async fn serve(
             SessionEvent::TrackStatus(handler) => {
                 match tracks.find(handler.track_namespace(), handler.track_name()) {
                     Some(track) => {
+                        // As its SUBSCRIBE_OK, the answer carries no Track Properties.
                         handler
                             .ok(
                                 0,
                                 ContentExists::True {
                                     location: track.last(),
                                 },
+                                moqt::TrackProperties::default(),
                             )
                             .await?
                     }
