@@ -3,12 +3,14 @@ pub(crate) type TrackNamespacePrefix = String;
 
 /// Whether `track_namespace_prefix` is the leading fields of `track_namespace`
 /// (draft-14 §9.28), both `/`-joined: `a/b` matches `a/b` and `a/b/c`, not
-/// `a/bc`. The join keeps field boundaries because `authorize` rejects a field
-/// containing `/`.
+/// `a/bc`, and the empty prefix, the empty tuple, leads every namespace. The
+/// join keeps field boundaries because `authorize` rejects a field containing
+/// `/`.
 pub(crate) fn namespace_has_prefix(track_namespace: &str, track_namespace_prefix: &str) -> bool {
-    track_namespace
-        .strip_prefix(track_namespace_prefix)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    track_namespace_prefix.is_empty()
+        || track_namespace
+            .strip_prefix(track_namespace_prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 pub(crate) fn namespace_prefixes_overlap(a: &str, b: &str) -> bool {
@@ -54,6 +56,13 @@ mod tests {
         assert!(!namespace_has_prefix("APP/site10/cam1", "APP/site1"));
         assert!(!namespace_has_prefix("APP", "APP/site1"));
         assert!(!namespace_has_prefix("APP//site1", "APP/site1"));
+    }
+
+    #[test]
+    fn the_empty_prefix_leads_every_namespace() {
+        // Act / Assert
+        assert!(namespace_has_prefix("APP/site1", ""));
+        assert!(namespace_has_prefix("", ""));
     }
 
     #[test]
