@@ -221,7 +221,7 @@ export class MediaSubscriber {
   ): void {
     const key = pictureKey(registration.userId, registration.source)
     const videoSwitch = this.videoSwitches.get(key)
-    if (videoSwitch?.outgoing === trackId && videoSwitch.splice.acceptOutgoing(groupId) === 'retire') {
+    if (videoSwitch?.outgoing === trackId && videoSwitch.splice.acceptOutgoing(groupId) === 'drop') {
       this.retireOutgoing(key, videoSwitch)
       return
     }

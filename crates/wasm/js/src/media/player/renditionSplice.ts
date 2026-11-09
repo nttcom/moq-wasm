@@ -29,10 +29,11 @@ export class RenditionSplice {
     return this.startGroupId
   }
 
-  /// `drop` is an object at or past the incoming rendition's start, sent
-  /// before the publisher processed the request to end there
-  /// (draft-ietf-moq-transport-14 §9.10). The subscription is left to the
-  /// publisher's PUBLISH_DONE.
+  /// `drop` is an object at or past the incoming rendition's start. A caller
+  /// that asked the publisher to end the outgoing subscription there can
+  /// still receive one sent before the publisher processed the request
+  /// (draft-ietf-moq-transport-14 §9.10), and leaves the subscription to the
+  /// publisher's PUBLISH_DONE; one that did not retires it.
   acceptOutgoing(groupId: bigint): 'play' | 'drop' {
     if (this.startGroupId === undefined) {
       if (this.outgoingNewest === undefined || groupId > this.outgoingNewest) {
