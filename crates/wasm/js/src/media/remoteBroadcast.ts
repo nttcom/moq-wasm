@@ -24,6 +24,7 @@ export type SourceViewState = {
 
 export type SourceViewListener = {
   onChange?(view: SourceView): void
+  onPlayerChange?(view: SourceView): void
 }
 
 export interface SourceView {
@@ -74,7 +75,7 @@ export type RemoteBroadcastOptions = {
 export class RemoteBroadcast {
   private readonly views = new Map<string, View>()
   private readonly listeners = new Set<RemoteBroadcastListener>()
-  private readonly catalog: BroadcastCatalog
+  private readonly broadcastCatalog: BroadcastCatalog
   private readonly unlistenCatalog: () => void
   private readonly log: (level: LogLevel, message: string) => void
   private readonly pauseHiddenVideo: boolean
@@ -89,16 +90,21 @@ export class RemoteBroadcast {
     this.log = options.onLog ?? ((level, message) => sdkLog(level, TARGET, message))
     this.pauseHiddenVideo = options.pauseHiddenVideo ?? true
     this.audioContext = options.audioContext
-    this.catalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })
-    this.unlistenCatalog = this.catalog.listen({
+    this.broadcastCatalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })
+    this.unlistenCatalog = this.broadcastCatalog.listen({
       onCatalog: (text) => this.applyCatalog(text),
       onPublisherAbsent: () => this.applySources([])
     })
-    this.catalog.start().catch((error: unknown) => this.log('error', `catalog: ${getErrorMessage(error)}`))
+    this.broadcastCatalog.start().catch((error: unknown) => this.log('error', `catalog: ${getErrorMessage(error)}`))
   }
 
   get sources(): ReadonlyMap<string, SourceView> {
     return this.views
+  }
+
+  /// Owned by the broadcast: `dispose` closes it, so do not close it yourself.
+  get catalog(): BroadcastCatalog {
+    return this.broadcastCatalog
   }
 
   /// Tells `onSourceAdd` of every source there is before returning. Returns
@@ -118,7 +124,7 @@ export class RemoteBroadcast {
     const views = [...this.views.values()]
     this.views.clear()
     await Promise.all(views.map((view) => view.dispose()))
-    await this.catalog.close()
+    await this.broadcastCatalog.close()
   }
 
   private applyCatalog(text: string): void {
@@ -204,7 +210,11 @@ class View implements SourceView {
       source: liveSource(source),
       audioContext,
       callbacks: {
-        onStateChange: () => {},
+        onStateChange: () => {
+          for (const listener of this.listeners) {
+            listener.onPlayerChange?.(this)
+          }
+        },
         onLiveFrame: () => this.framePresented(),
         onLog: log,
         onAudioLevel
@@ -212,6 +222,9 @@ class View implements SourceView {
     })
     this.showState()
     if (pauseHiddenVideo) {
+      // No video until the element shows, so a view the page never places subscribes none.
+      this.shown = false
+      void this.player.setVideoEnabled(false)
       this.visibility = new IntersectionObserver(([entry]) => void this.setShown(entry.isIntersecting))
       this.visibility.observe(this.element)
     }

@@ -40,11 +40,13 @@ export type SourceInput = Omit<SourceOptions, 'videoLabel'> & {
 }
 
 export type LocalSourceListener = {
-  /// The device of `kind` was unplugged or its capture stopped; the source
-  /// no longer publishes it.
+  /// The device of `kind` the SDK captured was unplugged or its capture
+  /// stopped; the source no longer publishes it. A track the page gave is the
+  /// page's to watch and replace.
   onTrackEnded?(kind: MediaKind): void
-  /// Every track of the source ended, such as the browser's "Stop sharing";
-  /// the source was removed from the broadcast before this call.
+  /// Every track of the source ended, the last one a device the SDK captured,
+  /// such as a screen after the browser's "Stop sharing"; the source was
+  /// removed from the broadcast before this call.
   onEnded?(): void
 }
 
@@ -371,7 +373,9 @@ class Source implements LocalSource {
   private attach(captured: CapturedTrack): void {
     this.tracks.set(captured.kind, captured)
     this.stream.addTrack(captured.track)
-    captured.track.addEventListener('ended', () => void this.trackEnded(captured), { once: true })
+    if (captured.owned) {
+      captured.track.addEventListener('ended', () => void this.trackEnded(captured), { once: true })
+    }
   }
 
   private detach(kind: MediaKind): void {

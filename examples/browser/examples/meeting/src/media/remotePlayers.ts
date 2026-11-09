@@ -1,11 +1,11 @@
 import type { MoqSession } from 'moq-wasm'
 import {
   type AudioLevel,
-  BroadcastCatalog,
+  type LivePlayer,
   type LivePlayerStats,
-  type LiveSource,
-  LivePlayer,
-  type MediaCatalogTrack
+  type MediaCatalogTrack,
+  RemoteBroadcast,
+  type SourceView
 } from 'moq-wasm/media'
 import { DEFAULT_PLAYOUT_SETTINGS, type PlayoutSettings } from '../types/playout'
 import { SCREEN_SHARE_SOURCE } from '../utils/catalogTrackName'
@@ -14,10 +14,11 @@ export type RemoteVideoSource = 'camera' | 'screenshare'
 export const REMOTE_VIDEO_SOURCES: RemoteVideoSource[] = ['camera', 'screenshare']
 export type RemotePlaybackStats = Partial<Record<RemoteVideoSource, LivePlayerStats>>
 
-/// The source names the publisher passes to `publish()`.
-const SOURCES: Record<RemoteVideoSource, LiveSource> = {
-  camera: { video: 'video', audio: 'audio' },
-  screenshare: { video: SCREEN_SHARE_SOURCE }
+/// The source names a member publishes each tile under. `video` is the camera
+/// of a member whose page still publishes with `publish()`.
+const SOURCE_NAMES: Record<RemoteVideoSource, string[]> = {
+  camera: ['camera', 'video'],
+  screenshare: [SCREEN_SHARE_SOURCE]
 }
 
 export type CatalogState = 'loading' | 'loaded' | 'absent'
@@ -46,20 +47,28 @@ export type RemotePlayersHandlers = {
   onAudioLevel?: (memberId: string, audioLevel: AudioLevel) => void
 }
 
-type SourcePlayer = { player: LivePlayer; container: HTMLDivElement; showsPicture: boolean }
-
 type MemberPlayers = {
-  catalog: BroadcastCatalog
+  broadcast: RemoteBroadcast
   catalogState: CatalogState
-  unlistenCatalog: () => void
-  sources: Record<RemoteVideoSource, SourcePlayer>
+  unlisten: () => void
+  /// Applied to a source's view once the catalog lists it.
+  shown: Record<RemoteVideoSource, boolean>
   /// The view the handlers were last told about, to skip the changes a page does not show.
   viewKey: string
+  removed: boolean
 }
 
-/// One `LivePlayer` per member and source on the session, sharing the
-/// member's `BroadcastCatalog`. The camera's player also plays the member's
-/// audio. A source's video is subscribed only while its tile is shown.
+const EMPTY_SOURCE_VIEW: RemoteSourceView = {
+  videoTracks: [],
+  selectedVideoTrack: '',
+  adaptiveVideo: true,
+  videoSubscribed: false,
+  showsPicture: false
+}
+
+/// One `RemoteBroadcast` per member on the session. Its camera view also
+/// plays the member's audio. A source's video is subscribed only while its
+/// tile is shown.
 export class RemotePlayers {
   private session: MoqSession | undefined
   private handlers: RemotePlayersHandlers = {}
@@ -82,26 +91,38 @@ export class RemotePlayers {
       return
     }
     this.remove(memberId)
-    const catalog = new BroadcastCatalog(session, trackNamespace)
+    const broadcast = new RemoteBroadcast(session, trackNamespace, {
+      onLog: (level, message) => {
+        if (level !== 'info') {
+          console[level](`[meeting][${memberId}] ${message}`)
+        }
+      }
+    })
     const member: MemberPlayers = {
-      catalog,
+      broadcast,
       catalogState: 'loading',
-      unlistenCatalog: () => {},
-      sources: {
-        camera: this.createPlayer(memberId, 'camera'),
-        screenshare: this.createPlayer(memberId, 'screenshare')
-      },
-      viewKey: ''
+      unlisten: () => {},
+      shown: { camera: false, screenshare: false },
+      viewKey: '',
+      removed: false
     }
     this.members.set(memberId, member)
-    member.unlistenCatalog = catalog.listen({
+    const unlistenCatalog = broadcast.catalog.listen({
       onCatalog: () => this.setCatalogState(member, 'loaded'),
       onPublisherAbsent: () => this.setCatalogState(member, 'absent')
     })
-    for (const source of REMOTE_VIDEO_SOURCES) {
-      member.sources[source].player
-        .start(session, trackNamespace, catalog)
-        .catch((error: unknown) => console.error(`[meeting] ${memberId} ${source} player failed to start`, error))
+    const unlistenSources = broadcast.listen({
+      onSourceAdd: (view) => this.sourceAdded(memberId, member, view),
+      onSourceRemove: () => this.notify(member),
+      onAudioLevel: (view, audioLevel) => {
+        if (sourceOf(view) === 'camera') {
+          this.handlers.onAudioLevel?.(memberId, audioLevel)
+        }
+      }
+    })
+    member.unlisten = () => {
+      unlistenCatalog()
+      unlistenSources()
     }
     this.notify(member)
   }
@@ -112,33 +133,36 @@ export class RemotePlayers {
       return
     }
     this.members.delete(memberId)
-    member.unlistenCatalog()
-    void (async () => {
-      for (const { player } of Object.values(member.sources)) {
-        await player.dispose()
-      }
-      await member.catalog.close()
-    })().catch((error: unknown) => console.warn(`[meeting] failed to release the players of ${memberId}`, error))
+    member.removed = true
+    member.unlisten()
+    member.broadcast
+      .dispose()
+      .catch((error: unknown) => console.warn(`[meeting] failed to release the players of ${memberId}`, error))
     this.handlers.onChange?.()
   }
 
-  /// The element a source's player draws into, for its tile to place.
+  /// The element a source's player draws into, for its tile to place;
+  /// undefined while the member's catalog lists no such source.
   container(memberId: string, source: RemoteVideoSource): HTMLElement | undefined {
-    return this.members.get(memberId)?.sources[source].container
+    return this.sourceView(memberId, source)?.element
   }
 
   /// Subscribes the source's video while its tile is shown, so the publisher
   /// can stop sending a hidden one; the camera's audio plays either way.
   setShown(memberId: string, source: RemoteVideoSource, shown: boolean): void {
-    this.members
-      .get(memberId)
-      ?.sources[source].player.setVideoEnabled(shown)
+    const member = this.members.get(memberId)
+    if (!member) {
+      return
+    }
+    member.shown[source] = shown
+    this.sourceView(memberId, source)
+      ?.setVideoEnabled(shown)
       .catch((error: unknown) => console.error(`[meeting] ${memberId} ${source} video ${shown ? 'on' : 'off'}`, error))
   }
 
   /// `trackName` undefined leaves the video rendition to the player's automatic choice.
   selectVideoTrack(memberId: string, source: RemoteVideoSource, trackName: string | undefined): void {
-    const player = this.members.get(memberId)?.sources[source].player
+    const player = this.sourceView(memberId, source)?.player
     if (!player) {
       return
     }
@@ -152,16 +176,15 @@ export class RemotePlayers {
   }
 
   selectAudioTrack(memberId: string, trackName: string): void {
-    this.members
-      .get(memberId)
-      ?.sources.camera.player.selectAudioTrack(trackName)
+    this.sourceView(memberId, 'camera')
+      ?.player.selectAudioTrack(trackName)
       .catch((error: unknown) => console.error(`[meeting] ${memberId} audio track ${trackName}`, error))
   }
 
   setPlayoutSettings(memberId: string, settings: PlayoutSettings): void {
     this.playoutSettings.set(memberId, settings)
-    for (const { player } of Object.values(this.members.get(memberId)?.sources ?? {})) {
-      applyPlayoutSettings(player, settings)
+    for (const view of this.members.get(memberId)?.broadcast.sources.values() ?? []) {
+      applyPlayoutSettings(view.player, settings)
     }
   }
 
@@ -171,15 +194,11 @@ export class RemotePlayers {
   }
 
   stats(memberId: string): RemotePlaybackStats {
-    const member = this.members.get(memberId)
-    if (!member) {
-      return {}
-    }
     return Object.fromEntries(
       REMOTE_VIDEO_SOURCES.flatMap((source) => {
-        const { player } = member.sources[source]
-        return player.state.videoTracks.length > 0 || player.state.audioTracks.length > 0
-          ? [[source, player.stats()]]
+        const view = this.sourceView(memberId, source)
+        return view && (view.player.state.videoTracks.length > 0 || view.player.state.audioTracks.length > 0)
+          ? [[source, view.stats()]]
           : []
       })
     )
@@ -194,40 +213,20 @@ export class RemotePlayers {
     this.session = undefined
   }
 
-  private createPlayer(memberId: string, source: RemoteVideoSource): SourcePlayer {
-    const container = document.createElement('div')
-    container.className = 'meeting-player h-full w-full'
-    // The callbacks read `player` and `sourcePlayer` only once the player has started.
-    const player: LivePlayer = new LivePlayer({
-      container,
-      source: SOURCES[source],
-      callbacks: {
-        onStateChange: () => {
-          if (player.state.delivery.liveVideoAlias === undefined) {
-            sourcePlayer.showsPicture = false
-          }
-          this.notifyMember(memberId)
-        },
-        onLiveFrame: () => {
-          if (!sourcePlayer.showsPicture) {
-            sourcePlayer.showsPicture = true
-            this.notifyMember(memberId)
-          }
-        },
-        onLog: (level, message) => {
-          if (level !== 'info') {
-            console[level](`[meeting][${memberId}][${source}] ${message}`)
-          }
-        },
-        onAudioLevel:
-          source === 'camera' ? (audioLevel) => this.handlers.onAudioLevel?.(memberId, audioLevel) : undefined
-      }
-    })
-    const sourcePlayer: SourcePlayer = { player, container, showsPicture: false }
-    // Off until the tile is shown, so the publisher sends no video for a member behind a closed filmstrip at join.
-    void player.setVideoEnabled(false)
-    applyPlayoutSettings(player, this.playoutSettings.get(memberId) ?? DEFAULT_PLAYOUT_SETTINGS)
-    return sourcePlayer
+  private sourceView(memberId: string, source: RemoteVideoSource): SourceView | undefined {
+    const member = this.members.get(memberId)
+    return member && viewOf(member.broadcast, source)
+  }
+
+  private sourceAdded(memberId: string, member: MemberPlayers, view: SourceView): void {
+    const source = sourceOf(view)
+    if (!source) {
+      return
+    }
+    applyPlayoutSettings(view.player, this.playoutSettings.get(memberId) ?? DEFAULT_PLAYOUT_SETTINGS)
+    void view.setVideoEnabled(member.shown[source])
+    view.listen({ onChange: () => this.notify(member), onPlayerChange: () => this.notify(member) })
+    this.notify(member)
   }
 
   private setCatalogState(member: MemberPlayers, state: CatalogState): void {
@@ -235,16 +234,12 @@ export class RemotePlayers {
     this.notify(member)
   }
 
-  private notifyMember(memberId: string): void {
-    const member = this.members.get(memberId)
-    if (member) {
-      this.notify(member)
-    }
-  }
-
   /// Calls `onChange` only when the view changes: each player reports its
   /// playback position several times a second, which the view does not show.
   private notify(member: MemberPlayers): void {
+    if (member.removed) {
+      return
+    }
     const key = JSON.stringify(memberView(member))
     if (key !== member.viewKey) {
       member.viewKey = key
@@ -253,27 +248,38 @@ export class RemotePlayers {
   }
 }
 
-function memberView({ catalogState, sources }: MemberPlayers): RemoteMemberView {
-  const camera = sources.camera.player.state
+function sourceOf(view: SourceView): RemoteVideoSource | undefined {
+  return REMOTE_VIDEO_SOURCES.find((source) => SOURCE_NAMES[source].includes(view.name))
+}
+
+function viewOf(broadcast: RemoteBroadcast, source: RemoteVideoSource): SourceView | undefined {
+  return [...broadcast.sources.values()].find((view) => sourceOf(view) === source)
+}
+
+function memberView({ catalogState, broadcast }: MemberPlayers): RemoteMemberView {
+  const camera = viewOf(broadcast, 'camera')?.player.state
   return {
     catalog: catalogState,
-    camera: sourceView(sources.camera),
-    screenshare: sourceView(sources.screenshare),
-    audioTracks: camera.audioTracks,
-    selectedAudioTrack: camera.selectedAudioTrack,
-    audioSubscribed: camera.delivery.liveAudioAlias !== undefined
+    camera: sourceView(viewOf(broadcast, 'camera')),
+    screenshare: sourceView(viewOf(broadcast, 'screenshare')),
+    audioTracks: camera?.audioTracks ?? [],
+    selectedAudioTrack: camera?.selectedAudioTrack ?? '',
+    audioSubscribed: camera?.delivery.liveAudioAlias !== undefined
   }
 }
 
-function sourceView({ player, showsPicture }: SourcePlayer): RemoteSourceView {
-  const { videoTracks, selectedVideoTrack, adaptiveVideo, delivery } = player.state
+function sourceView(view: SourceView | undefined): RemoteSourceView {
+  if (!view) {
+    return EMPTY_SOURCE_VIEW
+  }
+  const { videoTracks, selectedVideoTrack, adaptiveVideo, delivery } = view.player.state
   const videoSubscribed = delivery.liveVideoAlias !== undefined
   return {
     videoTracks,
     selectedVideoTrack,
     adaptiveVideo,
     videoSubscribed,
-    showsPicture: videoSubscribed && showsPicture
+    showsPicture: videoSubscribed && view.state.video === 'playing'
   }
 }
 
