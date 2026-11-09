@@ -27,6 +27,7 @@ use crate::{
             control_plane::{
                 constants::TerminationErrorCode,
                 control_messages::messages::{
+                    fetch::FetchParams,
                     fetch_cancel::FetchCancel,
                     go_away::GoAway,
                     parameters::{
@@ -481,14 +482,25 @@ impl IncomingRequestTask {
                     track_status,
                 )),
             ),
-            Message::Fetch(fetch) => (
-                RequestStreamKind::Fetch,
-                SessionEvent::Fetch(FetchHandler::new(
-                    scope.session.clone(),
-                    scope.connection.clone(),
-                    fetch,
-                )),
-            ),
+            Message::Fetch(fetch) => {
+                if let FetchParams::RelativeJoining {
+                    joining_request_id, ..
+                }
+                | FetchParams::AbsoluteJoining {
+                    joining_request_id, ..
+                } = fetch.fetch_params
+                {
+                    channel.wait_delivered(joining_request_id).await;
+                }
+                (
+                    RequestStreamKind::Fetch,
+                    SessionEvent::Fetch(FetchHandler::new(
+                        scope.session.clone(),
+                        scope.connection.clone(),
+                        fetch,
+                    )),
+                )
+            }
             Message::Publish { publish } => {
                 if let Some((code, reason)) = refused_track(&publish.track_properties) {
                     Self::reject(sender, code, reason).await;
@@ -546,11 +558,7 @@ impl IncomingRequestTask {
             ..RequestStream::new(kind, sender.clone())
         };
         // Registered before the event, so a handler can answer at once.
-        channel
-            .requests()
-            .incoming
-            .insert(request_id, stream.clone());
-        emit(scope, event);
+        channel.deliver_request(request_id, stream.clone(), || emit(scope, event));
         Some((request_id, stream, baseline))
     }
 

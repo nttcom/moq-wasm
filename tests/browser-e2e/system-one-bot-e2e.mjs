@@ -27,7 +27,7 @@ import {
   jsDir,
   waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
+import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
 
 /// A fake System One answering each POST with `{ answers: answer(body, settings) }`. `PUT /<key>`
 /// sets `settings[key]` to its body: as text if the setting is a string, else parsed as JSON.
@@ -98,7 +98,7 @@ async function run({
     childProcesses.push(vts);
     const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
       cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayAuthEnv() },
+      env: { ...process.env, ...nativeRelayEnv() },
     });
     const vite = spawnViteServer(webPort);
 

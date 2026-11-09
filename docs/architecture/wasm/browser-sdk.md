@@ -18,7 +18,7 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 
 | 項目 | 現状 | SDK |
 | --- | --- | --- |
-| 接続 | `MoqSession.connect(url, { token })` | `connect(url, options)` が `Session` を返す |
+| 接続 | `MoqSession.connect(url, { token, versions })`。`versions` は提示する draft（`draft-14` / `draft-18`）を優先順に並べ、省略すると draft-14 のみ | `connect(url, options)` が `Session` を返す |
 | namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })`、`start(session, namespace)` | 同じ形で、`Session` の上で動く |
 | メディアの配信 | `moq-wasm/media` の `publish(session, namespace, mediaStream)`。meeting の `mediaPublisher.ts` もこれで配信する | `publish(session, namespace, mediaStream)` |
 | track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `MoqFetch` / `TrackWriter` の handle と async iteration | `Subscription` / `TrackWriter` の handle と async iteration |

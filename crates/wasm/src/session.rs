@@ -6,7 +6,7 @@ use mediapack::loc::from_extension_headers;
 use moqt::{
     AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, RequestFailure,
     Session as MoqtSession, Subscription as MoqtSubscription, TerminationErrorCode, TrackObject,
-    TrackReader, executor,
+    TrackReader, Version, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     namespace::NamespaceInterest,
     object::{
@@ -52,15 +52,25 @@ impl Session {
     /// `token` is a string, a function returning a promise of one, which is
     /// called before each CLIENT_SETUP, or `undefined`. The session follows
     /// GOAWAY and reconnects by itself. `wasm_load_wait_ms` is how long the
-    /// caller waited for this module to load.
+    /// caller waited for this module to load. `versions` names the drafts to
+    /// offer, most preferred first, each `draft-14` or `draft-18`;
+    /// `undefined` offers draft-14 only, and an unknown name rejects.
     pub async fn connect(
         url: String,
         token: JsValue,
         wasm_load_wait_ms: f64,
+        versions: Option<Vec<String>>,
     ) -> Result<Session, JsValue> {
+        let versions = Version::offered(versions.as_deref()).map_err(anyhow_error)?;
         let scope = SessionScope::new();
         scope
-            .scoped(connect_session(url, token, wasm_load_wait_ms, scope))
+            .scoped(connect_session(
+                url,
+                token,
+                wasm_load_wait_ms,
+                versions,
+                scope,
+            ))
             .await
     }
 
@@ -814,12 +824,14 @@ async fn connect_session(
     url: String,
     token: JsValue,
     wasm_load_wait_ms: f64,
+    versions: Vec<Version>,
     scope: SessionScope,
 ) -> Result<Session, JsValue> {
     let authorization_token = token_source(token, scope)?;
-    tracing::info!(%url, wasm_load_wait_ms, "session connect requested");
+    tracing::info!(%url, wasm_load_wait_ms, supported_versions = ?versions, "session connect requested");
     let endpoint = Endpoint::<BROWSER>::create_client(&ClientConfig {
         authorization_token,
+        versions,
         ..ClientConfig::default()
     })
     .map_err(anyhow_error)?;

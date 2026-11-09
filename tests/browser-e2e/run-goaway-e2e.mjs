@@ -32,7 +32,7 @@ import {
   liveViewerPath,
   waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
+import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
 
 const redisPort = "6399";
 const redisContainer = `goaway-e2e-redis-${process.pid}`;
@@ -60,7 +60,7 @@ function spawnRelay({ id, port, innerPort }) {
     cwd: repoRoot,
     env: {
       ...process.env,
-      ...nativeRelayAuthEnv(),
+      ...nativeRelayEnv(),
       OTEL_SDK_DISABLED: "true",
       RELAY_ID: id,
       RELAY_PORT: String(port),

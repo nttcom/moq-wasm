@@ -82,7 +82,7 @@ const DRAFT14_ALPN: &str = "moq-00";
 /// draft-18 §3.1.3 / §3.1.4: the WebTransport subprotocol and the ALPN.
 const DRAFT18_PROTOCOL: &str = "moqt-18";
 
-const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(super) const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The drafts `ClientConfig::default()` offers.
 pub const DEFAULT_VERSIONS: &[Version] = &[Version::Draft14];
@@ -96,6 +96,29 @@ pub enum Version {
     Draft14,
     /// draft-ietf-moq-transport-18.
     Draft18,
+}
+
+impl std::str::FromStr for Version {
+    type Err = anyhow::Error;
+
+    fn from_str(name: &str) -> anyhow::Result<Self> {
+        match name {
+            "draft-14" => Ok(Self::Draft14),
+            "draft-18" => Ok(Self::Draft18),
+            _ => anyhow::bail!("unknown MoQT version {name:?}; expected draft-14 or draft-18"),
+        }
+    }
+}
+
+impl Version {
+    /// The drafts `names` lists, in its order, or `DEFAULT_VERSIONS` without
+    /// it. Fails on a name other than `draft-14` and `draft-18`.
+    pub fn offered(names: Option<&[String]>) -> anyhow::Result<Vec<Version>> {
+        match names {
+            Some(names) => names.iter().map(|name| name.parse()).collect(),
+            None => Ok(DEFAULT_VERSIONS.to_vec()),
+        }
+    }
 }
 
 /// The ALPNs and WebTransport subprotocols that offer `versions`, in their order.
@@ -1121,6 +1144,24 @@ mod tests {
         // Assert
         assert_eq!(protocols.quic_alpns, ["moqt-18", "moq-00"]);
         assert_eq!(protocols.web_transport, ["moqt-18"]);
+    }
+
+    #[test]
+    fn a_draft_is_parsed_from_its_name() {
+        // Act / Assert
+        assert_eq!("draft-14".parse::<Version>().unwrap(), Version::Draft14);
+        assert_eq!("draft-18".parse::<Version>().unwrap(), Version::Draft18);
+        assert!("draft-99".parse::<Version>().is_err());
+    }
+
+    #[test]
+    fn the_default_is_offered_without_names() {
+        // Act / Assert
+        assert_eq!(Version::offered(None).unwrap(), super::DEFAULT_VERSIONS);
+        assert_eq!(
+            Version::offered(Some(&["draft-18".to_string(), "draft-14".to_string()])).unwrap(),
+            [Version::Draft18, Version::Draft14]
+        );
     }
 
     #[test]

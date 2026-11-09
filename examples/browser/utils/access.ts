@@ -3,6 +3,9 @@
 /// root only the people a page's link is shared with know. The choice is made on the example list and
 /// kept in localStorage, so every example follows it.
 
+import type { MoqConnectOptions } from 'moq-wasm'
+
+import { offeredVersions } from './moqtVersion'
 import { LOCAL_HOSTS, resolveServiceUrl } from './serviceUrl'
 
 export type AccessMode = 'temporary' | 'public'
@@ -80,6 +83,10 @@ document.documentElement.dataset.accessMode = accessMode
 /// reconnect that follows the relay closing a session whose token expired.
 export function connectToken(): string | (() => Promise<string>) | undefined {
   return access.kind === 'temporary' ? async () => access.current().token : bearerToken()
+}
+
+export function connectOptions(): MoqConnectOptions {
+  return { token: connectToken(), versions: offeredVersions() }
 }
 
 /// For an HTTP service that authorizes with the relay's token, such as the recorder.

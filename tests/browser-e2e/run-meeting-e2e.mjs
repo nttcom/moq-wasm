@@ -23,7 +23,13 @@ import {
   waitForHttpOk,
 } from "./helpers.mjs";
 import { resolveLocalRelayUrl } from "../../scripts/resolve-local-relay-url.mjs";
-import { experimentAppId, mintToken, startVts, vtsPort } from "./vts-dev.mjs";
+import {
+  LOCAL_RELAY_MOQT_VERSIONS,
+  experimentAppId,
+  mintToken,
+  startVts,
+  vtsPort,
+} from "./vts-dev.mjs";
 
 const meetingIndexPath = "/moq-wasm/examples/meeting/index.html";
 const composeServices = ["redis", "relay-a", "relay-b"];
@@ -127,7 +133,11 @@ async function main() {
 function dockerCompose(...args) {
   return runCommand(resolveCommandName("docker"), ["compose", ...args], {
     cwd: repoRoot,
-    env: { ...process.env, AUTH_VTS_URL: containerVtsUrl },
+    env: {
+      ...process.env,
+      AUTH_VTS_URL: containerVtsUrl,
+      RELAY_MOQT_VERSIONS: LOCAL_RELAY_MOQT_VERSIONS,
+    },
   });
 }
 

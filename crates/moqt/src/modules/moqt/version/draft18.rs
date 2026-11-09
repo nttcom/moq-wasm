@@ -164,6 +164,8 @@ struct Requests {
     /// Streams of requests the peer sent.
     incoming: HashMap<RequestId, RequestStream>,
     peer_request_ids: HashSet<RequestId>,
+    /// The peer's requests whose event was handed to the application.
+    delivered: HashSet<RequestId>,
     /// Namespaces sent as NAMESPACE, with the SUBSCRIBE_NAMESPACE stream
     /// that carried them.
     advertised: HashMap<Vec<String>, RequestId>,
@@ -182,6 +184,8 @@ pub(crate) struct ControlChannel {
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
     requests: std::sync::Mutex<Requests>,
+    /// Notified after a peer request's event is handed over.
+    request_delivered: tokio::sync::Notify,
     /// The peer's SETUP declared the TRACE_CONTEXT Setup Option.
     pub(super) peer_reads_trace_context: bool,
     /// Held while a NAMESPACE or NAMESPACE_DONE is built and sent, and while
@@ -228,6 +232,7 @@ impl ControlChannel {
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
+            request_delivered: tokio::sync::Notify::new(),
             namespace_writes: tokio::sync::Mutex::new(()),
             binding: std::sync::OnceLock::new(),
         }
@@ -279,6 +284,37 @@ impl ControlChannel {
             .iter()
             .max()
             .map_or(self.peer_parity, |largest| largest + 2)
+    }
+
+    /// Registers the peer's request and runs `emit`, which hands its event
+    /// over, under one lock, so a request `wait_delivered` holds back is
+    /// handed over after it.
+    fn deliver_request(&self, request_id: RequestId, stream: RequestStream, emit: impl FnOnce()) {
+        let mut requests = self.requests();
+        requests.incoming.insert(request_id, stream);
+        requests.delivered.insert(request_id);
+        emit();
+        drop(requests);
+        self.request_delivered.notify_waiters();
+    }
+
+    /// Resolves once the event of the peer's request `request_id` was handed
+    /// over, or after the control message timeout. Each request has its own
+    /// stream, so a Joining FETCH can arrive before the SUBSCRIBE it joins;
+    /// the FETCH waits for it (§10.12.2).
+    async fn wait_delivered(&self, request_id: RequestId) {
+        let delivered = async {
+            loop {
+                let notified = self.request_delivered.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.requests().delivered.contains(&request_id) {
+                    return;
+                }
+                notified.await;
+            }
+        };
+        let _ = executor::timeout(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT, delivered).await;
     }
 
     /// `false` for a Request ID of the wrong parity or one already used
@@ -2022,6 +2058,62 @@ mod tests {
             assert!(closed.is_err(), "{scheme}: {closed:?}");
             assert_fetch_cancelled_with_reset_request_stream(scheme, event, request_reply);
         }
+    }
+
+    #[tokio::test]
+    async fn a_joining_fetch_that_arrives_first_waits_for_the_subscribe_it_joins() {
+        // Arrange: the FETCH's stream reaches the server before the SUBSCRIBE's
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-joining-first", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let subscribe_id = connection.control.take_request_id().await;
+        let fetch_id = connection.control.take_request_id().await;
+        let (fetch_stream, _fetch_reply) = connection.transport.open_bi().await.unwrap();
+        let fetch_sender = StreamSender::new(fetch_stream);
+        let fetch = messages::encode_fetch(&FetchMessage {
+            request_id: fetch_id,
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            fetch_params: FetchParams::RelativeJoining {
+                joining_request_id: subscribe_id,
+                joining_start: 0,
+            },
+            authorization_tokens: vec![],
+            fill_timeout: None,
+            trace_context: None,
+        })
+        .unwrap();
+        fetch_sender.send(&fetch).await.unwrap();
+        let before_subscribe = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            server.receive_event(),
+        )
+        .await;
+        let (subscribe_stream, _subscribe_reply) = connection.transport.open_bi().await.unwrap();
+        let subscribe_sender = StreamSender::new(subscribe_stream);
+        let subscribe = messages::encode_subscribe(&Subscribe {
+            request_id: subscribe_id,
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: true,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            trace_context: None,
+        })
+        .unwrap();
+
+        // Act
+        subscribe_sender.send(&subscribe).await.unwrap();
+        let first = next_event(&server).await;
+        let second = next_event(&server).await;
+
+        // Assert: §10.12.2, the publisher holds the Joining FETCH until the subscription exists
+        assert!(before_subscribe.is_err(), "{before_subscribe:?}");
+        assert!(matches!(first, SessionEvent::Subscribe(_)), "{first:?}");
+        assert!(matches!(second, SessionEvent::Fetch(_)), "{second:?}");
     }
 
     #[tokio::test]

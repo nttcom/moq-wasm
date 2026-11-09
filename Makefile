@@ -39,6 +39,8 @@ DEV_RELAY_APP_ID := 11111111-2222-3333-4444-555555555555
 
 # Starts a VTS on 127.0.0.1:8081 for the lifetime of the relay process.
 relay: export AUTH_VTS_URL ?= http://127.0.0.1:8081/verify
+# Accepts both drafts: the examples speak draft-18 unless the example list chooses draft-14.
+relay: export RELAY_MOQT_VERSIONS ?= draft-18,draft-14
 relay:
 	set -a; [ ! -f .env ] || . ./.env; set +a; \
 	cargo build -p vts; \

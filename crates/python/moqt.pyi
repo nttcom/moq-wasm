@@ -2,9 +2,18 @@
 
 from collections.abc import AsyncIterator
 
-async def connect(url: str, *, verify_certificate: bool = True, token: str | None = None) -> Session:
+async def connect(
+    url: str,
+    *,
+    verify_certificate: bool = True,
+    token: str | None = None,
+    versions: list[str] | None = None,
+) -> Session:
     """`moqt://` connects over raw QUIC, `https://` over WebTransport, presenting `token` (a JWT) in
-    CLIENT_SETUP. The session follows the relay's GOAWAY with the latest token it was given."""
+    CLIENT_SETUP. The session follows the relay's GOAWAY with the latest token it was given.
+    `versions` lists the drafts to offer, most preferred first, each `"draft-14"` or `"draft-18"`;
+    without it only draft-14 is offered. An unknown name raises `ValueError`, and an empty list fails
+    the connect."""
 
 class Session:
     async def subscribe_namespace(self, prefix: list[str]) -> NamespaceEvents:

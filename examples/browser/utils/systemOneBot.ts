@@ -1,5 +1,5 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
-import { connectToken, temporaryAppToken } from './access'
+import { connectOptions, temporaryAppToken } from './access'
 import { BOT_ROOM_END_TEXT, BotRoomRequest } from './botRoom'
 import { SystemOneStatusView } from './systemOneStatus'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
@@ -70,7 +70,7 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
       botRoom.open(resolveServiceUrl(window.location.search, relayUrl, options.botService), options.room, {
         token: temporaryAppToken
       })
-      const joined = await MoqSession.connect(relayUrl, { token: connectToken() })
+      const joined = await MoqSession.connect(relayUrl, connectOptions())
       session = joined
       void joined.closed.then(() => {
         if (session === joined) {

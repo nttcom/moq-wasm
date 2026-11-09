@@ -5,6 +5,7 @@ export { RequestError, RequestErrorCode } from './requestError'
 export {
   type CloseInfo,
   type MoqConnectOptions,
+  type MoqVersion,
   type MoqLocation,
   type MoqSubscribeOptions,
   type NamespaceEvent,

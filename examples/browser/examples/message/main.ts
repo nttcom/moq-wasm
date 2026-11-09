@@ -6,7 +6,7 @@ import {
   type ReceivedObject,
   type TrackWriter
 } from 'moq-wasm'
-import { connectToken } from '../../utils/access'
+import { connectOptions } from '../../utils/access'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { element, getErrorMessage, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
@@ -105,7 +105,7 @@ function reset(): void {
 
 onClick('connectBtn', async () => {
   try {
-    const opened = await MoqSession.connect(value('url'), { token: connectToken() })
+    const opened = await MoqSession.connect(value('url'), connectOptions())
     session = opened
     void opened.closed.then(({ code, reason }) => {
       console.info('connection closed', { code, reason })

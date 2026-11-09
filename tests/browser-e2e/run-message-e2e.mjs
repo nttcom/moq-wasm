@@ -23,7 +23,7 @@ import {
   messageIndexPath,
   waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayAuthEnv, startVts } from "./vts-dev.mjs";
+import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
 
 const childProcesses = [];
 
@@ -49,7 +49,7 @@ async function main() {
     childProcesses.push(vts);
     const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
       cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayAuthEnv() },
+      env: { ...process.env, ...nativeRelayEnv() },
     });
     const vite = spawnViteServer(webPort);
 

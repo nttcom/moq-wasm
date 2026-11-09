@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import { connectToken } from '../../utils/access'
+import { connectOptions } from '../../utils/access'
 import type { TrackWriter } from 'moq-wasm'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
@@ -331,7 +331,7 @@ async function connect(): Promise<void> {
   }
 
   await disconnect()
-  const connected = await MoqSession.connect(url, { token: connectToken() })
+  const connected = await MoqSession.connect(url, connectOptions())
   session = connected
   void connected.closed.then(() => {
     if (session === connected) {

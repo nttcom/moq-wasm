@@ -11,6 +11,7 @@ import { type Recording, openRecording } from 'moq-wasm/recording'
 import 'moq-wasm/media/player.css'
 import { bearerToken } from '../../utils/access'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
+import { offeredVersions } from '../../utils/moqtVersion'
 import { setUpRelayUrlControls } from '../../utils/relayPresets'
 import { urlFromQuery } from '../../utils/serviceUrl'
 import { EVENT_KINDS, type TimelineEvent, captionAt, eventRecords, mergeEvents } from './timeline'
@@ -498,7 +499,7 @@ async function open(): Promise<void> {
   const accessToken = token.value || undefined
   let session: MoqSession | undefined
   try {
-    session = await MoqSession.connect(relay.value, { token: accessToken })
+    session = await MoqSession.connect(relay.value, { token: accessToken, versions: offeredVersions() })
     const replay = await openRecording(session, recorder.value, recording.value, { token: accessToken })
     const watch = await session.watchNamespaces(replay.prefix)
     const group = new PlaybackGroup({ onStateChange: requestRender })

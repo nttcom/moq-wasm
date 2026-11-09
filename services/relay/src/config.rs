@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 use moqt::CertificateVerification;
 
 use crate::modules::auth::token_claims::ClaimPolicy;
@@ -133,15 +133,9 @@ fn moqt_versions(value: Option<String>) -> anyhow::Result<Vec<moqt::Version>> {
     let Some(text) = value else {
         return Ok(moqt::DEFAULT_VERSIONS.to_vec());
     };
-    let mut versions = Vec::new();
-    for name in text.split(',').map(str::trim) {
-        versions.push(match name {
-            "draft-14" => moqt::Version::Draft14,
-            "draft-18" => moqt::Version::Draft18,
-            _ => bail!("RELAY_MOQT_VERSIONS lists draft-14 and draft-18 only, got {name:?}"),
-        });
-    }
-    Ok(versions)
+    text.split(',')
+        .map(|name| name.trim().parse().context("RELAY_MOQT_VERSIONS"))
+        .collect()
 }
 
 impl DiskCacheConfig {

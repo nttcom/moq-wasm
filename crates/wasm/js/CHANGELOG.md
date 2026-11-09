@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `MoqSession.connect(url, { versions })` offers the MoQT drafts `versions`
+  names (`'draft-14'`, `'draft-18'`), most preferred first; without it only
+  draft-14 is offered, as before.
 - `MediaCatalogTrack` carries `eventType`, which names the records of an event
   timeline track (draft-ietf-moq-msf-01 §5.2.5), so a page can tell a chat
   from a transcript.

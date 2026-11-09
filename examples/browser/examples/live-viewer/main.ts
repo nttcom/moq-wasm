@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import { connectToken } from '../../utils/access'
+import { connectOptions } from '../../utils/access'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
 import { PublishPreview } from './publishPreview'
@@ -100,7 +100,7 @@ async function watchStream(): Promise<void> {
   try {
     await stopStream()
     const url = element<HTMLInputElement>('url').value.trim()
-    session = await MoqSession.connect(url, { token: connectToken() })
+    session = await MoqSession.connect(url, connectOptions())
     setStatus('connection-status', `Connected: ${url}`, 'ok')
     appendLog('info', `connected to ${url}`)
     await player.start(session, trackNamespace())

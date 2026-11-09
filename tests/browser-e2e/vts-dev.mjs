@@ -67,9 +67,15 @@ export async function startVts(appsFile = vtsAppsFile) {
   return child;
 }
 
-export function nativeRelayAuthEnv() {
+/// The environment of a relay the runners start. It accepts both drafts
+/// because the examples speak the one chosen on the example list, draft-18 by
+/// default.
+export function nativeRelayEnv() {
   return {
     AUTH_VTS_URL: vtsVerifyUrl,
     AUTH_RELAY_TOKEN: mintToken(relayAppId, "8760h"),
+    RELAY_MOQT_VERSIONS: LOCAL_RELAY_MOQT_VERSIONS,
   };
 }
+
+export const LOCAL_RELAY_MOQT_VERSIONS = "draft-18,draft-14";

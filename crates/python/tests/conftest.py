@@ -189,3 +189,10 @@ def relays_sharing_redis(relay_auth):
         with started_relay(relay_auth, "relay-b", env) as relay_b:
             with started_relay(relay_auth, "relay-a", env) as relay_a:
                 yield relay_a, relay_b
+
+
+@pytest.fixture(scope="session")
+def draft18_relay_url(relay_auth) -> str:
+    """A relay that accepts draft-18 only."""
+    with started_relay(relay_auth, "relay-draft18", {"RELAY_MOQT_VERSIONS": "draft-18"}) as relay:
+        yield relay.url
