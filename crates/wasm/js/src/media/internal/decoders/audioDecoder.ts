@@ -1,0 +1,149 @@
+import { alawToAudioData, isPcmAlawCodec } from '../alaw'
+import { GroupOrderGate } from '../groupOrderGate'
+import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import { createBitrateLogger } from '../bitrate'
+import { readLocHeader } from '../loc'
+import { workerLog } from '../../../core/log'
+
+const TARGET = 'moq-wasm::media::audio_decoder'
+
+type AudioConfig = {
+  codec: string
+  sampleRate: number
+  channels: number
+  descriptionBase64?: string
+}
+
+const audioBitrateLogger = createBitrateLogger((kbps) => {
+  self.postMessage({ type: 'bitrate', media: 'audio', kbps })
+})
+
+/// How far ahead of its hand-over to the audio output the group order gate
+/// releases an object, to cover the decode and the post to the page.
+const RELEASE_MARGIN_MS = 50
+
+const audioConfig: AudioConfig = { codec: 'opus', sampleRate: 48000, channels: 1 }
+let audioDecoder: AudioDecoder | undefined
+/// The decoder stamps its outputs from the sample count it has produced, not
+/// from the chunk timestamps, so a hole in the source would shift every later
+/// output; each output is labelled with the capture timestamp of the chunk it
+/// was decoded from instead.
+const pendingCaptureTimestamps: (number | undefined)[] = []
+let decoderSignature: string | null = null
+let directDecodeQueue: Promise<void> = Promise.resolve()
+const groupOrder = new GroupOrderGate((_groupId, object) => enqueueDirectDecode(object))
+
+function postAudioData(audioData: AudioData, captureTimestampMicros: number | undefined): void {
+  self.postMessage({ type: 'audioData', audioData, captureTimestampMicros }, [audioData])
+}
+
+async function createAudioDecoder(config: AudioDecoderConfig, signature: string) {
+  const init: AudioDecoderInit = {
+    output: (audioData) => postAudioData(audioData, pendingCaptureTimestamps.shift()),
+    error: (e: any) => {
+      workerLog('warn', TARGET, 'decoder error', { error: e })
+    }
+  }
+  const decoder = new AudioDecoder(init)
+  decoder.configure(config)
+  decoderSignature = signature
+  pendingCaptureTimestamps.length = 0
+  return decoder
+}
+
+type AudioWorkerMessage =
+  | SubgroupWorkerMessage
+  | { type: 'catalog'; codec?: string; sampleRate?: number; channels?: number; descriptionBase64?: string }
+  | { type: 'timeline'; captureMicros?: number; handOverAtUnixMs?: number }
+
+self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
+  const data = event.data
+  switch (data.type) {
+    case 'catalog':
+      audioConfig.codec = data.codec || audioConfig.codec
+      audioConfig.sampleRate = data.sampleRate ?? audioConfig.sampleRate
+      audioConfig.channels = data.channels ?? audioConfig.channels
+      audioConfig.descriptionBase64 = data.descriptionBase64 || audioConfig.descriptionBase64
+      return
+    case 'timeline':
+      groupOrder.setTimeline(
+        data.captureMicros !== undefined && data.handOverAtUnixMs !== undefined
+          ? {
+              captureMicros: data.captureMicros,
+              releaseAtMs: performance.now() + (data.handOverAtUnixMs - RELEASE_MARGIN_MS - Date.now())
+            }
+          : undefined
+      )
+      return
+    case 'object':
+      audioBitrateLogger.addBytes(data.subgroupStreamObject.objectPayloadLength)
+      groupOrder.push(data.groupId, data.subgroupStreamObject)
+  }
+}
+
+function enqueueDirectDecode(object: SubgroupObjectWithLoc): void {
+  if (!object.objectPayloadLength) {
+    return
+  }
+  directDecodeQueue = directDecodeQueue
+    .then(() => decode(object.objectPayload, readLocHeader(object.locHeader).timestampMicros))
+    .catch((error) => {
+      workerLog('error', TARGET, 'decode failed', { error })
+    })
+}
+
+async function decode(payload: Uint8Array, captureTimestampMicros: number | undefined) {
+  const timestamp = captureTimestampMicros ?? 0
+  if (isPcmAlawCodec(audioConfig.codec)) {
+    try {
+      decodePcmAlawChunk(payload, timestamp, captureTimestampMicros)
+      if (audioDecoder && audioDecoder.state !== 'closed') {
+        audioDecoder.close()
+      }
+      audioDecoder = undefined
+    } catch (error) {
+      workerLog('error', TARGET, 'PCM A-law decode failed', { error })
+    }
+    return
+  }
+
+  const desiredSignature = buildSignature(audioConfig)
+  if (!audioDecoder || audioDecoder.state === 'closed' || decoderSignature !== desiredSignature) {
+    try {
+      if (audioDecoder && audioDecoder.state !== 'closed') {
+        audioDecoder.close()
+      }
+      audioDecoder = await createAudioDecoder(buildDecoderConfig(audioConfig), desiredSignature)
+    } catch (e) {
+      workerLog('error', TARGET, 'decoder configure failed', { error: e })
+      return
+    }
+  }
+
+  audioDecoder.decode(new EncodedAudioChunk({ type: 'key', timestamp, data: payload }))
+  pendingCaptureTimestamps.push(captureTimestampMicros)
+}
+
+function decodePcmAlawChunk(payload: Uint8Array, timestamp: number, captureTimestampMicros: number | undefined): void {
+  const audioData = alawToAudioData(payload, audioConfig.sampleRate, audioConfig.channels, timestamp)
+  if (audioData) {
+    postAudioData(audioData, captureTimestampMicros)
+  }
+}
+
+function buildDecoderConfig(config: AudioConfig): AudioDecoderConfig {
+  const description =
+    config.codec.startsWith('mp4a') && config.descriptionBase64
+      ? Uint8Array.fromBase64(config.descriptionBase64)
+      : undefined
+  return {
+    codec: config.codec,
+    sampleRate: config.sampleRate,
+    numberOfChannels: config.channels,
+    description
+  }
+}
+
+function buildSignature(config: AudioConfig): string {
+  return `${config.codec}:${config.sampleRate}:${config.channels}:${config.descriptionBase64 ?? ''}`
+}

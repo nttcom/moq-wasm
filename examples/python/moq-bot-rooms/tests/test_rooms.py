@@ -1,6 +1,6 @@
 import asyncio
 
-from moq_bot_rooms.rooms import RoomEnd
+from moq_bot_rooms.rooms import BotRoom, RoomEnd
 from tests.helpers import CLOSED_MOMENT, OPEN_MOMENT, WEEKDAY_HOURS, FakeBots, FakeNow, make_rooms, settle
 
 
@@ -10,8 +10,8 @@ async def test_pages_in_one_room_share_its_bot():
     rooms = make_rooms(bots)
 
     # Act
-    first = rooms.join("abc")
-    second = rooms.join("abc")
+    first = rooms.join(BotRoom("abc"))
+    second = rooms.join(BotRoom("abc"))
     await settle()
 
     # Assert
@@ -25,8 +25,8 @@ async def test_bot_stops_once_the_last_page_has_been_gone_for_the_grace_period()
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots)
-    first = rooms.join("abc")
-    second = rooms.join("abc")
+    first = rooms.join(BotRoom("abc"))
+    second = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
@@ -45,10 +45,10 @@ async def test_page_that_returns_within_the_grace_period_keeps_the_bot():
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots)
-    rooms.join("abc").leave()
+    rooms.join(BotRoom("abc")).leave()
 
     # Act
-    again = rooms.join("abc")
+    again = rooms.join(BotRoom("abc"))
     await settle()
 
     # Assert
@@ -61,13 +61,13 @@ async def test_room_its_bot_finds_empty_ends_at_once_and_starts_anew_for_the_nex
     # Arrange: the page's request is still held, as Cloud Run holds it after the page is gone
     bots = FakeBots()
     rooms = make_rooms(bots)
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
     bots.empty("abc")
     ended = await asyncio.wait_for(page.ended(), 1)
-    later = rooms.join("abc")
+    later = rooms.join(BotRoom("abc"))
     await settle()
 
     # Assert
@@ -82,14 +82,14 @@ async def test_expired_room_refuses_pages_until_they_are_gone_then_starts_anew()
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots, max_room_seconds=0.05)
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
 
     # Act
     ended = await asyncio.wait_for(page.ended(), 1)
-    reconnect = await rooms.join("abc").ended()
+    reconnect = await rooms.join(BotRoom("abc")).ended()
     page.leave()
     await settle()
-    later = rooms.join("abc")
+    later = rooms.join(BotRoom("abc"))
     await asyncio.sleep(0)
 
     # Assert
@@ -103,11 +103,11 @@ async def test_new_room_beyond_max_rooms_is_refused_but_a_held_room_is_not():
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots, max_rooms=1)
-    first = rooms.join("abc")
+    first = rooms.join(BotRoom("abc"))
 
     # Act
-    other = await rooms.join("xyz").ended()
-    same = rooms.join("abc")
+    other = await rooms.join(BotRoom("xyz")).ended()
+    same = rooms.join(BotRoom("abc"))
     await settle()
 
     # Assert
@@ -123,7 +123,7 @@ async def test_room_outside_the_opening_hours_is_refused():
     rooms = make_rooms(bots, open_hours=WEEKDAY_HOURS, now=FakeNow(CLOSED_MOMENT))
 
     # Act
-    reason = await rooms.join("abc").ended()
+    reason = await rooms.join(BotRoom("abc")).ended()
 
     # Assert
     assert reason == RoomEnd.CLOSED
@@ -135,7 +135,7 @@ async def test_closing_time_stops_running_rooms():
     bots = FakeBots()
     now = FakeNow(OPEN_MOMENT)
     rooms = make_rooms(bots, open_hours=WEEKDAY_HOURS, now=now)
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
@@ -156,7 +156,7 @@ async def test_failed_bot_ends_the_room_for_its_pages():
     rooms = make_rooms(bots)
 
     # Act
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     reason = await asyncio.wait_for(page.ended(), 1)
 
     # Assert
@@ -168,7 +168,7 @@ async def test_shutdown_stops_every_bot_without_a_reason_and_refuses_new_pages()
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots)
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
@@ -177,7 +177,7 @@ async def test_shutdown_stops_every_bot_without_a_reason_and_refuses_new_pages()
     # Assert
     assert await page.ended() is None
     assert bots.running == set()
-    assert await rooms.join("xyz").ended() is None
+    assert await rooms.join(BotRoom("xyz")).ended() is None
     page.leave()
 
 
@@ -188,8 +188,8 @@ async def test_the_join_that_starts_a_room_picks_its_bot():
     rooms = make_rooms(default_bots)
 
     # Act
-    first = rooms.join("abc", picked_bots.run)
-    second = rooms.join("abc", default_bots.run)
+    first = rooms.join(BotRoom("abc"), picked_bots.run)
+    second = rooms.join(BotRoom("abc"), default_bots.run)
     await settle()
 
     # Assert: the second join shares the bot the first one started
@@ -203,7 +203,7 @@ async def test_page_that_says_it_leaves_ends_the_room_without_the_grace_period()
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots)
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
@@ -219,8 +219,8 @@ async def test_page_that_leaves_by_name_keeps_the_bot_for_the_other_pages():
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots)
-    leaving = rooms.join("abc")
-    staying = rooms.join("abc")
+    leaving = rooms.join(BotRoom("abc"))
+    staying = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
@@ -236,7 +236,7 @@ async def test_page_that_leaves_by_name_keeps_the_bot_for_the_other_pages():
 async def test_leave_names_no_hold_after_the_page_left():
     # Arrange
     rooms = make_rooms(FakeBots())
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     page.leave()
 
     # Act / Assert
@@ -248,13 +248,13 @@ async def test_stop_ends_the_room_for_every_page_and_the_next_page_starts_it_ane
     # Arrange
     bots = FakeBots()
     rooms = make_rooms(bots)
-    stopping = rooms.join("abc")
-    other = rooms.join("abc")
+    stopping = rooms.join(BotRoom("abc"))
+    other = rooms.join(BotRoom("abc"))
     await settle()
 
     # Act
     stopped = await rooms.stop(stopping.id)
-    later = rooms.join("abc")
+    later = rooms.join(BotRoom("abc"))
     await settle()
 
     # Assert
@@ -271,8 +271,24 @@ async def test_stop_ends_the_room_for_every_page_and_the_next_page_starts_it_ane
 async def test_stop_names_no_hold_after_the_page_left():
     # Arrange
     rooms = make_rooms(FakeBots())
-    page = rooms.join("abc")
+    page = rooms.join(BotRoom("abc"))
     page.leave()
 
     # Act / Assert
     assert not await rooms.stop(page.id)
+
+
+async def test_the_same_room_id_in_two_apps_is_two_rooms():
+    # Arrange
+    bots = FakeBots()
+    rooms = make_rooms(bots)
+
+    # Act
+    public = rooms.join(BotRoom("abc"))
+    temporary = rooms.join(BotRoom("abc", "temp-0123"))
+    await settle()
+
+    # Assert
+    assert bots.roots == ["anon", "temp-0123"]
+    public.leave()
+    temporary.leave()

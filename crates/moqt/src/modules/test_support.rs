@@ -1,22 +1,43 @@
 use std::{
+    collections::HashMap,
+    net::Ipv4Addr,
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
 use bytes::Bytes;
-use tracing_subscriber::EnvFilter;
+use tracing::{
+    Event,
+    field::{Field, Visit},
+    span::{Attributes, Id, Record},
+    subscriber::DefaultGuard,
+};
+use tracing_subscriber::{
+    EnvFilter, Layer,
+    layer::{Context, SubscriberExt},
+    registry::LookupSpan,
+};
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
-use crate::modules::transport::server_transport_config::MAX_CONCURRENT_BIDI_STREAMS;
-use crate::modules::transport::transport_connection::{
-    BoxedConnection, BoxedReceiveStream, BoxedSendStream,
+use crate::modules::moqt::version::APPLICATION_PROTOCOLS;
+use crate::modules::transport::{
+    accept_error::AcceptError,
+    application_protocol::ApplicationProtocols,
+    connect_target::ConnectTarget,
+    server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
+    transport_connection::{BoxedConnection, BoxedReceiveStream, BoxedSendStream},
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
+    websocket::websocket_listener::WebSocketListener,
 };
-use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
+use crate::namespace::NamespaceInterest;
 
 use crate::{
-    ClientConfig, DUAL, Endpoint, RequestFailure, Session, SessionEvent, Subscription, TrackReader,
-    TransportProtocol,
+    CertificateVerification, ClientConfig, Endpoint, NATIVE, RequestFailure, Session, SessionEvent,
+    Subscription, TrackReader, TransportProtocol,
     fetch::{Fetch, FetchDataReceiver, FetchDataSender, FetchOption},
     modules::moqt::{
         data_plane::object::{
@@ -24,10 +45,11 @@ use crate::{
             object_datagram::ObjectDatagram,
         },
         domains::{connection::IncomingObjectNotification, session_context::SessionContext},
-        runtime::dispatch::incoming_object::{IncomingDatagram, IncomingObject},
-        version::{APPLICATION_PROTOCOLS, DRAFT18_PROTOCOLS},
+        runtime::dispatch::incoming_object::{
+            IncomingDatagram, IncomingObject, IncomingObjectReceiver,
+        },
+        version::DRAFT18_PROTOCOLS,
     },
-    modules::transport::application_protocol::ApplicationProtocols,
     object::{
         DataReceiver, DatagramReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair,
         Location, Object, ObjectStatus, StreamDataReceiver, StreamDataReceiverFactory,
@@ -116,74 +138,238 @@ pub(crate) async fn assert_both_sides_open_bi_streams(
     assert!(from_server.is_ok(), "{:?}", from_server.err());
 }
 
-/// Starts a DUAL server on a free port whose accept loop resolves the first
+/// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
 /// returns the port and the accept task.
-pub(crate) fn spawn_dual_server_handshake(name: &str) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    spawn_dual_server_handshake_offering(name, APPLICATION_PROTOCOLS)
+pub(crate) fn spawn_native_server_handshake(
+    name: &str,
+) -> (u16, tokio::task::JoinHandle<Handshake>) {
+    spawn_native_server_handshake_offering(name, APPLICATION_PROTOCOLS)
 }
 
-fn spawn_dual_server_handshake_offering(
+fn spawn_native_server_handshake_offering(
     name: &str,
     protocols: ApplicationProtocols,
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
     let server_config = self_signed_server_config(name);
-    let server = Endpoint::<DUAL>::create_server_offering(&server_config, protocols).unwrap();
+    let server = Endpoint::<NATIVE>::create_server_offering(&server_config, protocols).unwrap();
     let port = server.local_port().unwrap();
     let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
     (port, accept)
 }
 
-/// Starts a DUAL server on a free port whose accept loop resolves the first
+/// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
-pub(crate) fn spawn_dual_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    spawn_dual_server_offering(name, APPLICATION_PROTOCOLS)
+pub(crate) fn spawn_native_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    spawn_native_server_offering(name, APPLICATION_PROTOCOLS)
 }
 
-/// `spawn_dual_server` offering only `protocols`.
-pub(crate) fn spawn_dual_server_offering(
+/// `spawn_native_server` offering only `protocols`.
+pub(crate) fn spawn_native_server_offering(
     name: &str,
     protocols: ApplicationProtocols,
 ) -> (u16, tokio::task::JoinHandle<Session>) {
-    let (port, handshake) = spawn_dual_server_handshake_offering(name, protocols);
-    let accept = tokio::spawn(async move { handshake.await.unwrap().accept().await.unwrap() });
+    let (port, handshake) = spawn_native_server_handshake_offering(name, protocols);
+    let accept = tokio::spawn(async move {
+        handshake
+            .await
+            .unwrap()
+            .accept(&tracing::Span::current())
+            .await
+            .unwrap()
+    });
     (port, accept)
 }
 
-/// `spawn_dual_server`, offering only draft-18.
-pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    spawn_dual_server_offering(name, DRAFT18_PROTOCOLS)
+/// Server-only transport that accepts QMux over WebSocket and nothing else.
+#[derive(Debug)]
+#[allow(non_camel_case_types)]
+pub(crate) struct WEB_SOCKET_ONLY;
+
+impl TransportProtocol for WEB_SOCKET_ONLY {
+    type ConnectionCreator = WebSocketOnlyCreator;
 }
 
-pub(crate) fn dual_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
-    Endpoint::<DUAL>::create_client(&config).unwrap()
+pub(crate) struct WebSocketOnlyCreator {
+    listener: WebSocketListener,
+    port: u16,
 }
 
-/// `dual_client_with_config`, offering only draft-18.
-pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<DUAL> {
-    Endpoint::<DUAL>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
+#[async_trait::async_trait]
+impl TransportConnectionCreator for WebSocketOnlyCreator {
+    fn client(
+        _: u16,
+        _: &CertificateVerification,
+        _: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        anyhow::bail!("a WebSocket-only endpoint is a server")
+    }
+
+    fn server(
+        cert_path: &str,
+        key_path: &str,
+        port: u16,
+        _: u64,
+        protocols: ApplicationProtocols,
+    ) -> anyhow::Result<Self> {
+        let refusing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let listener = WebSocketListener::bind(port, cert_path, key_path, protocols, refusing)?;
+        Ok(Self { listener, port })
+    }
+
+    async fn create_new_transport(&self, _: &ConnectTarget) -> anyhow::Result<BoxedConnection> {
+        anyhow::bail!("a WebSocket-only endpoint is a server")
+    }
+
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
+        let connection: BoxedConnection = Box::new(self.listener.accept().await?);
+        Ok(Box::pin(std::future::ready(Ok(connection))))
+    }
+
+    fn refuse_new_connections(&self) {}
+
+    async fn wait_idle(&self) {}
+
+    fn local_port(&self) -> anyhow::Result<u16> {
+        Ok(self.port)
+    }
+}
+
+/// A server reachable only over WebSocket, as behind a network that drops
+/// UDP: `_udp` holds the UDP port of the same number and never answers.
+pub(crate) struct UdpBlockedServer {
+    pub(crate) port: u16,
+    pub(crate) server: Endpoint<WEB_SOCKET_ONLY>,
+    _udp: std::net::UdpSocket,
+}
+
+pub(crate) fn udp_blocked_server(name: &str) -> UdpBlockedServer {
+    let config = self_signed_server_config(name);
+    loop {
+        let udp = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = udp.local_addr().unwrap().port();
+        let config = ServerConfig {
+            port,
+            ..config.clone()
+        };
+        // Retry: the port UDP picked may already be taken on TCP.
+        if let Ok(server) = Endpoint::<WEB_SOCKET_ONLY>::create_server(&config) {
+            return UdpBlockedServer {
+                port,
+                server,
+                _udp: udp,
+            };
+        }
+    }
+}
+
+/// Forwards to UDP `server_port`, delivering each client datagram `delay` late
+/// so QUIC opens only after `delay`. Its TCP port of the same number accepts
+/// connections and never answers, so WebSocket never opens.
+pub(crate) struct SlowUdpPath {
+    pub(crate) port: u16,
+    _tcp: std::net::TcpListener,
+    forward: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for SlowUdpPath {
+    fn drop(&mut self) {
+        self.forward.abort();
+    }
+}
+
+pub(crate) async fn slow_udp_path(server_port: u16, delay: Duration) -> SlowUdpPath {
+    loop {
+        let client_side = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let port = client_side.local_addr().unwrap().port();
+        // Retry: the port UDP picked may already be taken on TCP.
+        let Ok(tcp) = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)) else {
+            continue;
+        };
+        let server_side = tokio::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        server_side
+            .connect((Ipv4Addr::LOCALHOST, server_port))
+            .await
+            .unwrap();
+        let forward = tokio::spawn(forward_late(
+            Arc::new(client_side),
+            Arc::new(server_side),
+            delay,
+        ));
+        return SlowUdpPath {
+            port,
+            _tcp: tcp,
+            forward,
+        };
+    }
+}
+
+async fn forward_late(
+    client_side: Arc<tokio::net::UdpSocket>,
+    server_side: Arc<tokio::net::UdpSocket>,
+    delay: Duration,
+) {
+    let mut buffer = vec![0; 65536];
+    let Ok((len, client)) = client_side.recv_from(&mut buffer).await else {
+        return;
+    };
+    let replies = {
+        let client_side = client_side.clone();
+        let server_side = server_side.clone();
+        tokio::spawn(async move {
+            let mut buffer = vec![0; 65536];
+            while let Ok(len) = server_side.recv(&mut buffer).await {
+                let _ = client_side.send_to(&buffer[..len], client).await;
+            }
+        })
+    };
+    let mut datagram = buffer[..len].to_vec();
+    loop {
+        let server_side = server_side.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = server_side.send(&datagram).await;
+        });
+        let Ok((len, _)) = client_side.recv_from(&mut buffer).await else {
+            break;
+        };
+        datagram = buffer[..len].to_vec();
+    }
+    replies.abort();
+}
+
+pub(crate) fn native_client_with_config(config: ClientConfig) -> Endpoint<NATIVE> {
+    Endpoint::<NATIVE>::create_client(&config).unwrap()
+}
+
+/// `native_client_with_config`, offering only draft-18.
+pub(crate) fn draft18_client_with_config(config: ClientConfig) -> Endpoint<NATIVE> {
+    Endpoint::<NATIVE>::create_client_offering(&config, DRAFT18_PROTOCOLS).unwrap()
 }
 
 pub(crate) fn insecure_client_config() -> ClientConfig {
     ClientConfig {
-        port: 0,
-        verify_certificate: false,
-        authorization_token: None,
+        certificate_verification: CertificateVerification::Disabled,
         follow_go_away: false,
+        ..ClientConfig::default()
     }
 }
 
-pub(crate) fn dual_client() -> Endpoint<DUAL> {
-    dual_client_with_config(insecure_client_config())
+pub(crate) fn native_client() -> Endpoint<NATIVE> {
+    native_client_with_config(insecure_client_config())
 }
 
-/// Connects a DUAL client to the server started by `spawn_dual_server` and
+/// Connects a NATIVE client to the server started by `spawn_native_server` and
 /// returns both established sessions as (client, server).
 pub(crate) async fn connect_sessions(
     url: &str,
     accept: tokio::task::JoinHandle<Session>,
 ) -> anyhow::Result<(Session, Session)> {
-    connect_sessions_from(&dual_client(), url, accept).await
+    connect_sessions_from(&native_client(), url, accept).await
 }
 
 pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
@@ -205,6 +391,32 @@ pub(crate) async fn within<F: Future>(future: F) -> F::Output {
         .expect("the exchange timed out")
 }
 
+/// Polls `request` only until `peer` receives what it sends, so its response
+/// can arrive without the requester taking it.
+pub(crate) async fn send_without_waiting<F: Future + Unpin>(
+    request: &mut F,
+    peer: &Session,
+) -> SessionEvent {
+    tokio::select! {
+        _ = request => panic!("the request completed before the peer received it"),
+        event = within(peer.receive_event()) => event.unwrap(),
+    }
+}
+
+/// Returns once `receiver` has dispatched every control message `sender`
+/// sent before the call: the control stream is ordered, so a later
+/// PUBLISH_NAMESPACE reaching `receiver` means the earlier ones were handled.
+pub(crate) async fn wait_for_control_delivery(sender: &Session, receiver: &Session) {
+    let _pending = sender
+        .publisher()
+        .begin_publish_namespace("delivery-marker".to_string())
+        .await
+        .unwrap();
+    let SessionEvent::PublishNamespace(_) = within(receiver.receive_event()).await.unwrap() else {
+        panic!("expected the PUBLISH_NAMESPACE sent as a delivery marker");
+    };
+}
+
 pub(crate) async fn receive_disconnected(session: &Session) -> anyhow::Result<()> {
     tokio::time::timeout(DISCONNECT_TIMEOUT, async {
         while !matches!(session.receive_event().await?, SessionEvent::Disconnected()) {}
@@ -213,14 +425,19 @@ pub(crate) async fn receive_disconnected(session: &Session) -> anyhow::Result<()
     .await?
 }
 
-pub(crate) async fn spawn_connected_dual_sessions(name: &str) -> (Session, Session) {
-    let (port, accept) = spawn_dual_server(name);
+pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Session) {
+    let (port, accept) = spawn_native_server(name);
     connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
         .await
         .unwrap()
 }
 
-/// Connects a DUAL client and server that offer only draft-18, over raw
+/// `spawn_native_server`, offering only draft-18.
+pub(crate) fn spawn_draft18_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
+    spawn_native_server_offering(name, DRAFT18_PROTOCOLS)
+}
+
+/// Connects a NATIVE client and server that offer only draft-18, over raw
 /// QUIC for `moqt` or WebTransport for `https`.
 pub(crate) async fn spawn_connected_draft18_sessions(
     name: &str,
@@ -252,6 +469,36 @@ pub(crate) async fn use_up_bidi_streams(
     streams
 }
 
+pub(crate) async fn spawn_connected_native_sessions_following_go_away(
+    name: &str,
+) -> (Session, Session) {
+    let (port, accept) = spawn_native_server(name);
+    let endpoint = native_client_with_config(ClientConfig {
+        certificate_verification: CertificateVerification::Disabled,
+        follow_go_away: true,
+        ..ClientConfig::default()
+    });
+    connect_sessions_from(&endpoint, &format!("moqt://127.0.0.1:{port}"), accept)
+        .await
+        .unwrap()
+}
+
+pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Session, prefix: &str) {
+    let subscriber = client.subscriber();
+    let (subscribed, ()) = tokio::join!(
+        subscriber.subscribe_namespace(prefix.into(), NamespaceInterest::NamespacesAndTracks),
+        async {
+            let SessionEvent::SubscribeNameSpace(handler) =
+                within(server.receive_event()).await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_NAMESPACE");
+            };
+            handler.ok().await.unwrap();
+        }
+    );
+    subscribed.unwrap();
+}
+
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session) -> Subscription {
@@ -271,7 +518,7 @@ pub(crate) struct PublishedTrack {
 }
 
 pub(crate) async fn published_track(name: &str) -> PublishedTrack {
-    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let (client, server) = spawn_connected_native_sessions(name).await;
     published_track_between(client, server).await
 }
 
@@ -303,7 +550,7 @@ pub(crate) struct SubscribedTrack {
 
 /// The client subscribes to `ns/track` and the server accepts it.
 pub(crate) async fn subscribed_track(name: &str) -> SubscribedTrack {
-    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let (client, server) = spawn_connected_native_sessions(name).await;
     let mut subscriber = client.subscriber();
     let (subscribed, ()) = within(async {
         tokio::join!(
@@ -536,7 +783,7 @@ pub(crate) async fn register_and_take_data_receiver(
     context: &SessionContext,
     request_id: u64,
     track_alias: u64,
-) -> tokio::sync::mpsc::UnboundedReceiver<IncomingObject> {
+) -> IncomingObjectReceiver {
     context
         .register_data_receiver(&context.connection(), request_id, track_alias)
         .await
@@ -564,6 +811,7 @@ pub(crate) fn subscription(request_id: u64, track_alias: u64) -> Subscription {
         filter_type: crate::subscribe::FilterType::LargestObject,
         delivery_timeout: None,
         max_cache_duration: None,
+        last_update: crate::LastSubscribeUpdate::default(),
     })
 }
 
@@ -601,7 +849,7 @@ pub(crate) struct FetchedStream {
 }
 
 pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
-    let (client, server) = spawn_connected_dual_sessions(name).await;
+    let (client, server) = spawn_connected_native_sessions(name).await;
     let mut subscriber = client.subscriber();
     // Matches the EndOfTrack location in the FETCH round-trip test.
     let end = location(16_385, 0);
@@ -642,4 +890,134 @@ pub(crate) async fn fetched_stream(name: &str) -> FetchedStream {
         sender,
         receiver,
     }
+}
+
+/// A captured span or event: its name (an event's message), its fields
+/// formatted with `Debug`, and, for an event, the name of the span it was
+/// written in.
+#[derive(Clone)]
+pub(crate) struct Captured {
+    name: String,
+    fields: HashMap<String, String>,
+    span: Option<String>,
+}
+
+impl Captured {
+    pub(crate) fn field(&self, name: &str) -> Option<&str> {
+        self.fields.get(name).map(String::as_str)
+    }
+
+    pub(crate) fn span(&self) -> Option<&str> {
+        self.span.as_deref()
+    }
+}
+
+/// Install it with `capture_telemetry`.
+#[derive(Clone, Default)]
+pub(crate) struct CapturedTelemetry {
+    closed_spans: Arc<Mutex<Vec<Captured>>>,
+    events: Arc<Mutex<Vec<Captured>>>,
+}
+
+impl CapturedTelemetry {
+    pub(crate) fn closed_spans(&self, name: &str) -> Vec<Captured> {
+        named(&self.closed_spans, name)
+    }
+
+    pub(crate) fn events(&self, message: &str) -> Vec<Captured> {
+        named(&self.events, message)
+    }
+}
+
+fn named(captured: &Mutex<Vec<Captured>>, name: &str) -> Vec<Captured> {
+    let captured = captured.lock().unwrap();
+    captured
+        .iter()
+        .filter(|captured| captured.name == name)
+        .cloned()
+        .collect()
+}
+
+/// Installs a `CapturedTelemetry` as this thread's subscriber until the guard
+/// drops; on a current-thread runtime it captures the spawned tasks too.
+pub(crate) fn capture_telemetry() -> (CapturedTelemetry, DefaultGuard) {
+    let telemetry = CapturedTelemetry::default();
+    let subscriber = tracing_subscriber::registry().with(telemetry.clone());
+    (telemetry, tracing::subscriber::set_default(subscriber))
+}
+
+#[derive(Default)]
+struct FieldMap(HashMap<String, String>);
+
+impl Visit for FieldMap {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        self.0
+            .insert(field.name().to_string(), format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.0.insert(field.name().to_string(), value.to_string());
+    }
+}
+
+impl<S> Layer<S> for CapturedTelemetry
+where
+    S: tracing::Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut fields = FieldMap::default();
+        attrs.record(&mut fields);
+        if let Some(span) = ctx.span(id) {
+            span.extensions_mut().insert(fields);
+        }
+    }
+
+    fn on_record(&self, id: &Id, values: &Record<'_>, ctx: Context<'_, S>) {
+        if let Some(span) = ctx.span(id)
+            && let Some(fields) = span.extensions_mut().get_mut::<FieldMap>()
+        {
+            values.record(fields);
+        }
+    }
+
+    fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
+        let mut fields = FieldMap::default();
+        event.record(&mut fields);
+        let name = fields.0.remove("message").unwrap_or_default();
+        self.events.lock().unwrap().push(Captured {
+            name,
+            fields: fields.0,
+            span: ctx.event_span(event).map(|span| span.name().to_string()),
+        });
+    }
+
+    fn on_close(&self, id: Id, ctx: Context<'_, S>) {
+        let Some(span) = ctx.span(&id) else {
+            return;
+        };
+        let fields = span
+            .extensions_mut()
+            .remove::<FieldMap>()
+            .unwrap_or_default();
+        self.closed_spans.lock().unwrap().push(Captured {
+            name: span.name().to_string(),
+            fields: fields.0,
+            span: None,
+        });
+    }
+}
+
+thread_local! {
+    static SERVER_DECLARES_TRACE_CONTEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether a server on this thread puts TRACE_CONTEXT in its SERVER_SETUP.
+pub(crate) fn server_declares_trace_context() -> bool {
+    SERVER_DECLARES_TRACE_CONTEXT.get()
+}
+
+/// Makes the servers of this thread's current-thread runtime answer with a
+/// SERVER_SETUP that does not declare TRACE_CONTEXT.
+pub(crate) fn without_trace_context_declaration() {
+    SERVER_DECLARES_TRACE_CONTEXT.set(false);
 }

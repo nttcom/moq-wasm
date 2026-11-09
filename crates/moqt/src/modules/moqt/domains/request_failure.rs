@@ -15,7 +15,7 @@ pub enum RequestFailure {
         code: RequestErrorCode,
         reason: String,
     },
-    #[error("no response within the request timeout")]
+    #[error("request timed out")]
     Timeout,
     #[error("the session closed before the response arrived")]
     SessionClosed,
@@ -29,4 +29,29 @@ pub enum RequestFailure {
     /// it (draft-18 §6.1 MUST NOT). draft-14 never fails so.
     #[error("no stream for the PUBLISH; PUBLISH_BLOCKED was sent")]
     PublishBlocked,
+}
+
+/// Records the answered request's id on the current span; records nothing
+/// when the request was never answered.
+pub(crate) fn record_request_id<T>(
+    result: &Result<T, RequestFailure>,
+    request_id: impl FnOnce(&T) -> u64,
+) {
+    let request_id = match result {
+        Ok(answered) => request_id(answered),
+        Err(RequestFailure::Rejected { request_id, .. }) => *request_id,
+        Err(_) => return,
+    };
+    tracing::Span::current().record("request_id", request_id);
+}
+
+/// Records on the current span how a request ended: `ok` when its `*_OK`
+/// arrived, `rejected` when the peer answered `*_ERROR`, `failed` otherwise.
+pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {
+    let outcome = match result {
+        Ok(_) => "ok",
+        Err(RequestFailure::Rejected { .. }) => "rejected",
+        Err(_) => "failed",
+    };
+    tracing::Span::current().record("outcome", outcome);
 }

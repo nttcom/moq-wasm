@@ -328,6 +328,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
                 request_id,
                 track_namespace,
                 authorization_token: tokens,
+                trace_context: None,
             })
         }
         SUBSCRIBE_NAMESPACE => {
@@ -338,6 +339,7 @@ fn decode_payload(message_type: u64, buf: &mut Bytes) -> Result<Message, DecodeE
                 request_id,
                 track_namespace_prefix,
                 authorization_token: tokens,
+                trace_context: None,
             })
         }
         SUBSCRIBE_TRACKS => {
@@ -518,6 +520,7 @@ fn decode_subscribe(buf: &mut Bytes, allowed: &[u64]) -> Result<Subscribe, Decod
         filter_type: UNFILTERED,
         authorization_tokens: vec![],
         delivery_timeout: None,
+        trace_context: None,
     };
     for parameter in get_parameters(buf, allowed)? {
         match parameter {
@@ -740,6 +743,7 @@ fn decode_publish(buf: &mut Bytes) -> Result<(Publish, Vec<KeyValuePair>), Decod
         authorization_tokens: tokens(parameters),
         delivery_timeout: varint_property_value(&properties, OBJECT_DELIVERY_TIMEOUT_PROPERTY),
         max_duration: varint_property_value(&properties, MAX_CACHE_DURATION_PROPERTY),
+        trace_context: None,
     };
     Ok((publish, properties))
 }
@@ -802,6 +806,7 @@ fn decode_fetch(buf: &mut Bytes) -> Result<Fetch, DecodeError> {
         fetch_params,
         authorization_tokens: vec![],
         fill_timeout: None,
+        trace_context: None,
     };
     for parameter in get_parameters(buf, FETCH_PARAMETERS)? {
         match parameter {
@@ -1191,6 +1196,7 @@ mod tests {
             },
             authorization_tokens: vec![AuthorizationToken::use_value_utf8("jwt")],
             delivery_timeout: Some(1500),
+            trace_context: None,
         }
     }
 
@@ -1258,6 +1264,7 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: Some(200),
             max_duration: Some(60_000),
+            trace_context: None,
         };
         let fetch = Fetch {
             request_id: 6,
@@ -1271,6 +1278,7 @@ mod tests {
             },
             authorization_tokens: vec![],
             fill_timeout: None,
+            trace_context: None,
         };
         let joining = Fetch {
             fetch_params: FetchParams::RelativeJoining {
@@ -1283,11 +1291,13 @@ mod tests {
             request_id: 8,
             track_namespace: vec!["live".to_string()],
             authorization_token: vec![AuthorizationToken::use_value_utf8("jwt")],
+            trace_context: None,
         };
         let subscribe_namespace = SubscribeNamespace {
             request_id: 10,
             track_namespace_prefix: vec![],
             authorization_token: vec![],
+            trace_context: None,
         };
 
         // Act / Assert
@@ -1368,6 +1378,7 @@ mod tests {
                 },
                 authorization_tokens: vec![],
                 fill_timeout,
+                trace_context: None,
             };
 
             // Act

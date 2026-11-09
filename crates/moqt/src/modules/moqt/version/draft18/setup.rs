@@ -65,6 +65,8 @@ fn server_setup(setup: SetupMessage) -> ServerSetup {
             max_auth_token_cache_size: Some(setup.max_auth_token_cache_size),
             authority: setup.authority,
             moq_implementation: setup.implementation,
+            trace_context: false,
+            traceparent: None,
         },
     )
 }

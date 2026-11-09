@@ -9,6 +9,7 @@ Meeting（`examples/browser/examples/meeting`）のルームに HTTP で呼ば�
 | `granite-speech-5-470m` | Granite Speech 5.0 470m | bot の中の CPU。最初に選ばれたときに読み込む |
 | `qwen3-asr` | Qwen3-ASR-1.7B | GPU の Cloud Run（[音声認識を Cloud Run の GPU にデプロイする](../asr-on-cloud-run.md)） |
 | `granite-speech-5-2b` | Granite Speech 5.0 2b | GPU の Cloud Run（同上） |
+| `haas-ja` | Haas-ja-v1.0 | GPU の Cloud Run（[haas-asr-server](../haas-asr-server/README.md)） |
 
 書き起こしは MSF の event timeline として publish します。設計は [Live transcription for the Meeting example](../../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
@@ -22,7 +23,7 @@ sequenceDiagram
     P->>B: GET /rooms/{room}（開いている間だけ bot がいる）
     B->>R: SUBSCRIBE_NAMESPACE anon/{room}
     R->>B: PUBLISH_NAMESPACE anon/{room}/alice
-    B->>R: catalog（joining FETCH 付き）、audio_32kbps
+    B->>R: catalog（joining FETCH 付き）、audio
     Note over B: Silero VAD と音声認識（参加者ごと）
     B->>R: transcript（anon/{room}/bots/transcriber）
 ```
@@ -70,7 +71,9 @@ sequenceDiagram
 | `--gcloud-auth` / `--metadata-auth` | なし | `--asr` のサービスに ID トークンを付ける。手元では `gcloud`、Cloud Run ではメタデータサーバーから取る |
 | `--max-rooms` | `2` | 同時に動かすルームの数。CPU のモデルは、それぞれ全ルームで 1 つを順番に使う |
 
-ルーム名は `/` を含まない 1〜64 文字です。対象は `anon` のルームだけで、`?jwt=` で入ったルームには入れません。
+ルーム名は `/` を含まない 1〜64 文字です。対象は `anon` のルームと一時アプリのルームで、一時アプリのルームには、ページから受け取ったトークンを token mint で更新しながら入ります（[moq-bot-rooms](../moq-bot-rooms/README.md)）。`?jwt=` で入ったルームには入れません。
+
+下の表の `anon` は一時アプリのルームでは appId（`temp-…`）になります。
 
 ## トラック
 

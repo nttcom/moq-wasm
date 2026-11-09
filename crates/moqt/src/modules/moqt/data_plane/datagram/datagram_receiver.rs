@@ -3,12 +3,14 @@ use anyhow::bail;
 use crate::modules::moqt::data_plane::{
     malformed_track_error::MalformedTrackError, object::canonical_object::Object,
 };
-use crate::modules::moqt::runtime::dispatch::incoming_object::IncomingObject;
+use crate::modules::moqt::runtime::dispatch::incoming_object::{
+    IncomingObject, IncomingObjectReceiver,
+};
 
 #[derive(Debug)]
 pub struct DatagramReceiver {
     pub track_alias: u64,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
+    receiver: IncomingObjectReceiver,
     first_object: Option<Object>,
 }
 
@@ -16,7 +18,7 @@ impl DatagramReceiver {
     pub(crate) fn new(
         track_alias: u64,
         first_object: Object,
-        receiver: tokio::sync::mpsc::UnboundedReceiver<IncomingObject>,
+        receiver: IncomingObjectReceiver,
     ) -> Self {
         Self {
             track_alias,

@@ -68,13 +68,6 @@
         max-width: 620px;
       }
 
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 20px;
-        margin-bottom: 24px;
-      }
-
       .card {
         background: var(--card);
         border: 1px solid var(--border);
@@ -101,6 +94,7 @@
         background: rgba(255, 255, 255, 0.08);
         color: var(--muted);
         font-size: 12px;
+        white-space: nowrap;
       }
 
       .status span {
@@ -140,12 +134,6 @@
         box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.2);
       }
 
-      .button-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-      }
-
       button {
         background: linear-gradient(135deg, var(--accent), #ffbf69);
         border: none;
@@ -159,8 +147,7 @@
           box-shadow 0.2s ease;
       }
 
-      button.secondary,
-      #urlPresets button {
+      button.secondary {
         background: rgba(255, 255, 255, 0.1);
         color: var(--text);
         border: 1px solid var(--border);
@@ -207,6 +194,19 @@
         font-size: 12px;
       }
 
+      .command-inputs input {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .command-header button {
+        width: auto;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
       .modal {
         width: min(640px, 100%);
         padding: 0;
@@ -241,10 +241,6 @@
       .muted {
         color: var(--muted);
         font-size: 13px;
-      }
-
-      .setup-toggle {
-        margin-bottom: 24px;
       }
 
       .setup-toggle summary {
@@ -331,7 +327,251 @@
         font-size: 0.9em;
       }
 
+      .connect-card {
+        max-width: 560px;
+        margin: 0 auto;
+      }
+
+      .live-view {
+        display: grid;
+        gap: 20px;
+      }
+
+      .connect-card #connect-btn {
+        width: 100%;
+        padding: 14px 16px;
+        font-size: 15px;
+      }
+
+      .connect-error {
+        padding: 10px 14px;
+        border-radius: 12px;
+        background: rgba(255, 99, 71, 0.14);
+        color: #ffb4a6;
+        font-size: 13px;
+      }
+
+      .live-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .live-actions button {
+        width: auto;
+        padding: 8px 14px;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 20px;
+        align-items: start;
+      }
+
+      .stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .stack > .card-header {
+        margin-bottom: 0;
+      }
+
+      .field-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .field-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .segmented {
+        display: inline-flex;
+        padding: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .segmented-wide {
+        display: flex;
+      }
+
+      .segmented-wide button {
+        flex: 1;
+      }
+
+      .segmented button {
+        width: auto;
+        padding: 6px 14px;
+        background: transparent;
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .segmented button:hover {
+        transform: none;
+        box-shadow: none;
+        color: var(--text);
+      }
+
+      .segmented button[aria-selected='true'] {
+        background: rgba(255, 255, 255, 0.16);
+        color: var(--text);
+      }
+
+      .relay-options {
+        display: grid;
+        gap: 8px;
+      }
+
+      .relay-option {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(8, 12, 18, 0.5);
+        color: var(--text);
+        cursor: pointer;
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease;
+      }
+
+      .relay-option:has(input:checked) {
+        border-color: var(--accent-2);
+        background: rgba(46, 196, 182, 0.12);
+      }
+
+      .relay-option input {
+        accent-color: var(--accent-2);
+        margin: 0;
+      }
+
+      .relay-option-label {
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      .relay-option.compact {
+        padding: 6px 12px;
+      }
+
+      .relay-option.compact > div {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0 12px;
+      }
+
+      .relay-children {
+        display: grid;
+        gap: 8px;
+        margin-left: 24px;
+        padding-left: 16px;
+        border-left: 1px solid rgba(255, 255, 255, 0.15);
+      }
+
+      .relay-default-badge {
+        margin-left: 8px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: rgba(46, 196, 182, 0.2);
+        color: var(--accent-2);
+        font-size: 11px;
+      }
+
+      .relay-option-helper {
+        font-size: 12px;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+
+      .icon-btn {
+        width: 42px;
+        height: 42px;
+        flex-shrink: 0;
+        padding: 0;
+        font-size: 18px;
+      }
+
+      .ptz-controls {
+        margin: 0;
+        padding: 0;
+        border: none;
+        min-width: 0;
+      }
+
+      .ptz-controls:disabled {
+        opacity: 0.45;
+      }
+
+      .pad {
+        display: grid;
+        grid-template-columns: repeat(3, 64px);
+        grid-template-rows: repeat(3, 64px);
+        gap: 8px;
+        justify-content: center;
+      }
+
+      .pad-up,
+      .pad-down {
+        grid-column: 2;
+      }
+
+      .pad-left {
+        grid-column: 1;
+      }
+
+      button.pad-btn {
+        width: auto;
+        height: 100%;
+        padding: 0;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text);
+        font-size: 20px;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      button.pad-btn:hover {
+        transform: none;
+        background: rgba(255, 255, 255, 0.14);
+      }
+
+      button.pad-btn:active {
+        background: linear-gradient(135deg, var(--accent), #ffbf69);
+        color: #1a1208;
+        box-shadow: 0 0 0 3px rgba(255, 159, 28, 0.3);
+      }
+
+      button.pad-home {
+        border-radius: 50%;
+        font-size: 22px;
+      }
+
+      .video-card #stage {
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+
       @media (max-width: 960px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
         .setup-split {
           grid-template-columns: 1fr;
         }
@@ -344,10 +584,6 @@
 
         .hero {
           margin-bottom: 20px;
-        }
-
-        .button-row {
-          flex-direction: column;
         }
 
         button {
@@ -367,88 +603,124 @@
         </p>
       </header>
 
-      <details class="card setup-toggle">
-        <summary>
-          <div class="command-title">映像送信の開始方法</div>
-          <span class="muted">視聴する前に、別ターミナルで ONVIF カメラの映像を配信します。</span>
-        </summary>
-        <div class="setup-split">
-          <div class="setup-panel">
-            <div class="setup-panel-head">
-              <div class="command-title">クラウドRelay利用</div>
-              <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
+      <section id="connect-view">
+        <div class="card stack connect-card">
+          <div class="card-header">
+            <div>
+              <div class="command-title">Connect</div>
+              <div class="muted">Choose the relay the camera publishes to.</div>
             </div>
-            <div class="muted"><code>make relay</code> は不要です。トークンなしで配信できます。</div>
-            <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
+            <button
+              id="settings-btn"
+              class="secondary icon-btn"
+              type="button"
+              title="Advanced settings"
+              aria-label="Advanced settings"
+            >
+              &#9881;
+            </button>
+          </div>
+          <div class="field-head">
+            <span class="field-label">Relay</span>
+            <div id="relay-tabs" class="segmented" role="tablist">
+              <button type="button" role="tab" data-tab="cloud" aria-selected="true">Cloud</button>
+              <button type="button" role="tab" data-tab="local" aria-selected="false">Local</button>
+            </div>
+          </div>
+          <div id="relay-options" class="relay-options" role="tabpanel"></div>
+          <div id="connect-error" class="connect-error" role="alert" hidden></div>
+          <button id="connect-btn" type="button">Connect</button>
+        </div>
+      </section>
+
+      <div id="live-view" class="live-view" hidden>
+        <section class="layout">
+          <div class="card video-card">
+            <div class="card-header">
+              <div>
+                <div class="command-title">Live Video</div>
+                <div class="muted"><span id="live-relay"></span> · <span id="playback-status">Playback idle</span></div>
+              </div>
+              <div class="live-actions">
+                <div class="status" id="status"><span></span>disconnected</div>
+                <button id="disconnect-btn" class="secondary" type="button">Disconnect</button>
+              </div>
+            </div>
+            <div id="stage"></div>
+            <div class="muted" id="video-stats">-</div>
+          </div>
+
+          <div class="card stack">
+            <div class="card-header">
+              <div class="command-title">PTZ</div>
+              <div class="status" id="command-state"><span></span>waiting for camera</div>
+            </div>
+            <div id="ptz-tabs" class="segmented segmented-wide" role="tablist">
+              <button type="button" role="tab" data-tab="controller" aria-selected="true">Controller</button>
+              <button type="button" role="tab" data-tab="commands" aria-selected="false">Commands</button>
+            </div>
+            <fieldset id="ptz-controls" class="ptz-controls" disabled>
+              <div id="ptz-panel-controller" class="stack" role="tabpanel">
+                <div class="pad">
+                  <button type="button" class="pad-btn pad-up" data-move="up" aria-label="Tilt up">&#9650;</button>
+                  <button type="button" class="pad-btn pad-left" data-move="left" aria-label="Pan left">&#9664;</button>
+                  <button type="button" class="pad-btn pad-home" id="center-btn" aria-label="Center" title="Center">
+                    &#8962;
+                  </button>
+                  <button type="button" class="pad-btn pad-right" data-move="right" aria-label="Pan right">
+                    &#9654;
+                  </button>
+                  <button type="button" class="pad-btn pad-down" data-move="down" aria-label="Tilt down">
+                    &#9660;
+                  </button>
+                </div>
+                <div class="muted">Hold a button to move; release to stop.</div>
+              </div>
+              <div id="ptz-panel-commands" class="stack" role="tabpanel" hidden>
+                <div class="muted">Each command sends one JSON object to the ONVIF bridge.</div>
+                <div id="command-grid" class="commands"></div>
+              </div>
+            </fieldset>
+          </div>
+        </section>
+
+        <details class="card setup-toggle">
+          <summary>
+            <div class="command-title">映像送信の開始方法</div>
+            <span class="muted">映像が表示されないときは、別ターミナルで ONVIF カメラの映像を配信します。</span>
+          </summary>
+          <div class="setup-split">
+            <div class="setup-panel">
+              <div class="setup-panel-head">
+                <div class="command-title">クラウドRelay利用</div>
+                <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
+              </div>
+              <div class="muted"><code>make relay</code> は不要です。トークンなしで配信できます。</div>
+              <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
 
 # ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定しておく
 ONVIF_MOQT_URL=$RELAY make onvif
 make browser</code></pre>
-          </div>
-          <div class="setup-panel">
-            <div class="setup-panel-head">
-              <div class="command-title">ローカルRelay利用</div>
-              <code class="setup-relay-url">https://127.0.0.1:4433</code>
             </div>
-            <div class="muted">
-              <code>make relay</code> で relay を起動します。自己署名証明書なので Chrome は
-              <code>make chrome</code> で開きます。
-            </div>
-            <pre><code>make relay
+            <div class="setup-panel">
+              <div class="setup-panel-head">
+                <div class="command-title">ローカルRelay利用</div>
+                <code class="setup-relay-url">https://127.0.0.1:4433</code>
+              </div>
+              <div class="muted">
+                <code>make relay</code> で relay を起動します。自己署名証明書なので Chrome は
+                <code>make chrome</code> で開きます。
+              </div>
+              <pre><code>make relay
 
 # ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定しておく
 make onvif
 make browser
 make chrome</code></pre>
-          </div>
-        </div>
-      </details>
-
-      <section class="grid">
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="command-title">Connection</div>
-              <div class="muted">MoQ session + track layout</div>
-            </div>
-            <div class="status" id="status"><span></span>disconnected</div>
-          </div>
-          <form id="connect-form">
-            <label>
-              MoQ URL
-              <input id="moqt-url" type="text" value="https://127.0.0.1:4433" />
-            </label>
-            <div id="urlPresets" class="button-row"></div>
-            <div class="button-row">
-              <button id="connect-btn" type="button">Connect</button>
-              <button id="disconnect-btn" class="secondary" type="button">Disconnect</button>
-              <button id="settings-btn" class="secondary" type="button">Advanced settings</button>
-            </div>
-            <div class="muted">Command track alias: <span id="command-alias">-</span></div>
-          </form>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <div class="command-title">Live Video</div>
-              <div class="muted" id="playback-status">Playback idle</div>
             </div>
           </div>
-          <div id="stage"></div>
-          <div class="muted" id="video-stats">-</div>
-        </div>
-      </section>
-
-      <section class="card commands">
-        <div class="card-header">
-          <div>
-            <div class="command-title">PTZ Commands</div>
-            <div class="muted">Each command sends one JSON object to the ONVIF bridge.</div>
-          </div>
-        </div>
-        <div id="command-grid" class="commands"></div>
-      </section>
+        </details>
+      </div>
     </div>
 
     <dialog id="settings-modal" class="modal">
@@ -474,18 +746,10 @@ make chrome</code></pre>
           Command Track
           <input id="command-track" type="text" value="command" />
         </label>
-        <label>
-          Auth Info
-          <input id="auth-info" type="text" value="secret" />
-        </label>
-        <label>
-          Max Request ID
-          <input id="max-subscribe-id" type="number" value="100" />
-        </label>
       </div>
     </dialog>
 
     <script type="module" src="./main.ts"></script>
-    <script type="module" src="../../utils/publicNotice.ts"></script>
+    <script type="module" src="../../utils/accessBar.ts"></script>
   </body>
 </html>

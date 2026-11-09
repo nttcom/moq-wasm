@@ -9,9 +9,11 @@ An admin view of the relay mesh: per-session network statistics, per-track /
 per-subscription delivery counters, relay memory, and the pub/sub topology
 that links them, live and as history.
 
-- Every relay publishes one snapshot per second over MoQT.
-- The `observability` server subscribes to every relay, stores the snapshots in
-  ClickHouse, and serves them to the browser over HTTP.
+- Every relay sends one snapshot per second as an OTLP log record, and the
+  relay-wide values of it as OTLP gauges for HyperDX (see Relay gauges).
+- The ClickStack collector stores it in the `otel` database of ClickHouse,
+  and materialized views copy it into the `observability` database's tables.
+- The `observability` server serves those tables to the browser over HTTP.
 - The browser page renders the topology and plots history for a
   selected node.
 
@@ -22,42 +24,48 @@ Target scale: 3 relays, up to 100 clients.
 ```mermaid
 flowchart LR
   subgraph relay-a
-    C[StatsCollector] --> P[StatsPublishTask<br/>loopback session]
-    P -- "PUBLISH observability/relay-a<br/>network_stats" --> R[relay core]
+    C[StatsCollector] --> E[telemetry::EventLogger]
   end
-  R -- SUBSCRIBE --> O[observability server]
-  O -- "INSERT JSONEachRow (HTTP)" --> CH[(ClickHouse)]
-  B[browser topology page] -- "GET /api/snapshots, /api/series" --> O
-  O -- SELECT --> CH
+  E -- "OTLP gRPC log record<br/>relay.stats.snapshot" --> K[ClickStack collector]
+  K -- INSERT --> L[(otel.otel_logs)]
+  L -- "materialized views" --> T[(observability.*)]
+  B[browser topology page] -- "GET /api/snapshots, /api/series" --> O[observability server]
+  O -- SELECT --> T
 ```
 
-## Track
+## Snapshot record
 
 | Field | Value |
 | --- | --- |
-| Track Namespace | `["observability", <RELAY_ID>]` (`RELAY_ID` already exists in `RelayConfig`) |
-| Track Name | `network_stats` |
-| Group | one per snapshot; Group ID = Unix time in milliseconds of the snapshot |
-| Object | Object 0 only; payload is the JSON snapshot below |
+| `ServiceName` | `relay` (resource `relay.id` = `RELAY_ID`) |
+| `EventName` and body | `relay.stats.snapshot` |
+| `LogAttributes['snapshot']` | the JSON snapshot below |
+| `Timestamp` | the snapshot's `timestamp_ms` |
 
-A group per snapshot lets a congested subscriber skip stale snapshots and
-start from the newest one. Wall-clock group ids keep a restarted relay from
-reusing locations the relay cache still holds.
+The snapshot is an attribute rather than the body because the ClickStack
+collector parses a body containing a JSON object into one attribute per
+field, which would store it twice (see `docs/architecture/telemetry/architecture.md`).
 
-Topology is not a separate track: a snapshot already lists which session
+Topology is not a separate record: a snapshot already lists which session
 publishes each track and which session subscribes to it, so the topology at
 time *t* is the snapshot at *t*.
 
+The relays reach the collector the way their traces and logs do, so the
+server needs no list of relays: a relay appears once it logs a snapshot.
+A relay whose runtime stops, or whose collector reads block on a stuck
+directory lock, stops logging and leaves the live view after 10 s.
+
 ### Snapshot payload
 
-The type is `relay_stats::RelaySnapshot` (`crates/relay-stats`). Counters are
+The type is `telemetry::relay_stats::RelaySnapshot`. Counters are
 cumulative since the session, track cache or subscription started; rates are
 derived from consecutive snapshots, so a lost snapshot loses no traffic.
 `…_since_last_snapshot_…` and `lag_…` fields are gauges.
 
-All statistics are measured on the relay; clients report nothing. A browser
-client could not anyway: the wasm transport's `stats()` returns
-`TransportStats::default()`. A QUIC endpoint only knows the loss and
+All transport statistics are measured on the relay. A browser client could
+not report them: the wasm transport's `stats()` returns
+`TransportStats::default()`. What a browser does report is its player's
+view, through `POST /api/client-telemetry` (see Client telemetry). A QUIC endpoint only knows the loss and
 congestion window of what it sends, so the relay sees the two directions of a
 client session differently:
 
@@ -105,11 +113,12 @@ neither is reported.
 }
 ```
 
-- `peer` is `client` or `relay` from the endpoint the session arrived on,
-  `stats_publisher` for the relay's own loopback session, and `stats_subscriber`
-  for a session subscribed to the relay's own stats track (the observability
-  server, which presents the relay token). The page hides both stats peers, and
-  the relay totals in `/api/series` count only `client` and `relay` sessions.
+- `peer` is `client` or `relay` from the endpoint the session arrived on.
+  Snapshots stored while relays published stats over MoQT (see Relay side)
+  also carry `stats_publisher` and `stats_subscriber` sessions; until they
+  expire, the page hides them and the relay totals in `/api/series` count
+  only `client` and `relay` sessions, and `/api/namespaces` leaves out
+  `observability/…`.
 - `dialed_relay_id` is set on an inter-relay session this relay dialed. The
   accepting relay only sees a relay token, so consumers identify the far end
   of an accepted relay session by its remote IP: a relay's addresses are the
@@ -139,64 +148,59 @@ neither is reported.
   `disk_cache_max_mb` under Storage, the space the relay may use rather than
   the host's disk.
 - `client_sessions` is the count a drain waits for: client sessions only, no
-  relay peer and no stats session. `draining_since_ms` is when the relay began
+  relay peer. `draining_since_ms` is when the relay began
   draining (sent GOAWAY) and `null` while it serves; a relay older than these
   fields reads as 0 and `null`.
 
-## Relay side (`crates/relay`, `modules/observability/`)
+## Relay side (`services/relay`, `modules/observability/`)
 
 `docs/architecture/relay/architecture.md` ("Observability") describes the
-collector, the loopback `StatsPublishTask` and where each counter lives.
+collector, `StatsExportTask` and where each counter lives.
 
-Alternative considered: registering an in-process publisher directly in the
-pub/sub directory and writing into `TrackCache`. It saves one loopback QUIC
-connection but adds a second kind of publisher to the directory, the upstream
-resolver, ingress ownership and session cleanup — every path that today
-assumes a publisher is a session. At 1 Hz the loopback cost is negligible, so
-the loopback session wins.
+Alternative considered: publishing the snapshot on a MoQT track
+(`observability/<RELAY_ID>` / `network_stats`) through a loopback session, which
+the server subscribed to on every relay. Delivery went through the relay's
+own data plane, so a stalled data plane also stopped the stats, but the
+server needed a fixed list of relays, the loopback and server sessions showed
+up in the relay's statistics and traces, and the snapshots took a storage
+path of their own beside the relays' logs.
 
-Cascading is not used for observability: the server connects to each relay
-directly, so losing inter-relay routing does not hide the relays it affects.
+Cascading is not used for observability: each relay sends its own snapshots
+to the collector, so losing inter-relay routing does not hide the relays it
+affects.
 
-## Observability server (`crates/observability`)
+## Observability server (`services/observability`)
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `OBSERVABILITY_RELAYS` | required | Comma-separated `RELAY_ID=URL` pairs, e.g. `relay-a=moqt://relay-a:444` |
-| `OBSERVABILITY_AUTH_TOKEN` | none | JWT presented in CLIENT_SETUP |
-| `OBSERVABILITY_INSECURE` | unset | Any value disables relay certificate verification |
 | `CLICKHOUSE_URL` | `http://127.0.0.1:8123` | ClickHouse HTTP interface |
-| `CLICKHOUSE_DATABASE` | `observability` | Created at startup with its tables |
+| `CLICKHOUSE_DATABASE` | `observability` | Created at startup with its tables and views |
 | `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | none | Basic auth |
 | `OBSERVABILITY_HTTP_PORT` | `8095` | API port |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`) for player stats |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | none | OTLP/HTTP logs URL (`…/v1/logs`) for browser logs |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | none | OTLP/HTTP traces URL (`…/v1/traces`) for client request spans |
+| `AUTH_VTS_URL` | none | VTS `…/verify` URL that reads a browser report's app from its token; without it every report is `anon` |
 
-The recommended deployment connects to each relay's inner endpoint with
-`AUTH_RELAY_TOKEN`: relay tokens do not expire and have full access, while a
-client token (`app_id` = `observability`, `subscribe` claim) would be capped
-by the relay's `AUTH_MAX_TOKEN_TTL_SECONDS` and the server does not refresh
-tokens. Sessions authenticated with an `observability` client token are left
-out of the topology page.
+The server stores nothing of the relays itself; at startup `schema::apply`
+creates the tables and the views that fill them (see Storage) and the API
+starts.
 
-- `RelaySubscriptionTask` (one per relay): connect, SUBSCRIBE
-  `observability/<RELAY_ID>` / `network_stats` with Next Group Start, decode
-  each object and send it to the ingest task; reconnect 5 s after the session
-  or track ends.
-- `SnapshotIngestTask`: keeps the newest snapshot per relay in
-  `LatestSnapshots` and buffers every snapshot's rows for the periodic
-  ClickHouse INSERT (`snapshot_rows::SnapshotRows`, see Storage).
 - `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
-  - `GET /api/snapshots` — the newest snapshot of every relay that sent one
-    in the last 10 s (`RELAY_SILENCE`, timed by arrival here), from memory, so
-    a stopped relay leaves the live view instead of freezing on its last
-    state.
+  - `POST /api/client-telemetry` — a client's logs, player stats and spans (see
+    Client telemetry); 404 unless an OTLP endpoint is set.
+  - `GET /api/snapshots` — the newest snapshot of every relay that logged one
+    in the last 10 s (`RELAY_SILENCE`, by the snapshot's time), so a stopped
+    relay leaves the live view instead of freezing on its last state. The
+    relay's batch exporter (1 s) and the collector's batch (5 s) make it
+    trail the relay by up to about 6 s.
   - `GET /api/snapshots?at=<ms>&previous=<ms>` — `{ snapshots, previous }`:
     each relay's last snapshot at or before `at`, and at or before
     `previous`, if it published one in the 10 s before that time. The page
     sends `previous` 2 s before `at` to derive rates. One scan reads both, so
     `previous` must lie within 10 s before `at` (400 otherwise).
   - `GET /api/namespaces?from=…&to=…[&app_id=…]` — every namespace with a
-    track in the range (from `track_stats`, at most 1000, `observability/…`
-    excluded), with its tracks, relays, first / last time seen and the
+    track in the range (from `track_stats`, at most 1000), with its tracks, relays, first / last time seen and the
     number of distinct client subscriptions, plus the range's totals of
     client subscriptions and client sessions.
   - `GET /api/series?relay_id=…&target=process|relay|session|track|subscription&…&from=…&to=…&points=…`
@@ -219,13 +223,19 @@ cards remain distinguishable. Relay addresses stay unmasked because the page
 needs them to identify inter-relay sessions. ClickHouse keeps the unmasked
 addresses.
 
-The browser polls the server instead of subscribing over MoQT itself: one data
-path for live and history, and no relay tokens in the browser.
+The browser polls the server instead of reading ClickHouse or subscribing
+over MoQT itself: one data path for live and history, and no credentials in
+the browser.
 
 ## Storage (ClickHouse, self-hosted)
 
-`schema.rs` creates five MergeTree tables, all keyed by `relay_id` and
-`timestamp_ms` with `ts DateTime64(3, 'UTC')` derived from it:
+The collector writes each snapshot record into `otel.otel_logs` with the
+relays' other logs (7-day TTL, `HYPERDX_OTEL_EXPORTER_TABLES_TTL`), where
+HyperDX finds it by `relay.id`. That table is ordered by time and service,
+not by relay, and its granules hold 8192 rows, so the API does not query it.
+Instead `schema.rs` creates five MergeTree tables in the `observability`
+database, all keyed by `relay_id` and `timestamp_ms` with
+`ts DateTime64(3, 'UTC')` derived from it:
 
 | Table | Rows per snapshot | Extra key |
 | --- | --- | --- |
@@ -235,6 +245,23 @@ path for live and history, and no relay tokens in the browser.
 | `track_stats` | one per track | `publisher_session_id, namespace, name` |
 | `subscription_stats` | one per subscription | `subscriber_session_id, request_id` |
 
+and, for each, a materialized view `<table>_from_otel` from `otel.otel_logs`
+(`EventName = 'relay.stats.snapshot'`): ClickHouse runs it on every block the
+collector inserts, extracting each column from the snapshot JSON (an array
+element per row for sessions, tracks and subscriptions). The views are
+generated from the same column list as the tables, so a column added to a
+table is filled from the field of the same name. A field missing from an
+older relay's snapshot reads as 0 or `NULL`; a field with no column is
+ignored. The collector inserts at most once per 5 s (its batch timeout), so a
+table gets a part per 5 s, within ClickHouse's advice of about one INSERT per
+second per table.
+
+`schema::apply` drops the views, creates the tables and adds missing
+columns, rebuilds a table whose settings changed (below), then waits until
+the collector has created `otel.otel_logs` and creates the views again. The
+snapshots logged while the views are gone, a few seconds per server
+restart, are not copied, but they stay in `otel.otel_logs`.
+
 Every table is `PARTITION BY toYYYYMMDD(ts)` with
 `TTL toDateTime(ts) + INTERVAL 7 DAY` and `ttl_only_drop_parts = 1`, so old
 data leaves a whole day partition at a time; there is no capacity-based
@@ -243,27 +270,121 @@ few KB make the default granule about 1500 rows, so a `?at=` lookup of one row
 per relay decompressed thousands of payloads, and a seek bar drag sends one
 lookup per step. ClickHouse cannot change `index_granularity` on an existing
 table, so `schema::apply` rebuilds a table whose `engine_full` lacks its
-settings at startup, before ingestion starts: it copies the rows into
+settings, while no view inserts into it: it copies the rows into
 `<table>_rebuild`, swaps the two with `EXCHANGE TABLES` and drops the old
 data. The copy needs free disk for a second copy of the table.
-`SnapshotIngestTask` keeps the rows of the snapshots it receives in
-memory and, every 30 seconds, sends one synchronous INSERT per table, so a
-table gets one part per 30 seconds instead of one per relay snapshot. Parts
-created that often kept the merges busy: each merge rewrites the whole day
-part of a small table, and ClickHouse's documentation asks for batches of at
-least 1000 rows and about one INSERT per second per table at most. Alternative
-considered: server-side `async_insert`; it still costs one HTTP request per
-relay and table every second, and with `wait_for_async_insert = 0` a failed
-flush shows only in the ClickHouse log. A failed INSERT is logged and its batch
-dropped, and a restart loses the snapshots of the last interval, so charts
-trail the live view by up to 30 seconds. Inserts set `input_format_skip_unknown_fields`, so a
-field added to `relay-stats` is ignored until a column exists for it.
 Tables are created with `IF NOT EXISTS`, and every startup also runs
 `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for each column, so a database
 created by an older build gains the columns added since. A removed or retyped
 column still needs a hand-written `ALTER TABLE` (or a fresh database).
 
-ClickHouse runs as a `docker-compose.yml` service next to the relays.
+ClickHouse and the ClickStack services (collector, HyperDX on port 8080) run
+as `docker-compose.yml` services next to the relays; the relays send
+snapshots only with `OTEL_SDK_DISABLED=false`.
+
+Alternatives considered: OTLP metrics from the relay, read from
+`otel_metrics_*`, would chart in HyperDX but at the export interval
+(10 s or more), one row per metric and entity, and without the relations
+between sessions, tracks and subscriptions; querying the snapshot JSON in
+`otel.otel_logs` directly would parse a week of payloads for a 7-day chart.
+
+### Relay gauges
+
+The page reads the tables above, but HyperDX dashboards and alerts read
+`otel_metrics_*`. So the relay also records each snapshot's `process` values
+as OTLP gauges (`telemetry::relay_stats::ProcessGauges`), exported every 10 s
+with resource `service.name=relay` and `relay.id`:
+
+| Metric | Unit | `process` field |
+| --- | --- | --- |
+| `relay.process.rss` | By | `rss_bytes` (no point when unknown) |
+| `relay.cache.tracks` | {track} | `cache_tracks` |
+| `relay.cache.objects` | {object} | `cache_objects` |
+| `relay.cache.payload` | By | `cache_payload_bytes` |
+| `relay.disk_cache.payload` | By | `disk_cache_bytes` |
+| `relay.disk_cache.max` | By | `disk_cache_max_bytes` |
+| `relay.client_sessions` | {session} | `client_sessions` |
+| `relay.draining` | 1 | 1 while `draining_since_ms` is set, else 0 |
+
+Per-session, per-track and per-subscription values are not gauges: each
+session would add a series, and their relations exist only in the snapshot.
+
+## Client telemetry
+
+Clients (browser pages, `moq-cli`, the Python bots) cannot reach the
+collector, which listens only inside the VPC, so they post to the
+observability server behind its public load balancer, which converts the
+report to OTLP/JSON and forwards it (`client_telemetry`).
+
+- **Request.** `POST /api/client-telemetry` with a JSON body
+  `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields, traceId?, spanId? }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.
+  `service` is `browser` (the default), `moq-cli` or `python`; any other value
+  answers 400, so a client cannot log as a relay. `page` names the page, the
+  CLI subcommand or the bot. `clientId` is generated once per page load or
+  process. The server does not read `Content-Type`: browsers send
+  `text/plain`, a CORS simple request that `navigator.sendBeacon` can send
+  and that needs no preflight.
+- **Limits.** The body is at most 64 KiB (413), a report carries at most 100
+  logs, 100 stats and 100 spans, the ids of spans and logs must be 32 (trace) or 16 (span)
+  hex digits, `clientId`, `page`, `trackNamespace` and `mediaSource`
+  at most 128 characters (400).
+  Each client address has a token bucket of 10 reports refilled at 1 per
+  second (429). The address is the second-to-last `X-Forwarded-For` entry,
+  which the Google Cloud load balancer appends after the client's own value,
+  or the TCP peer without the header.
+- **App.** A report with a `token` takes the `appId` the VTS returns for it,
+  after the server checks `exp` (the VTS checks only the signature); a
+  rejected token answers 401 and forwards nothing. A report without one is
+  `anon`, the app the relay gives an anonymous session. The server sets
+  `app_id` and `client_id` on every record, so a client cannot claim another
+  app's data. A browser page sends one report per token: the wasm module hands
+  each record to the page with the token of its session (see
+  `docs/architecture/wasm/browser-sdk.md`), and the records of no session or
+  of a session without a token go in a report without one. A client whose
+  token was answered 401 sends that token's later records without it, so they
+  arrive as `anon` instead of being rejected again (`examples/browser/utils/clientTelemetry.ts`,
+  `moq-cli`).
+- **Logs** become OTLP log records of resource `service.name` (the report's
+  `service`) and `page`, with `app_id`, `client_id`, `target` and the
+  client's fields as attributes, and are posted to
+  `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`. A log's `traceId` and `spanId` go on
+  its OTLP record.
+- **Spans** are the closed INFO spans of `moqt` in the browser's wasm module
+  (`init({ onSpan })`) and in `moq-cli`, chiefly the request spans
+  (`moqt.subscriber.subscribe`, …) and `moqt.session.connect` (see "Request spans" in
+  `docs/architecture/moqt/architecture.md`). Each becomes an OTLP span of the
+  same resource as the logs, kind INTERNAL, with `app_id`, `client_id` and
+  the span's fields as attributes. `outcome` sets the status: `ok` is OK,
+  `rejected` and `failed` are ERROR with the outcome as message. They are
+  posted to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, so they land in
+  `otel_traces` with `ServiceName` `browser` or `moq-cli`. The Python bots
+  send none yet. A request span's `traceparent` travels with the request
+  (`TRACE_CONTEXT`), so the relay's span for it is its child in the same
+  trace; `moqt.session.connect`'s travels in CLIENT_SETUP, so the relay's
+  `relay.session.setup` is its child.
+- **Stats** become metric points with `app_id` and `client_id`, posted to
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
+  once (meeting: each remote member's camera and screen share) sends one
+  sample per track with `trackNamespace` (`/`-joined, as the relay logs it)
+  and `mediaSource`, which become the `track_namespace` and `media_source`
+  attributes. Keys other than these are dropped:
+
+| Metric | Unit | Kind | `LiveStats` field |
+| --- | --- | --- | --- |
+| `client.player.viewer_delay` | ms | gauge | `viewerDelayMs` |
+| `client.player.buffer` | ms | gauge | `bufferMs` |
+| `client.player.received` | kbit/s | gauge | `receivedKbps` |
+| `client.player.audio_breaks` | {break} | cumulative sum | `audioBreaks` |
+| `client.player.audio_concealed` | ms | cumulative sum | `audioConcealedMs` |
+| `client.player.shed` | ms | cumulative sum | `shedMs` |
+| `client.player.arrival_spread` | ms | gauge | `arrivalSpreadMs` |
+| `client.player.av_sync_offset` | ms | gauge, positive when the picture is ahead of the sound | `syncOffsetMs` |
+| `client.player.video_dropped` | {frame} | cumulative sum | `videoDroppedFrames` |
+| `client.player.video_late` | {frame} | cumulative sum | `videoLateFrames` |
+| `client.player.max_arrival_gap` | ms | gauge, `media_kind` attribute | `maxArrivalGapMs` |
+| `client.player.arrival_delay` | ms | gauge, `media_kind` attribute; includes the publisher-to-viewer clock offset, which the audio-video difference cancels | `arrivalDelayMs` |
+
+A collector that does not accept the export answers 502.
 
 ## Browser page (`examples/browser/examples/observability`)
 

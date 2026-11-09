@@ -260,6 +260,13 @@ mod tests {
         }
     }
 
+    fn staged(focus: usize, strip: &[usize]) -> Stage {
+        Stage {
+            focus,
+            strip: strip.to_vec(),
+        }
+    }
+
     fn share(owner: usize) -> Source {
         Source {
             owner,
@@ -276,13 +283,7 @@ mod tests {
         let stage = Stage::choose(&sources, &[true, true, true], Some(1), Some(0)).unwrap();
 
         // Assert
-        assert_eq!(
-            stage,
-            Stage {
-                focus: 1,
-                strip: vec![0, 2]
-            }
-        );
+        assert_eq!(stage, staged(1, &[0, 2]));
         assert_eq!(
             stage.rects(&CompositeSettings::default()),
             [
@@ -302,13 +303,7 @@ mod tests {
         let stage = Stage::choose(&sources, &[true, false, true], Some(1), Some(2)).unwrap();
 
         // Assert
-        assert_eq!(
-            stage,
-            Stage {
-                focus: 2,
-                strip: vec![0]
-            }
-        );
+        assert_eq!(stage, staged(2, &[0]));
     }
 
     #[test]
@@ -320,13 +315,7 @@ mod tests {
         let stage = Stage::choose(&sources, &[false, true, true], None, Some(0)).unwrap();
 
         // Assert
-        assert_eq!(
-            stage,
-            Stage {
-                focus: 1,
-                strip: vec![2]
-            }
-        );
+        assert_eq!(stage, staged(1, &[2]));
     }
 
     #[test]
@@ -347,13 +336,7 @@ mod tests {
         let stage = Stage::choose(&sources, &[true; 4], Some(2), Some(3)).unwrap();
 
         // Assert
-        assert_eq!(
-            stage,
-            Stage {
-                focus: 1,
-                strip: vec![3, 0, 2]
-            }
-        );
+        assert_eq!(stage, staged(1, &[3, 0, 2]));
     }
 
     #[test]
@@ -365,13 +348,7 @@ mod tests {
         let stage = Stage::choose(&sources, &[true; 4], None, Some(1)).unwrap();
 
         // Assert
-        assert_eq!(
-            stage,
-            Stage {
-                focus: 1,
-                strip: vec![0, 2, 3]
-            }
-        );
+        assert_eq!(stage, staged(1, &[0, 2, 3]));
     }
 
     #[test]
@@ -383,22 +360,13 @@ mod tests {
         let stage = Stage::choose(&sources, &[true, false, true], Some(1), Some(1)).unwrap();
 
         // Assert
-        assert_eq!(
-            stage,
-            Stage {
-                focus: 2,
-                strip: vec![0]
-            }
-        );
+        assert_eq!(stage, staged(2, &[0]));
     }
 
     #[test]
     fn a_single_tile_fills_the_output() {
         // Arrange
-        let stage = Stage {
-            focus: 0,
-            strip: Vec::new(),
-        };
+        let stage = staged(0, &[]);
 
         // Act / Assert
         assert_eq!(
@@ -410,10 +378,7 @@ mod tests {
     #[test]
     fn a_long_strip_shrinks_its_tiles_to_the_output_height() {
         // Arrange: eight tiles in the strip, 90 px each in 720 px
-        let stage = Stage {
-            focus: 0,
-            strip: (1..=8).collect(),
-        };
+        let stage = staged(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
 
         // Act
         let rects = stage.rects(&CompositeSettings::default());
