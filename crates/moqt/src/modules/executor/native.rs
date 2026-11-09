@@ -48,7 +48,7 @@ pub(crate) async fn yield_now() {
     tokio::task::yield_now().await
 }
 
-pub(crate) async fn sleep(duration: Duration) {
+pub async fn sleep(duration: Duration) {
     tokio::time::sleep(duration).await
 }
 
