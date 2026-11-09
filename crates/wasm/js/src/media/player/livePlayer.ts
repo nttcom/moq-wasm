@@ -205,16 +205,22 @@ export class LivePlayer {
       this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
     })
     this.resizeObserver.observe(options.container)
-    this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, options, {
-      onPresented: (picture) => this.notePresentedFrame(picture),
-      onFrameShown: (ids, captureMicros) => {
-        const trackAlias = this.subscriptions.get('video')?.id
-        if (ids && trackAlias !== undefined) {
-          this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
+    this.locLive = new LocLive(
+      this.stage.liveVideo,
+      this.stage.liveCanvas,
+      options.livePicture,
+      {
+        onPresented: (picture) => this.notePresentedFrame(picture),
+        onFrameShown: (ids, captureMicros) => {
+          const trackAlias = this.subscriptions.get('video')?.id
+          if (ids && trackAlias !== undefined) {
+            this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
+          }
+          this.callbacks.onLiveFrame()
         }
-        this.callbacks.onLiveFrame()
-      }
-    })
+      },
+      options.audioContext
+    )
     this.locReview = new LocReview(
       this.stage.reviewCanvas,
       {

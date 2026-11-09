@@ -81,8 +81,9 @@ export class LocLive {
   constructor(
     video: HTMLVideoElement,
     canvas: HTMLCanvasElement,
-    { livePicture, audioContext }: { livePicture?: LivePictureKind; audioContext?: AudioContext },
-    private readonly callbacks: LocLiveCallbacks
+    livePicture: LivePictureKind | undefined,
+    private readonly callbacks: LocLiveCallbacks,
+    audioContext?: AudioContext
   ) {
     this.picture = createLivePictureSink(video, canvas, (picture) => callbacks.onPresented(picture), livePicture)
     this.playout = new LivePlayout(
