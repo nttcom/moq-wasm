@@ -12,7 +12,7 @@ sequenceDiagram
     participant P as pipecat bot
     participant D as d1-2B (Cloud Run)
     B->>R: prompt (anon/moq-camera-detection/{room}/camera)、{"questions": [{"type": "choice", "question": "...", "choices": ["はい", "いいえ"]}, {"type": "boxes", "target": "人"}]}
-    B->>R: video (anon/moq-camera-detection/{room}/camera)、1 キーフレーム 1 group
+    B->>R: catalog と camera (anon/moq-camera-detection/{room}/camera)、1 キーフレーム 1 group
     R->>P: 全オブジェクト（キーフレーム + 差分フレーム）
     P->>P: PyAV で H.264 をデコードし、0.1 秒ごとに 1 枚 JPEG に
     P->>D: /v1/systemone 画像 + 全質問（choice、boxes）を 1 リクエストで
@@ -78,7 +78,8 @@ Cloud relay で試すだけなら bot を起動する必要はありません。
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `anon/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`。適用するたびに 1 件 1 group で送る。質問は 1〜8 個。選択式 `{"type": "choice", "question", "choices"}` は質問 200 文字以内、選択肢 2〜9 個で各 40 文字以内。枠 `{"type": "boxes", "target"}` は 100 文字以内 |
-| `anon/moq-camera-detection/{room}/camera` | `video` | ブラウザ | H.264 Annex B（640x480、ソフトウェアエンコード）。キーフレームごとに group を始める |
+| `anon/moq-camera-detection/{room}/camera` | `catalog` | ブラウザ | MSF catalog。bot は LOC の映像 track のうち名前が一番短いもの（rendition は映像の名前を前に付ける）を購読する |
+| `anon/moq-camera-detection/{room}/camera` | `camera` | ブラウザ | H.264 Annex B（640x480、ソフトウェアエンコード）。キーフレームごとに group を始める |
 | `anon/moq-camera-detection/{room}/detector` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で判定したフレーム、`data.prompt` で使った prompt の位置を指す。`data.answers` は質問の順に、選択式は選んだ選択肢（選択肢外なら `null`）、枠は `[[left, top, right, bottom], ...]` |
 
 - bot は group ごとにデコーダを作って全フレームをデコードし、0.1 秒ごとに 1 枚を判定に回します。判定中のリクエストが 8 件に

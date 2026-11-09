@@ -18,6 +18,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
+from moq_camera_detection.catalog import camera_video_track
 from moq_camera_detection.detector import CameraDetector, CameraPicture
 from moq_system_one_bot.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt, parse_prompt
@@ -29,7 +30,7 @@ DEFAULT_PORT = 8098
 # SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
 DEMO_NAME = "moq-camera-detection"
-VIDEO_TRACK = "video"
+CATALOG_TRACK = "catalog"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
@@ -103,6 +104,19 @@ async def forward_pictures(video: moqt.Track, latest_prompt: LatestPrompt, worke
             )
 
 
+async def video_track_name(session: moqt.Session, camera_namespace: list[str]) -> str:
+    # The joining FETCH brings the catalog the relay holds for the page's other viewers.
+    catalog = await session.subscribe(camera_namespace, CATALOG_TRACK, current_group=True)
+    try:
+        async for catalog_object in catalog:
+            track = camera_video_track(catalog_object.payload)
+            if track:
+                return track
+    finally:
+        await catalog.unsubscribe()
+    raise RuntimeError("the catalog ended before it listed a video track")
+
+
 async def forward_camera(session: moqt.Session, camera_namespace: list[str], worker: PipelineWorker):
     while True:
         try:
@@ -110,7 +124,7 @@ async def forward_camera(session: moqt.Session, camera_namespace: list[str], wor
             prompts = await session.subscribe(camera_namespace, PROMPT_TRACK)
             following = asyncio.create_task(latest_prompt.follow(prompts))
             try:
-                video = await session.subscribe(camera_namespace, VIDEO_TRACK)
+                video = await session.subscribe(camera_namespace, await video_track_name(session, camera_namespace))
                 await forward_pictures(video, latest_prompt, worker)
                 logger.info("camera track ended")
             finally:
