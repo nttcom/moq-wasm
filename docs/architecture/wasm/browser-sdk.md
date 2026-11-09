@@ -309,6 +309,8 @@ listener になる。publisher がいないときの再購読と、catalog の P
 方法は採らない。番号に意味が無いので、映像 track が catalog に無いときに、どの音声が
 そのソースのものかを決められない。track 名は `publish()` の命名（`video` と `audio`、
 `addSource` の `<name>` と `<name>_audio`）をアプリが渡し、player は命名の規則を持たない。
+命名の規則は、player の上に置く `RemoteBroadcast` が持つ（「相手ごとに再生し、source を
+名前で扱う」）。
 `source` を `start` の引数でなく player のオプションにするのは、`start` の3つ目の引数が
 すでに `LiveTracks` で、meeting はソースごとに player を作るため。
 
@@ -330,6 +332,209 @@ listener になる。publisher がいないときの再購読と、catalog の P
    ブラウザ E2E（`run-meeting-e2e.mjs`）で守る。
 8. **refactor(wasm): `./media/*` の export を消す。** examples が内部パスを使わなく
    なってから行う。
+
+## 相手ごとに再生し、source を名前で扱う
+
+### 現状
+会議の画面を書くには、ページが次のものを組み合わせる（meeting の `remotePlayers.ts`）。
+
+- 受ける側は、相手1人に `BroadcastCatalog` を1つと、source ごとの `LivePlayer` を作る。
+  `source` には track 名を組み立てて渡し、画面共有の有無は catalog を `parseCatalog` と
+  `extractCatalogTracks` で読んで判定する。退室では `unlisten`、`dispose`、`close` を全部呼ぶ。
+- 送る側は、`publish()` の最初の source だけ名前が無く、track は `video`/`audio` になる。
+  `addSource(name)` は `<name>`/`<name>_audio`。`MediaStream` はページが自分で取る。
+- 送る側は source 名で書き、受ける側は track 名で書く。
+
+### 目標の利用コード
+
+```ts
+import { MoqSession } from 'moq-wasm'
+import { createBroadcast, watchBroadcasts, type RemoteBroadcast } from 'moq-wasm/media'
+import 'moq-wasm/media/player.css'
+
+const session = await MoqSession.connect(url, { token: () => fetchToken() })
+
+joinButton.onclick = async () => {
+  // 呼んだ時点で namespace を公開する
+  const local = await createBroadcast(session, ['room', 'alice'], { onError: console.error })
+  // SDK が getUserMedia する。加工した track もそのまま渡せる
+  const camera = await local.addSource('camera', { label: 'Camera', video: true, audio: true })
+  preview.srcObject = camera.stream
+
+  const remotes = watchBroadcasts(session, ['room'], {
+    filter: (namespace) => namespace.at(-1) !== 'transcriber',
+    onAdd: (remote) => addTile(remote),
+    onRemove: (remote) => removeTile(remote)
+  })
+  leaveButton.onclick = async () => {
+    await remotes.close()
+    await local.close()
+    session.close()
+  }
+}
+
+function addTile(remote: RemoteBroadcast) {
+  const tile = newTile(remote.namespace) // ページが作るタイル。ページが消す
+  remote.listen({
+    // 登録した時点で、今ある source が流し直される
+    onSourceAdd: (view) => {
+      tile.append(view.element) // SDK が作り、SDK が消す
+      view.listen({ onChange: () => tile.render(view.name, view.state) })
+    },
+    onSourceRemove: (view) => tile.forget(view.name),
+    onAudioLevel: (view, level) => tile.speaking(level)
+  })
+}
+```
+
+### source の名前
+source 名は、その source の映像 track の名前である。`createBroadcast` の `addSource(name)` は
+今の `addSource` の命名をすべての source に当てはめ、名前の無い source を作らない。
+
+| track | 名前 |
+| --- | --- |
+| 映像 | `<name>` |
+| 音声 | `<name>_audio` |
+| rendition | `<name>_<rendition>`（映像と同じ altGroup） |
+| CMAF の兄弟、media timeline | `broadcast` の今の命名（`_cmaf`、`_timeline`） |
+
+- source 名は識別子で、表示名は MSF の `label`（draft-ietf-moq-msf-01 §5.2.10）に入れる。
+  独自フィールドは足さない（変更7の見送りのまま）。
+- `addSource` は、空の名前、`catalog`、`_audio`・`_cmaf`・`_timeline` で終わる名前、ほかの
+  source の track と重なる名前を reject する。
+- `crates/broadcast` を使う配信元（live-ingest、onvif-ingest、gst-plugin-moqt）は
+  `video`/`audio` のままにする。受ける側には source `video` として見える。
+
+`RemoteBroadcast` は catalog から次の規則で source を読む。
+
+1. CMAF の兄弟と timeline は source を決めるのに使わない。player が今と同じく、source の
+   track から見つける。
+2. altGroup（§5.2.12）を共有する LOC track は1つの source にまとめる。その名前は、group の
+   中で一番短い名前の映像 track（映像が無ければ音声 track）に 3 を当てはめて決める。
+   rendition と、live-translate の言語ごとの音声はこれでまとまる。
+3. 残りの映像 track は、その名前の source になる。音声 track は、`<name>_audio` なら
+   source `<name>`、`audio` なら source `video`（`publish()` と `broadcast` の既定の命名）、
+   それ以外は自分の名前の、音声だけの source になる。
+4. source は、その track が catalog に1本でもある間は存在する。カメラを止めても音声が
+   残る間は `onSourceRemove` を呼ばず、view の `state.video` が `off` になるだけである。
+
+renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同じ。映像が catalog から
+抜けると、番号から source の名前を決められない。
+
+### 送る側: `createBroadcast` と `LocalSource`
+
+| API | 振る舞い |
+| --- | --- |
+| `createBroadcast(session, namespace, { offerChat?, onError? })` | 呼んだ時点で namespace を公開する。`onError` は encoder のエラーを受ける |
+| `local.addSource(name, input)` | source を足し、その track を catalog に載せる。デバイスの権限を拒否されたら `getUserMedia` のエラー（`NotAllowedError`）で reject する |
+| `local.source(name)` / `local.removeSource(name)` / `local.close()` | `close` は全 source の PUBLISH_DONE を送り、session は閉じない |
+| `source.setVideo(input \| false)` / `source.setAudio(input \| false)` | デバイスの切り替え。`false` はデバイスを離す |
+| `source.setMuted(kind, muted)` / `source.muted` | デバイスを掴んだまま、送るのを止める |
+| `source.stream` | 送っている track の `MediaStream`。自分のプレビューに使う。track を替えても同じ stream の中で差し替える |
+| `source.stats()` | encoder の bitrate、fps、keyframe の数、落としたフレームの数 |
+| `source.listen({ onEnded })` | source の track がすべて終わった（デバイスが抜かれた、ブラウザの「共有を停止」）。SDK は source を外してから呼ぶ |
+
+`input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` で、`video` と
+`audio` は次のどれかである。
+
+- `true` か `MediaTrackConstraints`：SDK が `getUserMedia` で取る。両方を指定したら1回の
+  呼び出しにまとめ、許可のダイアログを1回にする。
+- `MediaStreamTrack`：ページが取った track（ノイズキャンセリングや背景ぼかしをかけたもの）。
+  `stream` は、その最初の映像と音声の track を渡す糖衣。
+- `display`：SDK が `getDisplayMedia` で取る。user activation の中で呼ぶ。
+
+track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSource`、`close` で止める。
+ページが渡した track は止めない。
+
+ミュートと OFF は、相手からは同じに見える。どちらも track が catalog から抜け、view の
+`state` が `off` になる。違いは自分の側だけにある（OFF はカメラのランプも消える）。
+
+### 受ける側: `watchBroadcasts` と `RemoteBroadcast`
+
+`watchBroadcasts(session, prefix, { filter?, onAdd, onRemove })` は `session.watchNamespaces`
+の上で、公開された namespace ごとに `RemoteBroadcast` を作る。
+
+- ハンドラは呼び出しの引数で受ける。監視の開始と処理の開始を一致させ、作ってから代入する
+  間に届いた配信を取りこぼさない。返り値は `close()` だけを持つ。
+- 同じ session が `createBroadcast` した namespace は除く。別の session（別のタブ）が同じ
+  namespace で配信していれば除かない。
+- `filter` で、文字起こしボットのような参加者以外の配信を除く。深さではなく関数にするのは、
+  参加者と同じ深さにいる配信も除けるようにするため。
+- namespace が withdraw されたら、SDK が view と catalog を片付けてから `onRemove` を呼ぶ。
+
+`RemoteBroadcast` は1つの `BroadcastCatalog` を持ち、source ごとに view を作る。1人を
+見るだけのページは `new RemoteBroadcast(session, namespace)` を直接使う。
+
+| API | 振る舞い |
+| --- | --- |
+| `remote.listen({ onSourceAdd?, onSourceRemove?, onAudioLevel? })` | 登録した時点の source を `onSourceAdd` で流し直す（`BroadcastCatalog.listen` と同じ）。解除する関数を返す |
+| `remote.sources` | source 名から view への `ReadonlyMap` |
+| `remote.dispose()` | view と catalog を片付ける |
+| `view.name` / `view.label` | source 名と catalog の `label` |
+| `view.element` | SDK が作る描画要素。source が消えたら SDK が取り除く |
+| `view.state` / `view.listen({ onChange })` | `{ video: 'waiting' \| 'playing' \| 'off', audio: 'playing' \| 'off', videoSize? }` |
+| `view.setVolume(volume)` / `view.stats()` | `LivePlayer` の `setVolume`、`stats` |
+| `view.setVideoEnabled(enabled)` | 映像の購読を止めて音声を残す |
+| `view.player` | seek や track の選択など、ほかの `LivePlayer` の操作 |
+
+`view.element` の決まり:
+
+- 要素はページが与えた箱いっぱいに広がり、映像の収め方は CSS 変数 `--moq-object-fit`
+  で決める（既定は `contain`）。大きさはページの CSS が決める。
+- `data-source` に source 名を、`data-video` と `data-audio` に `state` の値を付ける。
+  アバターやマイクの印を、ページが CSS だけで描ける。
+- SDK は要素を IntersectionObserver で見て、画面外の間は映像の購読を止める。
+  `RemoteBroadcast` の option で切れる。ページが `setVideoEnabled(false)` にした view は
+  自動では戻さない。
+- ページは要素を別の場所に移してよい。同じタスクの中で移せば映像は止まらない。HTML の
+  media 要素が document から外れたときの一時停止は、安定状態になってもまだ外れている
+  ときにだけ起きる。canvas はもともと影響を受けない。テストで守る。
+
+### 音声の出力
+今の player は、届いた音声のサンプルレートで AudioContext を1つずつ作る
+（`audioPlayout.ts`）。レートの違う context で鳴らすと chunk ごとにリサンプルされ、
+つなぎ目が乱れるためである。これを、サンプルレートごとに1つの context をページの全
+player で共有する形に変える。共有の仕組みは `AudioPlayout` の `givenContext` がすでに
+持っている（`PlaybackGroup` が使う）。ブラウザの配信は Opus（48 kHz）なので、会議では
+context は実質1つになる。
+
+- `unlockAudio()` は user activation の中で共有の context を作って resume する。
+  `watchBroadcasts` の `onAdd` は click の外で起きるので、その後に作る player が鳴るように
+  するためである。
+- `setAudioOutput(deviceId)` は、共有の context すべてに `AudioContext.setSinkId` をかける。
+  Safari に `AudioContext.setSinkId` があるかは実機で確かめ、無ければ Safari ではスピーカー
+  を選べないことを README に書く。
+
+### session の後始末
+`MoqSession.connect` の option `closeOnPageHide`（既定は有効）で、`pagehide` のときに
+session を閉じる。リロードした人の古い session が relay に残る時間を短くする。
+
+### 移行の手順
+1手順を1 PR にする。
+
+1. **feat(recorder): source 名で録画する source を選ぶ。** 今の `SourceChoice::Main` は
+   名前が `video`・`audio`・`video_<rendition>` の track を持つ source を選ぶ。これに
+   `camera` の命名（`camera`、`camera_audio`、`camera_<rendition>`）を足す。ブラウザが
+   `camera` で配信する前に入れる。
+2. **feat(wasm): `createBroadcast` と `LocalSource`。** `publish()` は手順8で消すまで残す。
+3. **feat(wasm): `RemoteBroadcast`。** catalog から source を読む規則、`listen`、
+   `view.element` と CSS、`state`、`setVolume`、`stats`。
+4. **feat(wasm): 画面外の view の映像を自動で止める。** 要素を移しても止まらないことの
+   テストも足す。
+5. **feat(wasm): `watchBroadcasts`。** `filter` と、自分の配信を除くこと。
+6. **feat(wasm): 共有の AudioContext、`unlockAudio`、`setAudioOutput`。** Safari の
+   `setSinkId` を先に確かめる。
+7. **feat(wasm): `closeOnPageHide`。**
+8. **refactor(browser): meeting を `createBroadcast` と `watchBroadcasts` に移す。**
+   `remotePlayers.ts` と、`publish()` の呼び出しを消す。ブラウザ E2E
+   （`run-meeting-e2e.mjs`）で守る。そのあと残りの example を移し、`publish()` を消して
+   README を書き直す。
+
+入り直し（リロードした人の古い session が残る間の振る舞い）は、現象を再現して原因を
+確かめてから決める。relay は、同じ namespace を公開する session が残っている間は
+PUBLISH_NAMESPACE_DONE を流さない。namespace に SDK が一意な要素を足す方法は採らない。
+名前で配信を指す使い方（`['live', 'concert']`）と、namespace で配信を探す recorder や
+live-translate が影響を受けるためである。
 
 ## 録画を `LivePlayer` で再生する
 
@@ -523,8 +728,9 @@ publisher の timeline から始め、recorder の replay を VOD にしてか�
   持つことになる。手順 4 で replay ごと消す。MP4 の録画ファイルと合成はそのまま残る。
 - 録画の時刻を開始からの media time にする前の録画（room manifest の `version` が 1 のもの）。
   後方互換は持たず、replay しない。
-- カメラか画面共有かを catalog で示すこと。今は `renderGroup` と `label` で足りる。
-  画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える必要が出たときに決める。
+- カメラか画面共有かを catalog で示すこと。source 名（「相手ごとに再生し、source を名前で
+  扱う」）と `label` で足りる。画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える
+  必要が出たときに決める。
 
 ## core API
 
