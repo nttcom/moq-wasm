@@ -3,6 +3,7 @@ import { type Publication, publish } from 'moq-wasm/media'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../../utils/relayPresets'
+import { offeredVersions } from '../../../utils/moqtVersion'
 import { buildVideoEncoderConfig } from '../../media/videoEncoderConfig'
 import { generateBroadcastId } from '../broadcastId'
 import { type BroadcastAccess, openBroadcastAccess, viewerUrl } from '../liveTranslate'
@@ -44,7 +45,7 @@ async function startBroadcast(): Promise<void> {
       video: { width: { ideal: 1280 }, height: { ideal: 720 } }
     })
     element<HTMLVideoElement>('preview').srcObject = mediaStream
-    session = await MoqSession.connect(url, { token: access.token })
+    session = await MoqSession.connect(url, { token: access.token, versions: offeredVersions() })
     const namespace = access.namespace
     publication = await publish(session, namespace, mediaStream, {
       videoEncoderConfig: buildVideoEncoderConfig(mediaStream),

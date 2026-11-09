@@ -2,6 +2,7 @@ import { MoqSession } from 'moq-wasm'
 import 'moq-wasm/media/player.css'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
+import { offeredVersions } from '../../../utils/moqtVersion'
 import { relayUrlFromQuery, setUpRelayUrlControls } from '../../../utils/relayPresets'
 import { type BroadcastAccess, BROADCAST_ID_PARAM, openBroadcastAccess, translatedNamespace } from '../liveTranslate'
 import { TranslationPlayer, type TranslationPlayerStats } from './translationPlayer'
@@ -71,7 +72,7 @@ async function watch(): Promise<void> {
     if (access.relayUrl) {
       urlInput.value = access.relayUrl
     }
-    session = await MoqSession.connect(urlInput.value.trim(), { token: access.token })
+    session = await MoqSession.connect(urlInput.value.trim(), { token: access.token, versions: offeredVersions() })
     await player.start(session, translatedNamespace(access.namespace))
     renderOverlay()
   } catch (error) {

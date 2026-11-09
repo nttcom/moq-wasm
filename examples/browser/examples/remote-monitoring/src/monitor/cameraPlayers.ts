@@ -1,5 +1,5 @@
 import { MoqSession } from 'moq-wasm'
-import { connectToken, withNamespaceRoot } from '../../../../utils/access'
+import { connectOptions, withNamespaceRoot } from '../../../../utils/access'
 import { LivePlayer } from 'moq-wasm/media'
 import type { StatsSample } from '../../../../utils/clientTelemetry'
 import { reportRelay, sampleCameras } from '../telemetry'
@@ -20,7 +20,7 @@ export class CameraPlayers {
 
   async connect(relayUrl: string, onClosed: () => void): Promise<void> {
     reportRelay(relayUrl)
-    const session = await MoqSession.connect(relayUrl, { token: connectToken() })
+    const session = await MoqSession.connect(relayUrl, connectOptions())
     this.session = session
     sampleCameras(() => this.samples())
     void session.closed.then(() => {

@@ -1,5 +1,5 @@
 import { MoqSession, type MoqSubscription, type ReceivedObject } from 'moq-wasm'
-import { connectToken } from '../../../utils/access'
+import { connectOptions } from '../../../utils/access'
 import { LocLive } from 'moq-wasm/media/player/locLive'
 import { getResolvedMediaVideoCodec } from '../catalog'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
@@ -190,7 +190,7 @@ const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement
 connectBtn.addEventListener('click', async () => {
   const url = form.url.value
 
-  session = await MoqSession.connect(url, { token: connectToken() })
+  session = await MoqSession.connect(url, connectOptions())
   receivedObjectCounts.video = 0
   receivedObjectCounts.audio = 0
   setStatusText('subscriber-connection-status', `Connected: ${url}`)

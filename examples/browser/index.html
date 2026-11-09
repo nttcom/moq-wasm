@@ -90,6 +90,18 @@
         gap: 1rem;
       }
 
+      .hero-title {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 1rem;
+      }
+
+      .version-switch button {
+        padding: 0.35rem 0.9rem;
+        font-size: 0.85rem;
+      }
+
       .access-switch {
         display: inline-flex;
         gap: 4px;
@@ -508,7 +520,17 @@
     <main class="page">
       <section class="hero">
         <div class="hero-head">
-          <h1>MoQT Playground</h1>
+          <div class="hero-title">
+            <h1>MoQT Playground</h1>
+            <div class="access-switch version-switch" role="tablist" aria-label="MoQT draft">
+              <button type="button" role="tab" data-moqt-version="draft-14" data-testid="version-draft-14">
+                draft v14
+              </button>
+              <button type="button" role="tab" data-moqt-version="draft-18" data-testid="version-draft-18">
+                draft v18
+              </button>
+            </div>
+          </div>
           <div class="access-switch" role="tablist" aria-label="接続モード">
             <button type="button" role="tab" data-access-mode="temporary" data-testid="access-temporary">
               一時トークン
@@ -887,5 +909,6 @@
     </main>
     <script type="module" src="./utils/preserveQueryLinks.js"></script>
     <script type="module" src="./utils/accessSwitch.ts"></script>
+    <script type="module" src="./utils/versionSwitch.ts"></script>
   </body>
 </html>
