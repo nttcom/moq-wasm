@@ -18,7 +18,7 @@ const resolution = `${MP4_FIXTURE.width}x${MP4_FIXTURE.height}`
 /// Well under the 10 s the relay waits for a FETCH response the browser publisher never sends.
 const FIRST_VIDEO_TIMEOUT_MS = 5_000
 /// Two seconds of samples cover two 1 s audio groups of the fixture; an AAC frame
-/// is 21 ms, so the 200 ms playout buffer is about 10 cells and a whole group 47.
+/// is 21 ms, so a whole group is 47 cells and the playout buffer stays well under 30.
 const AUDIO_AHEAD_SAMPLES = 20
 const AUDIO_AHEAD_SAMPLE_INTERVAL_MS = 100
 const AUDIO_CELLS_AHEAD_LIMIT = 30
