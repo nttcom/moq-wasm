@@ -497,19 +497,14 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
   ときにだけ起きる。canvas はもともと影響を受けない。テストで守る。
 
 ### 音声の出力
-今の player は、届いた音声のサンプルレートで AudioContext を1つずつ作る
-（`audioPlayout.ts`）。レートの違う context で鳴らすと chunk ごとにリサンプルされ、
-つなぎ目が乱れるためである。これを、サンプルレートごとに1つの context をページの全
-player で共有する形に変える。共有の仕組みは `AudioPlayout` の `givenContext` がすでに
-持っている（`PlaybackGroup` が使う）。ブラウザの配信は Opus（48 kHz）なので、会議では
-context は実質1つになる。
-
-- `unlockAudio()` は user activation の中で共有の context を作って resume する。
-  `watchBroadcasts` の `onAdd` は click の外で起きるので、その後に作る player が鳴るように
-  するためである。
-- `setAudioOutput(deviceId)` は、共有の context すべてに `AudioContext.setSinkId` をかける。
-  Safari に `AudioContext.setSinkId` があるかは実機で確かめ、無ければ Safari ではスピーカー
-  を選べないことを README に書く。
+ページが1つの `AudioContext` を持ち、`RemoteBroadcast`（`watchBroadcasts` の option も
+同じ）の `audioContext` で渡す。各 view の `LivePlayer` は、その context で live の LOC の音を
+鳴らす（`LivePlayerOptions.audioContext`）。ページは user gesture の中でその context を
+resume し、スピーカーは `audioContext.setSinkId(deviceId)` で選ぶ。`watchBroadcasts` の
+`onAdd` は click の外で起きるが、ページが click の中で resume した context で鳴るので、後から
+入った人の音も聞こえる。SDK が context を作って持つ API（`unlockAudio`、`setAudioOutput`）
+は足さない。context をページが持てば、ページは resume、出力先、close の時機を自分で決められ、
+SDK は context を1つも持たずに済む。
 
 ### session の後始末
 `MoqSession.connect` の option `closeOnPageHide`（既定は有効）で、`pagehide` のときに
@@ -528,8 +523,7 @@ session を閉じる。リロードした人の古い session が relay に残�
 4. **feat(wasm): 画面外の view の映像を自動で止める。** 要素を移しても止まらないことの
    テストも足す。
 5. **feat(wasm): `watchBroadcasts`。** `filter` と、自分の配信を除くこと。
-6. **feat(wasm): 共有の AudioContext、`unlockAudio`、`setAudioOutput`。** Safari の
-   `setSinkId` を先に確かめる。
+6. **feat(wasm): `RemoteBroadcast` の `audioContext`。**
 7. **feat(wasm): `closeOnPageHide`。**
 8. **refactor(browser): meeting を `createBroadcast` と `watchBroadcasts` に移す。**
    `remotePlayers.ts` と、`publish()` の呼び出しを消す。ブラウザ E2E
