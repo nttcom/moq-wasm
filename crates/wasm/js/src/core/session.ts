@@ -173,9 +173,9 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
   /// Resolves once the publisher ends the subscription (PUBLISH_DONE), or to
   /// `undefined` once the session ends without one.
   readonly done: Promise<PublishDone | undefined>
-  /// The wasm object is freed once it is closed and no read awaits it: a read
-  /// in flight borrows it.
-  private reads = 0
+  /// A call in flight borrows the wasm object until it settles, so the object
+  /// is freed only after the last call.
+  private calls = 0
   private closed = false
   private freed = false
 
@@ -194,13 +194,13 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
 
   /// Every object, status objects excepted; ordered within a subgroup only.
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
-    yield* objects(() => this.read(() => this.inner.next()))
+    yield* objects(() => this.call(() => this.inner.next()))
   }
 
   /// Each subgroup stream, status objects included.
   async *groups(): AsyncIterable<MoqGroup> {
     for (;;) {
-      const group = await this.read(() => this.inner.nextGroup())
+      const group = await this.call(() => this.inner.nextGroup())
       if (!group) {
         return
       }
@@ -213,14 +213,14 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     }
   }
 
-  setForward(forward: boolean): Promise<void> {
-    return this.inner.setForward(forward)
+  async setForward(forward: boolean): Promise<void> {
+    await this.call(() => this.inner.setForward(forward))
   }
 
   /// Delivers the groups before `groupId`, after which the publisher ends the
   /// subscription.
-  endBeforeGroup(groupId: bigint, forward: boolean): Promise<void> {
-    return this.inner.endBeforeGroup(groupId, forward)
+  async endBeforeGroup(groupId: bigint, forward: boolean): Promise<void> {
+    await this.call(() => this.inner.endBeforeGroup(groupId, forward))
   }
 
   /// UNSUBSCRIBE. Reads end once the publisher stops the streams.
@@ -228,29 +228,25 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     if (this.closed) {
       return
     }
-    try {
-      await this.inner.close()
-    } finally {
-      this.closed = true
-      this.freeIfIdle()
-    }
+    this.closed = true
+    await this.call(() => this.inner.close())
   }
 
-  private async read<T>(next: () => Promise<T>): Promise<T | undefined> {
+  private async call<T>(send: () => Promise<T>): Promise<T | undefined> {
     if (this.freed) {
       return undefined
     }
-    this.reads += 1
+    this.calls += 1
     try {
-      return await next()
+      return await send()
     } finally {
-      this.reads -= 1
+      this.calls -= 1
       this.freeIfIdle()
     }
   }
 
   private freeIfIdle(): void {
-    if (this.closed && this.reads === 0 && !this.freed) {
+    if (this.closed && this.calls === 0 && !this.freed) {
       this.freed = true
       this.inner.free()
     }

@@ -134,6 +134,31 @@ test('a subscription closed while a read is in flight is freed only once the rea
   expect(freed).toBe(1)
 })
 
+test('a subscription closed while a forward update is in flight is freed only once the update returns', async () => {
+  // Arrange
+  let freed = 0
+  const { promise: forwardSet, resolve: resolveForward } = Promise.withResolvers<void>()
+  const subscription = new MoqSubscription(
+    wasmSubscription({
+      setForward: () => forwardSet,
+      free: () => {
+        freed += 1
+      }
+    })
+  )
+  const forwarding = subscription.setForward(true)
+
+  // Act
+  await subscription.close()
+  const freedWhileForwarding = freed
+  resolveForward()
+  await forwarding
+
+  // Assert
+  expect(freedWhileForwarding).toBe(0)
+  expect(freed).toBe(1)
+})
+
 function wasmNamespaceWatch(overrides: Record<string, unknown>) {
   return {
     next: sequence([]),
