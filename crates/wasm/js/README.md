@@ -96,6 +96,19 @@ const screen = publication.addSource('screen', await navigator.mediaDevices.getD
 await publication.close() // PUBLISH_DONE on every track; the session stays open
 ```
 
+`stats()` on the publication and on each added source returns what that
+source's encoders output over the last second, `encodedKbps` and
+`encodedFramesPerSecond`, and their `encoderErrors` since it was published.
+`video` also has the encoded `frameSize`, the `droppedFrames` the encoder
+worker closed before encoding because an encoder's queue was full or no
+encoder could be configured, and each rendition by name in `renditions`. A
+kind the source has no track of is `undefined`.
+
+```ts
+const { video, audio } = screen.stats()
+console.log(video?.encodedKbps, video?.frameSize, video?.droppedFrames, audio?.encoderErrors)
+```
+
 ## Playing a broadcast: `LivePlayer`
 
 `LivePlayer` subscribes to the catalog of a namespace, picks its video and

@@ -4,6 +4,7 @@ import type { AudioLevel } from './internal/loc'
 import { capturePcm } from './internal/encoders/pcmCapture'
 import { EncoderTimeline } from './internal/encoders/encoderTimeline'
 import { videoEncoderConfig } from './internal/encoders/videoEncoderConfig'
+import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './internal/encoders/publishStats'
 import { forwardSdkLog, receiveWorkerLog, sdkLog } from '../core/log'
 
 const TARGET = 'moq-wasm::media::publish'
@@ -55,6 +56,9 @@ export type SourcePublication = {
   /// bitrate the source was published with. Does nothing once the publication
   /// is closed.
   setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void
+  /// What the source's encoders output over the last second, and the frames
+  /// they dropped and their failures since it was published.
+  stats(): SourcePublicationStats
   /// Ends the tracks with PUBLISH_DONE. The session stays open.
   close(): Promise<void>
 }
@@ -173,14 +177,16 @@ function publishSource(
   const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
     source.addRendition(name, label, bitrate)
   )
+  const videoStats = new VideoEncodeStats((options.renditions ?? []).map(({ name }) => name))
+  const audioStats = new AudioEncodeStats()
   const encode = (kind: MediaKind, track: MediaStreamTrack) => {
     const timeline = new EncoderTimeline(
       Math.round((performance.timeOrigin + startedAtMs) * 1000),
       Math.round((performance.now() - startedAtMs) * 1000)
     )
     return kind === 'video'
-      ? encodeVideo(source, track, options, renditionIndices, timeline, report)
-      : encodeAudio(source, track, timeline, report)
+      ? encodeVideo(source, track, options, renditionIndices, timeline, videoStats, report)
+      : encodeAudio(source, track, timeline, audioStats, report)
   }
   const kinds = new Map<MediaKind, Encoding>()
   for (const [kind, track] of [
@@ -245,6 +251,10 @@ function publishSource(
         encoding.encoder = encode('video', encoding.track)
       }
     },
+    stats: () => ({
+      video: kinds.has('video') ? videoStats.stats() : undefined,
+      audio: kinds.has('audio') ? audioStats.stats() : undefined
+    }),
     close: () => {
       closed = true
       return serialized(async () => {
@@ -261,16 +271,23 @@ function encodeVideo(
   options: SourceOptions,
   renditionIndices: number[],
   timeline: EncoderTimeline,
+  stats: VideoEncodeStats,
   report: (error: unknown) => void
 ): Encoder {
   const worker = new Worker(new URL('./internal/encoders/videoEncoder.ts', import.meta.url), {
     type: 'module'
   })
-  worker.onerror = (event) => report(workerError('video', event))
+  worker.onerror = (event) => {
+    stats.encoderErrors++
+    report(workerError('video', event))
+  }
   const configuredCodecs: (string | undefined)[] = []
   worker.onmessage = (
     event: MessageEvent<
-      (ChunkMessage<EncodedVideoChunk, EncodedVideoChunkMetadata> | { type: 'configError' | 'encoderError' }) & {
+      (
+        | ChunkMessage<EncodedVideoChunk, EncodedVideoChunkMetadata>
+        | { type: 'configError' | 'encoderError' | 'frameDropped' }
+      ) & {
         rendition: number
       }
     >
@@ -278,7 +295,12 @@ function encodeVideo(
     if (receiveWorkerLog(event.data)) {
       return
     }
+    if (event.data.type === 'frameDropped') {
+      stats.droppedFrames++
+      return
+    }
     if (event.data.type === 'configError' || event.data.type === 'encoderError') {
+      stats.encoderErrors++
       report(new Error(`video encoder ${event.data.rendition}: ${event.data.type}`))
       return
     }
@@ -286,6 +308,7 @@ function encodeVideo(
       return
     }
     const { chunk, metadata, rendition, captureTimestampMicros } = event.data
+    stats.add(rendition, chunk, metadata)
     const timestampMicros = timeline.place(chunk.timestamp, captureTimestampMicros)
     const renditionIndex = rendition === 0 ? undefined : renditionIndices[rendition - 1]
     try {
@@ -346,20 +369,36 @@ function encodeAudio(
   source: MediaSource,
   track: MediaStreamTrack,
   timeline: EncoderTimeline,
+  stats: AudioEncodeStats,
   report: (error: unknown) => void
 ): Encoder {
   const worker = new Worker(new URL('./internal/encoders/audioEncoder.ts', import.meta.url), {
     type: 'module'
   })
-  worker.onerror = (event) => report(workerError('audio', event))
+  worker.onerror = (event) => {
+    stats.encoderErrors++
+    report(workerError('audio', event))
+  }
   let configured = false
   worker.onmessage = (
-    event: MessageEvent<ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel }>
+    event: MessageEvent<
+      | (ChunkMessage<EncodedAudioChunk, EncodedAudioChunkMetadata> & { audioLevel?: AudioLevel })
+      | { type: 'configError' | 'encoderError' }
+    >
   ) => {
-    if (receiveWorkerLog(event.data) || event.data.type !== 'chunk') {
+    if (receiveWorkerLog(event.data)) {
+      return
+    }
+    if (event.data.type === 'configError' || event.data.type === 'encoderError') {
+      stats.encoderErrors++
+      report(new Error(`audio encoder: ${event.data.type}`))
+      return
+    }
+    if (event.data.type !== 'chunk') {
       return
     }
     const { chunk, metadata, audioLevel, captureTimestampMicros } = event.data
+    stats.add(chunk)
     const timestampMicros = timeline.place(chunk.timestamp, captureTimestampMicros)
     try {
       const config = metadata?.decoderConfig

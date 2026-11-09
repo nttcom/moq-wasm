@@ -1,4 +1,3 @@
-import { createBitrateLogger } from '../bitrate'
 import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
 import { fitEncodeSize } from './encodeSize'
@@ -12,10 +11,6 @@ let capturedTrack: MediaStreamTrack | undefined
 // Default keeps periodic keyframes alive even before the first keyframeInterval message.
 let keyframeInterval: number = 30
 let forceNextKeyframe = false
-
-const videoBitrateLogger = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', kbps })
-})
 
 /// One encoder of the stream's frames. Rendition 0 takes `encoderConfig`;
 /// `renditionConfigs`, which must arrive before `videoStream`, adds the others.
@@ -98,7 +93,6 @@ class Rendition {
         codec: metadata?.decoderConfig?.codec ?? 'none'
       })
     }
-    videoBitrateLogger.addBytes(chunk.byteLength)
     const { init, captureTimestampMicros } = this.captureTimestamps.restamp(chunk)
     const encodeDoneTimestampMicros = monotonicUnixMicros()
     self.postMessage({
@@ -161,6 +155,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       frameCounter = 0
       if (!(await initializeEncoders())) {
         workerLog('error', TARGET, 'encoders failed to initialize, frame dropped')
+        self.postMessage({ type: 'frameDropped' })
         videoFrame.close()
         continue
       }
@@ -170,6 +165,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     const busiest = Math.max(...renditions.map((rendition) => rendition.encoder?.encodeQueueSize ?? 0))
     if (busiest > 5) {
       workerLog('debug', TARGET, 'encode queue full, frame dropped', { encode_queue_size: busiest })
+      self.postMessage({ type: 'frameDropped' })
       videoFrame.close()
       continue
     }
