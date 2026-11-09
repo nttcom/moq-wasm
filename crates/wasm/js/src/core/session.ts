@@ -23,9 +23,13 @@ export type PublishDone = { readonly code: bigint; readonly reason: string }
 
 export type CloseInfo = { readonly code: number | undefined; readonly reason: string }
 
+export type MoqVersion = 'draft-14' | 'draft-18'
+
 export type MoqConnectOptions = {
   /// Called before each CLIENT_SETUP, a reconnect or a GOAWAY move included.
   token?: string | (() => Promise<string>)
+  /// The drafts offered to the relay, most preferred first; draft-14 only when omitted.
+  versions?: MoqVersion[]
 }
 
 export type PublishTrackOptions = {
@@ -91,7 +95,12 @@ export class MoqSession {
     const calledAtMs = performance.now()
     const moqt = await loadMoqt()
     const startedAtMs = performance.now()
-    const session = await moqt.Session.connect(url, options.token, Math.round(startedAtMs - calledAtMs))
+    const session = await moqt.Session.connect(
+      url,
+      options.token,
+      Math.round(startedAtMs - calledAtMs),
+      options.versions
+    )
     const elapsedMs = Math.round(performance.now() - startedAtMs)
     sdkLog('info', TARGET, 'session established', { transport: session.transport, duration_ms: elapsedMs })
     return new MoqSession(session)
