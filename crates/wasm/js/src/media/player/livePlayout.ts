@@ -1,0 +1,441 @@
+import { AudioPlayout } from './audioPlayout'
+import { type BufferPolicy, JitterBuffer } from './jitterBuffer'
+import { PlayoutClock, syncOffsetMs, type PlayoutOrigin } from './playoutClock'
+import type { MediaKind } from './trackContext'
+import { VideoPlayout } from './videoPlayout'
+
+export const DEFAULT_BUFFER_POLICY: BufferPolicy = { minimumMs: 200, maximumMs: Number.POSITIVE_INFINITY }
+export type CatchUp = 'speed-up' | 'skip' | 'off'
+/// What a sample whose time has passed does: moves the clock back by its
+/// miss, or is dropped so a fixed delay never grows.
+export type LateSamples = 'move-clock' | 'drop'
+const WARMUP_MS = 400
+const CATCH_UP_COMPRESSION_RATE = 1.1
+const CATCH_UP_EXCESS_MS = 20
+const MAX_CATCH_UP_MS = 400
+const MICROS_PER_MILLI = 1_000
+
+type Held = { captureMicros: number; arrivedAtMs: number } & (
+  { kind: 'video'; frame: VideoFrame } | { kind: 'audio'; audioData: AudioData }
+)
+
+/// Live LOC playback. Both decoders hand over samples as soon as they are
+/// decoded and one clock decides when each is presented, which is what keeps
+/// the picture and the sound together. The audio is the clock's master: it
+/// alone moves the clock, by the drift the audio device shows and by the
+/// misses it takes, so the sound never has to skip for the picture; the
+/// picture takes over only while no audio is playing. Every move of the clock
+/// applies from the sample that caused it on, so the frames waiting for their
+/// time move with the sound they belong to. A sample without a capture
+/// timestamp is presented at once and leaves the clock alone.
+///
+/// Playback opens with a warm-up: a subscription starts with a burst of what
+/// the relay had cached of the current groups, so the samples of the first
+/// `WARMUP_MS` are held and the clock is anchored on the newest of them. The
+/// burst is not observed; the buffer opens on the longest wait between two
+/// audio arrivals during the warm-up instead, because sources
+/// such as MPEG-TS over SRT deliver audio in bursts of a few hundred
+/// milliseconds. From then on the arrivals of both audio and video size the
+/// buffer, so a picture that arrives later than the sound is waited for. A
+/// buffer below its target grows by the misses it takes and, unless the
+/// catch-up is `off`, by stretching the audio while it is more than
+/// `CATCH_UP_EXCESS_MS` under. Once the buffer has settled, one above its
+/// target is shed as the catch-up asks: `speed-up` compresses the audio while
+/// it is more than `CATCH_UP_EXCESS_MS` over, `skip` drops the audio chunks
+/// that fit in the excess, `speed-up` skips too once it is more than
+/// `MAX_CATCH_UP_MS` over, and `off` keeps it. Whatever is older than the
+/// buffer is dropped rather than played late. Pausing drops what arrives, and
+/// resuming warms up again at the live edge.
+export class LivePlayout {
+  private readonly clock = new PlayoutClock()
+  private readonly jitterBuffer = new JitterBuffer(DEFAULT_BUFFER_POLICY)
+  private readonly audio = new AudioPlayout((driftMs, captureMicros) => this.shiftClock(driftMs, captureMicros))
+  private readonly video: VideoPlayout
+  private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
+  private newestAudioCaptureMicros: number | undefined
+  /// Audio that joins a playing picture is dropped while it is older than the
+  /// picture (`beforeMicros`), so the relay's cached burst cannot push the
+  /// clock, and the picture with it, back by the burst's age. The drop ends at
+  /// `untilMs` so that audio that is always behind the picture still plays.
+  private audioJoin: { beforeMicros: number; untilMs: number } | undefined
+  private paused = false
+  private catchUp: CatchUp = 'skip'
+  private lateSamples: LateSamples = 'move-clock'
+  private videoShedMs = 0
+  droppedLateAudio = 0
+  droppedLateVideo = 0
+
+  constructor(showVideo: (frame: VideoFrame) => void, onTimeline?: (origin: PlayoutOrigin | undefined) => void) {
+    this.video = new VideoPlayout(showVideo)
+    if (onTimeline) {
+      this.clock.setOriginListener(onTimeline)
+    }
+  }
+
+  /// `arrivedAtMs` is when the frame's object arrived, before any wait for
+  /// decoding.
+  presentVideo(frame: VideoFrame, arrivedAtMs = performance.now()): void {
+    if (this.paused) {
+      frame.close()
+      return
+    }
+    const captureMicros = frame.timestamp
+    if (!captureMicros) {
+      this.video.present(frame, performance.now())
+      return
+    }
+    if (!this.clock.anchored) {
+      this.hold({ kind: 'video', frame, captureMicros, arrivedAtMs })
+      return
+    }
+    this.jitterBuffer.observe('video', captureMicros, arrivedAtMs)
+    const nowMs = performance.now()
+    const master = !this.audioActive()
+    if (master) {
+      const excessMs = this.excessMs()
+      if (excessMs !== undefined && excessMs > MAX_CATCH_UP_MS) {
+        this.shiftClock(-excessMs, captureMicros)
+        this.videoShedMs += excessMs
+      }
+    }
+    if (this.lateSamples === 'drop' && this.isLate(captureMicros, nowMs, 0)) {
+      frame.close()
+      this.droppedLateVideo += 1
+      return
+    }
+    this.video.present(frame, this.playoutTime(captureMicros, nowMs, master))
+  }
+
+  /// A frame the relay had cached before the subscription started is shown at
+  /// once and leaves the clock and the buffer alone: it can be minutes old
+  /// when the picture has not changed since, and anchoring on it would hold
+  /// the live frames back by as much.
+  presentCachedVideo(frame: VideoFrame): void {
+    if (this.paused) {
+      frame.close()
+      return
+    }
+    this.video.present(frame, performance.now())
+  }
+
+  playAudio(audioData: AudioData, captureMicros: number | undefined): void {
+    if (this.paused) {
+      audioData.close()
+      return
+    }
+    this.audio.prepare(audioData.sampleRate)
+    if (!captureMicros) {
+      this.audio.play(audioData, undefined, (nowMs) => nowMs)
+      audioData.close()
+      return
+    }
+    if (!this.clock.anchored) {
+      this.hold({ kind: 'audio', audioData, captureMicros, arrivedAtMs: performance.now() })
+      return
+    }
+    const arrivedAtMs = performance.now()
+    if (this.scheduleAudio(audioData, captureMicros)) {
+      this.jitterBuffer.observe('audio', captureMicros, arrivedAtMs)
+    }
+  }
+
+  /// Call when an audio track starts on a picture that is already playing,
+  /// before its first sample. The clock and the picture run on instead of
+  /// warming up again.
+  joinAudio(): void {
+    const nowMs = performance.now()
+    const beforeMicros = this.video.positionMicrosAt(nowMs + this.audio.scheduleAheadMs())
+    this.audioJoin = beforeMicros === undefined ? undefined : { beforeMicros, untilMs: nowMs + WARMUP_MS }
+    this.newestAudioCaptureMicros = undefined
+  }
+
+  setVolume(volume: number, rampSeconds?: number): void {
+    this.audio.setVolume(volume, rampSeconds)
+  }
+
+  /// A second audio stream, to be scheduled at `dueAt` of its capture timestamps.
+  openAudioInput(): AudioPlayout {
+    return this.audio.openInput()
+  }
+
+  /// Warms up again so a larger buffer applies to what arrives from now on;
+  /// what was already scheduled plays out on the old timeline.
+  setBufferPolicy(policy: BufferPolicy): void {
+    this.jitterBuffer.policy = policy
+    this.clock.reset()
+    this.newestAudioCaptureMicros = undefined
+  }
+
+  bufferPolicy(): BufferPolicy {
+    return this.jitterBuffer.policy
+  }
+
+  fixedBuffer(): boolean {
+    return this.jitterBuffer.fixed
+  }
+
+  setCatchUp(catchUp: CatchUp): void {
+    this.catchUp = catchUp
+  }
+
+  setLateSamples(lateSamples: LateSamples): void {
+    this.lateSamples = lateSamples
+  }
+
+  /// When a sample captured at `captureMicros` is due, on the page clock;
+  /// undefined until the clock is anchored.
+  dueAt(captureMicros: number): number | undefined {
+    return this.clock.dueAt(captureMicros)
+  }
+
+  audioPositionMicros(): number | undefined {
+    return this.audio.positionMicrosAt(performance.now())
+  }
+
+  targetBufferMs(): number {
+    return this.jitterBuffer.targetMs(this.audioActive() ? this.audio.scheduleAheadMs() : 0)
+  }
+
+  /// Capture-to-arrival delay of the window's fastest sample; plus `bufferMs`
+  /// it gives the shown delay. Arrivals use the page clock and captures the
+  /// Unix clock, so `performance.timeOrigin` converts between them.
+  fastestArrivalDelayMs(): number | undefined {
+    const fastestDelayMs = this.jitterBuffer.fastestDelayMs()
+    return fastestDelayMs === undefined ? undefined : fastestDelayMs + performance.timeOrigin
+  }
+
+  /// Median capture-to-arrival delay of the window's live samples of `kind`,
+  /// on the Unix clock like `fastestArrivalDelayMs`.
+  arrivalDelayMs(kind: MediaKind): number | undefined {
+    const medianDelayMs = this.jitterBuffer.medianDelayMs(kind)
+    return medianDelayMs === undefined ? undefined : medianDelayMs + performance.timeOrigin
+  }
+
+  arrivalSpreadMs(): number | undefined {
+    return this.jitterBuffer.spreadMs()
+  }
+
+  /// How long the audio device takes to play what it is handed. The buffer
+  /// covers it plus the concealment lead.
+  outputLatencyMs(): number {
+    return this.audioActive() ? this.audio.outputLatencyMs() : 0
+  }
+
+  /// How long the fastest arrival of the window waits before it is presented.
+  bufferMs(): number | undefined {
+    const offsetMs = this.clock.offsetMs
+    const fastestDelayMs = this.jitterBuffer.fastestDelayMs()
+    return offsetMs === undefined || fastestDelayMs === undefined ? undefined : offsetMs - fastestDelayMs
+  }
+
+  setPaused(paused: boolean): void {
+    if (this.paused === paused) {
+      return
+    }
+    this.paused = paused
+    if (paused) {
+      this.video.flush()
+      this.dropHeld()
+      this.audio.flush()
+      void this.audio.suspend()
+    } else {
+      this.clock.reset()
+      this.newestAudioCaptureMicros = undefined
+      void this.audio.resume()
+    }
+  }
+
+  reset(): void {
+    this.video.flush()
+    this.audio.flush()
+    this.dropHeld()
+    this.clock.reset()
+    this.jitterBuffer.reset()
+    this.newestAudioCaptureMicros = undefined
+  }
+
+  close(): void {
+    this.reset()
+    this.audio.close()
+  }
+
+  /// How many times the sound has not continued where the previous chunk
+  /// ended since playback started.
+  audioBreaks(): number {
+    return this.audio.breaks
+  }
+
+  /// Total time the sound has been concealed by repetition since playback
+  /// started.
+  audioConcealedMs(): number {
+    return this.audio.concealedMs
+  }
+
+  videoDroppedFrames(): number {
+    return this.video.dropped
+  }
+
+  videoLateFrames(): number {
+    return this.video.late
+  }
+
+  /// How much latency the catch-up has taken out since playback started.
+  shedMs(): number {
+    return this.audio.shedMs + this.videoShedMs
+  }
+
+  /// How far the picture on screen is ahead of the sound, from the capture
+  /// timestamps each was presented at.
+  syncOffsetMs(): number | undefined {
+    return syncOffsetMs(this.video, this.audio)
+  }
+
+  /// The capture timestamp presented now: the picture's, or the sound's while
+  /// no picture is shown.
+  positionMicros(): number | undefined {
+    const nowMs = performance.now()
+    return this.video.positionMicrosAt(nowMs) ?? this.audio.positionMicrosAt(nowMs)
+  }
+
+  /// The relay sends the groups of a fresh subscription on separate streams,
+  /// so a chunk of an older group can land after a newer one has been
+  /// scheduled. The write head has moved past it, and as master it would
+  /// drag the clock back, so it is dropped.
+  private scheduleAudio(audioData: AudioData, captureMicros: number): boolean {
+    if (this.audioJoin) {
+      if (captureMicros < this.audioJoin.beforeMicros && performance.now() < this.audioJoin.untilMs) {
+        audioData.close()
+        return false
+      }
+      this.audioJoin = undefined
+    }
+    if (this.newestAudioCaptureMicros !== undefined && captureMicros <= this.newestAudioCaptureMicros) {
+      audioData.close()
+      return false
+    }
+    this.newestAudioCaptureMicros = captureMicros
+    if (this.lateSamples === 'drop' && this.isLate(captureMicros, performance.now(), this.audio.outputLatencyMs())) {
+      audioData.close()
+      this.droppedLateAudio += 1
+      return false
+    }
+    const excessMs = this.excessMs() ?? 0
+    const durationMs = audioData.duration / MICROS_PER_MILLI
+    if (excessMs > durationMs && (this.catchUp === 'skip' || excessMs > MAX_CATCH_UP_MS)) {
+      this.audio.skip(audioData)
+      this.shiftClock(-durationMs, captureMicros)
+      audioData.close()
+      return true
+    }
+    this.audio.setCompressionRate(this.compressionRateFor(excessMs))
+    this.audio.play(audioData, captureMicros, (nowMs) => this.playoutTime(captureMicros, nowMs, true))
+    audioData.close()
+    return true
+  }
+
+  private isLate(captureMicros: number, nowMs: number, leadMs: number): boolean {
+    const due = this.clock.dueAt(captureMicros)
+    return due !== undefined && due < nowMs + leadMs
+  }
+
+  private compressionRateFor(excessMs: number): number {
+    if (this.catchUp === 'speed-up' && excessMs > CATCH_UP_EXCESS_MS) {
+      return CATCH_UP_COMPRESSION_RATE
+    }
+    if (this.catchUp !== 'off' && excessMs < -CATCH_UP_EXCESS_MS) {
+      return 1 / CATCH_UP_COMPRESSION_RATE
+    }
+    return 1
+  }
+
+  private excessMs(): number | undefined {
+    const bufferMs = this.bufferMs()
+    if (this.catchUp === 'off' || bufferMs === undefined || !this.jitterBuffer.settled) {
+      return undefined
+    }
+    return bufferMs - this.targetBufferMs()
+  }
+
+  private audioActive(): boolean {
+    return this.audio.positionMicrosAt(performance.now()) !== undefined
+  }
+
+  /// A master sample that misses its time is presented at once and pushes
+  /// the clock back by the miss so the samples behind it stay contiguous.
+  private playoutTime(captureMicros: number, nowMs: number, master: boolean): number {
+    const due = this.clock.dueAt(captureMicros) ?? nowMs
+    if (due >= nowMs) {
+      return due
+    }
+    if (master) {
+      this.shiftClock(nowMs - due, captureMicros)
+    }
+    return nowMs
+  }
+
+  private shiftClock(deltaMs: number, fromCaptureMicros: number): void {
+    this.clock.shift(deltaMs)
+    this.video.shift(deltaMs, fromCaptureMicros)
+  }
+
+  private hold(sample: Held): void {
+    this.warmup ??= { timer: setTimeout(() => this.endWarmup(), WARMUP_MS), held: [] }
+    this.warmup.held.push(sample)
+  }
+
+  private endWarmup(): void {
+    if (!this.warmup) {
+      return
+    }
+    const { held } = this.warmup
+    this.warmup = undefined
+    if (held.length === 0) {
+      return
+    }
+    const nowMs = performance.now()
+    const newest = Math.max(...held.map((sample) => sample.captureMicros))
+    this.clock.anchor(
+      newest,
+      nowMs + this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), longestArrivalGapMs(held))
+    )
+    for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
+      const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
+      if (due < nowMs) {
+        close(sample)
+      } else if (sample.kind === 'video') {
+        this.video.present(sample.frame, due)
+      } else {
+        this.scheduleAudio(sample.audioData, sample.captureMicros)
+      }
+    }
+  }
+
+  private dropHeld(): void {
+    if (!this.warmup) {
+      return
+    }
+    clearTimeout(this.warmup.timer)
+    for (const sample of this.warmup.held) {
+      close(sample)
+    }
+    this.warmup = undefined
+  }
+}
+
+function longestArrivalGapMs(held: Held[]): number {
+  const audio = held.filter((sample) => sample.kind === 'audio')
+  const arrivals = (audio.length > 1 ? audio : held).map((sample) => sample.arrivedAtMs).sort((a, b) => a - b)
+  let longest = 0
+  for (let i = 1; i < arrivals.length; i += 1) {
+    longest = Math.max(longest, arrivals[i] - arrivals[i - 1])
+  }
+  return longest
+}
+
+function close(sample: Held): void {
+  if (sample.kind === 'video') {
+    sample.frame.close()
+  } else {
+    sample.audioData.close()
+  }
+}

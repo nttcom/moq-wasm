@@ -31,6 +31,7 @@ const OUTPUT_AUDIO_CAPS: &str = "audio/x-raw,format=F32LE,layout=interleaved,rat
 
 /// One participant. An input without video only feeds the audio mix and
 /// takes no tile.
+#[derive(Default)]
 pub struct CompositeInput {
     pub video: Option<EventSource>,
     pub screen_share: Option<EventSource>,
@@ -451,16 +452,12 @@ fn forward_bus_messages(
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
-    use mediapack::{Timestamp, mp4::Mp4Index};
+    use mediapack::{Timestamp, loc::VideoCodec, mp4::Mp4Index};
 
     use super::*;
-    use crate::{
-        Rendition, Transcoder,
-        test_support::{
-            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
-            fixture_events, ivf_frames, shifted, source,
-        },
+    use crate::test_support::{
+        FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
+        fixture_events, fixture_video_samples, ivf_events, shifted, source, transcode_54p,
     };
 
     const SETTINGS: CompositeSettings = CompositeSettings {
@@ -495,32 +492,16 @@ mod tests {
         ))
     }
 
-    fn ivf_events(
-        file: &[u8],
-        parse: impl Fn(&Bytes) -> (bool, Option<VideoConfig>),
-    ) -> Vec<MediaEvent> {
-        let mut events = Vec::new();
-        for (index, data) in ivf_frames(file).into_iter().enumerate() {
-            let (is_keyframe, config) = parse(&data);
-            if let Some(config) = config {
-                events.push(MediaEvent::VideoConfig(config));
-            }
-            let pts = Timestamp::from_ticks(index as u64, 30);
-            events.push(MediaEvent::Video(VideoSample {
-                data,
-                is_keyframe,
-                pts,
-                dts: pts,
-            }));
-        }
-        events
-    }
-
-    async fn composite(inputs: Vec<CompositeInput>, output: &Path) -> Result<()> {
-        let mut compositor = Compositor::start(inputs, SETTINGS, output)?;
+    async fn composite(inputs: Vec<CompositeInput>, name: &str) -> Mp4Index {
+        let output = output_path(name);
+        let mut compositor = Compositor::start(inputs, SETTINGS, &output).unwrap();
         tokio::time::timeout(TIMEOUT, compositor.finished())
             .await
-            .context("compositor did not finish")?
+            .expect("compositor did not finish")
+            .unwrap();
+        let index = read_index(&output);
+        std::fs::remove_file(output).unwrap();
+        index
     }
 
     fn read_index(path: &Path) -> Mp4Index {
@@ -576,28 +557,25 @@ mod tests {
         let inputs = vec![
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
                 audio: source(audio_events()),
                 loudness: loudness(Timestamp::default()),
+                ..Default::default()
             },
             CompositeInput {
                 video: source(later_video),
-                screen_share: None,
                 audio: source(shifted(audio_events(), shift)),
                 loudness: loudness(shift),
+                ..Default::default()
             },
         ];
-        let output = output_path("two");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "two").await;
 
         // Assert
-        let index = read_index(&output);
         assert_output_size(&index);
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
         assert_duration(&index, expected_end);
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -614,20 +592,15 @@ mod tests {
         let events = first.into_iter().chain(second).collect();
         let inputs = vec![CompositeInput {
             video: source(events),
-            screen_share: None,
-            audio: None,
-            loudness: None,
+            ..Default::default()
         }];
-        let output = output_path("gap");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "gap").await;
 
         // Assert
-        let index = read_index(&output);
         assert!(index.audio.is_none());
         assert_duration(&index, expected_end);
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -640,24 +613,19 @@ mod tests {
             CompositeInput {
                 video: source(video_events()),
                 screen_share: source(share),
-                audio: None,
-                loudness: None,
+                ..Default::default()
             },
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
-                audio: None,
-                loudness: None,
+                ..Default::default()
             },
         ];
-        let output = output_path("share");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "share").await;
 
         // Assert
-        assert_duration(&read_index(&output), expected_end);
-        std::fs::remove_file(output).unwrap();
+        assert_duration(&index, expected_end);
     }
 
     #[tokio::test]
@@ -666,28 +634,21 @@ mod tests {
         decode_in_software();
         let inputs = vec![
             CompositeInput {
-                video: None,
-                screen_share: None,
                 audio: source(audio_events()),
-                loudness: None,
+                ..Default::default()
             },
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
-                audio: None,
-                loudness: None,
+                ..Default::default()
             },
         ];
-        let output = output_path("audio-only");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "audio-only").await;
 
         // Assert
-        let index = read_index(&output);
         assert_output_size(&index);
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -700,68 +661,44 @@ mod tests {
         };
         let inputs = vec![
             CompositeInput {
-                video: None,
-                screen_share: None,
                 audio: source(audio_events()),
                 loudness: loudness(Timestamp::default()),
+                ..Default::default()
             },
             CompositeInput {
-                video: None,
-                screen_share: None,
                 audio: source(shifted(audio_events(), shift)),
                 loudness: loudness(shift),
+                ..Default::default()
             },
         ];
-        let output = output_path("nobody-has-video");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "nobody-has-video").await;
 
         // Assert: an audio-only file
-        let index = read_index(&output);
         assert!(index.video.is_none());
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
     async fn decodes_vp8_vp9_and_av1_inputs() {
         // Arrange
-        let vp8 = ivf_events(FIXTURE_VP8_IVF, |data| {
-            let frame = mediapack::vp8::parse_frame(data).unwrap();
-            (frame.is_keyframe, frame.config.map(VideoConfig::Vp8))
-        });
-        let vp9 = ivf_events(FIXTURE_VP9_IVF, |data| {
-            let frame = mediapack::vp9::parse_frame(data).unwrap();
-            (frame.is_keyframe, frame.config.map(VideoConfig::Vp9))
-        });
-        let av1_config = std::sync::Mutex::new(None);
-        let av1 = ivf_events(FIXTURE_AV1_IVF, |data| {
-            let mut current = av1_config.lock().unwrap();
-            let unit = mediapack::av1::parse_temporal_unit(data, current.as_ref()).unwrap();
-            if let Some(config) = &unit.config {
-                *current = Some(config.clone());
-            }
-            (unit.is_keyframe, unit.config.map(VideoConfig::Av1))
-        });
+        let vp8 = ivf_events(VideoCodec::Vp8, FIXTURE_VP8_IVF);
+        let vp9 = ivf_events(VideoCodec::Vp9, FIXTURE_VP9_IVF);
+        let av1 = ivf_events(VideoCodec::Av1, FIXTURE_AV1_IVF);
         let inputs = [vp8, vp9, av1]
             .into_iter()
             .map(|events| CompositeInput {
                 video: source(events),
-                screen_share: None,
-                audio: None,
-                loudness: None,
+                ..Default::default()
             })
             .collect();
-        let output = output_path("codecs");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "codecs").await;
 
         // Assert
-        let index = read_index(&output);
         assert_output_size(&index);
-        std::fs::remove_file(output).unwrap();
     }
 
     #[tokio::test]
@@ -769,24 +706,11 @@ mod tests {
         // Arrange: the fixture at 160x90, then the same pictures re-encoded at 96x54
         decode_in_software();
         let first = video_events();
-        let mut transcoder = Transcoder::new(&[Rendition {
-            name: "54p".into(),
-            width: 96,
-            height: 54,
-            bitrate_kbps: 100,
-        }])
-        .unwrap();
-        let input = transcoder.input();
-        for event in &first {
-            if let MediaEvent::Video(sample) = event {
-                input.push(sample).unwrap();
-            }
-        }
-        input.finish().unwrap();
-        let mut smaller = Vec::new();
-        while let Some(output) = transcoder.next().await {
-            smaller.push(output.unwrap().event);
-        }
+        let smaller = transcode_54p(&fixture_video_samples())
+            .await
+            .into_iter()
+            .map(|output| output.event)
+            .collect();
         let smaller = shifted(
             smaller,
             video_end(&first).saturating_sub(Timestamp::from_micros(1_421_333)),
@@ -794,18 +718,14 @@ mod tests {
         let expected_end = video_end(&smaller);
         let inputs = vec![CompositeInput {
             video: source(first.into_iter().chain(smaller).collect()),
-            screen_share: None,
-            audio: None,
-            loudness: None,
+            ..Default::default()
         }];
-        let output = output_path("resize");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "resize").await;
 
         // Assert
-        assert_duration(&read_index(&output), expected_end);
-        std::fs::remove_file(output).unwrap();
+        assert_duration(&index, expected_end);
     }
 
     fn config_only(events: Vec<MediaEvent>) -> Vec<MediaEvent> {
@@ -827,38 +747,28 @@ mod tests {
         let inputs = vec![
             CompositeInput {
                 video: source(video_events()),
-                screen_share: None,
                 audio: source(config_only(audio_events())),
-                loudness: None,
+                ..Default::default()
             },
             CompositeInput {
                 video: source(config_only(video_events())),
-                screen_share: None,
                 audio: source(audio_events()),
-                loudness: None,
+                ..Default::default()
             },
         ];
-        let output = output_path("no-samples");
 
         // Act
-        composite(inputs, &output).await.unwrap();
+        let index = composite(inputs, "no-samples").await;
 
         // Assert
-        let index = read_index(&output);
         assert!(index.video.is_some());
         assert!(matches!(index.audio, Some(AudioConfig::Aac(_))));
-        std::fs::remove_file(output).unwrap();
     }
 
     #[test]
     fn rejects_inputs_without_media() {
         // Arrange
-        let inputs = vec![CompositeInput {
-            video: None,
-            screen_share: None,
-            audio: None,
-            loudness: None,
-        }];
+        let inputs = vec![CompositeInput::default()];
 
         // Act / Assert
         assert!(Compositor::start(inputs, SETTINGS, &output_path("empty")).is_err());

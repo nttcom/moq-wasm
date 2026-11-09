@@ -1,4 +1,4 @@
-import type { DeliveryObserver, Playhead, StreamKind } from '@player/deliveryObserver'
+import type { DeliveryObserver, Playhead, StreamKind } from 'moq-wasm/media'
 
 const DEFAULT_KEPT_GROUPS = 5
 export const DEFAULT_WINDOW_SECONDS = 10
@@ -31,6 +31,29 @@ export type StreamRecord = {
   /// FETCH streams span groups, so their arrivals are kept per group.
   receivedAtByGroup: Map<bigint, Map<bigint, number>>
   captureAtByGroup: Map<bigint, Map<bigint, number>>
+}
+
+function newStreamRecord(
+  kind: StreamKind,
+  trackAlias: bigint,
+  track: string,
+  groupId: bigint,
+  openedAt: number
+): StreamRecord {
+  return {
+    kind,
+    trackAlias,
+    track,
+    groupId,
+    lastGroupId: groupId,
+    openedAt,
+    bytes: 0,
+    objects: 0,
+    receivedAtByObjectId: new Map(),
+    captureAtByObjectId: new Map(),
+    receivedAtByGroup: new Map(),
+    captureAtByGroup: new Map()
+  }
 }
 
 /// Subgroup streams the viewer has received, keyed by track alias and group;
@@ -71,20 +94,13 @@ export class StreamMonitor implements DeliveryObserver {
     const key = `${trackAlias}:${groupId}`
     let record = this.records.get(key)
     if (!record) {
-      record = {
-        kind: 'subscribe',
+      record = newStreamRecord(
+        'subscribe',
         trackAlias,
-        track: this.labels.get(trackAlias) ?? `alias ${trackAlias}`,
+        this.labels.get(trackAlias) ?? `alias ${trackAlias}`,
         groupId,
-        lastGroupId: groupId,
-        openedAt: now,
-        bytes: 0,
-        objects: 0,
-        receivedAtByObjectId: new Map(),
-        captureAtByObjectId: new Map(),
-        receivedAtByGroup: new Map(),
-        captureAtByGroup: new Map()
-      }
+        now
+      )
       this.records.set(key, record)
     }
     return record
@@ -124,20 +140,7 @@ export class StreamMonitor implements DeliveryObserver {
     const key = `fetch:${requestId}`
     let record = this.records.get(key)
     if (!record) {
-      record = {
-        kind: 'fetch',
-        trackAlias: requestId,
-        track: `fetch ${track}`,
-        groupId: groupId,
-        lastGroupId: groupId,
-        openedAt: now,
-        bytes: 0,
-        objects: 0,
-        receivedAtByObjectId: new Map(),
-        captureAtByObjectId: new Map(),
-        receivedAtByGroup: new Map(),
-        captureAtByGroup: new Map()
-      }
+      record = newStreamRecord('fetch', requestId, `fetch ${track}`, groupId, now)
       this.records.set(key, record)
     }
     record.lastGroupId = groupId

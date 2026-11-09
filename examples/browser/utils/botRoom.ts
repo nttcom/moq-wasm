@@ -30,41 +30,37 @@ export function pageRoomId(): string {
   return created
 }
 
+export type BotRoomOptions = {
+  /// Reaches the bot of a room this request starts, such as the Meeting transcriber's `asr`.
+  query?: Record<string, string>
+  /// The page's temporary app token, read on every connection; with one, the room runs under the
+  /// token's app instead of the public root.
+  token?: () => string | undefined
+}
+
+/// What `EventSource` waits by default before it reopens a dropped stream.
+const RECONNECT_DELAY_MS = 3_000
+
 /// Keeps the room's bot running while the request is open (docs/architecture/ai-bots/on-demand-rooms.md).
+/// The stream is read with `fetch` rather than `EventSource`, which cannot send the token in a header.
 export class BotRoomRequest {
-  private source: EventSource | undefined
+  private abort: AbortController | undefined
   /// Set from the server's `member` event.
   private holdUrl: ((action: 'leave' | 'stop') => string) | undefined
   private readonly closeOnPageHide = () => this.close()
 
-  constructor(private readonly onEnd: (reason: BotRoomEnd) => void) {}
+  constructor(
+    private readonly onEnd: (reason: BotRoomEnd) => void,
+    private readonly reconnectDelayMs = RECONNECT_DELAY_MS
+  ) {}
 
-  /// `query` reaches the bot of a room this request starts, such as the Meeting transcriber's `asr`.
-  open(serviceUrl: string, roomId: string, query: Record<string, string> = {}): void {
+  open(serviceUrl: string, roomId: string, options: BotRoomOptions = {}): void {
     this.close()
     const roomUrl = `${serviceUrl}/rooms/${encodeURIComponent(roomId)}`
-    const source = new EventSource(`${roomUrl}?${new URLSearchParams(query)}`)
-    source.addEventListener('member', (event) => {
-      const member = new URLSearchParams({ member: (event as MessageEvent<string>).data })
-      this.holdUrl = (action) => `${roomUrl}/${action}?${member}`
-    })
-    for (const reason of Object.keys(BOT_ROOM_END_TEXT) as BotRoomEnd[]) {
-      source.addEventListener(reason, () => {
-        // EventSource reopens any stream the server ends.
-        this.close()
-        this.onEnd(reason)
-      })
-    }
-    // A response that is not an event stream, such as the 400 for a query the bot refuses, closes
-    // the source for good; a dropped stream leaves it reconnecting.
-    source.addEventListener('error', () => {
-      if (source.readyState === EventSource.CLOSED) {
-        this.close()
-        this.onEnd('failed')
-      }
-    })
-    this.source = source
+    const abort = new AbortController()
+    this.abort = abort
     window.addEventListener('pagehide', this.closeOnPageHide)
+    void this.hold(roomUrl, options, abort.signal)
   }
 
   /// Stops the bot for every page that holds the room, then closes the request; before the server's
@@ -83,13 +79,102 @@ export class BotRoomRequest {
   /// the room.
   close(): void {
     window.removeEventListener('pagehide', this.closeOnPageHide)
-    this.source?.close()
-    this.source = undefined
+    this.abort?.abort()
+    this.abort = undefined
     if (this.holdUrl) {
       void postWithoutPreflight(this.holdUrl('leave'))
       this.holdUrl = undefined
     }
   }
+
+  /// Reopens a stream that drops, as `EventSource` does. A response that is not an event stream, such
+  /// as the 400 for a query the bot refuses or the 401 for a token it refuses, ends the request.
+  private async hold(roomUrl: string, options: BotRoomOptions, signal: AbortSignal): Promise<void> {
+    const url = `${roomUrl}?${new URLSearchParams(options.query ?? {})}`
+    while (!signal.aborted) {
+      const token = options.token?.()
+      const response = await fetch(url, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: 'no-store',
+        signal
+      }).catch(() => undefined)
+      if (signal.aborted) {
+        return
+      }
+      if (response && (!response.ok || !response.body)) {
+        this.end('failed')
+        return
+      }
+      const reason = response?.body ? await this.readEvents(response.body, roomUrl, signal) : undefined
+      if (signal.aborted) {
+        return
+      }
+      if (reason) {
+        this.end(reason)
+        return
+      }
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, this.reconnectDelayMs)
+        signal.addEventListener('abort', () => {
+          clearTimeout(timer)
+          resolve(undefined)
+        })
+      })
+    }
+  }
+
+  /// The reason the server ended the room with, or `undefined` once the stream drops.
+  private async readEvents(
+    body: ReadableStream<Uint8Array>,
+    roomUrl: string,
+    signal: AbortSignal
+  ): Promise<BotRoomEnd | undefined> {
+    const reader = body.getReader()
+    const decoder = new TextDecoder()
+    signal.addEventListener('abort', () => void reader.cancel().catch(() => undefined))
+    let buffered = ''
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) {
+          return undefined
+        }
+        buffered += decoder.decode(value, { stream: true })
+        let boundary: number
+        while ((boundary = buffered.indexOf('\n\n')) >= 0) {
+          const { event, data } = parseEvent(buffered.slice(0, boundary))
+          buffered = buffered.slice(boundary + 2)
+          if (event === 'member') {
+            const member = new URLSearchParams({ member: data })
+            this.holdUrl = (action) => `${roomUrl}/${action}?${member}`
+          } else if (event && event in BOT_ROOM_END_TEXT) {
+            return event as BotRoomEnd
+          }
+        }
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  private end(reason: BotRoomEnd): void {
+    this.close()
+    this.onEnd(reason)
+  }
+}
+
+/// One event of the stream; comment lines, such as the server's heartbeat, have neither field.
+function parseEvent(block: string): { event: string | undefined; data: string } {
+  let event: string | undefined
+  let data = ''
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) {
+      event = line.slice('event:'.length).trim()
+    } else if (line.startsWith('data:')) {
+      data = line.slice('data:'.length).trim()
+    }
+  }
+  return { event, data }
 }
 
 /// Without a body or headers the POST needs no CORS preflight; keepalive outlives a closing tab.

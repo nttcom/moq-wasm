@@ -9,10 +9,12 @@ pub(crate) mod setup;
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
 };
+
+use bytes::BytesMut;
 
 use crate::{
     RequestFailure,
@@ -27,6 +29,7 @@ use crate::{
                         fetch_cancel::FetchCancel, publish_done::PublishDone,
                         publish_namespace_cancel::PublishNamespaceCancel,
                         publish_namespace_done::PublishNamespaceDone, request_error::RequestError,
+                        requests_blocked::RequestsBlocked, subscribe_update::SubscribeUpdate,
                         unsubscribe::Unsubscribe, unsubscribe_namespace::UnsubscribeNamespace,
                     },
                 },
@@ -35,15 +38,22 @@ use crate::{
             },
             data_plane::stream::bi_stream_sender::BiStreamSender,
             domains::{connection::Connection, session_context::SessionContext},
-            version::{self, Notification, OutgoingRequest, OutgoingResponse},
+            version::{
+                self, Notification, OutgoingRequest, OutgoingResponse, RequestIdReservation,
+            },
         },
         transport::transport_send_stream::TransportSendError,
     },
 };
 
-/// How to withdraw a request whose success response arrives after the caller
-/// stopped waiting (timeout or cancellation). Late error responses never need
-/// a withdrawal and are always discarded.
+/// The SETUP MAX_REQUEST_ID this side sends, and how far past the peer's next
+/// Request ID every later MAX_REQUEST_ID reaches. Request IDs step by 2, so it
+/// allows 500 requests.
+pub(super) const REQUEST_ID_WINDOW: RequestId = 1000;
+
+/// How to withdraw a request whose success response the caller abandons: by
+/// timing out, by cancelling, or by dropping the `ReceivedResponse` before
+/// `accept`. Error responses need no withdrawal and are discarded.
 #[derive(Debug)]
 enum LateResponseAction {
     /// For TRACK_STATUS, which leaves no state at the peer.
@@ -67,7 +77,7 @@ enum LateResponseAction {
 /// session, §9.1).
 enum InflightRequest {
     Waiting {
-        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+        sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
     },
     Abandoned(LateResponseAction),
@@ -79,23 +89,57 @@ struct InflightRequests {
     control_stream_closed: bool,
 }
 
+struct OutgoingRequestIds {
+    next: RequestId,
+    /// The peer's Maximum Request ID this side last sent REQUESTS_BLOCKED for.
+    blocked_on: Option<RequestId>,
+}
+
+pub(super) struct RequestIdViolation {
+    pub(super) code: TerminationErrorCode,
+    pub(super) reason: &'static str,
+}
+
 pub(crate) struct ControlChannel {
     send_stream: BiStreamSender,
-    request_id: AtomicU64,
-    /// The Request ID after the largest one the peer has used.
+    request_ids: tokio::sync::Mutex<OutgoingRequestIds>,
+    /// Exclusive upper bound for this side's Request IDs: the peer's SETUP or
+    /// MAX_REQUEST_ID (§9.5).
+    peer_request_id_limit: tokio::sync::watch::Sender<RequestId>,
+    /// The Request ID the peer must use for its next request.
     next_peer_request_id: AtomicU64,
+    /// Exclusive upper bound for the peer's Request IDs: the last SETUP or
+    /// MAX_REQUEST_ID this side sent.
+    request_id_limit: AtomicU64,
+    /// The Request ID after the last one this side wrote.
+    written_request_id_end: AtomicU64,
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
+    /// The peer's SETUP carried the TRACE_CONTEXT Setup Option.
+    pub(super) peer_reads_trace_context: bool,
 }
 
 impl ControlChannel {
     /// A client numbers its requests from 0 and a server from 1, each in
-    /// steps of two.
-    fn new(send_stream: BiStreamSender, first_request_id: RequestId) -> Self {
+    /// steps of two. `peer_request_id_limit` is the peer's SETUP
+    /// MAX_REQUEST_ID; its default 0 allows no request (§9.3.2.3).
+    fn new(
+        send_stream: BiStreamSender,
+        first_request_id: RequestId,
+        peer_request_id_limit: RequestId,
+        peer_reads_trace_context: bool,
+    ) -> Self {
         Self {
             send_stream,
-            request_id: AtomicU64::new(first_request_id),
-            next_peer_request_id: AtomicU64::new(1 - first_request_id),
+            request_ids: tokio::sync::Mutex::new(OutgoingRequestIds {
+                next: first_request_id,
+                blocked_on: None,
+            }),
+            peer_request_id_limit: tokio::sync::watch::Sender::new(peer_request_id_limit),
+            next_peer_request_id: AtomicU64::new(first_request_id ^ 1),
+            request_id_limit: AtomicU64::new(REQUEST_ID_WINDOW),
+            written_request_id_end: AtomicU64::new(first_request_id),
             inflight_requests: Arc::default(),
+            peer_reads_trace_context,
         }
     }
 
@@ -106,35 +150,113 @@ impl ControlChannel {
         channel
     }
 
-    pub(crate) fn next_request_id(&self) -> RequestId {
-        self.request_id.fetch_add(2, Ordering::SeqCst)
-    }
-
-    fn note_peer_request_id(&self, request_id: RequestId) {
-        if self.is_peer_request_id(request_id) {
-            self.next_peer_request_id
-                .fetch_max(request_id + 2, Ordering::SeqCst);
-        }
+    pub(super) async fn reserve_request_id(
+        &self,
+    ) -> Result<RequestIdReservation<'_>, RequestFailure> {
+        executor::timeout(
+            version::CONTROL_MESSAGE_RESPONSE_TIMEOUT,
+            self.wait_for_request_id(),
+        )
+        .await
+        .map_err(|()| RequestFailure::Timeout)
     }
 
     /// Whether either endpoint has used `request_id` in this session. Each
     /// endpoint uses its Request IDs in order (§9.1), so every one below its
     /// next has existed.
     fn request_id_has_existed(&self, request_id: RequestId) -> bool {
-        let next = if self.is_peer_request_id(request_id) {
+        let next = if request_id % 2 == self.next_peer_request_id.load(Ordering::Relaxed) % 2 {
             &self.next_peer_request_id
         } else {
-            &self.request_id
+            &self.written_request_id_end
         };
-        request_id < next.load(Ordering::SeqCst)
+        request_id < next.load(Ordering::Relaxed)
     }
 
-    fn is_peer_request_id(&self, request_id: RequestId) -> bool {
-        request_id % 2 == self.next_peer_request_id.load(Ordering::SeqCst) % 2
+    /// Waits while the next Request ID reaches the peer's Maximum Request
+    /// ID, sending one REQUESTS_BLOCKED per limit (§9.6).
+    async fn wait_for_request_id(&self) -> RequestIdReservation<'_> {
+        let mut request_ids = self.request_ids.lock().await;
+        let mut peer_request_id_limit = self.peer_request_id_limit.subscribe();
+        loop {
+            let limit = *peer_request_id_limit.borrow_and_update();
+            if request_ids.next < limit {
+                break;
+            }
+            if request_ids.blocked_on != Some(limit) {
+                request_ids.blocked_on = Some(limit);
+                tracing::debug!(
+                    maximum_request_id = limit,
+                    "requests blocked by the peer's Maximum Request ID"
+                );
+                let blocked = Notification::RequestsBlocked(RequestsBlocked::new(limit));
+                if let Err(error) = self.notify(blocked).await {
+                    tracing::debug!(%error, "failed to send REQUESTS_BLOCKED");
+                }
+            }
+            // `self` owns the sender, so this only returns on a new value.
+            let _ = peer_request_id_limit.changed().await;
+        }
+        RequestIdReservation(tokio::sync::MutexGuard::map(request_ids, |ids| {
+            &mut ids.next
+        }))
     }
 
+    /// Returns the Maximum Request ID to advertise once the peer has used half
+    /// the window, so a peer that keeps sending never blocks. Fails when the
+    /// Request ID is not `next_peer_request_id` (§9.1) or reaches the
+    /// advertised limit (§9.5).
+    fn accept_peer_request_id(
+        &self,
+        request_id: RequestId,
+    ) -> Result<Option<RequestId>, RequestIdViolation> {
+        let invalid = |reason| RequestIdViolation {
+            code: TerminationErrorCode::InvalidRequestId,
+            reason,
+        };
+        let next = self.next_peer_request_id.load(Ordering::Relaxed);
+        if request_id % 2 != next % 2 {
+            return Err(invalid("Request ID has the parity of the other endpoint"));
+        }
+        let limit = self.request_id_limit.load(Ordering::Relaxed);
+        if request_id >= limit {
+            return Err(RequestIdViolation {
+                code: TerminationErrorCode::TooManyRequests,
+                reason: "Request ID reaches the Maximum Request ID",
+            });
+        }
+        if request_id != next {
+            return Err(invalid("Request ID is not the next expected one"));
+        }
+        let next = request_id + 2;
+        self.next_peer_request_id.store(next, Ordering::Relaxed);
+        if limit.saturating_sub(next) >= REQUEST_ID_WINDOW / 2 {
+            return Ok(None);
+        }
+        let raised = next + REQUEST_ID_WINDOW;
+        self.request_id_limit.store(raised, Ordering::Relaxed);
+        Ok(Some(raised))
+    }
+
+    /// Fails unless `limit` is above the current one (§9.5).
+    fn raise_peer_request_id_limit(&self, limit: RequestId) -> Result<(), &'static str> {
+        let raised = self.peer_request_id_limit.send_if_modified(|current| {
+            let raised = limit > *current;
+            if raised {
+                *current = limit;
+            }
+            raised
+        });
+        raised
+            .then_some(())
+            .ok_or("MAX_REQUEST_ID does not increase the Maximum Request ID")
+    }
+
+    /// Writes the request before releasing `reservation`, so the peer
+    /// receives this side's Request IDs in increasing order.
     pub(super) async fn send_request(
         &self,
+        reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let (request_id, message_type, payload, on_late_response) = match request {
@@ -179,13 +301,43 @@ impl ControlChannel {
                 },
             ),
         };
+        debug_assert_eq!(request_id, reservation.request_id());
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let registered = self.register(request_id, sender, on_late_response);
-        self.send_stream.send(message_type, payload).await?;
+        self.send_with_request_id(reservation, message_type, payload)
+            .await?;
         Ok(PendingResponse {
             receiver,
             _registered: registered,
         })
+    }
+
+    pub(super) async fn send_subscribe_update(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscribe_update: SubscribeUpdate,
+    ) -> Result<(), TransportSendError> {
+        debug_assert_eq!(subscribe_update.request_id, reservation.request_id());
+        self.send_with_request_id(
+            reservation,
+            ControlMessageType::SubscribeUpdate,
+            subscribe_update.encode(),
+        )
+        .await
+    }
+
+    async fn send_with_request_id(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        message_type: ControlMessageType,
+        payload: BytesMut,
+    ) -> Result<(), TransportSendError> {
+        let RequestIdReservation(mut next_request_id) = reservation;
+        self.send_stream.send(message_type, payload).await?;
+        *next_request_id += 2;
+        self.written_request_id_end
+            .store(*next_request_id, Ordering::Relaxed);
+        Ok(())
     }
 
     pub(super) async fn respond(
@@ -226,7 +378,6 @@ impl ControlChannel {
     ) -> Result<(), TransportSendError> {
         let (message_type, payload) = match notification {
             Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, m.encode()),
-            Notification::SubscribeUpdate(m) => (ControlMessageType::SubscribeUpdate, m.encode()),
             Notification::PublishDone {
                 request_id,
                 code,
@@ -274,7 +425,7 @@ impl ControlChannel {
     fn register(
         &self,
         request_id: RequestId,
-        sender: tokio::sync::oneshot::Sender<ResponseMessage>,
+        sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
     ) -> RegisteredSender {
         let mut inflight = self
@@ -311,6 +462,10 @@ impl ControlChannel {
             .expect("inflight_requests poisoned");
         inflight.control_stream_closed = true;
         inflight.requests.clear();
+        drop(inflight);
+        // No MAX_REQUEST_ID can arrive anymore: release blocked requests so
+        // they fail like any request on a closed control stream.
+        self.peer_request_id_limit.send_replace(RequestId::MAX);
     }
 }
 
@@ -349,7 +504,7 @@ impl Drop for RegisteredSender {
 }
 
 pub(crate) struct PendingResponse {
-    receiver: tokio::sync::oneshot::Receiver<ResponseMessage>,
+    receiver: tokio::sync::oneshot::Receiver<ReceivedResponse>,
     _registered: RegisteredSender,
 }
 
@@ -357,7 +512,7 @@ impl PendingResponse {
     /// Bounds the wait (§12.2). A timeout fails only this request, so a shared
     /// (inter-relay) session survives one slow request; the entry stays
     /// `Abandoned` and a late response goes to `handle_late_response`.
-    pub(super) async fn response(self) -> Result<ResponseMessage, RequestFailure> {
+    pub(super) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
         match executor::timeout(version::CONTROL_MESSAGE_RESPONSE_TIMEOUT, self.receiver).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(RequestFailure::SessionClosed),
@@ -366,7 +521,72 @@ impl PendingResponse {
     }
 }
 
-/// Handles a response that arrived after the caller abandoned the request.
+/// A response on its way to the caller. Dropped before `accept`, while still
+/// in the channel or after the caller got it, it is withdrawn through
+/// `handle_late_response`.
+pub(crate) struct ReceivedResponse(Option<UnacceptedResponse>);
+
+struct UnacceptedResponse {
+    message: ResponseMessage,
+    session: Weak<SessionContext>,
+    connection: Weak<Connection>,
+    request_id: RequestId,
+    action: LateResponseAction,
+}
+
+impl ReceivedResponse {
+    fn new(
+        message: ResponseMessage,
+        session: &Arc<SessionContext>,
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+        action: LateResponseAction,
+    ) -> Self {
+        Self(Some(UnacceptedResponse {
+            message,
+            session: Arc::downgrade(session),
+            connection: Arc::downgrade(connection),
+            request_id,
+            action,
+        }))
+    }
+
+    // Only `accept` and `drop` take the response, and both consume `self`.
+    pub(super) fn message(&self) -> &ResponseMessage {
+        &self.0.as_ref().expect("taken only on consume").message
+    }
+
+    pub(super) fn accept(mut self) -> ResponseMessage {
+        self.0.take().expect("taken only on consume").message
+    }
+}
+
+impl Drop for ReceivedResponse {
+    fn drop(&mut self) {
+        let Some(unaccepted) = self.0.take() else {
+            return;
+        };
+        let (Some(session), Some(connection)) = (
+            unaccepted.session.upgrade(),
+            unaccepted.connection.upgrade(),
+        ) else {
+            return;
+        };
+        // A single fire-and-forget withdrawal needs no owned JoinHandle.
+        executor::try_spawn("Abandoned Response Withdrawal", async move {
+            handle_late_response(
+                &session,
+                &connection,
+                unaccepted.request_id,
+                unaccepted.action,
+                unaccepted.message,
+            )
+            .await;
+        });
+    }
+}
+
+/// Handles a response the caller abandoned, before or after it arrived.
 /// A success response means the peer holds state (subscription, namespace
 /// interest, ...) nobody on this side will consume, so send the matching
 /// withdrawal. A success response whose type does not match the request is a
@@ -385,11 +605,13 @@ async fn handle_late_response(
             LateResponseAction::Unsubscribe => {
                 tracing::warn!(
                     request_id,
-                    "SUBSCRIBE_OK arrived after the request was abandoned; sending UNSUBSCRIBE"
+                    "SUBSCRIBE_OK of an abandoned request; sending UNSUBSCRIBE"
                 );
                 session
                     .cancel_unclaimed_track_alias(connection, subscribe_ok.track_alias)
                     .await;
+                // The caller may have registered its data receiver before dropping the response.
+                session.cancel_subscription(connection, request_id).await;
                 channel
                     .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
                     .await
@@ -400,7 +622,7 @@ async fn handle_late_response(
             LateResponseAction::UnsubscribeNamespace { namespace } => {
                 tracing::warn!(
                     request_id,
-                    "SUBSCRIBE_NAMESPACE_OK arrived after the request was abandoned; sending UNSUBSCRIBE_NAMESPACE"
+                    "SUBSCRIBE_NAMESPACE_OK of an abandoned request; sending UNSUBSCRIBE_NAMESPACE"
                 );
                 channel
                     .notify(Notification::UnsubscribeNamespace(
@@ -414,7 +636,7 @@ async fn handle_late_response(
             LateResponseAction::PublishNamespaceDone { namespace } => {
                 tracing::warn!(
                     request_id,
-                    "PUBLISH_NAMESPACE_OK arrived after the request was abandoned; sending PUBLISH_NAMESPACE_DONE"
+                    "PUBLISH_NAMESPACE_OK of an abandoned request; sending PUBLISH_NAMESPACE_DONE"
                 );
                 channel
                     .notify(Notification::PublishNamespaceDone(
@@ -428,10 +650,11 @@ async fn handle_late_response(
             LateResponseAction::PublishDone => {
                 tracing::warn!(
                     request_id,
-                    "PUBLISH_OK arrived after the request was abandoned; sending PUBLISH_DONE"
+                    "PUBLISH_OK of an abandoned request; sending PUBLISH_DONE"
                 );
                 // Stream Count 0 (§9.12): `publish()` returns no
-                // Subscription before PUBLISH_OK, so no stream was opened.
+                // Subscription before it accepts PUBLISH_OK, so no stream
+                // was opened.
                 channel
                     .notify(Notification::PublishDone {
                         request_id,
@@ -447,7 +670,7 @@ async fn handle_late_response(
             LateResponseAction::FetchCancel => {
                 tracing::warn!(
                     request_id,
-                    "FETCH_OK arrived after the request was abandoned; sending FETCH_CANCEL"
+                    "FETCH_OK of an abandoned request; sending FETCH_CANCEL"
                 );
                 channel
                     .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
@@ -479,7 +702,7 @@ fn discard_late_response(
     tracing::warn!(
         request_id,
         ?response,
-        "discarding response that arrived after the request was abandoned"
+        "discarding the response of an abandoned request"
     );
     Ok(())
 }
@@ -508,31 +731,46 @@ fn close_on_mismatched_late_response(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        pin::Pin,
+        sync::{Arc, atomic::Ordering},
+        time::Duration,
+    };
+
     use tokio::sync::mpsc::error::TryRecvError;
 
-    use super::{LateResponseAction, handle_late_response};
+    use futures::FutureExt;
+
+    use super::{
+        ControlChannel, LateResponseAction, Notification, OutgoingRequest, REQUEST_ID_WINDOW,
+        RequestIdReservation, handle_late_response,
+    };
     use crate::{
-        SessionEvent,
+        RequestFailure, Session, SessionEvent,
         modules::{
             moqt::{
                 control_plane::{
+                    control_messages::control_message_type::ControlMessageType,
                     control_messages::messages::{
                         fetch_ok::FetchOk,
+                        max_request_id::MaxRequestId,
                         parameters::{content_exists::ContentExists, filter_type::FilterType},
                         publish_ok::PublishOk,
+                        subscribe::Subscribe,
                         subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
                 },
-                domains::connection::IncomingObjectNotification,
+                domains::connection::{Connection, IncomingObjectNotification},
             },
             test_support::{
-                HANDSHAKE_TIMEOUT, notify_datagram, register_and_take_data_receiver,
-                spawn_connected_dual_sessions,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, notify_datagram,
+                register_and_take_data_receiver, spawn_connected_native_sessions,
             },
         },
         object::{GroupOrder, Location},
         publish::PublishDoneCode,
+        subscribe::TrackStatusHandler,
     };
 
     const REQUEST_ID: u64 = 1;
@@ -586,7 +824,7 @@ mod tests {
     #[tokio::test]
     async fn late_subscribe_ok_drops_the_objects_buffered_for_its_track_alias() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("sinks-late-subscribe-ok").await;
+        let (_client, server) = spawn_connected_native_sessions("sinks-late-subscribe-ok").await;
         let context = server.subscriber().session;
         notify_datagram(&context, TRACK_ALIAS).await;
 
@@ -619,7 +857,7 @@ mod tests {
     async fn late_subscribe_ok_keeps_the_receiver_of_another_subscription() {
         // Arrange
         let (_client, server) =
-            spawn_connected_dual_sessions("sinks-late-subscribe-ok-other").await;
+            spawn_connected_native_sessions("sinks-late-subscribe-ok-other").await;
         let context = server.subscriber().session;
         context
             .register_data_receiver(&context.connection(), OTHER_REQUEST_ID, TRACK_ALIAS)
@@ -647,7 +885,7 @@ mod tests {
     #[tokio::test]
     async fn late_publish_ok_is_withdrawn_with_publish_done() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("late-publish-ok").await;
+        let (client, server) = spawn_connected_native_sessions("late-publish-ok").await;
         let context = server.publisher().session;
 
         // Act
@@ -672,7 +910,7 @@ mod tests {
     #[tokio::test]
     async fn late_fetch_ok_is_withdrawn_with_fetch_cancel() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("late-fetch-ok").await;
+        let (client, server) = spawn_connected_native_sessions("late-fetch-ok").await;
         let context = server.subscriber().session;
 
         // Act
@@ -693,9 +931,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn late_subscribe_namespace_ok_is_withdrawn_with_unsubscribe_namespace() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("late-subscribe-namespace-ok").await;
+        let context = server.subscriber().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            &context.connection(),
+            REQUEST_ID,
+            LateResponseAction::UnsubscribeNamespace {
+                namespace: vec!["room".to_string(), "a".to_string()],
+            },
+            ResponseMessage::SubscribeNameSpaceOk(REQUEST_ID),
+        )
+        .await;
+
+        // Assert
+        let SessionEvent::UnsubscribeNamespace(unsubscribe) = client.receive_event().await.unwrap()
+        else {
+            panic!("expected UNSUBSCRIBE_NAMESPACE");
+        };
+        assert_eq!(unsubscribe.track_namespace_prefix(), "room/a");
+    }
+
+    #[tokio::test]
+    async fn late_publish_namespace_ok_is_withdrawn_with_publish_namespace_done() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("late-publish-namespace-ok").await;
+        let context = server.publisher().session;
+
+        // Act
+        handle_late_response(
+            &context,
+            &context.connection(),
+            REQUEST_ID,
+            LateResponseAction::PublishNamespaceDone {
+                namespace: vec!["room".to_string(), "a".to_string()],
+            },
+            ResponseMessage::PublishNamespaceOk(REQUEST_ID),
+        )
+        .await;
+
+        // Assert
+        let SessionEvent::PublishNamespaceDone(done) = client.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH_NAMESPACE_DONE");
+        };
+        assert_eq!(done.track_namespace(), "room/a");
+    }
+
+    #[tokio::test]
     async fn late_track_status_ok_for_another_request_kind_closes_the_session() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("late-track-status-ok").await;
+        let (_client, server) = spawn_connected_native_sessions("late-track-status-ok").await;
         let context = server.subscriber().session;
 
         // Act
@@ -717,5 +1006,284 @@ mod tests {
             matches!(event, SessionEvent::ProtocolViolation()),
             "{event:?}"
         );
+    }
+
+    fn track_status(request_id: u64) -> Subscribe {
+        Subscribe {
+            request_id,
+            track_namespace: vec!["ns".to_string()],
+            track_name: "track".to_string(),
+            subscriber_priority: 128,
+            group_order: GroupOrder::Ascending,
+            forward: false,
+            filter_type: FilterType::LargestObject,
+            authorization_tokens: vec![],
+            delivery_timeout: None,
+            trace_context: None,
+        }
+    }
+
+    /// Bypasses the Request ID reservation.
+    async fn send_track_status(session: &Session, request_id: u64) {
+        let connection = session.publisher().session.connection();
+        ControlChannel::of(&connection)
+            .send_stream
+            .send(
+                ControlMessageType::TrackStatus,
+                track_status(request_id).encode(),
+            )
+            .await
+            .unwrap();
+    }
+
+    async fn assert_closed_with(session: &Session, code: u32, reason: &str) {
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, session.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(code));
+        assert_eq!(close.reason, reason);
+    }
+
+    async fn assert_closed_with_invalid_request_id(session: &Session, reason: &str) {
+        assert_closed_with(session, 0x4, reason).await;
+    }
+
+    fn connection_of(session: &Session) -> Arc<Connection> {
+        session.publisher().session.connection()
+    }
+
+    async fn blocked_reservation(
+        channel: &ControlChannel,
+    ) -> Pin<Box<impl Future<Output = Result<RequestIdReservation<'_>, RequestFailure>>>> {
+        channel.peer_request_id_limit.send_replace(0);
+        let mut reservation = Box::pin(channel.reserve_request_id());
+        let blocked = tokio::time::timeout(Duration::from_millis(100), &mut reservation).await;
+        assert!(blocked.is_err(), "reserved past the peer's limit");
+        reservation
+    }
+
+    #[tokio::test]
+    async fn request_id_reservation_times_out_when_peer_does_not_raise_limit() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-id-timeout").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        channel.peer_request_id_limit.send_replace(0);
+        tokio::time::pause();
+
+        // Act
+        let result = channel.reserve_request_id().await;
+
+        // Assert
+        assert!(matches!(result, Err(RequestFailure::Timeout)));
+    }
+
+    /// The handler is returned so its drop does not answer a request the
+    /// test sent outside the client's inflight requests.
+    async fn receive_track_status(session: &Session) -> TrackStatusHandler {
+        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, session.receive_event())
+            .await
+            .unwrap()
+            .unwrap();
+        let SessionEvent::TrackStatus(handler) = event else {
+            panic!("expected TRACK_STATUS, got {event:?}");
+        };
+        handler
+    }
+
+    #[tokio::test]
+    async fn request_dropped_before_it_is_written_leaves_its_request_id_unused() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-id-dropped-send").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let _held_stream = channel.send_stream.hold().await;
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::TrackStatus(track_status(reservation.request_id()));
+
+        // Act
+        let send = channel.send_request(reservation, request).now_or_never();
+
+        // Assert
+        assert!(send.is_none(), "wrote past the held control stream");
+        let next = channel.reserve_request_id().await.unwrap();
+        assert_eq!(next.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn request_id_with_the_receivers_parity_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-id-wrong-parity").await;
+
+        // Act
+        send_track_status(&client, 1).await;
+
+        // Assert: the server closes the session
+        assert_closed_with_invalid_request_id(
+            &client,
+            "Request ID has the parity of the other endpoint",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn reused_request_id_closes_the_session() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("request-id-reused").await;
+        send_track_status(&client, 0).await;
+        let first = receive_track_status(&server).await;
+        assert_eq!(first.request_id(), 0);
+
+        // Act
+        send_track_status(&client, 0).await;
+
+        // Assert: the server closes the session
+        assert_closed_with_invalid_request_id(&client, "Request ID is not the next expected one")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn request_id_skipping_the_next_one_closes_the_session() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("request-id-gap").await;
+        send_track_status(&client, 0).await;
+        let first = receive_track_status(&server).await;
+        assert_eq!(first.request_id(), 0);
+
+        // Act
+        send_track_status(&client, 6).await;
+
+        // Assert
+        assert_closed_with_invalid_request_id(&client, "Request ID is not the next expected one")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn request_id_check_applies_to_requests_from_the_server() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("request-id-server-parity").await;
+
+        // Act
+        send_track_status(&server, 0).await;
+
+        // Assert: the client closes the session
+        assert_closed_with_invalid_request_id(
+            &server,
+            "Request ID has the parity of the other endpoint",
+        )
+        .await;
+        drop(client);
+    }
+
+    #[tokio::test]
+    async fn request_id_at_the_maximum_request_id_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("request-id-too-many").await;
+
+        // Act
+        send_track_status(&client, REQUEST_ID_WINDOW).await;
+
+        // Assert: the server closes the session with TOO_MANY_REQUESTS
+        assert_closed_with(&client, 0x7, "Request ID reaches the Maximum Request ID").await;
+    }
+
+    #[tokio::test]
+    async fn peer_past_half_the_window_gets_a_raised_maximum_request_id() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("request-id-raised").await;
+        let mut client_limit = ControlChannel::of(&connection_of(&client))
+            .peer_request_id_limit
+            .subscribe();
+        let server_connection = connection_of(&server);
+        let next_client_request_id = &ControlChannel::of(&server_connection).next_peer_request_id;
+        next_client_request_id.store(REQUEST_ID_WINDOW / 2, Ordering::Relaxed);
+
+        // Act
+        send_track_status(&client, REQUEST_ID_WINDOW / 2).await;
+        let _first = receive_track_status(&server).await;
+
+        // Assert: the limit moves a window past the client's next Request ID
+        let raised = tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            client_limit.wait_for(|limit| *limit != REQUEST_ID_WINDOW),
+        )
+        .await
+        .unwrap()
+        .map(|limit| *limit)
+        .unwrap();
+        assert_eq!(raised, REQUEST_ID_WINDOW / 2 + 2 + REQUEST_ID_WINDOW);
+        next_client_request_id.store(REQUEST_ID_WINDOW, Ordering::Relaxed);
+        send_track_status(&client, REQUEST_ID_WINDOW).await;
+        assert_eq!(
+            receive_track_status(&server).await.request_id(),
+            REQUEST_ID_WINDOW
+        );
+    }
+
+    #[tokio::test]
+    async fn max_request_id_that_does_not_increase_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("max-request-id-not-raised").await;
+
+        // Act
+        ControlChannel::of(&connection_of(&client))
+            .send_stream
+            .send(
+                ControlMessageType::MaxRequestId,
+                MaxRequestId::new(REQUEST_ID_WINDOW).encode(),
+            )
+            .await
+            .unwrap();
+
+        // Assert: the server closes the session with PROTOCOL_VIOLATION
+        assert_closed_with(
+            &client,
+            0x3,
+            "MAX_REQUEST_ID does not increase the Maximum Request ID",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn request_at_the_peers_limit_waits_for_max_request_id() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("request-id-blocked").await;
+        let client_connection = connection_of(&client);
+        let client_channel = ControlChannel::of(&client_connection);
+        let reservation = blocked_reservation(client_channel).await;
+
+        // Act
+        ControlChannel::of(&connection_of(&server))
+            .notify(Notification::MaxRequestId(MaxRequestId::new(2)))
+            .await
+            .unwrap();
+
+        // Assert
+        let reservation = tokio::time::timeout(HANDSHAKE_TIMEOUT, reservation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reservation.request_id(), 0);
+        drop(reservation);
+        assert_eq!(client_channel.request_ids.lock().await.blocked_on, Some(0));
+    }
+
+    #[tokio::test]
+    async fn closed_control_stream_releases_a_blocked_request() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("request-id-blocked-closed").await;
+        let client_connection = connection_of(&client);
+        let client_channel = ControlChannel::of(&client_connection);
+        let reservation = blocked_reservation(client_channel).await;
+
+        // Act
+        drop(server);
+
+        // Assert
+        let reservation = tokio::time::timeout(DISCONNECT_TIMEOUT, reservation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reservation.request_id(), 0);
     }
 }

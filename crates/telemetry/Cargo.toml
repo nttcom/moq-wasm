@@ -1,0 +1,21 @@
+[package]
+name = "telemetry"
+version = "0.1.0"
+edition = "2024"
+description = "Shared logging, tracing and relay statistics: stdout, OTLP and the relay snapshot format"
+
+[dependencies]
+anyhow = "1.0.102"
+http = "1.5.0"
+opentelemetry = { version = "0.33.1", features = ["trace", "logs", "metrics"] }
+opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio", "logs", "metrics"] }
+opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs", "metrics"] }
+opentelemetry-appender-tracing = "0.33.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1.44"
+tracing-opentelemetry = "0.34.0"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+opentelemetry_sdk = { version = "0.33.1", features = ["testing"] }

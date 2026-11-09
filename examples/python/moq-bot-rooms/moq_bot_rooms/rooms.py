@@ -1,14 +1,17 @@
 import asyncio
 import secrets
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 
 from loguru import logger
 
+from moq_bot_rooms.app_token import AppToken
 from moq_bot_rooms.open_hours import OpenHours
 
 GRACE_SECONDS = 30.0
+PUBLIC_NAMESPACE_ROOT = "anon"
 
 
 class RoomEnd(StrEnum):
@@ -21,15 +24,35 @@ class RoomEnd(StrEnum):
     STOPPED = "stopped"
 
 
-# Runs the bot for a room ID until it is cancelled, or returns once nobody is in the room. The
+@dataclass(frozen=True)
+class BotRoom:
+    """A room ID under a namespace root: the public one, or the temporary app of the page that
+    started the room, whose `token` the bot connects with."""
+
+    room_id: str
+    namespace_root: str = PUBLIC_NAMESPACE_ROOT
+    token: AppToken | None = None
+
+    @property
+    def key(self) -> str:
+        """Tells rooms apart: two apps may use the same room ID."""
+        return f"{self.namespace_root}/{self.room_id}"
+
+    @property
+    def relay_token(self) -> str | None:
+        return self.token.token if self.token else None
+
+
+# Runs the bot for a room until it is cancelled, or returns once nobody is in the room. The
 # server cannot rely on a page's request to tell it the page left: Cloud Run keeps the request to
 # the container open after the browser goes away.
-RunBot = Callable[[str], Awaitable[None]]
+RunBot = Callable[[BotRoom], Awaitable[None]]
 
 
 class _Room:
-    def __init__(self, room_id: str):
-        self.room_id = room_id
+    def __init__(self, room: BotRoom):
+        self.room = room
+        self.key = room.key
         self.members = 0
         # Resolves to None when the room stops without a reason to tell its pages: nobody
         # holds it any more, or the server is shutting down.
@@ -93,18 +116,19 @@ class Rooms:
         self._members: dict[str, tuple[Membership, _Room]] = {}
         self._shutting_down = False
 
-    def join(self, room_id: str, run_bot: RunBot | None = None) -> Membership:
+    def join(self, bot_room: BotRoom, run_bot: RunBot | None = None) -> Membership:
         """`run_bot`, when given, runs the room's bot instead of the default one if this join
-        starts the room; a join to a running room leaves its bot as it is."""
+        starts the room; a join to a running room leaves its bot, and the token it runs with, as
+        they are."""
         if self._shutting_down:
             return Membership.refused(None)
-        room = self._rooms.get(room_id)
+        room = self._rooms.get(bot_room.key)
         if room is None:
             if not self._is_open():
                 return Membership.refused(RoomEnd.CLOSED)
             if sum(not other.ended.done() for other in self._rooms.values()) >= self._max_rooms:
                 return Membership.refused(RoomEnd.FULL)
-            room = self._start(room_id, run_bot or self._run_bot)
+            room = self._start(bot_room, run_bot or self._run_bot)
         elif room.ended.done():
             # The room ended while pages held it and is remembered until they are gone, so a
             # page that reconnects learns why instead of starting the room again.
@@ -157,24 +181,24 @@ class Rooms:
     def _is_open(self) -> bool:
         return self._open_hours is None or self._open_hours.contains(self._now())
 
-    def _start(self, room_id: str, run_bot: RunBot) -> _Room:
-        room = _Room(room_id)
-        self._rooms[room_id] = room
+    def _start(self, bot_room: BotRoom, run_bot: RunBot) -> _Room:
+        room = _Room(bot_room)
+        self._rooms[room.key] = room
         room.task = asyncio.create_task(self._run(room, run_bot))
         room.expiry = asyncio.get_running_loop().call_later(self._max_room_seconds, self._end, room, RoomEnd.EXPIRED)
-        logger.info(f"room {room_id}: bot started")
+        logger.info(f"room {room.key}: bot started")
         return room
 
     async def _run(self, room: _Room, run_bot: RunBot) -> None:
         try:
-            await run_bot(room.room_id)
+            await run_bot(room.room)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception(f"room {room.room_id}: bot failed")
+            logger.exception(f"room {room.key}: bot failed")
             self._end(room, RoomEnd.FAILED)
             return
-        logger.info(f"room {room.room_id}: nobody is in the room")
+        logger.info(f"room {room.key}: nobody is in the room")
         # The requests still held get no reason, so a page that is still there reconnects and starts a new bot.
         self._remove(room)
 
@@ -185,7 +209,7 @@ class Rooms:
         room.expiry.cancel()
         if room.task is not asyncio.current_task():
             room.task.cancel()
-        logger.info(f"room {room.room_id}: bot stopped" + (f" ({reason})" if reason else ""))
+        logger.info(f"room {room.key}: bot stopped" + (f" ({reason})" if reason else ""))
 
     def _leave(self, room: _Room, member_id: str, at_once: bool) -> None:
         del self._members[member_id]
@@ -199,5 +223,5 @@ class Rooms:
 
     def _remove(self, room: _Room) -> None:
         self._end(room, None)
-        if self._rooms.get(room.room_id) is room:
-            del self._rooms[room.room_id]
+        if self._rooms.get(room.key) is room:
+            del self._rooms[room.key]

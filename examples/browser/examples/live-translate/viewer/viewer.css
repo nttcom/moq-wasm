@@ -1,0 +1,236 @@
+/* The picture is the page: everything else sits under it, folded away. */
+.viewer-page {
+  max-width: 960px;
+}
+
+.viewer-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.viewer-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.viewer-stage-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: #0b1f1f;
+  box-shadow: var(--shadow);
+}
+
+.viewer-stage,
+.viewer-stage .live-player-picture {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.viewer-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  pointer-events: none;
+}
+
+.viewer-overlay > * {
+  pointer-events: auto;
+}
+
+/* `hidden` must win over the flex display above. */
+.viewer-overlay[hidden] {
+  display: none;
+}
+
+.viewer-overlay-center {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.viewer-watch {
+  height: 56px;
+  padding: 0 32px;
+  border: 0;
+  border-radius: 28px;
+  background: var(--accent);
+  color: #fff;
+  font: 600 1.05rem var(--font-sans);
+  cursor: pointer;
+}
+
+.viewer-watch:hover {
+  background: var(--accent-strong);
+}
+
+.viewer-watch:focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+.viewer-overlay-status {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+}
+
+.viewer-overlay-status:empty {
+  display: none;
+}
+
+.viewer-language-bar {
+  top: auto;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px 14px;
+  background: linear-gradient(to top, rgba(5, 20, 20, 0.85), rgba(5, 20, 20, 0));
+}
+
+.viewer-language-status {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.8rem;
+}
+
+.viewer-language-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.viewer-language {
+  position: relative;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 17px;
+  background: rgba(5, 20, 20, 0.55);
+  color: #fff;
+  font: 500 0.92rem var(--font-sans);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.viewer-language:hover {
+  border-color: #fff;
+}
+
+.viewer-language:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.viewer-language[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* The switch takes between one and six seconds; the line shows it is under way. */
+.viewer-language[data-pending='true']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 40%;
+  background: #fff;
+  animation: viewer-pending 1.2s linear infinite;
+}
+
+@keyframes viewer-pending {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer-language[data-pending='true']::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+.viewer-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px 20px;
+  margin: 16px 0 0;
+}
+
+.viewer-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viewer-stats dt {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.viewer-stats dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.viewer-details {
+  margin-top: 16px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.viewer-details > summary {
+  padding: 12px 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.viewer-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 16px;
+}
+
+.viewer-console {
+  max-height: 240px;
+  overflow: auto;
+  padding: 0 0 12px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+/* Captions sit above the language bar, in the band broadcast subtitles use. */
+.viewer-captions {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 84px;
+  margin: 0;
+  text-align: center;
+  font-size: clamp(1rem, 2.2vw, 1.5rem);
+  line-height: 1.4;
+  color: #fff;
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 0.9),
+    0 2px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+
+.viewer-captions[hidden] {
+  display: none;
+}

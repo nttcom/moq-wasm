@@ -29,7 +29,7 @@ repository's relay and pages:
 - 0.5 replaced the announcement API with routes, so the version the bots pin
   is already behind.
 
-`moqt` does all of this: `Subscriber::fetch_relative_joining`, objects with
+`moqt` does all of this: `Subscriber::subscribe_current_group`, objects with
 their extension headers, and `publish::Origin`, which caches what it publishes
 and answers SUBSCRIBE and FETCH. An earlier binding (unmerged branch
 `feat/python-bindings`, 2026-09-07) wrapped `Session<DUAL>`, which no longer
@@ -74,10 +74,28 @@ await session.close()
 ```
 
 Left out: the server side (`listen`), raw request handlers, datagram tracks,
-extension headers (the transcriber reads no LOC property), authorization
-tokens (the Meeting rooms are anonymous), PUBLISH from a peer (rejected as
-`Uninterested`, as the recorder does), SUBSCRIBE_UPDATE, standalone FETCH and
-token refresh.
+extension headers (the transcriber reads no LOC property), PUBLISH from a peer
+(rejected as `Uninterested`, as the recorder does), SUBSCRIBE_UPDATE and
+standalone FETCH.
+
+### Authorization tokens
+A bot that serves a temporary app's room connects with that app's token and
+must outlive it (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
+apps"):
+
+```python
+session = await moqt.connect(url, token=jwt)
+await session.refresh_token(later_jwt, app_id="temp-3f9a…")
+```
+
+`connect` hands `moqt` an `AuthorizationTokenSource::provider` that reads the
+session's current token, so a connection the session opens by itself (to
+follow GOAWAY, or after the relay closed it for an expired token) presents the
+latest one. `refresh_token` sends the relay's in-session refresh, a
+TRACK_STATUS for `[app_id]` that carries the token (docs/architecture/relay/
+architecture.md "Token refresh"), and makes the token current once the relay
+accepts it. Getting a later token is the caller's job: the module knows
+nothing of the token mint.
 
 ### One event loop per session
 A session has one event receiver, so the module runs one loop per session:
@@ -85,7 +103,8 @@ A session has one event receiver, so the module runs one loop per session:
 - SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS go to the
   session's `Origin` through `Origin::handle`. A SUBSCRIBE for a track the
   origin does not have is rejected with TRACK_DOES_NOT_EXIST.
-- PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go to every `subscribe_namespace`
+- PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go through
+  `moqt::namespace::NamespaceWatchers` to every `subscribe_namespace`
   iterator whose prefix they match. PUBLISH_NAMESPACE is answered `ok`. An
   iterator is registered before its SUBSCRIBE_NAMESPACE is sent, since the
   relay answers with the namespaces it already knows.
@@ -124,12 +143,12 @@ The chat moderation bot is the second:
   stays published;
 - the chat is plain UTF-8 text, one message per group, instead of moq-rs's
   compressed JSON stream; a verdict names a message by its object's Location;
-- the verdicts and the d3-flash status are published through `session.track`
+- the verdicts and the System One status are published through `session.track`
   instead of the broadcast inside pipecat's `MOQTransport`.
 
 Camera detection and PTZ tracking follow: each subscribes to its page's
 prompt and the camera's video while their namespaces are published, and
-publishes its event timeline, d3-flash status and, for PTZ, the ONVIF
+publishes its event timeline, System One status and, for PTZ, the ONVIF
 commands through `session.track`. A video subscription that joins a group in
 the middle decodes nothing until the next group, which starts at a keyframe.
 

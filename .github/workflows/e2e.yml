@@ -19,33 +19,36 @@ on:
       - "examples/python/moq-camera-detection/**"
       - "examples/python/moq-ptz-tracking/**"
       - "examples/python/moq-bot-rooms/**"
-      - "examples/python/moq-d3-flash-bot/**"
+      - "examples/python/moq-system-one-bot/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "crates/python/**"
       - "examples/rust/moq-cli/**"
       - "crates/wasm/**"
-      - "crates/live-ingest/**"
-      - "crates/recorder/**"
+      - "services/live-ingest/**"
+      - "services/recorder/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - ".github/actions/install-apt-packages/**"
-      - "crates/relay/**"
+      - "services/relay/**"
       - "crates/moqt/**"
       - "crates/mediapack/**"
       - "crates/msf/**"
       - "crates/broadcast/**"
       - "crates/transcode/**"
-      - "crates/vts/**"
-      - "crates/console/**"
+      - "services/vts/**"
+      - "services/console/**"
       - "crates/app-registry/**"
       - "crates/auth-token/**"
-      - "crates/relay-stats/**"
+      - "crates/telemetry/**"
+      - "crates/client-telemetry/**"
       - "tests/auth-e2e/**"
       - "tests/cache-eviction-e2e/**"
       - "tests/cascading-relay-e2e/**"
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
+      - "tests/live-translate-e2e/**"
+      - "services/live-translate/**"
       - "tests/object-dedup-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -73,33 +76,36 @@ on:
       - "examples/python/moq-camera-detection/**"
       - "examples/python/moq-ptz-tracking/**"
       - "examples/python/moq-bot-rooms/**"
-      - "examples/python/moq-d3-flash-bot/**"
+      - "examples/python/moq-system-one-bot/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "crates/python/**"
       - "examples/rust/moq-cli/**"
       - "crates/wasm/**"
-      - "crates/live-ingest/**"
-      - "crates/recorder/**"
+      - "services/live-ingest/**"
+      - "services/recorder/**"
       - "crates/gst-plugin-moqt/**"
       - ".github/actions/install-ffmpeg-deps/**"
       - ".github/actions/install-apt-packages/**"
-      - "crates/relay/**"
+      - "services/relay/**"
       - "crates/moqt/**"
       - "crates/mediapack/**"
       - "crates/msf/**"
       - "crates/broadcast/**"
       - "crates/transcode/**"
-      - "crates/vts/**"
-      - "crates/console/**"
+      - "services/vts/**"
+      - "services/console/**"
       - "crates/app-registry/**"
       - "crates/auth-token/**"
-      - "crates/relay-stats/**"
+      - "crates/telemetry/**"
+      - "crates/client-telemetry/**"
       - "tests/auth-e2e/**"
       - "tests/cache-eviction-e2e/**"
       - "tests/cascading-relay-e2e/**"
       - "tests/fetch-e2e/**"
       - "tests/multiple-publishers-e2e/**"
       - "tests/moqtsink-e2e/**"
+      - "tests/live-translate-e2e/**"
+      - "services/live-translate/**"
       - "tests/object-dedup-e2e/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -161,7 +167,7 @@ jobs:
             live_viewer=true
             meeting=true
             console=true
-            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup)
+            compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup live-translate)
           else
             base="${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}"
 
@@ -188,7 +194,7 @@ jobs:
               # Shared by every browser example. A path under one example
               # selects only the jobs whose pages load its files.
               case "$path" in
-                examples/browser/lib/*|examples/browser/utils/*|examples/browser/public/*|examples/browser/index.html|examples/browser/package.json|examples/browser/package-lock.json|examples/browser/vite.config.mjs|examples/browser/tsconfig.json|examples/browser/postcss.config.cjs|examples/browser/playwright.config.ts|examples/browser/playwright.helpers.ts)
+                crates/wasm/js/*|examples/browser/lib/*|examples/browser/utils/*|examples/browser/public/*|examples/browser/index.html|package.json|package-lock.json|examples/browser/package.json|examples/browser/vite.config.mjs|examples/browser/tsconfig.json|examples/browser/postcss.config.cjs|examples/browser/playwright.config.ts|examples/browser/playwright.helpers.ts)
                   media=true
                   message=true
                   chat_moderation=true
@@ -201,96 +207,102 @@ jobs:
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-media-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/media/*|examples/browser/tests/media-e2e*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-media-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/media/*|examples/browser/tests/media-e2e*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   media=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-message-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/message/*|examples/browser/tests/message-e2e*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-message-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|examples/browser/examples/message/*|examples/browser/tests/message-e2e*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   message=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-chat-moderation/*|examples/browser/examples/media/*|examples/browser/tests/chat-moderation-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-chat-moderation/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-chat-moderation-e2e.mjs|tests/browser-e2e/system-one-bot-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-chat-moderation/*|examples/browser/examples/media/*|examples/browser/tests/chat-moderation-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-chat-moderation/*|examples/python/moq-bot-rooms/*|examples/python/moq-system-one-bot/*|crates/python/*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   chat_moderation=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-transcription-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|.cargo/config.toml|examples/browser/examples/meeting/*|examples/browser/tests/meeting-transcription-e2e*|examples/browser/tests/fake-asr.ts|examples/browser/tests/meeting-e2e-arrange.ts|examples/python/moq-meeting-transcriber/*|examples/python/moq-bot-rooms/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-transcription-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|.cargo/config.toml|examples/browser/examples/meeting/*|examples/browser/tests/meeting-transcription-e2e*|examples/browser/tests/fake-asr.ts|examples/browser/tests/meeting-e2e-arrange.ts|examples/python/moq-meeting-transcriber/*|examples/python/moq-bot-rooms/*|crates/python/*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   meeting_transcription=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-camera-detection/*|examples/browser/examples/media/*|examples/browser/tests/camera-detection-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-camera-detection/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-camera-detection-e2e.mjs|tests/browser-e2e/system-one-bot-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-camera-detection/*|examples/browser/examples/media/*|examples/browser/tests/camera-detection-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-camera-detection/*|examples/python/moq-bot-rooms/*|examples/python/moq-system-one-bot/*|crates/python/*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   camera_detection=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/fake-onvif-ingest.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-d3-flash.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-rooms/*|examples/python/moq-d3-flash-bot/*|examples/rust/moq-cli/*|crates/python/*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-ptz-tracking-e2e.mjs|tests/browser-e2e/system-one-bot-e2e.mjs|tests/browser-e2e/fake-onvif-ingest.py|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/moq-ptz-tracking/*|examples/browser/examples/media/*|examples/browser/tests/ptz-tracking-e2e*|examples/browser/tests/fake-system-one.ts|examples/browser/tests/leave-all-pages.ts|examples/python/moq-ptz-tracking/*|examples/python/moq-bot-rooms/*|examples/python/moq-system-one-bot/*|examples/rust/moq-cli/*|crates/python/*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   ptz_tracking=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/run-goaway-e2e.mjs|docker-compose.yml|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-viewer/*|examples/browser/examples/media/*|examples/browser/examples/message/*|examples/browser/examples/meeting/*|examples/browser/tests/live-viewer-*|examples/browser/tests/recorder-*|examples/browser/tests/goaway-e2e*|examples/browser/tests/message-e2e-arrange.ts|examples/browser/tests/meeting-e2e-arrange.ts|crates/wasm/*|crates/live-ingest/*|crates/recorder/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/run-goaway-e2e.mjs|docker-compose.yml|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-viewer/*|examples/browser/examples/media/*|examples/browser/examples/message/*|examples/browser/examples/meeting/*|examples/browser/tests/live-viewer-*|examples/browser/tests/recorder-*|examples/browser/tests/goaway-e2e*|examples/browser/tests/message-e2e-arrange.ts|examples/browser/tests/meeting-e2e-arrange.ts|crates/wasm/*|services/live-ingest/*|services/recorder/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/examples/meeting/*|examples/browser/tests/meeting-e2e*|crates/wasm/*|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-meeting-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|scripts/chrome_linux.sh|docker-compose.yml|examples/browser/examples/meeting/*|examples/browser/tests/meeting-e2e*|crates/wasm/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   meeting=true
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/cascading-relay-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/cascading-relay-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(cascading-relay)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/cache-eviction-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/cache-eviction-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(cache-eviction)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/fetch-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/fetch-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(fetch)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/multiple-publishers-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/multiple-publishers-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(multiple-publishers)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/gst-plugin-moqt/*|tests/moqtsink-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/gst-plugin-moqt/*|tests/moqtsink-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(moqtsink)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/object-dedup-e2e/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain|services/live-translate/*|tests/live-translate-e2e/*)
+                  compose_suites+=(live-translate)
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|tests/object-dedup-e2e/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(object-dedup)
                   ;;
               esac
 
               case "$path" in
-                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|crates/relay/*|crates/auth-token/*|crates/relay-stats/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|crates/vts/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/workflows/relay-image.yml|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|docker-compose.yml|tests/compose-relays.sh|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|tests/auth-e2e/*|examples/rust/moq-cli/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   compose_suites+=(auth)
                   ;;
               esac
               case "$path" in
-                .github/workflows/e2e.yml|.github/actions/install-playwright-chromium/*|tests/browser-e2e/run-console-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|examples/browser/package.json|examples/browser/package-lock.json|examples/browser/playwright.console.config.ts|examples/browser/tests/console-e2e*|crates/console/*|crates/app-registry/*|crates/auth-token/*|crates/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                .github/workflows/e2e.yml|.github/actions/install-playwright-chromium/*|tests/browser-e2e/run-console-e2e.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|package.json|package-lock.json|examples/browser/package.json|examples/browser/playwright.console.config.ts|examples/browser/tests/console-e2e*|services/console/*|crates/app-registry/*|crates/auth-token/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   console=true
                   ;;
               esac
@@ -321,7 +333,7 @@ jobs:
         env:
           # Tag = hash of every input to the relay image. Keep the crate list in
           # sync with the path deps in `cargo tree -p relay`.
-          RELAY_IMAGE_TAG: ${{ hashFiles('crates/relay/**', 'crates/moqt/**', 'crates/auth-token/**', 'crates/relay-stats/**', '.github/workflows/relay-image.yml', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain', '.cargo/config.toml', '.dockerignore') }}
+          RELAY_IMAGE_TAG: ${{ hashFiles('services/relay/**', 'crates/moqt/**', 'crates/auth-token/**', 'crates/telemetry/**', '.github/workflows/relay-image.yml', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain', '.cargo/config.toml', '.dockerignore') }}
         run: |
           set -euo pipefail
 
@@ -386,7 +398,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -415,6 +427,11 @@ jobs:
           CI: "true"
         run: node tests/browser-e2e/run-media-e2e.mjs
 
+      - name: Run media E2E through a TCP-only proxy (WebSocket fallback)
+        env:
+          CI: "true"
+        run: node tests/browser-e2e/run-media-e2e.mjs --through-tcp-proxy
+
       - name: Upload Playwright artifacts
         if: failure()
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
@@ -435,9 +452,15 @@ jobs:
         include:
           - name: live
             specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
+            ingest: rtmp
             goaway: true
+          - name: live-srt
+            specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
+            ingest: srt
+            goaway: false
           - name: mp4-recorder
             specs: tests/live-viewer-mp4-e2e.spec.ts tests/recorder-serve-e2e.spec.ts
+            ingest: rtmp
             goaway: false
     name: live_viewer_e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
@@ -455,7 +478,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -492,9 +515,18 @@ jobs:
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium
 
+      - name: Check that ffmpeg has the srt protocol
+        if: ${{ matrix.ingest == 'srt' }}
+        run: |
+          ffmpeg -hide_banner -protocols | grep -qw srt || {
+            echo "::error::ffmpeg lacks the srt protocol, so this row cannot push to live-ingest over SRT"
+            exit 1
+          }
+
       - name: Run live viewer E2E
         env:
           CI: "true"
+          LIVE_VIEWER_E2E_INGEST: ${{ matrix.ingest }}
         run: node tests/browser-e2e/run-live-viewer-e2e.mjs ${{ matrix.specs }}
 
       - name: Run GOAWAY E2E
@@ -532,7 +564,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -591,8 +623,8 @@ jobs:
           node-version: 22.23.4
           cache: npm
           cache-dependency-path: |
-            examples/browser/package-lock.json
-            crates/console/web/package-lock.json
+            package-lock.json
+            services/console/web/package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -645,7 +677,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -679,8 +711,8 @@ jobs:
         working-directory: examples/python/moq-bot-rooms
         run: uv run pytest
 
-      - name: Run d3-flash bot package unit tests
-        working-directory: examples/python/moq-d3-flash-bot
+      - name: Run System One bot package unit tests
+        working-directory: examples/python/moq-system-one-bot
         run: uv run pytest
 
       - name: Prepare browser E2E environment
@@ -724,7 +756,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -803,7 +835,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -873,7 +905,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -946,7 +978,7 @@ jobs:
         with:
           node-version: 22.23.4
           cache: npm
-          cache-dependency-path: examples/browser/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust toolchain
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
@@ -1007,6 +1039,13 @@ jobs:
         env:
           CI: "true"
         run: node tests/browser-e2e/run-meeting-e2e.mjs
+
+      # run-meeting-e2e.mjs stops the relay containers without removing them, so their logs remain.
+      - name: Collect relay logs
+        if: failure()
+        run: |
+          mkdir -p examples/browser/test-results
+          docker compose logs --no-color --timestamps relay-a relay-b > examples/browser/test-results/relay-logs.txt
 
       - name: Upload Playwright artifacts
         if: failure()
@@ -1084,7 +1123,7 @@ jobs:
         run: docker logout ghcr.io
 
       - name: Install GStreamer
-        if: ${{ matrix.suite == 'moqtsink' }}
+        if: ${{ matrix.suite == 'moqtsink' || matrix.suite == 'live-translate' }}
         uses: ./.github/actions/install-ffmpeg-deps
 
       - name: Run ${{ matrix.suite }} E2E

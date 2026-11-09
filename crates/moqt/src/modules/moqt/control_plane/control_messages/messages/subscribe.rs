@@ -1,3 +1,4 @@
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
@@ -23,6 +24,7 @@ pub struct Subscribe {
     pub filter_type: FilterType,
     pub authorization_tokens: Vec<AuthorizationToken>,
     pub delivery_timeout: Option<u64>,
+    pub trace_context: Option<TraceContext>,
 }
 
 impl Subscribe {
@@ -41,6 +43,7 @@ impl Subscribe {
             .filter_map(|value| AuthorizationToken::decode_parameter(value))
             .collect();
         let delivery_timeout = find_even(&parameters, 0x02);
+        let trace_context = TraceContext::find(&parameters);
 
         Ok(Subscribe {
             request_id,
@@ -52,6 +55,7 @@ impl Subscribe {
             filter_type,
             authorization_tokens,
             delivery_timeout,
+            trace_context,
         })
     }
 
@@ -72,6 +76,7 @@ impl Subscribe {
                 self.delivery_timeout
                     .map(|value| KeyValuePair::even(0x02, value)),
             )
+            .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
 
@@ -86,8 +91,11 @@ mod tests {
 
         use crate::modules::moqt::control_plane::control_messages::messages::{
             parameters::{
-                authorization_token::AuthorizationToken, filter_type::FilterType,
-                group_order::GroupOrder, location::Location,
+                authorization_token::AuthorizationToken,
+                filter_type::FilterType,
+                group_order::GroupOrder,
+                location::Location,
+                trace_context::{TEST_TRACEPARENT, TraceContext},
             },
             subscribe::Subscribe,
         };
@@ -113,6 +121,7 @@ mod tests {
                 filter_type,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                trace_context: None,
             };
 
             let buf = subscribe.encode();
@@ -161,6 +170,7 @@ mod tests {
                 filter_type,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                trace_context: None,
             };
 
             let buf = subscribe.encode();
@@ -212,6 +222,7 @@ mod tests {
                 filter_type,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                trace_context: None,
             };
 
             let buf = subscribe.encode();
@@ -278,6 +289,7 @@ mod tests {
                 filter_type,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                trace_context: None,
             };
 
             assert_eq!(depacketized_subscribe, expected_subscribe);
@@ -330,6 +342,7 @@ mod tests {
                 filter_type,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                trace_context: None,
             };
 
             assert_eq!(depacketized_subscribe, expected_subscribe);
@@ -391,6 +404,7 @@ mod tests {
                 filter_type,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                trace_context: None,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);
         }
@@ -410,6 +424,7 @@ mod tests {
                     token_value: Bytes::from_static(b"secret"),
                 }],
                 delivery_timeout: None,
+                trace_context: None,
             };
 
             let buf = subscribe.encode();
@@ -417,6 +432,31 @@ mod tests {
             let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
 
             assert_eq!(depacketized_subscribe, subscribe);
+        }
+
+        #[test]
+        fn trace_context_round_trips() {
+            // Arrange
+            let message = Subscribe {
+                request_id: 1,
+                track_namespace: vec!["room".to_string()],
+                track_name: "video".to_string(),
+                subscriber_priority: 0,
+                group_order: GroupOrder::Ascending,
+                forward: true,
+                filter_type: FilterType::LargestObject,
+                authorization_tokens: vec![],
+                delivery_timeout: None,
+                trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+            };
+
+            // Act
+            let bytes = message.encode();
+            let decoded = Subscribe::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+            // Assert
+            assert!(decoded.trace_context.is_some());
+            assert_eq!(decoded.trace_context, message.trace_context);
         }
     }
 }

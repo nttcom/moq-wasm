@@ -6,11 +6,14 @@ use crate::types::{KnownPackaging, Packaging};
 /// draft-ietf-moq-msf-01 §5: the catalog track MUST have this name.
 pub const CATALOG_TRACK_NAME: &str = "catalog";
 
+/// The catalog `version` (draft-ietf-moq-msf-01 §5.1.1).
+const MSF_VERSION: &str = "draft-01";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub version: Option<u32>,
+    pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta_update: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,7 +50,7 @@ impl Catalog {
     /// for a broadcast that will publish nothing more.
     pub fn new(tracks: Vec<Track>, generated_at_ms: u64) -> Self {
         Self {
-            version: Some(1),
+            version: Some(MSF_VERSION.to_string()),
             delta_update: None,
             add_tracks: None,
             remove_tracks: None,
@@ -84,7 +87,7 @@ mod tests {
     use crate::types::KnownPackaging;
 
     #[test]
-    fn new_is_an_independent_version_1_catalog_without_is_complete() {
+    fn new_is_an_independent_draft_01_catalog_without_is_complete() {
         // Act
         let catalog = Catalog::new(
             vec![Track::new("video", KnownPackaging::Loc, true)],
@@ -94,7 +97,7 @@ mod tests {
         // Assert
         assert_eq!(
             serde_json::to_string(&catalog).unwrap(),
-            r#"{"version":1,"generatedAt":1759924160383,"tracks":[{"name":"video","packaging":"loc","isLive":true}]}"#
+            r#"{"version":"draft-01","generatedAt":1759924160383,"tracks":[{"name":"video","packaging":"loc","isLive":true}]}"#
         );
     }
 
@@ -112,14 +115,14 @@ mod tests {
         // Assert
         assert_eq!(
             json,
-            r#"{"version":1,"generatedAt":1759924160383,"tracks":[{"name":"audio","packaging":"loc","isLive":true,"initRef":"audio"}],"initDataList":[{"id":"audio","type":"inline","data":"ERA="}]}"#
+            r#"{"version":"draft-01","generatedAt":1759924160383,"tracks":[{"name":"audio","packaging":"loc","isLive":true,"initRef":"audio"}],"initDataList":[{"id":"audio","type":"inline","data":"ERA="}]}"#
         );
     }
 
     #[test]
     fn a_catalog_with_unresolvable_init_data_still_parses() {
         // Arrange: the list precedes the tracks, its entry has a type the draft does not define, and the initRef names no entry
-        let json = r#"{"version":1,"initDataList":[{"id":"init-url","type":"url","data":"https://example.com/init.mp4"}],"tracks":[{"name":"video","packaging":"cmaf","isLive":true,"initRef":"init-hd"}]}"#;
+        let json = r#"{"version":"draft-01","initDataList":[{"id":"init-url","type":"url","data":"https://example.com/init.mp4"}],"tracks":[{"name":"video","packaging":"cmaf","isLive":true,"initRef":"init-hd"}]}"#;
 
         // Act
         let catalog: Catalog = serde_json::from_str(json).unwrap();

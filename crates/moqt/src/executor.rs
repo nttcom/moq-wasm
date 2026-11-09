@@ -1,6 +1,11 @@
-//! Spawning and clocks that work both natively, on tokio, and on wasm32 in a
+//! Spawning, sleeping and clocks that work both natively, on tokio, and on wasm32 in a
 //! browser, where `spawn` needs no `Send` and `std::time` panics.
 pub use crate::modules::executor::JoinHandle;
+pub use crate::modules::executor::MaybeSend;
+pub use crate::modules::executor::MaybeSync;
 pub use crate::modules::executor::now;
+pub use crate::modules::executor::sleep;
 pub use crate::modules::executor::spawn;
 pub use crate::modules::executor::system_time;
+#[cfg(target_arch = "wasm32")]
+pub use crate::modules::executor::{SpawnWrapper, set_spawn_wrapper};
