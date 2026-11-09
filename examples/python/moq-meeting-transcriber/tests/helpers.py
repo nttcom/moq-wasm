@@ -33,7 +33,7 @@ def meeting_catalog(*audio_bitrates: int) -> bytes:
         for bitrate in audio_bitrates
     ]
     tracks.append({"name": "camera_720p", "role": "video", "packaging": "loc", "codec": "avc1.64001f", "bitrate": 2_500_000})
-    return json.dumps({"version": 1, "tracks": tracks}).encode()
+    return json.dumps({"version": "draft-01", "tracks": tracks}).encode()
 
 
 class RecordingPublication:

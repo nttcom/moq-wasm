@@ -2,6 +2,9 @@ import { sdkLog } from '../core/log'
 
 export const CATALOG_TRACK_NAME = 'catalog'
 
+/// The catalog `version` (draft-ietf-moq-msf-01 §5.1.1).
+const MSF_VERSION = 'draft-01'
+
 export type MsfTrack = {
   namespace?: string
   name: string
@@ -31,7 +34,7 @@ export type MsfInitData = {
 }
 
 type MsfCatalog = {
-  version?: number
+  version?: string
   generatedAt?: number
   isComplete?: boolean
   tracks?: MsfTrack[]
@@ -69,7 +72,7 @@ export type MediaCatalogTrack = {
 
 export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitData[] = []): string {
   const catalog: MsfCatalog = {
-    version: 1,
+    version: MSF_VERSION,
     generatedAt: Date.now(),
     tracks,
     // Keep after `tracks`: JSON.stringify writes keys in insertion order, and

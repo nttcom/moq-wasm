@@ -616,10 +616,10 @@ mod tests {
         // Arrange: the publisher lists the video first and the audio with its next catalog
         let (catalog_sender, mut catalog_receiver) = mpsc::unbounded_channel();
         let video_only = catalog(
-            "{\"version\":1,\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\"}]}",
+            "{\"version\":\"draft-01\",\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\"}]}",
         );
         let with_audio = catalog(
-            "{\"version\":1,\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\"},{\"name\":\"audio\",\"packaging\":\"loc\",\"role\":\"audio\",\"isLive\":true,\"codec\":\"opus\",\"samplerate\":48000,\"channelConfig\":\"mono\"}]}",
+            "{\"version\":\"draft-01\",\"tracks\":[{\"name\":\"video\",\"packaging\":\"loc\",\"role\":\"video\",\"isLive\":true,\"codec\":\"vp8\"},{\"name\":\"audio\",\"packaging\":\"loc\",\"role\":\"audio\",\"isLive\":true,\"codec\":\"opus\",\"samplerate\":48000,\"channelConfig\":\"mono\"}]}",
         );
         catalog_sender.send(video_only).expect("sent");
         catalog_sender.send(with_audio).expect("sent");

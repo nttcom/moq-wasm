@@ -64,7 +64,6 @@ pub(crate) fn build_translated_catalog(
         .chain(texts)
         .collect();
     Some(Catalog {
-        version: source.version,
         generated_at: None,
         ..Catalog::new(tracks, 0)
     })
@@ -120,7 +119,7 @@ mod tests {
 
     fn browser_publisher_catalog() -> Catalog {
         serde_json::from_str(
-            r#"{ "version": 1, "tracks": [
+            r#"{ "version": "draft-01", "tracks": [
               { "namespace": "anon/live-translate/brave-otter", "name": "video_720p", "packaging": "loc", "role": "video", "isLive": true, "codec": "avc1.640028", "width": 1280, "height": 720 },
               { "namespace": "anon/live-translate/brave-otter", "name": "audio_64kbps", "packaging": "loc", "role": "audio", "isLive": true, "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono" },
               { "namespace": "anon/live-translate/brave-otter", "name": "audio_128kbps", "packaging": "loc", "role": "audio", "isLive": true, "codec": "opus", "bitrate": 128000, "samplerate": 48000, "channelConfig": "mono" }
