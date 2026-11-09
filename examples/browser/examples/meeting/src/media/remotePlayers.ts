@@ -15,7 +15,7 @@ export const REMOTE_VIDEO_SOURCES: RemoteVideoSource[] = ['camera', 'screenshare
 export type RemotePlaybackStats = Partial<Record<RemoteVideoSource, LivePlayerStats>>
 
 /// The source names a member publishes each tile under. `video` is the camera
-/// of a member whose page still publishes with `publish()`.
+/// of a member whose page publishes the unnamed `video` and `audio` tracks.
 const SOURCE_NAMES: Record<RemoteVideoSource, string[]> = {
   camera: ['camera', 'video'],
   screenshare: [SCREEN_SHARE_SOURCE]

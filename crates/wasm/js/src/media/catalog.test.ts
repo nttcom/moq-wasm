@@ -145,7 +145,7 @@ test('an event timeline keeps the type of its records', () => {
   expect([video.eventType, chat.eventType]).toEqual([undefined, 'com.skyway.chat.v1'])
 })
 
-/// The tracks `publish()` lists for a camera with a rendition and a shared screen.
+/// The tracks a page lists for an unnamed camera with a rendition and a shared screen.
 function cameraAndScreenTracks({ withoutCamera = false } = {}): MediaCatalogTrack[] {
   const track = (name: string, packaging: string, altGroup?: number): MediaCatalogTrack => ({
     name,
