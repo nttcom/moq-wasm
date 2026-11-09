@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::{Context, Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus};
 use object_store::{ObjectStore, ObjectStoreExt, path::Path};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     archive_chunks::{MAX_CHUNK_BYTES, digest},
@@ -18,11 +18,42 @@ const MAX_TRACKS: usize = 256;
 pub(crate) struct StoredTrack {
     pub(crate) namespace: String,
     pub(crate) source_namespace: String,
-    pub(crate) content: String,
     pub(crate) name: String,
     pub(crate) chunks: Vec<Value>,
     pub(crate) first: Location,
     pub(crate) last: Location,
+}
+
+impl StoredTrack {
+    /// The groups the track holds media of, as the archive manifest lists
+    /// them.
+    pub(crate) fn groups(&self) -> Result<BTreeSet<u64>> {
+        let mut groups = BTreeSet::new();
+        for chunk in &self.chunks {
+            for group in chunk["groups"]
+                .as_array()
+                .context("archive chunk lists no groups")?
+            {
+                let group = group.as_str().context("group id is not a string")?;
+                groups.insert(group.parse().context("invalid group id")?);
+            }
+        }
+        Ok(groups)
+    }
+
+    /// The earliest and the latest LOC capture timestamp of the track's
+    /// objects; `None` for a track whose objects carry none.
+    pub(crate) fn capture_range_us(&self) -> Option<(u64, u64)> {
+        let bounds = |field: &'static str| {
+            self.chunks
+                .iter()
+                .filter_map(move |chunk| chunk[field].as_str()?.parse::<u64>().ok())
+        };
+        Some((
+            bounds("capture_start_us").min()?,
+            bounds("capture_end_us").max()?,
+        ))
+    }
 }
 
 pub(crate) struct StoredRecording {
@@ -44,7 +75,7 @@ impl StoredRecording {
             prefix: store.recording_prefix(id),
             tracks: Vec::new(),
         };
-        let mut manifest: Value = serde_json::from_slice(
+        let manifest: Value = serde_json::from_slice(
             &recording
                 .read(
                     store.recording_prefix(id).join("manifest.json").as_ref(),
@@ -52,9 +83,6 @@ impl StoredRecording {
                 )
                 .await?,
         )?;
-        if manifest["format"] != "moq" {
-            manifest = crate::mp4_replay::import(store, id, room, &manifest).await?;
-        }
         ensure!(
             manifest["version"] == 1 && manifest["format"] == "moq",
             "unsupported recording format"
@@ -121,7 +149,6 @@ impl StoredRecording {
                                 "{room}/recordings/{id}/{member_index}/{content}/{source_index}"
                             ),
                             source_namespace: source_namespace.to_string(),
-                            content: content.to_string(),
                             name: string(track, "name")?.to_string(),
                             chunks,
                             first,
@@ -138,20 +165,15 @@ impl StoredRecording {
         Ok(recording)
     }
 
-    pub(crate) fn description(&self) -> Value {
-        json!({
-            "tracks": self.tracks.iter().map(|track| json!({
-                "namespace": track.namespace, "source_namespace": track.source_namespace,
-                "content": track.content, "name": track.name,
-                "first": location_json(track.first), "last": location_json(track.last),
-                "chunks": track.chunks.iter().map(|chunk| json!({
-                    "first": chunk["first"], "last": chunk["last"],
-                    "capture_start_us": chunk["capture_start_us"],
-                    "capture_end_us": chunk["capture_end_us"],
-                    "data_size": chunk["data_size"],
-                })).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
-        })
+    /// The replay namespaces, in the order the tracks list them.
+    pub(crate) fn namespaces(&self) -> Vec<&str> {
+        let mut namespaces: Vec<&str> = Vec::new();
+        for track in &self.tracks {
+            if !namespaces.contains(&track.namespace.as_str()) {
+                namespaces.push(&track.namespace);
+            }
+        }
+        namespaces
     }
 
     #[cfg(test)]
@@ -168,6 +190,24 @@ impl StoredRecording {
             .filter(|entry| entry["type"] == "object")
             .map(|entry| decode_object(entry, &data))
             .collect()
+    }
+
+    /// The payloads of the track's Normal objects, in location order.
+    pub(crate) async fn payloads(&self, track: &StoredTrack) -> Result<Vec<Bytes>> {
+        let mut payloads = Vec::new();
+        let mut cached_chunk = None;
+        let mut data = Bytes::new();
+        for entry in self.entries(track, track.first, track.last.next()).await? {
+            if cached_chunk != Some(entry.chunk) {
+                data = self.data(&track.chunks[entry.chunk]).await?;
+                cached_chunk = Some(entry.chunk);
+            }
+            let object = decode_object(&entry.value, &data)?;
+            if object.status == ObjectStatus::Normal {
+                payloads.push(object.payload);
+            }
+        }
+        Ok(payloads)
     }
 
     pub(crate) async fn entries(
@@ -208,8 +248,7 @@ impl StoredRecording {
                     at >= first && at <= last,
                     "object is outside its indexed location range"
                 );
-                if at >= start && (at < end || (at.group_id == end.group_id && end.object_id == 0))
-                {
+                if in_fetch_range(at, start, end) {
                     entries.push(StoredEntry {
                         chunk: chunk_index,
                         value,
@@ -252,6 +291,12 @@ impl StoredRecording {
         ensure!(bytes.len() <= limit, "archive object is too large");
         Ok(bytes)
     }
+}
+
+/// Whether a FETCH of `[start, end)` covers `at`; an `end` with object id 0
+/// takes its whole group (draft-14 §9.16.1).
+pub(crate) fn in_fetch_range(at: Location, start: Location, end: Location) -> bool {
+    at >= start && (at < end || (at.group_id == end.group_id && end.object_id == 0))
 }
 
 pub(crate) fn decode_object(entry: &Value, data: &Bytes) -> Result<Object> {
@@ -322,15 +367,12 @@ pub(crate) fn location(value: &Value) -> Result<Location> {
     })
 }
 
-fn location_json(location: Location) -> Value {
-    json!({ "group": location.group_id.to_string(), "object": location.object_id.to_string() })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{archive_chunks::ChunkWriter, archive_receiver::Event};
     use object_store::{PutPayload, memory::InMemory};
+    use serde_json::json;
 
     #[tokio::test]
     async fn restores_raw_objects_and_rejects_corrupt_chunks_and_escaping_keys() {

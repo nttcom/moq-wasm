@@ -83,35 +83,30 @@ needs the GStreamer plugins listed in the
 [transcode README](../../crates/transcode/README.md#compositing).
 
 An experimental `"format": "moq"` records participant camera, audio,
-screen-share and chat tracks, and the meeting transcriber's transcript, as
-object-store chunks instead of MP4. Omitting `format` retains MP4 behavior.
+screen-share and chat tracks with the media timelines of the camera and the
+screen share, and the meeting transcriber's transcript, as object-store chunks
+instead of MP4. Omitting `format` retains MP4 behavior.
 
-To replay a finished MoQ or MP4 recording, send `POST /recordings/<id>/publish`.
-The response is an NDJSON stream that stays open. Its first line names the
-relay and tracks under `<room>/recordings/<id>/...`, with each track's original
-first and last object locations; empty keepalive lines follow. Use standalone
-MoQ FETCH for those ranges. The recorder reads and checks the stored chunks
-without generating an MP4. The namespace stays available while at least one
-response is open and closes when the last one closes. Open the next response
-after `renew_after_seconds`, before Cloud Run's request timeout ends the current
-one, and close the previous one once no FETCH request is in flight.
-The recording player holds one while its page is open, including while paused.
+To replay a finished MoQ recording, send `POST /recordings/<id>/publish`
+(`409` for an MP4 recording). The response is an NDJSON stream that stays open.
+Its first line is
+`{"namespace_prefix": "<room>/recordings/<id>", "renew_after_seconds": 2700}`;
+empty keepalive lines follow. Under the prefix, each participant's camera and
+screen share is an MSF VOD broadcast: find the namespaces with
+SUBSCRIBE_NAMESPACE, read each `catalog` with SUBSCRIBE and a joining FETCH,
+which lists the recorded tracks with `isLive: false` and `trackDuration`, place
+the groups with the media timeline it lists, which covers the whole recording,
+and FETCH the media. The recorder reads and checks the stored chunks without
+generating an MP4. The namespace stays available while at least one response
+is open and closes when the last one closes. Open the next response after
+`renew_after_seconds`, before Cloud Run's request timeout ends the current one,
+and close the previous one once no FETCH request is in flight. Replay
+publications belong to one API process; keep that instance running while
+serving them.
 
-For MP4 recordings, the first publish request reads the original files and
-creates reusable MoQ chunks under `<id>/mp4-replay/`, without re-encoding or
-changing the MP4 files or their manifest. This first request needs time to read
-the whole recording and additional storage for the chunks. Recorder-produced
-fMP4 and progressive H.264 MP4 are supported; codecs must be supported by
-`mediapack` and the player's WebCodecs implementation. Capture origins in the
-room manifest align participant files. MP4 does not recover chat, transcripts
-or the original MoQ object identities.
-
-Open `examples/recording-player/` in the browser examples, enter the recorder
-URL and recording ID, then choose **Open recording** and **Play**. It renders
-participant and screen-share videos, mixes audio, and restores chat and
-transcript when seeking backward or forward. The meeting's Activities menu
-also offers **Record meeting with chat and transcript** and a link to its
-latest finished recording.
+`examples/recording-player/` in the browser examples cannot play this replay
+yet; recordings are to play in `LivePlayer` instead. The meeting's Activities
+menu offers **Record meeting with chat and transcript**.
 
 Anonymous rooms are public. Private rooms require `Authorization: Bearer <JWT>`
 and `--auth-vts-url <VTS verify endpoint>` (`AUTH_VTS_URL`): `subscribe` grants
@@ -129,16 +124,8 @@ the page that started it. A token that cannot be renewed is kept until the
 relay closes the session at its expiry. The token passes through the job's
 arguments, so whoever can read the launched job's configuration can read it.
 
-The player fetches media by indexed chunk, releases consumed payloads, and has
-no total recording-size limit. Seeking fetches the target interval and its
-preceding video access point. Catalogs and text history remain in memory.
-It rejects a track whose codec configuration changes. Its synchronization is
-approximate because
-publisher clocks have not been calibrated. Replay publications belong to one
-API process; keep that instance running while serving them.
-
 ```bash
-LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/recorder-archive-e2e.spec.ts tests/recorder-mp4-replay-e2e.spec.ts
+LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/recorder-archive-e2e.spec.ts
 ```
 
 | Option | Default | Meaning |

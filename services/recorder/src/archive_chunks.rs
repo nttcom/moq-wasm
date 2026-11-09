@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -164,6 +167,15 @@ async fn flush(store: &Arc<dyn ObjectStore>, prefix: &Path, track: &mut Track) -
     });
     let first = locations.clone().min();
     let last = locations.max();
+    // The groups with media: a status object alone carries none.
+    let groups: BTreeSet<u64> = track
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry["type"] == "object" && entry["status"] == moqt::object::ObjectStatus::Normal as u8
+        })
+        .filter_map(|entry| entry["group"].as_str()?.parse().ok())
+        .collect();
     let captures = track
         .entries
         .iter()
@@ -181,6 +193,7 @@ async fn flush(store: &Arc<dyn ObjectStore>, prefix: &Path, track: &mut Track) -
         "last": last.map(|(group, object)| json!({ "group": group.to_string(), "object": object.to_string() })),
         "capture_start_us": capture_start.map(|value| value.to_string()),
         "capture_end_us": capture_end.map(|value| value.to_string()),
+        "groups": groups.iter().map(u64::to_string).collect::<Vec<_>>(),
     }));
     Ok(())
 }
@@ -338,6 +351,49 @@ mod tests {
         assert!(conflict.is_err());
         assert_eq!(writer.tracks["chat"].entries.len(), 1);
         assert_eq!(writer.tracks["chat"].data, b"first");
+    }
+
+    #[tokio::test]
+    async fn lists_the_groups_whose_media_a_chunk_holds_in_numeric_order() {
+        // Arrange
+        let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+        let mut writer = ChunkWriter::new(store.clone(), Path::from("groups"), "anon/a".into());
+        let object = |group_id, status| {
+            Event::Object(Object {
+                location: Location {
+                    group_id,
+                    object_id: 0,
+                },
+                forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
+                publisher_priority: 1,
+                status,
+                extension_headers: ExtensionHeaders::default(),
+                payload: if status == ObjectStatus::Normal {
+                    Bytes::from_static(b"frame")
+                } else {
+                    Bytes::new()
+                },
+                ends_group: false,
+            })
+        };
+        for event in [
+            object(10, ObjectStatus::Normal),
+            object(9, ObjectStatus::Normal),
+            object(11, ObjectStatus::EndOfGroup),
+        ] {
+            writer.push("video", &event).await.unwrap();
+        }
+
+        // Act
+        let key = writer.finish().await.unwrap();
+        let bytes = store.get(&key).await.unwrap().bytes().await.unwrap();
+        let manifest: Value = serde_json::from_slice(&bytes).unwrap();
+
+        // Assert: group 11 holds only a status object
+        assert_eq!(
+            manifest["tracks"][0]["chunks"][0]["groups"],
+            json!(["9", "10"])
+        );
     }
 
     #[tokio::test]

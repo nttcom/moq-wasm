@@ -18,7 +18,7 @@ use crate::{
     launcher::{Job, Launcher},
     recording::Layout,
     relay::{ServiceToken, TemporaryToken},
-    replay::{ReplayLease, ReplayTask},
+    replay::{RENEW_AFTER, ReplayLease, ReplayTask},
     room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
     state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
     store::RecordingStore,
@@ -50,6 +50,9 @@ impl From<anyhow::Error> for StartRejection {
 #[derive(Debug)]
 pub(crate) enum PublishRejection {
     NotReady,
+    /// An MP4 recording keeps neither the catalog nor the media timeline a
+    /// replay serves.
+    NotMoq,
     /// The recording's room is not one this server can replay, as in
     /// `StartRejection::OutsideRoot`.
     OutsideRoot,
@@ -75,8 +78,7 @@ pub(crate) struct Recordings {
     store: RecordingStore,
     launcher: Launcher,
     /// A cell is reserved under the lock and filled outside it, so opening
-    /// one recording (an MP4 import can take minutes) does not hold up
-    /// requests for the others.
+    /// one recording does not block requests for the others.
     replays: Mutex<HashMap<String, Arc<OnceCell<ReplayTask>>>>,
 }
 
@@ -128,6 +130,9 @@ impl Recordings {
         if record.state != RoomState::Finished {
             return Err(PublishRejection::NotReady);
         }
+        if record.format != RecordingFormat::Moq {
+            return Err(PublishRejection::NotMoq);
+        }
         let token = self
             .service_token(&record.namespace_prefix, bearer)
             .ok_or(PublishRejection::OutsideRoot)?;
@@ -156,8 +161,8 @@ impl Recordings {
                     anyhow::Ok(replay)
                 })
                 .await;
-            let (mut description, lease) = match replay {
-                Ok(replay) => (replay.description(), first_lease.or_else(|| replay.lease())),
+            let lease = match replay {
+                Ok(replay) => first_lease.or_else(|| replay.lease()),
                 Err(error) => {
                     self.forget_replay(id, &cell).await;
                     return Err(error.into());
@@ -170,10 +175,10 @@ impl Recordings {
                 self.forget_replay(id, &cell).await;
                 continue;
             };
-            description["recording_id"] = id.into();
-            description["relay"] = self.config.room.relay.clone().into();
-            description["namespace_prefix"] =
-                format!("{}/recordings/{id}", record.namespace_prefix).into();
+            let description = json!({
+                "namespace_prefix": format!("{}/recordings/{id}", record.namespace_prefix),
+                "renew_after_seconds": RENEW_AFTER.as_secs(),
+            });
             return Ok(Some(Publication { description, lease }));
         }
     }
@@ -484,6 +489,29 @@ mod tests {
         assert!(matches!(again, Err(StartRejection::AlreadyRecording)));
         assert!(recordings.store.stop_requested(&id).await.unwrap());
         assert_eq!(listed["recordings"][0]["id"], id.as_str());
+    }
+
+    #[tokio::test]
+    async fn refuses_to_replay_an_mp4_recording() {
+        // Arrange
+        let recordings = recordings(1, false);
+        let finished = RoomRecord {
+            id: "1700000000000-000001".to_string(),
+            namespace_prefix: "anon/research".to_string(),
+            layout: Layout::Combined,
+            format: RecordingFormat::Mp4,
+            composite: false,
+            state: RoomState::Finished,
+            members: Vec::new(),
+            updated_at_ms: now_ms(),
+        };
+        recordings.store.write_state(&finished).await.unwrap();
+
+        // Act
+        let published = recordings.publish(&finished.id, None).await;
+
+        // Assert
+        assert!(matches!(published, Err(PublishRejection::NotMoq)));
     }
 
     #[tokio::test]

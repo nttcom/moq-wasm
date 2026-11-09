@@ -14,21 +14,3 @@ export async function publishTranscript(relay: string, namespace: string[]): Pro
 }
 
 window.addEventListener('pagehide', () => session?.close())
-
-export function measureFetchBytes(): void {
-  document.documentElement.dataset.fetchBytes = '0'
-  const fetch = MoqSession.prototype.fetch
-  MoqSession.prototype.fetch = async function (...args) {
-    const stream = await fetch.apply(this, args)
-    const iterate = stream[Symbol.asyncIterator].bind(stream)
-    stream[Symbol.asyncIterator] = async function* () {
-      for await (const object of { [Symbol.asyncIterator]: iterate }) {
-        document.documentElement.dataset.fetchBytes = String(
-          Number(document.documentElement.dataset.fetchBytes) + object.objectPayloadLength
-        )
-        yield object
-      }
-    }
-    return stream
-  }
-}

@@ -10,7 +10,6 @@ mod composite_job;
 mod file_writer;
 mod launcher;
 mod manifest;
-mod mp4_replay;
 mod pipeline;
 mod record_job;
 mod recorder;
@@ -30,6 +29,7 @@ mod token_refresh_task;
 mod track_list;
 mod track_selection;
 mod upload_task;
+mod vod;
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 

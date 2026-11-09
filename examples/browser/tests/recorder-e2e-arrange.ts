@@ -1,7 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { cpSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -91,36 +90,7 @@ export const test = base.extend<{ recorderServe: RecorderServe }>({
   }
 })
 
-export function recordingPlayerPath(recorderUrl: string, id: string): string {
-  const params = new URLSearchParams({ recorder: recorderUrl, relayUrl: liveViewerE2EConfig.moqtUrl, id })
-  return `/moq-wasm/examples/recording-player/?${params}`
-}
-
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
-
-export async function createProgressiveRecording(storeDir: string, recording: RoomRecording): Promise<string> {
-  const id = `${recording.id}-progressive`
-  const directory = join(storeDir, id)
-  await mkdir(directory)
-  const key = join(directory, 'source.mp4').replace(/^\//, '')
-  await copyFile(join(REPO_ROOT, 'crates/mediapack/fixtures/testsrc_progressive.mp4'), join('/', key))
-  const original = JSON.parse(await readFile(join(storeDir, recording.id, 'manifest.json'), 'utf8'))
-  const member = original.members.find((member: { files: unknown[] }) => member.files.length)
-  await writeFile(
-    join(directory, 'manifest.json'),
-    JSON.stringify({
-      members: [
-        {
-          namespace: member.namespace,
-          files: [{ key, capture_origin_us: member.files[0].capture_origin_us }]
-        }
-      ]
-    })
-  )
-  const state = JSON.parse(await readFile(join(storeDir, 'state', `${recording.id}.json`), 'utf8'))
-  await writeFile(join(storeDir, 'state', `${id}.json`), JSON.stringify({ ...state, id }))
-  return id
-}
 
 /// `recorder serve` with a directory store; it runs every recording and composite as a child process.
 async function startRecorderServe() {
@@ -228,6 +198,24 @@ async function startRecorderServe() {
         }
         await sleep(POLL_INTERVAL_MS)
       }
+    },
+    /// Opens a replay of the recording, which runs until `close`, and returns the first line of the answer.
+    async publish(recording: RoomRecording): Promise<{ answer: Record<string, unknown>; close: () => Promise<void> }> {
+      const response = await fetch(`${url}/recordings/${recording.id}/publish`, { method: 'POST' })
+      if (!response.ok || !response.body) {
+        throw new Error(`publish answered ${response.status}: ${await response.text()}`)
+      }
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let text = ''
+      while (!text.includes('\n')) {
+        const { value, done } = await reader.read()
+        if (done) {
+          throw new Error(`the publish answer ended before its first line: ${text}`)
+        }
+        text += decoder.decode(value, { stream: true })
+      }
+      return { answer: JSON.parse(text.slice(0, text.indexOf('\n'))), close: () => reader.cancel() }
     },
     async close(): Promise<void> {
       recorder.kill('SIGINT')
