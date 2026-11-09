@@ -5,19 +5,19 @@ use base64::{Engine, engine::general_purpose};
 use mediapack::{AudioConfig, aac::AudioSpecificConfig, loc::VideoCodec};
 use msf::{Catalog, KnownPackaging, KnownTrackRole, Packaging, Track};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct Selection {
     pub(crate) video: Option<VideoTrack>,
     pub(crate) audio: Option<AudioTrack>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct VideoTrack {
     pub(crate) name: String,
     pub(crate) codec: VideoCodec,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AudioTrack {
     pub(crate) name: String,
     pub(crate) config: AudioConfig,

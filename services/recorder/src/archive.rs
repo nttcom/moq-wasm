@@ -1,4 +1,9 @@
-use std::{path::PathBuf, task::Poll, time::SystemTime};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    task::Poll,
+    time::SystemTime,
+};
 
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -15,7 +20,7 @@ use crate::{
     archive_chunks::ChunkWriter,
     archive_receiver::{ArchiveTrack, Event},
     recorder::{BroadcastOptions, Content, choice, default_output_path},
-    track_selection,
+    track_selection::{self, Selection},
 };
 
 pub(crate) async fn record(session: &Session, args: &Args) -> Result<()> {
@@ -46,7 +51,7 @@ async fn record_until(
                 .and_then(|name| name.to_str())
                 .context("archive output must have a UTF-8 file name")?;
             Ok::<_, anyhow::Error>(ChunkWriter::new(
-                std::sync::Arc::from(store),
+                Arc::from(store),
                 prefix.join(name),
                 args.namespace.clone(),
             ))
@@ -67,6 +72,26 @@ async fn record_until(
         .map(drop)
 }
 
+fn part_path(path: &Path, index: usize) -> PathBuf {
+    if index == 0 {
+        return path.to_path_buf();
+    }
+    let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match path.extension() {
+        Some(extension) => format!("{stem}-{index}.{}", extension.to_string_lossy()),
+        None => format!("{stem}-{index}"),
+    };
+    path.with_file_name(name)
+}
+
+/// Records the broadcast as one archive per stretch in which no recorded
+/// track was replaced, so each archive's replay lists one track per kind: a
+/// catalog that swaps a video or audio track the archive holds media of for
+/// another, or changes its video codec or audio configuration, ends the
+/// archive, and the next one starts from that catalog. Archive `index`
+/// after the first goes to `path` and `chunks` with `-<index>` added
+/// (`part_path`, `ChunkWriter::part`). Returns the uploaded keys in archive
+/// order.
 pub(crate) async fn record_broadcast(
     session: &Session,
     namespace: &str,
@@ -74,8 +99,44 @@ pub(crate) async fn record_broadcast(
     options: &BroadcastOptions,
     chunks: Option<ChunkWriter>,
     stop: impl Future<Output = ()>,
-) -> Result<Option<object_store::path::Path>> {
+) -> Result<Vec<object_store::path::Path>> {
     tokio::pin!(stop);
+    let mut keys = Vec::new();
+    let mut index = 0;
+    loop {
+        let part_path = path.as_deref().map(|path| part_path(path, index));
+        let part_chunks = chunks.as_ref().map(|chunks| chunks.part(index));
+        let (key, end) = record_part(
+            session,
+            namespace,
+            part_path,
+            options,
+            part_chunks,
+            &mut stop,
+        )
+        .await?;
+        keys.extend(key);
+        if end == PartEnd::Done {
+            return Ok(keys);
+        }
+        index += 1;
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum PartEnd {
+    Done,
+    Replaced,
+}
+
+async fn record_part(
+    session: &Session,
+    namespace: &str,
+    path: Option<PathBuf>,
+    options: &BroadcastOptions,
+    chunks: Option<ChunkWriter>,
+    mut stop: impl Future<Output = ()> + Unpin,
+) -> Result<(Option<object_store::path::Path>, PartEnd)> {
     let mut archive = Archive::create(path, namespace, chunks).await?;
     let mut catalog = ArchiveTrack::subscribe(
         session,
@@ -86,8 +147,12 @@ pub(crate) async fn record_broadcast(
     )
     .await?;
     let (mut video, mut audio): (Option<ArchiveTrack>, Option<ArchiveTrack>) = (None, None);
+    let mut selected = Selection::default();
+    // The video and audio track the archive holds media of.
+    let mut recorded = Selection::default();
     let mut timelines: Vec<ArchiveTrack> = Vec::new();
     let mut catalog_open = true;
+    let mut end = PartEnd::Done;
     loop {
         tokio::select! {
             _ = &mut stop => break,
@@ -100,15 +165,23 @@ pub(crate) async fn record_broadcast(
                         }
                         _ => None,
                     };
+                    let selection = document
+                        .as_ref()
+                        .map(|document| track_selection::select_tracks(document, choice(options)))
+                        .transpose()?
+                        .map(Option::unwrap_or_default);
+                    if selection.as_ref().is_some_and(|selection| replaces(&recorded, selection)) {
+                        end = PartEnd::Replaced;
+                        break;
+                    }
                     archive.write_event("catalog", event).await?;
-                    let Some(document) = document else { continue };
+                    let (Some(document), Some(selection)) = (document, selection) else { continue };
                     if options.content == Content::Camera {
                         let names = track_selection::event_timelines(&document).map(|track| track.name.as_str());
                         subscribe_timelines(session, namespace, names, &mut timelines).await?;
                     }
-                    let selection = track_selection::select_tracks(&document, choice(options))?;
-                    let video_name = selection.as_ref().and_then(|s| s.video.as_ref()).map(|v| v.name.as_str());
-                    let audio_name = selection.as_ref().and_then(|s| s.audio.as_ref()).map(|a| a.name.as_str());
+                    let video_name = selection.video.as_ref().map(|v| v.name.as_str());
+                    let audio_name = selection.audio.as_ref().map(|a| a.name.as_str());
                     if video.as_ref().map(|t| t.subscription.track_name()) != video_name {
                         video = match video_name {
                             Some(name) => Some(ArchiveTrack::subscribe(session, namespace, name, FilterType::NextGroupStart, false).await?),
@@ -121,20 +194,27 @@ pub(crate) async fn record_broadcast(
                             None => None,
                         };
                     }
-                    let recorded: Vec<&str> = video_name.into_iter().chain(audio_name).collect();
-                    let names = track_selection::media_timelines(&document, &recorded).map(|track| track.name.as_str());
-                    subscribe_timelines(session, namespace, names, &mut timelines).await?;
+                    let names: Vec<&str> = video_name.into_iter().chain(audio_name).collect();
+                    let timeline_names = track_selection::media_timelines(&document, &names).map(|track| track.name.as_str());
+                    subscribe_timelines(session, namespace, timeline_names, &mut timelines).await?;
+                    selected = selection;
                 }
                 None => catalog_open = false,
             },
             item = next(&mut video) => match item? {
                 Some(event) => if let Some(track) = &video {
+                    if matches!(event, Event::Object(_)) && recorded.video.is_none() {
+                        recorded.video = selected.video.clone();
+                    }
                     archive.write_event(track.subscription.track_name(), event).await?;
                 },
                 None => video = None,
             },
             item = next(&mut audio) => match item? {
                 Some(event) => if let Some(track) = &audio {
+                    if matches!(event, Event::Object(_)) && recorded.audio.is_none() {
+                        recorded.audio = selected.audio.clone();
+                    }
                     archive.write_event(track.subscription.track_name(), event).await?;
                 },
                 None => audio = None,
@@ -148,7 +228,14 @@ pub(crate) async fn record_broadcast(
             break;
         }
     }
-    archive.finish().await
+    Ok((archive.finish().await?, end))
+}
+
+fn replaces(recorded: &Selection, selection: &Selection) -> bool {
+    fn swapped<T: PartialEq>(recorded: &Option<T>, next: &Option<T>) -> bool {
+        matches!((recorded, next), (Some(recorded), Some(next)) if recorded != next)
+    }
+    swapped(&recorded.video, &selection.video) || swapped(&recorded.audio, &selection.audio)
 }
 
 pub(crate) async fn record_event_track(
@@ -359,6 +446,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::scratch_dir;
+    use mediapack::loc::VideoCodec;
 
     #[tokio::test]
     async fn stores_object_identity_headers_and_payload_without_overwriting() {
@@ -639,6 +727,228 @@ mod tests {
         assert!(final_data.lines().any(|line| line == "{\"complete\":true}"));
         connection.close().await;
         tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[test]
+    fn a_swapped_track_or_codec_replaces_and_an_added_or_dropped_one_does_not() {
+        // Arrange
+        let video = |name: &str, codec| crate::track_selection::VideoTrack {
+            name: name.to_string(),
+            codec,
+        };
+        let recorded = Selection {
+            video: Some(video("video_480p", VideoCodec::H264)),
+            audio: None,
+        };
+        let with = |video| Selection { video, audio: None };
+
+        // Act / Assert
+        assert!(replaces(
+            &recorded,
+            &with(Some(video("video_720p", VideoCodec::H264)))
+        ));
+        assert!(replaces(
+            &recorded,
+            &with(Some(video("video_480p", VideoCodec::Vp8)))
+        ));
+        assert!(!replaces(
+            &recorded,
+            &with(Some(video("video_480p", VideoCodec::H264)))
+        ));
+        assert!(!replaces(&recorded, &with(None)));
+        assert!(!replaces(&with(None), &recorded));
+    }
+
+    #[test]
+    fn a_later_archive_takes_its_index_before_the_extension() {
+        // Act / Assert
+        assert_eq!(
+            part_path(Path::new("out/a.jsonl"), 0),
+            Path::new("out/a.jsonl")
+        );
+        assert_eq!(
+            part_path(Path::new("out/a.jsonl"), 2),
+            Path::new("out/a-2.jsonl")
+        );
+        assert_eq!(part_path(Path::new("out/a"), 1), Path::new("out/a-1"));
+    }
+
+    /// A recorder writing `archive.jsonl` from a publisher whose catalog
+    /// lists `video_480p`, which also serves `video_720p`.
+    struct RenditionSwitch {
+        dir: PathBuf,
+        publisher: crate::test_support::FakePublisher,
+        connection: crate::relay::RelayConnection,
+        stop_sender: tokio::sync::oneshot::Sender<()>,
+        recording: tokio::task::JoinHandle<Result<()>>,
+    }
+
+    const SWITCH_NAMESPACE: &str = "anon/test";
+
+    impl RenditionSwitch {
+        async fn start() -> Self {
+            let dir = scratch_dir();
+            let publisher = crate::test_support::FakePublisher::spawn();
+            for name in ["catalog", "video_480p", "video_720p"] {
+                publisher
+                    .origin
+                    .ensure_track(SWITCH_NAMESPACE, name, 0, Retention::NewestOnly)
+                    .await;
+            }
+            let switch_args = Args::parse_from([
+                "recorder",
+                "--relay",
+                &publisher.url,
+                "--namespace",
+                SWITCH_NAMESPACE,
+                "--archive",
+                "--output",
+                dir.join("archive.jsonl").to_str().unwrap(),
+            ]);
+            let connection = crate::relay::RelayConnection::connect(&publisher.url, false, None)
+                .await
+                .unwrap();
+            publish_rendition_catalog(&publisher.origin, &[480]).await;
+            let (stop_sender, stop) = tokio::sync::oneshot::channel();
+            let session = connection.session.clone();
+            let recording = tokio::spawn(async move {
+                record_until(&session, &switch_args, async {
+                    let _ = stop.await;
+                })
+                .await
+            });
+            let mut switch = Self {
+                dir,
+                publisher,
+                connection,
+                stop_sender,
+                recording,
+            };
+            switch.served("video_480p").await;
+            switch
+        }
+
+        async fn served(&mut self, name: &str) {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while self.publisher.served.recv().await.as_deref() != Some(name) {}
+            })
+            .await
+            .unwrap()
+        }
+
+        /// Writes a frame on `track` and waits until archive `file` stores it.
+        async fn write_frame(&self, track: &str, file: &str) {
+            let frame = crate::test_support::fixture().video.remove(0);
+            self.publisher
+                .origin
+                .write(
+                    SWITCH_NAMESPACE,
+                    track,
+                    OutgoingObject {
+                        group: GroupBoundary::Next,
+                        extension_headers: frame.extension_headers,
+                        payload: frame.payload,
+                    },
+                )
+                .await
+                .unwrap();
+            let path = self.dir.join(file);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let data = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+                    if data.lines().any(|line| {
+                        serde_json::from_str::<serde_json::Value>(line).is_ok_and(|entry| {
+                            entry["track"] == track && entry["payload"].is_string()
+                        })
+                    }) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap()
+        }
+
+        /// Stops the recording and returns the contents of `archive.jsonl` and
+        /// `archive-1.jsonl` that exist, in order.
+        async fn stop(self) -> Vec<String> {
+            let _ = self.stop_sender.send(());
+            self.recording.await.unwrap().unwrap();
+            let mut archives = Vec::new();
+            for file in ["archive.jsonl", "archive-1.jsonl"] {
+                if let Ok(data) = tokio::fs::read_to_string(self.dir.join(file)).await {
+                    archives.push(data);
+                }
+            }
+            self.connection.close().await;
+            tokio::fs::remove_dir_all(self.dir).await.unwrap();
+            archives
+        }
+    }
+
+    async fn publish_rendition_catalog(origin: &moqt::publish::Origin, heights: &[u32]) {
+        let tracks = heights
+            .iter()
+            .map(|height| {
+                let mut track =
+                    msf::Track::new(&format!("video_{height}p"), KnownPackaging::Loc, true);
+                track.role = Some(KnownTrackRole::Video.into());
+                track.codec = Some("avc1.42C01E".into());
+                track.height = Some(*height);
+                track
+            })
+            .collect();
+        let catalog = serde_json::to_vec(&Catalog::new(tracks, 0)).unwrap();
+        origin
+            .write(
+                SWITCH_NAMESPACE,
+                "catalog",
+                OutgoingObject::plain(GroupBoundary::Next, Bytes::from(catalog)),
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_catalog_that_swaps_the_recorded_rendition_starts_the_next_archive() {
+        // Arrange
+        let mut switch = RenditionSwitch::start().await;
+        switch.write_frame("video_480p", "archive.jsonl").await;
+
+        // Act: a taller rendition the recorder prefers
+        publish_rendition_catalog(&switch.publisher.origin, &[480, 720]).await;
+        switch.served("video_720p").await;
+        switch.write_frame("video_720p", "archive-1.jsonl").await;
+        let archives = switch.stop().await;
+
+        // Assert: each archive holds one rendition and is complete
+        let [first, next] = archives.as_slice() else {
+            panic!("expected two archives, got {}", archives.len());
+        };
+        assert!(first.contains("\"track\":\"video_480p\""));
+        assert!(!first.contains("\"track\":\"video_720p\""));
+        assert!(next.contains("\"track\":\"video_720p\""));
+        assert!(!next.contains("\"track\":\"video_480p\""));
+        for data in [first, next] {
+            assert!(data.lines().any(|line| line == "{\"complete\":true}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rendition_swapped_before_any_of_it_was_stored_keeps_the_archive() {
+        // Arrange
+        let mut switch = RenditionSwitch::start().await;
+
+        // Act
+        publish_rendition_catalog(&switch.publisher.origin, &[480, 720]).await;
+        switch.served("video_720p").await;
+        switch.write_frame("video_720p", "archive.jsonl").await;
+        let archives = switch.stop().await;
+
+        // Assert
+        assert_eq!(archives.len(), 1);
+        assert!(archives[0].contains("\"track\":\"video_720p\""));
     }
 
     #[tokio::test]
