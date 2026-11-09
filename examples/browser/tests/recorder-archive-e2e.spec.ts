@@ -19,13 +19,13 @@ async function seekTo(page: Page, seconds: number): Promise<void> {
   }, seconds)
 }
 
-/// Seeks to a capture timestamp, which the seek bar counts from the recording's start.
+/// Seeks to a position on the replay's LOC Timestamp axis, which the seek bar counts from the recording's start.
 async function seekToCapture(page: Page, captureMicros: number): Promise<void> {
   const startMicros = Number(await page.locator('#seek').getAttribute('data-start-us'))
   await seekTo(page, (captureMicros - startMicros) / 1_000_000)
 }
 
-/// The capture timestamp of the frame a tile showed last, NaN before one.
+/// The LOC Timestamp of the frame a tile showed last, NaN before one.
 async function shownMicros(tile: Locator): Promise<number> {
   return Number((await tile.getAttribute('data-capture-us')) ?? Number.NaN)
 }
@@ -48,9 +48,9 @@ test('records a room and plays its VOD replay through the relay to the end', asy
   expect(room.format).toBe('moq')
   expect(member.camera.length).toBeGreaterThan(0)
   const archive = JSON.parse(await readFile(join('/', member.camera[0]), 'utf8'))
-  expect(archive.tracks.map((track: { name: string }) => track.name)).toEqual(
-    expect.arrayContaining(['catalog', 'video', 'audio', 'video_timeline'])
-  )
+  const archived = archive.tracks.map((track: { name: string }) => track.name)
+  expect(archived).toEqual(expect.arrayContaining(['catalog', 'video', 'audio']))
+  expect(archived).not.toContain('video_timeline')
 
   // Act
   const replay = await recorderServe.publish(recording)
@@ -66,10 +66,11 @@ test('records a room and plays its VOD replay through the relay to the end', asy
       { relay: liveViewerE2EConfig.moqtUrl, prefix, namespace: `${prefix}/e2e/camera/0` }
     )
 
-    // Assert: the catalog and the timeline cover the recording
+    // Assert: the answer carries the start, and the catalog and the timeline (wallclock 0) cover the recording
     expect(replay.answer).toEqual({
       namespace_prefix: prefix,
-      renew_after_seconds: 2700
+      renew_after_seconds: 2700,
+      started_at_ms: Number(room.started_at_ms)
     })
     expect(catalog.isComplete).toBe(true)
     expect(catalog.generatedAt).toBeUndefined()
@@ -80,8 +81,9 @@ test('records a room and plays its VOD replay through the relay to the end', asy
       expect(track.trackDuration, track.name).toBeGreaterThan(30_000)
     }
     const records: TimelineRecord[] = timeline
-    const wallclocks = records.map(([, , wallclock]) => wallclock)
-    expect(Math.max(...wallclocks) - Math.min(...wallclocks)).toBeGreaterThan(30_000)
+    const presentations = records.map(([presentation]) => presentation)
+    expect(Math.max(...presentations) - Math.min(...presentations)).toBeGreaterThan(30_000)
+    expect(records.every(([, , wallclock]) => wallclock === 0)).toBe(true)
   } finally {
     await replay.close()
   }
@@ -185,15 +187,6 @@ test('records participants, screen share, chat and transcript and replays them i
     expect(aliceMember?.screen_share.length).toBeGreaterThan(0)
     expect(bobMember?.camera.length).toBeGreaterThan(0)
     const archive = JSON.parse(await readFile(join('/', aliceMember.camera[0]), 'utf8'))
-    const names = archive.tracks.map((track: { name: string }) => track.name)
-    expect(names).toContain('video_timeline')
-    // A switch of renditions starts the next archive, and the first can end before the timeline arrives.
-    const shareNames = []
-    for (const key of aliceMember.screen_share) {
-      const share = JSON.parse(await readFile(join('/', key), 'utf8'))
-      shareNames.push(...share.tracks.map((track: { name: string }) => track.name))
-    }
-    expect(shareNames).toContain('screenshare_timeline')
     const chat = archive.tracks.find((track: { name: string }) => track.name === 'chat')
     expect(chat).toBeTruthy()
     const payloads = []
@@ -208,6 +201,7 @@ test('records participants, screen share, chat and transcript and replays them i
     }
     expect(payloads.some((payload) => payload.includes('archive chat message'))).toBe(true)
     const aliceTracks: Track[] = aliceCatalog.tracks
+    expect(aliceTracks.map((track) => track.name)).toContain('video_timeline')
     const aliceAudio = aliceTracks.filter((track) => track.role === 'audio').map((track) => track.name)
     expect(aliceAudio.length).toBeGreaterThan(0)
     expect(aliceTracks.find((track) => track.name === 'transcript')).toMatchObject({

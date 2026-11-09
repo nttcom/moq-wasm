@@ -29,7 +29,7 @@ class FakeAnswer {
   }
 
   describe(
-    line = `{"namespace_prefix":"app/room/recordings/rec-1","renew_after_seconds":${RENEW_AFTER_SECONDS}}`
+    line = `{"namespace_prefix":"app/room/recordings/rec-1","renew_after_seconds":${RENEW_AFTER_SECONDS},"started_at_ms":1700000000000}`
   ): void {
     const encoder = new TextEncoder()
     const stream = new ReadableStream<Uint8Array>({
@@ -123,7 +123,7 @@ async function isOpen(recording: Recording): Promise<boolean> {
   return (await Promise.race([recording.closed.then(() => 'closed'), settle().then(() => 'open')])) === 'open'
 }
 
-test('the first line of the answer names the replay prefix', async () => {
+test('the first line of the answer names the replay prefix and when the recording started', async () => {
   // Arrange
   const recorder = new FakeRecorder()
 
@@ -132,6 +132,7 @@ test('the first line of the answer names the replay prefix', async () => {
 
   // Assert
   expect(recording.prefix).toEqual(['app', 'room', 'recordings', 'rec-1'])
+  expect(recording.startedAtMs).toBe(1_700_000_000_000)
   expect(recorder.answers[0].url).toBe(PUBLISH_URL)
   expect(recorder.answers[0].init.method).toBe('POST')
   expect(recorder.answers[0].authorization).toBe('Bearer jwt')
@@ -255,7 +256,9 @@ test('close() closes the current answer, the one it replaced and the one being o
   const recorder = new FakeRecorder()
   const recording = await recorder.open()
   await recorder.advanceBy(RENEW_AFTER_MS)
-  recorder.answers[1].describe('{"namespace_prefix":"app/room/recordings/rec-1","renew_after_seconds":30}')
+  recorder.answers[1].describe(
+    '{"namespace_prefix":"app/room/recordings/rec-1","renew_after_seconds":30,"started_at_ms":1700000000000}'
+  )
   await recorder.advanceBy(30_000)
 
   // Act

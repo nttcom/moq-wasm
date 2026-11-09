@@ -68,6 +68,9 @@ export class Recording {
   private constructor(
     /// The namespace prefix of the replay's broadcasts, for `session.watchNamespaces`.
     readonly prefix: string[],
+    /// When the recording started, in Unix milliseconds: the replay's LOC Timestamps are media
+    /// time since then, so a time of day is this plus a position.
+    readonly startedAtMs: number,
     private current: Answer,
     private readonly request: PublishRequest,
     private readonly environment: RecordingEnvironment
@@ -84,8 +87,8 @@ export class Recording {
     request: PublishRequest,
     environment: RecordingEnvironment
   ): Promise<Recording> {
-    const { prefix, answer } = await openAnswer(request, environment, new AbortController())
-    const recording = new Recording(prefix, answer, request, environment)
+    const { prefix, startedAtMs, answer } = await openAnswer(request, environment, new AbortController())
+    const recording = new Recording(prefix, startedAtMs, answer, request, environment)
     void session.closed.then(() => recording.close())
     return recording
   }
@@ -182,7 +185,7 @@ async function openAnswer(
   request: PublishRequest,
   environment: RecordingEnvironment,
   controller: AbortController
-): Promise<{ prefix: string[]; answer: Answer }> {
+): Promise<{ prefix: string[]; startedAtMs: number; answer: Answer }> {
   const token = typeof request.token === 'function' ? await request.token() : request.token
   const response = await environment.fetch(request.url, {
     method: 'POST',
@@ -198,8 +201,8 @@ async function openAnswer(
   }
   const reader = response.body!.getReader()
   try {
-    const { prefix, renewAfterMs } = parseDescription(await readLine(reader))
-    return { prefix, answer: new Answer(renewAfterMs, controller, reader) }
+    const { prefix, renewAfterMs, startedAtMs } = parseDescription(await readLine(reader))
+    return { prefix, startedAtMs, answer: new Answer(renewAfterMs, controller, reader) }
   } catch (error) {
     controller.abort()
     throw error
@@ -219,12 +222,16 @@ async function readLine(reader: ReadableStreamDefaultReader<Uint8Array>): Promis
   return text.slice(0, text.indexOf('\n'))
 }
 
-function parseDescription(line: string): { prefix: string[]; renewAfterMs: number } {
-  const { namespace_prefix: prefix, renew_after_seconds: renewAfterSeconds } = JSON.parse(line)
-  if (typeof prefix !== 'string' || !(renewAfterSeconds > 0)) {
+function parseDescription(line: string): { prefix: string[]; renewAfterMs: number; startedAtMs: number } {
+  const {
+    namespace_prefix: prefix,
+    renew_after_seconds: renewAfterSeconds,
+    started_at_ms: startedAtMs
+  } = JSON.parse(line)
+  if (typeof prefix !== 'string' || !(renewAfterSeconds > 0) || typeof startedAtMs !== 'number') {
     throw new Error(`the recorder described the replay as ${line}`)
   }
-  return { prefix: prefix.split('/'), renewAfterMs: renewAfterSeconds * 1_000 }
+  return { prefix: prefix.split('/'), renewAfterMs: renewAfterSeconds * 1_000, startedAtMs }
 }
 
 /// An answer the page aborted or the network broke has ended too.

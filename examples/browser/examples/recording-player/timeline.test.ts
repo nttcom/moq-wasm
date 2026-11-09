@@ -5,8 +5,8 @@ const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value
 
 test('a chat record is the participant whose broadcast carries it and a transcript record names its speaker', () => {
   // Arrange
-  const chat = encode([{ t: 100, data: { text: 'hello' } }])
-  const transcript = encode([{ t: 200, data: { speaker: 'bob', text: 'hi' } }])
+  const chat = encode([{ m: 100, data: { text: 'hello' } }])
+  const transcript = encode([{ m: 200, data: { speaker: 'bob', text: 'hi' } }])
 
   // Act
   const events = [...eventRecords(chat, 'chat', 'alice'), ...eventRecords(transcript, 'transcript', 'alice')]
@@ -21,13 +21,13 @@ test('a chat record is the participant whose broadcast carries it and a transcri
 
 test('repeated records merge and a later transcript correction keeps the utterance time', () => {
   // Arrange
-  const old = eventRecords(encode([{ t: 100, data: { speaker: 'alice', text: 'old' } }]), 'transcript', 'alice')
+  const old = eventRecords(encode([{ m: 100, data: { speaker: 'alice', text: 'old' } }]), 'transcript', 'alice')
   const corrected = eventRecords(
-    encode([{ t: 100, data: { speaker: 'alice', text: 'corrected' } }]),
+    encode([{ m: 100, data: { speaker: 'alice', text: 'corrected' } }]),
     'transcript',
     'alice'
   )
-  const chat = eventRecords(encode([{ t: 50, data: { text: 'first' } }]), 'chat', 'alice')
+  const chat = eventRecords(encode([{ m: 50, data: { text: 'first' } }]), 'chat', 'alice')
 
   // Act
   const events = mergeEvents([...old, ...corrected, ...corrected, ...chat, ...chat])
@@ -42,8 +42,8 @@ test('repeated records merge and a later transcript correction keeps the utteran
 test('a caption shows its speaker utterance for four seconds from its time', () => {
   // Arrange
   const events = mergeEvents([
-    ...eventRecords(encode([{ t: 1_000, data: { speaker: 'alice', text: 'hi' } }]), 'transcript', 'alice'),
-    ...eventRecords(encode([{ t: 2_000, data: { speaker: 'bob', text: 'hello' } }]), 'transcript', 'bob')
+    ...eventRecords(encode([{ m: 1_000, data: { speaker: 'alice', text: 'hi' } }]), 'transcript', 'alice'),
+    ...eventRecords(encode([{ m: 2_000, data: { speaker: 'bob', text: 'hello' } }]), 'transcript', 'bob')
   ])
 
   // Act / Assert

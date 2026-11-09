@@ -1,7 +1,7 @@
 export type EventKind = 'chat' | 'transcript'
 
-/// `at` is the wallclock time in Unix microseconds, the clock of the LOC
-/// capture timestamps.
+/// `at` is media time in microseconds since the recording started, the clock
+/// of the replay's LOC Timestamps.
 export type TimelineEvent = { at: number; kind: EventKind; speaker: string; text: string }
 
 /// The kind of each `eventType` (draft-ietf-moq-msf-01 §5.2.5) the page shows.
@@ -13,22 +13,22 @@ export const EVENT_KINDS: Readonly<Record<string, EventKind>> = {
 /// How long a transcribed utterance stays on its speaker's tile.
 const CAPTION_US = 4_000_000
 
-/// The records of one event timeline object (§8.1), indexed by wallclock `t`
-/// in milliseconds. A chat record names no speaker; its speaker is the
-/// participant whose broadcast carries the chat.
+/// The records of one event timeline object (§8.1), indexed by media time `m`
+/// in milliseconds, as the recorder stores them. A chat record names no
+/// speaker; its speaker is the participant whose broadcast carries the chat.
 export function eventRecords(payload: Uint8Array, kind: EventKind, participant: string): TimelineEvent[] {
   const records: unknown = JSON.parse(new TextDecoder().decode(payload))
   if (!Array.isArray(records)) throw new Error('Invalid event timeline')
   return records.map((record) => {
     if (
-      !Number.isSafeInteger(record?.t) ||
-      !Number.isSafeInteger(record.t * 1000) ||
+      !Number.isSafeInteger(record?.m) ||
+      !Number.isSafeInteger(record.m * 1000) ||
       typeof record?.data?.text !== 'string'
     ) {
-      throw new Error('Event has no source time or text')
+      throw new Error('Event has no media time or text')
     }
     return {
-      at: record.t * 1000,
+      at: record.m * 1000,
       kind,
       speaker: typeof record.data.speaker === 'string' ? record.data.speaker : participant,
       text: record.data.text

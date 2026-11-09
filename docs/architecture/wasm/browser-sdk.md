@@ -418,6 +418,8 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 - catalog の track が `isLive: false` のとき、シークバーの範囲を timeline の最初から最後
   （`trackDuration`）にし、`goLive` を出さない。再生位置が終わりに着いたら止まり、
   `state.ended` を立てる。
+  - 再生位置は LOC の Timestamp で表す。timeline の wallclock が 0 の記録は、presentation time の
+    位置に置く（replay は group の最初の Object の Timestamp を presentation time にしている）。
   - 映像と音声は SUBSCRIBE しない（Object が届かない）。全部を巻き戻しと同じ FETCH の窓で読む。
     timeline も Object が1つだけなので、catalog と同じく joining FETCH で読む。
   - timeline が届いたら最初の group から再生する。ライブの視聴と同じく、先に一時停止して
@@ -429,8 +431,9 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 - 複数の player を1つの再生位置に揃える `PlaybackGroup` を足す。会議で全員を 10 秒前に
   戻してまとめて見る、録画の会議を全員そろえて再生する、といった使い方のため。映像と音声が
   1つずつの配信は、1つの player の中で揃うので使わない。
-  - group は1つの AudioContext と、wallclock（LOC の capture timestamp）で表した1つの
-    再生位置を持つ。`play`、`pause`、`seek`、`skip`、`goLive` を全 player に当てる。
+  - group は1つの AudioContext と、LOC の Timestamp（ライブでは capture 時刻、録画では録画の
+    開始からの media time）で表した1つの再生位置を持つ。`play`、`pause`、`seek`、`skip`、
+    `goLive` を全 player に当てる。
     揃えている間の音声はこの AudioContext で鳴らし、ライブの間はそれぞれの player の
     ライブの再生経路で鳴らす。
   - ライブの間、player はそれぞれのライブの先端で再生する。揃えるのは巻き戻している間と、
@@ -439,7 +442,7 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
     group から操作し、1人だけ巻き戻すときは group から外す。戻すと group の再生位置に揃う。
     group にいる player の `seek`、`skip`、`goLive`、`setPaused` は group に当たる。
   - 再生位置が player の範囲の外にある player は、何も FETCH せず、状態で範囲外を示す。
-    範囲は、録画では timeline の最初の entry から `trackDuration` まで、ライブでは timeline
+    範囲は、録画では timeline の最初の entry から `trackDuration` の長さ、ライブでは timeline
     の最初の entry からライブの先端まで。timeline にあっても relay のキャッシュから消えた
     範囲は、上の `FetchFailure` で扱う。
     途中で入った参加者、先に抜けた参加者、入り直して namespace が分かれた参加者は、
@@ -448,7 +451,8 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 `moq-wasm/recording`:
 
 - `openRecording(session, recorderUrl, id, { token })` が、`POST /recordings/{id}/publish`
-  の応答を開いたまま持ち、replay の prefix を返す。`close()` で応答を閉じる。`session` が
+  の応答を開いたまま持ち、replay の prefix と録画の開始時刻（`startedAtMs`）を返す。
+  `close()` で応答を閉じる。`session` が
   閉じたときも閉じる。`token` は `connect` と同じく文字列か非同期関数で、関数なら応答を
   開くたびに呼ぶ。recorder が断ったら、HTTP の status を持つ `RecorderError` で reject する。
 - `renew_after_seconds` ごとに次の応答を開き、60 秒重ねてから前の応答を閉じる。新しい

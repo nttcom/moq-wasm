@@ -8,17 +8,20 @@ const SECONDS_PER_HOUR = 3_600
 type MediaTimelineRecord = {
   presentationTimeMs: number
   groupId: bigint
-  encodedAtMs: number
+  /// Where the group lies on the LOC Timestamp axis: the wallclock, or, when that is 0, the
+  /// presentation time, which a recording's replay also stamps its objects with.
+  timestampMs: number
 }
 
-/// draft-ietf-moq-msf-01 §7.1.1: `[presentation time ms, [group id, object id], encode wallclock ms]`.
+/// draft-ietf-moq-msf-01 §7.1.1: `[presentation time ms, [group id, object id], wallclock ms]`,
+/// the wallclock 0 for VOD.
 type MediaTimelineEntry = [number, [number, number], number]
 
 function parseMediaTimeline(document: string): MediaTimelineRecord[] {
-  return (JSON.parse(document) as MediaTimelineEntry[]).map(([presentationTimeMs, [groupId], encodedAtMs]) => ({
+  return (JSON.parse(document) as MediaTimelineEntry[]).map(([presentationTimeMs, [groupId], wallclockMs]) => ({
     presentationTimeMs,
     groupId: BigInt(groupId),
-    encodedAtMs
+    timestampMs: wallclockMs === 0 ? presentationTimeMs : wallclockMs
   }))
 }
 
@@ -36,7 +39,7 @@ export class MediaTimeline {
   }
 
   groupMarks(): GroupMark[] {
-    return this.records.map(({ groupId, encodedAtMs }) => ({ groupId, captureMicros: encodedAtMs * MICROS_PER_MILLI }))
+    return this.records.map(({ groupId, timestampMs }) => ({ groupId, captureMicros: timestampMs * MICROS_PER_MILLI }))
   }
 
   /// Presentation times are measured from the start of the broadcast, so any
@@ -46,12 +49,12 @@ export class MediaTimeline {
     if (!record) {
       return undefined
     }
-    return (record.encodedAtMs - record.presentationTimeMs) * MICROS_PER_MILLI
+    return (record.timestampMs - record.presentationTimeMs) * MICROS_PER_MILLI
   }
 
-  /// The bridge stamps a group's LOC capture timestamp and its timeline record
-  /// with the same encode wallclock, so a capture time resolves to a
-  /// presentation time by offsetting from the newest record at or before it.
+  /// A group's LOC Timestamp and its record's `timestampMs` are the same
+  /// instant, so a position resolves to a presentation time by offsetting from
+  /// the newest record at or before it.
   /// The offset is what keeps this working across renditions, whose group ids
   /// are numbered independently of the track the records point at.
   elapsedMsAt(captureMicros: number): number | undefined {
@@ -60,11 +63,11 @@ export class MediaTimeline {
     if (!anchor) {
       return undefined
     }
-    return Math.max(0, anchor.presentationTimeMs + (captureMs - anchor.encodedAtMs))
+    return Math.max(0, anchor.presentationTimeMs + (captureMs - anchor.timestampMs))
   }
 
   private recordAtOrBefore(captureMs: number): MediaTimelineRecord | undefined {
-    return this.records.findLast((record) => record.encodedAtMs <= captureMs)
+    return this.records.findLast((record) => record.timestampMs <= captureMs)
   }
 }
 
