@@ -11,6 +11,8 @@ const FAKED_GLOBALS = [
 
 type Timer = { id: number; dueMs: number; callback: () => void }
 
+export type FakeAudioContext = AudioContext & { readonly bufferSampleRates: number[] }
+
 export class FakeMediaEnvironment {
   nowMs = 1_000
   private timers: Timer[] = []
@@ -70,6 +72,7 @@ export class FakeMediaEnvironment {
         readonly destination = {}
         readonly outputLatency = environment.outputLatencySeconds
         readonly sampleRate: number
+        readonly bufferSampleRates: number[] = []
 
         constructor({ sampleRate }: { sampleRate: number }) {
           this.sampleRate = sampleRate
@@ -80,6 +83,7 @@ export class FakeMediaEnvironment {
         }
 
         createBuffer(_channelCount: number, length: number, sampleRate: number) {
+          this.bufferSampleRates.push(sampleRate)
           return { duration: length / sampleRate, copyToChannel() {} }
         }
       },

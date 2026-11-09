@@ -83,7 +83,7 @@ export class AudioPlayout {
   private writeHead: number | undefined
   private renderingPoll: ReturnType<typeof setTimeout> | undefined
   private concealmentTimer: ReturnType<typeof setTimeout> | undefined
-  private lastChunk: Channels | undefined
+  private lastChunk: { channels: Channels; sampleRate: number } | undefined
   private concealment: Concealment | undefined
   private last: Scheduled | undefined
   breaks = 0
@@ -234,7 +234,7 @@ export class AudioPlayout {
       continues
     )
     this.concealment = undefined
-    this.lastChunk = channels
+    this.lastChunk = { channels, sampleRate: chunk.sampleRate }
     this.start(output, channels, chunk.sampleRate, startAt)
     this.last = { captureMicros: chunk.captureMicros, atMs }
   }
@@ -271,13 +271,14 @@ export class AudioPlayout {
       this.output !== output ||
       this.waiting.length > 0 ||
       this.writeHead === undefined ||
-      this.writeHead < output.context.currentTime
+      this.writeHead < output.context.currentTime ||
+      !this.lastChunk
     ) {
       return
     }
-    const { sampleRate } = output.context
+    const { sampleRate } = this.lastChunk
     if (!this.concealment) {
-      const period = this.lastChunk && lastPeriod(this.lastChunk, sampleRate)
+      const period = lastPeriod(this.lastChunk.channels, sampleRate)
       if (!period) {
         return
       }
