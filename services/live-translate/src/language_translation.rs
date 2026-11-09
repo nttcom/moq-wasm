@@ -34,11 +34,14 @@ pub(crate) enum WriterUpdate {
 }
 
 impl LanguageTranslation {
+    /// `ended_sender` gets the language's code when its engine gives up, so
+    /// the owner ends the language's subscriptions.
     pub(crate) fn run(
         engine: &TranslationEngine,
         language: &'static TargetLanguage,
         source_pcm_receiver: broadcast::Receiver<SourcePcm>,
         capacity_permit: OwnedSemaphorePermit,
+        ended_sender: mpsc::UnboundedSender<&'static str>,
     ) -> Result<Self> {
         let (pcm_sender, pcm_receiver) = mpsc::channel(ENGINE_CHANNEL_CAPACITY);
         let (translated_sender, translated_receiver) = mpsc::channel(ENGINE_CHANNEL_CAPACITY);
@@ -67,6 +70,7 @@ impl LanguageTranslation {
                 packet_receiver,
                 writer_receiver,
             },
+            ended_sender,
         ));
         Ok(Self {
             writer_sender,
@@ -109,6 +113,7 @@ impl Translation {
         _running: RunningTranslation,
         _capacity_permit: OwnedSemaphorePermit,
         mut channels: Channels,
+        ended_sender: mpsc::UnboundedSender<&'static str>,
     ) {
         tracing::info!(language = self.language.code, "translation started");
         loop {
@@ -120,12 +125,17 @@ impl Translation {
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
                 },
-                Some(output) = channels.translated_receiver.recv() => match output {
-                    TranslationOutput::ConnectionStarted => {
+                output = channels.translated_receiver.recv() => match output {
+                    None => {
+                        tracing::warn!(language = self.language.code, "translation engine gave up");
+                        let _ = ended_sender.send(self.language.code);
+                        return;
+                    }
+                    Some(TranslationOutput::ConnectionStarted) => {
                         let frames = self.sequencer.restart();
                         self.encode(frames);
                     }
-                    TranslationOutput::Audio(samples) => {
+                    Some(TranslationOutput::Audio(samples)) => {
                         tracing::debug!(
                             language = self.language.code,
                             samples = samples.len(),
@@ -134,12 +144,12 @@ impl Translation {
                         let frames = self.sequencer.push_chunk(&samples);
                         self.encode(frames);
                     }
-                    TranslationOutput::TranslatedTranscript(transcript) => {
+                    Some(TranslationOutput::TranslatedTranscript(transcript)) => {
                         // Spoken at the point the translated audio has reached.
                         let timestamp = self.sequencer.translated_timestamp_micros();
                         self.publish_text(Track::Translated, timestamp, transcript).await;
                     }
-                    TranslationOutput::SourceTranscript(transcript) => {
+                    Some(TranslationOutput::SourceTranscript(transcript)) => {
                         // Heard up to the newest source audio sent.
                         let timestamp = self.sequencer.input_timestamp_micros();
                         self.publish_text(Track::Source, timestamp, transcript).await;
