@@ -79,7 +79,7 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
       {/* click hint */}
       {!isReview && cameraId && !lost && (
         <div className="absolute bottom-11 right-3 z-10 font-mono text-xs text-zinc-500 bg-zinc-900/70 rounded px-2 py-0.5">
-          クリックで過去を見る
+          クリックか ↓ で過去を見る
         </div>
       )}
 

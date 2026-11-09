@@ -107,6 +107,32 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const canStepBack = mode === 'review' && stageState !== undefined && stageState.seek.seekable
   const canStepForward = stageState?.mode === 'review'
 
+  // Arrow keys drive the stage: ← → step through a review, ↓ enters it, ↑ returns to live.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      switch (event.key) {
+        case 'ArrowLeft':
+          if (canStepBack) handleStepBack()
+          break
+        case 'ArrowRight':
+          if (canStepForward) handleStepForward()
+          break
+        case 'ArrowDown':
+          enterReview()
+          break
+        case 'ArrowUp':
+          if (mode === 'review') handleReturnToLive()
+          break
+        default:
+          return
+      }
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  })
+
   const publisherHref = `?mode=publisher&location=${encodeURIComponent(location)}&relay=${encodeURIComponent(relayUrl)}`
 
   return (
