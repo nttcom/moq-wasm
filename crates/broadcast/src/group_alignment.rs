@@ -11,6 +11,8 @@ const REMEMBERED_KEYFRAMES: usize = 64;
 /// id up instead of numbering on their own. The audio tracks follow the same
 /// boundaries: an audio sample belongs to the group of the latest keyframe at
 /// or before it, so a viewer replays the audio of a video window by its ids.
+/// The audio of a source that publishes no video starts its groups here
+/// instead.
 pub struct GroupAlignment {
     inner: Mutex<Inner>,
 }

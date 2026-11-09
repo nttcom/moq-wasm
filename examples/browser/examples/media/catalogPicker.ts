@@ -1,8 +1,7 @@
-import type { MoqtClientWrapper } from '@moqt/moqtClient'
-import { parse_msf_catalog_json } from '../../pkg/moqt'
-import { extractCatalogAudioTracks, extractCatalogVideoTracks, type MediaCatalogTrack } from '../../lib/msf/catalog'
+import type { MoqSession } from 'moq-wasm'
+import { type MediaCatalogTrack, type MediaKind, extractCatalogTracks, parseCatalog } from 'moq-wasm/media'
+import { latestObjects } from '../../utils/latestObjects'
 import { element, parseTrackNamespace, setStatusText } from '../../utils/page'
-import type { MediaKind } from '../../lib/player/trackContext'
 
 type CatalogPick = Record<MediaKind, { tracks: MediaCatalogTrack[]; selected?: MediaCatalogTrack }>
 
@@ -30,7 +29,7 @@ function placeholderOption(kind: MediaKind): HTMLOptionElement {
 }
 
 export function setUpCatalogPicker(
-  moqtClient: MoqtClientWrapper,
+  session: () => MoqSession | undefined,
   form: HTMLFormElement,
   onSelect?: (kind: MediaKind, track: MediaCatalogTrack) => void
 ): { pick: CatalogPick; reset: () => void } {
@@ -85,35 +84,37 @@ export function setUpCatalogPicker(
   element('sendCatalogSubscribeBtn').addEventListener('click', async () => {
     const trackNamespace = parseTrackNamespace(form['subscribe-track-namespace'].value)
     const catalogTrackName = form['catalog-track-name'].value.trim()
+    const connected = session()
+    if (!connected) {
+      setStatusText(STATUS_ID, 'Connect first')
+      return
+    }
     if (!catalogTrackName) {
       setStatusText(STATUS_ID, 'Catalog track is required')
       return
     }
-    const { trackAlias } = (
-      await moqtClient.subscribe(trackNamespace, catalogTrackName, 'secret', {
-        requestId: BigInt(form['catalog-subscribe-id'].value),
-        onPublishDone: () => {
-          reset()
-          setStatusText(STATUS_ID, 'Publisher ended the catalog track')
-        }
-      })
-    ).subscribeOk
-    form['catalog-track-alias'].value = trackAlias.toString()
     setStatusText(STATUS_ID, `Catalog subscribe requested: ${catalogTrackName}`)
-    moqtClient.setOnSubgroupObjectHandler(trackAlias, (_groupId, object) => {
-      if (object.objectStatus !== undefined) {
-        return
+    // The publisher sends its catalog when it changes and every 30 s, so a
+    // SUBSCRIBE alone would wait for the next one; the joining FETCH brings
+    // the current one.
+    const catalogs = await connected.subscribeCurrentGroup(trackNamespace, catalogTrackName)
+    void catalogs.done.then((done) => {
+      if (done) {
+        reset()
+        setStatusText(STATUS_ID, 'Publisher ended the catalog track')
       }
+    })
+    for await (const { objectPayload } of latestObjects(catalogs)) {
       try {
-        const catalog = parse_msf_catalog_json(new TextDecoder().decode(object.objectPayload))
-        pick.video.tracks = extractCatalogVideoTracks(catalog)
-        pick.audio.tracks = extractCatalogAudioTracks(catalog)
+        const catalog = parseCatalog(new TextDecoder().decode(objectPayload))
+        pick.video.tracks = extractCatalogTracks(catalog, 'video')
+        pick.audio.tracks = extractCatalogTracks(catalog, 'audio')
         render()
       } catch (error) {
         console.error('[CatalogPicker] failed to parse catalog', error)
         setStatusText(STATUS_ID, 'Catalog parse failed')
       }
-    })
+    }
   })
 
   render()

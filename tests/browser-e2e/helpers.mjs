@@ -1,6 +1,7 @@
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { createServer } from "node:net";
+import { createSocket } from "node:dgram";
+import { connect, createServer } from "node:net";
 import { resolve } from "node:path";
 
 import {
@@ -14,11 +15,6 @@ export const jsDir = resolve(repoRoot, "examples", "browser");
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
 export const liveViewerPath = "/moq-wasm/examples/live-viewer/index.html";
-export const chatModerationPath =
-  "/moq-wasm/examples/moq-chat-moderation/index.html";
-export const cameraDetectionPath =
-  "/moq-wasm/examples/moq-camera-detection/index.html";
-export const ptzTrackingPath = "/moq-wasm/examples/moq-ptz-tracking/index.html";
 const setupHelpText = "Run node tests/browser-e2e/setup-media-e2e.mjs first.";
 
 function assertPathExists(path, label, helpText) {
@@ -31,8 +27,8 @@ function assertPathExists(path, label, helpText) {
 export function assertE2EPrerequisites() {
   assertPathExists(certPath, "TLS certificate", setupHelpText);
   assertPathExists(keyPath, "TLS private key", setupHelpText);
-  assertPathExists(`${jsDir}/node_modules`, "node_modules", setupHelpText);
-  assertPathExists(`${jsDir}/pkg/moqt.js`, "wasm build output", setupHelpText);
+  assertPathExists(`${repoRoot}/node_modules`, "node_modules", setupHelpText);
+  assertPathExists(`${repoRoot}/crates/wasm/js/pkg/moqt.js`, "wasm build output", setupHelpText);
 }
 
 export function getDefaultWebPort() {
@@ -83,8 +79,42 @@ export async function waitForHttpOk(url, timeoutMs = 60_000) {
   );
 }
 
-/// A 300 s 720p30 H.264 + AAC test pattern streamed to live-ingest over RTMP.
-export function buildLiveIngestFfmpegArgs(rtmpAddress, namespace) {
+/// Forwards TCP on a free port to `targetPort` and drops every UDP datagram
+/// to that port, like a network that blocks UDP: a browser given
+/// `https://127.0.0.1:<port>` times out on WebTransport and falls back to
+/// WebSocket through the proxy. Without the UDP socket, the browser would
+/// fail at once on ICMP port unreachable and skip the timeout real users hit.
+export async function startTcpProxy(targetPort) {
+  const server = createServer((client) => {
+    const upstream = connect(targetPort, "127.0.0.1");
+    client.pipe(upstream).pipe(client);
+    client.on("error", () => upstream.destroy());
+    upstream.on("error", () => client.destroy());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = server.address().port;
+  const udpSink = createSocket("udp4");
+  try {
+    await new Promise((resolvePromise, rejectPromise) => {
+      udpSink.once("error", rejectPromise);
+      udpSink.bind(port, "127.0.0.1", resolvePromise);
+    });
+  } catch (error) {
+    server.close();
+    throw error;
+  }
+  return {
+    port,
+    close: () => {
+      server.close();
+      udpSink.close();
+    },
+  };
+}
+
+/// A 300 s 720p30 H.264 + AAC test pattern streamed to live-ingest over RTMP
+/// or SRT.
+export function buildLiveIngestFfmpegArgs(ingest, address, namespace) {
   return [
     "-hide_banner",
     "-loglevel",
@@ -118,8 +148,8 @@ export function buildLiveIngestFfmpegArgs(rtmpAddress, namespace) {
     "2",
     "-t",
     "300",
-    "-f",
-    "flv",
-    `rtmp://${rtmpAddress}/${namespace}/stream`,
+    ...(ingest === "srt"
+      ? ["-f", "mpegts", `srt://${address}?mode=caller&streamid=${namespace}`]
+      : ["-f", "flv", `rtmp://${address}/${namespace}/stream`]),
   ];
 }

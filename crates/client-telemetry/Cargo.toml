@@ -1,0 +1,10 @@
+[package]
+name = "client-telemetry"
+version = "0.1.0"
+edition = "2024"
+description = "Turns tracing events and closed spans into the log and span records of the observability server's /api/client-telemetry"
+
+[dependencies]
+serde_json = "1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }

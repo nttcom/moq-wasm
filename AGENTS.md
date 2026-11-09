@@ -6,7 +6,9 @@
 
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
-- Every Rust crate lives in `crates/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
+- Every Rust crate lives in `crates/<package name>/` or `services/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
+  - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `live-ingest`).
+  - `crates/` holds the code other crates, the browser, Python or GStreamer link against: libraries, bindings and plugins (`moqt`, `wasm`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
 - Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
   1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
   2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
@@ -31,16 +33,21 @@ Application and integration components (draft reference is normally not required
 | `crates/python` | Python (PyO3) bindings to use `moqt` from the Python bots |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
-| `crates/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
-| `crates/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
-| `crates/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
-| `crates/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
+| `services/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
+| `services/live-egress` | Bridge subscribing to a MoQT broadcast and sending it as plain RTP |
+| `services/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
+| `services/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
+| `crates/client-telemetry` | The log and span records of the observability server's `/api/client-telemetry`, built from `tracing` by the wasm module and `moq-cli` |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
-| `crates/relay-stats` | Snapshot a relay publishes on `observability/<relay id>` / `network_stats` |
-| `crates/observability` | Subscribes to every relay's stats track, stores the snapshots in ClickHouse and serves them over HTTP |
-| `crates/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
-| `crates/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
+| `crates/metadata-token` | The access token of the service account a Google Cloud workload runs as, read from the metadata server and cached until it expires; used by `app-registry` for Cloud Storage and by `live-translate` for the Agent Platform |
+| `crates/static-files` | Serves the built files of a web page from a directory, for `console` and `live-translate`: path checks, content types and the cache hint of hashed assets |
+| `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
+| `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
+| `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
+| `services/token-mint` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under |
+| `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
+| `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate` with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.
@@ -67,15 +74,16 @@ Application and integration components (draft reference is normally not required
 - Build: `cargo build`
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
-- Lint (JavaScript): `npx prettier --check`
-- Test (browser unit): `npm --prefix examples/browser test`
-- Wasm: `wasm-pack build crates/wasm --out-name moqt`
-- Console web: `npm --prefix crates/console/web run lint && npm --prefix crates/console/web run build`
+- Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore`
+- Test (browser unit): `npm test --workspaces`
+- Wasm: `npm --prefix crates/wasm/js run wasm`
+- Console web: `npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
 - E2E Test (auth): `./tests/auth-e2e/run.sh`
 - E2E Test (console): `node tests/browser-e2e/run-console-e2e.mjs`
+- E2E Test (live-translate): `node tests/browser-e2e/run-live-translate-e2e.mjs`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
@@ -93,6 +101,39 @@ Always use the `tracing` crate for log output (e.g. `tracing::info!`, `tracing::
 | INFO | Key milestones to monitor in production. | · Connection established/closed<br>· Subscribe/Publish started or completed<br>· Session start and teardown |
 | WARN | Recoverable issues that require attention. | · Retrying after a transient connection error<br>· Received an unexpected but non-fatal message type<br>· Stream closed by peer earlier than expected |
 | ERROR | Fatal failures requiring intervention. | · Connection failed after maximum retries<br>· Received a malformed or unrecognized MOQT message<br>· Authentication or TLS handshake failure |
+
+Logs and spans are exported over OTLP, where a log does not inherit its span's fields. For each INFO or higher log:
+- One event gets one INFO line. Writing a request (SUBSCRIBE, FETCH, PUBLISH, …) is an event of its own, so a request that is never answered still shows. Writing its response (`*_OK`, `*_ERROR`) is one too, so the side that answers shows when and how it answered. Any other step inside a request, a cleanup or a `Drop` is DEBUG.
+- The message is a fixed string; every value is a field (`tracing::info!(%error, request_id, "SUBSCRIBE_ERROR received")`, not `"... {}"`).
+- It carries the fields that identify what it is about, so it can be found without its span.
+
+Name fields from this vocabulary and add a name to it before using a new one:
+
+| Field | Meaning |
+| --- | --- |
+| `session_id` | The session the event is about |
+| `publisher_session_id` / `subscriber_session_id` | The two sessions of a track, when both are involved |
+| `session_peer` | `client` or `relay` |
+| `app_id` | The application of the session's token |
+| `client_id` | A browser page load, generated by the page and sent with its telemetry |
+| `request_id` | The draft's Request ID (not `subscribe_id`) |
+| `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
+| `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
+| `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
+| `track_alias` | The track alias on the session the log is about |
+| `supported_versions` / `selected_version` | The MoQT versions a CLIENT_SETUP offers, and the one its SERVER_SETUP picks |
+| `error` | The failure, as `%error` or `?error` |
+| `is_relay` | Whether a token's app is a relay |
+| `outcome` | How a call between services ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`; `vts.request`: `verified`, `malformed_token`, `unknown_app` or `invalid_signature`) |
+| `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
+| `url` | The URL a client connects to |
+| `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |
+| `transport` | The transport a connection opened: `QUIC`, `WebTransport` or `WebSocket` |
+| `remote_address` / `previous_remote_address` | The peer's address on a session's connection, and the one it replaced when the peer migrated |
+| `duration_ms` | Milliseconds from writing a request to receiving its response |
+| `wasm_load_wait_ms` | Milliseconds a browser's `MoqSession.connect` waited for the wasm module to load |
+
+A span that lives longer than the request that starts it (a track, a session) roots its own trace and links to the request's span: a span closes only after its children, so a long-lived child would hold its parent's trace unexported. A relay's request span continues the client's trace when the request carries `TRACE_CONTEXT`.
 
 ## 8. Git Conventions
 - Commit messages must be written in English.

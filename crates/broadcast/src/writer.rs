@@ -1,27 +1,31 @@
+use std::future::Future;
+
 use anyhow::Result;
 use mediapack::{AudioSample, MediaEvent, VideoSample};
 use moqt::executor::{self, JoinHandle};
 
 use crate::{
     broadcast::{Broadcast, SourceTracks},
-    publish_queue::{PublishQueue, QueueConsumer},
+    publish_queue::{PublishQueue, QueueConsumer, Queued},
     track_publisher::{SharedTiming, TrackPublisher},
 };
 
 pub struct BroadcastWriter {
     broadcast: Broadcast,
+    source_tracks: SourceTracks,
     timing: SharedTiming,
     queue: PublishQueue,
     _publish_task: JoinHandle,
 }
 
 impl BroadcastWriter {
-    pub fn run(broadcast: Broadcast, tracks: SourceTracks) -> Self {
-        let tracks = TrackPublisher::new(broadcast.clone(), tracks);
+    pub fn run(broadcast: Broadcast, source_tracks: SourceTracks) -> Self {
+        let tracks = TrackPublisher::new(broadcast.clone(), source_tracks.clone());
         let timing = tracks.shared_timing();
         let (queue, consumer) = PublishQueue::open(broadcast.connection().clone());
         Self {
             broadcast,
+            source_tracks,
             timing,
             queue,
             _publish_task: executor::spawn(
@@ -43,6 +47,16 @@ impl BroadcastWriter {
         self.queue.push(event)
     }
 
+    /// `Broadcast::remove_track`, taken after the media pushed before it. The
+    /// future does not borrow the writer, so media can be pushed meanwhile.
+    pub fn remove_track(&self, track_name: &str) -> impl Future<Output = Result<()>> + 'static {
+        self.queue.remove_track(track_name.to_string())
+    }
+
+    pub fn source_tracks(&self) -> &SourceTracks {
+        &self.source_tracks
+    }
+
     pub fn broadcast(&self) -> &Broadcast {
         &self.broadcast
     }
@@ -53,10 +67,23 @@ impl BroadcastWriter {
 }
 
 async fn publish_queued_events(mut consumer: QueueConsumer, mut tracks: TrackPublisher) {
-    while let Some(event) = consumer.event_receiver.recv().await {
-        if let Err(err) = tracks.push(&event).await {
-            let _ = consumer.failure_sender.send(err);
-            return;
+    while let Some(queued) = consumer.event_receiver.recv().await {
+        match queued {
+            Queued::Event(event) => {
+                if let Err(err) = tracks.push(&event).await {
+                    // The oneshot hands the cause to one later push; the pushes after it get a bare
+                    // "media publishing stopped", so log the cause here.
+                    tracing::error!(error = %format!("{err:#}"), "media publishing stopped");
+                    let _ = consumer.failure_sender.send(err);
+                    return;
+                }
+            }
+            Queued::RemoveTrack {
+                track_name,
+                done_sender,
+            } => {
+                let _ = done_sender.send(tracks.remove_track(&track_name).await);
+            }
         }
     }
 }

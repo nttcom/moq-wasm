@@ -1,12 +1,13 @@
 import { expect, test } from '@playwright/test'
 import {
-  D3_FLASH_ORIGIN,
+  SYSTEM_ONE_ORIGIN,
   answerDetectorWith,
   askCamera,
   clickJoinCamera,
-  joinCamera
+  joinCamera,
+  placeBoxes
 } from './camera-detection-e2e-arrange'
-import { delayD3FlashAnswers } from './fake-d3-flash'
+import { delaySystemOneAnswers } from './fake-system-one'
 import { leaveAllPages } from './leave-all-pages'
 
 const LATE_ANSWER_MS = 6_000
@@ -14,7 +15,7 @@ const LATE_ANSWER_MS = 6_000
 test.describe('MoQ Camera Detection', () => {
   test.afterEach(async ({ browser }) => {
     await leaveAllPages(browser, 'camera-detection-leave-button')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
   })
 
   test('tells a page in a second room that no bot is free', async ({ browser, page }) => {
@@ -67,6 +68,23 @@ test.describe('MoQ Camera Detection', () => {
     await expect(verdict).toHaveText('緑')
   })
 
+  test('draws the boxes of a boxes question next to the choice answer', async ({ page }) => {
+    // Arrange
+    await answerDetectorWith('はい')
+    await placeBoxes({ 人: [[0.2, 0.2, 0.5, 0.9]] })
+    await joinCamera(page)
+
+    // Act
+    await page.getByTestId('camera-detection-add-question-button').click()
+    await page.getByTestId('camera-detection-question-input').nth(1).fill('人')
+    await page.getByTestId('camera-detection-apply-button').click()
+
+    // Assert
+    const verdicts = page.getByTestId('camera-detection-verdict')
+    await expect(verdicts).toHaveText(['はい', '人 1'])
+    await expect(page.getByTestId('camera-detection-box')).toHaveText(['人'])
+  })
+
   test('shows an answer outside the choices as undecided', async ({ page }) => {
     // Arrange
     await answerDetectorWith('たぶん')
@@ -78,19 +96,19 @@ test.describe('MoQ Camera Detection', () => {
     await expect(verdict).toHaveText('判定できません')
   })
 
-  test('shows the d3-flash status while its answers are late', async ({ page }) => {
+  test('shows the System One status while its answers are late', async ({ page }) => {
     // Arrange
     await answerDetectorWith('はい')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, LATE_ANSWER_MS)
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, LATE_ANSWER_MS)
 
     // Act
     const verdict = await joinCamera(page)
 
     // Assert
-    const d3FlashStatus = page.getByTestId('camera-detection-d3-flash-status')
-    await expect(d3FlashStatus).toContainText('d3-flash')
-    await delayD3FlashAnswers(D3_FLASH_ORIGIN, 0)
+    const systemOneStatus = page.getByTestId('camera-detection-system-one-status')
+    await expect(systemOneStatus).toContainText('d1-2B')
+    await delaySystemOneAnswers(SYSTEM_ONE_ORIGIN, 0)
     await expect(verdict).toHaveText('はい', { timeout: 30_000 })
-    await expect(d3FlashStatus).toBeHidden()
+    await expect(systemOneStatus).toBeHidden()
   })
 })

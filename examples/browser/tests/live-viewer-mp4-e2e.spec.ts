@@ -57,8 +57,6 @@ test('live viewer publishes an uploaded MP4 from the browser and plays it back',
     // Assert
     await expect(viewer.connectionStatus).toContainText('Connected:')
     await expect(viewer.catalogStatus).toHaveText('Catalog loaded: 1 video / 1 audio')
-    // Assert: the relay has cached the catalog since the publisher's PUBLISH, so the FETCH never reaches the browser
-    await expect(viewer.logPanel).toContainText('fetched catalog')
     await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: FIRST_VIDEO_TIMEOUT_MS })
     await expectVideoDecoded(viewer.video)
     await expect(viewer.videoStats).toContainText(resolution)
@@ -234,10 +232,7 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
     await expect(viewer.playbackStatus).toContainText('Playing video')
     fetcher = await openMessagePage(session.context, liveViewerE2EConfig.moqtUrl)
     await fetcher.connectButton.click()
-    await expect(fetcher.logPanel).toContainText('[moqt][wt] connected')
-    await fetcher.setupButton.click()
-    await expect(fetcher.sendStatus).toHaveText('Sent CLIENT_SETUP')
-    await fetcher.fetchRequestIdInput.fill('0')
+    await expect(fetcher.sendStatus).toHaveText('Connected')
     await fetcher.fetchNamespaceInput.fill(FETCH_NAMESPACE)
     await fetcher.fetchTrackNameInput.fill('video')
     await fetcher.fetchStartGroupInput.fill('0')
@@ -250,10 +245,10 @@ test('a FETCH reaching before the relay cache is answered by the browser MP4 pub
 
     // Assert: the relay cached the track only from the viewer's SUBSCRIBE, so it forwards the FETCH upstream;
     // the publisher answers and the stream finishes, not reset, well before the relay's 10 s wait for it
-    await expect(fetcher.sendStatus).toHaveText('Sent FETCH')
-    await expect(fetcher.logPanel).toContainText(/FETCH 0 stream finished after [1-9]\d* objects/, {
+    await expect(fetcher.logPanel).toContainText(/FETCH stream finished after [1-9]\d* objects/, {
       timeout: FIRST_VIDEO_TIMEOUT_MS
     })
+    await expect(fetcher.sendStatus).toHaveText('Sent FETCH')
     // Assert: the replayed groups match what the relay cached from the subscription
     await expect(viewer.logPanel).not.toContainText(/malformed/i)
   } finally {

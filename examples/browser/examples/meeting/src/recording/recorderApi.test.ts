@@ -2,13 +2,22 @@ import { expect, test } from '@playwright/test'
 import { type RoomRecording, activeRecording, resolveRecorderUrl } from './recorderApi'
 
 function recording(id: string, state: RoomRecording['state']): RoomRecording {
-  return { id, namespace_prefix: 'anon/room', layout: 'combined', state, error: null, members: [], composite: null }
+  return {
+    id,
+    namespace_prefix: 'anon/room',
+    layout: 'combined',
+    format: 'mp4',
+    state,
+    error: null,
+    members: [],
+    composite: null
+  }
 }
 
 test('a configured recorder wins over the local default', () => {
   // Act / Assert
-  expect(resolveRecorderUrl('?recorderUrl=http://recorder.example:8096/', 'https://localhost:4433')).toBe(
-    'http://recorder.example:8096'
+  expect(resolveRecorderUrl('?recorderUrl=http://127.0.0.1:9096/', 'https://localhost:4433')).toBe(
+    'http://127.0.0.1:9096'
   )
 })
 

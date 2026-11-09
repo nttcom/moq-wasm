@@ -2,8 +2,10 @@ import { expect, test, type Locator } from '@playwright/test'
 import {
   arrangeLiveViewerE2ESession,
   closeLiveViewerE2ESession,
+  elapsedAtPosition,
   expectVideoDecoded,
   type LiveViewerPageModel,
+  parseClock,
   rewindableSeconds,
   syncOffsetMs
 } from './live-viewer-e2e-arrange'
@@ -31,20 +33,14 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     // Assert: 映像と音声は同じ clock で提示され、ずれは 1 フレーム未満
     await expect.poll(async () => syncOffsetMs(viewer), { timeout: 20_000 }).toBeLessThan(40)
 
-    // Act: relay のキャッシュが 10 秒分たまるのを待って巻き戻す
+    // Act: 10 秒分の group が FETCH できるようになるのを待って巻き戻す
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 60_000 }).toBeGreaterThan(10)
     await expect(viewer.seekbar).toBeEnabled()
     await expect(viewer.seekPosition).toHaveText('LIVE')
     await expect(viewer.seekElapsed).toHaveText(/^\d+:\d{2} \/ \d+:\d{2}$/)
 
-    // Assert: 軸は配信開始から始まり、FETCH できる区間はその一部として示される
+    // Assert: 軸は配信開始から始まる
     await expect(viewer.seekStart).toHaveText(/^0:0\d$/)
-    const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
-      offset: Number.parseFloat((element as HTMLElement).style.left),
-      width: Number.parseFloat((element as HTMLElement).style.width)
-    }))
-    expect(replayable.offset).toBeGreaterThan(0)
-    expect(replayable.width).toBeLessThan(100)
 
     await viewer.seekbar.focus()
     await viewer.seekbar.press('Home')
@@ -55,11 +51,14 @@ test('live viewer plays the ingested stream, switches renditions and rewinds', a
     await expect(viewer.playbackStatus).toContainText('Reviewing')
     await expect(viewer.liveButton).toHaveClass(/reviewing/)
     await expect(viewer.reviewCanvas).toBeVisible()
+
+    // Assert: the rewound picture has the width of the rendition the Auto option names; rewinding between an ABR
+    // switch and the new rendition's first frame leaves the live video at the previous rendition's width
     await expect
       .poll(async () => viewer.reviewCanvas.evaluate((element) => (element as HTMLCanvasElement).width), {
         timeout: 30_000
       })
-      .toBe(await viewer.video.evaluate((element) => (element as HTMLVideoElement).videoWidth))
+      .toBe(await autoRenditionWidth(viewer))
 
     await expect(viewer.seekPosition).toHaveText(/-\d+\.\ds/)
 
@@ -206,7 +205,7 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.packagingSelect.selectOption('cmaf')
 
     // Assert: the LOC picture stays until the MediaSource has presented a frame, then a blob-backed element is the one on screen
-    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_cmaf/)
+    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video\S*_cmaf/)
     await expect(viewer.video).toBeVisible()
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).toMatch(/^blob:/)
     await expectVideoDecoded(viewer.visibleVideo)
@@ -219,10 +218,15 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'volume')).toBeCloseTo(0.3, 5)
 
     // Act: a quality change re-opens the MediaSource with the rendition's init segment
-    await viewer.videoTrackSelect.selectOption(await renditionOption(viewer, 'video'))
+    await expect(viewer.playbackStatus).toContainText('Playing ')
+    const playing = (await viewer.playbackStatus.innerText()).replace('Playing ', '').replace(/_cmaf$/, '')
+    const rendition = await renditionOption(viewer, playing)
+    const previousSource = await mediaProp(viewer.visibleVideo, 'src')
+    await viewer.videoTrackSelect.selectOption(rendition)
 
     // Assert
-    await expect(viewer.logPanel).toContainText(/subscribed \S*\/video_\d+p_cmaf/)
+    await expect(viewer.logPanel).toContainText(new RegExp(`subscribed \\S*/${rendition}_cmaf`))
+    await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).not.toBe(previousSource)
     await expect
       .poll(async () => viewer.visibleVideo.evaluate((element) => (element as HTMLVideoElement).videoWidth), {
         timeout: 20_000
@@ -301,14 +305,74 @@ test('a second viewer joining a subscription the relay already holds gets the ca
     // Act
     await second.viewer.watchButton.click()
 
-    // Assert
-    await expect(second.viewer.logPanel).toContainText('fetched catalog')
+    // Assert: the catalog is resent every 30 s, so a catalog loaded within the timeout came through the joining FETCH
     await expect(second.viewer.catalogStatus).toContainText(/Catalog loaded: [1-9]/)
     await expect(second.viewer.playbackStatus).toContainText('Playing')
     await expectVideoDecoded(second.viewer.video)
   } finally {
     await closeLiveViewerE2ESession(second)
     await closeLiveViewerE2ESession(first)
+  }
+})
+
+test('live viewer rewinds to groups from before it started watching, placed by the media timeline', async ({
+  browser
+}) => {
+  test.setTimeout(180_000)
+  // Arrange: the bridge has published for longer than the 60 s its media timeline lists
+  const session = await arrangeLiveViewerE2ESession(browser)
+  const { viewer } = session
+
+  try {
+    await viewer.watchButton.click()
+    await expect
+      .poll(async () => parseClock((await viewer.seekElapsed.innerText()).split(' / ')[1]), { timeout: 90_000 })
+      .toBeGreaterThan(70)
+    await viewer.stopButton.click()
+    await expect(viewer.seekbar).toBeDisabled()
+
+    // Act
+    await viewer.watchButton.click()
+    await expect(viewer.playbackStatus).toContainText('Playing')
+    const watchedAt = Date.now()
+
+    // Assert: the timeline lists at once what live playback alone would take 40 s to observe
+    await expect.poll(async () => rewindableSeconds(viewer), { timeout: 10_000 }).toBeGreaterThan(40)
+
+    // Assert: FETCH できる区間は配信開始から始まる軸の一部として示される
+    const replayable = await viewer.seekAvailableWindow.evaluate((element) => ({
+      offset: Number.parseFloat((element as HTMLElement).style.left),
+      width: Number.parseFloat((element as HTMLElement).style.width)
+    }))
+    expect(replayable.offset).toBeGreaterThan(0)
+    expect(replayable.width).toBeLessThan(100)
+
+    // Act: 40 秒前へシークする（range input が書き直さない整数で渡す）
+    await viewer.seekbar.fill(String(Math.round(Number(await viewer.seekbar.getAttribute('max')) - 40)))
+
+    // Assert: 視聴を始める前の group から再生が続く
+    await expect(viewer.rewindStatus).toContainText(/Rewound \d/)
+    expect(rewoundSeconds(await viewer.rewindStatus.innerText())).toBeGreaterThan((Date.now() - watchedAt) / 1_000 + 20)
+    await expect(viewer.logPanel).toContainText(/fetched \d+ objects from group/)
+    const [atPosition] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
+    await expect
+      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 20_000 })
+      .toBeGreaterThan(atPosition + 3)
+
+    // Act: Home は timeline が載せる最古の group へ戻る
+    await viewer.seekbar.focus()
+    await viewer.seekbar.press('Home')
+
+    // Assert: その group から再生が続く
+    await expect
+      .poll(async () => rewoundSeconds(await viewer.rewindStatus.innerText()), { timeout: 20_000 })
+      .toBeGreaterThan(45)
+    const [atOldest] = (await viewer.seekElapsed.innerText()).split(' / ').map(parseClock)
+    await expect
+      .poll(async () => elapsedAtPosition(await viewer.seekElapsed.innerText()), { timeout: 20_000 })
+      .toBeGreaterThan(atOldest + 3)
+  } finally {
+    await closeLiveViewerE2ESession(session)
   }
 })
 
@@ -319,12 +383,9 @@ async function mediaProp<K extends 'src' | 'currentTime' | 'playbackRate' | 'pau
   return media.evaluate((element, property) => (element as HTMLMediaElement)[property], key)
 }
 
-function parseClock(text: string): number {
-  return text.split(':').reduce((total, part) => total * 60 + Number(part), 0)
-}
-
-function elapsedAtPosition(seekElapsed: string): number {
-  return parseClock(seekElapsed.split(' / ')[0])
+function rewoundSeconds(rewindStatus: string): number {
+  const match = rewindStatus.match(/Rewound (\d+\.\d)s/)
+  return match ? Number(match[1]) : 0
 }
 
 async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {
@@ -333,6 +394,14 @@ async function thumbValue(viewer: LiveViewerPageModel): Promise<number> {
 
 async function playedWidth(viewer: LiveViewerPageModel): Promise<number> {
   return viewer.seekReviewProgress.evaluate((element) => Number.parseFloat((element as HTMLElement).style.width))
+}
+
+async function autoRenditionWidth(viewer: LiveViewerPageModel): Promise<number> {
+  const options = await viewer.videoTrackSelect.locator('option').allTextContents()
+  const label = options[0].match(/^Auto \((.+)\)$/)?.[1]
+  const width = options.find((option) => option.startsWith(`${label} (`))?.match(/\((\d+)x\d+\)$/)?.[1]
+  expect(width).toBeDefined()
+  return Number(width)
 }
 
 /// The first transcoded rendition of the quality menu other than `except`.

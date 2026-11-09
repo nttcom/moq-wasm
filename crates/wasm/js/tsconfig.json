@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowJs": true,
+    "types": ["@types/dom-mediacapture-transform", "vite/client"],
+    "lib": ["esnext", "webworker", "dom"]
+  },
+  "include": ["src/**/*.ts", "pkg/**/*.d.ts"]
+}

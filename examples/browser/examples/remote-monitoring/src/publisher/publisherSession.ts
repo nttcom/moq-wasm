@@ -1,53 +1,31 @@
-import { MoqtClientWrapper, type SubgroupSender } from '@moqt/moqtClient'
+import { MoqSession } from 'moq-wasm'
+import { connectToken, withNamespaceRoot } from '../../../../utils/access'
+import { reportRelay } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][session]', ...args)
 
 export class PublisherSession {
-  private readonly client = new MoqtClientWrapper()
+  session: MoqSession | undefined
   readonly namespace: string[]
 
   constructor(location: string, camId: CameraId) {
-    this.namespace = ['anon', location, camId]
+    this.namespace = withNamespaceRoot(['anon', location, camId])
     log('created', { namespace: this.namespace })
   }
 
   async connect(relayUrl: string): Promise<void> {
-    await this.client.connect(relayUrl)
+    reportRelay(relayUrl)
+    const session = await MoqSession.connect(relayUrl, { token: connectToken() })
+    this.session = session
     log('connected', { relayUrl })
-
-    await this.client.publishNamespace(this.namespace, 'secret')
-    log('publishNamespace done', { namespace: this.namespace })
-
-    this.client.setOnIncomingSubscribeHandler(async ({ subscribe, respondOk, respondError }) => {
-      if (subscribe.trackName === 'video') {
-        const trackAlias = await respondOk()
-        const subscriberCount = this.getVideoTrackAliases().length
-        log('subscriber joined', { trackAlias: trackAlias.toString(), subscriberCount })
-      } else {
-        log('rejected unknown track', { trackName: subscribe.trackName })
-        await respondError(0n, 'unknown track')
-      }
-    })
-
-    this.client.setOnConnectionClosedHandler(() => {
-      log('connection closed')
-    })
+    void session.closed.then(() => log('connection closed'))
   }
 
-  getVideoTrackAliases(): bigint[] {
-    return this.client.trackSubscribers(this.namespace, 'video')
-  }
-
-  get sender(): SubgroupSender {
-    return this.client
-  }
-
-  async disconnect(): Promise<void> {
+  disconnect(): void {
     log('disconnecting...')
-    this.client.setOnIncomingSubscribeHandler(null)
-    this.client.setOnConnectionClosedHandler(null)
-    await this.client.disconnect()
+    this.session?.close()
+    this.session = undefined
     log('disconnected')
   }
 }
