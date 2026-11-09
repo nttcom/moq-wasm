@@ -57,10 +57,14 @@ jobs:
         run: |
           rustup component add clippy
           rustup component add rustfmt
+          rustup target add wasm32-unknown-unknown
       - name: Install FFmpeg build dependencies
         uses: ./.github/actions/install-ffmpeg-deps
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # The crates the wasm module is built from, with the features its build uses.
+      - name: Run Clippy for wasm32
+        run: cargo clippy -p wasm -p moqt -p broadcast -p client-telemetry -p mediapack -p msf --target wasm32-unknown-unknown -- -D warnings
       - name: Check code formatting
         run: cargo fmt --all -- --check
       - name: Run Unit Tests

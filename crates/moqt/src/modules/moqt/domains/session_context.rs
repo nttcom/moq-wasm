@@ -192,6 +192,9 @@ impl Drop for PendingFetch {
 }
 
 impl SessionContext {
+    // On wasm32 the browser transport is !Send, but the context is shared with
+    // the native build, where the tasks run on a multi-threaded executor.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) fn new(
         connection: Connection,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,

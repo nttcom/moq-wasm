@@ -335,9 +335,13 @@ impl Router {
     }
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "a select! result that is matched right away, never stored"
+// Only 64-bit pointers make `Event` large enough for the lint.
+#[cfg_attr(
+    not(target_arch = "wasm32"),
+    expect(
+        clippy::large_enum_variant,
+        reason = "a select! result that is matched right away, never stored"
+    )
 )]
 enum PreviousSignal {
     Event(Option<SessionEvent>),
@@ -431,6 +435,9 @@ async fn migrate(
         .await
         .map_err(|()| anyhow::anyhow!("connecting to {url} timed out"))?
         .with_context(|| format!("cannot connect to {url}"))?;
+    // On wasm32 the browser transport is !Send, but the connection is shared
+    // with the native build, where its tasks run on a multi-threaded executor.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     let connection = Arc::new(connection);
     let tasks = ConnectionTasks::run(&session, &connection, control_receiver, &session_span);
     let deadline = executor::now() + MIGRATION_TIMEOUT;
