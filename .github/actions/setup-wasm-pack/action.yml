@@ -13,6 +13,8 @@ runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         version="${{ inputs.version }}"
@@ -24,9 +26,16 @@ runs:
         trap 'rm -f "${archive_file}"' EXIT
         mkdir -p "${dest}"
         echo "Installing prebuilt wasm-pack ${version}..."
-        curl -fsSL \
-          "https://github.com/rustwasm/wasm-pack/releases/download/${version}/${archive}.tar.gz" \
-          -o "${archive_file}"
+        # Through the API with the job's token: GitHub times anonymous release
+        # downloads out when it is overloaded, and answers 504 now and then.
+        for attempt in 1 2 3 4 5; do
+          if gh release download "${version}" --repo wasm-bindgen/wasm-pack \
+            --pattern "${archive}.tar.gz" --output "${archive_file}" --clobber; then
+            break
+          fi
+          [ "${attempt}" -lt 5 ] || exit 1
+          sleep 10
+        done
         echo "${sha256}  ${archive_file}" | sha256sum -c -
         tar -xzf "${archive_file}" --strip-components=1 -C "${dest}" "${archive}/wasm-pack"
         echo "${dest}" >> "$GITHUB_PATH"

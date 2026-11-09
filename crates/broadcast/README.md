@@ -1,8 +1,8 @@
 # broadcast
 
 Publishes an MSF broadcast, a catalog and H.264/AAC tracks, into a MoQT relay.
-It is the publishing side shared by `crates/live-ingest`,
-`crates/gst-plugin-moqt` (`moqtsink`), `crates/onvif-ingest` and, built into
+It is the publishing side shared by `services/live-ingest`,
+`crates/gst-plugin-moqt` (`moqtsink`), `services/onvif-ingest`, `examples/rust/moq-cli` and, built into
 `crates/wasm`, the Live Viewer's in-browser MP4 publisher. Every publisher built
 on it produces the tracks below, so one player,
 `examples/browser/examples/live-viewer`, plays and rewinds all of them.
@@ -15,14 +15,14 @@ on it produces the tracks below, so one player,
 | `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-04) | H.264 Annex-B, parameter sets in band, capture timestamp as the Timestamp property (extension header 0x10) |
 | `audio` | LOC | Raw AAC, G.711 A-law, Opus or MP3 frames (CMAF sibling for AAC only) |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample |
-| `timeline` | MSF media timeline | `[presentation time, [group, object], encode wallclock]` per keyframe |
+| `<video>_timeline` (`video_timeline`) | MSF media timeline | One per source: `[presentation time, [group, object], encode wallclock]` per group of its video, renditions and audio |
 
 `video_720p` / `video_480p` / `video_360p` appear when the publisher transcodes
 (`crates/transcode`); each is one `altGroup` entry with `width` / `height` and
 its encoder target as `bitrate`.
 A publisher can name its tracks otherwise (`SourceTracks`): `onvif-ingest`
-publishes `video/profile_N` and `audio/profile_N` per camera profile, without
-`timeline`.
+publishes `video/profile_N`, `audio/profile_N` and `video/profile_N_timeline`
+per camera profile.
 
 ## Behaviour
 

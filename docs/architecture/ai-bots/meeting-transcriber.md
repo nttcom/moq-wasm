@@ -53,7 +53,7 @@ sequenceDiagram
     S->>R: connect, SUBSCRIBE_NAMESPACE {root}/{room}/
     R->>S: PUBLISH_NAMESPACE {root}/{room}/alice, .../bob
     S->>R: PUBLISH_NAMESPACE {root}/{room}/bots/transcriber
-    S->>R: SUBSCRIBE catalog, audio_128kbps (per participant)
+    S->>R: SUBSCRIBE catalog, audio (per participant)
     B->>R: audio objects
     R->>S: audio objects
     Note over S: VAD + Whisper per participant
@@ -63,14 +63,16 @@ sequenceDiagram
 ```
 
 ### Rooms it serves
-The transcriber serves rooms of the anonymous app only, whose namespace root
-is `anon`. A page that joined with `?jwt=` hides the captions button: a room
-under another app's root would need a token for the bot, which the service
-does not have.
+The transcriber serves rooms of the anonymous app, whose namespace root is
+`anon`, and rooms of a temporary app, whose page hands the service its token
+(see "Temporary apps" in [on-demand-rooms.md](on-demand-rooms.md)). A page that
+joined with `?jwt=` hides the captions button: the bot can refresh only the
+token mint's tokens, so a room of a registered app would outlive the bot's
+token.
 
 ### Starting and stopping
 The Meeting page gains a captions button in the bottom bar. Choosing a model
-from it opens `GET {transcriberUrl}/rooms/{room}` as an `EventSource` and
+from it opens `GET {transcriberUrl}/rooms/{room}` as an event stream and
 keeps it open. While the transcriber is in the room, every other page in the
 room opens the same request with the model the transcriber's status names, so
 one page leaving does not take the captions from the others. Leave or closing
@@ -91,7 +93,8 @@ room or the user picks a model.
 The page finds the service with `resolveServiceUrl`
 (`examples/browser/utils/serviceUrl.ts`), as the other bot pages do: a local
 relay means `http://127.0.0.1:8100`, any other relay the deployed service, and
-`?transcriberUrl=` overrides both.
+`?transcriberUrl=` on this machine or under `moqt.research.skyway.io` overrides
+both.
 
 `moq-bot-rooms` accepts room IDs of `[a-z0-9-]{1,32}`, which a Meeting room
 name need not match. `serve_rooms` takes the pattern as a parameter, and the
@@ -123,7 +126,7 @@ short utterance guesses wrong more often than a demo of a Japanese meeting
 gains from it. The Opus packets of the participant's audio objects are
 decoded with PyAV and pushed as `UserAudioRawFrame`s whose `user_id` is the
 participant's user name. The STT service is a `SegmentedSTTService` subclass
-that dates each utterance (below) and hands the segment to one of four speech
+that dates each utterance (below) and hands the segment to one of five speech
 recognizers:
 
 | Name | Model | Where it runs |
@@ -132,6 +135,7 @@ recognizers:
 | `granite-speech-5-470m` | Granite Speech 5.0 470m | in the bot, on the CPU |
 | `qwen3-asr` | Qwen3-ASR-1.7B | its own Cloud Run service with an L4 GPU, served by vLLM |
 | `granite-speech-5-2b` | Granite Speech 5.0 2b | its own Cloud Run service with an L4 GPU, served by vLLM |
+| `haas-ja` | Haas-ja-v1.0 | its own Cloud Run service with an L4 GPU, served by `haas-asr-server` |
 
 - `whisper`: all pipelines share one faster-whisper model, so memory does not
   grow with the number of speakers, and transcribe one segment at a time.
@@ -160,15 +164,25 @@ recognizers:
   Whisper's.
 - `qwen3-asr` and `granite-speech-5-2b`: the bot posts each segment as a
   WAV file to the service, with an identity token from the metadata server,
-  as the other bots call d3-flash. Qwen3-ASR takes it on the OpenAI-compatible
+  as the other bots call the System One service. Qwen3-ASR takes it on the OpenAI-compatible
   `/v1/audio/transcriptions` with `language=ja`. vLLM's transcription API
   gives Granite Speech a fixed prompt that names no language and drops the
   request's, so the bot sends Granite Speech the WAV on `/v1/chat/completions`
   with the model card's prompt for Japanese speech. Each model has a service
   of its own, since Qwen3-ASR needs a vLLM nightly pinned for it and a
   service then runs the official vLLM image with arguments only. Neither is
-  d3-flash: d3-flash already fills most of an L4's 24 GB with its own
-  weights, and it runs its own server rather than vLLM.
+  the System One service, which runs its own server (`system-one-server`)
+  rather than vLLM.
+- `haas-ja`: a Parakeet-TDT model (FastConformer encoder, TDT decoder) of
+  616M parameters trained on Japanese, so it takes no language either. It
+  runs on NeMo only, with Triton kernels that need an NVIDIA GPU, so vLLM
+  cannot serve it: `examples/python/haas-asr-server` loads it with haas-asr
+  and answers `/health` and `/v1/audio/transcriptions` as vLLM does, so the
+  bot calls it with the same `HttpRecognizer` as `qwen3-asr`. The server
+  runs the model on one thread, so concurrent segments wait for each other,
+  and a segment longer than the 30 s it was trained on is split at its
+  quietest points. Its 1.2 GB of weights go into the image rather than to
+  Cloud Storage.
 - None of the models transcribes while a participant speaks: each takes a
   whole utterance, so a caption follows the end of the utterance.
 
@@ -269,10 +283,11 @@ saves an instance only when two rooms use different models at once, and ties
 both to one vLLM build. Whisper `small` on the CPU covers the case of a
 transcriber that needs no GPU.
 
-### Qwen3-ASR and the d3-flash models in one service
-The weights would not fit one L4 together, so the service would have to swap
-models by request path, reloading d3-flash's 17 GB whenever chat moderation and
-captions run at once.
+### Qwen3-ASR and the decision model in one service
+When this was decided the decision model was d3-flash, whose 17 GB of weights
+would not fit one L4 together with Qwen3-ASR, so the service would have had to
+swap models by request path. d1-2B takes about 4 GB, but one service would
+still have to run both vLLM and `system-one-server`.
 
 ### MOSS-Transcribe-Diarize
 vLLM checks the request's `language` against a list and leaves it out of the

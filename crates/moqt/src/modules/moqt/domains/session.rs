@@ -8,11 +8,10 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
-use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
-use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
 use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
+use crate::modules::moqt::domains::session_creator::WaitIdle;
 use crate::modules::moqt::runtime::tasks::connection_tasks::ConnectionTasks;
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
@@ -34,6 +33,8 @@ pub struct Session {
     /// `None` for a session that does not follow GOAWAY.
     closed: Option<watch::Receiver<Option<TransportClose>>>,
     server_setup: Option<ServerSetup>,
+    /// The endpoint a client session was opened on; `None` on a server.
+    endpoint: Option<Arc<dyn WaitIdle>>,
 }
 
 /// What reads the session's connections.
@@ -54,10 +55,14 @@ impl Session {
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
         server_setup: Option<ServerSetup>,
         follow: Option<Follow>,
+        endpoint: Option<Arc<dyn WaitIdle>>,
+        parent_span: Span,
     ) -> Self {
         let inner = Arc::new(inner);
-        let parent_span = Span::current();
-        let session_span = tracing::info_span!(parent: &parent_span, "moqt.session");
+        // `parent_span` already names the session.
+        let session_span = Some(tracing::debug_span!(parent: &parent_span, "moqt.session"))
+            .filter(|span| !span.is_disabled())
+            .unwrap_or(parent_span);
         let tasks =
             ConnectionTasks::run(&inner, &inner.connection(), control_receiver, &session_span);
         let (driver, closed) = match follow {
@@ -81,6 +86,7 @@ impl Session {
             _driver: driver,
             closed,
             server_setup,
+            endpoint,
         }
     }
 
@@ -107,6 +113,18 @@ impl Session {
         self.inner.close_with_error(code, reason);
     }
 
+    /// Terminates the session with NO_ERROR; other handles to it may still be
+    /// alive. On a client, resolves once the close has been sent and every
+    /// other session opened on the same `Endpoint` has closed, so the process
+    /// can exit right after.
+    pub async fn close(&self) {
+        self.inner
+            .close_with_error(TerminationErrorCode::NoError, "");
+        if let Some(endpoint) = &self.endpoint {
+            endpoint.wait_idle().await;
+        }
+    }
+
     pub async fn receive_event(&self) -> anyhow::Result<SessionEvent> {
         match self.event_receiver.lock().await.recv().await {
             Some(v) => Ok(v),
@@ -115,7 +133,8 @@ impl Session {
     }
 
     /// Resolves once the session's last connection has closed, whichever
-    /// side closed it; a connection a GOAWAY replaced does not count.
+    /// side closed it; a connection a GOAWAY or a reconnect replaced does not
+    /// count.
     /// Consumes no session events, so it can be awaited beside
     /// `receive_event()`.
     pub async fn closed(&self) -> TransportClose {
@@ -139,6 +158,14 @@ impl Session {
         self.inner.connection().generation
     }
 
+    /// Resolves `true` once the session runs on a connection later than
+    /// `generation` (from `connection_generation`), and `false` once it will
+    /// not move again. Stays pending on a session that does not follow
+    /// GOAWAY (`ClientConfig::follow_go_away`).
+    pub async fn moved_past(&self, generation: u64) -> bool {
+        self.inner.moved_past(generation).await
+    }
+
     pub fn transport_stats(&self) -> TransportStats {
         self.inner.connection().transport.stats()
     }
@@ -148,12 +175,13 @@ impl Session {
     }
 
     /// The URL scheme `Endpoint::connect` takes for this session's transport:
-    /// `moqt` for raw QUIC, `https` for WebTransport. A server names a GOAWAY's
-    /// New Session URI in it (draft-14 §9.4).
+    /// `moqt` for raw QUIC, `https` for WebTransport, `wss` for WebSocket. A
+    /// server names a GOAWAY's New Session URI in it (draft-14 §9.4).
     pub fn url_scheme(&self) -> &'static str {
         match self.inner.connection().transport.negotiated_protocol() {
             NegotiatedProtocol::Quic { .. } => "moqt",
             NegotiatedProtocol::WebTransport { .. } => "https",
+            NegotiatedProtocol::WebSocket { .. } => "wss",
         }
     }
 
@@ -168,32 +196,6 @@ impl Session {
         Ok(())
     }
 
-    /// Allows the peer to use request ids below `max_request_id` (draft-14
-    /// §9.2). Fire-and-forget.
-    pub async fn raise_max_request_id(&self, max_request_id: u64) -> anyhow::Result<()> {
-        self.inner
-            .connection()
-            .control
-            .notify(Notification::MaxRequestId(MaxRequestId::new(
-                max_request_id,
-            )))
-            .await?;
-        Ok(())
-    }
-
-    /// Tells the peer this side ran out of request ids at
-    /// `maximum_request_id` (draft-14 §9.3). Fire-and-forget.
-    pub async fn requests_blocked(&self, maximum_request_id: u64) -> anyhow::Result<()> {
-        self.inner
-            .connection()
-            .control
-            .notify(Notification::RequestsBlocked(RequestsBlocked::new(
-                maximum_request_id,
-            )))
-            .await?;
-        Ok(())
-    }
-
     /// The SERVER_SETUP this client received on its first connection; `None`
     /// on a server session.
     pub fn server_setup(&self) -> Option<&ServerSetup> {
@@ -204,7 +206,7 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         self.session_span.in_scope(|| {
-            tracing::info!("Session dropped.");
+            tracing::debug!("session dropped");
         });
     }
 }
@@ -212,18 +214,56 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use crate::{
-        SessionEvent, TerminationErrorCode,
+        CertificateVerification, ClientConfig, SessionEvent, TerminationErrorCode,
         modules::test_support::{
-            DISCONNECT_TIMEOUT, connect_sessions, receive_disconnected,
-            spawn_connected_dual_sessions, spawn_dual_server,
+            DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, connect_sessions, native_client_with_config,
+            receive_disconnected, spawn_connected_native_sessions, spawn_native_server,
         },
         wire::MOQ_TRANSPORT_VERSION,
     };
 
     #[tokio::test]
+    async fn server_observes_a_client_that_exits_right_after_close() {
+        // Arrange
+        let (port, accept) = spawn_native_server("session-close");
+
+        // Act: the client's single-threaded runtime runs nothing after `close`
+        // returns; the endpoint is dropped and a publisher is still alive
+        tokio::task::spawn_blocking(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async {
+                let endpoint = native_client_with_config(ClientConfig {
+                    certificate_verification: CertificateVerification::Disabled,
+                    ..ClientConfig::default()
+                });
+                let connecting = endpoint
+                    .connect(&format!("moqt://127.0.0.1:{port}"))
+                    .await
+                    .unwrap();
+                let session = tokio::time::timeout(HANDSHAKE_TIMEOUT, connecting)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                drop(endpoint);
+                let _publisher = session.publisher();
+                session.close().await;
+            })
+        })
+        .await
+        .unwrap();
+
+        // Assert
+        let server = accept.await.unwrap();
+        receive_disconnected(&server).await.unwrap();
+    }
+
+    #[tokio::test]
     async fn transport_stats_reports_the_established_quic_path() {
         // Arrange
-        let (port, accept) = spawn_dual_server("transport-stats");
+        let (port, accept) = spawn_native_server("transport-stats");
         let (client, _server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -243,7 +283,7 @@ mod tests {
     #[tokio::test]
     async fn transport_addresses_name_the_peer_of_the_quic_path() {
         // Arrange
-        let (port, accept) = spawn_dual_server("transport-addresses");
+        let (port, accept) = spawn_native_server("transport-addresses");
         let (client, _server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
             .await
             .unwrap();
@@ -260,8 +300,9 @@ mod tests {
     #[tokio::test]
     async fn url_scheme_is_the_one_the_client_connected_with() {
         // Arrange
-        let (quic_port, quic_accept) = spawn_dual_server("url-scheme-quic");
-        let (wt_port, wt_accept) = spawn_dual_server("url-scheme-wt");
+        let (quic_port, quic_accept) = spawn_native_server("url-scheme-quic");
+        let (wt_port, wt_accept) = spawn_native_server("url-scheme-wt");
+        let (ws_port, ws_accept) = spawn_native_server("url-scheme-ws");
 
         // Act
         let (quic_client, quic_server) =
@@ -272,18 +313,24 @@ mod tests {
             connect_sessions(&format!("https://127.0.0.1:{wt_port}/moq"), wt_accept)
                 .await
                 .unwrap();
+        let (ws_client, ws_server) =
+            connect_sessions(&format!("wss://127.0.0.1:{ws_port}/moq"), ws_accept)
+                .await
+                .unwrap();
 
         // Assert
         assert_eq!(quic_client.url_scheme(), "moqt");
         assert_eq!(quic_server.url_scheme(), "moqt");
         assert_eq!(wt_client.url_scheme(), "https");
         assert_eq!(wt_server.url_scheme(), "https");
+        assert_eq!(ws_client.url_scheme(), "wss");
+        assert_eq!(ws_server.url_scheme(), "wss");
     }
 
     #[tokio::test]
     async fn client_session_keeps_the_server_setup_it_received() {
         // Arrange
-        let (port, accept) = spawn_dual_server("session-server-setup");
+        let (port, accept) = spawn_native_server("session-server-setup");
 
         // Act
         let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
@@ -303,7 +350,7 @@ mod tests {
     #[tokio::test]
     async fn dropping_the_client_session_disconnects_the_server_session() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-drop").await;
+        let (client, server) = spawn_connected_native_sessions("session-drop").await;
 
         // Act
         drop(client);
@@ -315,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn closed_reports_the_peers_termination_code_and_leaves_the_events_unread() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-closed").await;
+        let (client, server) = spawn_connected_native_sessions("session-closed").await;
 
         // Act
         server.close_with_error(TerminationErrorCode::GoawayTimeout, "bye");
@@ -332,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn server_go_away_names_the_new_session_uri_to_the_client() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-uri").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away-uri").await;
 
         // Act
         server
@@ -350,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn second_go_away_is_a_protocol_violation() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-twice").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away-twice").await;
         server.go_away(String::new()).await.unwrap();
         assert!(matches!(
             client.receive_event().await.unwrap(),
@@ -371,7 +418,7 @@ mod tests {
     #[tokio::test]
     async fn go_away_with_a_uri_sent_to_a_server_is_a_protocol_violation() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away-to-server").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away-to-server").await;
 
         // Act
         client
@@ -394,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn closing_with_a_non_violation_code_reports_disconnected_locally() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("session-local-close").await;
+        let (_client, server) = spawn_connected_native_sessions("session-local-close").await;
 
         // Act
         server.close_with_error(TerminationErrorCode::GoawayTimeout, "drain timed out");
@@ -410,7 +457,7 @@ mod tests {
     #[tokio::test]
     async fn closing_for_a_protocol_violation_reports_it_locally() {
         // Arrange
-        let (_client, server) = spawn_connected_dual_sessions("session-local-violation").await;
+        let (_client, server) = spawn_connected_native_sessions("session-local-violation").await;
 
         // Act
         server.close_with_error(TerminationErrorCode::ProtocolViolation, "bad peer");
@@ -429,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn go_away_reaches_the_peer_with_its_uri() {
         // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-go-away").await;
+        let (client, server) = spawn_connected_native_sessions("session-go-away").await;
 
         // Act
         client.go_away(String::new()).await.unwrap();
@@ -439,36 +486,5 @@ mod tests {
             panic!("expected GOAWAY from the client");
         };
         assert_eq!(go_away.new_session_uri(), "");
-    }
-
-    #[tokio::test]
-    async fn raise_max_request_id_reaches_the_peer() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-max-request-id").await;
-
-        // Act
-        client.raise_max_request_id(200).await.unwrap();
-
-        // Assert
-        let SessionEvent::MaxRequestId(max_request_id) = server.receive_event().await.unwrap()
-        else {
-            panic!("expected MAX_REQUEST_ID from the client");
-        };
-        assert_eq!(max_request_id.request_id(), 200);
-    }
-
-    #[tokio::test]
-    async fn requests_blocked_reaches_the_peer() {
-        // Arrange
-        let (client, server) = spawn_connected_dual_sessions("session-requests-blocked").await;
-
-        // Act
-        client.requests_blocked(100).await.unwrap();
-
-        // Assert
-        let SessionEvent::RequestsBlocked(blocked) = server.receive_event().await.unwrap() else {
-            panic!("expected REQUESTS_BLOCKED from the client");
-        };
-        assert_eq!(blocked.maximum_request_id(), 100);
     }
 }

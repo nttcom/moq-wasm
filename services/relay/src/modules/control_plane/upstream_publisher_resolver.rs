@@ -1,0 +1,250 @@
+use std::sync::Arc;
+
+use crate::modules::{
+    cascading::{
+        inter_relay_connection_manager::InterRelayConnectionManager,
+        route_registry::{RelayInfo, RelayRouteRegistry},
+        watched_namespace_routes::WatchedNamespaceRoutes,
+    },
+    control_plane::sequences::connect_relay,
+    directory::InMemoryLocalPubSubDirectory,
+    domain::{session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey},
+};
+
+/// A remote relay is only dialled by whoever sends it the request, so a relay
+/// that does not answer delays nothing else.
+#[derive(Clone, Debug)]
+pub(crate) enum UpstreamPublisher {
+    Session(SessionId),
+    Relay(RelayInfo),
+}
+
+pub(crate) struct UpstreamPublisherResolver {
+    route_registry: Arc<dyn RelayRouteRegistry>,
+    inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+    pub(crate) watched_namespace_routes: Arc<WatchedNamespaceRoutes>,
+}
+
+impl UpstreamPublisherResolver {
+    pub(crate) fn new(
+        route_registry: Arc<dyn RelayRouteRegistry>,
+        inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+    ) -> Self {
+        Self {
+            watched_namespace_routes: Arc::new(WatchedNamespaceRoutes::new(route_registry.clone())),
+            route_registry,
+            inter_relay_connection_manager,
+        }
+    }
+
+    /// Every publisher of the track: the local client publishers newest first
+    /// (session ids grow with time), then, for a client requester, every
+    /// remote relay publishing the namespace or the track. A relay requester
+    /// is served from local client publishers only, so a request never
+    /// travels from relay to relay and subscriptions cannot form a loop.
+    #[tracing::instrument(
+        level = "debug",
+        name = "relay.upstream_publisher_resolver.resolve",
+        skip_all,
+        fields(track_namespace = %track_namespace, track_name = %track_name)
+    )]
+    pub(crate) async fn resolve(
+        &self,
+        table: &InMemoryLocalPubSubDirectory,
+        track_namespace: &str,
+        track_name: &str,
+        requester: SessionPeer,
+    ) -> Vec<UpstreamPublisher> {
+        let mut publishers: Vec<UpstreamPublisher> = table
+            .find_upstream_publishers(track_namespace, track_name)
+            .into_iter()
+            .rev()
+            .map(UpstreamPublisher::Session)
+            .collect();
+        if requester == SessionPeer::Relay {
+            return publishers;
+        }
+        publishers.extend(
+            self.find_publisher_relays(&TrackKey::new(track_namespace, track_name))
+                .await
+                .into_iter()
+                .map(UpstreamPublisher::Relay),
+        );
+        publishers
+    }
+
+    /// A relay holding both routes is one publisher: one session leads to it.
+    async fn find_publisher_relays(&self, track_key: &TrackKey) -> Vec<RelayInfo> {
+        let mut relays = Vec::new();
+        match self
+            .route_registry
+            .find_active_namespace_publishers(&track_key.track_namespace)
+            .await
+        {
+            Ok(found) => relays.extend(found),
+            Err(err) => {
+                tracing::warn!(error = ?err, track_namespace = %track_key.track_namespace, "failed to find publisher relays")
+            }
+        }
+        match self
+            .route_registry
+            .find_active_track_publishers(track_key)
+            .await
+        {
+            Ok(found) => {
+                for relay in found {
+                    if !relays.iter().any(|known| known.relay_id == relay.relay_id) {
+                        relays.push(relay);
+                    }
+                }
+            }
+            Err(err) => tracing::warn!(
+                error = ?err,
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                "failed to find track publisher relays"
+            ),
+        }
+        relays
+    }
+
+    pub(crate) async fn session_of(&self, publisher: &UpstreamPublisher) -> Option<SessionId> {
+        match publisher {
+            UpstreamPublisher::Session(publisher_session_id) => Some(*publisher_session_id),
+            UpstreamPublisher::Relay(relay) => {
+                connect_relay(&self.inter_relay_connection_manager, relay).await
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
+    use crate::modules::{
+        directory::InMemoryLocalPubSubDirectory,
+        domain::{session_id::SessionId, session_peer::SessionPeer},
+        test_support::{
+            mock_session::detached_session_repository,
+            stub_route_registry::{PublisherLookup, StubRouteRegistry},
+        },
+    };
+
+    fn make_resolver(lookup: PublisherLookup) -> UpstreamPublisherResolver {
+        let repository = Arc::new(tokio::sync::Mutex::new(detached_session_repository()));
+        UpstreamPublisherResolver::new(
+            Arc::new(StubRouteRegistry::new(lookup)),
+            Arc::new(InterRelayConnectionManager::new(
+                repository,
+                unused_inter_relay_client_config(),
+            )),
+        )
+    }
+
+    fn table_with_publishers() -> InMemoryLocalPubSubDirectory {
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(3, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(5, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(7, "ns".to_string(), SessionPeer::Relay);
+        table
+    }
+
+    fn session_ids(publishers: &[UpstreamPublisher]) -> Vec<SessionId> {
+        publishers
+            .iter()
+            .filter_map(|publisher| match publisher {
+                UpstreamPublisher::Session(publisher_session_id) => Some(*publisher_session_id),
+                UpstreamPublisher::Relay(_) => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn resolves_every_local_client_publisher_newest_first() {
+        // Arrange
+        let table = table_with_publishers();
+        let resolver = make_resolver(PublisherLookup::NotFound);
+
+        // Act
+        let resolved = resolver
+            .resolve(&table, "ns", "track", SessionPeer::Client)
+            .await;
+
+        // Assert
+        assert_eq!(session_ids(&resolved), vec![5, 3]);
+    }
+
+    #[tokio::test]
+    async fn a_relay_requester_is_served_from_local_client_publishers_only() {
+        // Arrange
+        let table = table_with_publishers();
+        let resolver = make_resolver(PublisherLookup::MustNotBeCalled);
+
+        // Act
+        let resolved = resolver
+            .resolve(&table, "ns", "track", SessionPeer::Relay)
+            .await;
+
+        // Assert
+        assert_eq!(session_ids(&resolved), vec![5, 3]);
+    }
+
+    #[tokio::test]
+    async fn resolves_nothing_when_no_publisher_anywhere() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        let resolver = make_resolver(PublisherLookup::NotFound);
+
+        // Act
+        let resolved = resolver
+            .resolve(&table, "ns", "track", SessionPeer::Client)
+            .await;
+
+        // Assert
+        assert!(resolved.is_empty());
+    }
+
+    fn relay_ids(publishers: &[UpstreamPublisher]) -> Vec<String> {
+        publishers
+            .iter()
+            .filter_map(|publisher| match publisher {
+                UpstreamPublisher::Relay(relay) => Some(relay.relay_id.clone()),
+                UpstreamPublisher::Session(_) => None,
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn resolves_relays_publishing_the_namespace_or_the_track_once_each() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        let resolver = make_resolver(PublisherLookup::Found {
+            namespace_relay_ids: vec!["relay-a", "relay-b"],
+            track_relay_ids: vec!["relay-b", "relay-c"],
+        });
+
+        // Act
+        let resolved = resolver
+            .resolve(&table, "ns", "track", SessionPeer::Client)
+            .await;
+
+        // Assert
+        assert_eq!(relay_ids(&resolved), vec!["relay-a", "relay-b", "relay-c"]);
+    }
+
+    #[tokio::test]
+    async fn a_failing_route_registry_leaves_the_local_publishers() {
+        // Arrange
+        let table = table_with_publishers();
+        let resolver = make_resolver(PublisherLookup::Fails);
+
+        // Act
+        let resolved = resolver
+            .resolve(&table, "ns", "track", SessionPeer::Client)
+            .await;
+
+        // Assert
+        assert_eq!(session_ids(&resolved), vec![5, 3]);
+    }
+}

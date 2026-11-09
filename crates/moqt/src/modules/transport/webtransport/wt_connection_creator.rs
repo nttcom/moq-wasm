@@ -1,3 +1,4 @@
+use crate::modules::moqt::domains::endpoint::CertificateVerification;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -10,13 +11,11 @@ use super::wt_connection::WtConnection;
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
-    client_crypto::{
-        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
-    },
+    client_crypto::{client_crypto, client_endpoint, quic_client_config},
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::bind_dual_stack,
     server_transport_config::load_cert_and_key,
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
 };
 
 enum WtEndpoint {
@@ -79,22 +78,10 @@ pub(crate) async fn accept_session(
 impl TransportConnectionCreator for WtConnectionCreator {
     fn client(
         port_num: u16,
-        verify_certificate: bool,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
-    }
-
-    fn client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        Self::create_client(
-            port_num,
-            client_crypto_with_custom_cert(custom_cert_path)?,
-            protocols,
-        )
+        Self::create_client(port_num, client_crypto(verification)?, protocols)
     }
 
     fn server(
@@ -109,10 +96,10 @@ impl TransportConnectionCreator for WtConnectionCreator {
         let server = bind_dual_stack(port_num, |address| {
             Ok(web_transport_quinn::ServerBuilder::new()
                 .with_addr(address)
-                .with_certificate(certs, key)?)
+                .with_certificate(certs.clone(), key.clone_key())?)
         })?;
 
-        tracing::info!("Server ready! for WebTransport port: {}", port_num);
+        tracing::info!(port = port_num, "WebTransport server ready");
 
         Ok(WtConnectionCreator {
             quic_endpoint: quinn::Endpoint::clone(&server),
@@ -146,7 +133,7 @@ impl TransportConnectionCreator for WtConnectionCreator {
         Ok(Box::new(WtConnection::new(session)))
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         let server = match &self.endpoint {
             WtEndpoint::Server(s) => s,
             WtEndpoint::Client(_) => Err(anyhow::anyhow!(
@@ -164,8 +151,11 @@ impl TransportConnectionCreator for WtConnectionCreator {
                     .await;
                 continue;
             }
-            let session = accept_session(request, self.protocols).await?;
-            return Ok(Box::new(WtConnection::new(session)));
+            let protocols = self.protocols;
+            return Ok(Box::pin(async move {
+                let session = accept_session(request, protocols).await?;
+                Ok(Box::new(WtConnection::new(session)) as BoxedConnection)
+            }));
         }
     }
 
@@ -190,7 +180,7 @@ mod tests {
         modules::{
             test_support::{
                 HANDSHAKE_TIMEOUT, connect_sessions_from, insecure_client_config,
-                server_transport_creator, spawn_dual_server,
+                server_transport_creator, spawn_native_server,
             },
             transport::{
                 accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
@@ -201,7 +191,7 @@ mod tests {
     #[tokio::test]
     async fn web_transport_client_connects_to_a_host_name() {
         // Arrange
-        let (port, accept) = spawn_dual_server("wt-localhost");
+        let (port, accept) = spawn_native_server("wt-localhost");
         let client = Endpoint::<WEBTRANSPORT>::create_client(&insecure_client_config()).unwrap();
 
         // Act

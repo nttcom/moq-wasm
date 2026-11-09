@@ -1,0 +1,92 @@
+use tokio::sync::mpsc;
+
+use crate::modules::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::{cached_object::CachedObject, track_cache::OpenSubgroupGuard},
+        ingress::ingest_task::TrackIngest,
+    },
+    domain::track_key::TrackKey,
+    session::{data_receiver::datagram_receiver::DatagramReceiver, session_event::SessionEvent},
+};
+
+pub(crate) async fn read_datagrams(ingest: TrackIngest, mut receiver: Box<dyn DatagramReceiver>) {
+    let TrackIngest {
+        track_key,
+        cache,
+        publisher_mailbox_sender,
+        mut stop_receiver,
+        stamp,
+    } = ingest;
+    let mut current_group: Option<(u64, OpenSubgroupGuard<'_>)> = None;
+    loop {
+        let receive_result = tokio::select! {
+            _ = stop_receiver.changed() => {
+                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram reader stopped");
+                break;
+            }
+            result = receiver.receive_object() => result,
+        };
+
+        match receive_result {
+            Ok(object) => {
+                let group_id = object.location.group_id;
+                let open = match &mut current_group {
+                    Some((current_group_id, open)) if *current_group_id == group_id => open,
+                    slot => {
+                        if let Some((_, previous)) = slot.take() {
+                            previous.finish();
+                        }
+                        let key = SubgroupKey::Datagram { group_id };
+                        let (_, open) = slot.insert((group_id, cache.open_subgroup(key)));
+                        open
+                    }
+                };
+                let object = stamp.apply(CachedObject::from_object(object));
+                if open.insert(object).is_err() {
+                    report_malformed_track(&publisher_mailbox_sender, &track_key);
+                    break;
+                }
+            }
+            Err(error) if error.is::<moqt::object::MalformedTrackError>() => {
+                cache.mark_malformed();
+                report_malformed_track(&publisher_mailbox_sender, &track_key);
+                break;
+            }
+            Err(_) => {
+                tracing::debug!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "datagram receiver ended");
+                break;
+            }
+        }
+    }
+}
+
+fn report_malformed_track(
+    publisher_mailbox_sender: &mpsc::UnboundedSender<SessionEvent>,
+    track_key: &TrackKey,
+) {
+    tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "malformed track detected; stopping datagram ingest");
+    let _ = publisher_mailbox_sender.send(SessionEvent::MalformedTrackDetected(track_key.clone()));
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::modules::{
+        session::session_event::SessionEvent,
+        test_support::relay_harness::{FailingUpstream, RelayHarness},
+    };
+
+    #[tokio::test]
+    async fn a_subgroup_stream_on_the_datagram_track_reports_the_malformed_track() {
+        // Arrange
+        let mut harness = RelayHarness::new();
+        // Act
+        harness
+            .run_datagram_ingest(FailingUpstream(|| moqt::object::MalformedTrackError.into()))
+            .await;
+        // Assert
+        harness.wait_track_malformed().await;
+        let event = harness.expect_session_event().await;
+        assert!(matches!(event, SessionEvent::MalformedTrackDetected(_)));
+    }
+}

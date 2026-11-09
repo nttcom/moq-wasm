@@ -1,6 +1,6 @@
-use std::{future::Future, pin::pin, time::Duration};
+use std::{future::Future, pin::pin, sync::OnceLock, time::Duration};
 
-use futures::future::{AbortHandle, Abortable};
+use futures::future::{AbortHandle, Abortable, LocalBoxFuture};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
@@ -14,11 +14,26 @@ impl JoinHandle {
     }
 }
 
+pub type SpawnWrapper = fn(LocalBoxFuture<'static, ()>) -> LocalBoxFuture<'static, ()>;
+
+static SPAWN_WRAPPER: OnceLock<SpawnWrapper> = OnceLock::new();
+
+/// `spawn` passes every task through `wrapper`, calling it where the task is
+/// spawned. Only the first call takes effect.
+pub fn set_spawn_wrapper(wrapper: SpawnWrapper) {
+    let _ = SPAWN_WRAPPER.set(wrapper);
+}
+
 pub fn spawn<F>(_name: &str, future: F) -> JoinHandle
 where
     F: Future<Output = ()> + 'static,
 {
     let (abort_handle, abort_registration) = AbortHandle::new_pair();
+    let future: LocalBoxFuture<'static, ()> = Box::pin(future);
+    let future = match SPAWN_WRAPPER.get() {
+        Some(wrap) => wrap(future),
+        None => future,
+    };
     spawn_local(async move {
         let _ = Abortable::new(future, abort_registration).await;
     });
@@ -44,19 +59,17 @@ pub(crate) async fn timeout<F: Future>(duration: Duration, future: F) -> Result<
     }
 }
 
+thread_local! {
+    // `now()` runs several times per received object.
+    static PERFORMANCE: web_sys::Performance =
+        js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("performance"))
+            .expect("performance is defined in every browser global scope")
+            .unchecked_into();
+}
+
 /// Monotonic time since an arbitrary origin; only differences are meaningful.
 pub fn now() -> Duration {
-    let global = js_sys::global();
-    let performance = js_sys::Reflect::get(&global, &JsValue::from_str("performance"))
-        .expect("performance is defined in every browser global scope");
-    let now: js_sys::Function = js_sys::Reflect::get(&performance, &JsValue::from_str("now"))
-        .expect("performance.now is defined in every browser global scope")
-        .unchecked_into();
-    let millis = now
-        .call0(&performance)
-        .expect("performance.now takes no arguments")
-        .as_f64()
-        .expect("performance.now returns a number");
+    let millis = PERFORMANCE.with(web_sys::Performance::now);
     Duration::from_secs_f64(millis / 1_000.0)
 }
 
@@ -65,7 +78,7 @@ pub fn system_time() -> Duration {
     Duration::from_secs_f64(js_sys::Date::now() / 1_000.0)
 }
 
-pub(crate) async fn sleep(duration: Duration) {
+pub async fn sleep(duration: Duration) {
     let millis = i32::try_from(duration.as_millis()).unwrap_or(i32::MAX);
     let promise = js_sys::Promise::new(&mut |resolve, _reject| {
         let global = js_sys::global();

@@ -1,3 +1,4 @@
+use crate::modules::moqt::domains::endpoint::CertificateVerification;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,14 +8,12 @@ use quinn::rustls::{self};
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
-    client_crypto::{
-        client_crypto, client_crypto_with_custom_cert, client_endpoint, quic_client_config,
-    },
+    client_crypto::{client_crypto, client_endpoint, quic_client_config},
     connect_target::{ClientTransport, ConnectTarget},
     dual_stack_bind::bind_dual_stack,
     quic::quic_connection::QUICConnection,
     server_transport_config::quic_server_config,
-    transport_connection_creator::TransportConnectionCreator,
+    transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
 };
 
 pub struct QUICConnectionCreator {
@@ -42,22 +41,10 @@ impl QUICConnectionCreator {
 impl TransportConnectionCreator for QUICConnectionCreator {
     fn client(
         port_num: u16,
-        verify_certificate: bool,
+        verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verify_certificate)?, protocols)
-    }
-
-    fn client_with_custom_cert(
-        port_num: u16,
-        custom_cert_path: &str,
-        protocols: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
-        Self::create_client(
-            port_num,
-            client_crypto_with_custom_cert(custom_cert_path)?,
-            protocols,
-        )
+        Self::create_client(port_num, client_crypto(verification)?, protocols)
     }
 
     fn server(
@@ -74,8 +61,8 @@ impl TransportConnectionCreator for QUICConnectionCreator {
             protocols.quic_alpn_list(),
         )?;
         let endpoint = bind_dual_stack(port_num, |address| {
-            let endpoint = quinn::Endpoint::server(server_config, address)?;
-            tracing::info!("Server ready! for QUIC: {:?}", address);
+            let endpoint = quinn::Endpoint::server(server_config.clone(), address)?;
+            tracing::info!(%address, "QUIC server ready");
             Ok(endpoint)
         })?;
         Ok(QUICConnectionCreator {
@@ -100,7 +87,7 @@ impl TransportConnectionCreator for QUICConnectionCreator {
         Ok(Box::new(QUICConnection::new(connection)))
     }
 
-    async fn accept_new_transport(&self) -> Result<BoxedConnection, AcceptError> {
+    async fn accept_new_transport(&self) -> Result<TransportAccepting, AcceptError> {
         loop {
             let incoming = self
                 .endpoint
@@ -111,8 +98,9 @@ impl TransportConnectionCreator for QUICConnectionCreator {
                 incoming.refuse();
                 continue;
             }
-            let connection = incoming.await.map_err(anyhow::Error::from)?;
-            return Ok(Box::new(QUICConnection::new(connection)));
+            return Ok(Box::pin(async move {
+                Ok(Box::new(QUICConnection::new(incoming.await?)) as BoxedConnection)
+            }));
         }
     }
 

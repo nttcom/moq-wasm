@@ -8,6 +8,7 @@ import aiohttp
 from faster_whisper import WhisperModel
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
+from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
@@ -27,7 +28,9 @@ ROOM_ID_PATTERN = re.compile(r"[^/]{1,64}")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Transcribe every participant of a MoQ Meeting room")
-    add_serve_arguments(parser, default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
+    add_serve_arguments(
+        parser, bot="moq-meeting-transcriber", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS
+    )
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
     parser.add_argument(
         "--insecure",
@@ -84,8 +87,8 @@ def bot_from_query(args: argparse.Namespace, recognizers: Mapping[str, Recognize
     return partial(transcribe_room, args, recognizer)
 
 
-async def transcribe_room(args: argparse.Namespace, recognizer: Recognizer, room_id: str):
-    await Room(args.relay_url, not args.insecure, recognizer, room_id).run()
+async def transcribe_room(args: argparse.Namespace, recognizer: Recognizer, room: BotRoom):
+    await Room(args.relay_url, not args.insecure, recognizer, room).run()
 
 
 async def load_whisper(name: str) -> WhisperModel:
