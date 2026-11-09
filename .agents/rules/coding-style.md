@@ -25,6 +25,7 @@ Shared by all agents (Claude Code, Codex).
 - Names must represent the target concept clearly.
 - Abbreviations are allowed.
 - Channel-related variables must be named using the `xxx_sender` or `yyy_receiver` pattern.
+- Name MoQT protocol concepts with the draft's terms. A track started with PUBLISH is a subscription, like one started with SUBSCRIBE (draft-14 §5.1), and what a publisher serves is a track, so no MoQT state is a `Publication`. Application-facing public APIs (the wasm `publish()` result) may use `Publication`.
 
 ## Error Handling
 - Use `anyhow::Result` by default.
