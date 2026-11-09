@@ -1,7 +1,9 @@
 import { FormEvent, useState } from 'react'
 import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
+import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import type { TranscriptRecord } from '../media/transcript'
 import { ChatMessage } from '../types/chat'
+import { RecordPanel } from './RecordPanel'
 
 interface ChatSidebarProps {
   messages: ChatMessage[]
@@ -13,6 +15,8 @@ interface ChatSidebarProps {
   captions: CaptionsControls | null
   /// Whether the transcriber is in the room.
   transcribing: boolean
+  /// `null` while the recorder has not answered.
+  recording: RoomRecordingControls | null
 }
 
 export function ChatSidebar({
@@ -22,9 +26,10 @@ export function ChatSidebar({
   onSend,
   onToggle,
   captions,
-  transcribing
+  transcribing,
+  recording
 }: ChatSidebarProps) {
-  const [tab, setTab] = useState<'chat' | 'transcription'>('chat')
+  const [tab, setTab] = useState<'chat' | 'transcription' | 'record'>('chat')
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-l border-white/15 bg-slate-900">
       <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
@@ -36,6 +41,7 @@ export function ChatSidebar({
             active={tab === 'transcription'}
             onClick={() => setTab('transcription')}
           />
+          <SidebarTab label="Record" testId="record-tab" active={tab === 'record'} onClick={() => setTab('record')} />
         </div>
         <button
           type="button"
@@ -46,7 +52,9 @@ export function ChatSidebar({
         </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
-        {tab === 'transcription' ? (
+        {tab === 'record' ? (
+          <RecordPanel recording={recording} />
+        ) : tab === 'transcription' ? (
           transcribing && captions ? (
             <TranscriptPanel records={captions.records} />
           ) : (
