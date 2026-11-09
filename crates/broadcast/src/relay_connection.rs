@@ -1,3 +1,5 @@
+mod catalog_track;
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
@@ -5,7 +7,6 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use bytes::Bytes;
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
     TransportStats,
@@ -17,9 +18,10 @@ use msf::CATALOG_TRACK_NAME;
 use tokio::sync::{Mutex, watch};
 
 use crate::{
-    broadcast::{CatalogMetadata, awaits_subscribe, build_catalog, is_cmaf},
+    broadcast::{CatalogMetadata, awaits_subscribe, build_catalog},
     stream_ledger::{StreamLedger, StreamRecord},
 };
+use catalog_track::CatalogTrack;
 
 /// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
 /// forwards for a range it never cached can still be answered here.
@@ -134,7 +136,7 @@ pub(crate) struct ConnectedRelay {
     session: Arc<Session>,
     origin: Origin,
     state: Arc<Mutex<RelayState>>,
-    catalog_send: Mutex<()>,
+    catalog: CatalogTrack,
     ledger: StreamLedger,
     events: RelayEvents,
 }
@@ -273,10 +275,15 @@ impl ConnectedRelay {
         });
         Self {
             owned,
+            catalog: CatalogTrack::new(
+                session.clone(),
+                origin.clone(),
+                state.clone(),
+                ledger.clone(),
+            ),
             session,
             origin,
             state,
-            catalog_send: Mutex::new(()),
             ledger,
             events,
         }
@@ -378,7 +385,7 @@ impl ConnectedRelay {
             executor::now(),
             self.session.connection_generation(),
         ) {
-            self.send_catalog(&key.0).await?;
+            self.catalog.send(&key.0).await?;
         }
         if self.state.lock().await.disconnected {
             bail!("MoQ publisher disconnected");
@@ -516,7 +523,7 @@ impl ConnectedRelay {
                 return Ok(());
             }
         }
-        self.send_catalog(&namespace_path).await
+        self.catalog.send(&namespace_path).await
     }
 
     pub(crate) async fn remove_track(&self, namespace: &[String], track_name: &str) -> Result<()> {
@@ -536,94 +543,13 @@ impl ConnectedRelay {
             let after = catalog_track_names(&namespace_path, metadata)?;
             before.difference(&after).cloned().collect::<Vec<_>>()
         };
-        self.send_catalog(&namespace_path).await?;
+        self.catalog.send(&namespace_path).await?;
         for name in dropped {
             self.origin.end_track(&namespace_path, &name).await?;
             self.ledger.finish(&name);
             tracing::info!(track_namespace = %namespace_path, track_name = %name, "track removed");
         }
         Ok(())
-    }
-
-    /// The namespace is announced first, since the relay routes a PUBLISH by
-    /// its namespace. The non-CMAF tracks are published before the catalog is
-    /// sent, so a viewer subscribing to a track it read there finds the relay
-    /// already ingesting it; the relay would otherwise forward the SUBSCRIBE
-    /// here. CMAF tracks
-    /// wait for that SUBSCRIBE, so the uplink carries them only while someone
-    /// watches them.
-    ///
-    /// Sends do not overlap: `Origin::write_group` does not send a group
-    /// placed while another write on the track is in flight, and a snapshot
-    /// built earlier could otherwise be written last.
-    async fn send_catalog(&self, namespace_path: &str) -> Result<()> {
-        let _sending = self.catalog_send.lock().await;
-        let catalog = {
-            let guard = self.state.lock().await;
-            if guard.disconnected {
-                bail!("MoQ publisher disconnected");
-            }
-            let metadata = guard
-                .catalogs
-                .get(namespace_path)
-                .cloned()
-                .unwrap_or_default();
-            build_catalog(namespace_path, &metadata)?
-        };
-        let published_tracks = catalog
-            .tracks
-            .iter()
-            .flatten()
-            .filter(|track| !is_cmaf(track))
-            .map(|track| track.name.as_str());
-        for track_name in published_tracks.chain([CATALOG_TRACK_NAME]) {
-            self.publish_track((namespace_path.to_string(), track_name.to_string()))
-                .await?;
-        }
-        let payload = Bytes::from(serde_json::to_vec(&catalog).context("serialize msf catalog")?);
-        tracing::debug!(track_namespace = %namespace_path, catalog = %String::from_utf8_lossy(&payload), "catalog snapshot");
-        self.state.lock().await.catalog_sent.insert(
-            namespace_path.to_string(),
-            CatalogSent {
-                at: executor::now(),
-                generation: self.session.connection_generation(),
-            },
-        );
-        let bytes = payload.len();
-        match self
-            .origin
-            .write_group(namespace_path, CATALOG_TRACK_NAME, payload)
-            .await
-            .context("send catalog group")?
-        {
-            WriteOutcome::Sent(placement) => {
-                self.ledger
-                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
-                self.ledger.add_object(CATALOG_TRACK_NAME, bytes);
-                self.ledger.finish(CATALOG_TRACK_NAME);
-                tracing::info!(track_namespace = %namespace_path, group_id = placement.location.group_id, "catalog sent");
-            }
-            WriteOutcome::Stopped(placement) => {
-                self.ledger
-                    .open(CATALOG_TRACK_NAME, placement.location.group_id);
-                self.ledger.finish(CATALOG_TRACK_NAME);
-                tracing::info!(track_namespace = %namespace_path, "subscriber stopped the catalog group");
-            }
-            WriteOutcome::NotSent => {}
-        }
-        Ok(())
-    }
-
-    async fn publish_track(&self, key: TrackKey) -> Result<()> {
-        ensure_origin_track(&self.origin, &key).await;
-        self.state
-            .lock()
-            .await
-            .published_tracks
-            .entry(key.0.clone())
-            .or_default()
-            .insert(key.1.clone());
-        self.origin.publish(&self.session, &key.0, &key.1).await
     }
 }
 
@@ -691,6 +617,7 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
 mod tests {
     use std::path::PathBuf;
 
+    use bytes::Bytes;
     use moqt::{
         ClientConfig, NATIVE, Subscription, TrackObject, TrackReader,
         object::DataReceiver,
