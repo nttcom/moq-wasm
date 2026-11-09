@@ -26,6 +26,7 @@ use crate::{
             runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
             version::Version,
         },
+        transport::transport_stats::TransferredBytes,
     },
     publish::PublishOption,
     subscribe::SubscribeOption,
@@ -106,6 +107,14 @@ struct Connections {
     current: Arc<Connection>,
     /// The connection a migration moved away from, until it is closed.
     previous: Option<Arc<Connection>>,
+    /// What the connections that left the session carried.
+    retired: TransferredBytes,
+}
+
+impl Connections {
+    fn retire(&mut self, connection: &Connection) {
+        self.retired = self.retired.add(connection.transport.stats());
+    }
 }
 
 #[derive(Default)]
@@ -192,6 +201,7 @@ impl SessionContext {
             connections: std::sync::Mutex::new(Connections {
                 current: Arc::new(connection),
                 previous: None,
+                retired: TransferredBytes::default(),
             }),
             event_sender,
             receiver_map: tokio::sync::Mutex::new(HashMap::new()),
@@ -376,7 +386,9 @@ impl SessionContext {
     pub(crate) fn move_to(&self, next: Arc<Connection>) -> Arc<Connection> {
         let mut connections = self.connections();
         let moved_from = std::mem::replace(&mut connections.current, next);
-        connections.previous = Some(moved_from.clone());
+        if let Some(older) = connections.previous.replace(moved_from.clone()) {
+            connections.retire(&older);
+        }
         drop(connections);
         self.moves.send_modify(|_| {});
         moved_from
@@ -445,7 +457,17 @@ impl SessionContext {
             .is_some_and(|previous| Arc::ptr_eq(previous, connection))
         {
             connections.previous = None;
+            connections.retire(connection);
         }
+    }
+
+    pub(crate) fn transferred_bytes(&self) -> TransferredBytes {
+        let connections = self.connections();
+        std::iter::once(&connections.current)
+            .chain(&connections.previous)
+            .fold(connections.retired, |total, connection| {
+                total.add(connection.transport.stats())
+            })
     }
 
     fn connections(&self) -> std::sync::MutexGuard<'_, Connections> {

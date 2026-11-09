@@ -2272,6 +2272,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transferred_bytes_keep_what_the_closed_connection_carried() {
+        // Arrange
+        let (port, mut sessions, _accept) = spawn_reconnectable_server("session-transferred-bytes");
+        let client = connect_with(port, numbered_tokens(Arc::new(AtomicU64::new(0)))).await;
+        let (_, first) = next_session(&mut sessions).await;
+        subscribe(&client, &first).await;
+        let before = client.transferred_bytes();
+
+        // Act
+        first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
+        let (_, second) = next_session(&mut sessions).await;
+        serve_subscribe(&second).await;
+        let moved = tokio::time::timeout(DISCONNECT_TIMEOUT, client.moved_past(0)).await;
+        let after = client.transferred_bytes();
+        let current = client.transport_stats();
+
+        // Assert: the total holds the first connection's bytes on top of the current one's
+        assert_eq!(moved, Ok(true));
+        assert!(after.sent >= before.sent);
+        assert!(after.sent > current.sent_bytes);
+        assert!(after.received > current.received_bytes);
+    }
+
+    #[tokio::test]
     async fn a_close_for_an_expired_token_ends_a_session_with_a_fixed_token() {
         // Arrange
         let (port, mut sessions, _accept) = spawn_reconnectable_server("session-no-reconnect");

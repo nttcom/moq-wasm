@@ -1,5 +1,22 @@
 use std::time::Duration;
 
+/// Bytes a session carried over all its connections, the closed ones
+/// included; unlike `TransportStats`, it keeps counting across a migration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TransferredBytes {
+    pub sent: u64,
+    pub received: u64,
+}
+
+impl TransferredBytes {
+    pub(crate) fn add(self, stats: TransportStats) -> Self {
+        Self {
+            sent: self.sent + stats.sent_bytes,
+            received: self.received + stats.received_bytes,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TransportStats {
     pub rtt: Duration,

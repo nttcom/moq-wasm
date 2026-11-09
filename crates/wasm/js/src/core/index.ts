@@ -12,6 +12,7 @@ export {
   type PublishDone,
   type PublishTrackOptions,
   type ReceivedObject,
+  type TransportStats,
   MoqFetch,
   MoqGroup,
   MoqNamespaceWatch,

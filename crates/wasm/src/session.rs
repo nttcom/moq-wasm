@@ -91,6 +91,15 @@ impl Session {
         self.closed.clone()
     }
 
+    #[wasm_bindgen(js_name = transportStats)]
+    pub fn transport_stats(&self) -> TransportStats {
+        let bytes = self.session.transferred_bytes();
+        TransportStats {
+            sent_bytes: bytes.sent as f64,
+            received_bytes: bytes.received as f64,
+        }
+    }
+
     /// `filter` is `"largestObject"` (the default) or `"nextGroupStart"`.
     /// `priority` is the Subscriber Priority (draft-14 §7.2), 128 by default:
     /// the relay sends a lower value first.
@@ -815,6 +824,16 @@ pub struct CloseInfo {
     pub code: Option<u32>,
     #[wasm_bindgen(getter_with_clone, readonly)]
     pub reason: String,
+}
+
+/// Bytes are a `number` so a page can compute rates from them; one connection
+/// carries far fewer than 2^53 bytes.
+#[wasm_bindgen]
+pub struct TransportStats {
+    #[wasm_bindgen(readonly, js_name = sentBytes)]
+    pub sent_bytes: f64,
+    #[wasm_bindgen(readonly, js_name = receivedBytes)]
+    pub received_bytes: f64,
 }
 
 // The browser session is !Send, but wasm32 runs on one thread; `broadcast`

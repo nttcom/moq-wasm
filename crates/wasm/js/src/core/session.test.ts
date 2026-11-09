@@ -105,6 +105,28 @@ test('a request the relay rejects throws a RequestError with its code', async ()
   expect((error as RequestError).errorCode).toBe(0x4n)
 })
 
+test('transportStats copies the byte counts and frees the wasm object', () => {
+  // Arrange
+  let freed = 0
+  const session = new MoqSession({
+    closed: new Promise(() => {}),
+    transportStats: () => ({
+      sentBytes: 1200,
+      receivedBytes: 3400,
+      free: () => {
+        freed += 1
+      }
+    })
+  } as unknown as ConstructorParameters<typeof MoqSession>[0])
+
+  // Act
+  const stats = session.transportStats()
+
+  // Assert
+  expect(stats).toEqual({ sentBytes: 1200, receivedBytes: 3400 })
+  expect(freed).toBe(1)
+})
+
 test('a subscription closed while a read is in flight is freed only once the read returns', async () => {
   // Arrange
   let freed = 0

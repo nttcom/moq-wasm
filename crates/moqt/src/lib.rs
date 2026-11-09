@@ -49,4 +49,4 @@ pub use crate::modules::telemetry::set_trace_context_provider;
 pub use crate::modules::transport::accept_error::AcceptError;
 pub use crate::modules::transport::transport_connection::TransportClose;
 pub use crate::modules::transport::transport_send_stream::TransportSendError;
-pub use crate::modules::transport::transport_stats::TransportStats;
+pub use crate::modules::transport::transport_stats::{TransferredBytes, TransportStats};
