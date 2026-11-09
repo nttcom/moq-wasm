@@ -106,6 +106,22 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
             await within(request)
 
 
+async def test_a_session_offering_draft18_works_with_a_draft18_relay(draft18_relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    session = await moqt.connect(draft18_relay_url, verify_certificate=False, versions=["draft-18"])
+
+    # Act / Assert: the relay accepts the request, so the session speaks its draft
+    await within(session.publish_namespace(namespace))
+    await session.close()
+
+
+async def test_an_unknown_version_name_is_a_value_error():
+    # Act / Assert
+    with pytest.raises(ValueError, match="draft-99"):
+        await moqt.connect("moqt://127.0.0.1:4433", versions=["draft-99"])
+
+
 def temporary_app_id() -> str:
     return f"temp-{uuid.uuid4().hex}"
 

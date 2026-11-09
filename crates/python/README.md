@@ -15,6 +15,10 @@ async for event in await session.subscribe_namespace(["anon", "room"]):
         print((await anext(catalog)).payload)
 ```
 
+`connect` offers draft-14 only unless `versions` names the drafts to offer,
+most preferred first: `versions=["draft-18", "draft-14"]` gets draft-18 from a
+relay that accepts it and draft-14 from one that does not.
+
 ## Use from another Python project
 
 ```toml

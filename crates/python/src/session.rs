@@ -5,12 +5,15 @@ use std::{
 
 use moqt::{
     AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
-    NATIVE, RequestErrorCode, SessionEvent,
+    NATIVE, RequestErrorCode, SessionEvent, Version,
     executor::{self, JoinHandle},
     namespace::{NamespaceInterest, NamespaceWatchers},
     publish::{Origin, Retention},
 };
-use pyo3::{exceptions::PyRuntimeError, prelude::*};
+use pyo3::{
+    exceptions::{PyRuntimeError, PyValueError},
+    prelude::*,
+};
 
 use crate::{namespaces::NamespaceEvents, publication::TrackPublication, track::Track};
 
@@ -22,13 +25,16 @@ const REFRESH_TRACK_NAME: &str = "update_auth_token";
 /// The session follows the relay's GOAWAY by itself, presenting the latest
 /// token given to `connect` or `refresh_token`.
 #[pyfunction]
-#[pyo3(signature = (url, *, verify_certificate = true, token = None))]
+#[pyo3(signature = (url, *, verify_certificate = true, token = None, versions = None))]
 pub fn connect(
     py: Python<'_>,
     url: String,
     verify_certificate: bool,
     token: Option<String>,
+    versions: Option<Vec<String>>,
 ) -> PyResult<Bound<'_, PyAny>> {
+    let versions = Version::offered(versions.as_deref())
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
     let token = token.map(|token| Arc::new(Mutex::new(token)));
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let authorization_token = token.clone().map(|current| {
@@ -43,6 +49,7 @@ pub fn connect(
                 verify_certificate,
             ),
             authorization_token,
+            versions,
             ..ClientConfig::default()
         })?;
         let session = Arc::new(endpoint.connect(&url).await?.await?);
