@@ -35,13 +35,19 @@ outside them gets SUBSCRIBE_ERROR), for at most
 checks both every minute, ending the language's subscriptions with
 PUBLISH_DONE so the viewers fall back to the original audio and may subscribe
 again. An always-on language ignores the time limit and viewers leaving, and
-restarts when the open hours resume.
+restarts when the open hours resume. A language also ends, with the reason
+`translation unavailable`, when its Gemini session gives up: Gemini closed the
+connection with a policy violation (the API disabled, the account refused), or
+quick failures in a row have backed off all the way to 30 s. Reconnecting
+cannot mend either, and a viewer waiting on it would otherwise wait forever.
 
 With `PORT` set the process also serves HTTP (`page_server.rs`): the built
 Streamer and Viewer pages from `LIVE_TRANSLATE_STATIC_DIR` (through the
 `static-files` crate), `GET /token?id&role` for a page's token to publish
 (streamer) or subscribe (viewer) its one broadcast of the served app, with the
-namespace and the relay URL (`LIVE_TRANSLATE_PUBLIC_RELAY_URL`) to use, and
+namespace and the relay URL (`LIVE_TRANSLATE_PUBLIC_RELAY_URL`) to use and the
+open hours with whether they are open now, so the pages say the translation is
+closed before a viewer picks a language, and
 `GET /events`, a server-sent event stream that only sends a comment every 15 s.
 A page holds `/events` while it is in use: a Cloud Run instance lives while a
 request is in flight, so that stream is what keeps the translator running

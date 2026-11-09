@@ -86,6 +86,7 @@ export class TranslationPlayer {
   private droppedLateTranslatedAudio = 0
   private monitorOriginal = false
   private lastSwitchSeconds: number | undefined
+  private notice: string | undefined
   languages: LanguageOption[] = []
   private transcriptTracks = new Map<string, MediaCatalogTrack>()
   private captions: { lang: string; subscribed: Subscribed; lane: CaptionLane } | undefined
@@ -145,6 +146,12 @@ export class TranslationPlayer {
 
   get pendingLanguage(): string | undefined {
     return this.incoming?.lang
+  }
+
+  /// Why the chosen language is not heard: its SUBSCRIBE failed or the
+  /// translator ended it. Cleared by the next choice.
+  get languageNotice(): string | undefined {
+    return this.notice
   }
 
   stats(): TranslationPlayerStats {
@@ -237,6 +244,7 @@ export class TranslationPlayer {
       this.locLive.playout.setVolume(1)
       this.context.session = undefined
       this.languages = []
+      this.notice = undefined
       this.callbacks.onStateChange()
     })
   }
@@ -255,6 +263,7 @@ export class TranslationPlayer {
       }
       const abandoned = this.incoming
       this.incoming = undefined
+      this.notice = undefined
       await this.close(abandoned)
       const option = this.languages.find((candidate) => candidate.lang === lang)
       if (!option || lang === this.language) {
@@ -298,17 +307,22 @@ export class TranslationPlayer {
         this.incoming = undefined
       }
       translation.lane.close()
+      this.notice = `${option.label} は利用できません: ${error instanceof RequestError ? error.reasonPhrase : getErrorMessage(error)}`
       this.callbacks.onLog('error', `${option.label} is unavailable: ${getErrorMessage(error)}`)
     }
   }
 
-  /// The translator ends a language after its time limit or when its open
-  /// hours close, so the original audio comes back on its own.
+  /// The translator ends a language after its time limit, when its open
+  /// hours close or when its Gemini session gives up, so the original audio
+  /// comes back on its own.
   private async translationEnded(translation: Translation, done: PublishDone): Promise<void> {
     if (translation.closed) {
       return
     }
-    this.callbacks.onLog('warn', `${translation.lang} ended by the translator: ${done.reason || `status ${done.code}`}`)
+    const reason = done.reason || `status ${done.code}`
+    const label = this.languages.find((option) => option.lang === translation.lang)?.label ?? translation.lang
+    this.notice = `${label} の翻訳が止まりました: ${reason}`
+    this.callbacks.onLog('warn', `${translation.lang} ended by the translator: ${reason}`)
     if (this.translation === translation) {
       this.locLive.playout.setVolume(1, CROSSFADE_TIME_CONSTANT_SECONDS)
       this.translation = undefined
