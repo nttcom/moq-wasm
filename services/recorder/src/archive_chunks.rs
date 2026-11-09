@@ -41,6 +41,16 @@ impl ChunkWriter {
         }
     }
 
+    /// An empty writer for archive `index` of the same broadcast: this one's
+    /// prefix for 0, `<prefix>-<index>` after it.
+    pub(crate) fn part(&self, index: usize) -> Self {
+        let prefix = match index {
+            0 => self.prefix.clone(),
+            index => Path::from(format!("{}-{index}", self.prefix)),
+        };
+        Self::new(Arc::clone(&self.store), prefix, self.namespace.clone())
+    }
+
     pub(crate) async fn push(&mut self, name: &str, event: &Event) -> Result<()> {
         let next_id = self.tracks.len();
         let track = self.tracks.entry(name.to_owned()).or_insert_with(|| Track {

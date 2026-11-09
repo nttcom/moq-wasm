@@ -419,6 +419,15 @@ capture timestamps. The archive manifest lists each chunk with its object
 range, its capture range and the groups it holds media of, so the replay
 finds a track's recorded groups without reading the indexes. Duplicate object identities retain the first payload;
 conflicting duplicates fail the recording.
+A catalog that swaps a video or audio track the archive holds media of for
+another, such as a taller rendition, or changes its video codec or audio
+configuration, ends the archive before that catalog is stored, and the next
+archive starts from it: `camera-<n>` and `screenshare-<n>` follow `camera`
+and `screenshare` (`archive::record_broadcast`). A track swapped before any
+of its media was stored, added or dropped keeps the archive going. Each
+archive then holds one track per kind: the tracks of a switch listed side by
+side would share an `altGroup` without the matching media time sequences
+draft-ietf-moq-msf-01 §5.2.12 requires.
 The chunks go straight to the object store; no local copy is written. A reset
 subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The
 recording fails if a subscription, task or upload fails, and its final room
@@ -431,7 +440,8 @@ answered `409`. The replay announces namespaces under
 `<room>/recordings/<id>/<member>/<content>/<session-index>`: `<member>` is the
 member's namespace elements after the room, a meeting participant's name,
 `<content>` is `camera` or `screen_share`, and `<session-index>` counts the
-member's archives of that content, one per time they joined. With every
+member's archives of that content, one per time they joined and one more
+each time a catalog replaced a recorded track. With every
 element rather than the last, and the last two always content and index, two
 members never share one. The transcriber's namespace is not announced (see
 below), nor one that recorded no media its catalog lists, such as the screen

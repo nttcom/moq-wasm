@@ -501,10 +501,8 @@ publisher の timeline から始め、recorder の replay を VOD にしてか�
 - MP4 で保存した録画の replay。MP4 には元の catalog も timeline も残らないので、VOD の
   broadcast にするには、サンプルの時刻から catalog と timeline を作る経路を MoQ 形式とは別に
   持つことになる。手順 4 で replay ごと消す。MP4 の録画ファイルと合成はそのまま残る。
-- 録画の途中での codec や設定の変化。今の recording-player と同じく、再生を断る。
 - timeline を録画していない録画（手順 4 より前の録画と、timeline を出さない publisher の録画）。
   後方互換は持たず、`LivePlayer` では再生しない。
-- 録画の途中で選ばれた rendition が変わった track の切り替え。別の track として並ぶ。
 - カメラか画面共有かを catalog で示すこと。今は `renderGroup` と `label` で足りる。
   画面共有だけ高い解像度で録画するなど、種類で振る舞いを変える必要が出たときに決める。
 

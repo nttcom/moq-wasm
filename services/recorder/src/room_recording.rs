@@ -486,7 +486,7 @@ async fn archive_member(
     chunks: ChunkWriter,
     mut stop: watch::Receiver<bool>,
 ) -> Result<Vec<RecordedFile>> {
-    let key = record_archive(
+    let keys = record_archive(
         session,
         namespace,
         None,
@@ -497,7 +497,7 @@ async fn archive_member(
         },
     )
     .await?;
-    Ok(key
+    Ok(keys
         .into_iter()
         .map(|key| RecordedFile {
             path: path.clone(),
