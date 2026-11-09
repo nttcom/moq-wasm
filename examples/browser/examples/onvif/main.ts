@@ -6,9 +6,8 @@ import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
 import {
   CLOUD_RELAY_PRESETS,
   LOAD_BALANCED_RELAY_PRESET,
-  RELAY_URL_PARAM_NAMES,
   buildLocalRelayPresets,
-  firstSearchParam,
+  relayUrlFromQuery,
   type RelayPreset
 } from '../../utils/relayPresets'
 import { element, getErrorMessage, parseTrackNamespace } from '../../utils/page'
@@ -60,7 +59,7 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
 }
 
 let session: MoqSession | undefined
-let relayUrl = firstSearchParam(RELAY_URL_PARAM_NAMES) ?? LOAD_BALANCED_RELAY_PRESET.value
+let relayUrl = relayUrlFromQuery() ?? LOAD_BALANCED_RELAY_PRESET.value
 let relayTab: RelayTab = LOCAL_RELAY_PRESETS.some((preset) => preset.value === relayUrl) ? 'local' : 'cloud'
 const stage = element<HTMLDivElement>('stage')
 const telemetry = startPageTelemetry(

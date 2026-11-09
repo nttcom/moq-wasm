@@ -93,7 +93,8 @@ room or the user picks a model.
 The page finds the service with `resolveServiceUrl`
 (`examples/browser/utils/serviceUrl.ts`), as the other bot pages do: a local
 relay means `http://127.0.0.1:8100`, any other relay the deployed service, and
-`?transcriberUrl=` overrides both.
+`?transcriberUrl=` on this machine or under `moqt.research.skyway.io` overrides
+both.
 
 `moq-bot-rooms` accepts room IDs of `[a-z0-9-]{1,32}`, which a Meeting room
 name need not match. `serve_rooms` takes the pattern as a parameter, and the

@@ -2,7 +2,7 @@ import { MoqSession } from 'moq-wasm'
 import 'moq-wasm/media/player.css'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
-import { RELAY_URL_PARAM_NAMES, firstSearchParam, setUpRelayUrlControls } from '../../../utils/relayPresets'
+import { relayUrlFromQuery, setUpRelayUrlControls } from '../../../utils/relayPresets'
 import { type BroadcastAccess, BROADCAST_ID_PARAM, openBroadcastAccess, translatedNamespace } from '../liveTranslate'
 import { TranslationPlayer, type TranslationPlayerStats } from './translationPlayer'
 
@@ -46,7 +46,7 @@ const telemetry = startPageTelemetry('live-translate-viewer', () => urlInput.val
 setUpRelayUrlControls(urlInput, element('urlPresets'))
 broadcastIdInput.value = new URLSearchParams(location.search).get(BROADCAST_ID_PARAM) ?? ''
 // The streamer's link carries the broadcast ID and the relay URL; a viewer who typed the URL by hand sees the form.
-connection.open = !(broadcastIdInput.value && firstSearchParam(RELAY_URL_PARAM_NAMES))
+connection.open = !(broadcastIdInput.value && relayUrlFromQuery())
 renderTitle()
 broadcastIdInput.addEventListener('input', renderTitle)
 watchButton.addEventListener('click', () => void watch())
