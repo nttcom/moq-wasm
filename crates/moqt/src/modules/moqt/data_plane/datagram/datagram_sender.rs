@@ -68,7 +68,7 @@ mod tests {
 
     use crate::modules::test_support::{
         HANDSHAKE_TIMEOUT, connect_sessions, data_receiver, datagram_object, next_datagram,
-        published_track_between, spawn_dual_server,
+        published_track_between, spawn_native_server,
     };
     use crate::object::DatagramDelivery;
 
@@ -77,7 +77,7 @@ mod tests {
     /// on.
     async fn assert_an_oversized_datagram_is_dropped(name: &str, scheme: &str, path: &str) {
         // Arrange
-        let (port, accept) = spawn_dual_server(name);
+        let (port, accept) = spawn_native_server(name);
         let (client, server) =
             connect_sessions(&format!("{scheme}://127.0.0.1:{port}{path}"), accept)
                 .await

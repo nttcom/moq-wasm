@@ -46,6 +46,15 @@ pub(crate) fn keyframe_annexb() -> Bytes {
     with_start_codes([&FIXTURE_SPS[..], &FIXTURE_PPS, &IDR_SLICE])
 }
 
+pub(crate) fn keyframe_sample(pts: Timestamp) -> VideoSample {
+    VideoSample {
+        data: keyframe_annexb(),
+        is_keyframe: true,
+        pts,
+        dts: pts,
+    }
+}
+
 pub(crate) fn delta_frame_annexb() -> Bytes {
     with_start_codes([&NON_IDR_SLICE[..]])
 }
@@ -82,6 +91,7 @@ pub(crate) fn audio_event(pts_ms: u64) -> MediaEvent {
     MediaEvent::Audio(AudioSample {
         data: Bytes::from_static(&[0xDE, 0xAD]),
         pts: Timestamp::from_millis(pts_ms),
+        audio_level: None,
     })
 }
 

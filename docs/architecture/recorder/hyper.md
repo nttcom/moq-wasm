@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Add `hyper` (`http1`, `server`), `hyper-util` (`tokio`) and `http-body-util`
-to `crates/recorder`. `src/api_server.rs` serves the API of
+to `services/recorder`. `src/api_server.rs` serves the API of
 `recorder serve`, which starts, stops and reports room recordings for the
 meeting example.
 

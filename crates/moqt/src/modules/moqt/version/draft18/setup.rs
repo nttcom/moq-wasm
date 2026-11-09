@@ -16,10 +16,7 @@ use crate::modules::{
         },
         data_plane::stream::stream_sender::StreamSender,
     },
-    transport::{
-        connect_target::{ClientTransport, ConnectTarget},
-        transport_connection::BoxedConnection,
-    },
+    transport::{connect_target::ConnectTarget, transport_connection::BoxedConnection},
 };
 
 const IMPLEMENTATION: &str = "MOQ-WASM";
@@ -41,11 +38,10 @@ async fn receive_setup(peer: &mut MessageReceiver) -> anyhow::Result<SetupMessag
 /// §10.3.1.1 / §10.3.1.2: over native QUIC the client states the URI's
 /// authority and path; over WebTransport the CONNECT request carries them.
 fn client_setup(target: &ConnectTarget, authorization_token: Option<&str>) -> SetupMessage {
-    let native_quic = target.transport == ClientTransport::Quic;
+    let (authority, path) = target.quic_uri_parts().unzip();
     SetupMessage {
-        path: native_quic
-            .then(|| target.url[url::Position::BeforePath..url::Position::AfterQuery].to_string()),
-        authority: native_quic.then(|| target.url.authority().to_string()),
+        path,
+        authority,
         authorization_tokens: authorization_token
             .map(AuthorizationToken::use_value_utf8)
             .into_iter()
@@ -65,6 +61,8 @@ fn server_setup(setup: SetupMessage) -> ServerSetup {
             max_auth_token_cache_size: Some(setup.max_auth_token_cache_size),
             authority: setup.authority,
             moq_implementation: setup.implementation,
+            trace_context: false,
+            traceparent: None,
         },
     )
 }

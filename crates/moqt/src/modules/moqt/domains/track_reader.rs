@@ -4,7 +4,11 @@ use tokio::sync::mpsc;
 
 use crate::{
     Subscriber, Subscription,
-    modules::executor::{self, JoinHandle, MaybeSend},
+    fetch::{Fetch, FetchOption},
+    modules::{
+        executor::{self, JoinHandle, MaybeSend},
+        moqt::domains::subscriber::{SentFetch, joining_remainder},
+    },
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, Object,
         ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
@@ -27,7 +31,7 @@ pub struct TrackObject {
 
 impl TrackObject {
     /// `None` for an object without media: a status or an empty payload.
-    fn of(object: Object) -> Option<Self> {
+    pub fn from_object(object: Object) -> Option<Self> {
         if object.status != ObjectStatus::Normal || object.payload.is_empty() {
             return None;
         }
@@ -71,13 +75,70 @@ impl TrackReader {
         }
     }
 
-    /// Returns `Ok(None)` once the track has no more data. A failure inside
-    /// one subgroup stream is returned as `Err`; the other streams keep being
-    /// read. A `MalformedTrackError` ends the track after the streams already
+    /// The track's data is read only after the FETCH ends, so the fetched
+    /// objects come first. `joining_fetch` is the Joining FETCH written behind
+    /// the SUBSCRIBE; `None` reads the live objects only.
+    pub(crate) fn joining_current_group(
+        subscriber: Subscriber,
+        subscription: Subscription,
+        joining_fetch: Option<SentFetch>,
+    ) -> Self {
+        let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        let fetch_sender = object_sender.clone();
+        let receiver = async move {
+            let mut subscriber = subscriber;
+            if let Err(error) =
+                send_current_group(&mut subscriber, &subscription, joining_fetch, fetch_sender)
+                    .await
+            {
+                tracing::debug!(%error, "joining FETCH of the current group failed");
+            }
+            subscriber.accept_data_receiver(&subscription).await
+        };
+        Self {
+            object_receiver,
+            _track_read_task: TrackReadTask::run(receiver, object_sender),
+        }
+    }
+
+    /// Returns `Ok(None)` once the track has no more data. A failed subgroup
+    /// stream only ends that stream. The only `Err` is a
+    /// `MalformedTrackError`, which ends the track after the streams already
     /// accepted are drained.
     pub async fn next_object(&mut self) -> anyhow::Result<Option<TrackObject>> {
         self.object_receiver.recv().await.transpose()
     }
+}
+
+/// For a track without content the peer refuses the FETCH with INVALID_RANGE
+/// (draft-14 §9.16.2), which leaves the reader with the live objects only.
+async fn send_current_group(
+    subscriber: &mut Subscriber,
+    subscription: &Subscription,
+    joining_fetch: Option<SentFetch>,
+    object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
+) -> anyhow::Result<()> {
+    let Some(sent) = joining_fetch else {
+        return Ok(());
+    };
+    let option = FetchOption::default();
+    let remainder = joining_remainder(subscription, 0, &option);
+    let handle = subscriber.fetch_answered(sent, &option, remainder).await?;
+    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
+    loop {
+        match receiver.receive().await? {
+            Fetch::Object(object) => {
+                if let Some(object) = TrackObject::from_object(object)
+                    && object_sender.send(Ok(object)).await.is_err()
+                {
+                    break;
+                }
+            }
+            Fetch::UnknownRange { .. } => {}
+            Fetch::End => break,
+        }
+    }
+    Ok(())
 }
 
 struct TrackReadTask {
@@ -93,7 +154,11 @@ impl TrackReadTask {
             let mut receiver = match receiver.await {
                 Ok(receiver) => receiver,
                 Err(error) => {
-                    tracing::debug!(%error, "track has no data receiver");
+                    if error.is::<MalformedTrackError>() {
+                        let _ = object_sender.send(Err(error)).await;
+                    } else {
+                        tracing::debug!(%error, "track has no data receiver");
+                    }
                     return;
                 }
             };
@@ -105,7 +170,7 @@ impl TrackReadTask {
                             subgroup_readers.push(read_subgroup(stream, object_sender.clone()));
                         }
                         Ok(TrackData::Datagram(object)) => {
-                            if let Some(object) = TrackObject::of(object)
+                            if let Some(object) = TrackObject::from_object(object)
                                 && object_sender.send(Ok(object)).await.is_err()
                             {
                                 return;
@@ -141,7 +206,7 @@ async fn read_subgroup(
     object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
 ) {
     if let Err(error) = read_subgroup_objects(&mut receiver, &object_sender).await {
-        let _ = object_sender.send(Err(error)).await;
+        tracing::debug!(%error, "subgroup stream failed; the track goes on");
     }
 }
 
@@ -152,7 +217,7 @@ async fn read_subgroup_objects(
     loop {
         match receiver.receive().await? {
             Some(Subgroup::Object(object)) => {
-                let Some(object) = TrackObject::of(object) else {
+                let Some(object) = TrackObject::from_object(object) else {
                     continue;
                 };
                 if object_sender.send(Ok(object)).await.is_err() {
@@ -177,7 +242,7 @@ mod tests {
             HANDSHAKE_TIMEOUT, datagram_object, open_subgroup, published_track, send_payload,
             subscribed_track_reader,
         },
-        object::{ForwardingPreference, MalformedTrackError},
+        object::{DataStreamResetCode, ForwardingPreference, MalformedTrackError},
         wire::{SubgroupId, SubgroupObject},
     };
 
@@ -356,6 +421,28 @@ mod tests {
             locations(&objects),
             BTreeSet::from([(0, None, 0, Bytes::from_static(b"object"))])
         );
+    }
+
+    #[tokio::test]
+    async fn a_reset_subgroup_stream_is_skipped_and_the_next_group_is_read() {
+        // Arrange
+        let track = published_track("reader-reset").await;
+        let factory = track.client.publisher().create_stream(&track.published);
+        let mut group_0 = open_subgroup(&factory, 0, SubgroupId::None).await;
+        send_payload(&mut group_0, b"g0-o0").await;
+        let mut reader = subscribed_track_reader(&track.server, &track.accepted).await;
+        collect_objects(&mut reader, 1).await;
+
+        // Act
+        group_0.reset(DataStreamResetCode::Cancelled).await.unwrap();
+        let mut group_1 = open_subgroup(&factory, 1, SubgroupId::None).await;
+        send_payload(&mut group_1, b"g1-o0").await;
+        let next = tokio::time::timeout(HANDSHAKE_TIMEOUT, reader.next_object())
+            .await
+            .expect("object within timeout");
+
+        // Assert
+        assert_eq!(next.unwrap().unwrap().payload, Bytes::from_static(b"g1-o0"));
     }
 
     #[tokio::test]

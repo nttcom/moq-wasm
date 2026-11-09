@@ -1,0 +1,126 @@
+use std::{sync::Arc, time::Duration};
+
+use tokio::sync::mpsc;
+
+use crate::{
+    config::{CacheConfig, DiskCacheConfig},
+    modules::{
+        auth::token_verifier::TokenVerifier,
+        cascading::{
+            inter_relay_connection_manager::{InterRelayClientConfig, InterRelayConnectionManager},
+            route_registry::RelayRouteRegistry,
+            watched_namespace_job::WatchedNamespaceJob,
+        },
+        control_plane::{
+            control_message_forwarder::ControlMessageForwarder,
+            session_workers::{SessionWorkers, WorkerDeps},
+            upstream_publisher_resolver::UpstreamPublisherResolver,
+        },
+        data_plane::cache::{
+            disk_cache::DiskCacheTask, eviction_job::spawn_cache_eviction_job,
+            store::TrackCacheStore,
+        },
+        directory::InMemoryLocalPubSubDirectory,
+        observability::{
+            stats_collector::{StatsCollector, StatsSources},
+            stats_export_task::unix_millis_now,
+        },
+        session::session_repository::{SessionAdded, SessionRepository},
+    },
+};
+
+pub(crate) struct DataPlaneConfig {
+    pub(crate) cache: CacheConfig,
+    /// `config.dir` must have gone through `prepare_directory`.
+    pub(crate) disk_cache: Option<DiskCacheConfig>,
+    pub(crate) fetch_fill_timeout: Duration,
+}
+
+pub(crate) struct RelayRuntime {
+    repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+    local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
+    cache_store: Arc<TrackCacheStore>,
+    inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
+    _session_workers: SessionWorkers,
+    _evict_job: tokio::task::JoinHandle<()>,
+    _watched_namespace_job: WatchedNamespaceJob,
+    _disk_cache: Option<DiskCacheTask>,
+}
+
+impl RelayRuntime {
+    pub(crate) fn new(
+        repo: Arc<tokio::sync::Mutex<SessionRepository>>,
+        route_registry: Arc<dyn RelayRouteRegistry>,
+        inter_relay_client: InterRelayClientConfig,
+        token_verifier: Arc<dyn TokenVerifier>,
+        data_plane: DataPlaneConfig,
+        session_added_receiver: mpsc::UnboundedReceiver<SessionAdded>,
+    ) -> Self {
+        let disk_cache = data_plane.disk_cache.map(DiskCacheTask::run);
+        let cache_store = Arc::new(TrackCacheStore::with_disk(
+            disk_cache.as_ref().map(DiskCacheTask::handle),
+        ));
+        let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
+            repo.clone(),
+            inter_relay_client,
+        ));
+        let upstream_publisher_resolver = Arc::new(UpstreamPublisherResolver::new(
+            route_registry.clone(),
+            inter_relay_connection_manager.clone(),
+        ));
+        let local_pub_sub_directory = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let watched_namespace_job = WatchedNamespaceJob::run(
+            upstream_publisher_resolver.watched_namespace_routes.clone(),
+            local_pub_sub_directory.clone(),
+        );
+        let session_workers = SessionWorkers::run(
+            session_added_receiver,
+            WorkerDeps {
+                control_message_forwarder: ControlMessageForwarder {
+                    repository: repo.clone(),
+                },
+                repo: repo.clone(),
+                local_pub_sub_directory: local_pub_sub_directory.clone(),
+                route_registry,
+                inter_relay_connection_manager: inter_relay_connection_manager.clone(),
+                upstream_publisher_resolver,
+                cache_store: cache_store.clone(),
+                token_verifier,
+                fetch_fill_timeout: data_plane.fetch_fill_timeout,
+            },
+        );
+        let evict_job = spawn_cache_eviction_job(cache_store.clone(), data_plane.cache);
+        Self {
+            repo,
+            local_pub_sub_directory,
+            cache_store,
+            inter_relay_connection_manager,
+            _session_workers: session_workers,
+            _evict_job: evict_job,
+            _watched_namespace_job: watched_namespace_job,
+            _disk_cache: disk_cache,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_store(&self) -> &Arc<TrackCacheStore> {
+        &self.cache_store
+    }
+
+    pub(crate) fn begin_draining(&self) {
+        self.local_pub_sub_directory
+            .begin_draining(unix_millis_now());
+    }
+
+    pub(crate) fn stats_collector(&self, relay_id: String) -> StatsCollector {
+        StatsCollector::new(
+            relay_id,
+            StatsSources {
+                repo: self.repo.clone(),
+                directory: self.local_pub_sub_directory.clone(),
+                cache_store: self.cache_store.clone(),
+                inter_relay_connection_manager: self.inter_relay_connection_manager.clone(),
+            },
+        )
+    }
+}

@@ -1,6 +1,7 @@
 use anyhow::Context;
 use std::{
     net::{Ipv4Addr, SocketAddr},
+    path::Path,
     sync::Arc,
 };
 
@@ -9,45 +10,54 @@ use quinn::rustls::{
     pki_types::{CertificateDer, pem::PemObject},
 };
 
-use crate::modules::transport::{
-    crypto_provider::install_default_crypto_provider,
-    quic::skip_certd_validation::SkipVerification,
-    server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
+use crate::modules::{
+    moqt::domains::endpoint::CertificateVerification,
+    transport::{
+        crypto_provider::install_default_crypto_provider,
+        quic::skip_certd_validation::SkipVerification,
+        server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
+    },
 };
 
-pub(crate) fn client_crypto(verify_certificate: bool) -> anyhow::Result<rustls::ClientConfig> {
-    install_default_crypto_provider();
-    let builder = rustls::ClientConfig::builder();
-    let crypto = if verify_certificate {
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().certs {
-            roots.add(cert)?;
-        }
-        builder.with_root_certificates(roots).with_no_client_auth()
-    } else {
-        builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipVerification))
-            .with_no_client_auth()
-    };
-    Ok(crypto)
-}
-
-pub(crate) fn client_crypto_with_custom_cert(
-    custom_cert_path: &str,
+pub(crate) fn client_crypto(
+    verification: &CertificateVerification,
 ) -> anyhow::Result<rustls::ClientConfig> {
     install_default_crypto_provider();
-    let certs = CertificateDer::pem_file_iter(custom_cert_path)
-        .context("failed to open the certificate file")?
+    let builder = rustls::ClientConfig::builder();
+    let roots = match verification {
+        CertificateVerification::NativeRoots => {
+            let mut roots = rustls::RootCertStore::empty();
+            for cert in rustls_native_certs::load_native_certs().certs {
+                roots.add(cert)?;
+            }
+            roots
+        }
+        CertificateVerification::TrustedCertificates(path) => trusted_certificates(path)?,
+        CertificateVerification::Disabled => {
+            return Ok(builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(SkipVerification))
+                .with_no_client_auth());
+        }
+    };
+    Ok(builder.with_root_certificates(roots).with_no_client_auth())
+}
+
+fn trusted_certificates(path: &Path) -> anyhow::Result<rustls::RootCertStore> {
+    let certs = CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("failed to open the certificate file {}", path.display()))?
         .collect::<Result<Vec<_>, _>>()
-        .context("failed to parse the certificate file")?;
+        .with_context(|| format!("failed to parse the certificate file {}", path.display()))?;
+    anyhow::ensure!(
+        !certs.is_empty(),
+        "the certificate file {} holds no certificate",
+        path.display()
+    );
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs {
         roots.add(cert)?;
     }
-    Ok(rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth())
+    Ok(roots)
 }
 
 pub(crate) fn quic_client_config(

@@ -5,13 +5,11 @@ use crate::modules::moqt::control_plane::{
     error_codes::RequestErrorCode,
     handler::{
         fetch_cancel_handler::FetchCancelHandler, fetch_handler::FetchHandler,
-        go_away_handler::GoAwayHandler, max_request_id_handler::MaxRequestIdHandler,
-        publish_blocked_handler::PublishBlockedHandler, publish_done_handler::PublishDoneHandler,
-        publish_handler::PublishHandler,
+        go_away_handler::GoAwayHandler, publish_blocked_handler::PublishBlockedHandler,
+        publish_done_handler::PublishDoneHandler, publish_handler::PublishHandler,
         publish_namespace_cancel_handler::PublishNamespaceCancelHandler,
         publish_namespace_done_handler::PublishNamespaceDoneHandler,
-        publish_namespace_handler::PublishNamespaceHandler,
-        requests_blocked_handler::RequestsBlockedHandler, subscribe_handler::SubscribeHandler,
+        publish_namespace_handler::PublishNamespaceHandler, subscribe_handler::SubscribeHandler,
         subscribe_namespace_handler::SubscribeNamespaceHandler,
         subscribe_namespace_update_handler::SubscribeNamespaceUpdateHandler,
         subscribe_update_handler::SubscribeUpdateHandler, track_status_handler::TrackStatusHandler,
@@ -32,8 +30,6 @@ pub(crate) type ErrorPhrase = String;
 #[non_exhaustive]
 pub enum SessionEvent {
     GoAway(GoAwayHandler),
-    MaxRequestId(MaxRequestIdHandler),
-    RequestsBlocked(RequestsBlockedHandler),
     PublishNamespace(PublishNamespaceHandler),
     PublishNamespaceDone(PublishNamespaceDoneHandler),
     PublishNamespaceCancel(PublishNamespaceCancelHandler),

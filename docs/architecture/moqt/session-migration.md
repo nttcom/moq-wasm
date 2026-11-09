@@ -67,11 +67,9 @@ never migrates.
 | Client | Setting | Why |
 | --- | --- | --- |
 | relay → relay (`inter_relay_connection_manager`) | `false` | a relay-peer GOAWAY is answered by subscribing other publishers ("GOAWAY sequence") |
-| relay stats publisher (`stats_publish_task`) | `false` | it connects to its own relay, which is the one draining |
-| broadcast, recorder, observability, live-egress, onvif-ingest command subscriber, moq-cli, wasm | `true` | |
+| broadcast, recorder, live-egress, onvif-ingest command subscriber, moq-cli, wasm | `true` | |
 
-The default is `true`; the two relay call sites set `false` in the same
-change.
+The default is `true`; the relay call site sets `false` in the same change.
 
 ### Request ids and track aliases
 
@@ -98,8 +96,18 @@ ids.
 
 ### Subscribing side
 
-A subscription carried over is re-sent with `NextGroupStart` (or with its
-Forward state and its original range for a finite one). Its incoming streams
+A subscription carried over is re-sent with its Forward state and
+`NextGroupStart`, or, for an AbsoluteRange, a range that starts after the
+newest group the previous connection handed out and keeps its End Group.
+A SUBSCRIBE_UPDATE replaces the carried Forward state and priority, and one
+with an End Group turns the carried filter into an AbsoluteRange of its Start
+Location and End Group, so a range narrowed after the SUBSCRIBE is kept. An
+AbsoluteRange whose End Group the previous connection has started is not
+re-sent: it ends there, and the previous connection is kept until its
+streams end (10 s limit). A subscription only delivers objects after the
+Largest Object of its SUBSCRIBE_OK (draft-14 §9.7), so a range that starts
+at or below it joins that group mid-way; `GroupCutover` leaves such a group
+to the previous connection. Its incoming streams
 of both connections feed the same `DataReceiver`. A subgroup
 stream carries one group, so the group cutover of `GroupCutover` becomes a
 per-stream decision: the receiver hands out the streams of groups before the
@@ -116,6 +124,13 @@ stream is cut off after the move, the part not delivered yet (the range
 after the last location received, up to the FETCH_OK's End Location) is
 FETCHed on the current connection and the same receiver reads on. A
 descending FETCH is not sent again.
+
+A Joining FETCH may only join a Largest Object subscription (draft-14
+§9.16.2), and a later connection holds the subscription with the filter it
+was sent again with. So `fetch_relative_joining` sends a Joining FETCH only
+on the connection the subscription was first sent on; once the session has
+moved, it FETCHes the same range (from the joined group up to the
+SUBSCRIBE_OK's Largest Location) as a Standalone FETCH.
 
 ### Publishing side
 
@@ -137,6 +152,37 @@ connection's Disconnected and ProtocolViolation are dropped. A
 PUBLISH_NAMESPACE the new relay sends for a namespace already announced on the
 previous one is delivered as is (the application acknowledges it again, as
 the recorder does now).
+
+### Reconnecting after a lost connection
+
+A session that follows GOAWAY also replaces a connection that ended without
+one, through the same migration to its current URL. It reconnects when the
+network or the server ended the connection without a termination code, and
+when the server closed it with EXPIRED_AUTH_TOKEN while
+`ClientConfig::authorization_token` is a provider, which hands the new
+connection a fresh token. A close this side made, and any other termination
+code, ends the session as before.
+
+Attempts start 0.5 s after the loss and double their delay up to 10 s, for at
+most 60 s, about as long as a relay keeps a track in its cache. A server that
+rejects the token at SETUP (UNAUTHORIZED, EXPIRED_AUTH_TOKEN) gets one more
+attempt only. Meanwhile `Session::closed` stays pending and no `Disconnected`
+is delivered. A SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE, PUBLISH or SUBSCRIBE
+the loss cuts off before its answer (its send fails or the control stream
+closes) releases the `carried` lock, waits for the new connection and is sent
+there; it fails only when the session ends without one. A PUBLISH_NAMESPACE
+or SUBSCRIBE_NAMESPACE is carried from the moment it was sent, so the
+migration itself sends it again and `publish_namespace` or
+`subscribe_namespace` returns once the new connection accepted it. A
+PUBLISH_NAMESPACE or SUBSCRIBE_NAMESPACE that is rejected or times out
+removes only its own record from `carried`, so another request for the same
+namespace stays carried. An UNSUBSCRIBE_NAMESPACE or PUBLISH_NAMESPACE_DONE
+sent before the answer removes every record of the namespace. Other
+requests, and a request that times out, still fail. Once a new
+connection takes the requests again, the lost one is retired at once, since it
+delivers nothing more: each subscription continues from the next group start
+on the new connection, and the objects published in between are not filled
+in.
 
 ### Closing the previous connection
 
@@ -200,6 +246,6 @@ Each step is one PR, stacked:
 - The default of `follow_go_away`. `true` makes every client migrate unless it
   opts out, which is what draft-14 §3.5 recommends, but a client this
   repository does not know about changes behaviour.
-- The migration connects with the token the session started with. A client
-  that refreshes its token in-session (the recorder's `--auth-token-file`)
-  needs the current token handed to the session.
+- A client that refreshes its token in-session (the recorder's
+  `--auth-token-file`) hands `ClientConfig` an `AuthorizationTokenSource`
+  provider, which each connection calls for its CLIENT_SETUP.

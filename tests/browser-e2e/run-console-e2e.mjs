@@ -18,7 +18,7 @@ import {
 import { findFreePort, jsDir, waitForHttpOk } from "./helpers.mjs";
 import { startVts, vtsAppsFile, vtsVerifyUrl } from "./vts-dev.mjs";
 
-const consoleWebDir = resolve(repoRoot, "crates", "console", "web");
+const consoleWebDir = resolve(repoRoot, "services", "console", "web");
 const childProcesses = [];
 
 async function main() {

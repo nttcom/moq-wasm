@@ -4,21 +4,16 @@ import { PTZ_TRACKING_PATH } from '../playwright.helpers'
 const moqtUrl = process.env.PTZ_TRACKING_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 const botUrl = process.env.PTZ_TRACKING_E2E_BOT_URL!
 const cameraOrigin = process.env.PTZ_TRACKING_E2E_CAMERA_ORIGIN!
-export const D3_FLASH_ORIGIN = process.env.PTZ_TRACKING_E2E_D3_FLASH_ORIGIN!
+export const SYSTEM_ONE_ORIGIN = process.env.PTZ_TRACKING_E2E_SYSTEM_ONE_ORIGIN!
 
 export type PtzCommand = { type: string }
 
-/// Where the fake d3-flash sees the target, as fractions of the picture from its top-left corner.
-export async function placeTargetAt(x: number, y: number): Promise<void> {
-  await answerDetectorWith(`${x},${y}`)
-}
+/// [left, top, right, bottom] as fractions of the picture from its top-left corner.
+export type Box = [number, number, number, number]
 
-export async function hideTarget(): Promise<void> {
-  await answerDetectorWith('not visible')
-}
-
-async function answerDetectorWith(position: string): Promise<void> {
-  const response = await fetch(`${D3_FLASH_ORIGIN}/position`, { method: 'PUT', body: position })
+/// The boxes the fake System One server finds for each target; a target left out has none.
+export async function placeBoxes(boxes: Record<string, Box[]>): Promise<void> {
+  const response = await fetch(`${SYSTEM_ONE_ORIGIN}/boxes`, { method: 'PUT', body: JSON.stringify(boxes) })
   expect(response.ok).toBe(true)
 }
 
@@ -36,7 +31,12 @@ export async function joinCamera(page: Page): Promise<Locator> {
   return page.getByTestId('ptz-tracking-position')
 }
 
-export async function trackTarget(page: Page, target: string): Promise<void> {
-  await page.getByTestId('ptz-tracking-target-input').fill(target)
+export async function trackTargets(page: Page, targets: string[]): Promise<void> {
+  for (const [index, target] of targets.entries()) {
+    if (index > 0) {
+      await page.getByTestId('ptz-tracking-add-target-button').click()
+    }
+    await page.getByTestId('ptz-tracking-target-input').nth(index).fill(target)
+  }
   await page.getByTestId('ptz-tracking-start-button').click()
 }

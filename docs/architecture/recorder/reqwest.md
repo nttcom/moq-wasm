@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Add `reqwest` (`default-features = false`, `json` and `rustls`) to
-`crates/recorder` as a direct dependency. `launcher::Launcher::CloudRun` uses it
+`services/recorder` as a direct dependency. `launcher::Launcher::CloudRun` uses it
 to get an access token from the GCE metadata server and to start a Cloud Run
 Job execution with `POST https://run.googleapis.com/v2/<job>:run`.
 
@@ -36,7 +36,7 @@ OAuth token of the service's service account.
 
 ## Decision
 
-Use `reqwest` with the same features as `crates/relay`. It is already in the
+Use `reqwest` with the same features as `services/relay`. It is already in the
 lock file through `object_store`'s `gcp` feature, so the addition brings no new
 crate into the build. The token is requested per launch: launches are rare
 (one per recording and per composite), so caching it is not worth the code.

@@ -1,0 +1,58 @@
+name: SDK release
+
+# `docs/architecture/wasm/browser-sdk.md` "配布".
+on:
+  push:
+    tags:
+      - "sdk-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.4
+      - name: Check the tag names the package version
+        run: |
+          version=$(node -p "require('./crates/wasm/js/package.json').version")
+          if [ "${GITHUB_REF_NAME}" != "sdk-v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not name the package version ${version}"
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "${GITHUB_ENV}"
+      - name: Take the release notes from the changelog
+        run: node crates/wasm/js/scripts/release-notes.mjs "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+      - name: Install Rust
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.99.1
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+      - name: Install dependencies
+        run: npm ci
+      - name: Build the moq-wasm package
+        run: npm run wasm -w moq-wasm && npm run build -w moq-wasm
+      - name: Build a Vite project from the packed tarball
+        run: npm run check:pack -w moq-wasm
+      - name: Pack the tarball
+        run: npm pack -w moq-wasm --pack-destination "${RUNNER_TEMP}"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${RUNNER_TEMP}/moq-wasm-${VERSION}.tgz" \
+            --verify-tag \
+            --title "moq-wasm ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"

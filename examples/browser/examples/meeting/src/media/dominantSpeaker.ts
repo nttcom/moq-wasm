@@ -1,4 +1,4 @@
-import type { AudioLevel } from '../../../../utils/media/loc'
+import type { AudioLevel } from 'moq-wasm/media/internal/loc'
 
 /// A member speaks while its audio carried voice activity this recently.
 const SPEAKING_WINDOW_MS = 500

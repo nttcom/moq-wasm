@@ -5,16 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoQT Playground</title>
     <style>
+      /* Temporary mode, the default; public mode overrides below. */
       :root {
-        --bg-top: #0b1020;
-        --bg-bottom: #111a34;
-        --surface: rgba(18, 29, 56, 0.72);
-        --surface-border: rgba(151, 184, 255, 0.22);
-        --text-main: #ebf1ff;
-        --text-sub: #b7c6ea;
-        --accent: #7cc7ff;
-        --accent-strong: #4f9fff;
+        --bg-top: #07080c;
+        --bg-bottom: #0e1016;
+        --glow-left: #1a1d2a;
+        --glow-right: rgba(26, 29, 42, 0);
+        --hero-bg: linear-gradient(145deg, #15171f, #0c0d12);
+        --surface: rgba(22, 24, 32, 0.82);
+        --surface-border: rgba(255, 255, 255, 0.1);
+        --node-bg: rgba(10, 11, 16, 0.7);
+        --text-main: #eceef3;
+        --text-sub: #a3a8b8;
+        --accent: #9db4ff;
+        --accent-strong: #6f8dff;
         --shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
+        --card-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
+        --card-shadow-hover: 0 24px 38px rgba(0, 0, 0, 0.34);
+      }
+
+      :root[data-access-mode='public'] {
+        --bg-top: #f7f9fd;
+        --bg-bottom: #e8eef8;
+        --glow-left: #dfe8fb;
+        --glow-right: #dcefff;
+        --hero-bg: linear-gradient(145deg, #ffffff, #f1f5fc);
+        --surface: rgba(255, 255, 255, 0.92);
+        --surface-border: rgba(30, 60, 120, 0.14);
+        --node-bg: rgba(255, 255, 255, 0.85);
+        --text-main: #14203a;
+        --text-sub: #4b5b7b;
+        --accent: #2563eb;
+        --accent-strong: #1d4ed8;
+        --shadow: 0 20px 40px rgba(20, 40, 80, 0.1);
+        --card-shadow: 0 10px 24px rgba(20, 40, 80, 0.08);
+        --card-shadow-hover: 0 18px 30px rgba(20, 40, 80, 0.14);
       }
 
       * {
@@ -27,8 +52,8 @@
         font-family: 'Avenir Next', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
         color: var(--text-main);
         background:
-          radial-gradient(80rem 45rem at -10% -20%, #1d2c62 0%, rgba(29, 44, 98, 0) 60%),
-          radial-gradient(70rem 40rem at 110% -30%, #1f4c7d 0%, rgba(31, 76, 125, 0) 60%),
+          radial-gradient(80rem 45rem at -10% -20%, var(--glow-left) 0%, transparent 60%),
+          radial-gradient(70rem 40rem at 110% -30%, var(--glow-right) 0%, transparent 60%),
           linear-gradient(160deg, var(--bg-top) 10%, var(--bg-bottom) 90%);
       }
 
@@ -44,7 +69,7 @@
         padding: 2rem;
         border: 1px solid var(--surface-border);
         border-radius: 1.4rem;
-        background: linear-gradient(145deg, rgba(26, 41, 77, 0.82), rgba(13, 22, 44, 0.8));
+        background: var(--hero-bg);
         box-shadow: var(--shadow);
         backdrop-filter: blur(8px);
         animation: fade-up 420ms ease-out both;
@@ -55,6 +80,78 @@
         font-size: clamp(1.8rem, 4.4vw, 2.8rem);
         line-height: 1.1;
         letter-spacing: 0.01em;
+      }
+
+      .hero-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .access-switch {
+        display: inline-flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--surface-border);
+        border-radius: 999px;
+        background: rgba(127, 127, 127, 0.12);
+      }
+
+      .access-switch button {
+        padding: 0.5rem 1.2rem;
+        border: 0;
+        border-radius: 999px;
+        background: none;
+        color: var(--text-sub);
+        font: inherit;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .access-switch button[aria-selected='true'] {
+        background: var(--accent-strong);
+        color: #fff;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+      }
+
+      .access-description {
+        margin: 0.9rem 0 0;
+        color: var(--text-sub);
+        font-size: 0.92rem;
+        line-height: 1.7;
+      }
+
+      .access-status {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.6rem 1rem;
+        margin-top: 0.8rem;
+        font-size: 0.9rem;
+      }
+
+      .access-status:empty {
+        display: none;
+      }
+
+      .access-status code {
+        padding: 0.15rem 0.5rem;
+        border-radius: 0.4rem;
+        background: rgba(127, 127, 127, 0.16);
+      }
+
+      .access-status button {
+        padding: 0.35rem 0.8rem;
+        border: 1px solid var(--surface-border);
+        border-radius: 0.5rem;
+        background: none;
+        color: inherit;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
       }
 
       .section {
@@ -99,7 +196,7 @@
         grid-template-areas:
           '. . browser . . . .'
           '. . browser-link . . . .'
-          'camera camera-link relay bot-link bot d3-flash-link d3-flash';
+          'camera camera-link relay bot-link bot system-one-link system-one';
         justify-content: center;
         justify-items: center;
       }
@@ -132,12 +229,12 @@
         grid-area: bot;
       }
 
-      .hub-d3-flash-link {
-        grid-area: d3-flash-link;
+      .hub-system-one-link {
+        grid-area: system-one-link;
       }
 
-      .hub-d3-flash {
-        grid-area: d3-flash;
+      .hub-system-one {
+        grid-area: system-one;
       }
 
       .observability-map {
@@ -182,7 +279,7 @@
         padding: 0.5rem 0.6rem 0.4rem;
         border-radius: 0.6rem;
         border: 1px solid var(--surface-border);
-        background: rgba(11, 16, 32, 0.6);
+        background: var(--node-bg);
         font-size: 0.72rem;
         font-weight: 600;
         line-height: 1.2;
@@ -241,7 +338,7 @@
         color: var(--text-main);
         background: var(--surface);
         border: 1px solid var(--surface-border);
-        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
+        box-shadow: var(--card-shadow);
         transition:
           transform 180ms ease,
           border-color 180ms ease,
@@ -262,7 +359,7 @@
       .card:hover {
         transform: translateY(-4px);
         border-color: rgba(124, 199, 255, 0.58);
-        box-shadow: 0 24px 38px rgba(0, 0, 0, 0.34);
+        box-shadow: var(--card-shadow-hover);
       }
 
       .card:focus-visible {
@@ -345,7 +442,17 @@
   <body>
     <main class="page">
       <section class="hero">
-        <h1>MoQT Playground</h1>
+        <div class="hero-head">
+          <h1>MoQT Playground</h1>
+          <div class="access-switch" role="tablist" aria-label="接続モード">
+            <button type="button" role="tab" data-access-mode="temporary" data-testid="access-temporary">
+              一時トークン
+            </button>
+            <button type="button" role="tab" data-access-mode="public" data-testid="access-public">Public</button>
+          </div>
+        </div>
+        <p class="access-description" id="access-description"></p>
+        <div class="access-status" id="access-status"></div>
       </section>
 
       <section class="section" aria-labelledby="low-level-heading">
@@ -397,6 +504,30 @@
               <span class="link">↔</span>
               <span class="node"
                 ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+              >
+            </p>
+            <span class="arrow" aria-hidden="true"></span>
+          </a>
+          <a class="card" href="examples/recording-player/index.html">
+            <div class="card-head">
+              <h3>Recording Player</h3>
+              <p>MoQ のまま保存した会議録画の再生</p>
+            </div>
+            <p class="flow">
+              <span class="node cloud"
+                ><svg><use href="/icons.svg#icon-cloud" /></svg>Object Store</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-workflow" /></svg>Recorder<small>FETCH で再配信</small></span
+              >
+              <span class="link">→</span>
+              <span class="node relay"
+                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>
@@ -460,7 +591,9 @@
               >
               <span class="link">→</span>
               <span class="node"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small>RTMP / SRT → MoQ</small></span
+                ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small
+                  >RTMP / SRT → MoQ</small
+                ></span
               >
               <span class="link">→</span>
               <span class="node relay"
@@ -484,7 +617,7 @@
           <a class="card" href="examples/moq-chat-moderation/index.html">
             <div class="card-head">
               <h3>MoQ Chat Moderation</h3>
-              <p>チャットの暴言判定</p>
+              <p>チャットのラベル判定</p>
             </div>
             <p class="flow">
               <span class="node"
@@ -500,7 +633,7 @@
               >
               <span class="link">↔</span>
               <span class="node cloud"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
+                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>
@@ -524,7 +657,7 @@
               >
               <span class="link">↔</span>
               <span class="node cloud"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
+                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>
@@ -532,7 +665,7 @@
           <a class="card" href="examples/moq-ptz-tracking/index.html">
             <div class="card-head">
               <h3>MoQ PTZ Tracking</h3>
-              <p>指定した対象を PTZ カメラで追う</p>
+              <p>指定した対象を PTZ カメラで画面に収める</p>
             </div>
             <p class="flow hub">
               <span class="node hub-browser"
@@ -550,9 +683,38 @@
               <span class="node hub-bot"
                 ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
               >
-              <span class="link hub-d3-flash-link">↔</span>
-              <span class="node cloud hub-d3-flash"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d3-flash</span
+              <span class="link hub-system-one-link">↔</span>
+              <span class="node cloud hub-system-one"
+                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
+              >
+            </p>
+            <span class="arrow" aria-hidden="true"></span>
+          </a>
+          <a
+            class="card"
+            href="https://moqt-relay-live-translate-2wygx2l4sq-an.a.run.app/examples/live-translate/streamer/"
+          >
+            <div class="card-head">
+              <h3>Live Translate</h3>
+              <p>配信の音声を視聴者の言語に翻訳して届ける</p>
+            </div>
+            <p class="flow">
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+              >
+              <span class="link">→</span>
+              <span class="node relay"
+                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+              >
+              <span class="link">⇄</span>
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-workflow" /></svg>live-translate<small
+                  >Gemini Live Translate</small
+                ></span
+              >
+              <span class="link">→</span>
+              <span class="node"
+                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
               >
             </p>
             <span class="arrow" aria-hidden="true"></span>
@@ -654,6 +816,6 @@
       </section>
     </main>
     <script type="module" src="./utils/preserveQueryLinks.js"></script>
-    <script type="module" src="./utils/publicNotice.ts"></script>
+    <script type="module" src="./utils/accessSwitch.ts"></script>
   </body>
 </html>

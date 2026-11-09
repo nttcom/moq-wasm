@@ -32,8 +32,8 @@ use std::{
 
 use anyhow::{Context as _, bail, ensure};
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure, Session, SessionEvent,
-    Subscription, TrackObject, TrackProperties, TrackReader, Version,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure,
+    Session, SessionEvent, Subscription, TrackObject, TrackProperties, TrackReader, Version,
     fetch::{Fetch, FetchOption, FetchParams},
     object::{
         ContentExists, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
@@ -60,10 +60,10 @@ fn relay_url() -> String {
 
 async fn connect(version: Version) -> anyhow::Result<Session> {
     let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        verify_certificate: false,
+        certificate_verification: CertificateVerification::Disabled,
         follow_go_away: false,
         versions: vec![version],
-        ..Default::default()
+        ..ClientConfig::default()
     })?;
     endpoint.connect(&relay_url()).await?.await
 }
