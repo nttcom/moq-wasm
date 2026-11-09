@@ -175,6 +175,15 @@ speakerSelect.onchange = () => void audioContext.setSinkId(speakerSelect.value)
 
 To play tracks the page already knows instead of the catalog's, pass them as
 the third argument of `start`: `player.start(session, namespace, { video: [track], audio: [track] })`.
+Either list may be left out, but not both.
+
+A broadcast with audio and no video, such as a member who joined with the
+camera off, plays its sound live, whether its catalog, its `source` or the
+given tracks list no video: `state.videoTracks` is empty, `state.playbackStatus`
+reads `Playing <audio track>`, and the PUBLISH_DONE of the audio takes given
+tracks back to waiting for the publisher. It cannot be rewound or played as
+VOD: the seek axis follows the video's groups, so `state.seek.seekable` stays
+false and `seek` and `skip` do nothing. Live CMAF also needs a video track.
 
 Players that play sources of one broadcast share its catalog through a
 `BroadcastCatalog`, since one session must not subscribe to a track twice

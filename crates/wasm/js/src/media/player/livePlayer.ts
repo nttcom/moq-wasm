@@ -80,8 +80,9 @@ export type LivePlayerOptions = {
 
 export type PlayerStatus = { text: string; state: StatusState }
 
-/// The LOC tracks of a publisher that announces no catalog.
-export type LiveTracks = { video: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }
+/// The LOC tracks of a publisher that announces no catalog; at least one
+/// video or audio track.
+export type LiveTracks = { video?: MediaCatalogTrack[]; audio?: MediaCatalogTrack[] }
 
 export type LivePlayerState = {
   started: boolean
@@ -194,7 +195,9 @@ export class LivePlayer {
       }
     }
     this.textTracks = new TextTracks(this.context)
-    this.subscriptions = new TrackSubscriptions(this.context, (kind, done) => this.publisherEnded(kind, done))
+    this.subscriptions = new TrackSubscriptions(this.context, (kind, done, leading) =>
+      this.publisherEnded(kind, done, leading)
+    )
     this.stallWatch = new StallWatch(() => {
       this.changed()
       this.adaptVideo()
@@ -311,9 +314,13 @@ export class LivePlayer {
   /// tracks or a catalog the player subscribes the catalog itself.
   /// Resolves once the tracks are subscribed or, when nobody publishes the
   /// namespace yet, once the player has started waiting for the publisher.
+  /// Rejects given tracks that list neither a video nor an audio track.
   async start(session: MoqSession, namespace: string[], tracks?: LiveTracks | BroadcastCatalog): Promise<void> {
     if (this.disposed) {
       throw new Error('the player is disposed')
+    }
+    if (!(tracks instanceof BroadcastCatalog) && tracks && !tracks.video?.length && !tracks.audio?.length) {
+      throw new Error('the given tracks list no video or audio track')
     }
     const shared = tracks instanceof BroadcastCatalog ? tracks : undefined
     const given = tracks instanceof BroadcastCatalog ? undefined : tracks
@@ -421,7 +428,8 @@ export class LivePlayer {
     }
   }
 
-  /// Called when the video track the page gave ends with PUBLISH_DONE.
+  /// Called when the video track the page gave ends with PUBLISH_DONE, or the
+  /// audio track while no video is subscribed.
   /// `playbackText` reports that PUBLISH_DONE: the wasm client drops the other
   /// tracks' PUBLISH_DONE once `forgetPublisher` has unsubscribed them.
   private async publisherLeft(playbackText: string): Promise<void> {
@@ -805,7 +813,7 @@ export class LivePlayer {
       return
     }
     this.cmafTracks = []
-    await this.subscribeReplacedTracks(this.replaceAllTracks(tracks.video, tracks.audio ?? [], 'Tracks given'))
+    await this.subscribeReplacedTracks(this.replaceAllTracks(tracks.video ?? [], tracks.audio ?? [], 'Tracks given'))
   }
 
   private replaceAllTracks(video: MediaCatalogTrack[], audio: MediaCatalogTrack[], source: string): boolean {
@@ -1067,6 +1075,9 @@ export class LivePlayer {
       this.notePlaying(trackName)
     } else {
       this.timeline.audio.record(groupId, object.locHeader)
+      if (!this.subscriptions.get('video')) {
+        this.notePlaying(trackName)
+      }
       const audioLevel = readLocHeader(object.locHeader).audioLevel
       if (audioLevel) {
         this.callbacks.onAudioLevel?.(audioLevel)
@@ -1129,14 +1140,14 @@ export class LivePlayer {
     }
   }
 
-  private publisherEnded(kind: MediaKind, done: PublishDone): void {
+  private publisherEnded(kind: MediaKind, done: PublishDone, leading: boolean): void {
     if (kind === 'video') {
       this.stallWatch.clear()
     }
     const playbackText = publisherEndedText(kind, done)
     this.playbackStatus = { text: playbackText, state: 'idle' }
     this.changed()
-    if (kind === 'video' && this.givenTracks) {
+    if (leading && this.givenTracks) {
       void this.publisherLeft(playbackText)
     }
   }
