@@ -172,6 +172,12 @@ await screen.start(session, namespace, catalog)
 
 `stop()` leaves a shared catalog open; `catalog.close()` unsubscribes it.
 
+Tell a stopped track from a departed publisher by the catalog: a track that
+a publisher mutes or whose source it closes leaves the catalog, and the
+namespace of a publisher whose session drops is withdrawn. PUBLISH_DONE does
+not tell them apart: both end the track's subscriptions with `TRACK_ENDED`
+(draft-ietf-moq-transport-14 §9.12).
+
 ## Playing several broadcasts together: `PlaybackGroup`
 
 `PlaybackGroup` plays its players at one position on one clock. While live,
