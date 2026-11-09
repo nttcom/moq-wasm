@@ -14,7 +14,7 @@ use crate::modules::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Publish {
     pub request_id: u64,
     pub track_namespace_tuple: Vec<String>,
