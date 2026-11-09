@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus};
 use msf::{
@@ -12,7 +12,9 @@ use serde_json::Value;
 use crate::{
     archive_reader::{StoredRecording, StoredTrack},
     recorder::Content,
+    recording_clock::MICROS_PER_MILLI,
     room_recording::TRANSCRIPT_TRACK_NAME,
+    track_selection,
 };
 
 const TRANSCRIPT_EVENT_TYPE: &str = "com.skyway.transcript.v1";
@@ -85,11 +87,20 @@ async fn namespace_tracks(
         serde_json::from_slice(payload)
     })
     .await?;
-    let names: Vec<&str> = stored
+    let mut names: Vec<&str> = stored
         .iter()
         .map(|track| track.name.as_str())
         .filter(|name| *name != CATALOG_TRACK_NAME)
         .collect();
+    let recorded = names.clone();
+    for timeline in catalogs
+        .iter()
+        .flat_map(|catalog| track_selection::media_timelines(catalog, &recorded))
+    {
+        if !names.contains(&timeline.name.as_str()) {
+            names.push(&timeline.name);
+        }
+    }
     let mut listed = listed_tracks(&catalogs, &names);
     if !listed
         .tracks
@@ -100,35 +111,31 @@ async fn namespace_tracks(
     }
     let stored_track = |name: &str| stored.iter().find(|track| track.name == name);
     let mut built = Vec::new();
-    let mut first_records_ms = Vec::new();
     for timeline in listed
         .tracks
         .iter()
         .filter(|track| track.packaging == Packaging::Known(KnownPackaging::MediaTimeline))
     {
-        let mut groups = BTreeSet::new();
-        for name in timeline.depends.iter().flatten() {
-            if let Some(track) = stored_track(name) {
-                groups.extend(track.groups()?);
-            }
-        }
-        let track = stored_track(&timeline.name).context("listed track is not stored")?;
-        let documents =
-            documents(recording, track, |payload| serde_json::from_slice(payload)).await?;
-        let records = full_timeline(documents, &groups);
-        first_records_ms.extend(records.first().map(MediaTimelineRecord::encoded_at_ms));
+        let tracks = timeline
+            .depends
+            .iter()
+            .flatten()
+            .filter_map(|name| stored_track(name));
+        let records = recorded_timeline(tracks)?;
         built.push(BuiltTrack::new(
             namespace,
             &timeline.name,
             serde_json::to_vec(&records)?,
         ));
     }
-    let media = listed
-        .tracks
-        .iter()
-        .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
-        .filter_map(|track| stored_track(&track.name)?.capture_range_us());
-    let duration_ms = duration_ms(media, first_records_ms.into_iter().min());
+    let duration_ms = span(
+        listed
+            .tracks
+            .iter()
+            .filter(|track| track.packaging == Packaging::Known(KnownPackaging::Loc))
+            .filter_map(|track| stored_track(&track.name)?.timestamp_range_us()),
+    )
+    .map(|(first_us, last_us)| (last_us - first_us) / MICROS_PER_MILLI);
     let audio: Vec<String> = listed
         .tracks
         .iter()
@@ -172,12 +179,12 @@ async fn namespace_tracks(
 }
 
 /// The transcriber's records, split by the camera replay namespace of the
-/// speaker's first session whose captured media spans the record's `t`, each
-/// list sorted by `t` with a record stored twice kept once. `t` and the LOC
-/// capture timestamps are both Unix wallclock time. The transcriber names a
-/// speaker after the one namespace element below the room, so a record is
-/// left out when `<room>/<speaker>` is no member or `t` falls outside all of
-/// that member's sessions.
+/// speaker's first session whose media spans the record's `m`, each list
+/// sorted by `m` with a record stored twice kept once. `m` and the LOC
+/// Timestamps are both time since the recording started (`RecordingClock`).
+/// The transcriber names a speaker after the one namespace element below the
+/// room, so a record is left out when `<room>/<speaker>` is no member or `m`
+/// falls outside all of that member's sessions.
 async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Value>>> {
     let mut records = BTreeMap::new();
     for track in recording
@@ -188,8 +195,8 @@ async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Va
         let documents: Vec<Vec<Value>> =
             documents(recording, track, |payload| serde_json::from_slice(payload)).await?;
         for record in documents.into_iter().flatten() {
-            if let Some(t) = record["t"].as_u64() {
-                records.insert((t, record.to_string()), record);
+            if let Some(m) = record["m"].as_u64() {
+                records.insert((m, record.to_string()), record);
             }
         }
     }
@@ -206,20 +213,20 @@ async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Va
             let first = tracks
                 .first()
                 .filter(|track| track.content == Content::Camera)?;
-            let captured = span(tracks.iter().filter_map(|track| track.capture_range_us()))?;
-            Some((namespace, first.source_namespace.as_str(), captured))
+            let recorded = span(tracks.iter().filter_map(|track| track.timestamp_range_us()))?;
+            Some((namespace, first.source_namespace.as_str(), recorded))
         })
         .collect();
     let mut split: HashMap<&str, Vec<Value>> = HashMap::new();
-    for ((t, _), record) in records {
+    for ((m, _), record) in records {
         let Some(speaker) = record["data"]["speaker"].as_str() else {
             continue;
         };
         let member = format!("{}/{speaker}", recording.room);
-        let t_us = t.saturating_mul(1000);
+        let m_us = m.saturating_mul(MICROS_PER_MILLI);
         if let Some((namespace, _, _)) = sessions
             .iter()
-            .find(|(_, source, (start, end))| *source == member && (*start..=*end).contains(&t_us))
+            .find(|(_, source, (start, end))| *source == member && (*start..=*end).contains(&m_us))
         {
             split.entry(namespace).or_default().push(record);
         }
@@ -338,37 +345,41 @@ fn listed_tracks(catalogs: &[Catalog], names: &[&str]) -> Listed {
     Listed { tracks, init_data }
 }
 
-/// The records of every stored timeline object merged by location, the first
-/// stored one kept for a location, and only those of `groups`, in location
-/// order. Each stored object lists the last 60 s; together they cover the
-/// whole recording, and presentation time and wallclock stay the
-/// publisher's (draft-ietf-moq-msf-01 §7.1.1).
-fn full_timeline(
-    documents: Vec<Vec<MediaTimelineRecord>>,
-    groups: &BTreeSet<u64>,
-) -> Vec<MediaTimelineRecord> {
-    let mut records = BTreeMap::new();
-    for record in documents.into_iter().flatten() {
-        if groups.contains(&record.location().0) {
-            records.entry(record.location()).or_insert(record);
+/// The media timeline of `tracks` as the replay serves it: one record per
+/// group they hold media of, at the earliest first object with a LOC
+/// Timestamp among them. Their Timestamps are media time since the recording
+/// started, so the presentation time is that object's Timestamp, floored to
+/// milliseconds, and the wallclock is 0, as draft-ietf-moq-msf-01 §7.1.1 asks
+/// of VOD.
+fn recorded_timeline<'a>(
+    tracks: impl Iterator<Item = &'a &'a StoredTrack>,
+) -> Result<Vec<MediaTimelineRecord>> {
+    let mut starts: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
+    for track in tracks {
+        for (group_id, start) in track.group_starts()? {
+            let Some(timestamp_us) = start.timestamp_us else {
+                continue;
+            };
+            let earliest = starts
+                .entry(group_id)
+                .or_insert((timestamp_us, start.object_id));
+            if timestamp_us < earliest.0 {
+                *earliest = (timestamp_us, start.object_id);
+            }
         }
     }
-    records.into_values().collect()
+    let mut records: Vec<MediaTimelineRecord> = starts
+        .into_iter()
+        .map(|(group_id, (timestamp_us, object_id))| {
+            MediaTimelineRecord::new(timestamp_us / MICROS_PER_MILLI, group_id, object_id, 0)
+        })
+        .collect();
+    records.sort_by_key(|record| (record.presentation_time_ms(), record.location()));
+    Ok(records)
 }
 
 fn span(ranges: impl Iterator<Item = (u64, u64)>) -> Option<(u64, u64)> {
     ranges.reduce(|(first, last), (start, end)| (first.min(start), last.max(end)))
-}
-
-/// Milliseconds from the earlier of the first timeline record and the first
-/// captured media object to the last captured one; `None` without media.
-fn duration_ms(
-    media_capture_us: impl Iterator<Item = (u64, u64)>,
-    first_record_ms: Option<u64>,
-) -> Option<u64> {
-    let (first_us, last_us) = span(media_capture_us)?;
-    let start_ms = first_record_ms.map_or(first_us / 1000, |record| record.min(first_us / 1000));
-    Some((last_us / 1000).saturating_sub(start_ms))
 }
 
 #[cfg(test)]
@@ -445,58 +456,8 @@ mod tests {
         assert_eq!(listed.init_data, [init_data]);
     }
 
-    #[test]
-    fn a_full_timeline_merges_the_records_by_location_and_keeps_the_recorded_groups() {
-        // Arrange: each object lists the records of its last three groups; groups 1 and 4 were not recorded
-        let documents = vec![
-            vec![
-                record(0, 1, 100),
-                record(1000, 2, 1100),
-                record(2000, 3, 1200),
-            ],
-            vec![
-                record(1000, 2, 1100),
-                record(2000, 3, 1200),
-                record(3000, 4, 1300),
-            ],
-            vec![
-                record(2000, 3, 1200),
-                record(3000, 4, 1300),
-                record(4000, 5, 1400),
-            ],
-        ];
-        let groups = BTreeSet::from([2, 3, 5]);
-
-        // Act
-        let timeline = full_timeline(documents, &groups);
-
-        // Assert
-        assert_eq!(
-            timeline,
-            [
-                record(1000, 2, 1100),
-                record(2000, 3, 1200),
-                record(4000, 5, 1400)
-            ]
-        );
-    }
-
-    #[test]
-    fn the_duration_starts_at_the_earlier_of_the_first_record_and_the_first_capture() {
-        // Act
-        let from_record = duration_ms([(2_500_000, 9_000_000)].into_iter(), Some(2_000));
-        let from_capture = duration_ms([(2_500_000, 9_000_000)].into_iter(), Some(3_000));
-        let without_media = duration_ms(std::iter::empty(), Some(2_000));
-
-        // Assert
-        assert_eq!(
-            (from_record, from_capture, without_media),
-            (Some(7_000), Some(6_500), None)
-        );
-    }
-
     #[tokio::test]
-    async fn builds_a_complete_vod_catalog_and_a_full_timeline_from_the_stored_tracks() {
+    async fn builds_a_complete_vod_catalog_and_a_timeline_of_the_stored_groups() {
         // Arrange
         let recording = recorded_camera().await;
 
@@ -524,12 +485,57 @@ mod tests {
         );
         let timeline: Vec<MediaTimelineRecord> =
             serde_json::from_slice(&built[0].object.payload).unwrap();
-        let groups: Vec<u64> = timeline.iter().map(|record| record.location().0).collect();
-        assert_eq!(groups, [10, 11, 12]);
+        assert_eq!(
+            timeline,
+            [record(0, 10, 0), record(1_000, 11, 0), record(2_000, 12, 0)]
+        );
         assert!(
             built
                 .iter()
                 .all(|track| track.object.location == BUILT_LOCATION)
+        );
+    }
+
+    #[test]
+    fn a_timeline_of_several_tracks_starts_each_group_at_its_earliest_first_object() {
+        // Arrange: the audio of group 5 starts before its video, and group 6 has no audio
+        let track = |name: &str, groups: serde_json::Value| StoredTrack {
+            namespace: "anon/room/recordings/r/alice/camera/0".to_string(),
+            source_namespace: "anon/room/alice".to_string(),
+            content: Content::Camera,
+            name: name.to_string(),
+            chunks: vec![json!({ "groups": groups })],
+            first: Location {
+                group_id: 5,
+                object_id: 0,
+            },
+            last: Location {
+                group_id: 6,
+                object_id: 0,
+            },
+        };
+        let video = track(
+            "video",
+            json!([
+                { "group": "5", "object": "0", "timestamp_us": "1020000" },
+                { "group": "6", "object": "0", "timestamp_us": "2000000" },
+            ]),
+        );
+        let audio = track(
+            "audio",
+            json!([{ "group": "5", "object": "2", "timestamp_us": "1000999" }]),
+        );
+
+        // Act
+        let timeline = recorded_timeline([&video, &audio].iter()).unwrap();
+
+        // Assert: presentation times are floored to milliseconds
+        assert_eq!(
+            timeline,
+            [
+                MediaTimelineRecord::new(1_000, 5, 2, 0),
+                MediaTimelineRecord::new(2_000, 6, 0, 0)
+            ]
         );
     }
 
@@ -556,8 +562,8 @@ mod tests {
         let transcript = || {
             vec![
                 json!([]),
-                json!([transcript_record(1_700_000_001_500, "alice")]),
-                json!([transcript_record(1_700_000_001_000, "alice")]),
+                json!([transcript_record(1_500, "alice")]),
+                json!([transcript_record(1_000, "alice")]),
             ]
         };
         let recordings = [
@@ -599,10 +605,10 @@ mod tests {
         // Arrange: records out of order across objects, one stored twice
         let recording = recorded_meeting(vec![
             json!([]),
-            json!([transcript_record(1_700_000_001_500, "alice")]),
-            json!([transcript_record(1_700_000_011_000, "alice")]),
-            json!([transcript_record(1_700_000_001_000, "alice")]),
-            json!([transcript_record(1_700_000_001_000, "alice")]),
+            json!([transcript_record(1_500, "alice")]),
+            json!([transcript_record(11_000, "alice")]),
+            json!([transcript_record(1_000, "alice")]),
+            json!([transcript_record(1_000, "alice")]),
         ])
         .await;
 
@@ -613,13 +619,13 @@ mod tests {
         assert_eq!(
             transcript_in(&built, ALICE_FIRST),
             Some(vec![
-                transcript_record(1_700_000_001_000, "alice"),
-                transcript_record(1_700_000_001_500, "alice"),
+                transcript_record(1_000, "alice"),
+                transcript_record(1_500, "alice"),
             ])
         );
         assert_eq!(
             transcript_in(&built, ALICE_SECOND),
-            Some(vec![transcript_record(1_700_000_011_000, "alice")])
+            Some(vec![transcript_record(11_000, "alice")])
         );
         let transcript = built
             .iter()
@@ -633,10 +639,10 @@ mod tests {
         // Arrange: alice between her sessions, bob without a microphone,
         // carol never joined, the transcriber's own notice
         let recording = recorded_meeting(vec![json!([
-            transcript_record(1_700_000_005_000, "alice"),
-            transcript_record(1_700_000_001_000, "bob"),
-            transcript_record(1_700_000_001_000, "carol"),
-            transcript_record(1_700_000_001_000, "transcriber"),
+            transcript_record(5_000, "alice"),
+            transcript_record(1_000, "bob"),
+            transcript_record(1_000, "carol"),
+            transcript_record(1_000, "transcriber"),
         ])])
         .await;
 
@@ -650,8 +656,7 @@ mod tests {
     #[tokio::test]
     async fn lists_a_participants_transcript_as_a_subtitle_timeline_of_their_audio() {
         // Arrange
-        let recording =
-            recorded_meeting(vec![json!([transcript_record(1_700_000_001_000, "alice")])]).await;
+        let recording = recorded_meeting(vec![json!([transcript_record(1_000, "alice")])]).await;
 
         // Act
         let built = build_tracks(&recording).await.unwrap();
