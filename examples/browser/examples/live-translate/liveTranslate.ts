@@ -12,6 +12,9 @@ export type BroadcastAccess = {
   namespace: string[]
   relayUrl: string | undefined
   token: (() => Promise<string>) | undefined
+  /// Set while the translator is outside its open hours, for the page to
+  /// show before a viewer picks a language.
+  closedNotice: string | undefined
   release(): void
 }
 
@@ -22,6 +25,7 @@ export async function openBroadcastAccess(broadcastId: string, role: BroadcastRo
       namespace: [...PUBLIC_NAMESPACE_PREFIX, broadcastId],
       relayUrl: undefined,
       token: undefined,
+      closedNotice: undefined,
       release: () => {}
     }
   }
@@ -30,11 +34,12 @@ export async function openBroadcastAccess(broadcastId: string, role: BroadcastRo
     namespace: grant.namespace,
     relayUrl: grant.relayUrl,
     token: async () => (await fetchGrant(broadcastId, role))?.token ?? grant.token,
+    closedNotice: grant.openHours && !grant.open ? `翻訳は稼働時間外です（稼働時間: ${grant.openHours}）` : undefined,
     release: () => events.close()
   }
 }
 
-type Grant = { token: string; namespace: string[]; relayUrl: string }
+type Grant = { token: string; namespace: string[]; relayUrl: string; openHours: string | null; open: boolean }
 
 /// Only an answer that shows the page is served without the service, a 404
 /// or a dev server's page itself, means the broadcast is public. Any other
@@ -44,8 +49,8 @@ async function fetchGrant(broadcastId: string, role: BroadcastRole): Promise<Gra
   const response = await fetch(`/token?id=${encodeURIComponent(broadcastId)}&role=${role}`, { redirect: 'manual' })
   const json = response.headers.get('content-type')?.includes('application/json') ?? false
   if (response.ok && json) {
-    const body = (await response.json()) as { token: string; namespace: string; relayUrl: string }
-    return { token: body.token, namespace: body.namespace.split('/'), relayUrl: body.relayUrl }
+    const body = (await response.json()) as Omit<Grant, 'namespace'> & { namespace: string }
+    return { ...body, namespace: body.namespace.split('/') }
   }
   if (response.status === 404 || (response.ok && !json)) {
     return undefined
