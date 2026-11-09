@@ -4,7 +4,7 @@ Next: when -02 is on the Datatracker, add it under `docs/spec/` and compare it w
 
 ## Goal
 
-Writers follow -02: `version` `"draft-02"`; event timeline index keys `T`/`L`/`M` (§8.2: `examples/browser/examples/meeting/src/session/localSession.ts:467`, the transcriber, the Python bots); no `depends` on the wallclock-indexed chat (`crates/broadcast/src/broadcast.rs:392`) and transcript (`services/recorder/src/vod.rs:234`, §8.3); a media timeline names a whole renderGroup by its number (§7.2, `crates/broadcast/src/broadcast.rs:377`).
+Writers follow -02: `version` `"draft-02"`; event timeline index keys `T`/`L`/`M` (§8.2: `examples/browser/examples/meeting/src/session/localSession.ts:467`, the transcriber, the Python bots); no `depends` on the wallclock-indexed chat (`crates/broadcast/src/broadcast.rs:392`) and transcript (`services/recorder/src/vod.rs:234`, §8.3); a media timeline names a whole renderGroup by its number (§7.2, `crates/broadcast/src/broadcast.rs:377`); each `loc` track carries the fields §5.2.4.1 requires for its role (the audio placeholder, `crates/broadcast/src/broadcast.rs:357`, has no `samplerate` or `channelConfig`; the browser's video `framerate` is optional, `crates/wasm/js/src/media/publish.ts:326`).
 Readers follow: `mediaTimelineOf` (`crates/wasm/js/src/media/catalog.ts:121`) and the recorder (`services/recorder/src/track_selection.rs:202`) resolve a renderGroup number; the recorder reads `T` (`services/recorder/src/vod.rs:191`).
 Unit tests of `broadcast`, `recorder` and the browser SDK with -02 catalogs, and the meeting and recorder E2E, show it.
 
