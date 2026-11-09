@@ -13,10 +13,12 @@ export type SourceOptions = {
   videoLabel?: string
   /// Frames between keyframes; each keyframe starts a group.
   keyframeIntervalFrames?: number
-  /// The fields it sets replace the encoder's defaults (H.264 at 1280x720,
-  /// 1 Mbps, 30 fps, `latencyMode: 'realtime'`), for the renditions too; the
-  /// broadcast takes H.264, VP8, VP9 and AV1.
-  videoEncoderConfig?: VideoEncoderConfig
+  /// Fields set here replace the encoder's defaults (H.264, at most 1280x720,
+  /// 1 Mbps, 30 fps, `latencyMode: 'realtime'`) for the video and its
+  /// renditions. The broadcast takes H.264, VP8, VP9 and AV1. `width` and
+  /// `height` bound the encoded size: a frame keeps its aspect ratio and is
+  /// never scaled up.
+  videoEncoderConfig?: Partial<VideoEncoderConfig>
   /// Renditions of the video, each in the track `<video track>_<name>` and
   /// encoded from the video's frames.
   renditions?: Rendition[]
@@ -52,7 +54,7 @@ export type SourcePublication = {
   /// with its codec. A muted video takes it when unmuted. The catalog keeps the
   /// bitrate the source was published with. Does nothing once the publication
   /// is closed.
-  setVideoEncoderConfig(config: VideoEncoderConfig): void
+  setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void
   /// Ends the tracks with PUBLISH_DONE. The session stays open.
   close(): Promise<void>
 }

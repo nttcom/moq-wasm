@@ -6,6 +6,10 @@
   fills the unset ones with the package's defaults, so `latencyMode: 'quality'`
   now reaches the encoder instead of always `'realtime'`. Renditions take the
   same fields, with their own size and bitrate.
+- `videoEncoderConfig` and `setVideoEncoderConfig` take a
+  `Partial<VideoEncoderConfig>`, so a page may set only the bitrate and frame
+  rate. `width` and `height` (1280x720 by default) bound the encoded size: a
+  frame smaller than them is encoded at its own size instead of scaled up.
 
 ## 0.3.0
 
