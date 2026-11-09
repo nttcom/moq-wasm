@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `publish()` passes every field of `videoEncoderConfig` to the encoder and
+  fills the unset ones with the package's defaults, so `latencyMode: 'quality'`
+  now reaches the encoder instead of always `'realtime'`. Renditions take the
+  same fields, with their own size and bitrate.
+
 ## 0.3.0
 
 - `MoqSession.connect(url, { versions })` offers the MoQT drafts `versions`

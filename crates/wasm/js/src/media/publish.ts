@@ -3,6 +3,7 @@ import type { MediaSource } from '../../pkg/moqt'
 import type { AudioLevel } from './internal/loc'
 import { capturePcm } from './internal/encoders/pcmCapture'
 import { EncoderTimeline } from './internal/encoders/encoderTimeline'
+import { videoEncoderConfig } from './internal/encoders/videoEncoderConfig'
 import { forwardSdkLog, receiveWorkerLog, sdkLog } from '../core/log'
 
 const TARGET = 'moq-wasm::media::publish'
@@ -12,8 +13,9 @@ export type SourceOptions = {
   videoLabel?: string
   /// Frames between keyframes; each keyframe starts a group.
   keyframeIntervalFrames?: number
-  /// Replaces the encoder's H.264 default; the broadcast takes H.264, VP8, VP9
-  /// and AV1.
+  /// The fields it sets replace the encoder's defaults (H.264 at 1280x720,
+  /// 1 Mbps, 30 fps, `latencyMode: 'realtime'`), for the renditions too; the
+  /// broadcast takes H.264, VP8, VP9 and AV1.
   videoEncoderConfig?: VideoEncoderConfig
   /// Renditions of the video, each in the track `<video track>_<name>` and
   /// encoded from the video's frames.
@@ -37,10 +39,6 @@ export type Rendition = {
   /// Bits per second.
   bitrate: number
 }
-
-/// The codec and bitrate of the video encoder worker's `buildDefaultConfig`.
-const DEFAULT_VIDEO_CODEC = 'avc1.640028'
-const DEFAULT_VIDEO_BITRATE = 1_000_000
 
 export type MediaKind = 'video' | 'audio'
 
@@ -159,7 +157,7 @@ export async function publish(
 }
 
 function videoBitrate(options: SourceOptions): number | undefined {
-  return options.videoEncoderConfig ? options.videoEncoderConfig.bitrate : DEFAULT_VIDEO_BITRATE
+  return videoEncoderConfig(options.videoEncoderConfig).bitrate
 }
 
 function publishSource(
@@ -315,16 +313,13 @@ function encodeVideo(
     worker.postMessage({ type: 'encoderConfig', config: options.videoEncoderConfig })
   }
   if (options.renditions?.length) {
-    const codec = options.videoEncoderConfig?.codec ?? DEFAULT_VIDEO_CODEC
     worker.postMessage({
       type: 'renditionConfigs',
       configs: options.renditions.map(({ width, height, bitrate }) => ({
-        codec,
+        ...options.videoEncoderConfig,
         width,
         height,
-        bitrate,
-        framerate: options.videoEncoderConfig?.framerate,
-        hardwareAcceleration: options.videoEncoderConfig?.hardwareAcceleration
+        bitrate
       }))
     })
   }
