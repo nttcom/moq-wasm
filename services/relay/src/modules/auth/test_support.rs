@@ -92,11 +92,14 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
     spawn_relay(token, Arc::new(NoopRelayRouteRegistry)).await
 }
 
+/// The tests write and read draft-14 messages.
+pub(crate) const TEST_VERSIONS: &[moqt::Version] = &[moqt::Version::Draft14];
+
 pub(crate) async fn spawn_relay(
     token: VerifiedToken,
     route_registry: Arc<dyn RelayRouteRegistry>,
 ) -> RunningRelay {
-    spawn_relay_offering(token, route_registry, moqt::DEFAULT_VERSIONS)
+    spawn_relay_offering(token, route_registry, TEST_VERSIONS)
 }
 
 /// A relay that accepts only draft-18 sessions; connect to it with

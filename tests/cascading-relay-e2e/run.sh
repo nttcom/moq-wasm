@@ -38,7 +38,7 @@ run_suite() {
 
 run_suite
 
-# The same suite with draft-18 offered on every hop, the inter-relay one
-# included; it also checks that Track Properties survive the cascade.
-RELAY_MOQT_VERSIONS=draft-18,draft-14 docker compose up -d --wait --no-deps --force-recreate relay-a relay-b
-run_suite --moqt-versions draft-18,draft-14
+# The run above puts every hop, the inter-relay one included, on draft-18,
+# so it also checks that Track Properties survive the cascade.
+RELAY_MOQT_VERSIONS=draft-14 docker compose up -d --wait --no-deps --force-recreate relay-a relay-b
+run_suite --moqt-versions draft-14

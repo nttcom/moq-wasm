@@ -128,7 +128,8 @@ mod tests {
     use super::*;
     use crate::modules::{
         auth::test_support::{
-            RunningRelay, app_token, relay_server_offering, spawn_relay_with_verifier,
+            RunningRelay, TEST_VERSIONS, app_token, relay_server_offering,
+            spawn_relay_with_verifier,
         },
         cascading::route_registry::NoopRelayRouteRegistry,
         test_support::{
@@ -138,7 +139,7 @@ mod tests {
     };
 
     fn manager_trusting(trusted_cert_path: PathBuf) -> InterRelayConnectionManager {
-        manager_offering(trusted_cert_path, moqt::DEFAULT_VERSIONS)
+        manager_offering(trusted_cert_path, TEST_VERSIONS)
     }
 
     fn manager_offering(

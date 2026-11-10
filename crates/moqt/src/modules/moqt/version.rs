@@ -4,9 +4,7 @@
 //! hold control messages, how a response finds its request, how a request
 //! is cancelled.
 //!
-//! draft-14 and draft-18 are implemented. `DEFAULT_VERSIONS` offers only
-//! draft-14 because draft-18 has not been checked against other
-//! implementations.
+//! draft-14 and draft-18 are implemented.
 
 pub(crate) mod draft14;
 pub(crate) mod draft18;
@@ -85,7 +83,7 @@ const DRAFT18_PROTOCOL: &str = "moqt-18";
 pub(super) const CONTROL_MESSAGE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The drafts `ClientConfig::default()` offers.
-pub const DEFAULT_VERSIONS: &[Version] = &[Version::Draft14];
+pub const DEFAULT_VERSIONS: &[Version] = &[Version::Draft18, Version::Draft14];
 
 /// A MoQT draft a session can speak; the one both ends offer is chosen when
 /// the session is established.

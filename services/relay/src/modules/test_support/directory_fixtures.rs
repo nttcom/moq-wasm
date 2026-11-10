@@ -3,7 +3,7 @@ use std::sync::Arc;
 use moqt::{CertificateVerification, namespace::NamespaceInterest, object::ContentExists};
 
 use crate::modules::{
-    auth::verified_token::VerifiedToken,
+    auth::{test_support::TEST_VERSIONS, verified_token::VerifiedToken},
     cascading::{
         inter_relay_connection_manager::{InterRelayClientConfig, InterRelayConnectionManager},
         route_registry::NoopRelayRouteRegistry,
@@ -206,7 +206,7 @@ pub(crate) fn unused_inter_relay_client_config() -> InterRelayClientConfig {
     InterRelayClientConfig {
         relay_token: "unused-relay-token".to_string(),
         certificate_verification: CertificateVerification::NativeRoots,
-        versions: moqt::DEFAULT_VERSIONS.to_vec(),
+        versions: TEST_VERSIONS.to_vec(),
     }
 }
 

@@ -422,13 +422,13 @@ mod tests {
                     constants::MOQ_TRANSPORT_VERSION,
                     control_messages::messages::parameters::authorization_token::AuthorizationToken,
                 },
-                version::{DEFAULT_VERSIONS, application_protocols},
+                version::application_protocols,
             },
             test_support::{
-                DRAFTS, HANDSHAKE_TIMEOUT, WEB_SOCKET_ONLY, capture_telemetry, connected_sessions,
-                native_client, native_client_with_config, self_signed_server_config, slow_udp_path,
-                spawn_connected_native_sessions, spawn_native_server,
-                spawn_native_server_handshake, udp_blocked_server, within,
+                DRAFTS, HANDSHAKE_TIMEOUT, TEST_VERSIONS, WEB_SOCKET_ONLY, capture_telemetry,
+                connected_sessions, native_client, native_client_with_config,
+                self_signed_server_config, slow_udp_path, spawn_connected_native_sessions,
+                spawn_native_server, spawn_native_server_handshake, udp_blocked_server, within,
             },
             transport::client_crypto::{client_crypto, client_endpoint, quic_client_config},
         },
@@ -886,7 +886,7 @@ mod tests {
         let accepting = tokio::spawn(async move { server.accept().await.unwrap().await.err() });
         let silent = within(silent_quic_peer(
             port,
-            application_protocols(DEFAULT_VERSIONS).unwrap().quic_alpns[0],
+            application_protocols(TEST_VERSIONS).unwrap().quic_alpns[0],
         ))
         .await;
         within(async {

@@ -95,14 +95,14 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
     # Act
     await within(session.close())
 
-    # Assert
+    # Assert: draft-14 fails writing the control stream; draft-18 fails opening the request's stream
     await within(session.closed())
     for request in (
         session.subscribe(namespace, TRACK),
         session.subscribe_namespace(namespace),
         session.publish_namespace(namespace),
     ):
-        with pytest.raises(RuntimeError, match="connection lost"):
+        with pytest.raises(RuntimeError, match="connection lost|the session closed"):
             await within(request)
 
 

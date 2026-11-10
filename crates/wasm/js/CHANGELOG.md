@@ -1,7 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.4.3
 
+- `LivePlayer` no longer opens a live broadcast with audio about the audio
+  output latency (around 190 ms in Chrome) later than its buffer target for
+  the first 10 s. The audio held through the warm-up and due within the
+  output latency was scheduled late and pushed the playout clock back.
+- A `RemoteBroadcast` view that is told of several visibility changes at once,
+  as on a busy page, follows the latest instead of the oldest, so a view on
+  screen no longer keeps its video unsubscribed.
+
+## 0.4.2
+
+- `MoqSession.connect()` without `versions` offers draft-18, then draft-14,
+  instead of draft-14 only, so a relay that accepts draft-18 is reached over
+  it. Pass `versions: ['draft-14']` to stay on draft-14.
 - `addSource()` raises the H.264 level of `videoEncoderConfig.codec` to the
   lowest one that holds the encoded size and frame rate. The default
   `avc1.640028` (level 4.0) holds at most 1920x1088 at 30 fps, so since 0.4.1

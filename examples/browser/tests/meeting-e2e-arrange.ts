@@ -75,30 +75,46 @@ function createMeetingClientPageModel(page: Page) {
 export type MeetingClientPageModel = ReturnType<typeof createMeetingClientPageModel>
 
 type TrackProcessorConstructor = new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> }
+type TrackGeneratorConstructor = new (init: { kind: 'video' }) => MediaStreamTrack & {
+  writable: WritableStream<VideoFrame>
+}
 
 // Serialized into the page by addInitScript, so nothing outside its body is in scope.
 function withholdCameraFrames(warmupMs: number): void {
-  const page = window as unknown as { MediaStreamTrackProcessor?: TrackProcessorConstructor }
+  const page = window as unknown as {
+    MediaStreamTrackProcessor?: TrackProcessorConstructor
+    MediaStreamTrackGenerator?: TrackGeneratorConstructor
+  }
   const NativeProcessor = page.MediaStreamTrackProcessor
-  if (typeof NativeProcessor !== 'function') {
+  const Generator = page.MediaStreamTrackGenerator
+  if (typeof NativeProcessor !== 'function' || typeof Generator !== 'function') {
     return
   }
   page.MediaStreamTrackProcessor = function (init: { track: MediaStreamTrack }) {
-    const processor = new NativeProcessor(init)
     if (init.track.kind !== 'video') {
-      return processor
+      return new NativeProcessor(init)
     }
+    // The page hands the readable to a worker. A stream the page creates would
+    // copy each frame on the way and leave the original open, and the camera
+    // stops once a few are; a track generator's stream moves them.
+    const delayed = new Generator({ kind: 'video' })
+    const writer = delayed.writable.getWriter()
+    const reader = new NativeProcessor(init).readable.getReader()
     const constructedAtMs = performance.now()
-    const warmup = new TransformStream<VideoFrame, VideoFrame>({
-      transform(frame, controller) {
-        if (performance.now() - constructedAtMs < warmupMs) {
-          frame.close()
-        } else {
-          controller.enqueue(frame)
+    void (async () => {
+      for (;;) {
+        const { value: frame, done } = await reader.read()
+        if (done) {
+          await writer.close()
+          return
         }
+        if (performance.now() - constructedAtMs >= warmupMs) {
+          await writer.write(frame)
+        }
+        frame.close()
       }
-    })
-    return { readable: processor.readable.pipeThrough(warmup) }
+    })()
+    return new NativeProcessor({ track: delayed })
   } as unknown as TrackProcessorConstructor
 }
 
