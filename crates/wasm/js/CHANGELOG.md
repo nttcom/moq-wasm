@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1
+
+- `addSource()` encodes each frame at its own size unless `width` and
+  `height` in `videoEncoderConfig` bound it, instead of at most 1280x720, so a
+  screen share that sets only the bitrate and frame rate is no longer shrunk
+  to 720p. A page that wants 720p sets `width` and `height`.
+- A new video encoder encodes one frame and drops it before sending live
+  frames. Chrome on macOS takes seconds to make the first encoder ready, and
+  the frames captured meanwhile were sent together seconds late, so the
+  receiver froze on the first frame and widened its buffer to the delay.
+- `watchBroadcasts()` and `MoqSession.watchNamespaces()` over draft-18 ask the
+  relay for the namespaces only, not for PUBLISH of their tracks, which the
+  session refused.
+- `init({ telemetry: { stats } })` sends the player stats it returns with each
+  report, as `TelemetryStatsSample`s, and `telemetry.url` may be a function
+  called at each send. `reportLog()` hands a page's own log to `onLog` and
+  `telemetry`.
+
 ## 0.4.0
 
 - Breaking: `createBroadcast()` replaces `publish()`, which is removed with
