@@ -118,11 +118,12 @@ const camera = await local.addSource('camera', {
   // Shared by the video and its renditions. Defaults: H.264, a keyframe every
   // 30 seconds on the same frames in every track.
   encoding: { codec: 'av01.0.08M.08', keyframeIntervalSeconds: 10 },
-  // The track `camera`. Defaults: 1 Mbps, 30 fps, the frame's own size;
-  // `width` and `height` bound the size.
+  // The track `camera`. Defaults: 1 Mbps, every frame at its own size;
+  // `width` and `height` bound the size, `framerate` skips faster frames.
   main: { width: 1920, height: 1080, bitrate: 2_500_000, framerate: 30 },
-  // Each rendition is the track `camera_<name>`, encoded from the same frames.
-  renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 }]
+  // Each rendition is the track `camera_<name>`, encoded from the same frames
+  // with the same keyframes. `framerate` defaults to the main video's.
+  renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000, framerate: 15 }]
 })
 preview.srcObject = camera.stream // the tracks the source publishes
 

@@ -65,7 +65,7 @@ async function startPublishing(): Promise<void> {
     label: 'Camera',
     stream: mediaStream,
     ...buildVideoEncoding(mediaStream),
-    renditions: [{ name: 'low', label: 'Low', width: 320, height: 180, bitrate: 150_000 }]
+    renditions: [{ name: 'low', label: 'Low', width: 320, height: 180, bitrate: 150_000, framerate: 15 }]
   })
   setStatusText('publisher-send-status', `Publishing started: ${namespace.join('/')}`)
 }
