@@ -726,6 +726,23 @@ impl Subscriber {
         .await
     }
 
+    /// Changes the Subscriber Priority (draft-14 §7.1) and repeats the
+    /// subscription's current Start Location, End Group and Forward State.
+    pub async fn update_priority(
+        &self,
+        subscription: &Subscription,
+        subscriber_priority: u8,
+    ) -> anyhow::Result<()> {
+        self.repeat(
+            subscription,
+            SubscribeUpdateOption {
+                subscriber_priority,
+                ..repeated_update(subscription)
+            },
+        )
+        .await
+    }
+
     /// Ends the subscription before `group_id`: groups below it are still
     /// delivered and the publisher answers with PUBLISH_DONE once it has sent
     /// them (draft-14 §9.10, §9.12). The current Start Location, priority and
@@ -2182,6 +2199,66 @@ mod tests {
             );
             assert_eq!(update.subscriber_priority(), 128);
         }
+    }
+
+    #[tokio::test]
+    async fn update_priority_repeats_the_subscription_fields_with_the_new_priority() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-update-priority", version).await;
+            let (subscription, handler) = subscribed(&client, &server).await;
+
+            // Act
+            client
+                .subscriber()
+                .update_priority(&subscription, 7)
+                .await
+                .unwrap();
+
+            // Assert
+            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_UPDATE from the client");
+            };
+            assert_eq!(update.subscription_request_id(), handler.request_id());
+            assert_eq!(update.subscriber_priority(), 7);
+            assert!(update.forward());
+            assert_eq!(
+                update.filter(),
+                Some(FilterType::AbsoluteStart {
+                    location: Location {
+                        group_id: 3,
+                        object_id: 2
+                    }
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn update_forward_after_update_priority_repeats_that_priority() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions("subscriber-update-forward-after-priority").await;
+        let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
+        client
+            .subscriber()
+            .update_priority(&subscription, 7)
+            .await
+            .unwrap();
+        receive_subscribe_update(&server).await;
+
+        // Act
+        client
+            .subscriber()
+            .update_forward(&subscription, false)
+            .await
+            .unwrap();
+
+        // Assert: repeating the SUBSCRIBE's priority would undo the update
+        let update = receive_subscribe_update(&server).await;
+        assert!(!update.forward());
+        assert_eq!(update.subscriber_priority(), 7);
     }
 
     #[tokio::test]
