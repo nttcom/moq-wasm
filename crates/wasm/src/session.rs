@@ -345,8 +345,10 @@ impl Session {
     }
 
     pub fn close(&self) {
-        self.session
-            .close_with_error(TerminationErrorCode::NoError, "closed by the application");
+        self.scope.in_scope(|| {
+            self.session
+                .close_with_error(TerminationErrorCode::NoError, "closed by the application")
+        });
     }
 }
 
