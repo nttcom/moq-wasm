@@ -1,18 +1,15 @@
-use std::{collections::HashMap, convert::Infallible, net::IpAddr, sync::Arc};
+use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use anyhow::Context;
 use http_body_util::Full;
+use http_server::{HttpServer, error_response, json_response};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE, HeaderValue},
-    server::conn::http1,
-    service::service_fn,
+    header::{ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue},
 };
-use hyper_util::rt::TokioIo;
-use serde::Serialize;
 use serde_json::json;
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::net::TcpListener;
 
 use crate::{
     browser_json::snapshots_for_browser,
@@ -35,36 +32,17 @@ pub struct ApiState {
 }
 
 pub struct ApiServer {
-    _accept_handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 impl ApiServer {
     pub fn run(listener: TcpListener, state: ApiState) -> Self {
+        let state = Arc::new(state);
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, Arc::new(state))),
+            _http: HttpServer::run(listener, move |request, peer| {
+                handle(request, peer.ip(), state.clone())
+            }),
         }
-    }
-}
-
-async fn accept_connections(listener: TcpListener, state: Arc<ApiState>) {
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                tracing::warn!(%error, "accept failed");
-                continue;
-            }
-        };
-        let state = state.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, peer.ip(), state.clone()));
-            if let Err(error) = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::debug!(%peer, %error, "connection closed with error");
-            }
-        });
     }
 }
 
@@ -82,26 +60,30 @@ fn query_params(request: &Request<Incoming>) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
-async fn handle(
-    request: Request<Incoming>,
-    peer: IpAddr,
-    state: Arc<ApiState>,
-) -> Result<JsonResponse, Infallible> {
+async fn handle(request: Request<Incoming>, peer: IpAddr, state: Arc<ApiState>) -> JsonResponse {
+    let mut response = route(request, peer, &state).await;
+    response
+        .headers_mut()
+        .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    response
+}
+
+async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> JsonResponse {
     if request.method() == Method::POST && request.uri().path() == "/api/client-telemetry" {
-        return Ok(client_telemetry(request, peer, &state).await);
+        return client_telemetry(request, peer, state).await;
     }
     let params = query_params(&request);
     let response = match (request.method(), request.uri().path()) {
-        (&Method::GET, "/api/snapshots") => snapshots(&state, &params).await,
-        (&Method::GET, "/api/series") => series(&state, &params).await,
-        (&Method::GET, "/api/namespaces") => namespaces(&state, &params).await,
+        (&Method::GET, "/api/snapshots") => snapshots(state, &params).await,
+        (&Method::GET, "/api/series") => series(state, &params).await,
+        (&Method::GET, "/api/namespaces") => namespaces(state, &params).await,
         (&Method::GET, "/healthz") => Ok(json_response(StatusCode::OK, &json!({ "status": "ok" }))),
         _ => Ok(error_response(StatusCode::NOT_FOUND, "not_found")),
     };
-    Ok(response.unwrap_or_else(|error| {
+    response.unwrap_or_else(|error| {
         tracing::warn!(?error, "request failed");
         error_response(StatusCode::BAD_REQUEST, &format!("{error:#}"))
-    }))
+    })
 }
 
 /// Browsers post as `text/plain`, a CORS simple request, so there is no preflight to answer.
@@ -239,20 +221,6 @@ async fn series(
     let query = series_query(params)?;
     let series = series::query(&state.clickhouse, &query).await?;
     Ok(json_response(StatusCode::OK, &series))
-}
-
-fn error_response(status: StatusCode, error: &str) -> JsonResponse {
-    json_response(status, &json!({ "error": error }))
-}
-
-fn json_response(status: StatusCode, body: &impl Serialize) -> JsonResponse {
-    let body = serde_json::to_vec(body).unwrap_or_else(|_| b"null".to_vec());
-    let mut response = Response::new(Full::from(body));
-    *response.status_mut() = status;
-    let headers = response.headers_mut();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    response
 }
 
 #[cfg(test)]

@@ -8,17 +8,15 @@ use std::{
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http_server::HttpServer;
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Body, Frame, Incoming},
     header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue, LOCATION},
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::TokioIo;
 use serde_json::json;
 use static_files::StaticFiles;
-use tokio::{net::TcpListener, task::JoinHandle, time::Interval};
+use tokio::{net::TcpListener, time::Interval};
 use tracing::Instrument;
 
 use crate::{
@@ -38,7 +36,7 @@ const IAP_EMAIL_HEADER: &str = "x-goog-authenticated-user-email";
 /// `/events` streams the pages hold are what keeps the translator running
 /// between the pages' other requests.
 pub(crate) struct PageServer {
-    _accept_handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 pub(crate) struct PageServerState {
@@ -55,39 +53,16 @@ impl PageServer {
     pub(crate) fn run(listener: TcpListener, state: PageServerState) -> Self {
         let state = Arc::new(state);
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, state)),
+            _http: HttpServer::run(listener, move |request, _peer| {
+                handle(request, state.clone())
+            }),
         }
-    }
-}
-
-async fn accept_connections(listener: TcpListener, state: Arc<PageServerState>) {
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                tracing::warn!(%error, "accept failed");
-                continue;
-            }
-        };
-        let state = state.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, state.clone()));
-            if let Err(error) = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::debug!(%peer, %error, "connection closed with error");
-            }
-        });
     }
 }
 
 type PageResponse = Response<BoxBody<Bytes, Infallible>>;
 
-async fn handle(
-    request: Request<Incoming>,
-    state: Arc<PageServerState>,
-) -> Result<PageResponse, Infallible> {
+async fn handle(request: Request<Incoming>, state: Arc<PageServerState>) -> PageResponse {
     let (head, _body) = request.into_parts();
     let span = tracing::info_span!(
         "live_translate.request",
@@ -108,7 +83,7 @@ async fn handle(
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
-    Ok(response)
+    response
 }
 
 /// `GET /token?id=<broadcast id>&role=streamer|viewer`: a token to publish
@@ -260,16 +235,11 @@ fn redirect(location: &'static str) -> PageResponse {
 }
 
 fn json_response(status: StatusCode, body: serde_json::Value) -> PageResponse {
-    let mut response = Response::new(Full::from(Bytes::from(body.to_string())).boxed());
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
+    http_server::json_response(status, &body).map(BodyExt::boxed)
 }
 
 fn error_response(status: StatusCode, error: &str) -> PageResponse {
-    json_response(status, json!({ "error": error }))
+    http_server::error_response(status, error).map(BodyExt::boxed)
 }
 
 #[cfg(test)]

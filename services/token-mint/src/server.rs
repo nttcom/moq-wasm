@@ -1,25 +1,22 @@
 use std::{
-    convert::Infallible,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use http_body_util::{BodyExt, Full, Limited};
+use http_server::{HttpServer, error_response, json_response};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
     header::{
         ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        CONTENT_TYPE, HeaderValue,
+        HeaderValue,
     },
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::TokioIo;
 use serde::Deserialize;
-use serde_json::{Value, json};
-use tokio::{net::TcpListener, task::JoinHandle};
+use serde_json::json;
+use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
@@ -30,7 +27,7 @@ use crate::{
 const MAX_BODY_BYTES: usize = 16 * 1024;
 
 pub struct TokenMintServer {
-    _accept_handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 struct ServerState {
@@ -52,30 +49,10 @@ impl TokenMintServer {
             trusted_proxy_hops,
         });
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, state)),
+            _http: HttpServer::run(listener, move |request, peer| {
+                handle(request, peer, state.clone())
+            }),
         }
-    }
-}
-
-async fn accept_connections(listener: TcpListener, state: Arc<ServerState>) {
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                tracing::warn!(%error, "accept failed");
-                continue;
-            }
-        };
-        let state = state.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, peer, state.clone()));
-            if let Err(error) = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::debug!(%peer, %error, "connection closed with error");
-            }
-        });
     }
 }
 
@@ -90,7 +67,7 @@ async fn handle(
     request: Request<Incoming>,
     peer: SocketAddr,
     state: Arc<ServerState>,
-) -> Result<JsonResponse, Infallible> {
+) -> JsonResponse {
     let (head, body) = request.into_parts();
     let span = tracing::info_span!(
         "token_mint.request",
@@ -103,7 +80,7 @@ async fn handle(
     let response = async {
         match (&head.method, head.uri.path()) {
             (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),
-            (&Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
+            (&Method::GET, "/healthz") => json_response(StatusCode::OK, &json!({ "status": "ok" })),
             (&Method::POST, "/tokens") => {
                 let client = client_address(&head.headers, peer, state.trusted_proxy_hops);
                 issue(&state, client)
@@ -115,7 +92,7 @@ async fn handle(
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
-    Ok(with_cors(response))
+    with_cors(response)
 }
 
 fn issue(state: &ServerState, client: IpAddr) -> JsonResponse {
@@ -127,7 +104,7 @@ fn issue(state: &ServerState, client: IpAddr) -> JsonResponse {
         Ok(issued) => {
             tracing::Span::current().record("app_id", issued.app_id.as_str());
             tracing::info!(app_id = %issued.app_id, "temporary token issued");
-            json_response(StatusCode::CREATED, json!(issued))
+            json_response(StatusCode::CREATED, &json!(issued))
         }
         Err(error) => internal_error(&error),
     }
@@ -145,7 +122,7 @@ async fn refresh(body: Incoming, issuer: &TokenMint) -> JsonResponse {
         Ok(issued) => {
             tracing::Span::current().record("app_id", issued.app_id.as_str());
             tracing::info!(app_id = %issued.app_id, "temporary token refreshed");
-            json_response(StatusCode::OK, json!(issued))
+            json_response(StatusCode::OK, &json!(issued))
         }
         Err(RefreshError::Internal(error)) => internal_error(&error),
         Err(rejected) => {
@@ -215,24 +192,12 @@ fn empty_response(status: StatusCode) -> JsonResponse {
     response
 }
 
-fn error_response(status: StatusCode, error: &str) -> JsonResponse {
-    json_response(status, json!({ "error": error }))
-}
-
-fn json_response(status: StatusCode, body: Value) -> JsonResponse {
-    let mut response = Response::new(Full::from(body.to_string()));
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use auth_token::verify_signature;
+    use serde_json::Value;
 
     use super::*;
 

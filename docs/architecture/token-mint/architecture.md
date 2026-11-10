@@ -23,7 +23,7 @@ app is revoked.
 | --- | --- |
 | `issuer.rs` | `TokenMint`: `issue` signs `Claims::issued` for a new `temp-<32 hex>` app with `publish` and `subscribe` `""` and a one-hour lifetime; `refresh` verifies the token with the secret, requires a temporary `appId` and an `exp` after now, and signs a new hour for the same app. A failed refresh is a `RefreshError`. |
 | `rate_limit.rs` | `RateLimit`: fixed windows per client address, counted in this process. |
-| `server.rs` | `TokenMintServer`: owns the accept-loop `JoinHandle`; one hyper HTTP/1 connection task per peer. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TOKEN_MINT_TRUSTED_PROXY_HOPS`). |
+| `server.rs` | `TokenMintServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TOKEN_MINT_TRUSTED_PROXY_HOPS`). |
 | `main.rs` | Reads `TOKEN_MINT_SECRET`, `TOKEN_MINT_TRUSTED_PROXY_HOPS` and `PORT`, and serves until terminated. |
 
 ## Invariants

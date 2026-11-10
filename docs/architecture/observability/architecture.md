@@ -190,7 +190,7 @@ The server stores nothing of the relays itself; at startup `schema::apply`
 creates the tables and the views that fill them (see Storage) and the API
 starts.
 
-- `ApiServer` (`hyper`, as in `vts`, with `Access-Control-Allow-Origin: *`):
+- `ApiServer` (`http_server::HttpServer`, as in `vts`, with `Access-Control-Allow-Origin: *`):
   - `POST /api/client-telemetry` — a client's logs, player stats and spans (see
     Client telemetry); 404 unless an OTLP endpoint is set.
   - `GET /api/snapshots` — the newest snapshot of every relay that logged one
