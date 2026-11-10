@@ -1,5 +1,5 @@
 import type { MoqSession } from 'moq-wasm'
-import { type LocalBroadcast, type LocalSource, createBroadcast } from 'moq-wasm/media'
+import { type LocalBroadcast, type LocalSource, type VideoEncodingOptions, createBroadcast } from 'moq-wasm/media'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import { DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 import { CAMERA_RENDITIONS, INITIAL_CAMERA_ENCODING_SETTINGS, SCREEN_SHARE_RENDITIONS } from './meetingCatalog'
@@ -55,7 +55,7 @@ export class MediaPublisher {
     })
     this.camera = await this.broadcast.addSource('camera', {
       label: 'Camera',
-      videoEncoderConfig: this.videoEncodingSettings,
+      ...sourceVideoEncoding(this.videoEncodingSettings),
       renditions: CAMERA_RENDITIONS
     })
   }
@@ -122,7 +122,7 @@ export class MediaPublisher {
     this.screenShare = await broadcast.addSource(SCREEN_SHARE_SOURCE, {
       label: 'Screen',
       stream,
-      videoEncoderConfig: this.screenShareEncodingSettings,
+      ...sourceVideoEncoding(this.screenShareEncodingSettings),
       renditions: SCREEN_SHARE_RENDITIONS
     })
   }
@@ -154,12 +154,12 @@ export class MediaPublisher {
 
   setVideoEncodingSettings(settings: VideoEncodingSettings): void {
     this.videoEncodingSettings = settings
-    this.camera?.setVideoEncoderConfig(settings)
+    this.camera?.setVideoEncoding(sourceVideoEncoding(settings))
   }
 
   setScreenShareEncodingSettings(settings: VideoEncodingSettings): void {
     this.screenShareEncodingSettings = settings
-    this.screenShare?.setVideoEncoderConfig(settings)
+    this.screenShare?.setVideoEncoding(sourceVideoEncoding(settings))
   }
 
   async dispose(): Promise<void> {
@@ -230,4 +230,15 @@ function releaseStream(stream: MediaStream | null): void {
     track.onended = null
     track.stop()
   })
+}
+
+function sourceVideoEncoding({
+  codec,
+  framerate,
+  hardwareAcceleration,
+  width,
+  height,
+  bitrate
+}: VideoEncodingSettings): VideoEncodingOptions {
+  return { encoding: { codec, hardwareAcceleration }, main: { width, height, bitrate, framerate } }
 }

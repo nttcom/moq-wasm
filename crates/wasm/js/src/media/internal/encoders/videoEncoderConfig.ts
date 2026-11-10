@@ -29,8 +29,4 @@ export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): Vi
   }
 }
 
-const DEFAULT_KEYFRAME_INTERVAL_SECONDS = 30
-
-export function defaultKeyframeIntervalFrames(config?: Partial<VideoEncoderConfig>): number {
-  return (videoEncoderConfig(config).framerate ?? DEFAULT_FRAMERATE) * DEFAULT_KEYFRAME_INTERVAL_SECONDS
-}
+export const DEFAULT_KEYFRAME_INTERVAL_SECONDS = 30

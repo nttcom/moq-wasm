@@ -22,16 +22,13 @@ const MAX_QUESTION_LENGTH = 200
 const MAX_TARGET_LENGTH = 100
 const MAX_CHOICES = 9
 const MAX_CHOICE_LENGTH = 40
-/// The detector starts a decoder per group, so a new detector waits for the next keyframe.
-const KEYFRAME_INTERVAL_FRAMES = 30
-const VIDEO_ENCODER_CONFIG: VideoEncoderConfig = {
+const VIDEO_ENCODING = {
   codec: 'avc1.42e01f',
-  width: 640,
-  height: 480,
-  bitrate: 500_000,
-  framerate: 30,
+  // The detector starts a decoder per group, so a new detector waits for the next keyframe.
+  keyframeIntervalSeconds: 1,
   hardwareAcceleration: 'prefer-software'
-}
+} as const
+const MAIN_VIDEO = { width: 640, height: 480, bitrate: 500_000, framerate: 30 }
 
 type Question = { type: 'choice'; question: string; choices: string[] } | { type: 'boxes'; target: string }
 type Prompt = { questions: Question[] }
@@ -58,7 +55,7 @@ setUpSystemOneBotPage({
   botService: BOT_SERVICE,
   beforeConnect: async () => {
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: VIDEO_ENCODER_CONFIG.width, height: VIDEO_ENCODER_CONFIG.height },
+      video: { width: MAIN_VIDEO.width, height: MAIN_VIDEO.height },
       audio: false
     })
     preview.srcObject = mediaStream
@@ -68,8 +65,8 @@ setUpSystemOneBotPage({
     await broadcast.addSource('camera', {
       label: 'Camera',
       stream: mediaStream!,
-      keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
-      videoEncoderConfig: VIDEO_ENCODER_CONFIG
+      encoding: VIDEO_ENCODING,
+      main: MAIN_VIDEO
     })
     promptWriter = await session.publishTrack(CAMERA_NAMESPACE, PROMPT_TRACK)
     onEachSubscriber(promptWriter, async () => {

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { defaultKeyframeIntervalFrames, videoEncoderConfig } from './videoEncoderConfig'
+import { videoEncoderConfig } from './videoEncoderConfig'
 
 test('a field the page sets replaces the default, such as a quality latency mode for screen sharing', () => {
   // Act
@@ -35,10 +35,4 @@ test('the defaults leave the encoded size to the frame', () => {
   // Assert
   expect(config.width).toBeUndefined()
   expect(config.height).toBeUndefined()
-})
-
-test("keyframes are 30 seconds apart at the encoder's frame rate", () => {
-  // Act / Assert
-  expect(defaultKeyframeIntervalFrames()).toBe(900)
-  expect(defaultKeyframeIntervalFrames({ framerate: 15 })).toBe(450)
 })

@@ -319,8 +319,9 @@ listener になる。publisher がいないときの再購読と、catalog の P
 
 #### keyframe の間隔と NEW_GROUP_REQUEST
 
-配信側の keyframe は既定で 30 秒おきである（`keyframeIntervalFrames` を省略すると、
-encoder の frame rate の 30 秒分）。視聴側は次の keyframe を待たず、draft-18 の
+配信側の keyframe は既定で 30 秒おきである（`encoding.keyframeIntervalSeconds`）。
+encoder worker はフレームの timestamp で keyframe を選び、選んだフレームを全 rendition で
+keyframe にするので、間隔はトラックの frame rate によらない。視聴側は次の keyframe を待たず、draft-18 の
 NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
 
 - **配信側。** `MediaBroadcast.addSource` は `onKeyframeRequest` を受け取り、映像と
@@ -473,8 +474,21 @@ renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同�
 | `source.stats()` | `publish()` の `SourcePublication.stats()` と同じ（映像と rendition ごとの kbps・fps・frameSize、落としたフレームと encoder のエラーの数） |
 | `source.listen({ onTrackEnded, onEnded })` | `onTrackEnded(kind)` は SDK が取ったその kind の track が終わった（デバイスが抜かれた）とき、`onEnded` は source の track がすべて終わった（ブラウザの「共有を停止」）とき。SDK は track や source を外してから呼ぶ。ページが渡した track の終了はページが扱う（取り直して `setAudio` で差し替えるなど） |
 
-`input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` で、`video` と
-`audio` は次のどれかである。
+`input` は `{ label?, video?, audio?, stream?, display?, ...SourceOptions }` である。
+`SourceOptions` は映像の encode を、どの track に効くかで3つに分ける。
+
+| フィールド | 効く track | 中身 |
+| --- | --- | --- |
+| `encoding` | 映像 `<source>` と全 rendition | `codec`、`keyframeIntervalSeconds`、`hardwareAcceleration` |
+| `main` | 映像 `<source>` | `width`、`height`（大きさの上限）、`bitrate`、`framerate`（rendition も引き継ぐ） |
+| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width`、`height`、`bitrate` |
+
+`label` は source の label で、映像の label と音声の label（後ろに ` audio`）になるので、
+`main` ではなく `input` の直下に置く。`latencyMode: 'realtime'` と `scalabilityMode: 'L1T1'` は
+SDK が固定し、利用者には見せない。`source.setVideoEncoding({ encoding, main })` は2つを
+置き換えて encoder を作り直す。
+
+`video` と `audio` は次のどれかである。
 
 - `true` か `MediaTrackConstraints`：SDK が `getUserMedia` で取る。両方を指定したら1回の
   呼び出しにまとめ、許可のダイアログを1回にする。
@@ -1065,7 +1079,7 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 1.0 の範囲として決めたもの。
 
 1. **codec: 映像は H.264、VP8、VP9、AV1、音声は Opus と AAC。** 既定は
-   `avc1.640028` と `opus`。`addSource` の `videoEncoderConfig.codec` で選び、ブラウザが encode できない
+   `avc1.640028` と `opus`。`addSource` の `encoding.codec` で選び、ブラウザが encode できない
    codec を指定したら reject する（「配信を `crates/broadcast` に寄せる」の変更6）。
 2. **認証トークン: 文字列か、更新用の非同期関数。** 関数は、接続、GOAWAY による移動、
    再接続のたびに呼ぶ（「core API」の「認証トークン」）。
