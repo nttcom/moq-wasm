@@ -465,15 +465,14 @@ jobs:
           - name: live
             specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
             ingest: rtmp
-            goaway: true
           - name: live-srt
             specs: tests/live-viewer-e2e.spec.ts tests/live-viewer-delivery-e2e.spec.ts
             ingest: srt
-            goaway: false
           - name: mp4-recorder
             specs: tests/live-viewer-mp4-e2e.spec.ts tests/recorder-serve-e2e.spec.ts
             ingest: rtmp
-            goaway: false
+          # run-goaway-e2e.mjs needs the same build as the rows above.
+          - name: goaway
     name: live_viewer_e2e (${{ matrix.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -536,13 +535,14 @@ jobs:
           }
 
       - name: Run live viewer E2E
+        if: ${{ matrix.name != 'goaway' }}
         env:
           CI: "true"
           LIVE_VIEWER_E2E_INGEST: ${{ matrix.ingest }}
         run: node tests/browser-e2e/run-live-viewer-e2e.mjs ${{ matrix.specs }}
 
       - name: Run GOAWAY E2E
-        if: ${{ matrix.goaway }}
+        if: ${{ matrix.name == 'goaway' }}
         env:
           CI: "true"
         run: node tests/browser-e2e/run-goaway-e2e.mjs
