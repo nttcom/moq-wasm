@@ -46,6 +46,12 @@ impl GroupAlignment {
         group_id
     }
 
+    /// The group numbered last, whichever track numbered it.
+    pub(crate) fn newest(&self) -> Option<u64> {
+        let inner = self.inner.lock().expect("group alignment lock");
+        (!inner.by_presentation_time.is_empty()).then(|| inner.next_group_id - 1)
+    }
+
     pub(crate) fn aligned(&self, presentation_us: u64) -> Option<u64> {
         self.inner
             .lock()
@@ -100,6 +106,20 @@ mod tests {
 
         // Assert
         assert_eq!((first, second, repeated), (700, 701, 700));
+    }
+
+    #[test]
+    fn the_newest_group_is_the_one_numbered_last() {
+        // Arrange
+        let alignment = GroupAlignment::new(700);
+        let before = alignment.newest();
+
+        // Act: the second keyframe is numbered for an earlier time than the first
+        alignment.keyframe(2_000_000);
+        alignment.keyframe(1_000_000);
+
+        // Assert
+        assert_eq!((before, alignment.newest()), (None, Some(701)));
     }
 
     #[test]

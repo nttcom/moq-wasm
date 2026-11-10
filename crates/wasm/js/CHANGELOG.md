@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- A source with renditions keeps publishing when its video and audio start
+  within a few frames of each other. Its video and audio could stop with
+  `media publishing stopped: group ... precedes the next group ...` while the
+  renditions kept flowing.
+
 ## 0.5.0
 
 - Breaking: `addSource()` takes the video's encoder settings in `encoding`,
