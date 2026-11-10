@@ -61,8 +61,8 @@ export type MediaCatalogTrack = {
   channelConfig?: string
   width?: number
   height?: number
-  /// draft-ietf-moq-msf-01 §5.2.20; a publisher lists it only for a track it
-  /// caps at that frame rate.
+  /// draft-ietf-moq-msf-01 §5.2.20; this project's publishers list it only for
+  /// a track they cap at that frame rate.
   framerate?: number
   initData?: string
   depends?: string[]

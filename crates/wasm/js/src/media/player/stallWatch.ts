@@ -1,6 +1,5 @@
 const STALL_MS = 500
-/// Frame intervals a picture may stand still before it counts as stalled, so
-/// one late frame of a slow track does not.
+/// So one late frame of a slow track does not count as a stall.
 const STALL_FRAME_INTERVALS = 2
 
 /// How long a picture may stand still before it counts as stalled: 500 ms, or
@@ -15,7 +14,6 @@ export class StallWatch {
 
   constructor(private readonly onChange: () => void) {}
 
-  /// `framerate` is the catalog's for the track the frame belongs to.
   framePresented(framerate: number | undefined): void {
     this.clear()
     this.timer = setTimeout(() => {
