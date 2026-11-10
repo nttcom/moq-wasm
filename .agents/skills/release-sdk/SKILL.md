@@ -5,7 +5,7 @@ description: Release the browser SDK (moq-wasm). Use when the user asks to relea
 
 # Release the SDK
 
-The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` ("配布"). The changelog entries come from the `## リリースノート` sections of the PRs (see the `create-pull-request` skill).
+The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` ("配布").
 
 ## Steps
 
@@ -14,7 +14,7 @@ The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` 
    `git log --format='%s' <tag>..origin/master -- crates/wasm crates/moqt crates/broadcast crates/msf crates/mediapack crates/client-telemetry`.
    Each squash-merged subject ends in `(#<number>)`.
 3. Read each PR's body with `gh pr view <number> --json title,body` and take its `## リリースノート` section.
-4. Show the user the PRs without that section, with their titles, and ask which of them a user of the SDK would notice. Write an entry for those the user names, in the same style.
+4. Show the user the PRs without that section whose entry is not already under `## Unreleased` in `crates/wasm/js/CHANGELOG.md`, with their titles, and ask which of them a user of the SDK would notice. Write an entry for those the user names, following the `## リリースノート` rule of the `create-pull-request` skill.
 5. Pick the version: a minor bump (`0.x` → `0.(x+1).0`) when an entry starts with `Breaking:`, a patch bump otherwise. Tell the user which and why.
 6. On a branch `chore/wasm-release-<version>` from `origin/master`:
    - Add `## <version>` under `# Changelog` in `crates/wasm/js/CHANGELOG.md` with the entries, `Breaking:` ones first. Fold in any entries left under `## Unreleased` and remove that heading.
