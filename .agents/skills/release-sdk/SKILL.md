@@ -5,7 +5,7 @@ description: Release the browser SDK (moq-wasm). Use when the user asks to relea
 
 # Release the SDK
 
-The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` ("配布"). PRs do not edit `crates/wasm/js/CHANGELOG.md`; each one that a user of the SDK can notice carries its entry in a `## リリースノート` section of its body (see the `create-pull-request` skill).
+The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` ("配布"). The changelog entries come from the `## リリースノート` sections of the PRs (see the `create-pull-request` skill).
 
 ## Steps
 
