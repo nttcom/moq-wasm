@@ -44,7 +44,9 @@ impl IapVerifier {
         Ok(Self {
             audience,
             keys: IapKeys {
-                http: Client::builder().timeout(KEYS_REQUEST_TIMEOUT).build()?,
+                http: http_client::builder()
+                    .timeout(KEYS_REQUEST_TIMEOUT)
+                    .build()?,
                 url: keys_url,
                 cache: Mutex::new(KeyCache::default()),
             },

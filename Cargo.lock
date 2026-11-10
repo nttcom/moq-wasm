@@ -93,6 +93,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "http-body-util",
+ "http-client",
  "hyper",
  "hyper-util",
  "metadata-token",
@@ -235,9 +236,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.18.2"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faac5829c2b74c28f830747e7818ccfb684261b5f48a1118b1e2a13d36dfab13"
+checksum = "048006790404103c488e6c5616b3e7e702a71292aadda08e8f7698a9e0d2eb53"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -245,9 +246,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.46.0"
+version = "0.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1622d8446a2d4b2ce0c7eefc73dd43a99779028d5ee5c2dd8073a658ba8a2bc"
+checksum = "8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52"
 dependencies = [
  "cc",
  "cmake",
@@ -535,6 +536,7 @@ dependencies = [
  "auth-token",
  "base64 0.23.1",
  "http-body-util",
+ "http-client",
  "http-server",
  "hyper",
  "hyper-util",
@@ -1302,6 +1304,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-client"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+]
+
+[[package]]
 name = "http-server"
 version = "0.1.0"
 dependencies = [
@@ -1770,6 +1779,7 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "http-body-util",
+ "http-client",
  "http-server",
  "hyper",
  "mediapack",
@@ -1928,6 +1938,7 @@ dependencies = [
  "broadcast",
  "clap",
  "client-telemetry",
+ "http-client",
  "mediapack",
  "moqt",
  "msf",
@@ -2148,6 +2159,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "http-body-util",
+ "http-client",
  "http-server",
  "hyper",
  "hyper-util",
@@ -2191,6 +2203,7 @@ dependencies = [
  "clap",
  "gstreamer",
  "gstreamer-app",
+ "http-client",
  "mediapack",
  "moqt",
  "rand 0.10.3",
@@ -2796,6 +2809,7 @@ dependencies = [
  "bytes",
  "clap",
  "http-body-util",
+ "http-client",
  "http-server",
  "hyper",
  "hyper-util",
@@ -2908,6 +2922,7 @@ dependencies = [
  "auth-token",
  "bytes",
  "dashmap",
+ "http-client",
  "moqt",
  "opentelemetry",
  "opentelemetry_sdk",
@@ -3678,6 +3693,7 @@ dependencies = [
  "anyhow",
  "auth-token",
  "http-body-util",
+ "http-client",
  "http-server",
  "hyper",
  "reqwest",
@@ -4088,6 +4104,7 @@ dependencies = [
  "app-registry",
  "auth-token",
  "http-body-util",
+ "http-client",
  "http-server",
  "hyper",
  "reqwest",

@@ -279,14 +279,16 @@ mod tests {
         let port = serve(Some(app()), None).await;
 
         // Act
-        let body: serde_json::Value = reqwest::get(format!(
-            "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
-        ))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+        let body: serde_json::Value = http_client::client()
+            .get(format!(
+                "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
 
         // Assert
         let token = body["token"].as_str().unwrap();
@@ -307,14 +309,16 @@ mod tests {
         let port = serve(Some(app()), Some("Mon-Fri 09:00-17:30 +09:00")).await;
 
         // Act
-        let body: serde_json::Value = reqwest::get(format!(
-            "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
-        ))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+        let body: serde_json::Value = http_client::client()
+            .get(format!(
+                "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
+            ))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
 
         // Assert: the text as given; `open` depends on the clock, so only its type
         assert_eq!(body["openHours"], "Mon-Fri 09:00-17:30 +09:00");
@@ -327,11 +331,13 @@ mod tests {
         let port = serve(None, None).await;
 
         // Act
-        let response = reqwest::get(format!(
-            "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
-        ))
-        .await
-        .unwrap();
+        let response = http_client::client()
+            .get(format!(
+                "http://127.0.0.1:{port}/token?id=brave-otter&role=viewer"
+            ))
+            .send()
+            .await
+            .unwrap();
 
         // Assert
         assert_eq!(response.status(), 404);

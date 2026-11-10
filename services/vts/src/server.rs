@@ -145,7 +145,7 @@ mod tests {
     }
 
     async fn post_verify(server: &TestServer, body: impl Into<reqwest::Body>) -> reqwest::Response {
-        reqwest::Client::new()
+        http_client::client()
             .post(url(server, "/verify"))
             .body(body)
             .send()
@@ -285,7 +285,11 @@ mod tests {
         let server = start_server().await;
 
         // Act
-        let response = reqwest::get(url(&server, "/healthz")).await.unwrap();
+        let response = http_client::client()
+            .get(url(&server, "/healthz"))
+            .send()
+            .await
+            .unwrap();
 
         // Assert
         assert_eq!(response.status(), StatusCode::OK);
@@ -297,7 +301,11 @@ mod tests {
         let server = start_server().await;
 
         // Act
-        let response = reqwest::get(url(&server, "/verify")).await.unwrap();
+        let response = http_client::client()
+            .get(url(&server, "/verify"))
+            .send()
+            .await
+            .unwrap();
 
         // Assert
         assert_eq!(response.status(), StatusCode::NOT_FOUND);

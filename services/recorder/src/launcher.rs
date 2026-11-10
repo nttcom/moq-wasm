@@ -64,7 +64,7 @@ impl Launcher {
                     .composite_job
                     .clone()
                     .context("--launcher cloud-run needs --composite-job")?,
-                client: reqwest::Client::new(),
+                client: http_client::client(),
             },
         })
     }

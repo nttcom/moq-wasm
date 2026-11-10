@@ -78,7 +78,7 @@ impl Reporter {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_nanos());
         Self {
-            http: reqwest::Client::builder()
+            http: http_client::builder()
                 .timeout(REQUEST_TIMEOUT)
                 .build()
                 .unwrap_or_default(),

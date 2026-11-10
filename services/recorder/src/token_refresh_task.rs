@@ -102,7 +102,7 @@ fn expires_within(token: &str, margin: Duration, now: u64) -> bool {
 }
 
 async fn refresh_at_issuer(url: &str, token: &str) -> Result<String> {
-    let response = reqwest::Client::new()
+    let response = http_client::client()
         .post(format!("{}/tokens/refresh", url.trim_end_matches('/')))
         .timeout(Duration::from_secs(10))
         .json(&serde_json::json!({ "token": token }))

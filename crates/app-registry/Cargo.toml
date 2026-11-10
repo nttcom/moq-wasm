@@ -8,6 +8,7 @@ description = "The registry of apps whose secrets sign client JWTs, kept as one 
 anyhow = "1.0.102"
 metadata-token = { path = "../metadata-token" }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+http-client = { path = "../http-client" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["sync", "fs"] }

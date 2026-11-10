@@ -80,7 +80,7 @@ impl ClientTelemetry {
             return Ok(None);
         }
         Ok(Some(Self {
-            http: reqwest::Client::new(),
+            http: http_client::client(),
             verifier: config.vts_url.map(AppVerifier::new).transpose()?,
             otlp_logs_endpoint: config.otlp_logs_endpoint,
             otlp_metrics_endpoint: config.otlp_metrics_endpoint,
@@ -241,7 +241,7 @@ mod tests {
     }
 
     async fn post(observability: &Observability, body: String) -> StatusCode {
-        reqwest::Client::new()
+        http_client::client()
             .post(&observability.url)
             .header("content-type", "text/plain")
             .body(body)

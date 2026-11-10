@@ -409,7 +409,7 @@ mod tests {
     }
 
     async fn get_me(console: &TestConsole, assertion: Option<&str>) -> reqwest::Response {
-        let mut request = reqwest::Client::new().get(format!("{}/api/me", console.base_url));
+        let mut request = http_client::client().get(format!("{}/api/me", console.base_url));
         if let Some(assertion) = assertion {
             request = request.header(IAP_ASSERTION_HEADER, assertion);
         }
@@ -422,7 +422,7 @@ mod tests {
         path: &str,
         body: Option<Value>,
     ) -> reqwest::Response {
-        let mut request = reqwest::Client::new()
+        let mut request = http_client::client()
             .request(method, format!("{}{path}", console.base_url))
             .header(CSRF_HEADER, "1");
         if let Some(body) = body {
@@ -687,7 +687,7 @@ mod tests {
         let console = start_console(development("accounts.google.com:1")).await;
 
         // Act
-        let response = reqwest::Client::new()
+        let response = http_client::client()
             .delete(format!("{}/api/apps/app-1", console.base_url))
             .send()
             .await
@@ -704,7 +704,7 @@ mod tests {
         let console = start_console(development("accounts.google.com:1")).await;
 
         // Act
-        let response = reqwest::Client::new()
+        let response = http_client::client()
             .delete(format!("{}/api/apps/app-1", console.base_url))
             .header(CSRF_HEADER, "1")
             .header("origin", "https://attacker.example")
@@ -722,7 +722,7 @@ mod tests {
         let console = start_console(development("accounts.google.com:1")).await;
 
         // Act
-        let response = reqwest::Client::new()
+        let response = http_client::client()
             .delete(format!("{}/api/apps/app-1", console.base_url))
             .header(CSRF_HEADER, "1")
             .header("origin", &console.base_url)
@@ -760,7 +760,7 @@ mod tests {
     }
 
     async fn get(console: &TestConsole, path: &str) -> reqwest::Response {
-        reqwest::Client::new()
+        http_client::client()
             .get(format!("{}{path}", console.base_url))
             .send()
             .await

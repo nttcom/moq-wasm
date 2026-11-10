@@ -228,7 +228,7 @@ mod tests {
         forwarded_for: &str,
         body: impl Into<reqwest::Body>,
     ) -> reqwest::Response {
-        reqwest::Client::new()
+        http_client::client()
             .post(format!("{}{path}", server.base_url))
             .header("x-forwarded-for", forwarded_for)
             .body(body)
@@ -336,7 +336,7 @@ mod tests {
         let server = start_server(10).await;
 
         // Act
-        let response = reqwest::Client::new()
+        let response = http_client::client()
             .request(
                 reqwest::Method::OPTIONS,
                 format!("{}/tokens", server.base_url),

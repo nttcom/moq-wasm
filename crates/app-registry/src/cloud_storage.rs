@@ -45,7 +45,7 @@ pub(crate) struct CloudStorageObject {
 
 impl CloudStorageObject {
     pub(crate) fn new(endpoint: Endpoint, bucket: &str, object: &str) -> anyhow::Result<Self> {
-        let http = Client::builder().timeout(REQUEST_TIMEOUT).build()?;
+        let http = http_client::builder().timeout(REQUEST_TIMEOUT).build()?;
         let (base, metadata_token) = match endpoint {
             Endpoint::CloudStorage => (
                 Url::parse(CLOUD_STORAGE_URL).expect("CLOUD_STORAGE_URL is a valid URL"),

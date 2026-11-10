@@ -30,7 +30,7 @@ struct VerifyErrorResponse {
 
 impl VtsTokenVerifier {
     pub(crate) fn new(verify_url: String, claim_policy: ClaimPolicy) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder().timeout(VERIFY_TIMEOUT).build()?;
+        let client = http_client::builder().timeout(VERIFY_TIMEOUT).build()?;
         Ok(Self {
             client,
             verify_url,

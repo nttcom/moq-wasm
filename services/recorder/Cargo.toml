@@ -18,6 +18,7 @@ moqt = { path = "../../crates/moqt" }
 msf = { path = "../../crates/msf" }
 object_store = { version = "0.14.2", default-features = false, features = ["fs", "gcp"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+http-client = { path = "../../crates/http-client" }
 serde_json = "1"
 sha2 = "0.9"
 tokio = { version = "1.52.3", features = ["full"] }

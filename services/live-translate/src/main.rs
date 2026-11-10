@@ -275,7 +275,7 @@ fn translation_engine(args: &Args) -> Result<TranslationEngine> {
         Some(service_account) => GeminiCredentials::Gcloud {
             service_account: service_account.to_string(),
         },
-        None => GeminiCredentials::MetadataServer(MetadataToken::new(reqwest::Client::new())),
+        None => GeminiCredentials::MetadataServer(MetadataToken::new(http_client::client())),
     };
     let platform = AgentPlatform::new(project, &args.gcp_location, credentials);
     tracing::info!(

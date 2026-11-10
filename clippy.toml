@@ -1,0 +1,6 @@
+disallowed-methods = [
+    { path = "reqwest::Client::new", reason = "use http_client::client()" },
+    { path = "reqwest::Client::builder", reason = "use http_client::builder()" },
+    { path = "reqwest::ClientBuilder::new", reason = "use http_client::builder()" },
+    { path = "reqwest::get", reason = "use http_client::client().get()" },
+]

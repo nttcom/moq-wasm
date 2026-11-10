@@ -20,4 +20,5 @@ tracing = "0.1.44"
 [dev-dependencies]
 app-registry = { path = "../../crates/app-registry", features = ["testing"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
+http-client = { path = "../../crates/http-client" }
 tracing-subscriber = "0.3.23"

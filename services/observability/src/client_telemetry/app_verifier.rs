@@ -45,7 +45,7 @@ struct VerifiedClaims {
 impl AppVerifier {
     pub(super) fn new(verify_url: String) -> anyhow::Result<Self> {
         Ok(Self {
-            http: reqwest::Client::builder().timeout(VERIFY_TIMEOUT).build()?,
+            http: http_client::builder().timeout(VERIFY_TIMEOUT).build()?,
             verify_url,
         })
     }

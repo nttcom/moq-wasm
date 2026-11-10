@@ -9,7 +9,7 @@ pub(crate) struct SoapResponse {
 }
 
 pub(crate) fn build(target: &Target) -> Result<Client> {
-    Client::builder()
+    http_client::builder()
         .timeout(target.timeout())
         .build()
         .context("http client build failed")

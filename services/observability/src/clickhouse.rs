@@ -12,7 +12,7 @@ pub struct ClickHouse {
 impl ClickHouse {
     pub fn new(config: ClickHouseConfig) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: http_client::client(),
             config,
         }
     }

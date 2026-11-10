@@ -1,0 +1,8 @@
+[package]
+name = "http-client"
+version = "0.1.0"
+edition = "2024"
+description = "Builds the workspace's reqwest clients"
+
+[dependencies]
+reqwest = { version = "0.13.4", default-features = false }

@@ -11,7 +11,7 @@ use crate::state_sync_task::now_ms;
 const CLOCK_LEEWAY_SECONDS: u64 = 60;
 const MAX_CLIENT_TOKEN_SECONDS: u64 = 86_400;
 
-static VTS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+static VTS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(http_client::client);
 
 #[derive(Debug)]
 pub(crate) struct AuthError {
