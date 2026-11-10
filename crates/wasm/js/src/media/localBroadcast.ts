@@ -199,7 +199,6 @@ class Broadcast implements LocalBroadcast {
           videoBitrate(options),
           videoFramerate(options),
           audioName,
-          `${label} audio`,
           onKeyframeRequest
         ),
       new MediaStream(tracks.map(({ track }) => track)),

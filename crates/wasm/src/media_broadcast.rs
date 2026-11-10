@@ -106,7 +106,8 @@ impl MediaBroadcast {
 
     /// Only a source on the tracks `video` and `audio` brings the chat. Every
     /// source brings its media timeline, `<video>_timeline`. Its video forms
-    /// a switching set of its own with its renditions.
+    /// a switching set of its own with its renditions. The audio is labelled
+    /// `<video_label> audio`.
     /// `video_bitrate` is the video encoder's target in bits per second, and
     /// `video_framerate` the frames per second it is capped at, if it is.
     /// The video and its renditions have dynamic groups (draft-18 §12.6):
@@ -121,7 +122,6 @@ impl MediaBroadcast {
         video_bitrate: Option<f64>,
         video_framerate: Option<f64>,
         audio: String,
-        audio_label: String,
         on_keyframe_request: Function,
     ) -> MediaSource {
         let keyframe_requests = Arc::new(Notify::new());
@@ -131,9 +131,9 @@ impl MediaBroadcast {
         let tracks = SourceTracks {
             switching_set: video.clone(),
             video,
+            audio_label: format!("{video_label} audio"),
             video_label,
             audio,
-            audio_label,
             cmaf: false,
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
             video_framerate: video_framerate.map(|framerate| framerate as u32),
