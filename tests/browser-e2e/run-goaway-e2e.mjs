@@ -25,6 +25,7 @@ import {
 } from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
+  buildBinaries,
   buildLiveIngestFfmpegArgs,
   getDefaultBaseUrl,
   getDefaultWebPort,
@@ -105,14 +106,8 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
-    // One build per package, as CI builds them: a combined build unifies
-    // features differently and recompiles the dependencies.
-    for (const pkg of ["relay", "live-ingest", "recorder"]) {
-      await runCommand("cargo", ["build", "-p", pkg], {
-        cwd: repoRoot,
-        env: process.env,
-      });
-    }
+    // The recorder spec runs target/debug/recorder.
+    buildBinaries(["relay", "live-ingest", "recorder"]);
     // A Redis of its own: relays registered in a shared one would be
     // candidates for the GOAWAY target.
     const redis = spawnProcess(

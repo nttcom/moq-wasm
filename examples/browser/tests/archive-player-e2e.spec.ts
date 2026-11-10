@@ -16,12 +16,8 @@ test('records a live broadcast and plays and seeks its archive', async ({ page }
   const store = join(dir, 'store')
   await mkdir(store)
   const recorder = spawn(
-    'cargo',
+    resolve(process.cwd(), '../../target/debug/recorder'),
     [
-      'run',
-      '-p',
-      'recorder',
-      '--',
       '--relay',
       process.env.MEDIA_E2E_MOQT_URL ?? 'https://127.0.0.1:4433',
       '--namespace',

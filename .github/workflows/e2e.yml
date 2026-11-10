@@ -513,16 +513,6 @@ jobs:
       - name: Prepare media E2E environment
         run: node tests/browser-e2e/setup-media-e2e.mjs
 
-      - name: Build relay, live ingest and recorder
-        # One invocation per package: run-live-viewer-e2e.mjs and the recorder
-        # spec start each with its own `cargo run -p`, and a combined build
-        # unifies features differently, which would recompile the
-        # dependencies at run time.
-        run: |
-          cargo build -p relay
-          cargo build -p live-ingest
-          cargo build -p recorder
-
       - name: Install Playwright Chromium
         uses: ./.github/actions/install-playwright-chromium
 
