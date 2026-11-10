@@ -80,7 +80,17 @@ jobs:
       # The tests start a relay and a VTS built from this workspace.
       - name: Run binding tests
         working-directory: crates/python
-        run: uv run pytest
+        # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
+        run: uv run pytest --basetemp="$RUNNER_TEMP/pytest"
+
+      - name: Upload binding test logs
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: python-binding-logs
+          path: ${{ runner.temp }}/pytest/**/*.log
+          if-no-files-found: ignore
 
       - name: Run transcriber unit tests
         working-directory: examples/python/moq-meeting-transcriber
