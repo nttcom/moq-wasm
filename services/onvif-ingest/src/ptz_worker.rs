@@ -10,7 +10,7 @@ use std::thread;
 /// Deserialized from the viewer's command JSON, e.g. `{"type": "stop"}`.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Command {
+pub(crate) enum Command {
     Absolute {
         pan: f32,
         tilt: f32,
@@ -34,7 +34,7 @@ pub enum Command {
         speed: f32,
     },
 }
-pub fn spawn(target: Target) -> Sender<Command> {
+pub(crate) fn spawn(target: Target) -> Sender<Command> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || run_worker(target, rx));
     tx

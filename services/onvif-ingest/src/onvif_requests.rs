@@ -1,61 +1,61 @@
-pub const DEVICE_ACTION_NS: &str = "http://www.onvif.org/ver10/device/wsdl";
-pub const MEDIA_ACTION_NS: &str = "http://www.onvif.org/ver10/media/wsdl";
-pub const PTZ_ACTION_NS: &str = "http://www.onvif.org/ver20/ptz/wsdl";
-pub const TT_NS: &str = "http://www.onvif.org/ver10/schema";
+pub(crate) const DEVICE_ACTION_NS: &str = "http://www.onvif.org/ver10/device/wsdl";
+pub(crate) const MEDIA_ACTION_NS: &str = "http://www.onvif.org/ver10/media/wsdl";
+pub(crate) const PTZ_ACTION_NS: &str = "http://www.onvif.org/ver20/ptz/wsdl";
+pub(crate) const TT_NS: &str = "http://www.onvif.org/ver10/schema";
 
-pub const PAN_TILT_POSITION_SPACE: &str =
+pub(crate) const PAN_TILT_POSITION_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/PanTiltSpaces/PositionGenericSpace";
-pub const ZOOM_POSITION_SPACE: &str =
+pub(crate) const ZOOM_POSITION_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/ZoomSpaces/PositionGenericSpace";
-pub const PAN_TILT_TRANSLATION_SPACE: &str =
+pub(crate) const PAN_TILT_TRANSLATION_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/PanTiltSpaces/TranslationGenericSpace";
-pub const ZOOM_TRANSLATION_SPACE: &str =
+pub(crate) const ZOOM_TRANSLATION_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/ZoomSpaces/TranslationGenericSpace";
-pub const PAN_TILT_VELOCITY_SPACE: &str =
+pub(crate) const PAN_TILT_VELOCITY_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/PanTiltSpaces/VelocityGenericSpace";
-pub const ZOOM_VELOCITY_SPACE: &str =
+pub(crate) const ZOOM_VELOCITY_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/ZoomSpaces/VelocityGenericSpace";
-pub const PAN_TILT_SPEED_SPACE: &str =
+pub(crate) const PAN_TILT_SPEED_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/PanTiltSpaces/GenericSpeedSpace";
-pub const ZOOM_SPEED_SPACE: &str =
+pub(crate) const ZOOM_SPEED_SPACE: &str =
     "http://www.onvif.org/ver10/tptz/ZoomSpaces/ZoomGenericSpeedSpace";
 
-pub struct OnvifRequest {
-    pub namespace: &'static str,
-    pub operation: &'static str,
-    pub body: String,
+pub(crate) struct OnvifRequest {
+    pub(crate) namespace: &'static str,
+    pub(crate) operation: &'static str,
+    pub(crate) body: String,
 }
 
 #[derive(Clone, Copy)]
-pub struct PtzMoveRequest {
-    pub pan: f32,
-    pub tilt: f32,
-    pub zoom: f32,
-    pub speed: f32,
+pub(crate) struct PtzMoveRequest {
+    pub(crate) pan: f32,
+    pub(crate) tilt: f32,
+    pub(crate) zoom: f32,
+    pub(crate) speed: f32,
 }
 
 #[derive(Clone, Copy)]
-pub struct PtzMoveSpaces<'a> {
-    pub pan_tilt: Option<&'a str>,
-    pub zoom: Option<&'a str>,
-    pub pan_tilt_speed: Option<&'a str>,
-    pub zoom_speed: Option<&'a str>,
+pub(crate) struct PtzMoveSpaces<'a> {
+    pub(crate) pan_tilt: Option<&'a str>,
+    pub(crate) zoom: Option<&'a str>,
+    pub(crate) pan_tilt_speed: Option<&'a str>,
+    pub(crate) zoom_speed: Option<&'a str>,
 }
 
 #[derive(Clone, Copy)]
-pub struct PtzVelocityRequest {
-    pub pan: f32,
-    pub tilt: f32,
-    pub zoom: f32,
+pub(crate) struct PtzVelocityRequest {
+    pub(crate) pan: f32,
+    pub(crate) tilt: f32,
+    pub(crate) zoom: f32,
 }
 
 #[derive(Clone, Copy)]
-pub struct PtzVelocitySpaces<'a> {
-    pub pan_tilt: Option<&'a str>,
-    pub zoom: Option<&'a str>,
+pub(crate) struct PtzVelocitySpaces<'a> {
+    pub(crate) pan_tilt: Option<&'a str>,
+    pub(crate) zoom: Option<&'a str>,
 }
 
-pub fn get_services() -> OnvifRequest {
+pub(crate) fn get_services() -> OnvifRequest {
     build(
         DEVICE_ACTION_NS,
         "GetServices",
@@ -65,7 +65,7 @@ pub fn get_services() -> OnvifRequest {
     )
 }
 
-pub fn get_capabilities() -> OnvifRequest {
+pub(crate) fn get_capabilities() -> OnvifRequest {
     build(
         DEVICE_ACTION_NS,
         "GetCapabilities",
@@ -75,7 +75,7 @@ pub fn get_capabilities() -> OnvifRequest {
     )
 }
 
-pub fn get_profiles() -> OnvifRequest {
+pub(crate) fn get_profiles() -> OnvifRequest {
     build(
         MEDIA_ACTION_NS,
         "GetProfiles",
@@ -83,7 +83,7 @@ pub fn get_profiles() -> OnvifRequest {
     )
 }
 
-pub fn get_stream_uri(profile_token: &str) -> OnvifRequest {
+pub(crate) fn get_stream_uri(profile_token: &str) -> OnvifRequest {
     build(
         MEDIA_ACTION_NS,
         "GetStreamUri",
@@ -93,7 +93,7 @@ pub fn get_stream_uri(profile_token: &str) -> OnvifRequest {
     )
 }
 
-pub fn get_configurations() -> OnvifRequest {
+pub(crate) fn get_configurations() -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfigurations",
@@ -101,7 +101,7 @@ pub fn get_configurations() -> OnvifRequest {
     )
 }
 
-pub fn get_configuration_options(token: &str) -> OnvifRequest {
+pub(crate) fn get_configuration_options(token: &str) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "GetConfigurationOptions",
@@ -111,7 +111,7 @@ pub fn get_configuration_options(token: &str) -> OnvifRequest {
     )
 }
 
-pub fn absolute_move(
+pub(crate) fn absolute_move(
     profile: &str,
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
@@ -132,7 +132,7 @@ pub fn absolute_move(
     )
 }
 
-pub fn relative_move(
+pub(crate) fn relative_move(
     profile: &str,
     movement: PtzMoveRequest,
     spaces: PtzMoveSpaces<'_>,
@@ -153,7 +153,7 @@ pub fn relative_move(
     )
 }
 
-pub fn continuous_move(
+pub(crate) fn continuous_move(
     profile: &str,
     velocity: PtzVelocityRequest,
     spaces: PtzVelocitySpaces<'_>,
@@ -174,7 +174,7 @@ pub fn continuous_move(
     )
 }
 
-pub fn stop(profile: &str, pan_tilt: bool, zoom: bool) -> OnvifRequest {
+pub(crate) fn stop(profile: &str, pan_tilt: bool, zoom: bool) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "Stop",

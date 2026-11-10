@@ -13,23 +13,23 @@ use tokio::task::JoinHandle;
 
 use crate::ptz_worker::Command;
 
-pub struct CommandTrack {
-    pub namespace: String,
-    pub track: String,
-    pub subscriber_priority: u8,
+pub(crate) struct CommandTrack {
+    pub(crate) namespace: String,
+    pub(crate) track: String,
+    pub(crate) subscriber_priority: u8,
 }
 
 /// Follows the viewer's command track on a session of its own, separate from
 /// the media broadcast, and forwards each command to the PTZ worker. The
 /// viewer announces the namespace or publishes the track; either way the
 /// track is subscribed again whenever a new viewer takes over.
-pub struct CommandSubscriber {
+pub(crate) struct CommandSubscriber {
     _endpoint: Endpoint<NATIVE>,
     task: JoinHandle<Result<()>>,
 }
 
 impl CommandSubscriber {
-    pub async fn run(
+    pub(crate) async fn run(
         url: &str,
         client_config: &ClientConfig,
         command_track: CommandTrack,
@@ -62,7 +62,7 @@ impl CommandSubscriber {
 
     /// Resolves only with an error: the command session disconnected or a
     /// control message failed.
-    pub async fn finished(&mut self) -> Result<()> {
+    pub(crate) async fn finished(&mut self) -> Result<()> {
         (&mut self.task).await.context("command session task")?
     }
 }

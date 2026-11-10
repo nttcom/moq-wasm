@@ -1,15 +1,27 @@
+mod app_config;
+mod arrival_clamp;
+mod cli;
+mod command_subscriber;
+mod onvif_client;
+mod onvif_profile_list;
+mod onvif_requests;
+mod onvif_services;
+mod onvif_stream_uri;
+mod ptz_config;
+mod ptz_worker;
+mod rtsp_source;
+mod soap_client;
+mod wsse_auth;
+
+use crate::{
+    arrival_clamp::ArrivalClamp,
+    command_subscriber::{CommandSubscriber, CommandTrack},
+};
 use anyhow::{anyhow, bail, Context, Result};
 use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
 use clap::Parser;
 use mediapack::MediaEvent;
 use moqt::{CertificateVerification, ClientConfig};
-use onvif_ingest::{
-    app_config,
-    arrival_clamp::ArrivalClamp,
-    cli,
-    command_subscriber::{CommandSubscriber, CommandTrack},
-    onvif_client, onvif_profile_list, onvif_stream_uri, ptz_worker, rtsp_source, soap_client,
-};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::{

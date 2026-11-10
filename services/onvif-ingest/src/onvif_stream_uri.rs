@@ -2,7 +2,7 @@ use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text, so
 use anyhow::{anyhow, Result};
 use roxmltree::Document;
 
-pub async fn fetch(onvif: &OnvifClient, profile_token: &str) -> Result<String> {
+pub(crate) async fn fetch(onvif: &OnvifClient, profile_token: &str) -> Result<String> {
     let cmd = onvif_requests::get_stream_uri(profile_token);
     let response = onvif.send_media(&cmd).await?;
     if response.status >= 400 {

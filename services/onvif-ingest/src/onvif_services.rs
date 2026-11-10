@@ -1,10 +1,10 @@
 use crate::{onvif_client::OnvifClient, onvif_requests};
 use roxmltree::Document;
-pub struct ServiceEndpoints {
-    pub media_endpoint: String,
-    pub ptz_endpoint: String,
+pub(crate) struct ServiceEndpoints {
+    pub(crate) media_endpoint: String,
+    pub(crate) ptz_endpoint: String,
 }
-pub async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
+pub(crate) async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
     let (mut media, mut ptz) = match onvif.send_device(&onvif_requests::get_services()).await {
         Ok(services) if services.status < 400 => parse_services(&services.body),
         _ => (None, None),

@@ -7,7 +7,7 @@ use time::{macros::format_description, OffsetDateTime};
 const PASSWORD_DIGEST_TYPE: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest";
 const NONCE_ENCODING: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary";
 
-pub fn build_wsse_header(username: &str, password: &str) -> Result<String> {
+pub(crate) fn build_wsse_header(username: &str, password: &str) -> Result<String> {
     let created = created_timestamp()?;
     let nonce = generate_nonce(20)?;
     let nonce_b64 = general_purpose::STANDARD.encode(&nonce);

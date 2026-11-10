@@ -3,19 +3,19 @@ use crate::wsse_auth;
 use anyhow::{Context, Result};
 use reqwest::Client;
 
-pub struct SoapResponse {
-    pub status: u16,
-    pub body: String,
+pub(crate) struct SoapResponse {
+    pub(crate) status: u16,
+    pub(crate) body: String,
 }
 
-pub fn build(target: &Target) -> Result<Client> {
+pub(crate) fn build(target: &Target) -> Result<Client> {
     Client::builder()
         .timeout(target.timeout())
         .build()
         .context("http client build failed")
 }
 
-pub fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
+pub(crate) fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
     let status = response.status;
     if status == 200 {
         tracing::info!("SOAP response ({action}): {endpoint} -> HTTP {status} (OK)");
@@ -24,7 +24,7 @@ pub fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
     }
 }
 
-pub async fn send(
+pub(crate) async fn send(
     client: &Client,
     target: &Target,
     endpoint: &str,

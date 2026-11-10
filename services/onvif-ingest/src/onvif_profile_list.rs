@@ -2,17 +2,17 @@ use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text, so
 use anyhow::{anyhow, Result};
 use roxmltree::Document;
 
-pub struct ProfileSummary {
-    pub token: String,
-    pub name: Option<String>,
-    pub video_source: Option<String>,
-    pub video_encoder: Option<String>,
-    pub ptz_config: Option<String>,
-    pub video_resolution: Option<(u32, u32)>,
-    pub video_framerate: Option<f64>,
+pub(crate) struct ProfileSummary {
+    pub(crate) token: String,
+    pub(crate) name: Option<String>,
+    pub(crate) video_source: Option<String>,
+    pub(crate) video_encoder: Option<String>,
+    pub(crate) ptz_config: Option<String>,
+    pub(crate) video_resolution: Option<(u32, u32)>,
+    pub(crate) video_framerate: Option<f64>,
 }
 
-pub async fn fetch(onvif: &OnvifClient) -> Result<Vec<ProfileSummary>> {
+pub(crate) async fn fetch(onvif: &OnvifClient) -> Result<Vec<ProfileSummary>> {
     let cmd = onvif_requests::get_profiles();
     let response = onvif.send_media(&cmd).await?;
     if response.status >= 400 {
