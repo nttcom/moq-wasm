@@ -91,7 +91,9 @@ impl PublishHandler for moqt::publish::PublishHandler {
             tracing::error!("PUBLISH_OK requires publisher-initiated upstream subscription");
             return Ok(());
         };
-        self.ok(subscriber_priority, filter_type).await.map(|_| ())
+        self.ok(subscriber_priority, filter_type, self.forward)
+            .await
+            .map(|_| ())
     }
 
     async fn accept_data_receiver(&self) {

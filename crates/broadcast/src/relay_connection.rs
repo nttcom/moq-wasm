@@ -727,8 +727,10 @@ mod tests {
                             if object_sender.is_some() {
                                 handler.accept_data_receiver().await;
                             }
-                            let subscription =
-                                handler.ok(0, FilterType::LargestObject).await.unwrap();
+                            let subscription = handler
+                                .ok(0, FilterType::LargestObject, handler.forward)
+                                .await
+                                .unwrap();
                             published_tracks.insert(
                                 subscription.request_id(),
                                 format!("{}/{}", handler.track_namespace, handler.track_name),

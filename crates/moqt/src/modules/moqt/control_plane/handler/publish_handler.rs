@@ -88,14 +88,17 @@ impl PublishHandler {
         }
     }
 
+    /// `forward` is the Forward State the subscription starts in, which need
+    /// not be the one the PUBLISH asked for (draft-18 §5.1).
     pub async fn ok(
         &self,
         subscriber_priority: u8,
         filter_type: FilterType,
+        forward: bool,
     ) -> Result<Subscription, TransportSendError> {
         let publish_ok = PublishOk {
             request_id: self.guard.request_id(),
-            forward: self.forward,
+            forward,
             subscriber_priority,
             group_order: self.group_order,
             filter_type,
@@ -114,7 +117,7 @@ impl PublishHandler {
                 group_order: self.group_order,
                 content_exists: self.content_exists,
                 subscriber_priority,
-                forward: self.forward,
+                forward,
                 filter_type,
                 delivery_timeout: self.delivery_timeout,
                 track_properties: self.track_properties.clone(),
@@ -170,7 +173,7 @@ mod tests {
 
     use crate::publish::PublishOption;
     use crate::subscribe::FilterType;
-    use crate::{RequestErrorCode, TrackProperties};
+    use crate::{RequestErrorCode, Subscription, TrackProperties};
     use crate::{
         SessionEvent,
         modules::{
@@ -211,7 +214,10 @@ mod tests {
         };
 
         // Act
-        let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
+        let accepted = handler
+            .ok(128, FilterType::LargestObject, true)
+            .await
+            .unwrap();
 
         // Assert
         assert_eq!(handler.track_properties.max_cache_duration(), Some(2_000));
@@ -223,6 +229,41 @@ mod tests {
         assert_eq!(
             published.track_properties().max_cache_duration(),
             Some(2_000)
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_ok_sets_the_forward_state_of_both_subscriptions() {
+        // Arrange: the PUBLISH asks for Forward State 1
+        let (client, server) = spawn_connected_native_sessions("publish-handler-forward").await;
+        let request = tokio::spawn(async move {
+            client
+                .publisher()
+                .publish(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    PublishOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected PUBLISH from the client");
+        };
+
+        // Act
+        let accepted = handler
+            .ok(128, FilterType::LargestObject, false)
+            .await
+            .unwrap();
+
+        // Assert
+        let published = request.await.unwrap().unwrap();
+        assert!(handler.forward);
+        assert!(
+            matches!(accepted, Subscription::PublisherInitiated(accepted) if !accepted.forward)
+        );
+        assert!(
+            matches!(published, Subscription::PublisherInitiated(published) if !published.forward)
         );
     }
 

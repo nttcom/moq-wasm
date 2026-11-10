@@ -1163,7 +1163,10 @@ mod tests {
                     .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
                     .await
                     .unwrap();
-                let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
+                let accepted = handler
+                    .ok(128, FilterType::LargestObject, true)
+                    .await
+                    .unwrap();
                 handler.accept_data_receiver().await;
                 (written, accepted)
             })

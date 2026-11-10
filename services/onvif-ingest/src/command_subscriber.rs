@@ -258,6 +258,7 @@ async fn accept_command_publish(
         .ok(
             command_track.subscriber_priority,
             FilterType::NextGroupStart,
+            handler.forward,
         )
         .await
         .context("accept command publish")?;
