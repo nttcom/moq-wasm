@@ -216,6 +216,11 @@ track, and a subscriber joining late starts both tracks at the same keyframe.
 A source that publishes no video, because it has none or removed it, has no
 keyframes to follow: its audio starts a group of its own every second, taking
 the ids from the same alignment so they keep increasing when video starts.
+A browser rendition can number a keyframe before the writer takes the video's
+configuration. The audio starts no group of its own until it has entered the
+newest group, so it drops what precedes that keyframe and starts the
+keyframe's group: a group it numbered for an earlier time would have a later
+id, and the track's group ids would run backwards.
 
 Group ids are seeded from the wall clock rather than counted from zero. The
 relay keeps a track's cache when its publisher is replaced and treats a track

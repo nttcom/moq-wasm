@@ -283,6 +283,7 @@ impl TrackPublisher {
             pts_us = sample.pts.micros(),
             bytes = sample.data.len()
         );
+        let follows_video = self.audio_follows_video();
         let Some(group) = self.audio_group(sample.pts.micros()) else {
             return Ok(());
         };
@@ -320,7 +321,7 @@ impl TrackPublisher {
         }
         self.publish_cmaf_audio(sample, group).await?;
         let (GroupBoundary::At(group_id), false, Some(captured_at)) =
-            (group, self.video_published, captured_at)
+            (group, follows_video, captured_at)
         else {
             return Ok(());
         };
@@ -356,10 +357,19 @@ impl TrackPublisher {
         Ok(())
     }
 
+    /// A rendition numbers a keyframe on its own task, which can be before this
+    /// task takes the video's configuration. A group the audio then numbered for
+    /// an earlier time would have a later id than the keyframe's group, which
+    /// the audio enters next, so the audio numbers none until it has entered
+    /// the newest group.
+    fn audio_follows_video(&self) -> bool {
+        self.video_published || self.timing.alignment.newest() != self.audio_group_id
+    }
+
     /// Without video the audio takes its group ids from the video's alignment,
     /// so they keep increasing when video starts.
     fn audio_group(&mut self, presentation_us: u64) -> Option<GroupBoundary> {
-        if !self.video_published {
+        if !self.audio_follows_video() {
             let due = self.audio_only_group_start_us.is_none_or(|start| {
                 presentation_us.saturating_sub(start) >= AUDIO_ONLY_GROUP_DURATION_US
             });
@@ -515,6 +525,38 @@ mod tests {
                 Some(GroupBoundary::Within)
             ]
         );
+    }
+
+    #[test]
+    fn audio_waits_for_the_keyframe_a_rendition_numbered_before_the_video_configuration() {
+        // Arrange
+        let mut publisher = publisher();
+        let keyframe = publisher.timing.alignment.keyframe(50_000);
+
+        // Act
+        let before_keyframe = publisher.audio_group(40_000);
+        let at_keyframe = publisher.audio_group(60_000);
+        publisher.video_published = true;
+        let after_configuration = publisher.audio_group(80_000);
+
+        // Assert
+        assert_eq!(before_keyframe, None);
+        assert_eq!(at_keyframe, Some(GroupBoundary::At(keyframe)));
+        assert_eq!(after_configuration, Some(GroupBoundary::Within));
+    }
+
+    #[tokio::test]
+    async fn the_audio_leaves_the_record_of_a_group_a_rendition_started_to_the_video() {
+        // Arrange
+        let mut publisher = publisher();
+        publisher.timing.alignment.keyframe(50_000);
+        publisher.push(&opus_config()).await.unwrap();
+
+        // Act
+        publisher.push(&audio_at(60_000)).await.unwrap();
+
+        // Assert
+        assert_eq!(recorded(&publisher), []);
     }
 
     #[tokio::test]
