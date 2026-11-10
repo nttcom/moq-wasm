@@ -24,7 +24,7 @@ const DEFAULT_CONFIG: VideoEncoderSettings = {
   bitrate: 1_000_000,
   framerate: DEFAULT_FRAMERATE,
   // Chrome tries only a hardware encoder for 'prefer-hardware', so a machine
-  // without one could not encode at all.
+  // without one cannot encode at all.
   hardwareAcceleration: 'no-preference',
   // The hardware encoder of an M1 Mac supports only L1T1.
   scalabilityMode: 'L1T1',
