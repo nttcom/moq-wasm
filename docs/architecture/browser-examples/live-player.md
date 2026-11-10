@@ -539,6 +539,9 @@ and each minute without congestion halves it again.
 The first 3 s after a switch are left out, since the lag of the two renditions
 differs by the transcoding delay. Every change goes through the rendition
 switch above, so a step costs no picture gap; CMAF mode and review do not adapt.
+Each switch logs its reason (`height`, `raise`, `congested` or `calm`) with the
+picture height, the least lag of the last second, the least lag since the
+rendition started and the throughput of the last 2 s.
 
 The ladder ends at the first rendition at least as tall as the container in
 device pixels, since a picture shown that small gains nothing from a taller

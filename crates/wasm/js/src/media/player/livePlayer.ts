@@ -1137,8 +1137,14 @@ export class LivePlayer {
     const ladder = bitrateLadder(this.tracks.video, current.track)
     const choice = this.adaptiveBitrate.decideUnderHeight(nowMs, ladder, current.name, this.pictureHeightPx)
     if (choice) {
-      this.context.log('info', `adaptive quality: ${current.name} -> ${choice}`)
-      this.selectTrack('video', choice).catch((error) => {
+      this.context.log(
+        'info',
+        `adaptive quality: ${current.name} -> ${choice.name} (reason=${choice.reason}` +
+          ` height_px=${roundOrNone(this.pictureHeightPx)} recent_lag_ms=${roundOrNone(choice.recentLagMs)}` +
+          ` baseline_lag_ms=${roundOrNone(choice.baselineLagMs)}` +
+          ` throughput_kbps=${Math.round(choice.throughputBps / 1_000)})`
+      )
+      this.selectTrack('video', choice.name).catch((error) => {
         this.context.log('error', `adaptive quality: ${getErrorMessage(error)}`)
       })
     }
@@ -1465,4 +1471,8 @@ function publisherEndedText(trackName: string, done: PublishDone): string {
 /// decoders only take the LOC ones.
 function isLocTrack(track: MediaCatalogTrack): boolean {
   return track.packaging !== 'cmaf'
+}
+
+function roundOrNone(value: number | undefined): string {
+  return value === undefined ? 'none' : String(Math.round(value))
 }
