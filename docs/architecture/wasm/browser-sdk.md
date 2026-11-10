@@ -228,6 +228,21 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    track を作る。`SourceTracks` に CMAF を作るかどうかのフラグを足す。既定は今のまま
    にして live-ingest などは変えず、ブラウザの配信だけ既定で切る。
 
+## 映像 encoder のウォームアップ
+
+Chrome（macOS、Chrome 156 で確認）では、プロセスで最初の `VideoEncoder` が使える
+ようになるまでに数秒かかる。その間、worker にフレームが届かなくなり、カメラも
+撮らなくなる。準備ができると、止まる直前に撮ったフレームがまとめて届く。それを
+そのまま encode すると、数秒前のフレームが live として届き、受信側はその到着の
+揺れでジッターバッファーを膨らませる。
+
+そこで、`createBroadcast` の映像 worker（`media/internal/encoders/videoEncoder.ts`）
+は、encoder を作るたびに最初の1フレームを keyframe として encode し、`flush()` が
+終わるまで出力を捨てる（`EncoderWarmUp`）。その間に読んだフレームは閉じて
+`frameDropped` として数える。`flush()` を待つので、
+`latencyMode: 'quality'` のように先読みする encoder でもウォームアップは終わる。
+捨てた出力が持つ `decoderConfig` は、最初の live の出力に付けて渡す。
+
 ## Safari 対応
 
 Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がいくつかある。Safari 27.0.1

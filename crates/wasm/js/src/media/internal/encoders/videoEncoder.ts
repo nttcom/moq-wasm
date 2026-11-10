@@ -1,5 +1,6 @@
 import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
+import { EncoderWarmUp } from './encoderWarmUp'
 import { fitEncodeSize } from './encodeSize'
 import { videoEncoderConfig, type VideoEncoderSettings } from './videoEncoderConfig'
 import { workerLog } from '../../../core/log'
@@ -21,6 +22,11 @@ class Rendition {
   // null makes the next frame reconfigure the encoder.
   configuredFrameSize: string | null = null
   private encodedAny = false
+  // The encoder whose outputs are dropped, until its warm-up frame is flushed.
+  private warmingUp: VideoEncoder | undefined
+  // Chrome gives the decoder config only with the first output after a
+  // configure, which is a warm-up output.
+  private warmUpDecoderConfig: VideoDecoderConfig | undefined
   readonly captureTimestamps = new CaptureTimestamps()
 
   constructor(
@@ -60,6 +66,8 @@ class Rendition {
     this.encoder = encoder
     this.configuredFrameSize = frameSize(frame)
     this.encodedAny = false
+    this.warmingUp = undefined
+    this.warmUpDecoderConfig = undefined
     workerLog('info', TARGET, 'encoder initialized', { config, rendition: this.index })
     return true
   }
@@ -86,7 +94,33 @@ class Rendition {
     return { ...this.config, ...fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight }) }
   }
 
+  /// Encodes `frame` as a keyframe and drops its output, sized like the live frames.
+  async warmUp(frame: VideoFrame): Promise<void> {
+    const encoder = this.encoder
+    if (!encoder) {
+      return
+    }
+    this.configureForFrame(frame)
+    this.warmingUp = encoder
+    try {
+      encoder.encode(frame, { keyFrame: true })
+      await encoder.flush()
+    } finally {
+      if (this.warmingUp === encoder) {
+        this.warmingUp = undefined
+      }
+    }
+  }
+
   private send(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
+    if (this.warmingUp) {
+      this.warmUpDecoderConfig = metadata?.decoderConfig ?? this.warmUpDecoderConfig
+      return
+    }
+    if (this.warmUpDecoderConfig) {
+      metadata = { ...metadata, decoderConfig: metadata?.decoderConfig ?? this.warmUpDecoderConfig }
+      this.warmUpDecoderConfig = undefined
+    }
     if (!this.encodedAny) {
       this.encodedAny = true
       workerLog('info', TARGET, 'first chunk encoded', {
@@ -130,6 +164,7 @@ async function initializeEncoders(frame: VideoFrame): Promise<boolean> {
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   let frameCounter = 0
+  const warmUp = new EncoderWarmUp((error) => workerLog('warn', TARGET, 'encoder warm-up failed', { error }))
   for (const rendition of renditions) {
     if (rendition.encoder && rendition.encoder.state !== 'closed') {
       rendition.encoder.close()
@@ -170,6 +205,13 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
         videoFrame.close()
         continue
       }
+      warmUp.reset()
+    }
+
+    if (!warmUp.admit(videoFrame, renditions)) {
+      self.postMessage({ type: 'frameDropped' })
+      videoFrame.close()
+      continue
     }
 
     // A frame any encoder cannot take is dropped for all, so the renditions keep the same frames.
