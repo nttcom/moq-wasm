@@ -53,6 +53,9 @@ test('audio without capture timestamps leaves the delay of timed video unchanged
 
 const AUDIO_DELAY_MS = 100
 const VIDEO_DELAY_MS = 300
+const LIVE_VIDEO_DELAY_MS = 50
+/// The playout's `WARMUP_MS`.
+const WARMUP_LIMIT_MS = 400
 const SETTLE_MS = 12_000
 
 /// Streams audio arriving `AUDIO_DELAY_MS` after capture, with video arriving
@@ -127,18 +130,39 @@ test('a buffer below its target grows by stretching the audio without a break', 
   expect(playout.audioBreaks()).toBe(0)
 })
 
-test('audio held through the warm-up and due within the output latency leaves the opening clock in place', () => {
-  // Arrange
-  const playout = new LivePlayout((frame) => frame.close())
+const OUTPUT_START_UP_MS = 50
 
-  // Act: stop before the buffer settles, so nothing trims a clock pushed back at the warm-up
+test('audio is held until the output reports its latency and then opens the clock on it', () => {
+  // Arrange
+  environment.outputStartUpMs = OUTPUT_START_UP_MS
+  const playout = new LivePlayout((frame) => frame.close())
+  const firstCaptureMicros = (environment.nowMs - AUDIO_DELAY_MS) * MICROS_PER_MILLI
+
+  // Act: stop before the buffer settles, so a clock pushed back by a held chunk still shows
+  streamLive(playout, OUTPUT_START_UP_MS)
+  const dueWhileStartingMs = playout.dueAt(firstCaptureMicros)
   streamLive(playout, 1_000)
 
-  // Assert: the anchor's target (longest arrival gap + schedule-ahead) plus the newest held chunk's age
-  expect(playout.bufferMs()!).toBeCloseTo(AUDIO_CHUNK_MS + SCHEDULE_AHEAD_MS + AUDIO_CHUNK_MS)
+  // Assert: the anchor's target is an audio chunk plus the schedule-ahead, and no held chunk pushed the clock back
+  expect(dueWhileStartingMs).toBeUndefined()
+  expect(playout.bufferMs()!).toBeCloseTo(AUDIO_CHUNK_MS + SCHEDULE_AHEAD_MS)
+  expect(playout.audioBreaks()).toBe(0)
 })
 
-const LIVE_VIDEO_DELAY_MS = 50
+test('a picture without sound opens after the warm-up limit', () => {
+  // Arrange
+  const playout = new LivePlayout((frame) => frame.close())
+  const firstCaptureMicros = (environment.nowMs - LIVE_VIDEO_DELAY_MS) * MICROS_PER_MILLI
+
+  // Act
+  streamLiveVideo(playout, WARMUP_LIMIT_MS)
+  const dueBeforeLimitMs = playout.dueAt(firstCaptureMicros)
+  streamLiveVideo(playout, 2 * VIDEO_FRAME_MS)
+
+  // Assert
+  expect(dueBeforeLimitMs).toBeUndefined()
+  expect(playout.dueAt(firstCaptureMicros)).toBeDefined()
+})
 
 function streamLiveVideo(playout: LivePlayout, durationMs: number): void {
   const startMs = environment.nowMs
@@ -186,7 +210,7 @@ test('cached frames arriving after the live ones leave the buffer target alone',
   expect(playout.targetBufferMs()).toBeCloseTo(0)
 })
 
-test('audio joining a playing picture with a cached burst leaves the picture running', () => {
+test('audio joining a playing picture from a second behind leaves the picture running', () => {
   // Arrange
   const shownAtMs: number[] = []
   const playout = new LivePlayout((frame) => {
@@ -196,7 +220,7 @@ test('audio joining a playing picture with a cached burst leaves the picture run
   streamLiveVideo(playout, 3_000)
   const joinedAtMs = environment.nowMs
 
-  // Act: the audio joins with the relay's last second of it, then both stream live
+  // Act: the audio joins with chunks from a second before the picture, then both stream live
   playout.joinAudio()
   for (let ageMs = 1_000; ageMs > LIVE_VIDEO_DELAY_MS; ageMs -= AUDIO_CHUNK_MS) {
     playout.playAudio(

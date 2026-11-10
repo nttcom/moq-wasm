@@ -615,13 +615,15 @@ bounds fix it, and a maximum below the output latency makes every chunk late.
 `Current` next to the bounds shows the buffer and its target, and the Buffer
 chart below the player stacks the output latency and `audio jitter (p-p)` under
 the target and the buffer held, with delay, bitrate and A/V charted beside it
-over the last minute. A subscription opens
-with a burst of what the relay had cached of the current groups, so the
-samples of the first 400 ms are held and the clock is anchored on the newest
-of them; older ones are dropped rather than played late. That burst says
-nothing about the jitter, so the buffer opens on the longest wait
-between two audio arrivals seen during the warm-up instead: sources such as
-MPEG-TS over SRT deliver audio in bursts. The audio is the clock's master: it
+over the last minute. Playback opens with a warm-up. A new `AudioContext`
+reports its output latency only after it has started rendering, a few tens of
+milliseconds after it is created. The samples are held until it does, and the
+clock is then anchored on the newest of them; older ones are dropped rather
+than played late. A clock anchored earlier is short by the output latency, and
+the sound breaks when the clock makes up for it. A picture whose sound has not
+arrived within 400 ms opens without it. No jitter has been observed by then,
+so the buffer opens on the longest wait between two audio arrivals so far, and
+on at least the duration of one audio chunk. The audio is the clock's master: it
 alone moves the clock, so the sound never skips for the picture, and the
 picture takes over only while no audio is playing. Video frames are held until
 they are due and then written to the MediaStream the video element shows;
