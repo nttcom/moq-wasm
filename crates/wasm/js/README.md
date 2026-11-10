@@ -203,7 +203,17 @@ Pass the page's `AudioContext` as `audioContext` to `watchBroadcasts` or
 `RemoteBroadcast`, as to a `LivePlayer`: every view plays its live LOC sound
 through it. Resume it from a user gesture, such as the join button, so that the
 views of someone who joins after the click are heard too, and pick the speaker
-with `audioContext.setSinkId(deviceId)`.
+with `audioContext.setSinkId(deviceId)`. TypeScript's DOM types (5.9 and 7.0)
+do not declare `setSinkId` on `AudioContext`, so declare it in one of the
+page's modules:
+
+```ts
+declare global {
+  interface AudioContext {
+    setSinkId(sinkId: string): Promise<void>
+  }
+}
+```
 
 ## Playing a broadcast: `LivePlayer`
 
