@@ -7,8 +7,6 @@
   on a high-density screen takes a lower rendition: a 215 px tall tile at a
   device pixel ratio of 2 takes 240p instead of 480p.
 
-## Unreleased
-
 - Breaking: `addSource()` takes the video's encoder settings in `encoding`,
   shared by the video and its renditions (`codec`,
   `keyframeIntervalSeconds`, `hardwareAcceleration`), and `main`, the track
