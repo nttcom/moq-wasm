@@ -967,14 +967,6 @@ impl SubscribeHandler for MockSubscribeHandler {
         FilterType::LargestObject
     }
 
-    fn _max_cache_duration(&self) -> Option<u64> {
-        None
-    }
-
-    fn _delivery_timeout(&self) -> Option<u64> {
-        None
-    }
-
     fn allocate_track_alias(&self) -> u64 {
         if let Some(hook) = &self.on_allocate_track_alias {
             hook();
@@ -1257,14 +1249,6 @@ impl PublishHandler for MockPublishHandler {
 
     fn _forward(&self) -> bool {
         true
-    }
-
-    fn _delivery_timeout(&self) -> Option<u64> {
-        None
-    }
-
-    fn _max_cache_duration(&self) -> Option<u64> {
-        None
     }
 
     fn subscription(
