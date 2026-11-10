@@ -38,7 +38,7 @@ export type VideoEncoding = {
   /// next. The video and its renditions take their keyframes on the same
   /// frames.
   keyframeIntervalSeconds?: number
-  /// `prefer-hardware` by default.
+  /// `no-preference` by default, which falls back to a software encoder.
   hardwareAcceleration?: HardwareAcceleration
 }
 
