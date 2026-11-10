@@ -226,7 +226,7 @@ impl Session {
                 let events = self.routes.watch(prefix.clone());
                 self.session
                     .subscriber()
-                    .subscribe_namespace(prefix.join("/"), NamespaceInterest::NamespacesAndTracks)
+                    .subscribe_namespace(prefix.join("/"), NamespaceInterest::Namespaces)
                     .await
                     .map_err(|error| request_error(RequestKind::SubscribeNamespace, &error))?;
                 Ok(NamespaceWatch {
