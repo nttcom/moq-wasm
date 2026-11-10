@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `LivePlayer` no longer opens a live broadcast with audio about the audio
+  output latency (around 190 ms in Chrome) later than its buffer target for
+  the first 10 s. The audio held through the warm-up and due within the
+  output latency was scheduled late and pushed the playout clock back.
+
 ## 0.4.2
 
 - `MoqSession.connect()` without `versions` offers draft-18, then draft-14,
