@@ -2,73 +2,73 @@ use crate::onvif_requests::{PtzMoveSpaces, PtzVelocitySpaces};
 use roxmltree::{Document, Node};
 
 #[derive(Clone, Copy, Debug)]
-pub struct AxisRange {
-    pub min: f32,
-    pub max: f32,
+pub(crate) struct AxisRange {
+    pub(crate) min: f32,
+    pub(crate) max: f32,
 }
 
 impl AxisRange {
-    pub fn new(min: f32, max: f32) -> Self {
+    pub(crate) fn new(min: f32, max: f32) -> Self {
         let (min, max) = if min <= max { (min, max) } else { (max, min) };
         Self { min, max }
     }
 
-    pub fn clamp(self, value: f32) -> f32 {
+    pub(crate) fn clamp(self, value: f32) -> f32 {
         value.clamp(self.min, self.max)
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct PanTiltRange {
-    pub uri: Option<String>,
-    pub x: AxisRange,
-    pub y: AxisRange,
+pub(crate) struct PanTiltRange {
+    pub(crate) uri: Option<String>,
+    pub(crate) x: AxisRange,
+    pub(crate) y: AxisRange,
 }
 
 #[derive(Clone, Debug)]
-pub struct ZoomRange {
-    pub uri: Option<String>,
-    pub x: AxisRange,
+pub(crate) struct ZoomRange {
+    pub(crate) uri: Option<String>,
+    pub(crate) x: AxisRange,
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct PtzRange {
-    pub abs_pan_tilt: Option<PanTiltRange>,
-    pub abs_zoom: Option<ZoomRange>,
-    pub rel_pan_tilt: Option<PanTiltRange>,
-    pub rel_zoom: Option<ZoomRange>,
-    pub cont_pan_tilt: Option<PanTiltRange>,
-    pub cont_zoom: Option<ZoomRange>,
-    pub speed_pan_tilt: Option<PanTiltRange>,
-    pub speed_zoom: Option<ZoomRange>,
+pub(crate) struct PtzRange {
+    pub(crate) abs_pan_tilt: Option<PanTiltRange>,
+    pub(crate) abs_zoom: Option<ZoomRange>,
+    pub(crate) rel_pan_tilt: Option<PanTiltRange>,
+    pub(crate) rel_zoom: Option<ZoomRange>,
+    pub(crate) cont_pan_tilt: Option<PanTiltRange>,
+    pub(crate) cont_zoom: Option<ZoomRange>,
+    pub(crate) speed_pan_tilt: Option<PanTiltRange>,
+    pub(crate) speed_zoom: Option<ZoomRange>,
 }
 
 impl PtzRange {
-    pub fn absolute_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
+    pub(crate) fn absolute_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
         pan_tilt_or_default(self.abs_pan_tilt.as_ref(), None)
     }
 
-    pub fn absolute_zoom_range(&self) -> AxisRange {
+    pub(crate) fn absolute_zoom_range(&self) -> AxisRange {
         zoom_or_default(self.abs_zoom.as_ref(), None)
     }
 
-    pub fn relative_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
+    pub(crate) fn relative_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
         pan_tilt_or_default(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
     }
 
-    pub fn relative_zoom_range(&self) -> AxisRange {
+    pub(crate) fn relative_zoom_range(&self) -> AxisRange {
         zoom_or_default(self.rel_zoom.as_ref(), self.abs_zoom.as_ref())
     }
 
-    pub fn continuous_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
+    pub(crate) fn continuous_pan_tilt_range(&self) -> (AxisRange, AxisRange) {
         pan_tilt_or_default(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref())
     }
 
-    pub fn continuous_zoom_range(&self) -> AxisRange {
+    pub(crate) fn continuous_zoom_range(&self) -> AxisRange {
         zoom_or_default(self.cont_zoom.as_ref(), self.abs_zoom.as_ref())
     }
 
-    pub fn speed_range(&self) -> AxisRange {
+    pub(crate) fn speed_range(&self) -> AxisRange {
         if let Some(range) = &self.speed_pan_tilt {
             let min = range.x.min.min(range.y.min);
             let max = range.x.max.max(range.y.max);
@@ -80,7 +80,7 @@ impl PtzRange {
         AxisRange::new(0.0, 1.0)
     }
 
-    pub fn absolute_spaces(&self) -> PtzMoveSpaces<'_> {
+    pub(crate) fn absolute_spaces(&self) -> PtzMoveSpaces<'_> {
         PtzMoveSpaces {
             pan_tilt: pan_tilt_space(self.abs_pan_tilt.as_ref(), None),
             zoom: zoom_space(self.abs_zoom.as_ref(), None),
@@ -89,7 +89,7 @@ impl PtzRange {
         }
     }
 
-    pub fn relative_spaces(&self) -> PtzMoveSpaces<'_> {
+    pub(crate) fn relative_spaces(&self) -> PtzMoveSpaces<'_> {
         PtzMoveSpaces {
             pan_tilt: pan_tilt_space(self.rel_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref()),
             zoom: zoom_space(self.rel_zoom.as_ref(), self.abs_zoom.as_ref()),
@@ -97,7 +97,7 @@ impl PtzRange {
         }
     }
 
-    pub fn continuous_spaces(&self) -> PtzVelocitySpaces<'_> {
+    pub(crate) fn continuous_spaces(&self) -> PtzVelocitySpaces<'_> {
         PtzVelocitySpaces {
             pan_tilt: pan_tilt_space(self.cont_pan_tilt.as_ref(), self.abs_pan_tilt.as_ref()),
             zoom: zoom_space(self.cont_zoom.as_ref(), self.abs_zoom.as_ref()),
@@ -105,7 +105,7 @@ impl PtzRange {
     }
 }
 
-pub fn extract_tokens(body: &str) -> Vec<String> {
+pub(crate) fn extract_tokens(body: &str) -> Vec<String> {
     let Ok(doc) = Document::parse(body) else {
         return Vec::new();
     };
@@ -115,7 +115,7 @@ pub fn extract_tokens(body: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
+pub(crate) fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
     let Ok(doc) = Document::parse(body) else {
         return PtzRange::default();
     };
@@ -175,7 +175,7 @@ pub fn extract_range_from_config(body: &str, token: &str) -> PtzRange {
     range
 }
 
-pub fn update_range_from_options(mut range: PtzRange, body: &str) -> PtzRange {
+pub(crate) fn update_range_from_options(mut range: PtzRange, body: &str) -> PtzRange {
     let Ok(doc) = Document::parse(body) else {
         return range;
     };

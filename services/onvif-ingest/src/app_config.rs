@@ -6,7 +6,7 @@ const ONVIF_PORT: u16 = 2020;
 const ONVIF_PATH: &str = "/onvif/device_service";
 
 #[derive(Debug, Clone)]
-pub struct Target {
+pub(crate) struct Target {
     host: String,
     username: String,
     password: String,
@@ -14,7 +14,7 @@ pub struct Target {
 }
 
 impl Target {
-    pub fn from_args(args: &Args) -> Result<Self> {
+    pub(crate) fn from_args(args: &Args) -> Result<Self> {
         let host = args.ip.trim().to_string();
         if host.is_empty() {
             bail!("ip is required");
@@ -35,15 +35,15 @@ impl Target {
         })
     }
 
-    pub fn onvif_endpoint(&self) -> String {
+    pub(crate) fn onvif_endpoint(&self) -> String {
         format!("http://{}:{}{}", self.host, ONVIF_PORT, ONVIF_PATH)
     }
 
-    pub fn credentials(&self) -> (&str, &str) {
+    pub(crate) fn credentials(&self) -> (&str, &str) {
         (self.username.as_str(), self.password.as_str())
     }
 
-    pub fn timeout(&self) -> Duration {
+    pub(crate) fn timeout(&self) -> Duration {
         self.timeout
     }
 }

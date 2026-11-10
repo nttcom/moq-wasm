@@ -13,14 +13,14 @@ const MAX_SLEW_US: i64 = 5_000;
 /// would stamp every later sample into the future and show viewers a negative
 /// delay. The shift follows the earliest arrival seen and moves gradually.
 #[derive(Default)]
-pub struct ArrivalClamp {
+pub(crate) struct ArrivalClamp {
     origin_us: Option<i64>,
     shift_us: i64,
     target_shift_us: i64,
 }
 
 impl ArrivalClamp {
-    pub fn apply(&mut self, event: &mut MediaEvent, arrival_us: i64) {
+    pub(crate) fn apply(&mut self, event: &mut MediaEvent, arrival_us: i64) {
         match event {
             MediaEvent::Video(VideoSample { pts, dts, .. }) => {
                 self.follow(*pts, arrival_us);

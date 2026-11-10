@@ -87,7 +87,11 @@ impl Broadcast {
             .await
     }
 
-    pub async fn update_audio_catalog(&self, track_name: &str, info: AudioTrackInfo) -> Result<()> {
+    pub(crate) async fn update_audio_catalog(
+        &self,
+        track_name: &str,
+        info: AudioTrackInfo,
+    ) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
@@ -164,17 +168,17 @@ impl Default for SourceTracks {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AudioTrackInfo {
-    pub label: String,
-    pub config: AudioConfig,
+pub(crate) struct AudioTrackInfo {
+    pub(crate) label: String,
+    pub(crate) config: AudioConfig,
     /// Lists a CMAF sibling, for AAC only.
-    pub cmaf: bool,
+    pub(crate) cmaf: bool,
     /// `SourceTracks::switching_set` of the track's source, whose render
     /// group the track joins.
-    pub switching_set: String,
+    pub(crate) switching_set: String,
     /// `SourceTracks::video` of the track's source, whose media timeline
     /// lists the track's groups.
-    pub source: String,
+    pub(crate) source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,7 +224,7 @@ impl VideoTrackInfo {
     }
 }
 
-pub fn cmaf_track_name(track_name: &str) -> String {
+pub(crate) fn cmaf_track_name(track_name: &str) -> String {
     format!("{track_name}{CMAF_TRACK_SUFFIX}")
 }
 

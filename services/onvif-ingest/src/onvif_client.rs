@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use reqwest::Client;
 
-pub struct OnvifClient {
+pub(crate) struct OnvifClient {
     client: Client,
     target: Target,
     device_endpoint: String,
@@ -31,7 +31,7 @@ impl OnvifClient {
         }
     }
 
-    pub async fn initialize(client: Client, target: Target) -> Result<Self> {
+    pub(crate) async fn initialize(client: Client, target: Target) -> Result<Self> {
         let mut onvif = Self::new(client, target);
 
         onvif.init_endpoints().await;
@@ -40,29 +40,29 @@ impl OnvifClient {
         Ok(onvif)
     }
 
-    pub async fn initialize_media(client: Client, target: Target) -> Result<Self> {
+    pub(crate) async fn initialize_media(client: Client, target: Target) -> Result<Self> {
         let mut onvif = Self::new(client, target);
         onvif.init_endpoints().await;
         Ok(onvif)
     }
 
-    pub fn device_endpoint(&self) -> &str {
+    pub(crate) fn device_endpoint(&self) -> &str {
         &self.device_endpoint
     }
 
-    pub fn media_endpoint(&self) -> &str {
+    pub(crate) fn media_endpoint(&self) -> &str {
         &self.media_endpoint
     }
 
-    pub fn ptz_endpoint(&self) -> &str {
+    pub(crate) fn ptz_endpoint(&self) -> &str {
         &self.ptz_endpoint
     }
 
-    pub fn profile_token(&self) -> &str {
+    pub(crate) fn profile_token(&self) -> &str {
         &self.profile_token
     }
 
-    pub fn ptz_range(&self) -> ptz_config::PtzRange {
+    pub(crate) fn ptz_range(&self) -> ptz_config::PtzRange {
         self.ptz_range.clone()
     }
 
@@ -126,15 +126,24 @@ impl OnvifClient {
         Ok(response.body)
     }
 
-    pub async fn send_device(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
+    pub(crate) async fn send_device(
+        &self,
+        command: &OnvifRequest,
+    ) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.device_endpoint, command).await
     }
 
-    pub async fn send_media(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
+    pub(crate) async fn send_media(
+        &self,
+        command: &OnvifRequest,
+    ) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.media_endpoint, command).await
     }
 
-    pub async fn send_ptz(&self, command: &OnvifRequest) -> Result<soap_client::SoapResponse> {
+    pub(crate) async fn send_ptz(
+        &self,
+        command: &OnvifRequest,
+    ) -> Result<soap_client::SoapResponse> {
         self.send_to(&self.ptz_endpoint, command).await
     }
 

@@ -22,7 +22,7 @@ const OPUS_SAMPLE_RATE: u32 = 48_000;
 
 /// Blocks the calling thread playing the RTSP stream at `url` and sending its
 /// media as `MediaEvent`s; returns an error once the stream ends or fails.
-pub fn run(url: &str, event_sender: TokioSender<MediaEvent>) -> Result<()> {
+pub(crate) fn run(url: &str, event_sender: TokioSender<MediaEvent>) -> Result<()> {
     gst::init().context("initialize GStreamer")?;
     let pipeline = gst::Pipeline::new();
     let source = gst::ElementFactory::make("rtspsrc")

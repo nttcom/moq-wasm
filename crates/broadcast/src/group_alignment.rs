@@ -13,7 +13,7 @@ const REMEMBERED_KEYFRAMES: usize = 64;
 /// or before it, so a viewer replays the audio of a video window by its ids.
 /// The audio of a source that publishes no video starts its groups here
 /// instead.
-pub struct GroupAlignment {
+pub(crate) struct GroupAlignment {
     inner: Mutex<Inner>,
 }
 
@@ -46,7 +46,7 @@ impl GroupAlignment {
         group_id
     }
 
-    pub fn aligned(&self, presentation_us: u64) -> Option<u64> {
+    pub(crate) fn aligned(&self, presentation_us: u64) -> Option<u64> {
         self.inner
             .lock()
             .expect("group alignment lock")
@@ -65,7 +65,7 @@ impl GroupAlignment {
             .map(|(_, group_id)| *group_id)
     }
 
-    pub fn nearest_keyframe_us(&self, presentation_us: u64) -> Option<u64> {
+    pub(crate) fn nearest_keyframe_us(&self, presentation_us: u64) -> Option<u64> {
         let inner = self.inner.lock().expect("group alignment lock");
         let before = inner
             .by_presentation_time

@@ -34,9 +34,9 @@ const AUDIO_ONLY_GROUP_DURATION_US: u64 = 1_000_000;
 /// the source video carry the same capture timestamp and group id for the same
 /// presentation time (draft-ietf-moq-cmsf-01 §3.2).
 #[derive(Clone)]
-pub struct SharedTiming {
-    pub loc: Arc<OnceLock<LocMuxer>>,
-    pub alignment: Arc<GroupAlignment>,
+pub(crate) struct SharedTiming {
+    pub(crate) loc: Arc<OnceLock<LocMuxer>>,
+    pub(crate) alignment: Arc<GroupAlignment>,
 }
 
 impl SharedTiming {
