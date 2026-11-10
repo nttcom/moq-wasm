@@ -6,6 +6,10 @@
   within a few frames of each other. Its video and audio could stop with
   `media publishing stopped: group ... precedes the next group ...` while the
   renditions kept flowing.
+- `LivePlayer` logs at debug instead of warning that the catalog codec
+  changed after the decoder started, when it switches to a rendition whose
+  codec string differs only in its level, such as `avc1.64001E` and
+  `avc1.64000B`.
 
 ## 0.5.0
 
