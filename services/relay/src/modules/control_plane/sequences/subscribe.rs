@@ -5,6 +5,7 @@ use crate::modules::directory::track::DownstreamSubscription;
 use crate::modules::{
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
+        sequences::new_group_request::NewGroupRequest,
         upstream_publisher_resolver::UpstreamPublisherResolver,
     },
     data_plane::cache::store::TrackCacheStore,
@@ -142,6 +143,7 @@ impl Subscribe {
                     requester,
                     track_namespace,
                     track_name,
+                    handler.new_group_request(),
                     table,
                     forwarder,
                     upstream_publisher_resolver,
@@ -208,8 +210,9 @@ impl Subscribe {
     }
 
     /// Finds the track or creates it: the first SUBSCRIBE for a track sends
-    /// the upstream SUBSCRIBEs and every SUBSCRIBE for it waits for the first
-    /// producer, or for the creation to fail (draft-14 §8.4).
+    /// the upstream SUBSCRIBEs, with its `new_group_request` (draft-18
+    /// §10.2.13), and every SUBSCRIBE for it waits for the first producer, or
+    /// for the creation to fail (draft-14 §8.4).
     #[allow(clippy::too_many_arguments)]
     #[tracing::instrument(
         level = "debug",
@@ -227,6 +230,7 @@ impl Subscribe {
         requester: SessionPeer,
         track_namespace: &str,
         track_name: &str,
+        new_group_request: Option<u64>,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
@@ -260,10 +264,14 @@ impl Subscribe {
                     }
                     TrackLookup::Started(receiver, reservation) => {
                         let cache_before_subscribe = cached_largest(cache_store, &track_key);
+                        if let Some(new_group_request) = new_group_request {
+                            table.record_new_group_request(&track_key, new_group_request);
+                        }
                         self.create_upstream_subscription(
                             session_id,
                             requester,
                             &track_key,
+                            new_group_request,
                             table,
                             forwarder,
                             upstream_publisher_resolver,
@@ -325,6 +333,7 @@ impl Subscribe {
         session_id: SessionId,
         requester: SessionPeer,
         track_key: &TrackKey,
+        new_group_request: Option<u64>,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
@@ -361,6 +370,7 @@ impl Subscribe {
             track_key,
             session_id,
             publishers,
+            new_group_request,
         );
     }
 
@@ -498,6 +508,18 @@ impl Subscribe {
             track_alias = subscriber_track_alias,
             "SUBSCRIBE accepted"
         );
+        if let Some(new_group_request) = handler.new_group_request() {
+            NewGroupRequest
+                .handle(
+                    session_id,
+                    &track_key,
+                    new_group_request,
+                    table,
+                    cache_store,
+                    forwarder,
+                )
+                .await;
+        }
         Acceptance::Answered
     }
 
@@ -678,6 +700,7 @@ mod tests {
                     SessionPeer::Client,
                     &track_key.track_namespace,
                     &track_key.track_name,
+                    None,
                     &table,
                     &forwarder,
                     &resolver,
@@ -743,6 +766,7 @@ mod tests {
                 SessionPeer::Client,
                 "ns",
                 "track",
+                None,
                 &table,
                 &forwarder,
                 &resolver,
@@ -944,6 +968,7 @@ mod tests {
                 SessionPeer::Client,
                 "ns",
                 "track",
+                None,
                 &table,
                 &forwarder,
                 &Arc::new(local_publisher_resolver()),

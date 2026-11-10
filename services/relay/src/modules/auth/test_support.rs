@@ -96,11 +96,29 @@ pub(crate) async fn spawn_relay(
     token: VerifiedToken,
     route_registry: Arc<dyn RelayRouteRegistry>,
 ) -> RunningRelay {
+    spawn_relay_offering(token, route_registry, moqt::DEFAULT_VERSIONS)
+}
+
+/// A relay that accepts only draft-18 sessions; connect to it with
+/// `connect_draft18_client`.
+pub(crate) fn spawn_draft18_relay(token: VerifiedToken) -> RunningRelay {
+    spawn_relay_offering(
+        token,
+        Arc::new(NoopRelayRouteRegistry),
+        &[moqt::Version::Draft18],
+    )
+}
+
+fn spawn_relay_offering(
+    token: VerifiedToken,
+    route_registry: Arc<dyn RelayRouteRegistry>,
+    versions: &[moqt::Version],
+) -> RunningRelay {
     let OfferingRelay {
         server,
         cert_path,
         cert_dir,
-    } = relay_server_offering(token, route_registry, moqt::DEFAULT_VERSIONS);
+    } = relay_server_offering(token, route_registry, versions);
     let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
     RunningRelay {
         port: handler.local_port,
@@ -159,10 +177,18 @@ pub(crate) fn relay_server_offering(
 }
 
 pub(crate) fn client_endpoint(authorization_token: Option<String>) -> Endpoint<QUIC> {
+    client_endpoint_offering(authorization_token, moqt::DEFAULT_VERSIONS)
+}
+
+fn client_endpoint_offering(
+    authorization_token: Option<String>,
+    versions: &[moqt::Version],
+) -> Endpoint<QUIC> {
     Endpoint::<QUIC>::create_client(&ClientConfig {
         certificate_verification: CertificateVerification::Disabled,
         authorization_token: authorization_token.map(Into::into),
         follow_go_away: false,
+        versions: versions.to_vec(),
         ..ClientConfig::default()
     })
     .unwrap()
@@ -177,7 +203,15 @@ pub(crate) async fn spawn_relay_and_connect_client(
 }
 
 pub(crate) async fn connect_client(relay: &RunningRelay) -> Session {
-    let endpoint = client_endpoint(Some("jwt".to_string()));
+    connect(relay, client_endpoint(Some("jwt".to_string()))).await
+}
+
+pub(crate) async fn connect_draft18_client(relay: &RunningRelay) -> Session {
+    let endpoint = client_endpoint_offering(Some("jwt".to_string()), &[moqt::Version::Draft18]);
+    connect(relay, endpoint).await
+}
+
+async fn connect(relay: &RunningRelay, endpoint: Endpoint<QUIC>) -> Session {
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         endpoint
             .connect(&format!("moqt://127.0.0.1:{}", relay.port))

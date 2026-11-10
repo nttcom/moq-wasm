@@ -27,9 +27,9 @@ use crate::modules::{
             namespace_prefixes_overlap,
         },
     },
-    session::handler::publish::PublishHandler,
+    session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
-use tokio::sync::watch;
+use tokio::{sync::watch, time::Instant};
 
 /// What a SUBSCRIBE finds for its track. Each holds a `TrackReservation`,
 /// so the track wants its producers for the caller already.
@@ -842,6 +842,40 @@ impl InMemoryLocalPubSubDirectory {
             .remove_if_mut(track_key, |_, track| track.pending_producer_ended(failure));
     }
 
+    /// The upstream subscriptions to send `new_group_request` on, for a
+    /// track whose Largest Group is `largest_group`: those of its publishers
+    /// with dynamic groups when its `NewGroupRequestGate` admits the request,
+    /// which is then recorded as sent; none otherwise.
+    pub(crate) fn admit_new_group_request(
+        &self,
+        track_key: &TrackKey,
+        new_group_request: u64,
+        largest_group: Option<u64>,
+    ) -> Vec<(SessionId, UpstreamSubscription)> {
+        let Some(mut track) = self.upstream_tracks.get_mut(track_key) else {
+            return Vec::new();
+        };
+        let subscriptions = track.state().dynamic_group_subscriptions();
+        if subscriptions.is_empty()
+            || !track
+                .new_group_requests
+                .admit(new_group_request, largest_group, Instant::now())
+        {
+            return Vec::new();
+        }
+        subscriptions
+    }
+
+    /// Records the NEW_GROUP_REQUEST the upstream SUBSCRIBEs creating the
+    /// track carry.
+    pub(crate) fn record_new_group_request(&self, track_key: &TrackKey, new_group_request: u64) {
+        if let Some(mut track) = self.upstream_tracks.get_mut(track_key) {
+            track
+                .new_group_requests
+                .record(new_group_request, None, Instant::now());
+        }
+    }
+
     fn with_consumer<T>(
         &self,
         downstream_session_id: SessionId,
@@ -1203,7 +1237,7 @@ mod tests {
     use super::*;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, producer, producer_with,
-        table_with_upstream, track_key,
+        table_with_upstream, track_key, upstream_carrying,
     };
     use crate::modules::test_support::directory_fixtures::{
         client_subscription, delivery_control, downstream_subscription, namespaces_and_tracks,
@@ -1878,6 +1912,28 @@ mod tests {
         // Assert
         assert!(registered);
         assert!(!signals.delivery_control_receiver.borrow().forward);
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_goes_only_to_publishers_with_dynamic_groups() {
+        // Arrange: session 1 publishes without dynamic groups, session 2 with
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let without_dynamic_groups = table.admit_new_group_request(&track_key, 0, None);
+        let mut properties = moqt::TrackProperties::default();
+        properties.set_dynamic_groups(true);
+        table.register_upstream_subscription(
+            track_key.clone(),
+            2,
+            producer_with(upstream_carrying(properties)),
+        );
+
+        // Act
+        let admitted = table.admit_new_group_request(&track_key, 0, None);
+
+        // Assert: draft-18 §10.2.13
+        assert!(without_dynamic_groups.is_empty());
+        let publishers: Vec<SessionId> = admitted.iter().map(|(session, _)| *session).collect();
+        assert_eq!(publishers, [2]);
     }
 
     #[tokio::test]

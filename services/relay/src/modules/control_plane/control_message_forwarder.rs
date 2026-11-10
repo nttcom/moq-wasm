@@ -164,6 +164,7 @@ impl ControlMessageForwarder {
         session_id: SessionId,
         track_namespace: String,
         track_name: String,
+        new_group_request: Option<u64>,
     ) -> anyhow::Result<UpstreamSubscription> {
         let mut subscriber = self.subscriber(session_id).await?;
         let option = SubscribeOption {
@@ -171,10 +172,30 @@ impl ControlMessageForwarder {
             group_order: GroupOrder::Ascending,
             forward: true,
             filter_type: FilterType::LargestObject,
+            new_group_request,
         };
         tracing::debug!("forwarding SUBSCRIBE");
         subscriber
             .send_subscribe(track_namespace, track_name, option)
+            .await
+    }
+
+    #[tracing::instrument(
+        level = "info",
+        name = "relay.control_message_forwarder.new_group_request",
+        skip_all,
+        fields(publisher_session_id = %session_id, request_id = %subscription.request_id())
+    )]
+    pub(crate) async fn new_group_request(
+        &self,
+        session_id: SessionId,
+        subscription: &UpstreamSubscription,
+        new_group_request: u64,
+    ) -> anyhow::Result<bool> {
+        let subscriber = self.subscriber(session_id).await?;
+        tracing::debug!("forwarding NEW_GROUP_REQUEST");
+        subscriber
+            .send_new_group_request(subscription, new_group_request)
             .await
     }
 

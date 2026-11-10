@@ -74,7 +74,7 @@ impl GoAway {
                 publishers = publishers.len(),
                 "subscribing other publishers"
             );
-            subscribe_publishers(&join_deps, &track_key, session_id, publishers);
+            subscribe_publishers(&join_deps, &track_key, session_id, publishers, None);
         }
     }
 }

@@ -21,6 +21,7 @@ use crate::modules::{
         fetch::Fetch,
         go_away::GoAway,
         malformed_track::MalformedTrackCleanup,
+        new_group_request::NewGroupRequest,
         publish::Publish,
         publish_namespace::PublishNamespace,
         publish_namespace_done::PublishNamespaceDone,
@@ -356,7 +357,27 @@ impl SessionWorker {
                     )
                 });
                 match verdict {
-                    UpdateVerdict::Done => {}
+                    UpdateVerdict::Done => {
+                        let requested = handler.new_group_request().zip(
+                            deps.local_pub_sub_directory.get_downstream_subscription(
+                                session_id,
+                                handler.subscription_request_id(),
+                            ),
+                        );
+                        if let Some((new_group_request, subscription)) = requested {
+                            NewGroupRequest
+                                .handle(
+                                    session_id,
+                                    &subscription.track_key,
+                                    new_group_request,
+                                    deps.local_pub_sub_directory.as_ref(),
+                                    &deps.cache_store,
+                                    &deps.control_message_forwarder,
+                                )
+                                .instrument(event_span)
+                                .await;
+                        }
+                    }
                     UpdateVerdict::EndSubscription(end) => {
                         Unsubscribe {}
                             .handle(

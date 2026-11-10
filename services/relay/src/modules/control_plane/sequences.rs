@@ -3,6 +3,7 @@ pub(crate) mod drain_release;
 pub(crate) mod fetch;
 pub(crate) mod go_away;
 pub(crate) mod malformed_track;
+pub(crate) mod new_group_request;
 pub(crate) mod publish;
 pub(crate) mod publish_namespace;
 pub(crate) mod publish_namespace_done;

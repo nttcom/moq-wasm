@@ -18,7 +18,7 @@ optionally cascades across relays via a Redis-backed route registry.
 | Directory | Holds |
 | --- | --- |
 | `session/` | The session as the relay sees it: `Session` / `Publisher` / `Subscriber` traits implemented by `moqt::Session` and by the test mocks, the per-message `handler::*` traits, data stream adapters, `SessionRepository`, `SessionEvent` |
-| `domain/` | Relay vocabulary shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, `DeliveryControl`, `DeliveryStats`, `PublishDoneReason`, the egress runner's `DownstreamRunnerSignals` (error codes are `moqt`'s typed enums) |
+| `domain/` | Relay vocabulary shared by every layer: `TrackKey`, `SessionId`, `SessionPeer`, `DeliveryControl`, `DeliveryStats`, `NewGroupRequestGate`, `PublishDoneReason`, the egress runner's `DownstreamRunnerSignals` (error codes are `moqt`'s typed enums) |
 | `directory/` | The relay's registry: `InMemoryLocalPubSubDirectory` (namespace tables, tracks and the consumer index) and `track.rs` with `Track`, its `Producer`s (each owning the `IngestTask` reading its publisher) and `Consumer`s (each owning the signals its egress runner lives by) |
 | `auth/` | Token verification, claims, per-request authorization, token refresh, session expiry |
 | `control_plane/` | Control-message processing: `SessionWorkers` and the per-session `SessionWorker`, one `sequences/*` struct per message, `ControlMessageForwarder`, `UpstreamPublisherResolver`, the `PendingProducerTask` behind every upstream SUBSCRIBE |
@@ -602,6 +602,43 @@ session worker closes the session for): the UNSUBSCRIBE sequence removes the
 registration, handing its runner PUBLISH_DONE UPDATE_FAILED, which it sends
 once its streams are done, and releases the upstream subscriptions left
 unneeded. The relay itself never branches on the draft.
+
+### NEW_GROUP_REQUEST sequence
+A subscriber asks the Original Publisher for a new group with
+NEW_GROUP_REQUEST (draft-18 §10.2.13), in a SUBSCRIBE or a REQUEST_UPDATE.
+`sequences/new_group_request.rs` passes it upstream:
+
+- The SUBSCRIBE that creates the track: every upstream SUBSCRIBE carries the
+  parameter (`PendingProducerTask`), and the track's `NewGroupRequestGate`
+  records it as sent.
+- A SUBSCRIBE to an established track, after its SUBSCRIBE_OK, and a
+  REQUEST_UPDATE, after the SUBSCRIBE_UPDATE sequence applied it: the relay
+  sends a REQUEST_UPDATE with the same value on the upstream subscription of
+  every publisher whose track properties carry DYNAMIC_GROUPS (§12.6), both
+  those it subscribed to and those that sent PUBLISH.
+
+`domain/new_group_request_gate.rs` decides whether a request goes upstream.
+It is held in the track (`directory::Track`), so it counts the requests of
+all subscribers together. A request is not sent when:
+
+1. no publisher of the track has dynamic groups (§10.2.13);
+2. its value is not 0 and not above the track's Largest Group, resolved like
+   a SUBSCRIBE's: the group it asks for already began (§10.2.13);
+3. the last request sent is still outstanding and is not smaller. It is
+   outstanding until the Largest Group increases (§10.2.13);
+4. the last request was sent less than 2 seconds ago
+   (`NEW_GROUP_REQUEST_INTERVAL`).
+
+Rule 4 is not in the draft, whose §10.2.13 has the relay send every request
+that passes rules 1 to 3. It bounds the keyframes a publisher encodes when
+many subscribers join, and the group the earlier request started is then at
+most 2 seconds long, so the subscriber held back joins it by Joining FETCH
+(`moqt::Subscriber::subscribe_group_start` does so on its own). A relay
+subscribing to another relay sends and gates the request the same way, so
+each relay on the path applies the interval.
+
+The request is not answered to the subscriber beyond the REQUEST_OK of its
+REQUEST_UPDATE; a subscriber cannot tell whether it was passed on.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Joining

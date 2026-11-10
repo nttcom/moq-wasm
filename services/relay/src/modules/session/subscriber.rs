@@ -14,6 +14,14 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         option: moqt::subscribe::SubscribeOption,
     ) -> anyhow::Result<UpstreamSubscription>;
     async fn send_unsubscribe(&self, subscription: &UpstreamSubscription) -> anyhow::Result<()>;
+    /// Sends NEW_GROUP_REQUEST (draft-18 §10.2.13) in a REQUEST_UPDATE of
+    /// `subscription`. Returns false when the publisher's session cannot
+    /// carry it.
+    async fn send_new_group_request(
+        &self,
+        subscription: &UpstreamSubscription,
+        new_group_request: u64,
+    ) -> anyhow::Result<bool>;
     async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
     async fn create_data_receiver(
         &mut self,
@@ -60,6 +68,15 @@ impl Subscriber for moqt::Subscriber {
     )]
     async fn send_unsubscribe(&self, subscription: &UpstreamSubscription) -> anyhow::Result<()> {
         self.unsubscribe(subscription.as_moqt()).await
+    }
+
+    async fn send_new_group_request(
+        &self,
+        subscription: &UpstreamSubscription,
+        new_group_request: u64,
+    ) -> anyhow::Result<bool> {
+        self.request_new_group(subscription.as_moqt(), new_group_request.checked_sub(1))
+            .await
     }
 
     #[tracing::instrument(

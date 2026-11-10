@@ -37,12 +37,15 @@ pub(crate) struct PendingProducerDeps {
 
 /// Sends the track's upstream SUBSCRIBE to every publisher (draft-14 §8.4),
 /// each in its own `PendingProducerTask`, so a relay that cannot be reached
-/// or a session that never answers holds back no other.
+/// or a session that never answers holds back no other. `new_group_request`
+/// is the NEW_GROUP_REQUEST of the SUBSCRIBE that creates the track, which
+/// the upstream SUBSCRIBEs carry too (draft-18 §10.2.13).
 pub(crate) fn subscribe_publishers(
     deps: &PendingProducerDeps,
     track_key: &TrackKey,
     subscriber_session_id: SessionId,
     publishers: Vec<UpstreamPublisher>,
+    new_group_request: Option<u64>,
 ) {
     deps.table
         .add_pending_producers(track_key, publishers.len());
@@ -52,6 +55,7 @@ pub(crate) fn subscribe_publishers(
             track_key.clone(),
             subscriber_session_id,
             publisher,
+            new_group_request,
         );
     }
 }
@@ -86,11 +90,18 @@ impl PendingProducerTask {
         track_key: TrackKey,
         subscriber_session_id: SessionId,
         publisher: UpstreamPublisher,
+        new_group_request: Option<u64>,
     ) -> Self {
         let join_handle = tokio::spawn(
             async move {
-                let failure =
-                    Self::answer(&deps, &track_key, subscriber_session_id, &publisher).await;
+                let failure = Self::answer(
+                    &deps,
+                    &track_key,
+                    subscriber_session_id,
+                    &publisher,
+                    new_group_request,
+                )
+                .await;
                 let malformed = failure
                     .as_ref()
                     .is_some_and(|failure| failure.code == RequestErrorCode::MalformedTrack);
@@ -115,6 +126,7 @@ impl PendingProducerTask {
         track_key: &TrackKey,
         subscriber_session_id: SessionId,
         publisher: &UpstreamPublisher,
+        new_group_request: Option<u64>,
     ) -> Option<CreationFailure> {
         let Some(publisher_session_id) = deps.resolver.session_of(publisher).await else {
             return Some(CreationFailure {
@@ -129,6 +141,7 @@ impl PendingProducerTask {
                 publisher_session_id,
                 track_key.track_namespace.clone(),
                 track_key.track_name.clone(),
+                new_group_request,
             )
             .await
         {
@@ -338,6 +351,7 @@ mod tests {
             track_key(),
             SUBSCRIBER_SESSION,
             UpstreamPublisher::Session(publisher_session_id),
+            None,
         );
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
             .await
@@ -507,6 +521,7 @@ mod tests {
             track_key(),
             SUBSCRIBER_SESSION,
             UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
+            None,
         );
         tokio::time::timeout(Duration::from_secs(1), task._join_handle)
             .await

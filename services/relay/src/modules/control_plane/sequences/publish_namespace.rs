@@ -158,6 +158,7 @@ impl PublishNamespace {
                 &track_key,
                 announcing_session_id,
                 publishers.clone(),
+                None,
             );
         }
     }
