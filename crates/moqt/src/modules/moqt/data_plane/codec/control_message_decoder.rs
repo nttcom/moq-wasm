@@ -236,6 +236,7 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: None,
             trace_context: None,
+            new_group_request: None,
         }
     }
 
@@ -252,6 +253,7 @@ mod tests {
             forward: true,
             authorization_tokens: vec![],
             delivery_timeout: None,
+            new_group_request: None,
         }
     }
 

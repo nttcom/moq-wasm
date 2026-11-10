@@ -760,6 +760,14 @@ impl Subscriber for MockUpstreamSubscriber {
         Ok(())
     }
 
+    async fn send_new_group_request(
+        &self,
+        _subscription: &UpstreamSubscription,
+        _new_group_request: u64,
+    ) -> anyhow::Result<bool> {
+        Ok(true)
+    }
+
     async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
         unimplemented!("not used by MockUpstreamSession tests")
     }
@@ -965,6 +973,10 @@ impl SubscribeHandler for MockSubscribeHandler {
 
     fn _filter_type(&self) -> FilterType {
         FilterType::LargestObject
+    }
+
+    fn new_group_request(&self) -> Option<u64> {
+        None
     }
 
     fn allocate_track_alias(&self) -> u64 {
@@ -1181,6 +1193,10 @@ impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
 
     fn filter(&self) -> Option<FilterType> {
         self.filter
+    }
+
+    fn new_group_request(&self) -> Option<u64> {
+        None
     }
 
     fn may_widen(&self) -> bool {

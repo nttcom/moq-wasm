@@ -24,6 +24,10 @@ pub struct Subscribe {
     pub filter_type: FilterType,
     pub authorization_tokens: Vec<AuthorizationToken>,
     pub delivery_timeout: Option<u64>,
+    /// NEW_GROUP_REQUEST (draft-18 §10.2.13): the largest Group ID the
+    /// subscriber knows plus 1, 0 when it knows none. Draft-14 has no such
+    /// parameter and sends none.
+    pub new_group_request: Option<u64>,
     pub trace_context: Option<TraceContext>,
 }
 
@@ -55,6 +59,7 @@ impl Subscribe {
             filter_type,
             authorization_tokens,
             delivery_timeout,
+            new_group_request: None,
             trace_context,
         })
     }
@@ -122,6 +127,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
 
             let buf = subscribe.encode();
@@ -171,6 +177,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
 
             let buf = subscribe.encode();
@@ -223,6 +230,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
 
             let buf = subscribe.encode();
@@ -290,6 +298,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
 
             assert_eq!(depacketized_subscribe, expected_subscribe);
@@ -343,6 +352,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
 
             assert_eq!(depacketized_subscribe, expected_subscribe);
@@ -405,6 +415,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
             assert_eq!(depacketized_subscribe, expected_subscribe);
         }
@@ -425,6 +436,7 @@ mod tests {
                 }],
                 delivery_timeout: None,
                 trace_context: None,
+                new_group_request: None,
             };
 
             let buf = subscribe.encode();
@@ -448,6 +460,7 @@ mod tests {
                 authorization_tokens: vec![],
                 delivery_timeout: None,
                 trace_context: TraceContext::parse(TEST_TRACEPARENT.as_bytes()),
+                new_group_request: None,
             };
 
             // Act

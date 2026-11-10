@@ -1,10 +1,12 @@
+use std::time::Duration;
+
 use bytes::Bytes;
 use futures::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::mpsc;
 
 use crate::{
-    Subscriber, Subscription,
-    fetch::{Fetch, FetchOption},
+    RequestFailure, Subscriber, Subscription,
+    fetch::{Fetch, FetchHandle, FetchOption},
     modules::{
         executor::{self, JoinHandle, MaybeSend},
         moqt::domains::subscriber::{SentFetch, joining_remainder},
@@ -18,6 +20,11 @@ use crate::{
 /// Bounds how far a reader task runs ahead of `next_object()`; a full channel
 /// stops reading that QUIC stream so flow control reaches the publisher.
 const OBJECT_CHANNEL_CAPACITY: usize = 64;
+
+/// How long a reader that asked for a new group waits for it before it
+/// fetches the current group instead: a relay does not pass on a request that
+/// follows another closely, and a publisher may have no frame to encode.
+const NEW_GROUP_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
 pub struct TrackObject {
@@ -87,17 +94,82 @@ impl TrackReader {
         let fetch_sender = object_sender.clone();
         let receiver = async move {
             let mut subscriber = subscriber;
-            if let Err(error) =
-                send_current_group(&mut subscriber, &subscription, joining_fetch, fetch_sender)
-                    .await
-            {
-                tracing::debug!(%error, "joining FETCH of the current group failed");
+            if let Some(sent) = joining_fetch {
+                let option = FetchOption::default();
+                let remainder = joining_remainder(&subscription, 0, &option);
+                let fetch = subscriber.fetch_answered(sent, &option, remainder).await;
+                send_fetched_group(&mut subscriber, fetch, fetch_sender).await;
             }
             subscriber.accept_data_receiver(&subscription).await
         };
         Self {
             object_receiver,
             _track_read_task: TrackReadTask::run(receiver, object_sender),
+        }
+    }
+
+    /// For a subscription that asked for a new group (draft-18 §10.2.13)
+    /// while `largest_group` was the track's largest: yields the track from
+    /// the first group after it. The rest of `largest_group` cannot be decoded
+    /// without its start, so it is held back, and yielded behind a Joining
+    /// FETCH of that group when no newer group arrives within
+    /// `NEW_GROUP_WAIT`.
+    pub(crate) fn awaiting_new_group(
+        subscriber: Subscriber,
+        subscription: Subscription,
+        largest_group: u64,
+    ) -> Self {
+        let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        let mut live = Self::of(
+            Subscriber {
+                session: subscriber.session.clone(),
+            },
+            subscription.clone(),
+        );
+        let join_handle = executor::spawn("Track Reader (new group)", async move {
+            let mut subscriber = subscriber;
+            let mut held = Vec::new();
+            let mut waiting = true;
+            let wait = executor::sleep(NEW_GROUP_WAIT);
+            tokio::pin!(wait);
+            loop {
+                let object = tokio::select! {
+                    object = live.next_object() => match object {
+                        Ok(Some(object)) if waiting && object.group_id <= largest_group => {
+                            held.push(object);
+                            continue;
+                        }
+                        Ok(Some(object)) => {
+                            waiting = false;
+                            Ok(object)
+                        }
+                        Ok(None) => return,
+                        Err(error) => Err(error),
+                    },
+                    () = &mut wait, if waiting => {
+                        waiting = false;
+                        tracing::debug!(largest_group, "no new group arrived; fetching the current group");
+                        let fetch = subscriber
+                            .fetch_relative_joining(&subscription, 0, FetchOption::default())
+                            .await;
+                        send_fetched_group(&mut subscriber, fetch, object_sender.clone()).await;
+                        for object in std::mem::take(&mut held) {
+                            if object_sender.send(Ok(object)).await.is_err() {
+                                return;
+                            }
+                        }
+                        continue;
+                    }
+                };
+                let failed = object.is_err();
+                if object_sender.send(object).await.is_err() || failed {
+                    return;
+                }
+            }
+        });
+        Self {
+            object_receiver,
+            _track_read_task: TrackReadTask { join_handle },
         }
     }
 
@@ -110,35 +182,34 @@ impl TrackReader {
     }
 }
 
-/// For a track without content the peer refuses the FETCH with INVALID_RANGE
-/// (draft-14 §9.16.2), which leaves the reader with the live objects only.
-async fn send_current_group(
+/// Sends the objects of the answered Joining FETCH `fetch` to `object_sender`. For a track
+/// without content the peer refuses the FETCH with INVALID_RANGE (draft-14
+/// §9.16.2), which leaves the reader with the live objects only.
+async fn send_fetched_group(
     subscriber: &mut Subscriber,
-    subscription: &Subscription,
-    joining_fetch: Option<SentFetch>,
+    fetch: Result<FetchHandle, RequestFailure>,
     object_sender: mpsc::Sender<anyhow::Result<TrackObject>>,
-) -> anyhow::Result<()> {
-    let Some(sent) = joining_fetch else {
-        return Ok(());
-    };
-    let option = FetchOption::default();
-    let remainder = joining_remainder(subscription, 0, &option);
-    let handle = subscriber.fetch_answered(sent, &option, remainder).await?;
-    let mut receiver = subscriber.accept_fetch_receiver(&handle).await?;
-    loop {
-        match receiver.receive().await? {
-            Fetch::Object(object) => {
-                if let Some(object) = TrackObject::from_object(object)
-                    && object_sender.send(Ok(object)).await.is_err()
-                {
-                    break;
+) {
+    let sent = async {
+        let mut receiver = subscriber.accept_fetch_receiver(&fetch?).await?;
+        loop {
+            match receiver.receive().await? {
+                Fetch::Object(object) => {
+                    if let Some(object) = TrackObject::from_object(object)
+                        && object_sender.send(Ok(object)).await.is_err()
+                    {
+                        break;
+                    }
                 }
+                Fetch::UnknownRange { .. } => {}
+                Fetch::End => break,
             }
-            Fetch::UnknownRange { .. } => {}
-            Fetch::End => break,
         }
+        anyhow::Ok(())
+    };
+    if let Err(error) = sent.await {
+        tracing::debug!(%error, "joining FETCH of the current group failed");
     }
-    Ok(())
 }
 
 struct TrackReadTask {

@@ -330,8 +330,11 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
   The media timeline keeps arriving and places them; for a rendition the
   timeline does not cover they are estimated from the arrival lag of the last
   live object and drift ahead while the main thread is busy.
-  `LIVE` restores Forward 1; the relay resumes from the next group it opens,
-  so the live picture takes up to one GOP to move. `stop` during a review
+  `LIVE` restores Forward 1; the relay resumes from the next group it opens.
+  The player asks the publisher for a new group (NEW_GROUP_REQUEST) right
+  after, so the live picture moves with that group; when the relay holds
+  the request back or the track has no dynamic groups, it takes up to one
+  GOP. `stop` during a review
   unsubscribes instead, with no SUBSCRIBE_UPDATE. Against a relay that does
   not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
 
@@ -695,7 +698,8 @@ frame, which the player does not know without decoding it.
 ### Instant live return
 
 `goLive` after a review resumes the live subscriptions and the picture moves
-with the next group the relay forwards, up to one GOP later. A page that
+with the next group the relay forwards: the one the player's
+NEW_GROUP_REQUEST starts, or up to one GOP later without it. A page that
 wants the live picture back at once opts into `keepLiveWhileReviewing`: the
 live subscriptions keep forwarding during the review and the live pipeline
 keeps decoding and presenting behind the review picture, muted, so `goLive`

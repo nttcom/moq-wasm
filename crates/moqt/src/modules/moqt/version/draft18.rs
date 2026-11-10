@@ -718,19 +718,44 @@ impl ControlChannel {
         update: SubscribeUpdate,
     ) -> Result<(), TransportSendError> {
         debug_assert_eq!(update.request_id, reservation.request_id());
+        let message =
+            messages::encode_request_update(update.request_id, &update).map_err(encode_error)?;
+        self.send_request_update(reservation, update.subscription_request_id, message)
+            .await
+    }
+
+    pub(super) async fn send_new_group_request(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscription_request_id: RequestId,
+        new_group_request: u64,
+    ) -> Result<(), TransportSendError> {
+        let message =
+            messages::encode_new_group_request(reservation.request_id(), new_group_request)
+                .map_err(encode_error)?;
+        self.send_request_update(reservation, subscription_request_id, message)
+            .await
+    }
+
+    /// The stream is the one this endpoint opened for its SUBSCRIBE or the
+    /// one the peer opened for its PUBLISH.
+    async fn send_request_update(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscription_request_id: RequestId,
+        message: BytesMut,
+    ) -> Result<(), TransportSendError> {
         let stream = {
             let requests = self.requests();
             requests
                 .outgoing
-                .get(&update.subscription_request_id)
-                .or_else(|| requests.incoming.get(&update.subscription_request_id))
+                .get(&subscription_request_id)
+                .or_else(|| requests.incoming.get(&subscription_request_id))
                 .cloned()
         };
         let Some(stream) = stream else {
             return Err(TransportSendError::ClosedStream);
         };
-        let message =
-            messages::encode_request_update(update.request_id, &update).map_err(encode_error)?;
         stream.sender.send(&message).await?;
         let RequestIdReservation(mut next_request_id) = reservation;
         *next_request_id += 2;
@@ -2105,6 +2130,7 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: None,
             trace_context: None,
+            new_group_request: None,
         })
         .unwrap();
 
@@ -3274,6 +3300,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_new_group_request_belongs_to_the_update_that_carries_it() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-new-group", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+        let connection = client.publisher().session.connection();
+        let asking = request_update(
+            connection.control.take_request_id().await,
+            &[parameters::Parameter::NewGroupRequest(4)],
+        );
+        let pausing = request_update(
+            connection.control.take_request_id().await,
+            &[parameters::Parameter::Forward(false)],
+        );
+
+        // Act
+        stream.sender.send(&asking).await.unwrap();
+        let asked = next_event(&server).await;
+        stream.sender.send(&pausing).await.unwrap();
+        let paused = next_event(&server).await;
+
+        // Assert: §10.2.13 the request is not state a later update repeats
+        let (SessionEvent::SubscribeUpdate(asked), SessionEvent::SubscribeUpdate(paused)) =
+            (asked, paused)
+        else {
+            panic!("expected two SUBSCRIBE_UPDATEs");
+        };
+        assert_eq!(asked.new_group_request(), Some(4));
+        assert!(asked.forward());
+        assert_eq!(paused.new_group_request(), None);
+    }
+
+    #[tokio::test]
     async fn a_request_update_hands_over_the_filter_it_carries() {
         // Arrange
         let (client, server) =
@@ -3325,6 +3385,7 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: None,
             trace_context: None,
+            new_group_request: None,
         })
         .unwrap();
         sender.send(&subscribe).await.unwrap();
@@ -3599,6 +3660,7 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: None,
             trace_context: None,
+            new_group_request: None,
         })
         .unwrap();
         sender.send(&track_status).await.unwrap();

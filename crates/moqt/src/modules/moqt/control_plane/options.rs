@@ -61,6 +61,11 @@ pub struct SubscribeOption {
     pub group_order: GroupOrder,
     pub forward: bool,
     pub filter_type: FilterType,
+    /// Sent as NEW_GROUP_REQUEST (draft-18 §10.2.13) to ask the Original
+    /// Publisher for a new group: the largest Group ID the subscriber knows
+    /// plus 1, or 0 when it knows none. A track without dynamic groups
+    /// ignores it. Draft-14 has no such parameter and sends none.
+    pub new_group_request: Option<u64>,
 }
 
 impl Default for SubscribeOption {
@@ -70,6 +75,7 @@ impl Default for SubscribeOption {
             group_order: GroupOrder::Ascending,
             forward: true,
             filter_type: FilterType::LargestObject,
+            new_group_request: None,
         }
     }
 }

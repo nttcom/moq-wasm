@@ -4,7 +4,6 @@ import { type CameraId, type VideoSource } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
-const KEYFRAME_INTERVAL_FRAMES = 30 // 30fps × 1s = 1 GoP per second
 const VIDEO_CONFIG = {
   codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
   width: 1280,
@@ -52,7 +51,6 @@ export class CameraPublisher {
     await this.broadcast.addSource('camera', {
       label: this.camId,
       video: this.stream.getVideoTracks()[0],
-      keyframeIntervalFrames: KEYFRAME_INTERVAL_FRAMES,
       videoEncoderConfig: encoderConfig
     })
     log('publishing', { camId: this.camId, source: this.source.type, namespace })

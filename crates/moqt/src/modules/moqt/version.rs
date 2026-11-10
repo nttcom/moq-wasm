@@ -914,6 +914,26 @@ impl ControlChannel {
         }
     }
 
+    /// Sends a draft-18 REQUEST_UPDATE that asks for a new group (§10.2.13)
+    /// and returns true. Draft-14 has no NEW_GROUP_REQUEST: nothing is sent
+    /// and this returns false.
+    pub(crate) async fn send_new_group_request(
+        &self,
+        reservation: RequestIdReservation<'_>,
+        subscription_request_id: u64,
+        new_group_request: u64,
+    ) -> Result<bool, TransportSendError> {
+        match self {
+            Self::Draft14(_) => Ok(false),
+            Self::Draft18(channel) => {
+                channel
+                    .send_new_group_request(reservation, subscription_request_id, new_group_request)
+                    .await?;
+                Ok(true)
+            }
+        }
+    }
+
     pub(crate) async fn respond(
         &self,
         response: OutgoingResponse,

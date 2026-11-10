@@ -59,6 +59,8 @@ async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<Tra
         })?;
     let option = SubscribeOption {
         filter_type: FilterType::NextGroupStart,
+        // A track with long groups starts one when asked (draft-18 §5.1.3.1).
+        new_group_request: Some(0),
         ..SubscribeOption::default()
     };
     let media_subscription = subscriber

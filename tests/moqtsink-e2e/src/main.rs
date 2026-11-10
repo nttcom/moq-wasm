@@ -91,6 +91,7 @@ async fn subscribe(subscriber: &mut Subscriber, track: &str) -> Result<Subscript
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await

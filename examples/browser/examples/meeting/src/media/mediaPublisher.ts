@@ -2,12 +2,7 @@ import type { MoqSession } from 'moq-wasm'
 import { type LocalBroadcast, type LocalSource, createBroadcast } from 'moq-wasm/media'
 import type { AudioCaptureConstraints, CameraCaptureConstraints } from '../types/captureConstraints'
 import { DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
-import {
-  CAMERA_KEYFRAME_INTERVAL,
-  CAMERA_RENDITIONS,
-  INITIAL_CAMERA_ENCODING_SETTINGS,
-  SCREEN_SHARE_RENDITIONS
-} from './meetingCatalog'
+import { CAMERA_RENDITIONS, INITIAL_CAMERA_ENCODING_SETTINGS, SCREEN_SHARE_RENDITIONS } from './meetingCatalog'
 import { SCREEN_SHARE_SOURCE } from '../utils/catalogTrackName'
 import { captureWithRetry } from './captureRetry'
 
@@ -61,8 +56,7 @@ export class MediaPublisher {
     this.camera = await this.broadcast.addSource('camera', {
       label: 'Camera',
       videoEncoderConfig: this.videoEncodingSettings,
-      renditions: CAMERA_RENDITIONS,
-      keyframeIntervalFrames: CAMERA_KEYFRAME_INTERVAL
+      renditions: CAMERA_RENDITIONS
     })
   }
 
@@ -129,8 +123,7 @@ export class MediaPublisher {
       label: 'Screen',
       stream,
       videoEncoderConfig: this.screenShareEncodingSettings,
-      renditions: SCREEN_SHARE_RENDITIONS,
-      keyframeIntervalFrames: CAMERA_KEYFRAME_INTERVAL
+      renditions: SCREEN_SHARE_RENDITIONS
     })
   }
 

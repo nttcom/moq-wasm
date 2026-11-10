@@ -46,6 +46,7 @@ Rust の列は `moqt` の今の API で同じことをする方法である。
 | `MoqSession.connect(url, { token })` | `moqt.connect(url, verify_certificate=)`。**トークンが無い** | `Endpoint::create_client(&ClientConfig { authorization_token, .. })` → `connect(url).await?.await?`。イベントループは自分で書く |
 | `subscribe(ns, track, { filter, forward, priority })` | `subscribe(ns, name)`。**filter、forward、priority が無い** | `Subscriber::subscribe(ns, name, SubscribeOption)` → `accept_data_receiver` → `TrackReader::new` |
 | `subscribeCurrentGroup(ns, track)` | `subscribe(ns, name, current_group=True)` | `Subscriber::subscribe_current_group` が `(Subscription, TrackReader)` を返す |
+| `subscribeGroupStart(ns, track, newGroupAfter)`、`MoqSubscription.requestNewGroup(largestGroup)` | **無い** | `Subscriber::subscribe_group_start`、`Subscriber::request_new_group` |
 | `fetch(ns, track, start, end)` → `MoqFetch` | **無い** | `Subscriber::fetch` → `accept_fetch_receiver` |
 | `trackStatus(ns, track)` → `MoqLocation \| undefined` | **無い** | `Subscriber::track_status` の `content_exists` |
 | `watchNamespaces(prefix)` → `MoqNamespaceWatch` | `subscribe_namespace(prefix)` → `NamespaceEvents`。**止める手段が無い** | `NamespaceWatchers::watch` → `Subscriber::subscribe_namespace`。`unsubscribe_namespace` で止める。振り分けは自分で書く |

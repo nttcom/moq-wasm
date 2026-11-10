@@ -912,14 +912,14 @@ export class LivePlayer {
     }
 
     const { name, track } = played
-    const currentGroup = kind === 'video'
+    const groupStart = kind === 'video'
     if (this.packaging === 'cmaf') {
       await this.subscriptions.subscribe(
         kind,
         name,
         track,
         (groupId, object) => this.handleCmafObject(kind, name, groupId, object),
-        currentGroup
+        groupStart
       )
       return
     }
@@ -929,7 +929,7 @@ export class LivePlayer {
       name,
       track,
       (groupId, object, cached) => this.handleLocObject(kind, track.name, groupId, object, cached),
-      currentGroup
+      groupStart
     )
   }
 
@@ -980,6 +980,9 @@ export class LivePlayer {
       return true
     }
     pending.next = next
+    // The splice waits for a group start: renditions keyframe on the same
+    // frames, so the new group begins on the outgoing rendition too.
+    void this.subscriptions.requestNewGroup(next, next.handle.largest?.groupId)
     return true
   }
 

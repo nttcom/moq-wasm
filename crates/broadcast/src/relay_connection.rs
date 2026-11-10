@@ -16,7 +16,7 @@ use moqt::{
     subscribe::SubscribeHandler,
 };
 use msf::CATALOG_TRACK_NAME;
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, Notify, watch};
 
 use crate::{
     broadcast::{CatalogMetadata, awaits_subscribe, build_catalog},
@@ -406,6 +406,19 @@ impl ConnectedRelay {
             }
             WriteOutcome::NotSent => Ok(false),
         }
+    }
+
+    pub(crate) async fn accept_new_group_requests(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        requested: Arc<Notify>,
+    ) -> Result<()> {
+        let key = (namespace.join("/"), track_name.to_string());
+        ensure_origin_track(&self.origin, &key).await;
+        self.origin
+            .accept_new_group_requests(&key.0, &key.1, requested)
+            .await
     }
 
     /// Returns `handler` for a namespace no broadcast here publishes and for a

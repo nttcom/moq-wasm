@@ -14,7 +14,7 @@ function recordingHandler(): { handler: ObjectHandler; received: [bigint, bigint
   }
 }
 
-test('a subscription from the current group marks the objects up to the largest one as cached', async () => {
+test('a subscription from a group start marks the objects up to the largest one as cached', async () => {
   // Arrange
   const session = new FakeSession({ groupId: 3n, objectId: 1n }, [
     receivedObject(3n, 0n),
@@ -30,13 +30,58 @@ test('a subscription from the current group marks the objects up to the largest 
   await session.drained
 
   // Assert
-  expect(session.calls.map((call) => call.method)).toEqual(['subscribeCurrentGroup'])
+  expect(session.calls).toEqual([{ method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60 }])
   expect(received).toEqual([
     [3n, 0n, true],
     [3n, 1n, true],
     [3n, 2n, false],
     [4n, 0n, false]
   ])
+})
+
+test('resuming forwarding asks the video for a new group, after its Forward update', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
+  subscriptions.pauseForward()
+
+  // Act
+  subscriptions.resumeForward()
+  await expect.poll(() => session.updates.at(-1)).toBe('setForward audio true')
+
+  // Assert: delivery resumes at a group start, which audio reaches within a frame
+  expect(session.updates).toEqual([
+    'setForward video false',
+    'setForward audio false',
+    'setForward video true',
+    'requestNewGroup video undefined',
+    'setForward audio true'
+  ])
+})
+
+test('a request for a new group is repeated while no group starts, and not once one has', async () => {
+  // Arrange: `waiting` receives nothing, `started` the first object of a group
+  const idle = new FakeSession(undefined, [])
+  const live = new FakeSession(undefined, [receivedObject(4n, 0n)])
+  const waiting = await new TrackSubscriptions(idle.context(), () => {}).open('video', 'video', VIDEO, () => {})
+  const started = await new TrackSubscriptions(live.context(), () => {}).open('video', 'video', VIDEO, () => {})
+  await live.drained
+  const startedSubscriptions = new TrackSubscriptions(live.context(), () => {})
+
+  // Act
+  const again = new TrackSubscriptions(idle.context(), () => {}).requestNewGroup(waiting, 3n)
+  started.groupStarts = 0
+  const once = startedSubscriptions.requestNewGroup(started, 3n)
+  started.groupStarts = 1
+  await expect.poll(() => idle.updates.length, { timeout: 5_000 }).toBe(2)
+  waiting.forgotten = true
+  await Promise.all([again, once])
+
+  // Assert: the relay may have held the first request back
+  expect(idle.updates).toEqual(['requestNewGroup video 3', 'requestNewGroup video undefined'])
+  expect(live.updates).toEqual(['requestNewGroup video 3'])
 })
 
 test('a rendition switch subscribes without a joining FETCH', async () => {
@@ -59,7 +104,7 @@ test('a rendition switch subscribes without a joining FETCH', async () => {
   ])
 })
 
-test('a subscription from the current group waits for the next group while forwarding is paused', async () => {
+test('a subscription from a group start waits for the next group while forwarding is paused', async () => {
   // Arrange
   const session = new FakeSession(undefined, [])
   const subscriptions = new TrackSubscriptions(session.context(), () => {})

@@ -16,6 +16,7 @@ use crate::modules::{
     domain::{
         delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
+        new_group_request_gate::NewGroupRequestGate,
         publish_done_reason::PublishDoneReason,
         runner_signals::DownstreamRunnerSignals,
         session_id::SessionId,
@@ -175,6 +176,7 @@ pub(crate) struct Track {
     reservations: Reservations,
     /// Sessions a forwarded PUBLISH is on its way to.
     pending_consumers: HashSet<SessionId>,
+    pub(crate) new_group_requests: NewGroupRequestGate,
 }
 
 impl Track {
@@ -187,6 +189,7 @@ impl Track {
             last_failure: None,
             reservations: Reservations::default(),
             pending_consumers: HashSet::new(),
+            new_group_requests: NewGroupRequestGate::default(),
         }
     }
 
@@ -334,6 +337,22 @@ impl TrackState {
             .values()
             .next_back()
             .and_then(|producer| producer.expires)
+    }
+
+    /// The upstream subscriptions of the publishers whose track has dynamic
+    /// groups (draft-18 §12.6): the ones a NEW_GROUP_REQUEST may go to.
+    pub(crate) fn dynamic_group_subscriptions(&self) -> Vec<(SessionId, UpstreamSubscription)> {
+        self.producers
+            .iter()
+            .filter(|(_, producer)| {
+                producer
+                    .subscription
+                    .as_moqt()
+                    .track_properties()
+                    .dynamic_groups()
+            })
+            .map(|(session_id, producer)| (*session_id, producer.subscription.clone()))
+            .collect()
     }
 
     /// The newest publisher's track properties, which the relay passes

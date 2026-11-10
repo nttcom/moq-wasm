@@ -13,16 +13,18 @@ import { UNOBSERVED_DELIVERIES } from '../deliveryObserver'
 import type { TrackContext } from '../trackContext'
 
 export type SubscribeCall = {
-  method: 'subscribe' | 'subscribeCurrentGroup'
+  method: 'subscribe' | 'subscribeCurrentGroup' | 'subscribeGroupStart'
   track: string
   options?: MoqSubscribeOptions
+  newGroupAfter?: number
 }
 
 /// Every SUBSCRIBE answers with `largest` and delivers `objects`; a FETCH
 /// delivers the objects `fetchable` lists for its track in its group range.
 /// `drained` resolves once a reader has taken them all. `updates` records each
 /// UNSUBSCRIBE and SUBSCRIBE_UPDATE sent on a subscription, such as
-/// `close video` or `setForward audio true`; `failedClose` makes each
+/// `close video`, `setForward audio true` or `requestNewGroup video 7`;
+/// `failedClose` makes each
 /// UNSUBSCRIBE fail. `publishDone` ends the newest subscription to a track
 /// with PUBLISH_DONE.
 export class FakeSession {
@@ -58,6 +60,11 @@ export class FakeSession {
 
   async subscribeCurrentGroup(_namespace: string[], track: string): Promise<MoqSubscription> {
     this.calls.push({ method: 'subscribeCurrentGroup', track })
+    return this.subscription(track)
+  }
+
+  async subscribeGroupStart(_namespace: string[], track: string, newGroupAfter: number): Promise<MoqSubscription> {
+    this.calls.push({ method: 'subscribeGroupStart', track, newGroupAfter })
     return this.subscription(track)
   }
 
@@ -110,6 +117,10 @@ export class FakeSession {
       },
       setForward: async (forward: boolean) => {
         this.updates.push(`setForward ${track} ${forward}`)
+      },
+      requestNewGroup: async (largestGroup?: bigint) => {
+        this.updates.push(`requestNewGroup ${track} ${largestGroup}`)
+        return true
       }
     } as unknown as MoqSubscription
   }

@@ -290,7 +290,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::SubscribeUpdate(subscribe_update) => {
                 let subscribe_update_handler =
-                    SubscribeUpdateHandler::new(connection, subscribe_update);
+                    SubscribeUpdateHandler::new(session.clone(), connection, subscribe_update);
                 DepacketizeResult::SessionEvent(SessionEvent::SubscribeUpdate(
                     subscribe_update_handler,
                 ))

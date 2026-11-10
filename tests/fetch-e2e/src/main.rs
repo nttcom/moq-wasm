@@ -300,6 +300,7 @@ async fn carol(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -380,6 +381,7 @@ async fn bob(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -620,6 +622,7 @@ async fn run_cross_relay_standalone_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -705,6 +708,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -726,6 +730,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -782,6 +787,7 @@ async fn run_cross_relay_leading_gap_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -800,6 +806,7 @@ async fn run_cross_relay_leading_gap_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -942,6 +949,7 @@ async fn run_upstream_fetch_forwarding_data_not_found(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -989,6 +997,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -1010,6 +1019,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -1041,6 +1051,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -1137,6 +1148,7 @@ async fn run_cross_relay_live_joining_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;
@@ -1156,6 +1168,7 @@ async fn run_cross_relay_live_joining_fetch(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;

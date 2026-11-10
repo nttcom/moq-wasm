@@ -203,13 +203,11 @@ pub(crate) async fn record_broadcast(
         );
     }
 
-    let filter_type = if options.from_cache {
-        FilterType::LargestObject
-    } else {
-        FilterType::NextGroupStart
-    };
     let video = match &selection.video {
-        Some(video) => Some(relay::subscribe(session, namespace, &video.name, filter_type).await?),
+        Some(video) if options.from_cache => Some(
+            relay::subscribe(session, namespace, &video.name, FilterType::LargestObject).await?,
+        ),
+        Some(video) => Some(relay::subscribe_group_start(session, namespace, &video.name).await?),
         None => None,
     };
     let audio = match &selection.audio {
@@ -464,8 +462,7 @@ async fn add_listed_video(
     let Some(video) = select_video(catalog, choice(options))? else {
         return Ok(None);
     };
-    let track =
-        relay::subscribe(session, namespace, &video.name, FilterType::NextGroupStart).await?;
+    let track = relay::subscribe_group_start(session, namespace, &video.name).await?;
     recording.add_video(&video).await?;
     tracing::info!(video = %video.name, "catalog lists the video track now; recording it");
     Ok(Some(track))

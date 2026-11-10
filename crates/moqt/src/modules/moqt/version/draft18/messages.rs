@@ -37,7 +37,7 @@ use crate::modules::moqt::control_plane::{
             trace_context::TraceContext,
             track_properties::{
                 DEFAULT_PUBLISHER_GROUP_ORDER, DEFAULT_PUBLISHER_PRIORITY as PRIORITY_PROPERTY,
-                IMMUTABLE_PROPERTIES, TrackProperties,
+                DYNAMIC_GROUPS, IMMUTABLE_PROPERTIES, TrackProperties,
             },
         },
         publish::Publish,
@@ -553,6 +553,7 @@ fn decode_subscribe(buf: &mut Bytes, allowed: &[u64]) -> Result<Subscribe, Decod
         filter_type: UNFILTERED,
         authorization_tokens: vec![],
         delivery_timeout: None,
+        new_group_request: None,
         trace_context: None,
     };
     for parameter in get_parameters(buf, allowed)? {
@@ -563,6 +564,7 @@ fn decode_subscribe(buf: &mut Bytes, allowed: &[u64]) -> Result<Subscribe, Decod
             Parameter::SubscriptionFilter(filter) => subscribe.filter_type = filter,
             Parameter::AuthorizationToken(token) => subscribe.authorization_tokens.push(token),
             Parameter::ObjectDeliveryTimeout(timeout) => subscribe.delivery_timeout = Some(timeout),
+            Parameter::NewGroupRequest(group) => subscribe.new_group_request = Some(group),
             Parameter::TraceContext(trace_context) => subscribe.trace_context = trace_context,
             _ => {}
         }
@@ -581,6 +583,9 @@ fn subscribe_parameters(subscribe: &Subscribe) -> Vec<Parameter> {
     }
     if let Some(timeout) = subscribe.delivery_timeout {
         parameters.push(Parameter::ObjectDeliveryTimeout(timeout));
+    }
+    if let Some(group) = subscribe.new_group_request {
+        parameters.push(Parameter::NewGroupRequest(group));
     }
     parameters.extend(token_parameters(&subscribe.authorization_tokens));
     parameters.extend(trace_context_parameter(&subscribe.trace_context));
@@ -623,9 +628,9 @@ pub(crate) fn encode_track_status(track_status: &Subscribe) -> anyhow::Result<By
 }
 
 /// The Track Properties ending a message (§2.5). Priorities above 255
-/// (§12.4) and group orders other than Ascending or Descending (§12.5), in
-/// the mutable list or inside Immutable Properties, close the session with
-/// PROTOCOL_VIOLATION.
+/// (§12.4), group orders other than Ascending or Descending (§12.5) and
+/// DYNAMIC_GROUPS above 1 (§12.6), in the mutable list or inside Immutable
+/// Properties, close the session with PROTOCOL_VIOLATION.
 fn get_track_properties(buf: &mut Bytes) -> Result<TrackProperties, DecodeError> {
     let properties = super::codec::get_track_properties(buf)?;
     for property in properties.searched() {
@@ -646,6 +651,9 @@ fn get_track_properties(buf: &mut Bytes) -> Result<TrackProperties, DecodeError>
                 return Err(DecodeError::protocol_violation(
                     "DEFAULT PUBLISHER GROUP ORDER is neither Ascending nor Descending",
                 ));
+            }
+            DYNAMIC_GROUPS if value > 1 => {
+                return Err(DecodeError::protocol_violation("DYNAMIC_GROUPS above 1"));
             }
             _ => {}
         }
@@ -1132,6 +1140,21 @@ pub(crate) fn encode_request_update(
     frame(REQUEST_UPDATE, &payload)
 }
 
+/// A REQUEST_UPDATE that only asks for a new group (§10.2.13): a parameter it
+/// omits keeps its value (§10.9).
+pub(crate) fn encode_new_group_request(
+    request_id: u64,
+    new_group_request: u64,
+) -> anyhow::Result<BytesMut> {
+    let mut payload = BytesMut::new();
+    put_vi64(&mut payload, request_id);
+    put_parameters(
+        &mut payload,
+        &[Parameter::NewGroupRequest(new_group_request)],
+    )?;
+    frame(REQUEST_UPDATE, &payload)
+}
+
 /// Immutable Properties (§12.7) holding an application property (§2.5:
 /// 0x38-0x3F) whose value 5 takes two bytes; the model has no field for it.
 #[cfg(test)]
@@ -1198,6 +1221,7 @@ mod tests {
             },
             authorization_tokens: vec![AuthorizationToken::use_value_utf8("jwt")],
             delivery_timeout: Some(1500),
+            new_group_request: Some(8),
             trace_context: None,
         }
     }
@@ -1536,6 +1560,7 @@ mod tests {
             forward: true,
             authorization_tokens: vec![],
             delivery_timeout: None,
+            new_group_request: None,
         };
 
         // Act
@@ -1552,6 +1577,19 @@ mod tests {
                 end_group: 7,
             }
         )));
+    }
+
+    #[test]
+    fn a_new_group_request_update_carries_only_that_parameter() {
+        // Act
+        let decoded = decode(encode_new_group_request(12, 4).unwrap());
+
+        // Assert: §10.9, the parameters it omits keep their values
+        let Message::RequestUpdate(decoded) = decoded else {
+            panic!("expected REQUEST_UPDATE");
+        };
+        assert_eq!(decoded.request_id, 12);
+        assert_eq!(decoded.parameters, [Parameter::NewGroupRequest(4)]);
     }
 
     #[test]
@@ -1708,6 +1746,37 @@ mod tests {
             let result = decode_message(SUBSCRIBE_OK, payload.freeze());
 
             // Assert: §12.4
+            assert!(
+                matches!(
+                    result,
+                    Err(DecodeError::Violation {
+                        code: TerminationErrorCode::ProtocolViolation,
+                        ..
+                    })
+                ),
+                "{properties:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dynamic_groups_above_1_is_a_protocol_violation() {
+        // Arrange: DYNAMIC_GROUPS (0x30) of 2, in the mutable list and
+        // inside Immutable Properties
+        let cases = [
+            vec![varint_property(0x30, 2)],
+            vec![immutable(&[varint_property(0x30, 2)])],
+        ];
+        for properties in cases {
+            let mut payload = BytesMut::new();
+            put_vi64(&mut payload, 1);
+            put_parameters(&mut payload, &[]).unwrap();
+            put_key_value_pairs(&mut payload, &properties).unwrap();
+
+            // Act
+            let result = decode_message(SUBSCRIBE_OK, payload.freeze());
+
+            // Assert: §12.6
             assert!(
                 matches!(
                     result,

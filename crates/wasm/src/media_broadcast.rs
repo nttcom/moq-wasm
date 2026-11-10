@@ -1,21 +1,26 @@
+mod keyframe_request_task;
+
+use std::sync::Arc;
+
 use anyhow::{Result as AnyResult, anyhow};
 use broadcast::{
     Broadcast, BroadcastWriter, RelayConnection, RenditionConfig, RenditionKeyframes,
     RenditionTrack, SourceTracks,
 };
 use bytes::Bytes;
-use js_sys::Promise;
+use js_sys::{Function, Promise};
 use mediapack::{
     AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp,
     aac::AudioSpecificConfig,
     loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
 };
 use moqt::executor::{self, JoinHandle};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
 use crate::{anyhow_error, js_error, log_sink::SessionScope};
+use keyframe_request_task::KeyframeRequestTask;
 
 /// An MSF broadcast of media the page encodes: it publishes the catalog, the
 /// LOC tracks and the media timeline, keeps objects for FETCH and answers
@@ -36,6 +41,7 @@ pub struct MediaSource {
     /// configuration changes and a sample.
     video: Option<LocDemuxer>,
     renditions: Vec<Rendition>,
+    _keyframe_requests: KeyframeRequestTask,
 }
 
 /// One rendition of the video, written by a task of its own in the order its
@@ -102,6 +108,10 @@ impl MediaBroadcast {
     /// source brings its media timeline, `<video>_timeline`. Its video forms
     /// a switching set of its own with its renditions.
     /// `video_bitrate` is the video encoder's target in bits per second.
+    /// The video and its renditions have dynamic groups (draft-18 §12.6):
+    /// `on_keyframe_request` is called, without arguments, when a subscriber
+    /// asks for a new group, and the page then encodes the next frame of the
+    /// video and of every rendition as a keyframe.
     #[wasm_bindgen(js_name = addSource)]
     pub fn add_source(
         &self,
@@ -110,7 +120,12 @@ impl MediaBroadcast {
         video_bitrate: Option<f64>,
         audio: String,
         audio_label: String,
+        on_keyframe_request: Function,
     ) -> MediaSource {
+        let keyframe_requests = Arc::new(Notify::new());
+        let keyframe_request_task = self
+            .scope
+            .in_scope(|| KeyframeRequestTask::run(keyframe_requests.clone(), on_keyframe_request));
         let tracks = SourceTracks {
             switching_set: video.clone(),
             video,
@@ -119,6 +134,7 @@ impl MediaBroadcast {
             audio_label,
             cmaf: false,
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
+            keyframe_requests: Some(keyframe_requests),
         };
         MediaSource {
             writer: self
@@ -128,6 +144,7 @@ impl MediaBroadcast {
             tracks,
             video: None,
             renditions: Vec::new(),
+            _keyframe_requests: keyframe_request_task,
         }
     }
 }

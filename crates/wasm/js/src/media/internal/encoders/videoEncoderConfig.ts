@@ -1,10 +1,12 @@
 export type VideoEncoderSettings = Omit<VideoEncoderConfig, 'width' | 'height'> &
   Partial<Pick<VideoEncoderConfig, 'width' | 'height'>>
 
+const DEFAULT_FRAMERATE = 30
+
 const DEFAULT_CONFIG: VideoEncoderSettings = {
   codec: 'avc1.640028', // H.264 High Profile Level 4.0
   bitrate: 1_000_000,
-  framerate: 30,
+  framerate: DEFAULT_FRAMERATE,
   hardwareAcceleration: 'prefer-hardware',
   // The hardware encoder of an M1 Mac supports only L1T1.
   scalabilityMode: 'L1T1',
@@ -25,4 +27,10 @@ export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): Vi
         ? Math.min(120, Math.max(1, Math.round(merged.framerate)))
         : DEFAULT_CONFIG.framerate
   }
+}
+
+const DEFAULT_KEYFRAME_INTERVAL_SECONDS = 30
+
+export function defaultKeyframeIntervalFrames(config?: Partial<VideoEncoderConfig>): number {
+  return (videoEncoderConfig(config).framerate ?? DEFAULT_FRAMERATE) * DEFAULT_KEYFRAME_INTERVAL_SECONDS
 }
