@@ -144,6 +144,7 @@ pub(crate) async fn subscribe_group_start(
             namespace.to_string(),
             name.to_string(),
             FETCHED_GROUP_OBJECTS,
+            SubscribeOption::default().subscriber_priority,
         )
         .await
         .with_context(|| format!("failed to subscribe {namespace}/{name}"))?;

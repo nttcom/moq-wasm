@@ -909,8 +909,10 @@ impl Subscriber {
         track_namespace: String,
         track_name: String,
         new_group_after: u64,
+        subscriber_priority: u8,
     ) -> Result<(Subscription, TrackReader), RequestFailure> {
         let option = SubscribeOption {
+            subscriber_priority,
             filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
@@ -2642,6 +2644,7 @@ mod tests {
     }
 
     const NEW_GROUP_AFTER: u64 = 5;
+    const SUBSCRIBER_PRIORITY: u8 = 7;
 
     /// The reader of a `subscribe_group_start` the server accepted with
     /// `largest`, and the server's side of the subscription.
@@ -2654,7 +2657,12 @@ mod tests {
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
-                .subscribe_group_start("ns".to_string(), TRACK.to_string(), NEW_GROUP_AFTER)
+                .subscribe_group_start(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    NEW_GROUP_AFTER,
+                    SUBSCRIBER_PRIORITY,
+                )
                 .await
         });
         let SessionEvent::Subscribe(mut handler) = within(server.receive_event()).await.unwrap()
@@ -2668,6 +2676,20 @@ mod tests {
             .unwrap();
         let (_, reader) = request.await.unwrap().unwrap();
         (reader, handler.into_subscription(alias))
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_sends_its_subscriber_priority() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-priority", "moqt").await;
+
+        // Act
+        let (_reader, served) =
+            start_subscribe_group_start(&client, &server, location(3, 1), true).await;
+
+        // Assert
+        assert_eq!(served.subscriber_priority(), SUBSCRIBER_PRIORITY);
     }
 
     #[tokio::test]
@@ -2792,7 +2814,12 @@ mod tests {
         let mut subscriber = client.subscriber();
         let _request = tokio::spawn(async move {
             subscriber
-                .subscribe_group_start("ns".to_string(), TRACK.to_string(), NEW_GROUP_AFTER)
+                .subscribe_group_start(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    NEW_GROUP_AFTER,
+                    SUBSCRIBER_PRIORITY,
+                )
                 .await
         });
         let SessionEvent::Subscribe(_subscribe) = within(server.receive_event()).await.unwrap()
