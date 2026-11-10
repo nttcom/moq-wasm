@@ -39,8 +39,8 @@ export type MainVideo = {
   /// Bits per second; 1 Mbps by default.
   bitrate?: number
   /// Frames per second, clamped to 1–120: frames that come faster are skipped,
-  /// except keyframes. Without it every frame is encoded, and the encoder
-  /// expects 30. The renditions take it unless they set their own.
+  /// except keyframes. Without it, every frame is encoded and the encoder is
+  /// configured for 30. The renditions take it unless they set their own.
   framerate?: number
 }
 

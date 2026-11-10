@@ -1,11 +1,11 @@
-/// Thins a video's frames to at most `framerate` per second, by their timestamps.
-///
-/// A frame up to `EARLY_TOLERANCE` of an interval early still passes, so a
-/// source at the limit keeps every frame despite capture jitter, while a source
-/// at twice the limit still loses every other frame. A gap of two intervals or
-/// more, such as a still screen share, restarts the count from the next frame.
+/// A frame up to this fraction of an interval early still passes, so a source
+/// at the limit keeps every frame despite capture jitter, while a source at
+/// twice the limit loses every other frame.
 const EARLY_TOLERANCE = 0.4
 
+/// Thins a video's frames to at most `framerate` per second, by their
+/// timestamps. After a gap of two intervals or more, such as a still screen
+/// share, the next frame passes and restarts the count.
 export class FrameRateLimit {
   private readonly intervalMicros: number
   private nextDueMicros: number | undefined

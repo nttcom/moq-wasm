@@ -17,8 +17,9 @@ let forceNextKeyframe = false
 
 /// One encoder of the stream's frames. Rendition 0 takes `encoderConfig`;
 /// `renditionConfigs`, which must arrive before `videoStream`, adds the others.
-/// All encode the same keyframes, so the outputs of one frame share a
-/// timestamp; a rendition with a frame rate set skips the frames above it.
+/// All encode the same keyframes, and the outputs of one frame share its
+/// timestamp. A rendition with a frame rate skips the frames that come faster
+/// than it.
 class Rendition {
   encoder: VideoEncoder | undefined
   // null makes the next frame reconfigure the encoder.
@@ -164,8 +165,8 @@ class Rendition {
 
 let renditions: Rendition[] = [new Rendition(0, {})]
 
-/// A limit only for a frame rate the page set: the default one is the encoder's
-/// estimate, and a camera faster than it keeps its frames.
+/// Returns a limit only when the page set a frame rate: the default 30 is just
+/// the encoder's estimate, so a faster camera keeps all its frames.
 function frameRateLimit(
   settings: VideoEncoderSettings,
   config: Partial<VideoEncoderConfig>
