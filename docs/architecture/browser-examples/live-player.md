@@ -541,9 +541,9 @@ The ladder ends at the first rendition at least as tall as the container in
 device pixels, since a picture shown that small gains nothing from a taller
 one. A rendition above that cap steps down to it at once, and a container
 grown taller raises playback to the new cap at once unless the path was
-congested in the last 10 s. Under `Auto` the first video track the player
-subscribes to is already capped, so a small tile never starts on the top
-rendition.
+congested in the last 10 s. Under `Auto` the player subscribes no video until
+the container has a height, since `RemoteBroadcast` starts a player before its
+page places the container; it then starts on the top of the capped ladder.
 
 ### Review audio
 
