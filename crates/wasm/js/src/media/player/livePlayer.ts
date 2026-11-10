@@ -174,8 +174,9 @@ export class LivePlayer {
   private adaptiveVideo = true
   private videoEnabled = true
   private nextAdaptAtMs = 0
-  /// The container's height in device pixels, the unit a rendition's height
-  /// compares to; undefined before it is laid out.
+  /// The container's height in CSS pixels, which a rendition's height compares
+  /// to: on a high-density screen a rendition may be scaled up by the device
+  /// pixel ratio. Undefined before it is laid out.
   private pictureHeightPx: number | undefined
   private catalogStatus: PlayerStatus = { text: 'Catalog not loaded yet', state: 'idle' }
   private playbackStatus: PlayerStatus = { text: 'Playback idle', state: 'idle' }
@@ -204,7 +205,7 @@ export class LivePlayer {
     })
     this.stage = new PictureStage(options.container)
     this.resizeObserver = new ResizeObserver(([entry]) => {
-      const heightPx = entry.contentRect.height * window.devicePixelRatio
+      const heightPx = entry.contentRect.height
       this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
     })
     this.resizeObserver.observe(options.container)
