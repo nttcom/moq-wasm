@@ -127,6 +127,17 @@ test('a buffer below its target grows by stretching the audio without a break', 
   expect(playout.audioBreaks()).toBe(0)
 })
 
+test('audio held through the warm-up and due within the output latency leaves the opening clock in place', () => {
+  // Arrange
+  const playout = new LivePlayout((frame) => frame.close())
+
+  // Act: stop before the buffer settles, so nothing trims a clock pushed back at the warm-up
+  streamLive(playout, 1_000)
+
+  // Assert: the anchor's target (longest arrival gap + schedule-ahead) plus the newest held chunk's age
+  expect(playout.bufferMs()!).toBeCloseTo(AUDIO_CHUNK_MS + SCHEDULE_AHEAD_MS + AUDIO_CHUNK_MS)
+})
+
 const LIVE_VIDEO_DELAY_MS = 50
 
 function streamLiveVideo(playout: LivePlayout, durationMs: number): void {
