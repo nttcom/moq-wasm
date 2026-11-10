@@ -98,12 +98,15 @@ impl RelayConnection {
     }
 }
 
+/// 2 seconds of video at 30 fps, the time within which the relay passes on
+/// only one request for a new group.
+const FETCHED_GROUP_OBJECTS: u64 = 60;
+
 pub(crate) struct Track {
     pub(crate) subscription: Subscription,
     pub(crate) reader: TrackReader,
 }
 
-/// `NextGroupStart` begins a live video recording on a keyframe;
 /// `LargestObject` continues right after what `fetch_cached` returns.
 pub(crate) async fn subscribe(
     session: &Session,
@@ -122,6 +125,30 @@ pub(crate) async fn subscribe(
         .with_context(|| format!("failed to subscribe {namespace}/{name}"))?;
     Ok(Track {
         reader: subscriber.track_reader(&subscription),
+        subscription,
+    })
+}
+
+/// Begins a live video recording at the first object of a group: the
+/// current group when it began within `FETCHED_GROUP_OBJECTS`, else a new
+/// group the publisher is asked to start. See
+/// `moqt::Subscriber::subscribe_group_start`.
+pub(crate) async fn subscribe_group_start(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+) -> Result<Track> {
+    let (subscription, reader) = session
+        .subscriber()
+        .subscribe_group_start(
+            namespace.to_string(),
+            name.to_string(),
+            FETCHED_GROUP_OBJECTS,
+        )
+        .await
+        .with_context(|| format!("failed to subscribe {namespace}/{name}"))?;
+    Ok(Track {
+        reader,
         subscription,
     })
 }

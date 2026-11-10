@@ -27,6 +27,8 @@ pub async fn subscribe(
 ) -> Result<Subscription> {
     let option = SubscribeOption {
         filter_type,
+        // A track with long groups starts one when asked (draft-18 §5.1.3.1).
+        new_group_request: (filter_type == FilterType::NextGroupStart).then_some(0),
         ..SubscribeOption::default()
     };
     session
