@@ -14,7 +14,7 @@ srt-tokio = "0.4.4"
 futures = "0.3.32"
 broadcast = { path = "../../crates/broadcast" }
 moqt = { path = "../../crates/moqt" }
-mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
+mediapack = { path = "../../crates/mediapack" }
 transcode = { path = "../../crates/transcode" }
 tracing = "0.1"
 telemetry = { path = "../../crates/telemetry" }
