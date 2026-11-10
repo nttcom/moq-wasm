@@ -69,6 +69,7 @@ Section rules:
 - `## 関連タスク` — link issues as `#<IssueNumber>`. This repository is public OSS, so never paste internal tracker URLs.
 - `## やらないこと` — state what was deliberately left out, so reviewers do not look for it.
 - `## 影響範囲` — name the affected crates and whether the change is breaking for dependents. `moqt` is the central crate, so changes there affect the whole workspace.
+  - For a `fix` PR, also state the versions the bug affects: the first release that contains it (`git tag --contains <commit that introduced the bug> --list 'sdk-v*' --sort=v:refname | head -1`, or `未リリース` when no tag contains it), and the MoQT draft version (`draft-14`, `draft-18`) when the bug occurs on only one of them.
 - `## テスト` — the commands actually run and their results. If a check was skipped, say so.
 
 ### Do Not Write
