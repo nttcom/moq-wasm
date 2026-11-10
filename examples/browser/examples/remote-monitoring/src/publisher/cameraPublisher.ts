@@ -16,7 +16,9 @@ function cameraColor(camId: CameraId): string {
   for (const ch of camId) {
     hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
   }
-  return `hsl(${hash % 360} 60% 22%)`
+  // Names that differ in their last character would otherwise land on neighbouring hues.
+  const hue = (Math.imul(hash, 0x9e3779b1) >>> 0) % 360
+  return `hsl(${hue} 60% 22%)`
 }
 
 export class CameraPublisher {
