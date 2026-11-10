@@ -1154,7 +1154,10 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 リリースの手順:
 
 1. パッケージの `package.json` の version を上げ、`CHANGELOG.md` にその version の
-   節を足す。
+   節を足す。節の中身は、前の tag から後にマージされた PR の本文の「リリースノート」
+   の節を集めて作る（`.agents/skills/release-sdk/SKILL.md`）。並行する PR が同じ
+   `CHANGELOG.md` に書くと衝突するので、PR は `CHANGELOG.md` を変えず、載せる英文を
+   PR の本文に書く。
 2. `sdk-v<version>` の tag を push する。crate とは別に版を刻むので、tag には `sdk-`
    を付ける。
 3. CI がその tag で wasm と TS をビルドし、`npm pack` の tarball を作り、同じ名前の
