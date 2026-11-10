@@ -7,7 +7,6 @@ export type Rendition = {
   framerate?: number
 } & RenditionSize
 
-/// A rendition's size, either bounded or scaled from the captured frame.
 export type RenditionSize =
   | {
       /// Bound the encoded size like `MainVideo.width` and `height`.
@@ -23,8 +22,7 @@ export type RenditionSize =
       height?: never
     }
 
-/// Throws a `RangeError` for a `scaleResolutionDownBy` below 1, which would
-/// scale the frame up, or not finite.
+/// Throws a `RangeError` for a `scaleResolutionDownBy` below 1 or not finite.
 export function checkRenditions(renditions: Rendition[] = []): void {
   for (const { name, scaleResolutionDownBy } of renditions) {
     if (
