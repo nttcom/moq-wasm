@@ -19,8 +19,6 @@ pub(crate) trait SubscribeHandler: 'static + Send + Sync {
     fn _group_order(&self) -> GroupOrder;
     fn forward(&self) -> bool;
     fn _filter_type(&self) -> FilterType;
-    fn _max_cache_duration(&self) -> Option<u64>;
-    fn _delivery_timeout(&self) -> Option<u64>;
     fn allocate_track_alias(&self) -> u64;
     fn understands(&self, track_properties: &TrackProperties) -> bool;
     async fn ok_with_track_alias(
@@ -66,12 +64,6 @@ impl SubscribeHandler for moqt::subscribe::SubscribeHandler {
     }
     fn _filter_type(&self) -> FilterType {
         self.filter_type
-    }
-    fn _max_cache_duration(&self) -> Option<u64> {
-        self.track_properties.max_cache_duration()
-    }
-    fn _delivery_timeout(&self) -> Option<u64> {
-        self.track_properties.delivery_timeout()
     }
     fn allocate_track_alias(&self) -> u64 {
         moqt::subscribe::SubscribeHandler::allocate_track_alias(self)

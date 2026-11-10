@@ -110,11 +110,11 @@ impl UnsubscribeNamespace {
         track_namespace_prefix: &str,
         route_registry: &dyn RelayRouteRegistry,
     ) -> Vec<RelayInfo> {
-        let namespace_routes = match route_registry
+        let track_namespaces = match route_registry
             .find_namespace_publishers_by_prefix(track_namespace_prefix)
             .await
         {
-            Ok(routes) => routes,
+            Ok(track_namespaces) => track_namespaces,
             Err(err) => {
                 tracing::warn!(
                     error = ?err,
@@ -127,16 +127,16 @@ impl UnsubscribeNamespace {
 
         let mut relay_ids = HashSet::new();
         let mut relays = Vec::new();
-        for namespace_route in namespace_routes {
+        for track_namespace in track_namespaces {
             let publisher_relays = match route_registry
-                .find_active_namespace_publishers(&namespace_route.track_namespace)
+                .find_active_namespace_publishers(&track_namespace)
                 .await
             {
                 Ok(publisher_relays) => publisher_relays,
                 Err(err) => {
                     tracing::warn!(
                         error = ?err,
-                        track_namespace = %namespace_route.track_namespace,
+                        track_namespace = %track_namespace,
                         "failed to find publisher relays for UNSUBSCRIBE_NAMESPACE"
                     );
                     continue;

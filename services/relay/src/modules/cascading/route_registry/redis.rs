@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use redis::AsyncCommands;
 use tokio::sync::watch;
 
-use super::{NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry};
+use super::{RegisterRouteError, RelayInfo, RelayRouteRegistry};
 use crate::modules::domain::track_key::{TrackKey, namespace_has_prefix};
 
 #[derive(Clone, Copy)]
@@ -383,11 +383,11 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
     async fn find_namespace_publishers_by_prefix(
         &self,
         track_namespace_prefix: &str,
-    ) -> anyhow::Result<Vec<NamespaceRoute>> {
+    ) -> anyhow::Result<Vec<String>> {
         let mut connection = self.connection.clone();
         let pattern = Self::publisher_namespace_pattern(track_namespace_prefix);
         let keys: Vec<String> = connection.keys(pattern).await?;
-        let mut routes = Vec::new();
+        let mut track_namespaces = Vec::new();
 
         for key in keys {
             let Some(track_namespace) = key
@@ -402,10 +402,10 @@ impl RelayRouteRegistry for RedisRelayRouteRegistry {
             if self.find_active_routes(key).await?.is_empty() {
                 continue;
             }
-            routes.push(NamespaceRoute { track_namespace });
+            track_namespaces.push(track_namespace);
         }
 
-        Ok(routes)
+        Ok(track_namespaces)
     }
 
     async fn unregister_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()> {

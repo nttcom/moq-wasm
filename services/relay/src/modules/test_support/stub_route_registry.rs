@@ -6,9 +6,7 @@ use std::sync::{
 use async_trait::async_trait;
 
 use crate::modules::{
-    cascading::route_registry::{
-        NamespaceRoute, RegisterRouteError, RelayInfo, RelayRouteRegistry,
-    },
+    cascading::route_registry::{RegisterRouteError, RelayInfo, RelayRouteRegistry},
     domain::track_key::TrackKey,
 };
 
@@ -175,17 +173,11 @@ impl RelayRouteRegistry for StubRouteRegistry {
     async fn find_namespace_publishers_by_prefix(
         &self,
         _track_namespace_prefix: &str,
-    ) -> anyhow::Result<Vec<NamespaceRoute>> {
-        let routes = self
+    ) -> anyhow::Result<Vec<String>> {
+        Ok(self
             .namespace_routes
-            .as_ref()
-            .expect("not used with the stub route registry");
-        Ok(routes
-            .iter()
-            .map(|track_namespace| NamespaceRoute {
-                track_namespace: track_namespace.clone(),
-            })
-            .collect())
+            .clone()
+            .expect("not used with the stub route registry"))
     }
 
     async fn unregister_namespace_publisher(&self, _track_namespace: &str) -> anyhow::Result<()> {

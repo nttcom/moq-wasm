@@ -20,8 +20,6 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
     fn _group_order(&self) -> GroupOrder;
     fn _content_exists(&self) -> ContentExists;
     fn _forward(&self) -> bool;
-    fn _delivery_timeout(&self) -> Option<u64>;
-    fn _max_cache_duration(&self) -> Option<u64>;
     fn subscription(
         &self,
         subscriber_priority: u8,
@@ -62,12 +60,6 @@ impl PublishHandler for moqt::publish::PublishHandler {
     }
     fn _forward(&self) -> bool {
         self.forward
-    }
-    fn _delivery_timeout(&self) -> Option<u64> {
-        self.delivery_timeout
-    }
-    fn _max_cache_duration(&self) -> Option<u64> {
-        self.track_properties.max_cache_duration()
     }
 
     fn subscription(
