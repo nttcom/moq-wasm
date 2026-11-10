@@ -145,6 +145,7 @@ export class LivePlayer {
   private readonly subscriptions: TrackSubscriptions
   private readonly timeline = new SeekTimeline()
   private readonly stage: PictureStage
+  private readonly container: HTMLElement
   private readonly resizeObserver: ResizeObserver
   private readonly locLive: LocLive
   private readonly cmafLive = new CmafLive()
@@ -180,7 +181,7 @@ export class LivePlayer {
   private nextAdaptAtMs = 0
   /// The container's height in CSS pixels, which a rendition's height compares
   /// to: on a high-density screen a rendition may be scaled up by the device
-  /// pixel ratio. Undefined before it is laid out.
+  /// pixel ratio. Undefined while the container has no height.
   private pictureHeightPx: number | undefined
   private catalogStatus: PlayerStatus = { text: 'Catalog not loaded yet', state: 'idle' }
   private playbackStatus: PlayerStatus = { text: 'Playback idle', state: 'idle' }
@@ -208,10 +209,8 @@ export class LivePlayer {
       this.adaptiveBitrate.setLatencyTolerance(options.latencyTolerance)
     }
     this.stage = new PictureStage(options.container)
-    this.resizeObserver = new ResizeObserver(([entry]) => {
-      const heightPx = entry.contentRect.height
-      this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
-    })
+    this.container = options.container
+    this.resizeObserver = new ResizeObserver(() => this.pictureResized())
     this.resizeObserver.observe(options.container)
     this.locLive = new LocLive(
       this.stage.liveVideo,
@@ -870,6 +869,41 @@ export class LivePlayer {
     return renditionAboveHeight(bitrateLadder(tracks, first), first.name, this.pictureHeightPx) ?? first.name
   }
 
+  private measurePictureHeight(): void {
+    const heightPx = this.container.clientHeight
+    this.pictureHeightPx = heightPx > 0 ? heightPx : undefined
+  }
+
+  /// Subscribes the waiting video when the container gets a height.
+  private pictureResized(): void {
+    const waiting = this.pictureHeightPx === undefined
+    this.measurePictureHeight()
+    if (waiting && this.pictureHeightPx !== undefined && this.started && !this.subscriptions.get('video')) {
+      void this.queueTrackChange(async () => {
+        await this.resubscribe('video')
+        await this.openLiveMse()
+      })
+    }
+  }
+
+  /// Under Auto, subscribes no video until the container has a height, then
+  /// starts on the top of the ladder capped to it: the catalog can list the
+  /// source before the page places the container.
+  private playedVideo(): PlayedTrack | undefined {
+    if (!this.videoEnabled) {
+      return undefined
+    }
+    if (!this.adaptiveVideo || this.subscriptions.get('video')) {
+      return this.selectedTrack('video')
+    }
+    this.measurePictureHeight()
+    if (this.pictureHeightPx === undefined) {
+      return undefined
+    }
+    this.selected.video = this.startingTrack('video', this.tracks.video)
+    return this.selectedTrack('video')
+  }
+
   private async subscribeMediaTimeline(catalog: unknown): Promise<void> {
     const track = mediaTimelineOf(
       catalog,
@@ -902,7 +936,7 @@ export class LivePlayer {
   /// Nothing is subscribed for a broadcast that is not live: review FETCHes the
   /// selected track from its next window on.
   private async resubscribe(kind: MediaKind): Promise<void> {
-    const played = kind === 'video' && !this.videoEnabled ? undefined : this.selectedTrack(kind)
+    const played = kind === 'video' ? this.playedVideo() : this.selectedTrack(kind)
     if (!this.timeline.live) {
       return
     }

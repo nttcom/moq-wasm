@@ -544,6 +544,63 @@ test('Auto follows a tile resized long after its last switch, though the publish
   }
 })
 
+test('a member who starts the camera into a filmstrip tile plays on the low rendition from the first frame', async ({
+  browser
+}) => {
+  // Arrange: carol speaks so she takes the focus, and alice watches in the stage view, where bob will get a 126 px filmstrip tile
+  const params = {
+    e2eVideoCodec: 'vp8',
+    e2eVideoWidth: '640',
+    e2eVideoHeight: '360',
+    e2eVideoLowHeight: '180',
+    e2eVideoBitrate: '300000'
+  }
+  const alice = await arrangeMeetingClient(browser, { params })
+  const bob = await arrangeMeetingClient(browser, { params })
+  const carol = await arrangeMeetingClient(browser, { params })
+  try {
+    const roomName = `e2e-filmstrip-start-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await joinRoom(carol.page, roomName, 'carol', 'a')
+    await enableMedia(carol.page)
+    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    await alice.page.page.getByTestId('stage-view-button').click()
+    await joinRoom(bob.page, roomName, 'bob', 'a')
+    const widths = await recordVideoWidths(alice.page.page, 'bob')
+
+    // Act
+    await enableMedia(bob.page)
+    await bob.page.toggleMicrophoneButton.click()
+
+    // Assert
+    await expect.poll(widths, { timeout: 30_000 }).toContain(320)
+    expect(await widths()).toEqual([320])
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
+})
+
+// Records each change of a member's decoded video width, sampled every 20 ms; the returned function reads the changes so far.
+async function recordVideoWidths(viewer: Page, memberName: string): Promise<() => Promise<number[]>> {
+  const key = `videoWidths-${memberName}`
+  await viewer.evaluate(
+    ({ key, selector }) => {
+      const widths: number[] = []
+      Reflect.set(window, key, widths)
+      setInterval(() => {
+        const width = document.querySelector<HTMLVideoElement>(selector)?.videoWidth ?? 0
+        if (width > 0 && widths.at(-1) !== width) {
+          widths.push(width)
+        }
+      }, 20)
+    },
+    { key, selector: `[data-testid="member-card-${memberName}"] [data-testid="live-player-video"]` }
+  )
+  return () => viewer.evaluate((key) => Reflect.get(window, key) as number[], key)
+}
+
 test('closing the filmstrip unsubscribes the video of the members it hid', async ({ browser }) => {
   // Arrange: carol turns her microphone off, so alice's speaker view focuses bob
   const alice = await arrangeMeetingClient(browser)
