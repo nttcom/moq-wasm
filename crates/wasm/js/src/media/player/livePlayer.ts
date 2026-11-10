@@ -199,10 +199,7 @@ export class LivePlayer {
     this.subscriptions = new TrackSubscriptions(this.context, (kind, done, leading) =>
       this.publisherEnded(kind, done, leading)
     )
-    this.stallWatch = new StallWatch(() => {
-      this.changed()
-      this.adaptVideo()
-    })
+    this.stallWatch = new StallWatch(() => this.changed())
     this.stage = new PictureStage(options.container)
     this.resizeObserver = new ResizeObserver(([entry]) => {
       const heightPx = entry.contentRect.height
@@ -1138,13 +1135,7 @@ export class LivePlayer {
     }
     this.nextAdaptAtMs = nowMs + ADAPT_INTERVAL_MS
     const ladder = bitrateLadder(this.tracks.video, current.track)
-    const choice = this.adaptiveBitrate.decideUnderHeight(
-      nowMs,
-      ladder,
-      current.name,
-      this.stallWatch.stalled,
-      this.pictureHeightPx
-    )
+    const choice = this.adaptiveBitrate.decideUnderHeight(nowMs, ladder, current.name, this.pictureHeightPx)
     if (choice) {
       this.context.log('info', `adaptive quality: ${current.name} -> ${choice}`)
       this.selectTrack('video', choice).catch((error) => {

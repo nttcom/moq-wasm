@@ -88,8 +88,11 @@ function estimateBitrate(track: MediaCatalogTrack, reference: MediaCatalogTrack 
 /// Chooses the rendition to play from how its objects arrive.
 /// - Delivery is pushed at the encoded rate, so throughput measured while the
 ///   path keeps up does not show how much more it could carry.
-/// - A rising capture-to-arrival lag or a stall shows the rendition does not
-///   fit; the throughput measured then is what the path carries. With a
+/// - A rising capture-to-arrival lag shows the rendition does not fit; the
+///   throughput measured then is what the path carries. A gap in arrivals
+///   does not count: a publisher sends nothing while its source does not
+///   change, such as a shared screen, and objects a congested path holds up
+///   show the queue in their lag once they arrive. With a
 ///   `targetLagMs`, the largest lag of the last `SPREAD_WINDOW_MS` standing
 ///   above it also counts as not fitting, since the jitter buffer holds the
 ///   playout back by the spread keyframes add to the least lag. The target is
@@ -133,12 +136,12 @@ export class AdaptiveBitrate {
   }
 
   /// Returns the rendition to switch to, or undefined to stay on `current`.
-  decide(nowMs: number, ladder: Rung[], current: string, stalled: boolean): string | undefined {
+  decide(nowMs: number, ladder: Rung[], current: string): string | undefined {
     const index = ladder.findIndex((rung) => rung.name === current)
     if (index < 0 || nowMs < this.settledAtMs) {
       return undefined
     }
-    if (stalled || this.congested(nowMs)) {
+    if (this.congested(nowMs)) {
       this.calmSinceMs = nowMs
       this.lastCongestedAtMs = nowMs
       return this.stepDown(nowMs, ladder, index)
@@ -154,13 +157,7 @@ export class AdaptiveBitrate {
   /// `decide` over the ladder capped to the picture's `height`: a rendition
   /// above the cap steps down to it at once, and a cap raised by a taller
   /// picture is taken as `raiseTo` allows.
-  decideUnderHeight(
-    nowMs: number,
-    ladder: Rung[],
-    current: string,
-    stalled: boolean,
-    height: number | undefined
-  ): string | undefined {
+  decideUnderHeight(nowMs: number, ladder: Rung[], current: string, height: number | undefined): string | undefined {
     const capped = capLadderToHeight(ladder, height)
     const ceilingBitrate = capped.at(-1)?.bitrate
     const raised =
@@ -169,7 +166,7 @@ export class AdaptiveBitrate {
     return (
       renditionAboveHeight(ladder, current, height) ??
       (raised ? this.raiseTo(nowMs, capped, current) : undefined) ??
-      this.decide(nowMs, capped, current, stalled)
+      this.decide(nowMs, capped, current)
     )
   }
 
