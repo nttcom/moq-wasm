@@ -1,7 +1,7 @@
 import type { MoqSession } from '../core/session'
 import { sdkLog } from '../core/log'
 import { extractCatalogTracks } from './catalog'
-import { parseCatalog } from './parseCatalog'
+import { parseCatalog } from '../../pkg/moqt'
 import type { AudioLevel } from './internal/loc'
 import { getErrorMessage } from './internal/status'
 import { BroadcastCatalog } from './player/broadcastCatalog'

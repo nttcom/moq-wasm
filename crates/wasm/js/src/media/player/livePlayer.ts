@@ -35,7 +35,7 @@ import {
   mediaTimelineOf,
   sourceTracks
 } from '../catalog'
-import { parseCatalog } from '../parseCatalog'
+import { parseCatalog } from '../../../pkg/moqt'
 
 const MICROS_PER_SECOND = 1_000_000
 const REVIEW_PLAYHEAD_STEP_US = 1_000_000
