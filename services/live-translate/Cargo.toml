@@ -13,8 +13,8 @@ futures-util = "0.3.32"
 gstreamer = "0.25"
 gstreamer-app = "0.25"
 http-body-util = "0.1.4"
+http-server = { path = "../../crates/http-server" }
 hyper = { version = "1.10.1", features = ["http1", "server"] }
-hyper-util = { version = "0.1.20", features = ["tokio"] }
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 metadata-token = { path = "../../crates/metadata-token" }
 moqt = { path = "../../crates/moqt" }

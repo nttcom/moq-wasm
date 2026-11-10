@@ -1,5 +1,4 @@
 use std::{
-    convert::Infallible,
     path::PathBuf,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -7,6 +6,7 @@ use std::{
 
 use app_registry::{App, RegistryStore};
 use http_body_util::{BodyExt, Full, Limited};
+use http_server::HttpServer;
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -14,15 +14,12 @@ use hyper::{
         CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue, ORIGIN,
         X_CONTENT_TYPE_OPTIONS,
     },
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::TokioIo;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use static_files::StaticFiles;
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::net::TcpListener;
 
 use crate::{
     apps::{self, Creation},
@@ -58,36 +55,16 @@ impl ConsoleState {
 }
 
 pub struct ConsoleServer {
-    _accept_handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 impl ConsoleServer {
     pub fn run(listener: TcpListener, state: Arc<ConsoleState>) -> Self {
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, state)),
+            _http: HttpServer::run(listener, move |request, _peer| {
+                handle(request, state.clone())
+            }),
         }
-    }
-}
-
-async fn accept_connections(listener: TcpListener, state: Arc<ConsoleState>) {
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                tracing::warn!(%error, "accept failed");
-                continue;
-            }
-        };
-        let state = state.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, state.clone()));
-            if let Err(error) = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::debug!(%peer, %error, "connection closed with error");
-            }
-        });
     }
 }
 
@@ -102,10 +79,7 @@ impl Refusal {
     }
 }
 
-async fn handle(
-    request: Request<Incoming>,
-    state: Arc<ConsoleState>,
-) -> Result<JsonResponse, Infallible> {
+async fn handle(request: Request<Incoming>, state: Arc<ConsoleState>) -> JsonResponse {
     let (head, body) = request.into_parts();
     let mut response = if head.method != Method::GET && !is_same_origin_request(&head.headers) {
         error_response(StatusCode::FORBIDDEN, "forbidden")
@@ -125,7 +99,7 @@ async fn handle(
         HeaderValue::from_static(CONTENT_SECURITY),
     );
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    Ok(response)
+    response
 }
 
 async fn route(
@@ -360,21 +334,20 @@ fn unix_now() -> u64 {
 }
 
 fn error_response(status: StatusCode, error: &str) -> JsonResponse {
-    json_response(status, json!({ "error": error }))
+    no_store(http_server::error_response(status, error))
 }
 
 fn json_response(status: StatusCode, body: Value) -> JsonResponse {
-    let mut response = Response::new(Full::from(body.to_string()));
-    *response.status_mut() = status;
-    let headers = response.headers_mut();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    no_store(http_server::json_response(status, &body))
 }
 
 fn empty_response(status: StatusCode) -> JsonResponse {
     let mut response = Response::new(Full::default());
     *response.status_mut() = status;
+    no_store(response)
+}
+
+fn no_store(mut response: JsonResponse) -> JsonResponse {
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));

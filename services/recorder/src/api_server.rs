@@ -1,8 +1,9 @@
-use std::{collections::HashMap, convert::Infallible, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 use http_body_util::{BodyExt, Either, Full, Limited};
+use http_server::HttpServer;
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -10,12 +11,9 @@ use hyper::{
         ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
         CONTENT_TYPE, HeaderValue, ORIGIN, VARY,
     },
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::net::TcpListener;
 
 use crate::{
     api_auth::bearer_token,
@@ -43,7 +41,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 /// needs no preflight. Private rooms require a VTS-verified bearer token;
 /// anonymous rooms are public. A failing store answers 500.
 pub(crate) struct ApiServer {
-    handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 struct ApiState {
@@ -62,45 +60,16 @@ impl ApiServer {
             allowed_origins,
         });
         Self {
-            handle: tokio::spawn(accept_connections(listener, state)),
+            _http: HttpServer::run(listener, move |request, _peer| {
+                handle(request, Arc::clone(&state))
+            }),
         }
-    }
-}
-
-impl Drop for ApiServer {
-    fn drop(&mut self) {
-        self.handle.abort();
-    }
-}
-
-async fn accept_connections(listener: TcpListener, state: Arc<ApiState>) {
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                tracing::warn!(%error, "accept failed");
-                continue;
-            }
-        };
-        let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, Arc::clone(&state)));
-            if let Err(error) = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::debug!(%peer, %error, "connection closed with error");
-            }
-        });
     }
 }
 
 type ApiResponse = Response<Either<Full<Bytes>, ReplayStream>>;
 
-async fn handle(
-    request: Request<Incoming>,
-    state: Arc<ApiState>,
-) -> Result<ApiResponse, Infallible> {
+async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse {
     let origin = allowed_origin(request.headers(), &state.allowed_origins);
     let method = request.method().clone();
     let path = request.uri().path().to_string();
@@ -113,12 +82,12 @@ async fn handle(
             ["recordings", id, ..] => match state.recordings.namespace(id).await {
                 Ok(Some(namespace)) => namespace,
                 Ok(None) => {
-                    return Ok(with_cors(
+                    return with_cors(
                         error_response(StatusCode::NOT_FOUND, "no such recording"),
                         origin,
-                    ));
+                    );
                 }
-                Err(error) => return Ok(with_cors(internal_error(&error), origin)),
+                Err(error) => return with_cors(internal_error(&error), origin),
             },
             ["recordings"] if method == Method::GET => query
                 .get("namespace_prefix")
@@ -133,10 +102,7 @@ async fn handle(
                 .authorize(&headers, &namespace, write)
                 .await
             {
-                return Ok(with_cors(
-                    error_response(error.status, error.message),
-                    origin,
-                ));
+                return with_cors(error_response(error.status, error.message), origin);
             }
         }
     }
@@ -151,10 +117,7 @@ async fn handle(
                 if let Some(namespace) = body["namespace_prefix"].as_str()
                     && let Err(error) = state.recordings.authorize(&headers, namespace, true).await
                 {
-                    return Ok(with_cors(
-                        error_response(error.status, error.message),
-                        origin,
-                    ));
+                    return with_cors(error_response(error.status, error.message), origin);
                 }
                 start(&state.recordings, &body, bearer_token(&headers)).await
             }
@@ -202,7 +165,7 @@ async fn handle(
         }
         _ => error_response(StatusCode::NOT_FOUND, "not_found"),
     };
-    Ok(with_cors(response, origin))
+    with_cors(response, origin)
 }
 
 async fn start(recordings: &Recordings, body: &Value, bearer: Option<&str>) -> ApiResponse {
@@ -330,12 +293,7 @@ fn replay_response(publication: Publication) -> ApiResponse {
 }
 
 fn json_response(status: StatusCode, body: &Value) -> ApiResponse {
-    let mut response = Response::new(Either::Left(Full::new(Bytes::from(body.to_string()))));
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
+    http_server::json_response(status, body).map(Either::Left)
 }
 
 fn empty_response(status: StatusCode) -> ApiResponse {
@@ -345,7 +303,7 @@ fn empty_response(status: StatusCode) -> ApiResponse {
 }
 
 fn error_response(status: StatusCode, message: &str) -> ApiResponse {
-    json_response(status, &json!({ "error": message }))
+    http_server::error_response(status, message).map(Either::Left)
 }
 
 #[cfg(test)]

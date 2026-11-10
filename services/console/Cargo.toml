@@ -10,6 +10,7 @@ app-registry = { path = "../../crates/app-registry" }
 auth-token = { path = "../../crates/auth-token" }
 base64 = "0.23.1"
 http-body-util = "0.1.4"
+http-server = { path = "../../crates/http-server" }
 hyper = { version = "1.10.1", features = ["http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }

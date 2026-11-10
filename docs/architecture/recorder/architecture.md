@@ -284,8 +284,8 @@ segment, and a network stall would hold up the recording.
 
 The room watcher ignores namespaces under `<room>/recordings/<id>/` so that
 replayed recordings do not become participants of a new recording.
-`recorder serve` is an HTTP API (`api_server::ApiServer`, see
-[hyper.md](hyper.md)) that keeps no recording in its own memory or process.
+`recorder serve` is an HTTP API (`api_server::ApiServer` on
+`http_server::HttpServer`, see [hyper.md](hyper.md)) that keeps no recording in its own memory or process.
 Every room recording runs as a `recorder record` job and every composite as a
 `recorder composite` job; the API and the jobs share the recordings' state
 through small JSON objects in the store (`--store`, `gs://` or `file://`), so

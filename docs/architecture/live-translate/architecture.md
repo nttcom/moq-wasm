@@ -63,7 +63,7 @@ the container is.
 ## Runtime flow
 
 ```
-PageServer                   one accept loop; pages, /token, /events, /healthz
+PageServer                   one http_server::HttpServer; pages, /token, /events, /healthz
 main (Router)                one task; the only reader of Session::receive_event
  ├─ PUBLISH_NAMESPACE        direct children of the root start a BroadcastTranslation
  ├─ PUBLISH_NAMESPACE_DONE   drops it

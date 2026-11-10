@@ -535,6 +535,7 @@ dependencies = [
  "auth-token",
  "base64 0.23.1",
  "http-body-util",
+ "http-server",
  "hyper",
  "hyper-util",
  "reqwest",
@@ -1301,6 +1302,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-server"
+version = "0.1.0"
+dependencies = [
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1756,8 +1770,8 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "http-body-util",
+ "http-server",
  "hyper",
- "hyper-util",
  "mediapack",
  "metadata-token",
  "moqt",
@@ -2134,6 +2148,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "http-body-util",
+ "http-server",
  "hyper",
  "hyper-util",
  "reqwest",
@@ -2781,6 +2796,7 @@ dependencies = [
  "bytes",
  "clap",
  "http-body-util",
+ "http-server",
  "hyper",
  "hyper-util",
  "mediapack",
@@ -3662,8 +3678,8 @@ dependencies = [
  "anyhow",
  "auth-token",
  "http-body-util",
+ "http-server",
  "hyper",
- "hyper-util",
  "reqwest",
  "ring",
  "serde",
@@ -4072,8 +4088,8 @@ dependencies = [
  "app-registry",
  "auth-token",
  "http-body-util",
+ "http-server",
  "hyper",
- "hyper-util",
  "reqwest",
  "serde",
  "serde_json",

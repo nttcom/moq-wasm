@@ -1,17 +1,14 @@
-use std::{convert::Infallible, sync::Arc};
+use std::sync::Arc;
 
 use http_body_util::{BodyExt, Full, Limited};
+use http_server::{HttpServer, error_response, json_response};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{CONTENT_TYPE, HeaderValue},
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::TokioIo;
 use serde::Deserialize;
-use serde_json::{Value, json};
-use tokio::{net::TcpListener, task::JoinHandle};
+use serde_json::json;
+use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{registry::Registry, verify::verify_token};
@@ -19,7 +16,7 @@ use crate::{registry::Registry, verify::verify_token};
 const MAX_BODY_BYTES: usize = 16 * 1024;
 
 pub struct VtsServer {
-    _accept_handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 pub struct Secrets {
@@ -31,30 +28,10 @@ pub struct Secrets {
 impl VtsServer {
     pub fn run(listener: TcpListener, secrets: Arc<Secrets>) -> Self {
         Self {
-            _accept_handle: tokio::spawn(accept_connections(listener, secrets)),
+            _http: HttpServer::run(listener, move |request, _peer| {
+                handle(request, secrets.clone())
+            }),
         }
-    }
-}
-
-async fn accept_connections(listener: TcpListener, secrets: Arc<Secrets>) {
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(accepted) => accepted,
-            Err(error) => {
-                tracing::warn!(%error, "accept failed");
-                continue;
-            }
-        };
-        let secrets = secrets.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, secrets.clone()));
-            if let Err(error) = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                tracing::debug!(%peer, %error, "connection closed with error");
-            }
-        });
     }
 }
 
@@ -65,10 +42,7 @@ struct VerifyRequest {
     token: String,
 }
 
-async fn handle(
-    request: Request<Incoming>,
-    secrets: Arc<Secrets>,
-) -> Result<JsonResponse, Infallible> {
+async fn handle(request: Request<Incoming>, secrets: Arc<Secrets>) -> JsonResponse {
     let (head, body) = request.into_parts();
     let span = tracing::info_span!(
         "vts.request",
@@ -82,7 +56,7 @@ async fn handle(
     telemetry::continue_trace_from(&span, &head.headers);
     let response = async {
         match (head.method, head.uri.path()) {
-            (Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
+            (Method::GET, "/healthz") => json_response(StatusCode::OK, &json!({ "status": "ok" })),
             (Method::POST, "/verify") => verify(body, &secrets).await,
             _ => error_response(StatusCode::NOT_FOUND, "not_found"),
         }
@@ -90,7 +64,7 @@ async fn handle(
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
-    Ok(response)
+    response
 }
 
 async fn verify(body: Incoming, secrets: &Secrets) -> JsonResponse {
@@ -115,7 +89,7 @@ async fn verify(body: Incoming, secrets: &Secrets) -> JsonResponse {
             tracing::info!(app_id = %verified.app_id, is_relay = verified.is_relay, "verify ok");
             json_response(
                 StatusCode::OK,
-                json!({
+                &json!({
                     "appId": verified.app_id,
                     "isRelay": verified.is_relay,
                     "claims": verified.claims,
@@ -130,22 +104,10 @@ async fn verify(body: Incoming, secrets: &Secrets) -> JsonResponse {
     }
 }
 
-fn error_response(status: StatusCode, error: &str) -> JsonResponse {
-    json_response(status, json!({ "error": error }))
-}
-
-fn json_response(status: StatusCode, body: Value) -> JsonResponse {
-    let mut response = Response::new(Full::from(body.to_string()));
-    *response.status_mut() = status;
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
-}
-
 #[cfg(test)]
 mod tests {
     use app_registry::testing::TemporaryRegistryFile;
+    use serde_json::Value;
 
     use super::*;
     use crate::test_support::{

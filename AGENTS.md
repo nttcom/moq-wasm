@@ -42,6 +42,7 @@ Application and integration components (draft reference is normally not required
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/metadata-token` | The access token of the service account a Google Cloud workload runs as, read from the metadata server and cached until it expires; used by `app-registry` for Cloud Storage and by `live-translate` for the Agent Platform |
 | `crates/static-files` | Serves the built files of a web page from a directory, for `console` and `live-translate`: path checks, content types and the cache hint of hashed assets |
+| `crates/http-server` | The HTTP/1 accept loop and JSON response helpers shared by the services' HTTP servers (`console`, `vts`, `token-mint`, `observability`, `live-translate`, `recorder`) |
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
 | `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |

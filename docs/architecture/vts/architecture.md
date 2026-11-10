@@ -27,7 +27,7 @@ clock and one rule set govern both accepting a session and expiring it later.
 | --- | --- |
 | `registry.rs` | `Registry`: reads the apps through `app-registry` on every `current` call and keeps the last apps it read. A read that fails logs a warning and returns those last apps. `Registry::load` fails when the first read fails. |
 | `verify.rs` | `verify_token`: `auth_token::decode_unverified_payload` → require string `appId` → pick the secret: the temporary app secret for a temporary app when one is configured, else the registered app's → `auth_token::verify_signature` with it. Returns `VerifiedToken { app_id, is_relay, claims }` or a `RejectReason`; a `SignatureError` maps onto `malformed_token` or `invalid_signature`. |
-| `server.rs` | `VtsServer`: owns the accept-loop `JoinHandle`; one `tokio::spawn` per connection running hyper HTTP/1. Routes `GET /healthz` and `POST /verify` against `Secrets` (the `Registry` and the optional temporary app secret); everything else is 404. |
+| `server.rs` | `VtsServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `GET /healthz` and `POST /verify` against `Secrets` (the `Registry` and the optional temporary app secret); everything else is 404. |
 | `main.rs` | Picks the registry location (`VTS_APPS_FILE` or `VTS_REGISTRY_BUCKET`, not both), loads the `Registry`, reads `VTS_TEMPORARY_APP_SECRET`, binds `0.0.0.0:<port>` and serves until the process is terminated. A registry that cannot be loaded at startup stops the process. |
 
 The registered apps are `app_registry::Apps`; parsing, validation and storage live in `crates/app-registry`.
