@@ -22,7 +22,7 @@ from moq_camera_detection.catalog import camera_video_track
 from moq_camera_detection.detector import CameraDetector, CameraPicture
 from moq_system_one_bot.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt, parse_prompt
-from moq_camera_detection.video import GroupDecoder, picture_to_jpeg
+from moq_system_one_bot.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import SystemOneVisionClient
 
 DEFAULT_PORT = 8098

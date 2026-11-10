@@ -10,6 +10,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 | `identity_token` | `--gcloud-auth` と `--metadata-auth` のオプションと、それに応じた ID トークン（`moq-bot-rooms` の `identity_token`） |
 | `relay` | `--relay-url` と `--insecure` のオプションと、relay への接続が切れるたびにつなぎ直す `stay_connected` |
 | `namespace` | ページの namespace が publish されている間だけ処理を動かす `while_published` |
+| `video` | 1 group ずつ H.264 を復号する `GroupDecoder` と、復号した絵を JPEG にする `picture_to_jpeg`（幅を指定すると縦横比を保って縮小する） |
 | `publication` | bot が書くトラックの型（`moqt.TrackPublication` とテストの代役） |
 
 ## テスト

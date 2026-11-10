@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-import av
-
 from moq_system_one_bot import testing
 from moq_system_one_bot.testing import READ_TIMEOUT_SECONDS
 from moq_ptz_tracking.ptz import PtzCommands
@@ -13,19 +11,6 @@ from moq_ptz_tracking.vision import Answer, Box, Sighting, TargetBox
 MOVE_END_WAIT_SECONDS = 0.3
 
 MUG_TARGET = Target(("a red mug",), "video/profile_1", (7, 0))
-
-
-def h264_group(frame_count: int, width: int = 64, height: int = 48) -> list[bytes]:
-    encoder = av.CodecContext.create("libx264", "w")
-    encoder.width = width
-    encoder.height = height
-    encoder.pix_fmt = "yuv420p"
-    encoder.options = {"tune": "zerolatency", "profile": "baseline"}
-    pictures = [av.VideoFrame(width, height, "yuv420p") for _ in range(frame_count)]
-    for pts, picture in enumerate(pictures):
-        picture.pts = pts
-    packets = [packet for picture in [*pictures, None] for packet in encoder.encode(picture)]
-    return [bytes(packet) for packet in packets]
 
 
 class RecordingPublication(testing.RecordingPublication):

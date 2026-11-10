@@ -1,10 +1,25 @@
 import asyncio
 from types import SimpleNamespace
 
+import av
+
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.testing import RecordingPublication
 
 SETTLE_SECONDS = 0.05
+
+
+def h264_group(frame_count: int, width: int = 64, height: int = 48) -> list[bytes]:
+    encoder = av.CodecContext.create("libx264", "w")
+    encoder.width = width
+    encoder.height = height
+    encoder.pix_fmt = "yuv420p"
+    encoder.options = {"tune": "zerolatency", "profile": "baseline"}
+    pictures = [av.VideoFrame(width, height, "yuv420p") for _ in range(frame_count)]
+    for pts, picture in enumerate(pictures):
+        picture.pts = pts
+    packets = [packet for picture in [*pictures, None] for packet in encoder.encode(picture)]
+    return [bytes(packet) for packet in packets]
 
 
 async def published_status(status: SystemOneStatus) -> RecordingPublication:
