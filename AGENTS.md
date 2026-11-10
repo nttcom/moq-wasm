@@ -146,3 +146,4 @@ A span that lives longer than the request that starts it (a track, a session) ro
 - PR titles and descriptions must be written in Japanese; descriptions follow `.github/pull_request_template.md`.
 - This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
+- When releasing the browser SDK (`moq-wasm`), follow the skill in `.agents/skills/release-sdk/SKILL.md`. Pull requests do not edit `crates/wasm/js/CHANGELOG.md`; they carry its entry in their body.
