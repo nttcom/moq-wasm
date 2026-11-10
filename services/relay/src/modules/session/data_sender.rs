@@ -4,11 +4,13 @@ pub(crate) mod stream_sender;
 pub(crate) mod stream_sender_factory;
 
 use crate::modules::session::data_object::DataObject;
-use moqt::object::DataStreamResetCode;
+use moqt::object::{DataStreamResetCode, StreamPriority};
 
 #[async_trait::async_trait]
 pub(crate) trait DataSender: 'static + Send + Sync {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()>;
+
+    async fn set_priority(&mut self, priority: StreamPriority) -> anyhow::Result<()>;
 
     async fn close(&mut self) -> anyhow::Result<()> {
         Ok(())

@@ -68,7 +68,12 @@ pub(crate) fn track_key() -> TrackKey {
 
 /// An open-ended subscription starting at {0, 0}.
 pub(crate) fn delivery_control(forward: bool) -> DeliveryControl {
-    DeliveryControl::new(forward, &moqt::subscribe::FilterType::LargestObject, None)
+    DeliveryControl::new(
+        128,
+        forward,
+        &moqt::subscribe::FilterType::LargestObject,
+        None,
+    )
 }
 
 /// A Largest Object subscription to `track_key` accepted at `joining_location`.

@@ -175,6 +175,7 @@ async fn an_update_moving_the_start_back_delivers_from_the_new_start() {
         location: location(4, 0),
     };
     egress.apply_subscribe_update(DeliveryControl::new(
+        128,
         true,
         &earlier_start,
         Some(location(4, 0)),
@@ -214,6 +215,7 @@ async fn a_start_moved_back_over_a_group_an_update_left_out_resumes_it_on_a_new_
         location: location(3, 0),
     };
     egress.apply_subscribe_update(DeliveryControl::new(
+        128,
         true,
         &back_to_three,
         Some(location(3, 1)),

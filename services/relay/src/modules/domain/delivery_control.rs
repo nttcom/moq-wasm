@@ -5,6 +5,7 @@ use moqt::{object::Location, subscribe::FilterType};
 /// and its egress runner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DeliveryControl {
+    pub(crate) subscriber_priority: u8,
     pub(crate) forward: bool,
     /// The subscription's Start Location (§9.7), before egress raises it
     /// past the Largest Object.
@@ -28,12 +29,18 @@ pub(crate) struct DeliveryControl {
 impl DeliveryControl {
     /// `largest` is the Largest Location the subscription was accepted with.
     /// An AbsoluteRange End Group is the last group included (§9.7).
-    pub(crate) fn new(forward: bool, filter_type: &FilterType, largest: Option<Location>) -> Self {
+    pub(crate) fn new(
+        subscriber_priority: u8,
+        forward: bool,
+        filter_type: &FilterType,
+        largest: Option<Location>,
+    ) -> Self {
         let end_group = match filter_type {
             FilterType::AbsoluteRange { end_group, .. } => Some(end_group.saturating_add(1)),
             _ => None,
         };
         Self {
+            subscriber_priority,
             forward,
             start: filter_type.start_location(largest),
             end_group,
@@ -48,6 +55,7 @@ impl DeliveryControl {
     #[cfg(test)]
     pub(crate) fn from_subscribe_update(forward: bool, start: Location, end_group: u64) -> Self {
         Self {
+            subscriber_priority: 128,
             forward,
             start,
             end_group: (end_group != 0).then_some(end_group),
@@ -58,19 +66,21 @@ impl DeliveryControl {
     }
 
     /// What an update asks for when the track's Largest Object is `largest`:
-    /// its Forward State and the range of `filter`, resolved like a
-    /// SUBSCRIBE's; `None` keeps the current range.
+    /// its Subscriber Priority, its Forward State and the range of `filter`,
+    /// resolved like a SUBSCRIBE's; `None` keeps the current range.
     pub(crate) fn requested(
         &self,
+        subscriber_priority: u8,
         forward: bool,
         filter: Option<FilterType>,
         largest: Option<Location>,
     ) -> Self {
         let range = match filter {
-            Some(filter) => Self::new(forward, &filter, largest),
+            Some(filter) => Self::new(subscriber_priority, forward, &filter, largest),
             None => *self,
         };
         Self {
+            subscriber_priority,
             forward,
             largest_at_update: largest,
             restarts: self.restarts,
@@ -140,7 +150,7 @@ mod tests {
         let largest = Some(location(5, 3));
 
         // Act
-        let control = DeliveryControl::new(true, &FilterType::NextGroupStart, largest);
+        let control = DeliveryControl::new(128, true, &FilterType::NextGroupStart, largest);
 
         // Assert
         assert_eq!(control.start, location(6, 0));
@@ -156,7 +166,7 @@ mod tests {
         };
 
         // Act
-        let control = DeliveryControl::new(true, &filter_type, None);
+        let control = DeliveryControl::new(128, true, &filter_type, None);
 
         // Assert
         assert!(control.contains_group(4));
@@ -186,12 +196,12 @@ mod tests {
     #[test]
     fn narrowing_update_moves_start_and_end() {
         // Arrange
-        let mut control = DeliveryControl::new(true, &FilterType::LargestObject, None);
+        let mut control = DeliveryControl::new(128, true, &FilterType::LargestObject, None);
         let filter = FilterType::AbsoluteRange {
             location: location(3, 1),
             end_group: 7,
         };
-        let requested = control.requested(true, Some(filter), None);
+        let requested = control.requested(128, true, Some(filter), None);
 
         // Act
         let widens = control.widens_to(&requested);
@@ -215,8 +225,8 @@ mod tests {
         };
 
         // Act
-        let start_back = control.requested(true, Some(earlier_start), None);
-        let end_out = control.requested(true, Some(open_end), None);
+        let start_back = control.requested(128, true, Some(earlier_start), None);
+        let end_out = control.requested(128, true, Some(open_end), None);
 
         // Assert
         assert!(control.widens_to(&start_back));
@@ -235,9 +245,9 @@ mod tests {
         };
 
         // Act
-        control.apply_update(control.requested(true, Some(later_start), None));
+        control.apply_update(control.requested(128, true, Some(later_start), None));
         let after_narrowing = control.restarts;
-        control.apply_update(control.requested(true, Some(earlier_start), None));
+        control.apply_update(control.requested(128, true, Some(earlier_start), None));
 
         // Assert
         assert_eq!((after_narrowing, control.restarts), (0, 1));
@@ -246,10 +256,10 @@ mod tests {
     #[test]
     fn a_subgroup_continues_past_the_largest_object_at_the_update() {
         // Arrange
-        let mut control = DeliveryControl::new(true, &FilterType::LargestObject, None);
+        let mut control = DeliveryControl::new(128, true, &FilterType::LargestObject, None);
 
         // Act
-        control.apply_update(control.requested(true, None, Some(location(4, 2))));
+        control.apply_update(control.requested(128, true, None, Some(location(4, 2))));
 
         // Assert
         assert_eq!(control.resume_object_id(3, 7), None);
@@ -261,12 +271,12 @@ mod tests {
     #[test]
     fn turning_forward_on_counts_a_resume() {
         // Arrange
-        let mut control = DeliveryControl::new(true, &FilterType::LargestObject, None);
+        let mut control = DeliveryControl::new(128, true, &FilterType::LargestObject, None);
 
         // Act
-        control.apply_update(control.requested(false, None, None));
+        control.apply_update(control.requested(128, false, None, None));
         let paused = control.resumes;
-        control.apply_update(control.requested(true, None, Some(location(4, 2))));
+        control.apply_update(control.requested(128, true, None, Some(location(4, 2))));
 
         // Assert
         assert_eq!((paused, control.resumes), (0, 1));
@@ -278,7 +288,7 @@ mod tests {
         let control = bounded(location(3, 0), 8);
 
         // Act
-        let requested = control.requested(false, None, Some(location(5, 2)));
+        let requested = control.requested(128, false, None, Some(location(5, 2)));
 
         // Assert
         assert!(!control.widens_to(&requested));
@@ -290,13 +300,35 @@ mod tests {
     }
 
     #[test]
-    fn a_relative_filter_in_an_update_starts_from_the_current_largest_object() {
+    fn an_update_takes_the_subscriber_priority_and_keeps_the_range() {
         // Arrange
-        let control = DeliveryControl::new(true, &FilterType::LargestObject, Some(location(1, 0)));
+        let mut control = bounded(location(3, 0), 8);
 
         // Act
-        let requested =
-            control.requested(true, Some(FilterType::NextGroupStart), Some(location(5, 2)));
+        control.apply_update(control.requested(7, true, None, None));
+
+        // Assert
+        assert_eq!(control.subscriber_priority, 7);
+        assert_eq!(
+            (control.start, control.end_group),
+            (location(3, 0), Some(8))
+        );
+        assert_eq!((control.restarts, control.resumes), (0, 0));
+    }
+
+    #[test]
+    fn a_relative_filter_in_an_update_starts_from_the_current_largest_object() {
+        // Arrange
+        let control =
+            DeliveryControl::new(128, true, &FilterType::LargestObject, Some(location(1, 0)));
+
+        // Act
+        let requested = control.requested(
+            128,
+            true,
+            Some(FilterType::NextGroupStart),
+            Some(location(5, 2)),
+        );
 
         // Assert
         assert_eq!(requested.start, location(6, 0));

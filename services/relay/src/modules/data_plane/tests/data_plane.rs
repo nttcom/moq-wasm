@@ -238,6 +238,53 @@ async fn later_group_stream_opens_with_a_lower_transport_priority() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stream_opened_after_an_update_takes_its_subscriber_priority() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+
+    // Act
+    egress.update_subscriber_priority(7);
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.object(0);
+
+    // Assert
+    assert_eq!(egress.expect_stream_priority().await.subscriber_priority, 7);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_update_of_the_subscriber_priority_reprioritizes_an_open_stream() {
+    // Arrange: the header and object 0 are downstream on a stream of the SUBSCRIBE's priority
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let upstream_stream = harness.open_upstream_stream();
+    upstream_stream.header(0);
+    upstream_stream.object(0);
+    let opened = egress.expect_stream_priority().await;
+    for _ in 0..2 {
+        assert!(matches!(egress.expect_sent().await, Sent::Object(_)));
+    }
+
+    // Act
+    egress.update_subscriber_priority(7);
+
+    // Assert: draft-14 §7.1, only the Subscriber Priority of the stream changes
+    let Sent::Reprioritized(reprioritized) = egress.expect_sent().await else {
+        panic!("the open stream should be reprioritized");
+    };
+    assert_eq!(
+        reprioritized,
+        moqt::object::StreamPriority {
+            subscriber_priority: 7,
+            ..opened
+        }
+    );
+    upstream_stream.object(1);
+    assert!(matches!(egress.expect_sent().await, Sent::Object(_)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn upstream_reset_is_relayed_as_a_downstream_reset() {
     // Arrange
     let harness = RelayHarness::new();

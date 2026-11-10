@@ -1178,6 +1178,7 @@ impl FetchHandler for MockFetchHandler {
 /// `draft`; `answers` records the Largest Object of every `ok`.
 pub(crate) struct MockSubscribeUpdateHandler {
     subscription_request_id: u64,
+    subscriber_priority: u8,
     forward: bool,
     filter: Option<FilterType>,
     draft: UpdateDraft,
@@ -1203,10 +1204,18 @@ impl MockSubscribeUpdateHandler {
     ) -> Self {
         Self {
             subscription_request_id,
+            subscriber_priority: 128,
             forward,
             filter,
             draft,
             answers: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub(crate) fn with_subscriber_priority(self, subscriber_priority: u8) -> Self {
+        Self {
+            subscriber_priority,
+            ..self
         }
     }
 }
@@ -1221,7 +1230,7 @@ impl SubscribeUpdateHandler for MockSubscribeUpdateHandler {
     }
 
     fn subscriber_priority(&self) -> u8 {
-        128
+        self.subscriber_priority
     }
 
     fn forward(&self) -> bool {

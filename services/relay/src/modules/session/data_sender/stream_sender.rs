@@ -1,5 +1,5 @@
 use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
-use moqt::object::DataStreamResetCode;
+use moqt::object::{DataStreamResetCode, StreamPriority};
 
 enum SenderInner {
     Uninitialized(moqt::object::SubgroupHeaderSender),
@@ -47,6 +47,14 @@ impl DataSender for StreamSender {
                     "StreamSender already initialized or in invalid state"
                 )),
             },
+        }
+    }
+
+    async fn set_priority(&mut self, priority: StreamPriority) -> anyhow::Result<()> {
+        match self.inner.as_ref() {
+            Some(SenderInner::Uninitialized(sender)) => sender.set_priority(priority).await,
+            Some(SenderInner::HeaderSent(sender)) => sender.set_priority(priority).await,
+            None => Ok(()),
         }
     }
 

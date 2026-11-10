@@ -109,7 +109,12 @@ impl DownstreamPublish {
                 filter_type,
                 joining_location: largest_location,
             },
-            DeliveryControl::new(forward, &filter_type, largest_location),
+            DeliveryControl::new(
+                downstream_subscription.subscriber_priority(),
+                forward,
+                &filter_type,
+                largest_location,
+            ),
         ) else {
             let track_ended = PublishDoneReason {
                 status_code: PublishDoneCode::TrackEnded,
