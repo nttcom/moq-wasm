@@ -40,3 +40,13 @@ test('an odd scaled size is rounded down to even', () => {
   // Assert
   expect(size).toEqual({ width: 500, height: 498 })
 })
+
+test('a frame is encoded at its own size when no size is requested', () => {
+  // Act / Assert
+  expect(fitEncodeSize({}, { width: 2560, height: 1440 })).toEqual({ width: 2560, height: 1440 })
+})
+
+test('a requested height alone bounds the size', () => {
+  // Act / Assert
+  expect(fitEncodeSize({ height: 720 }, { width: 2560, height: 1440 })).toEqual({ width: 1280, height: 720 })
+})

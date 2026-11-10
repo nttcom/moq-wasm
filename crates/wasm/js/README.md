@@ -114,7 +114,8 @@ const camera = await local.addSource('camera', {
   label: 'Camera',
   video: { deviceId: cameraId },
   audio: true,
-  // Replaces the encoder's defaults: H.264, at most 1280x720, 1 Mbps, 30 fps.
+  // Replaces the encoder's defaults: H.264, 1 Mbps, 30 fps, the frame's own size.
+  // `width` and `height` bound the size.
   videoEncoderConfig: { codec: 'av01.0.08M.08', bitrate: 2_500_000 },
   // Each rendition is the track `camera_<name>`, encoded from the same frames.
   renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 }]
