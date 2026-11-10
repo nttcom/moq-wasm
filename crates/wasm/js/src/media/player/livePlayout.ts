@@ -406,9 +406,10 @@ export class LivePlayout {
       newest,
       nowMs + this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), longestArrivalGapMs(held))
     )
+    const audioLeadMs = this.audio.outputLatencyMs()
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
-      if (due < nowMs) {
+      if (due < nowMs + (sample.kind === 'audio' ? audioLeadMs : 0)) {
         close(sample)
       } else if (sample.kind === 'video') {
         this.video.present(sample.frame, due)
