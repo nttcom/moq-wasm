@@ -18,7 +18,7 @@ moq-cli subscribe --relay <relay> --track <namespace>/video | ffplay -
 | `--insecure` | ● | ● | Skip certificate verification, for self-signed relays |
 | `--auth-token` | ● | ● | JWT for the relay. Also `MOQT_AUTH_TOKEN` |
 | `--auth-token-file` | ● | ● | File holding the JWT. Also `MOQT_AUTH_TOKEN_FILE`. Exclusive with `--auth-token` |
-| `--versions` | ● | ● | MoQT drafts offered, comma-separated and most preferred first, e.g. `draft-18,draft-14`; only `draft-14` when omitted. Also `MOQT_VERSIONS` |
+| `--versions` | ● | ● | MoQT drafts offered, comma-separated and most preferred first, e.g. `draft-14`; `draft-18,draft-14` when omitted. Also `MOQT_VERSIONS` |
 | `--telemetry` | ● | ● | Observability server that receives the logs. Also `MOQT_TELEMETRY_URL` |
 | `--no-telemetry` | ● | ● | Send no logs to an observability server |
 

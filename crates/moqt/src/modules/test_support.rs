@@ -47,7 +47,7 @@ use crate::{
         runtime::dispatch::incoming_object::{
             IncomingDatagram, IncomingObject, IncomingObjectReceiver,
         },
-        version::{DEFAULT_VERSIONS, Version, server_application_protocols},
+        version::{Version, server_application_protocols},
     },
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
@@ -90,6 +90,9 @@ fn unique_cert_dir(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("moqt-test-{name}-{}-{id}", std::process::id()))
 }
 
+/// Tests that name no draft write and read draft-14 bytes and messages.
+pub(crate) const TEST_VERSIONS: &[Version] = &[Version::Draft14];
+
 /// A server config on a free port with a fresh self-signed certificate for
 /// `localhost` and `127.0.0.1`.
 pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
@@ -103,7 +106,7 @@ pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
         cert_path,
         key_path,
         keep_alive_interval_sec: 5,
-        versions: DEFAULT_VERSIONS.to_vec(),
+        versions: TEST_VERSIONS.to_vec(),
     }
 }
 
@@ -152,7 +155,7 @@ pub(crate) async fn assert_both_sides_open_bi_streams(
 pub(crate) fn spawn_native_server_handshake(
     name: &str,
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
-    spawn_native_server_handshake_offering(name, DEFAULT_VERSIONS)
+    spawn_native_server_handshake_offering(name, TEST_VERSIONS)
 }
 
 pub(crate) fn spawn_native_server_handshake_offering(
@@ -172,7 +175,7 @@ pub(crate) fn spawn_native_server_handshake_offering(
 /// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming session; returns the port and the accept task.
 pub(crate) fn spawn_native_server(name: &str) -> (u16, tokio::task::JoinHandle<Session>) {
-    spawn_native_server_offering(name, DEFAULT_VERSIONS)
+    spawn_native_server_offering(name, TEST_VERSIONS)
 }
 
 /// Every draft. Iterating it prints each draft to the test's captured

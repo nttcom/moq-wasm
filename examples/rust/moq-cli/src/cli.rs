@@ -82,7 +82,7 @@ pub struct RelayArgs {
     #[arg(long, env = "MOQT_AUTH_TOKEN_FILE")]
     pub auth_token_file: Option<PathBuf>,
     /// MoQT drafts offered to the relay, comma-separated and most preferred
-    /// first, each draft-14 or draft-18; draft-14 only when omitted
+    /// first, each draft-14 or draft-18; draft-18, then draft-14, when omitted
     #[arg(long, env = "MOQT_VERSIONS", value_delimiter = ',')]
     pub versions: Vec<moqt::Version>,
 }
