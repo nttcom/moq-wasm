@@ -376,11 +376,11 @@ impl SubscribeNameSpace {
         forwarder: &ControlMessageForwarder,
         route_registry: &dyn RelayRouteRegistry,
     ) {
-        let routes = match route_registry
+        let track_namespaces = match route_registry
             .find_namespace_publishers_by_prefix(offer.prefix)
             .await
         {
-            Ok(routes) => routes,
+            Ok(track_namespaces) => track_namespaces,
             Err(err) => {
                 tracing::warn!(
                     error = ?err,
@@ -392,14 +392,12 @@ impl SubscribeNameSpace {
             }
         };
 
-        for route in routes {
-            if offer.was_offered(&route.track_namespace)
-                || already_sent.contains(&route.track_namespace)
-            {
+        for track_namespace in track_namespaces {
+            if offer.was_offered(&track_namespace) || already_sent.contains(&track_namespace) {
                 continue;
             }
             forwarder
-                .publish_namespace(session_id, route.track_namespace)
+                .publish_namespace(session_id, track_namespace)
                 .await;
         }
     }

@@ -15,11 +15,6 @@ pub(crate) struct RelayInfo {
     pub(crate) port: u16,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct NamespaceRoute {
-    pub(crate) track_namespace: String,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RegisterRouteError {
     #[error("namespace route is already registered")]
@@ -61,7 +56,7 @@ pub(crate) trait RelayRouteRegistry: Send + Sync {
     async fn find_namespace_publishers_by_prefix(
         &self,
         track_namespace_prefix: &str,
-    ) -> anyhow::Result<Vec<NamespaceRoute>>;
+    ) -> anyhow::Result<Vec<String>>;
     async fn unregister_namespace_publisher(&self, track_namespace: &str) -> anyhow::Result<()>;
     async fn unregister_namespace_subscriber(
         &self,
