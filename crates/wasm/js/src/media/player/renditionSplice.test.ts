@@ -85,3 +85,28 @@ test('without an outgoing group the incoming rendition cuts over at its first gr
   // Assert
   expect(verdict).toEqual({ play: true, start: { groupId: 7n, aligned: false }, retireOutgoing: true })
 })
+
+test('the incoming rendition plays once it delivers the start group, before the outgoing one retires', () => {
+  // Arrange
+  const splice = new RenditionSplice(10n)
+
+  // Act
+  const verdict = splice.acceptIncoming(11n, 0n)
+
+  // Assert
+  expect(verdict.retireOutgoing).toBe(false)
+  expect(splice.incomingPlaying).toBe(true)
+})
+
+test('the incoming rendition is not playing while it waits for the start group', () => {
+  // Arrange
+  const splice = new RenditionSplice(10n)
+
+  // Act
+  splice.acceptIncoming(10n, 0n)
+  splice.acceptIncoming(10n, 1n)
+
+  // Assert: the outgoing rendition delivered group 10 first, so the incoming one starts at 11
+  expect(splice.start).toBe(11n)
+  expect(splice.incomingPlaying).toBe(false)
+})

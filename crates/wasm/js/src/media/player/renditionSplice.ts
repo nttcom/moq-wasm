@@ -20,6 +20,7 @@ export type IncomingVerdict = {
 export class RenditionSplice {
   private outgoingNewest: bigint | undefined
   private startGroupId: bigint | undefined
+  incomingPlaying = false
 
   constructor(outgoingNewest: bigint | undefined) {
     this.outgoingNewest = outgoingNewest
@@ -45,6 +46,12 @@ export class RenditionSplice {
   }
 
   acceptIncoming(groupId: bigint, objectId: bigint): IncomingVerdict {
+    const verdict = this.judgeIncoming(groupId, objectId)
+    this.incomingPlaying ||= verdict.play
+    return verdict
+  }
+
+  private judgeIncoming(groupId: bigint, objectId: bigint): IncomingVerdict {
     if (this.startGroupId !== undefined) {
       return { play: groupId >= this.startGroupId, retireOutgoing: groupId > this.startGroupId }
     }
