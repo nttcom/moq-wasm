@@ -7,8 +7,6 @@
   on a high-density screen takes a lower rendition: a 215 px tall tile at a
   device pixel ratio of 2 takes 240p instead of 480p.
 
-## Unreleased
-
 - Breaking: `addSource()` takes the video's encoder settings in `encoding`,
   shared by the video and its renditions (`codec`,
   `keyframeIntervalSeconds`, `hardwareAcceleration`), and `main`, the track
@@ -43,6 +41,9 @@
   `height`: it divides the captured frame's size, as in WebRTC, so a page
   asks for a quarter of the camera without knowing its size. `addSource()`
   rejects a value below 1 with a `RangeError`.
+- The catalog lists a video track's `framerate` only when `main.framerate`
+  or the rendition's `framerate` caps it, at that value, instead of 30 for
+  every track.
 
 ## 0.4.4
 

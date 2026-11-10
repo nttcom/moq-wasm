@@ -36,6 +36,7 @@ impl RenditionFanout {
                         track: format!("{VIDEO_TRACK_NAME}_{}", rendition.name),
                         label: format!("Video {}", rendition.name),
                         bitrate: Some(u64::from(rendition.bitrate_kbps) * 1000),
+                        framerate: None,
                         cmaf: true,
                         keyframes: RenditionKeyframes::FollowSource,
                     },

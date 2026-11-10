@@ -10,7 +10,8 @@ import {
   type VideoEncodingOptions,
   checkRenditions,
   publishSource,
-  videoBitrate
+  videoBitrate,
+  videoFramerate
 } from './internal/encoders/sourceEncoding'
 import type { SourcePublicationStats } from './internal/encoders/publishStats'
 
@@ -71,7 +72,8 @@ export interface LocalSource {
   isMuted(kind: MediaKind): boolean
   /// Restarts the video's and the renditions' encoders with `options`, which
   /// replace the source's `encoding` and `main`. A muted video takes them when
-  /// unmuted. The catalog keeps the bitrate the source was published with.
+  /// unmuted. The catalog keeps the bitrate and frame rate the source was
+  /// published with.
   /// Does nothing once the source is closed.
   setVideoEncoding(options: VideoEncodingOptions): void
   /// What the source's encoders output over the last second, and the frames
@@ -191,7 +193,14 @@ class Broadcast implements LocalBroadcast {
     await this.broadcast.declareTracks([name, audioName])
     const encoding = publishSource(
       (onKeyframeRequest) =>
-        this.broadcast.addSource(name, label, videoBitrate(options), audioName, `${label} audio`, onKeyframeRequest),
+        this.broadcast.addSource(
+          name,
+          label,
+          videoBitrate(options),
+          videoFramerate(options),
+          audioName,
+          onKeyframeRequest
+        ),
       new MediaStream(tracks.map(({ track }) => track)),
       options,
       this.startedAtMs,

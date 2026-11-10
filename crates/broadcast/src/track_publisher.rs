@@ -119,6 +119,7 @@ impl TrackPublisher {
                     switching_set: self.tracks.switching_set.clone(),
                     source: self.tracks.video.clone(),
                     bitrate: self.tracks.video_bitrate,
+                    framerate: self.tracks.video_framerate,
                     ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
                 if let Some(requested) = &self.tracks.keyframe_requests {

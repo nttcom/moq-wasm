@@ -34,6 +34,8 @@ pub struct RenditionConfig {
     pub track: String,
     pub label: String,
     pub bitrate: Option<u64>,
+    /// Frames per second, when the rendition's encoder caps them.
+    pub framerate: Option<u32>,
     pub cmaf: bool,
     pub keyframes: RenditionKeyframes,
 }
@@ -84,6 +86,7 @@ impl RenditionTrack {
                     .then(|| Fmp4TrackMuxer::video(config.clone()));
                 let info = VideoTrackInfo {
                     bitrate: self.config.bitrate,
+                    framerate: self.config.framerate,
                     switching_set: self.switching_set.clone(),
                     source: self.source.clone(),
                     cmaf: self.config.cmaf,
@@ -181,6 +184,7 @@ mod tests {
                 track: "video_low".to_string(),
                 label: "Low".to_string(),
                 bitrate: None,
+                framerate: None,
                 cmaf: false,
                 keyframes,
             },

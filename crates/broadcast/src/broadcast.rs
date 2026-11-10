@@ -173,6 +173,9 @@ pub struct SourceTracks {
     /// The video's target bitrate in bits per second, known when the source
     /// encodes it.
     pub video_bitrate: Option<u64>,
+    /// The most frames per second the source encodes the video at, known
+    /// when the source caps it.
+    pub video_framerate: Option<u32>,
     /// Set by a source that encodes a keyframe when asked: notified when a
     /// subscriber of the video or of one of its renditions asks for a new
     /// group (draft-18 §10.2.13), which the next keyframe starts.
@@ -189,6 +192,7 @@ impl Default for SourceTracks {
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
             video_bitrate: None,
+            video_framerate: None,
             keyframe_requests: None,
         }
     }
@@ -218,6 +222,9 @@ pub struct VideoTrackInfo {
     /// Target bitrate in bits per second, known when the publisher encodes
     /// the track itself.
     pub bitrate: Option<u64>,
+    /// Frames per second, known when the publisher caps the track's frame
+    /// rate; the catalog leaves `framerate` out otherwise.
+    pub framerate: Option<u32>,
     pub cmaf: bool,
     /// `SourceTracks::switching_set` of the track's source.
     pub switching_set: String,
@@ -244,6 +251,7 @@ impl VideoTrackInfo {
             height,
             init_segment: general_purpose::STANDARD.encode(init_segment),
             bitrate: None,
+            framerate: None,
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
             source: VIDEO_TRACK_NAME.to_string(),
@@ -317,7 +325,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         loc.render_group = render_groups.get(info.switching_set.as_str()).copied();
         loc.codec = Some(info.codec.clone());
         loc.mime_type = Some(video_mime_type(&info.codec).to_string());
-        loc.framerate = Some(30.0);
+        loc.framerate = info.framerate.map(f64::from);
         loc.width = Some(info.width);
         loc.height = Some(info.height);
         loc.bitrate = info.bitrate;
@@ -645,6 +653,7 @@ mod tests {
             height: 360,
             init_segment: String::new(),
             bitrate: None,
+            framerate: None,
             cmaf: true,
             switching_set: switching_set.to_string(),
             source: switching_set.to_string(),
@@ -684,6 +693,40 @@ mod tests {
         assert_ne!(alt_group("video"), alt_group("screen"));
         assert_ne!(alt_group("video_cmaf"), alt_group("video"));
         assert_ne!(alt_group("video_cmaf"), alt_group("screen"));
+    }
+
+    #[test]
+    fn a_video_track_lists_its_frame_rate_only_when_the_publisher_caps_it() {
+        // Arrange: the camera is capped at 30 fps, its rendition at 2, the screen not at all
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                (
+                    "video".to_string(),
+                    VideoTrackInfo {
+                        framerate: Some(30),
+                        ..video("video")
+                    },
+                ),
+                (
+                    "video_low".to_string(),
+                    VideoTrackInfo {
+                        framerate: Some(2),
+                        ..video("video")
+                    },
+                ),
+                ("screen".to_string(), video("screen")),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let framerate = |name: &str| track_named(&catalog, name).framerate;
+        assert_eq!(framerate("video"), Some(30.0));
+        assert_eq!(framerate("video_low"), Some(2.0));
+        assert_eq!(framerate("screen"), None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ import { capturePcm } from './pcmCapture'
 import { EncoderTimeline } from './encoderTimeline'
 import {
   DEFAULT_KEYFRAME_INTERVAL_SECONDS,
+  framerateCap,
   type RenditionEncoderConfig,
   videoEncoderConfig
 } from './videoEncoderConfig'
@@ -77,7 +78,8 @@ export type SourceEncoding = {
   replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
   /// Restarts the video's and the renditions' encoders with `options`, which
   /// replace the source's `encoding` and `main`. A muted video takes them when
-  /// unmuted. The catalog keeps the bitrate the source was published with.
+  /// unmuted. The catalog keeps the bitrate and frame rate the source was
+  /// published with.
   /// Does nothing once the source is closed.
   setVideoEncoding(options: VideoEncodingOptions): void
   /// What the source's encoders output over the last second, and the frames
@@ -94,6 +96,10 @@ export type SourceEncoding = {
 
 export function videoBitrate(options: SourceOptions): number | undefined {
   return videoEncoderConfig(mainEncoderConfig(options)).bitrate
+}
+
+export function videoFramerate(options: SourceOptions): number | undefined {
+  return framerateCap(options.main?.framerate)
 }
 
 /// The WebCodecs fields of the video's encoder. The keyframe interval is not
@@ -117,8 +123,8 @@ export function publishSource(
   let options = initialOptions
   const kinds = new Map<MediaKind, Encoding>()
   const source = addSource(() => kinds.get('video')?.encoder?.forceKeyframe?.())
-  const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
-    source.addRendition(name, label, bitrate)
+  const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate, framerate }) =>
+    source.addRendition(name, label, bitrate, framerateCap(framerate ?? options.main?.framerate))
   )
   const videoStats = new VideoEncodeStats((options.renditions ?? []).map(({ name }) => name))
   const audioStats = new AudioEncodeStats()
