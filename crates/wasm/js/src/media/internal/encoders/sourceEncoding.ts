@@ -2,14 +2,16 @@ import type { MediaSource } from '../../../../pkg/moqt'
 import type { AudioLevel } from '../loc'
 import { capturePcm } from './pcmCapture'
 import { EncoderTimeline } from './encoderTimeline'
-import { videoEncoderConfig } from './videoEncoderConfig'
+import { defaultKeyframeIntervalFrames, videoEncoderConfig } from './videoEncoderConfig'
 import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
 import { receiveWorkerLog } from '../../../core/log'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
   videoLabel?: string
-  /// Frames between keyframes; each keyframe starts a group.
+  /// Frames between keyframes; each keyframe starts a group. By default, the
+  /// frames of 30 seconds at the encoder's frame rate: a viewer that joins or
+  /// switches rendition asks for a keyframe instead of waiting for the next.
   keyframeIntervalFrames?: number
   /// Fields set here replace the encoder's defaults (H.264, 1 Mbps, 30 fps,
   /// `latencyMode: 'realtime'`) for the video and its renditions. The
@@ -33,8 +35,6 @@ export type Rendition = {
 
 export type MediaKind = 'video' | 'audio'
 
-const DEFAULT_KEYFRAME_INTERVAL_FRAMES = 60
-
 type ChunkMessage<Chunk, Metadata> = {
   type: 'chunk'
   chunk: Chunk
@@ -42,8 +42,9 @@ type ChunkMessage<Chunk, Metadata> = {
   captureTimestampMicros: number | undefined
 }
 
-/// Stops one kind's encoder worker and what feeds it.
-type Encoder = { stop: () => void }
+/// Stops one kind's encoder worker and what feeds it. `forceKeyframe` makes
+/// the next video frame a keyframe of the video and of every rendition.
+type Encoder = { stop: () => void; forceKeyframe?: () => void }
 
 type Encoding = { track?: MediaStreamTrack; muted: boolean; encoder?: Encoder }
 
@@ -74,14 +75,18 @@ export function videoBitrate(options: SourceOptions): number | undefined {
   return videoEncoderConfig(options.videoEncoderConfig).bitrate
 }
 
+/// `addSource` adds the source to the broadcast with the callback it is given,
+/// which the broadcast calls when a subscriber asks for a new group.
 export function publishSource(
-  source: MediaSource,
+  addSource: (onKeyframeRequest: () => void) => MediaSource,
   stream: MediaStream,
   initialOptions: SourceOptions,
   startedAtMs: number,
   report: (error: unknown) => void
 ): SourceEncoding {
   let options = initialOptions
+  const kinds = new Map<MediaKind, Encoding>()
+  const source = addSource(() => kinds.get('video')?.encoder?.forceKeyframe?.())
   const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate }) =>
     source.addRendition(name, label, bitrate)
   )
@@ -96,7 +101,6 @@ export function publishSource(
       ? encodeVideo(source, track, options, renditionIndices, timeline, videoStats, report)
       : encodeAudio(source, track, timeline, audioStats, report)
   }
-  const kinds = new Map<MediaKind, Encoding>()
   for (const [kind, track] of [
     ['video', stream.getVideoTracks()[0]],
     ['audio', stream.getAudioTracks()[0]]
@@ -256,8 +260,9 @@ function encodeVideo(
   }
   worker.postMessage({
     type: 'keyframeInterval',
-    keyframeInterval: options.keyframeIntervalFrames ?? DEFAULT_KEYFRAME_INTERVAL_FRAMES
+    keyframeInterval: options.keyframeIntervalFrames ?? defaultKeyframeIntervalFrames(options.videoEncoderConfig)
   })
+  const forceKeyframe = () => worker.postMessage({ type: 'forceKeyframe' })
   if (options.videoEncoderConfig) {
     worker.postMessage({ type: 'encoderConfig', config: options.videoEncoderConfig })
   }
@@ -275,7 +280,7 @@ function encodeVideo(
   if (typeof MediaStreamTrackProcessor === 'function') {
     const videoStream = new MediaStreamTrackProcessor({ track }).readable
     worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
-    return { stop: () => worker.terminate() }
+    return { stop: () => worker.terminate(), forceKeyframe }
   }
   // Safari reads a track only in a worker. The worker stops the clone it was
   // given, which `terminate` would leave running.
@@ -285,7 +290,8 @@ function encodeVideo(
     stop: () => {
       worker.onmessage = null
       worker.postMessage({ type: 'stop' })
-    }
+    },
+    forceKeyframe
   }
 }
 

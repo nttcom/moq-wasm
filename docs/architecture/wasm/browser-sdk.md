@@ -314,8 +314,31 @@ listener になる。publisher がいないときの再購読と、catalog の P
 | ソースの選択 | `LivePlayerOptions.source`（`{ video, audio? }`）。名前の映像 track と、その altGroup（draft-ietf-moq-msf-01 §5.2.12）の rendition、名前の音声 track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
 | 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`） | 小さいタイルは低い rendition を受ける |
 | Audio Level | `LivePlayerCallbacks.onAudioLevel?(level: AudioLevel)`。音声 object の LOC Audio Level property（draft-ietf-moq-loc-04 §2.3.3.2）を渡す。`AudioLevel` を export する | 話者の検出（`dominantSpeaker.ts`） |
-| 最初の映像を joining FETCH で取る | 映像の最初の購読は `subscribeCurrentGroup` にする。rendition の切り替えは今と同じく次の group を待つ | 静止した画面共有も、参加した直後に映る |
+| 最初の映像を group の先頭から取る | 映像の最初の購読は `subscribeGroupStart` にする（下の「keyframe の間隔と NEW_GROUP_REQUEST」）。rendition の切り替えは新しい group を要求し、その先頭で切り替える | 静止した画面共有も、参加した直後に映る |
 | 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
+
+#### keyframe の間隔と NEW_GROUP_REQUEST
+
+配信側の keyframe は既定で 30 秒おきである（`keyframeIntervalFrames` を省略すると、
+encoder の frame rate の 30 秒分）。視聴側は次の keyframe を待たず、draft-18 の
+NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
+
+- **配信側。** `MediaBroadcast.addSource` は `onKeyframeRequest` を受け取り、映像と
+  その rendition の track を DYNAMIC_GROUPS（§12.6）付きで配信する。要求が
+  届くと wasm が callback を呼び、`sourceEncoding.ts` が encoder worker に
+  `forceKeyframe` を送る。worker は次のフレームを全 rendition で keyframe にする
+  ので、group id は rendition の間で揃ったままである。
+- **最初の購読。** `subscribeGroupStart(namespace, track, 60)` を使う。SUBSCRIBE と
+  joining FETCH を続けて送る。SUBSCRIBE_OK の Largest Object が 60 object（30 fps で
+  2 秒）より手前なら、その FETCH で今の group を先頭から取る。それ以降なら FETCH を
+  取り消して NEW_GROUP_REQUEST を送り、新しい group から読む。1 秒待っても新しい group が来なければ、今の group を FETCH する。
+  DYNAMIC_GROUPS の無い track と draft-14 の session は、いつも joining FETCH になる。
+- **rendition の切り替えと `goLive`。** どちらも group の先頭からしか始められない
+  ので、切り替え先を購読した直後と、Forward を 1 に戻した直後に
+  `Subscription.requestNewGroup` を呼ぶ。
+- **relay。** 同じ track への要求は、2 秒に 1 回だけ上流へ送る。その間に来た要求は
+  送らない。最初の購読は上の FETCH で追いつくが、切り替えと `goLive` は次の
+  group まで待つ。
 
 ソースは映像と音声の track 名で渡す。rendition は、catalog が switching set ごとに
 付ける altGroup から見つかる。映像だけがミュートされて catalog から外れても、音声は名前で
@@ -870,6 +893,7 @@ export interface Session extends EventTarget {
   readonly closed: Promise<CloseInfo>
   subscribe(namespace: string[], track: string, options?: SubscribeOptions): Promise<Subscription>
   subscribeCurrentGroup(namespace: string[], track: string): Promise<Subscription>  // SUBSCRIBE + joining FETCH
+  subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number): Promise<Subscription>  // joining FETCH または NEW_GROUP_REQUEST
   fetch(namespace: string[], track: string, range: FetchRange): Promise<AsyncIterable<MoqObject>>
   trackStatus(namespace: string[], track: string): Promise<TrackStatus>
   announce(namespace: string[]): Promise<Announcement>          // PUBLISH_NAMESPACE

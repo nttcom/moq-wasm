@@ -17,9 +17,6 @@ export interface ArrangeMeetingClientOptions {
   cameraWarmupMs?: number
 }
 
-// Use a short camera keyframe interval (~1s at 15fps) so newly-subscribed clients
-// get a renderable keyframe quickly even when several streams decode concurrently.
-const KEYFRAME_INTERVAL = 15
 const E2E_VIDEO_WIDTH = 160
 const E2E_VIDEO_HEIGHT = 90
 const E2E_VIDEO_FRAMERATE = 15
@@ -31,7 +28,6 @@ const FORWARDED_CONSOLE_TEXT_PATTERN =
 
 async function openMeetingPage(page: Page, jwt: string | undefined, extra: Record<string, string>): Promise<void> {
   const params = new URLSearchParams({
-    keyframeInterval: String(KEYFRAME_INTERVAL),
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
     e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
     e2eVideoFramerate: String(E2E_VIDEO_FRAMERATE),

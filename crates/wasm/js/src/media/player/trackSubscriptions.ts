@@ -17,6 +17,12 @@ import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
 /// so audio takes the downlink ahead of video.
 const SUBSCRIBER_PRIORITY: Record<MediaKind, number> = { video: 128, audio: 0 }
 
+/// A group whose largest object ID is below this is read from its start
+/// through a joining FETCH; a longer one is not worth catching up on when the
+/// publisher starts a new group on request. 2 seconds of video at 30 fps,
+/// the time within which the relay passes on only one such request.
+const FETCHED_GROUP_OBJECTS = 60
+
 export type TrackSubscription = PlayedTrack & {
   id: bigint
   handle: MoqSubscription
@@ -51,18 +57,19 @@ export class TrackSubscriptions {
     return this.forwardPaused
   }
 
-  /// `currentGroup` starts the subscription at the first object of the group
-  /// the largest object is in, through a joining FETCH (draft-14 §9.16.2).
-  /// While forwarding is paused the subscription starts with the next group
-  /// instead.
+  /// `groupStart` starts the subscription at the first object of a group
+  /// (draft-18 §5.1.3.1): the group the largest object is in, through a
+  /// joining FETCH, or a new group the publisher is asked to start when that
+  /// group's largest object ID is `FETCHED_GROUP_OBJECTS` or more. While forwarding is paused
+  /// the subscription starts with the next group instead.
   async subscribe(
     kind: MediaKind,
     wireName: string,
     track: MediaCatalogTrack,
     handler: ObjectHandler,
-    currentGroup = false
+    groupStart = false
   ): Promise<void> {
-    this.subscriptions.set(kind, await this.open(kind, wireName, track, handler, currentGroup))
+    this.subscriptions.set(kind, await this.open(kind, wireName, track, handler, groupStart))
   }
 
   /// Subscribes without making the subscription the one of its kind, so a
@@ -73,13 +80,13 @@ export class TrackSubscriptions {
     wireName: string,
     track: MediaCatalogTrack,
     handler: ObjectHandler,
-    currentGroup = false
+    groupStart = false
   ): Promise<TrackSubscription> {
     const namespace = catalogTrackNamespace(track, this.context.namespace)
     const session = sessionOf(this.context)
-    const joining = currentGroup && !this.forwardPaused
+    const joining = groupStart && !this.forwardPaused
     const handle = joining
-      ? await session.subscribeCurrentGroup(namespace, wireName)
+      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS)
       : await session.subscribe(namespace, wireName, {
           forward: !this.forwardPaused,
           priority: SUBSCRIBER_PRIORITY[kind]
@@ -95,6 +102,18 @@ export class TrackSubscriptions {
     void handle.done.then((done) => done && this.end(kind, subscription, done))
     this.context.log('info', `subscribed ${namespace.join('/')}/${wireName}`)
     return subscription
+  }
+
+  /// Asks the publisher of `subscription` to start a new group, for a reader
+  /// that can only start at one. Never rejects: a track that does not start
+  /// groups on request, or a request that fails, leaves the reader waiting
+  /// for the track's next group.
+  async requestNewGroup(subscription: TrackSubscription, largestGroup?: bigint): Promise<void> {
+    try {
+      await subscription.handle.requestNewGroup(largestGroup)
+    } catch (error) {
+      this.context.log('warn', `new group of ${subscription.name}: ${getErrorMessage(error)}`)
+    }
   }
 
   /// Makes `next` the subscription of its kind. The one it replaces keeps
@@ -206,11 +225,17 @@ export class TrackSubscriptions {
     if (!this.context.session?.isOpen) {
       return
     }
-    for (const subscription of this.subscriptions.values()) {
+    for (const [kind, subscription] of this.subscriptions) {
       try {
         await subscription.handle.setForward(forward)
       } catch (error) {
         this.context.log('error', `forward ${subscription.name}: ${getErrorMessage(error)}`)
+        continue
+      }
+      // Delivery resumes with the next group, which the video would
+      // otherwise wait a keyframe interval for.
+      if (forward && kind === 'video') {
+        await this.requestNewGroup(subscription)
       }
     }
     this.context.log('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)

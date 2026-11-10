@@ -37,8 +37,8 @@ async function expectVideoPlaying(video: import('@playwright/test').Locator): Pr
   await expect.poll(async () => video.evaluate((el) => (el as HTMLVideoElement).paused)).toBe(false)
 }
 
-// Assert that inter-frames decode too: the publisher sends one keyframe per second, so frames
-// must keep arriving well above that rate.
+// Assert that inter-frames decode too: the publisher sends a keyframe every 30 seconds and when
+// a viewer asks for one, so ten more frames within the timeout are mostly inter-frames.
 async function expectInterFramesDecoded(video: import('@playwright/test').Locator): Promise<void> {
   const initialFrames = await video.evaluate(
     (el) => (el as HTMLVideoElement).getVideoPlaybackQuality().totalVideoFrames
@@ -149,6 +149,35 @@ test('cross-relay: two clients on different relays see each other and receive vi
   } finally {
     await client1.context.close()
     await client2.context.close()
+  }
+})
+
+test('a viewer who joins long after the last keyframe sees the camera without waiting for the next one', async ({
+  browser
+}) => {
+  // Arrange: alice's camera sent its last keyframe at least 12 s before bob subscribes; bob fetches that group or asks for a new one
+  const alice = await arrangeMeetingClient(browser)
+  const bob = await arrangeMeetingClient(browser)
+  try {
+    const roomName = `e2e-late-join-${Date.now()}`
+    await joinRoom(alice.page, roomName, 'alice', 'a')
+    await enableMedia(alice.page)
+    await alice.page.page.waitForTimeout(12_000)
+    await joinRoom(bob.page, roomName, 'bob', 'b')
+    await expectCatalogStatus(bob.page.page, 'alice', 'Subscribed', 60_000)
+
+    // Act
+    await subscribeMedia(bob.page.page, 'alice')
+
+    // Assert: the next periodic keyframe is up to 18 s away
+    const video = getMemberVideo(bob.page.page, 'alice')
+    await expect
+      .poll(() => video.evaluate((el) => (el as HTMLVideoElement).readyState), { timeout: 5_000 })
+      .toBeGreaterThanOrEqual(2)
+    await expectInterFramesDecoded(video)
+  } finally {
+    await alice.context.close()
+    await bob.context.close()
   }
 })
 

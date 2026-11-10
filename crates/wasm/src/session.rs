@@ -155,6 +155,36 @@ impl Session {
             .await
     }
 
+    /// Subscribes and reads the track from the first object of a group
+    /// (draft-18 §5.1.3.1): the current group, through a joining FETCH sent
+    /// with the SUBSCRIBE, or, when the track has dynamic groups and its
+    /// largest object ID is `new_group_after` or more, a new group it asks
+    /// the publisher to start (NEW_GROUP_REQUEST, §10.2.13) after
+    /// withdrawing the FETCH.
+    #[wasm_bindgen(js_name = subscribeGroupStart)]
+    pub async fn subscribe_group_start(
+        &self,
+        namespace: Vec<String>,
+        track: String,
+        new_group_after: u32,
+    ) -> Result<Subscription, JsValue> {
+        self.scope
+            .scoped(async {
+                let (subscription, reader) = self
+                    .session
+                    .subscriber()
+                    .subscribe_group_start(namespace.join("/"), track, new_group_after.into())
+                    .await
+                    .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
+                Ok(Subscription::new(
+                    self,
+                    subscription,
+                    Reading::Objects(reader),
+                ))
+            })
+            .await
+    }
+
     /// A Standalone FETCH (draft-14 §9.16.1). `end_object` is the End
     /// Location's Object: the last object plus 1, and 0 means the whole group.
     #[allow(clippy::too_many_arguments)]
@@ -553,6 +583,23 @@ impl Subscription {
                 self.session
                     .subscriber()
                     .update_forward(&self.subscription, forward)
+                    .await
+                    .map_err(anyhow_error)
+            })
+            .await
+    }
+
+    /// Asks the publisher to start a new group (NEW_GROUP_REQUEST, draft-18
+    /// §10.2.13). `largest_group` is the largest group ID of the track the
+    /// caller has seen. Resolves to false, without sending, for a track
+    /// without dynamic groups.
+    #[wasm_bindgen(js_name = requestNewGroup)]
+    pub async fn request_new_group(&self, largest_group: Option<u64>) -> Result<bool, JsValue> {
+        self.scope
+            .scoped(async {
+                self.session
+                    .subscriber()
+                    .request_new_group(&self.subscription, largest_group)
                     .await
                     .map_err(anyhow_error)
             })

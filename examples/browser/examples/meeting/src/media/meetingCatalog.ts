@@ -1,5 +1,4 @@
 import type { Rendition } from 'moq-wasm/media'
-import { DEFAULT_VIDEO_KEYFRAME_INTERVAL } from '../types/catalog'
 import { DEFAULT_VIDEO_ENCODING_SETTINGS, type VideoEncodingSettings } from '../types/videoEncoding'
 
 type E2ECameraSettings = {
@@ -30,16 +29,6 @@ function readWindowSearchParams(): URLSearchParams | null {
   return new URLSearchParams(window.location.search)
 }
 
-// E2E hook: `?keyframeInterval=N` shortens the camera GOP so new subscribers get a
-// renderable keyframe quickly. Without the param the normal default is used.
-function resolveCameraKeyframeInterval(): number {
-  const params = readWindowSearchParams()
-  if (!params) {
-    return DEFAULT_VIDEO_KEYFRAME_INTERVAL
-  }
-  return readPositiveIntegerParam(params, 'keyframeInterval') ?? DEFAULT_VIDEO_KEYFRAME_INTERVAL
-}
-
 function resolveE2ECameraSettings(): E2ECameraSettings | null {
   const params = readWindowSearchParams()
   if (!params) {
@@ -57,7 +46,6 @@ function resolveE2ECameraSettings(): E2ECameraSettings | null {
   return { width, height, framerate, bitrate, codec, lowHeight }
 }
 
-export const CAMERA_KEYFRAME_INTERVAL = resolveCameraKeyframeInterval()
 export const E2E_CAMERA_SETTINGS = resolveE2ECameraSettings()
 
 export const INITIAL_CAMERA_ENCODING_SETTINGS: VideoEncodingSettings = E2E_CAMERA_SETTINGS

@@ -60,6 +60,7 @@ type WasmSession = Pick<
   | 'transportStats'
   | 'subscribe'
   | 'subscribeCurrentGroup'
+  | 'subscribeGroupStart'
   | 'fetch'
   | 'trackStatus'
   | 'watchNamespaces'
@@ -70,7 +71,7 @@ type WasmSession = Pick<
 >
 type WasmSubscription = Pick<
   Moqt.Subscription,
-  'largest' | 'done' | 'next' | 'nextGroup' | 'setForward' | 'endBeforeGroup' | 'close' | 'free'
+  'largest' | 'done' | 'next' | 'nextGroup' | 'setForward' | 'requestNewGroup' | 'endBeforeGroup' | 'close' | 'free'
 >
 type WasmGroup = Pick<Moqt.Group, 'groupId' | 'subgroupId' | 'next' | 'free'>
 type WasmObject = Pick<
@@ -133,6 +134,18 @@ export class MoqSession {
   /// the largest object is in come first.
   async subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () => this.inner.subscribeCurrentGroup(namespace, track))
+    return new MoqSubscription(subscription)
+  }
+
+  /// SUBSCRIBE that reads from the first object of a group (draft-18 §5.1.3.1).
+  /// The group the largest object is in comes first, through a joining FETCH,
+  /// unless the track starts a group on request and the largest object ID is
+  /// `newGroupAfter` or more: then the publisher is asked for a new
+  /// group (NEW_GROUP_REQUEST, §10.2.13) and the objects start with it.
+  async subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number): Promise<MoqSubscription> {
+    const subscription = await request('SUBSCRIBE', () =>
+      this.inner.subscribeGroupStart(namespace, track, newGroupAfter)
+    )
     return new MoqSubscription(subscription)
   }
 
@@ -227,6 +240,15 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
 
   async setForward(forward: boolean): Promise<void> {
     await this.call(() => this.inner.setForward(forward))
+  }
+
+  /// Asks the publisher to start a new group (NEW_GROUP_REQUEST, draft-18
+  /// §10.2.13). `largestGroup` is the largest group ID of the track seen so
+  /// far. Resolves to false, without asking, for a track that does not start
+  /// groups on request. The relay does not pass on a request that follows
+  /// another within 2 seconds.
+  async requestNewGroup(largestGroup?: bigint): Promise<boolean> {
+    return (await this.call(() => this.inner.requestNewGroup(largestGroup))) ?? false
   }
 
   /// Delivers the groups before `groupId`, after which the publisher ends the
