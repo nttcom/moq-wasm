@@ -1,4 +1,4 @@
-import { MoqSession } from 'moq-wasm'
+import { MoqSession, reportLog } from 'moq-wasm'
 import { connectOptions } from '../../utils/access'
 import type { TrackWriter } from 'moq-wasm'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
@@ -62,7 +62,7 @@ let session: MoqSession | undefined
 let relayUrl = relayUrlFromQuery() ?? LOAD_BALANCED_RELAY_PRESET.value
 let relayTab: RelayTab = LOCAL_RELAY_PRESETS.some((preset) => preset.value === relayUrl) ? 'local' : 'cloud'
 const stage = element<HTMLDivElement>('stage')
-const telemetry = startPageTelemetry(
+startPageTelemetry(
   'onvif',
   () => relayUrl,
   () => playerSamples(player)
@@ -90,7 +90,7 @@ function renderVideoStats(): void {
 }
 
 function log(level: 'info' | 'warn' | 'error', message: string): void {
-  telemetry.log(level, message)
+  reportLog(level, 'onvif', message)
   console[level](`[onvif] ${message}`)
 }
 

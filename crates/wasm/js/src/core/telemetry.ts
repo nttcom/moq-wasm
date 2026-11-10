@@ -1,28 +1,42 @@
+import type { LiveStats } from '../media/player/locLive'
 import type { LogRecord, SpanRecord } from './init'
 
-/// The observability server takes at most this many logs and spans each per report.
+/// The observability server takes at most this many logs, stats and spans each per report.
 const MAX_RECORDS = 100
 const FLUSH_INTERVAL_MS = 10_000
 
 export interface TelemetryOptions {
   /// The observability server's origin (`https://observability.example`). Reports go to its
-  /// `/api/client-telemetry`.
-  url: string
+  /// `/api/client-telemetry`. A function is called at each send, for a page that picks the
+  /// server from the relay its user chooses.
+  url: string | (() => string)
   /// Names the page in each report, at most 128 characters.
   page: string
   /// Returns the fields a log or span is sent with, to mask or drop a value such as a
   /// `track_namespace` that holds a user id. Messages and span names are sent as they are.
   redact?: (fields: Fields) => Fields
+  /// Called at each send for the players' stats to send with the session-less records. `redact`
+  /// does not apply to them.
+  stats?: () => TelemetryStatsSample[]
+}
+
+/// One player's `stats()`. A page playing several tracks sets `trackNamespace` (joined with
+/// `/`) and `mediaSource`; a page with a single player omits both.
+export interface TelemetryStatsSample {
+  trackNamespace?: string
+  mediaSource?: string
+  values: LiveStats
 }
 
 type Fields = LogRecord['fields']
 
-type Batch = { logs: LogRecord[]; spans: SpanRecord[] }
+type Batch = { logs: LogRecord[]; stats: (TelemetryStatsSample & { timeMs: number })[]; spans: SpanRecord[] }
 /// Resolves to the response's HTTP status, or `undefined` when there is none to read.
 type Send = (url: string, body: string, beacon: boolean) => Promise<number | undefined>
 
-/// Queues the SDK's logs and spans per session token and posts them to the observability
-/// server's `/api/client-telemetry`, which verifies the token and forwards them to the collector.
+/// Queues the SDK's logs and spans per session token, with the page's player stats, and posts
+/// them to the observability server's `/api/client-telemetry`, which verifies the token and
+/// forwards them to the collector.
 export class ClientTelemetry {
   readonly clientId = crypto.randomUUID()
   private batches = new Map<string | undefined, Batch>()
@@ -43,15 +57,20 @@ export class ClientTelemetry {
 
   /// Sends one report per token. `beacon` sends with `navigator.sendBeacon`, which outlives the page.
   flush(beacon = false): void {
+    const timeMs = Date.now()
+    for (const sample of this.options.stats?.() ?? []) {
+      keepNewest(this.batch(undefined).stats, { timeMs, ...sample })
+    }
     const batches = this.batches
     this.batches = new Map()
-    const endpoint = `${this.options.url.replace(/\/+$/, '')}/api/client-telemetry`
-    for (const [batchToken, { logs, spans }] of batches) {
-      if (logs.length === 0 && spans.length === 0) {
+    const url = typeof this.options.url === 'string' ? this.options.url : this.options.url()
+    const endpoint = `${url.replace(/\/+$/, '')}/api/client-telemetry`
+    for (const [batchToken, { logs, stats, spans }] of batches) {
+      if (logs.length === 0 && stats.length === 0 && spans.length === 0) {
         continue
       }
       const token = batchToken !== undefined && this.rejectedTokens.has(batchToken) ? undefined : batchToken
-      const body = JSON.stringify({ token, clientId: this.clientId, page: this.options.page, logs, spans })
+      const body = JSON.stringify({ token, clientId: this.clientId, page: this.options.page, logs, stats, spans })
       void this.send(endpoint, body, beacon).then((status) => {
         if (status === 401 && token !== undefined) {
           this.rejectedTokens.add(token)
@@ -73,7 +92,7 @@ export class ClientTelemetry {
   private batch(token: string | undefined): Batch {
     let batch = this.batches.get(token)
     if (!batch) {
-      batch = { logs: [], spans: [] }
+      batch = { logs: [], stats: [], spans: [] }
       this.batches.set(token, batch)
     }
     return batch

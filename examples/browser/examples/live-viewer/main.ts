@@ -1,4 +1,4 @@
-import { MoqSession } from 'moq-wasm'
+import { MoqSession, reportLog } from 'moq-wasm'
 import { connectOptions } from '../../utils/access'
 import { Mp4Publisher } from './mp4Publisher'
 import { PlaybackCharts, SAMPLE_INTERVAL_MS } from './playbackCharts'
@@ -31,7 +31,7 @@ import 'moq-wasm/media/controls.css'
 const STREAM_RENDER_INTERVAL_MS = 100
 
 let session: MoqSession | undefined
-const telemetry = startPageTelemetry(
+startPageTelemetry(
   'live-viewer',
   () => element<HTMLInputElement>('url').value.trim(),
   () => playerSamples(player)
@@ -266,7 +266,7 @@ function trackNamespace(): string[] {
 }
 
 function appendLog(level: 'info' | 'warn' | 'error', message: string): void {
-  telemetry.log(level, message)
+  reportLog(level, 'live-viewer', message)
   const panel = document.getElementById('logPanel')
   if (!panel) {
     return

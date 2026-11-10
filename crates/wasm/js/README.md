@@ -420,7 +420,26 @@ await init({
 ```
 
 `onSpan` receives the wasm module's spans, and `telemetry` sends both to an
-observability server.
+observability server every 10 s, with the player stats its `stats` returns:
+
+```ts
+import { init, reportLog } from 'moq-wasm'
+
+await init({
+  logLevel: 'info',
+  telemetry: {
+    url: 'https://observability.example', // or a function, called at each send
+    page: 'viewer',
+    stats: () => (player.state.started ? [{ values: player.stats() }] : [])
+  }
+})
+
+// The page's own logs are sent only when handed over
+reportLog('warn', 'viewer', 'stalled', { track_name: 'video' })
+```
+
+A page playing several tracks sets `trackNamespace` (joined with `/`) and
+`mediaSource` on each sample.
 
 ## Vite
 

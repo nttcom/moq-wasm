@@ -32,6 +32,10 @@ export function forwardSdkLog(
   emit(level, target, message, toFields(fields))
 }
 
+/// Hands a page's own log to `init`'s `onLog` and `telemetry`, as `forwardSdkLog` does the SDK's,
+/// at `logLevel` or above. `target` names the page. It is not written to the console.
+export const reportLog = forwardSdkLog
+
 function emit(level: LogLevel, target: string, message: string, fields: Fields): void {
   if (sink && SEVERITY[level] <= SEVERITY[sink.level]) {
     sink.emit({ timeMs: Date.now(), level, target, message, fields }, undefined)

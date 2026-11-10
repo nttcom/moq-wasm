@@ -1,4 +1,4 @@
-import type { TrackWriter } from 'moq-wasm'
+import { type TrackWriter, reportLog } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
 import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
@@ -24,7 +24,7 @@ type Prompt = { targets: string[]; video?: string }
 /// [index into the prompt's targets, edges]
 type TargetBox = [number, BoxEdges]
 
-const telemetry = startPageTelemetry(
+startPageTelemetry(
   'moq-ptz-tracking',
   () => element<HTMLInputElement>('url').value.trim(),
   () => playerSamples(player)
@@ -35,7 +35,7 @@ const player = new LivePlayer({
     onStateChange: followSelectedVideoTrack,
     onLiveFrame: renderViewerDelay,
     onLog: (level, message) => {
-      telemetry.log(level, message)
+      reportLog(level, 'moq-ptz-tracking', message)
       console[level](`[moq-ptz-tracking] ${message}`)
     }
   }

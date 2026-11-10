@@ -1,6 +1,7 @@
 export type { Announcement, TrackWriter } from '../../pkg/moqt'
 export { type InitOptions, type LogLevel, type LogRecord, type SpanRecord, init, loadMoqt } from './init'
-export type { TelemetryOptions } from './telemetry'
+export { reportLog } from './log'
+export type { TelemetryOptions, TelemetryStatsSample } from './telemetry'
 export { RequestError, RequestErrorCode } from './requestError'
 export {
   type CloseInfo,
