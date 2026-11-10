@@ -107,7 +107,8 @@ impl MediaBroadcast {
     /// Only a source on the tracks `video` and `audio` brings the chat. Every
     /// source brings its media timeline, `<video>_timeline`. Its video forms
     /// a switching set of its own with its renditions.
-    /// `video_bitrate` is the video encoder's target in bits per second.
+    /// `video_bitrate` is the video encoder's target in bits per second, and
+    /// `video_framerate` the frames per second it is capped at, if it is.
     /// The video and its renditions have dynamic groups (draft-18 §12.6):
     /// `on_keyframe_request` is called, without arguments, when a subscriber
     /// asks for a new group, and the page then encodes the next frame of the
@@ -118,6 +119,7 @@ impl MediaBroadcast {
         video: String,
         video_label: String,
         video_bitrate: Option<f64>,
+        video_framerate: Option<f64>,
         audio: String,
         audio_label: String,
         on_keyframe_request: Function,
@@ -134,6 +136,7 @@ impl MediaBroadcast {
             audio_label,
             cmaf: false,
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
+            video_framerate: video_framerate.map(|framerate| framerate as u32),
             keyframe_requests: Some(keyframe_requests),
         };
         MediaSource {
@@ -208,13 +211,21 @@ impl MediaSource {
     /// Adds a rendition of the video in the track `<video track>_<name>`, in the
     /// group ids of the video's keyframes on the same frames
     /// (draft-ietf-moq-cmsf-01 §3.2), and returns its index. `bitrate` is in
-    /// bits per second. Removing the video removes its renditions.
+    /// bits per second, and `framerate` the frames per second the rendition is
+    /// capped at, if it is. Removing the video removes its renditions.
     #[wasm_bindgen(js_name = addRendition)]
-    pub fn add_rendition(&mut self, name: String, label: String, bitrate: Option<f64>) -> usize {
+    pub fn add_rendition(
+        &mut self,
+        name: String,
+        label: String,
+        bitrate: Option<f64>,
+        framerate: Option<f64>,
+    ) -> usize {
         let config = RenditionConfig {
             track: format!("{}_{name}", self.tracks.video),
             label,
             bitrate: bitrate.map(|bitrate| bitrate as u64),
+            framerate: framerate.map(|framerate| framerate as u32),
             cmaf: false,
             keyframes: RenditionKeyframes::SameFrames,
         };

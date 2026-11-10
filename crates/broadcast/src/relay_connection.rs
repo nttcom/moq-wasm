@@ -856,6 +856,7 @@ mod tests {
             height: 360,
             init_segment: String::new(),
             bitrate: None,
+            framerate: None,
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
             source: VIDEO_TRACK_NAME.to_string(),

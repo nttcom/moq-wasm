@@ -32,3 +32,10 @@ export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): Vi
 }
 
 export const DEFAULT_KEYFRAME_INTERVAL_SECONDS = 30
+
+/// The frame rate a track set to `framerate` is capped at, as the encoder
+/// worker clamps it; undefined when it is not set, as the worker then encodes
+/// every frame.
+export function framerateCap(framerate: number | undefined): number | undefined {
+  return framerate === undefined ? undefined : videoEncoderConfig({ framerate }).framerate
+}

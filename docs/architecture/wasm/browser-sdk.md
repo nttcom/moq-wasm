@@ -498,7 +498,8 @@ WebCodecs の `framerate` は rate control の目安で、encoder はフレー�
 フレームを飛ばす（`frameRateLimit.ts`）。keyframe のフレームは飛ばさないので、どの
 rendition も同じフレームで group が始まる。指定しなければ、届いたフレームをすべて
 encode する。画面共有のように変化があるときだけフレームが届く入力は、上限より遅いので
-何も飛ばさない。`source.setVideoEncoding({ encoding, main })` は2つを
+何も飛ばさない。catalog の `framerate`（MSF §5.2.20、任意）は、上限を指定したトラックにだけその値を書く。
+指定がないトラックの実際の fps は入力次第で分からないので、項目を省く。`source.setVideoEncoding({ encoding, main })` は2つを
 置き換えて encoder を作り直す。
 
 `video` と `audio` は次のどれかである。
