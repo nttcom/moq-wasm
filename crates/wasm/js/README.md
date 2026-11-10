@@ -276,6 +276,7 @@ Without `PlayerControls`, draw the controls from `player.state` in
 | Seek                          | `seek(captureMicros)` to a LOC capture timestamp, `skip(seconds)`; `state.seek` holds the seekable range in capture seconds (`replayableStartSeconds` to `liveEdgeSeconds`) |
 | Pause, volume, speed          | `setPaused(paused)`, `setVolume(volume)`, `setPlaybackRate(rate)`                                                                                                           |
 | Hide the picture              | `setVideoEnabled(false)` unsubscribes the video and keeps the audio; `setVideoEnabled(true)` subscribes it again                                                            |
+| Video ahead of other videos   | `setVideoPriority(priority)`: on a congested downlink the relay sends the video of a lower value first (0 to 255, 128 by default); the audio stays ahead of every video     |
 | Status texts                  | `state.catalogStatus`, `state.playbackStatus`, `state.rewindStatus`                                                                                                         |
 | Delivery statistics           | `stats()`, `formatLiveStats(stats)`                                                                                                                                         |
 

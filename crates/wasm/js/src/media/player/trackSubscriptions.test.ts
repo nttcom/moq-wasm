@@ -30,7 +30,7 @@ test('a subscription from a group start marks the objects up to the largest one 
   await session.drained
 
   // Assert
-  expect(session.calls).toEqual([{ method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60 }])
+  expect(session.calls).toEqual([{ method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60, priority: 128 }])
   expect(received).toEqual([
     [3n, 0n, true],
     [3n, 1n, true],
@@ -133,6 +133,56 @@ test('audio is subscribed with a lower subscriber priority value than video, so 
     ['video-720p', 128],
     ['audio', 0]
   ])
+})
+
+test('a video priority set while the video is subscribed is sent as an update of the video only', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
+
+  // Act
+  subscriptions.setVideoPriority(7)
+
+  // Assert
+  await expect.poll(() => session.updates).toEqual(['setPriority video 7'])
+})
+
+test('a video subscribed after its priority was set is subscribed with it', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  subscriptions.setVideoPriority(7)
+
+  // Act: a video from a group start, a rendition opened for a switch, and the audio
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {}, true)
+  await subscriptions.open('video', 'video_low', VIDEO, () => {})
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
+
+  // Assert
+  expect(session.calls.map((call) => [call.track, call.priority ?? call.options?.priority])).toEqual([
+    ['video', 7],
+    ['video_low', 7],
+    ['audio', 0]
+  ])
+  expect(session.updates).toEqual([])
+})
+
+test('a rendition that takes over takes the priority set while it was being subscribed', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  const next = await subscriptions.open('video', 'video_low', VIDEO, () => {})
+  subscriptions.setVideoPriority(7)
+  await expect.poll(() => session.updates).toEqual(['setPriority video 7'])
+
+  // Act
+  subscriptions.handOver('video', next)
+
+  // Assert
+  await expect.poll(() => session.updates.at(-1)).toBe('setPriority video_low 7')
 })
 
 test('a failed UNSUBSCRIBE resolves, so the other tracks are still unsubscribed', async () => {
