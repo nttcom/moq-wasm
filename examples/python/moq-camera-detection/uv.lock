@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -887,8 +887,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },
-    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "av", version = "19.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "moq-bot-rooms" },
     { name = "moq-system-one-bot" },
     { name = "moqt" },
@@ -904,7 +902,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
-    { name = "av", specifier = ">=14" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
     { name = "moq-system-one-bot", editable = "../moq-system-one-bot" },
     { name = "moqt", directory = "../../../crates/python" },
@@ -923,6 +920,8 @@ version = "0.1.0"
 source = { editable = "../moq-system-one-bot" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "av", version = "19.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "moq-bot-rooms" },
     { name = "moqt" },
 ]
@@ -930,6 +929,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
+    { name = "av", specifier = ">=14" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
     { name = "moqt", directory = "../../../crates/python" },
 ]

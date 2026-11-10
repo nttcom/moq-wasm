@@ -5,7 +5,6 @@ description = "pipecat bot that pans and tilts an ONVIF camera toward a target f
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
-    "av>=14",
     "moq-bot-rooms",
     "moq-system-one-bot",
     "moqt",

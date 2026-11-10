@@ -5,7 +5,6 @@ description = "pipecat bot that judges whether a person is visible in MoQ camera
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
-    "av>=14",
     "moq-bot-rooms",
     "moq-system-one-bot",
     "moqt",

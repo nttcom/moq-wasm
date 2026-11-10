@@ -23,7 +23,7 @@ from moq_system_one_bot.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
-from moq_ptz_tracking.video import GroupDecoder, picture_to_jpeg
+from moq_system_one_bot.video import GroupDecoder, picture_to_jpeg
 from moq_ptz_tracking.vision import SystemOneVisionClient
 
 DEFAULT_PORT = 8099
@@ -37,6 +37,7 @@ STATUS_TRACK = "status"
 RETENTION_SECONDS = 60 * 60
 RESUBSCRIBE_DELAY_SECONDS = 1.0
 SAMPLE_INTERVAL_SECONDS = 0.1
+JPEG_WIDTH = 640
 
 
 @dataclass(frozen=True)
@@ -142,7 +143,7 @@ async def forward_video(
             target = latest_target.target
             if picture is not None and target is not None and decoded_at >= next_sample_at:
                 next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
-                jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
+                jpeg = await asyncio.to_thread(picture_to_jpeg, picture, JPEG_WIDTH)
                 await worker.queue_frame(
                     CameraPicture(
                         jpeg=jpeg,
