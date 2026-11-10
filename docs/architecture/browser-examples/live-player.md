@@ -522,8 +522,9 @@ Objects are pushed at the rate the rendition is encoded at, so the throughput a
 viewer measures while the path keeps up is the rendition's own bitrate and says
 nothing about the headroom. `AdaptiveBitrate` therefore steps down on what
 shows a rendition does not fit: the least capture-to-arrival lag of the last
-second standing more than 400 ms above the least lag since the rendition
-started, or the largest lag of the last 3 s above the caller's target when it
+second standing more than the player's latency tolerance (400 ms by default,
+2 s for `'high'`) above the least lag since the rendition started, or the
+largest lag of the last 3 s above the caller's target when it
 gives one. The largest lag is the least one plus the spread keyframes add to
 it, by which the jitter buffer holds the playout back. A gap in arrivals is no
 reason to step down: a publisher sends nothing while its source does not

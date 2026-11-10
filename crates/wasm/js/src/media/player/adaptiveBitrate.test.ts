@@ -345,3 +345,40 @@ test('a step down for congestion carries the lag and throughput it was decided o
   expect(choice).toMatchObject({ name: 'video_360p', reason: 'congested', recentLagMs: 1_100, baselineLagMs: 100 })
   expect(choice?.throughputBps).toBeCloseTo(4_000 * 8 * (1_000 / FRAME_MS), -5)
 })
+
+test('a high latency tolerance rides out a lag a low one steps down on', () => {
+  // Arrange: the least lag stands a second above its best
+  const low = new AdaptiveBitrate()
+  const high = new AdaptiveBitrate()
+  high.setLatencyTolerance('high')
+  for (const abr of [low, high]) {
+    abr.restart(0)
+    congest(abr, SETTLE_MS, 5_000)
+  }
+
+  // Act / Assert
+  expect(low.decide(5_000, LADDER, 'video_720p')).toBe('video_360p')
+  expect(high.decide(5_000, LADDER, 'video_720p')).toBeUndefined()
+})
+
+test('a latency tolerance in milliseconds steps down past that excess lag', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+  abr.setLatencyTolerance(900)
+  abr.restart(0)
+  congest(abr, SETTLE_MS, 5_000)
+
+  // Act / Assert: the excess of 1 s is past 900 ms
+  expect(abr.decide(5_000, LADDER, 'video_720p')).toBe('video_360p')
+})
+
+test('a latency tolerance rejects what is not a duration', () => {
+  // Arrange
+  const abr = new AdaptiveBitrate()
+
+  // Act / Assert
+  expect(() => abr.setLatencyTolerance(Infinity)).not.toThrow()
+  expect(() => abr.setLatencyTolerance(-1)).toThrow(RangeError)
+  expect(() => abr.setLatencyTolerance(Number.NaN)).toThrow(RangeError)
+  expect(() => abr.setLatencyTolerance('medium' as 'low')).toThrow(RangeError)
+})

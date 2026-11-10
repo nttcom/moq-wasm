@@ -280,12 +280,13 @@ Without `PlayerControls`, draw the controls from `player.state` in
 
 Options of `new LivePlayer`:
 
-| Option                   | Effect                                                                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source`                 | Plays only this source of the catalog, `{ video: 'screen', audio: 'screen_audio' }`; without it every video and audio track is a choice     |
-| `keepLiveWhileReviewing` | Keeps the live tracks playing behind a rewind, so `goLive()` shows the live picture at once, at the cost of the live bandwidth and decoding |
-| `callbacks.onAudioLevel` | Receives the LOC Audio Level of each live audio object that carries one                                                                     |
-| `audioContext`           | Plays the live LOC sound through the page's context; see below                                                                              |
+| Option                   | Effect                                                                                                                                                                                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source`                 | Plays only this source of the catalog, `{ video: 'screen', audio: 'screen_audio' }`; without it every video and audio track is a choice                                                                                                                          |
+| `keepLiveWhileReviewing` | Keeps the live tracks playing behind a rewind, so `goLive()` shows the live picture at once, at the cost of the live bandwidth and decoding                                                                                                                      |
+| `callbacks.onAudioLevel` | Receives the LOC Audio Level of each live audio object that carries one                                                                                                                                                                                          |
+| `audioContext`           | Plays the live LOC sound through the page's context; see below                                                                                                                                                                                                   |
+| `latencyTolerance`       | How much the live video may fall behind before the automatic quality steps down: `'low'` (400 ms, the default), `'high'` (2 s), or milliseconds, `Infinity` for never; `setLatencyTolerance()` changes it. A shared screen keeps its text readable with `'high'` |
 
 Players on one page can share one `AudioContext` through `audioContext`, so
 they mix into one output stream and the page picks the speaker with
