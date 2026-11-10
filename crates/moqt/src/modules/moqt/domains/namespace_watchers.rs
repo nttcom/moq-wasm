@@ -35,6 +35,7 @@ impl NamespaceWatchers {
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         match event {
             SessionEvent::PublishNamespace(handler) => {
+                tracing::info!(track_namespace = %handler.track_namespace, "PUBLISH_NAMESPACE received");
                 if let Err(error) = handler.ok().await {
                     tracing::warn!(track_namespace = %handler.track_namespace, %error, "failed to acknowledge PUBLISH_NAMESPACE");
                 }
@@ -42,6 +43,7 @@ impl NamespaceWatchers {
                 None
             }
             SessionEvent::PublishNamespaceDone(handler) => {
+                tracing::info!(track_namespace = %handler.track_namespace, "PUBLISH_NAMESPACE_DONE received");
                 self.notify(handler.track_namespace_tuple, false);
                 None
             }
