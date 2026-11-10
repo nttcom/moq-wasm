@@ -827,13 +827,12 @@ export class LivePlayer {
   }
 
   private async subscribeReplacedTracks(changed: boolean): Promise<void> {
-    if (!changed) {
-      this.reconfigureDecoders()
-      return
+    if (changed) {
+      await this.resubscribe('video')
+      await this.resubscribe('audio')
+      await this.openLiveMse()
     }
-    await this.resubscribe('video')
-    await this.resubscribe('audio')
-    await this.openLiveMse()
+    this.reconfigureDecoders()
   }
 
   private replaceTracks(kind: MediaKind, tracks: MediaCatalogTrack[]): boolean {
@@ -1176,8 +1175,8 @@ export class LivePlayer {
   }
 
   /// A catalog update may redefine a track under the same name, as when the
-  /// publisher is replaced by one with another audio codec, so the decoders
-  /// take the new definition of the tracks they are already subscribed to.
+  /// publisher is replaced by one with another audio codec or lists a camera
+  /// before its renditions.
   private reconfigureDecoders(): void {
     if (this.packaging !== 'loc') {
       return
