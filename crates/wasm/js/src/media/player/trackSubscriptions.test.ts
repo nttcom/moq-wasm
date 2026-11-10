@@ -61,6 +61,29 @@ test('resuming forwarding asks the video for a new group, after its Forward upda
   ])
 })
 
+test('a request for a new group is repeated while no group starts, and not once one has', async () => {
+  // Arrange: `waiting` receives nothing, `started` the first object of a group
+  const idle = new FakeSession(undefined, [])
+  const live = new FakeSession(undefined, [receivedObject(4n, 0n)])
+  const waiting = await new TrackSubscriptions(idle.context(), () => {}).open('video', 'video', VIDEO, () => {})
+  const started = await new TrackSubscriptions(live.context(), () => {}).open('video', 'video', VIDEO, () => {})
+  await live.drained
+  const startedSubscriptions = new TrackSubscriptions(live.context(), () => {})
+
+  // Act
+  const again = new TrackSubscriptions(idle.context(), () => {}).requestNewGroup(waiting, 3n)
+  started.groupStarts = 0
+  const once = startedSubscriptions.requestNewGroup(started, 3n)
+  started.groupStarts = 1
+  await expect.poll(() => idle.updates.length, { timeout: 5_000 }).toBe(2)
+  waiting.forgotten = true
+  await Promise.all([again, once])
+
+  // Assert: the relay may have held the first request back
+  expect(idle.updates).toEqual(['requestNewGroup video 3', 'requestNewGroup video undefined'])
+  expect(live.updates).toEqual(['requestNewGroup video 3'])
+})
+
 test('a rendition switch subscribes without a joining FETCH', async () => {
   // Arrange
   const session = new FakeSession({ groupId: 3n, objectId: 1n }, [receivedObject(4n, 0n), receivedObject(4n, 1n)])

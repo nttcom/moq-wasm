@@ -23,11 +23,19 @@ const SUBSCRIBER_PRIORITY: Record<MediaKind, number> = { video: 128, audio: 0 }
 /// the time within which the relay passes on only one such request.
 const FETCHED_GROUP_OBJECTS = 60
 
+/// The relay passes on one request for a new group of a track per 2 seconds
+/// and does not say when it holds one back, so a request is repeated until
+/// a group starts.
+const NEW_GROUP_RETRY_MS = 2_200
+const NEW_GROUP_ATTEMPTS = 5
+
 export type TrackSubscription = PlayedTrack & {
   id: bigint
   handle: MoqSubscription
   /// Set once the player let go of it, so objects still in flight are dropped.
   forgotten: boolean
+  /// The first objects of groups received so far.
+  groupStarts: number
 }
 
 /// Review plays what FETCH brings, so the live subscriptions stop forwarding
@@ -91,10 +99,20 @@ export class TrackSubscriptions {
           forward: !this.forwardPaused,
           priority: SUBSCRIBER_PRIORITY[kind]
         })
-    const subscription: TrackSubscription = { id: streamId(), handle, name: wireName, track, forgotten: false }
+    const subscription: TrackSubscription = {
+      id: streamId(),
+      handle,
+      name: wireName,
+      track,
+      forgotten: false,
+      groupStarts: 0
+    }
     const observed = observedObjectHandler(this.context, subscription.id, wireName, handler)
     const read = joining ? readJoinedObjects : readGroups
     void read(this.context, subscription.id, handle, (groupId, object, cached) => {
+      if (object.objectId === 0n) {
+        subscription.groupStarts += 1
+      }
       if (!subscription.forgotten) {
         observed(groupId, object, cached)
       }
@@ -105,14 +123,25 @@ export class TrackSubscriptions {
   }
 
   /// Asks the publisher of `subscription` to start a new group, for a reader
-  /// that can only start at one. Never rejects: a track that does not start
-  /// groups on request, or a request that fails, leaves the reader waiting
-  /// for the track's next group.
+  /// that can only start at one, and asks again while none starts. Never
+  /// rejects: a track that does not start groups on request, or a request
+  /// that fails, leaves the reader waiting for the track's next group.
   async requestNewGroup(subscription: TrackSubscription, largestGroup?: bigint): Promise<void> {
-    try {
-      await subscription.handle.requestNewGroup(largestGroup)
-    } catch (error) {
-      this.context.log('warn', `new group of ${subscription.name}: ${getErrorMessage(error)}`)
+    const groupStarts = subscription.groupStarts
+    for (let attempt = 0; attempt < NEW_GROUP_ATTEMPTS; attempt++) {
+      try {
+        // A repeated request names no group: the one `largestGroup` asked for may have started.
+        if (!(await subscription.handle.requestNewGroup(attempt === 0 ? largestGroup : undefined))) {
+          return
+        }
+      } catch (error) {
+        this.context.log('warn', `new group of ${subscription.name}: ${getErrorMessage(error)}`)
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, NEW_GROUP_RETRY_MS))
+      if (subscription.forgotten || subscription.groupStarts > groupStarts) {
+        return
+      }
     }
   }
 
@@ -235,7 +264,7 @@ export class TrackSubscriptions {
       // Delivery resumes with the next group, which the video would
       // otherwise wait a keyframe interval for.
       if (forward && kind === 'video') {
-        await this.requestNewGroup(subscription)
+        void this.requestNewGroup(subscription)
       }
     }
     this.context.log('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)
