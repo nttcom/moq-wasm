@@ -61,6 +61,9 @@ export type MediaCatalogTrack = {
   channelConfig?: string
   width?: number
   height?: number
+  /// draft-ietf-moq-msf-01 §5.2.20; this project's publishers list it only for
+  /// a track they cap at that frame rate.
+  framerate?: number
   initData?: string
   depends?: string[]
   lang?: string
@@ -163,6 +166,7 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       channelConfig: asString(track.channelConfig),
       width: asNumber(track.width),
       height: asNumber(track.height),
+      framerate: asNumber(track.framerate),
       initData: resolveInitData(catalog, track),
       depends: asStrings(track.depends),
       lang: asString(track.lang),

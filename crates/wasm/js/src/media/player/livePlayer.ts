@@ -1252,7 +1252,7 @@ export class LivePlayer {
     if (this.paused || picture !== this.wantedPicture()) {
       return
     }
-    this.stallWatch.framePresented()
+    this.stallWatch.framePresented(this.subscriptions.get('video')?.track.framerate)
   }
 
   /// Delivery resumes at the next group, and the picture standing still until
