@@ -765,6 +765,7 @@ impl Subscriber for MockUpstreamSubscriber {
                 expires: 0,
                 group_order: GroupOrder::Ascending,
                 subscriber_priority: 128,
+                forward: true,
                 content_exists,
                 filter_type: FilterType::LargestObject,
                 track_properties: TrackProperties::default(),

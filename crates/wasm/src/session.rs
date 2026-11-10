@@ -617,12 +617,12 @@ impl Subscription {
 
     /// SUBSCRIBE_UPDATE (draft-14 §9.10).
     #[wasm_bindgen(js_name = endBeforeGroup)]
-    pub async fn end_before_group(&self, group_id: u64, forward: bool) -> Result<(), JsValue> {
+    pub async fn end_before_group(&self, group_id: u64) -> Result<(), JsValue> {
         self.scope
             .scoped(async {
                 self.session
                     .subscriber()
-                    .end_before_group(&self.subscription, group_id, forward)
+                    .end_before_group(&self.subscription, group_id)
                     .await
                     .map_err(anyhow_error)
             })

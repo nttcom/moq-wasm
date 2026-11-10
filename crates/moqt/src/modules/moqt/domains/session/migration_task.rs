@@ -1186,7 +1186,7 @@ mod tests {
         assert_eq!(next_payload(&mut reader).await, payload(1, b"a1-0"));
         client
             .subscriber()
-            .end_before_group(&subscription, 4, true)
+            .end_before_group(&subscription, 4)
             .await
             .unwrap();
 

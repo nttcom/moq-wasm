@@ -6,7 +6,7 @@ use crate::{
         parameters::content_exists::ContentExists, publish_ok::PublishOk, subscribe_ok::SubscribeOk,
     },
     object::GroupOrder,
-    subscribe::{FilterType, SubscribeHandler, SubscribeUpdateOption},
+    subscribe::{FilterType, SubscribeHandler, SubscribeOption, SubscribeUpdateOption},
 };
 
 #[derive(Clone, Debug)]
@@ -86,6 +86,15 @@ impl Subscription {
         }
     }
 
+    /// The Forward State of the SUBSCRIBE or PUBLISH_OK. `last_update` holds
+    /// the Forward State of a later update.
+    pub(crate) fn forward(&self) -> bool {
+        match self {
+            Self::PublisherInitiated(subscription) => subscription.forward,
+            Self::SubscriberInitiated(subscription) => subscription.forward,
+        }
+    }
+
     pub(crate) fn last_update(&self) -> &LastSubscribeUpdate {
         match self {
             Self::PublisherInitiated(subscription) => &subscription.last_update,
@@ -126,6 +135,7 @@ pub struct SubscriberInitiatedSubscription {
     pub group_order: GroupOrder,
     pub content_exists: ContentExists,
     pub subscriber_priority: u8,
+    pub forward: bool,
     pub filter_type: FilterType,
     /// What the SUBSCRIBE_OK said about the track.
     pub track_properties: TrackProperties,
@@ -137,8 +147,7 @@ impl SubscriberInitiatedSubscription {
         track_namespace: String,
         track_name: String,
         subscribe_ok: SubscribeOk,
-        subscriber_priority: u8,
-        filter_type: FilterType,
+        option: &SubscribeOption,
     ) -> Self {
         Self {
             request_id: subscribe_ok.request_id,
@@ -148,8 +157,9 @@ impl SubscriberInitiatedSubscription {
             expires: subscribe_ok.expires,
             group_order: subscribe_ok.group_order,
             content_exists: subscribe_ok.content_exists,
-            subscriber_priority,
-            filter_type,
+            subscriber_priority: option.subscriber_priority,
+            forward: option.forward,
+            filter_type: option.filter_type,
             track_properties: subscribe_ok.track_properties,
             last_update: LastSubscribeUpdate::default(),
         }
@@ -165,6 +175,7 @@ impl SubscriberInitiatedSubscription {
             group_order: handler.group_order,
             content_exists: ContentExists::False,
             subscriber_priority: handler.subscriber_priority,
+            forward: handler.forward,
             filter_type: handler.filter_type,
             track_properties: handler.track_properties.clone(),
             last_update: LastSubscribeUpdate::default(),

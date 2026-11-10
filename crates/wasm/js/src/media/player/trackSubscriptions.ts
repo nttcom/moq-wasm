@@ -203,7 +203,7 @@ export class TrackSubscriptions {
   /// subscription with PUBLISH_DONE once they are sent.
   async endBeforeGroup(subscription: TrackSubscription, groupId: bigint): Promise<void> {
     if (sessionOf(this.context).isOpen) {
-      await subscription.handle.endBeforeGroup(groupId, !this.forwardPaused)
+      await subscription.handle.endBeforeGroup(groupId)
     }
   }
 
