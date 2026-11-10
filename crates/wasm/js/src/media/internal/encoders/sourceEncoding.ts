@@ -6,6 +6,7 @@ import {
   DEFAULT_KEYFRAME_INTERVAL_SECONDS,
   framerateCap,
   type RenditionEncoderConfig,
+  type VideoCodecName,
   videoEncoderConfig
 } from './videoEncoderConfig'
 import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
@@ -27,13 +28,15 @@ export type SourceOptions = {
 
 /// Encoder settings shared by the video and its renditions.
 export type VideoEncoding = {
-  /// A WebCodecs codec string; `avc1.640028` (H.264 High) by default. The
-  /// broadcast takes H.264, VP8, VP9 and AV1. The H.264 level is raised to the
-  /// lowest one that holds each track's encoded size and frame rate.
-  codec?: string
-  /// Each keyframe starts a group. 30 by default, since a viewer that joins or switches rendition asks for a keyframe instead of
-  /// waiting for the next. The video and its renditions take their keyframes
-  /// on the same frames.
+  /// `'h264'` (the default), `'vp8'`, `'vp9'` or `'av1'`, for which the SDK
+  /// picks the profile, or a WebCodecs codec string such as `'avc1.4d4028'`
+  /// to pick it yourself. The H.264 level is raised to the lowest one that
+  /// holds each track's encoded size and frame rate.
+  codec?: VideoCodecName | (string & {})
+  /// Each keyframe starts a group. 30 by default, since a viewer that joins
+  /// or switches rendition asks for a keyframe instead of waiting for the
+  /// next. The video and its renditions take their keyframes on the same
+  /// frames.
   keyframeIntervalSeconds?: number
   /// `prefer-hardware` by default.
   hardwareAcceleration?: HardwareAcceleration

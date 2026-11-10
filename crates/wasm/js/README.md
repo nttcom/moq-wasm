@@ -117,7 +117,8 @@ const camera = await local.addSource('camera', {
   audio: true,
   // Shared by the video and its renditions. Defaults: H.264, a keyframe every
   // 30 seconds on the same frames in every track.
-  encoding: { codec: 'av01.0.08M.08', keyframeIntervalSeconds: 10 },
+  // `codec` is 'h264', 'vp8', 'vp9' or 'av1', or a WebCodecs codec string.
+  encoding: { codec: 'av1', keyframeIntervalSeconds: 10 },
   // The track `camera`. Defaults: 1 Mbps, every frame at its own size;
   // `width` and `height` bound the size, `framerate` skips faster frames.
   main: { width: 1920, height: 1080, bitrate: 2_500_000, framerate: 30 },
