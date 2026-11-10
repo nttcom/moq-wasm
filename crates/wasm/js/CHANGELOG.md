@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The automatic quality no longer steps down while a picture stands still. A
+  shared screen sends no frames while the screen does not change, and each
+  pause dropped it to its lowest rendition, where it stayed until the screen
+  kept moving for 10 s.
+
 - A source with renditions keeps publishing when its video and audio start
   within a few frames of each other. Its video and audio could stop with
   `media publishing stopped: group ... precedes the next group ...` while the

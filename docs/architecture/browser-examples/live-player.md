@@ -523,9 +523,12 @@ viewer measures while the path keeps up is the rendition's own bitrate and says
 nothing about the headroom. `AdaptiveBitrate` therefore steps down on what
 shows a rendition does not fit: the least capture-to-arrival lag of the last
 second standing more than 400 ms above the least lag since the rendition
-started, the largest lag of the last 3 s above the caller's target when it
-gives one, or a stall. The largest lag is the least one plus the spread
-keyframes add to it, by which the jitter buffer holds the playout back. The
+started, or the largest lag of the last 3 s above the caller's target when it
+gives one. The largest lag is the least one plus the spread keyframes add to
+it, by which the jitter buffer holds the playout back. A gap in arrivals is no
+reason to step down: a publisher sends nothing while its source does not
+change, as a shared screen does, and the objects a congested path holds up
+show the queue in their lag once they arrive. The
 meeting example's target is its 250 ms capture-to-display delay less the output
 latency, with no minimum buffer, so the largest lag plus the output latency is
 the delay shown. It then picks the highest rendition at or below 80 % of the
