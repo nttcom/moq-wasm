@@ -22,7 +22,7 @@ modules/moqt/runtime      ← background tasks + incoming-object dispatch
 modules/moqt/control_plane← control messages, handlers, session events
 modules/moqt/version      ← per-draft adapter: control channel, SETUP, control receive loop
 modules/moqt/data_plane   ← object formats, stream/datagram send/receive, codecs
-modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/WEBTRANSPORT/NATIVE markers
+modules/moqt/protocol.rs  ← TransportProtocol trait + QUIC/NATIVE markers
         │
         ▼
 modules/transport         ← transport abstraction + quinn/web-transport-quinn impls + QMux over WebSocket
@@ -46,7 +46,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   Implementation files under `modules/` are not arranged by these modules;
   each public module only re-exports.
 - The whole stack compiles for `wasm32` as well; the quinn-based transports
-  and their markers (`QUIC`, `WEBTRANSPORT`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
+  and their markers (`QUIC`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
   `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
   API; it also uses the message codecs for the JavaScript message types.
@@ -87,12 +87,11 @@ takes no stream ID while pending; WebTransport keeps a pending open for the
 next call, since past the stream ID it still writes the stream header; the
 browser's API cannot tell, so it waits like `open_bi`.
 
-Four zero-sized markers implement it; the first three are native-only:
+Three zero-sized markers implement it; the first two are native-only:
 
 | Marker | Implementation | Notes |
 | --- | --- | --- |
 | `QUIC` | quinn, the MoQT ALPNs (`moq-00`) | raw QUIC; used for inter-relay links and native clients |
-| `WEBTRANSPORT` | web-transport-quinn, ALPN `h3` | browser-facing |
 | `NATIVE` | quinn endpoint dispatching on ALPN, plus a TCP listener | server: accepts both `h3` (WebTransport handshake) and the MoQT ALPNs (raw QUIC) on one UDP port, and QMux over WebSocket (`wss://`, below) on the TCP port of the same number. Client: one UDP socket, the URL scheme picks the ALPN per connection; both connect through `ConnectTarget::connect_quic` (IPv4 preferred, matching the IPv4 client socket), and WebTransport then runs `web_transport_quinn::Session::connect` on that connection. A `wss://` URL opens a TCP + TLS connection instead. |
 | `BROWSER` | the browser's `WebTransport` API through `web-sys` (`modules/transport/browser`), and QMux over its `WebSocket` (`browser_web_socket.rs`) | wasm32 only, client only: `https://` and `wss://` URLs, only `CertificateVerification::NativeRoots` (the browser's own trust store), `accept` and `server` fail. Stream priority maps to `sendOrder`, RESET_STREAM and STOP_SENDING codes to `WebTransportError.streamErrorCode`, datagrams are written fire-and-forget. `TransportSendStream::close` is synchronous on every transport, so it cannot wait for the peer's ACK of the FIN; here it starts `writer.close()`, which resolves only once that ACK arrives, and returns without awaiting it. `stats()` is all zeros. The `web-sys` WebTransport types are behind `--cfg web_sys_unstable_apis`, set in the root `.cargo/config.toml`. A WebTransport that loses the race, to WebSocket or to the hedged second WebTransport, is closed, since the JavaScript object would keep connecting. Over WebSocket, `send` waits while the browser has more than 1 MiB queued (`bufferedAmount`), so a slow TCP path pushes back on the QMux send task; a browser cannot send WebSocket Ping, and QX_PING keeps the session alive. |
 
@@ -104,14 +103,14 @@ stream types) is a plain type over the boxed transport, so one process can hold
 sessions of different transports in one collection and the `NATIVE` creator
 simply boxes a `QUICConnection` or a `WtConnection` per connection.
 
-Client-side helpers shared by the three creators:
+Client-side helpers shared by the creators:
 
 - `connect_target.rs` — `ConnectTarget::parse(url)` maps the scheme to a
   transport (`moqt://` → raw QUIC, default port 4433; `https://` → WebTransport,
   default port 443; `wss://` → QMux over WebSocket, default port 443) and
   resolves the host, preferring IPv4 because the client endpoint binds an IPv4
-  socket. `QUIC` / `WEBTRANSPORT` creators reject a URL for another transport;
-  only `NATIVE` connects over WebSocket. The wasm build parses with the browser's `URL`
+  socket. The `QUIC` creator rejects a URL for another transport.
+  The wasm build parses with the browser's `URL`
   (`web_sys::Url`) instead of the `url` crate and leaves host and port to
   `WebTransport`.
 - WebSocket fallback — `SessionCreator::open_transport` (shared by every
@@ -140,7 +139,7 @@ Client-side helpers shared by the three creators:
   every connection it opens, including those a session opens to follow
   GOAWAY or to reconnect, verifies the server the same way.
 
-The three creators bind server endpoints to `[::]:port` through
+The two native creators bind server endpoints to `[::]:port` through
 `bind_dual_stack` (`dual_stack_bind.rs`). On Apple targets it holds
 `0.0.0.0:port` during the bind, because XNU lets `[::]:port` bind while
 another socket holds `0.0.0.0:port`. XNU picks that IPv4 port without regard

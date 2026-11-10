@@ -130,8 +130,7 @@ impl Default for ClientConfig {
 /// does so for `https://` only. QUIC or WebTransport gets a head start, then
 /// WebSocket is dialed alongside it and the first to open is used; a failure
 /// within the head start dials WebSocket at once. Only opening the transport
-/// races; a failed SETUP does not fall back. `QUIC` and `WEBTRANSPORT` ignore
-/// this.
+/// races; a failed SETUP does not fall back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WebSocketFallback {
     Disabled,
@@ -201,8 +200,8 @@ impl<T: TransportProtocol> Endpoint<T> {
     /// `url` selects the transport by scheme: `moqt://host[:port]` for raw
     /// QUIC (default port 4433), `https://host[:port][/path]` for
     /// WebTransport and `wss://host[:port][/path]` for QMux over WebSocket
-    /// (both default port 443). `QUIC` and `WEBTRANSPORT` endpoints accept
-    /// only their own scheme; `NATIVE` accepts all three.
+    /// (both default port 443). `QUIC` endpoints accept only `moqt://`;
+    /// `NATIVE` accepts all three.
     pub async fn connect(&self, url: &str) -> anyhow::Result<Connecting> {
         self.session_creator.create_new_connection(url).await
     }
