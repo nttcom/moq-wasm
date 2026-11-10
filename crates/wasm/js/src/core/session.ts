@@ -259,8 +259,8 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
 
   /// Delivers the groups before `groupId`, after which the publisher ends the
   /// subscription.
-  async endBeforeGroup(groupId: bigint, forward: boolean): Promise<void> {
-    await this.call(() => this.inner.endBeforeGroup(groupId, forward))
+  async endBeforeGroup(groupId: bigint): Promise<void> {
+    await this.call(() => this.inner.endBeforeGroup(groupId))
   }
 
   /// UNSUBSCRIBE. Reads end once the publisher stops the streams.

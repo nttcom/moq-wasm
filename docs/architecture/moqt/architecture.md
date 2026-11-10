@@ -568,7 +568,8 @@ request is cancelled or updated on the wire is left to moqt.
 `update_forward` and `end_before_group` take the fields they do not set
 from the last SUBSCRIBE_UPDATE sent for the `Subscription`, which its
 clones share, so neither widens a range an earlier update narrowed
-(§9.10). Application
+(§9.10); before any update they take them from its SUBSCRIBE or PUBLISH_OK,
+the Forward State included. Application
 code consumes inbound control messages through
 `Session::receive_event() -> SessionEvent`. `Session::closed()` awaits the
 transport close itself (the signal `DisconnectWatchTask` turns into

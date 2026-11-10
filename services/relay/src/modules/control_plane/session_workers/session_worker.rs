@@ -550,7 +550,7 @@ mod tests {
     async fn end_before_start(subscriber: &Session, subscription: &Subscription) {
         subscriber
             .subscriber()
-            .end_before_group(subscription, 1, true)
+            .end_before_group(subscription, 1)
             .await
             .unwrap();
     }

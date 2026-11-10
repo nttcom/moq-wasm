@@ -31,6 +31,7 @@ fn subscriber_initiated(
         expires: 0,
         group_order: moqt::object::GroupOrder::Ascending,
         subscriber_priority: 128,
+        forward: true,
         content_exists: moqt::object::ContentExists::False,
         filter_type,
         track_properties: moqt::TrackProperties::default(),

@@ -279,8 +279,7 @@ impl Subscriber {
             track_namespace,
             track_name,
             message,
-            option.subscriber_priority,
-            option.filter_type,
+            &option,
         ));
         Ok((subscription, joining_fetch))
     }
@@ -717,25 +716,30 @@ impl Subscriber {
         subscription: &Subscription,
         forward: bool,
     ) -> anyhow::Result<()> {
-        self.repeat(subscription, repeated_update(subscription, forward))
-            .await
+        self.repeat(
+            subscription,
+            SubscribeUpdateOption {
+                forward,
+                ..repeated_update(subscription)
+            },
+        )
+        .await
     }
 
     /// Ends the subscription before `group_id`: groups below it are still
     /// delivered and the publisher answers with PUBLISH_DONE once it has sent
-    /// them (draft-14 §9.10, §9.12). The current Start Location and priority
-    /// are repeated, so `forward` has to be the current Forward State.
+    /// them (draft-14 §9.10, §9.12). The current Start Location, priority and
+    /// Forward State are repeated.
     pub async fn end_before_group(
         &self,
         subscription: &Subscription,
         group_id: u64,
-        forward: bool,
     ) -> anyhow::Result<()> {
         self.repeat(
             subscription,
             SubscribeUpdateOption {
                 end_group: group_id,
-                ..repeated_update(subscription, forward)
+                ..repeated_update(subscription)
             },
         )
         .await
@@ -1033,13 +1037,13 @@ fn new_group_request(
     }
 }
 
-/// The last SUBSCRIBE_UPDATE sent for `subscription` with `forward`
-/// replaced, or before any update, the range and priority of its SUBSCRIBE
-/// or PUBLISH_OK. `end_group` is the SUBSCRIBE_UPDATE field: the end group
-/// plus one, or 0 for an open-ended subscription.
-fn repeated_update(subscription: &Subscription, forward: bool) -> SubscribeUpdateOption {
+/// The last SUBSCRIBE_UPDATE sent for `subscription`, or before any update,
+/// the range, priority and Forward State of its SUBSCRIBE or PUBLISH_OK.
+/// `end_group` is the SUBSCRIBE_UPDATE field: the end group plus one, or 0
+/// for an open-ended subscription.
+fn repeated_update(subscription: &Subscription) -> SubscribeUpdateOption {
     if let Some(last) = subscription.last_update().get() {
-        return SubscribeUpdateOption { forward, ..last };
+        return last;
     }
     let largest = match subscription.content_exists() {
         ContentExists::True { location } => Some(location),
@@ -1053,7 +1057,7 @@ fn repeated_update(subscription: &Subscription, forward: bool) -> SubscribeUpdat
             _ => 0,
         },
         subscriber_priority: subscription.subscriber_priority(),
-        forward,
+        forward: subscription.forward(),
     }
 }
 
@@ -1836,11 +1840,23 @@ mod tests {
         JoinHandle<Result<Subscription, RequestFailure>>,
         SubscribeHandler,
     ) {
+        start_subscribe_with(client, server, track_name, SubscribeOption::default()).await
+    }
+
+    async fn start_subscribe_with(
+        client: &Session,
+        server: &Session,
+        track_name: &str,
+        option: SubscribeOption,
+    ) -> (
+        JoinHandle<Result<Subscription, RequestFailure>>,
+        SubscribeHandler,
+    ) {
         let mut subscriber = client.subscriber();
         let track_name = track_name.to_string();
         let request = tokio::spawn(async move {
             subscriber
-                .subscribe("ns".to_string(), track_name, SubscribeOption::default())
+                .subscribe("ns".to_string(), track_name, option)
                 .await
         });
         let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
@@ -2208,7 +2224,7 @@ mod tests {
             // Act
             client
                 .subscriber()
-                .end_before_group(&subscription, 7, true)
+                .end_before_group(&subscription, 7)
                 .await
                 .unwrap();
 
@@ -2233,6 +2249,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn end_before_group_repeats_the_forward_state_of_the_subscribe() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) =
+                connected_sessions("subscriber-end-before-group-forward", version).await;
+            let option = SubscribeOption {
+                forward: false,
+                ..SubscribeOption::default()
+            };
+            let (request, handler) = start_subscribe_with(&client, &server, "track", option).await;
+            handler.ok(0, ContentExists::False).await.unwrap();
+            let subscription = request.await.unwrap().unwrap();
+
+            // Act
+            client
+                .subscriber()
+                .end_before_group(&subscription, 7)
+                .await
+                .unwrap();
+
+            // Assert: Forward 1 would start the delivery the SUBSCRIBE held back
+            assert!(!receive_subscribe_update(&server).await.forward());
+        }
+    }
+
+    #[tokio::test]
+    async fn end_before_group_after_update_forward_repeats_that_forward_state() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions("subscriber-end-after-update-forward").await;
+        let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
+        client
+            .subscriber()
+            .update_forward(&subscription, false)
+            .await
+            .unwrap();
+        receive_subscribe_update(&server).await;
+
+        // Act
+        client
+            .subscriber()
+            .end_before_group(&subscription, 7)
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(!receive_subscribe_update(&server).await.forward());
+    }
+
+    #[tokio::test]
     async fn update_forward_after_end_before_group_repeats_that_end_group() {
         // Arrange
         let (client, server) =
@@ -2240,7 +2306,7 @@ mod tests {
         let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
         client
             .subscriber()
-            .end_before_group(&subscription.clone(), 7, true)
+            .end_before_group(&subscription.clone(), 7)
             .await
             .unwrap();
         receive_subscribe_update(&server).await;
