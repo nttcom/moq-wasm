@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
@@ -8,6 +11,8 @@ use msf::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
+
+use tokio::sync::Notify;
 
 use crate::relay_connection::RelayConnection;
 
@@ -74,6 +79,23 @@ impl Broadcast {
             return Ok(false);
         };
         relay.send_object(&self.namespace, track_name, object).await
+    }
+
+    /// Gives the video track dynamic groups (draft-18 §12.6): `requested` is
+    /// notified when a subscriber asks for a new group, which the source
+    /// starts by encoding a keyframe. Call before the track's first
+    /// `update_video_catalog`, which publishes it.
+    pub async fn accept_keyframe_requests(
+        &self,
+        track_name: &str,
+        requested: Arc<Notify>,
+    ) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay
+            .accept_new_group_requests(&self.namespace, track_name, requested)
+            .await
     }
 
     pub async fn update_video_catalog(&self, track_name: &str, info: VideoTrackInfo) -> Result<()> {
@@ -151,6 +173,10 @@ pub struct SourceTracks {
     /// The video's target bitrate in bits per second, known when the source
     /// encodes it.
     pub video_bitrate: Option<u64>,
+    /// Set by a source that encodes a keyframe when asked: notified when a
+    /// subscriber of the video or of one of its renditions asks for a new
+    /// group (draft-18 §10.2.13), which the next keyframe starts.
+    pub keyframe_requests: Option<Arc<Notify>>,
 }
 
 impl Default for SourceTracks {
@@ -163,6 +189,7 @@ impl Default for SourceTracks {
             cmaf: true,
             switching_set: VIDEO_TRACK_NAME.to_string(),
             video_bitrate: None,
+            keyframe_requests: None,
         }
     }
 }

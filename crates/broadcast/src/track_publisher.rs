@@ -121,6 +121,11 @@ impl TrackPublisher {
                     bitrate: self.tracks.video_bitrate,
                     ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
+                if let Some(requested) = &self.tracks.keyframe_requests {
+                    self.broadcast
+                        .accept_keyframe_requests(&self.tracks.video, requested.clone())
+                        .await?;
+                }
                 self.broadcast
                     .update_video_catalog(&self.tracks.video, info)
                     .await

@@ -194,6 +194,19 @@ together, so its renditions use `RenditionKeyframes::SameFrames`: a rendition
 keyframe that arrives before the source's takes the id for that presentation
 time itself, and the source's keyframe finds the same id.
 
+A source that encodes a keyframe when asked sets
+`SourceTracks::keyframe_requests`. `TrackPublisher` and each `RenditionTrack`
+then register that `Notify` for their video track with
+`Broadcast::accept_keyframe_requests` before the catalog update that
+publishes the track, so `Origin` sends the track with DYNAMIC_GROUPS
+(draft-ietf-moq-transport-18 §12.6) and notifies it when a subscriber sends
+NEW_GROUP_REQUEST (§10.2.13). One `Notify` serves the source and all its
+renditions: the source keyframes them together, so a request on any of the
+tracks starts a new group on each. The browser sets it (`MediaBroadcast`'s
+`onKeyframeRequest`); `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`
+cannot ask their encoders for a keyframe and leave it unset. CMAF siblings do
+not get dynamic groups.
+
 The audio tracks follow the same boundaries: an audio sample belongs to the
 group of the latest video keyframe at or before it, so audio groups start at
 the same keyframes with the same ids as the video groups. Audio before the
