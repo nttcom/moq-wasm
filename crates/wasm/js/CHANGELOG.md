@@ -26,6 +26,13 @@
   })
   ```
 
+- `main.framerate` and the new `Rendition.framerate` cap the frames a track
+  encodes; `videoEncoderConfig.framerate` was only the encoder's estimate.
+  The encoder worker skips frames that come faster, except keyframes, so
+  every rendition still starts its groups on the same frames. A rendition
+  takes the main video's frame rate unless it sets its own. Without
+  `framerate` every frame is encoded, as before.
+
 ## 0.4.4
 
 - `addSource()` encodes a keyframe every 30 seconds by default instead of

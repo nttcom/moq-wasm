@@ -3,6 +3,7 @@ import { avcCodecForSize } from './avcLevel'
 import { CaptureTimestamps } from './captureTimestamps'
 import { EncoderWarmUp } from './encoderWarmUp'
 import { fitEncodeSize } from './encodeSize'
+import { FrameRateLimit } from './frameRateLimit'
 import { KeyframeSchedule } from './keyframeSchedule'
 import { DEFAULT_KEYFRAME_INTERVAL_SECONDS, videoEncoderConfig, type VideoEncoderSettings } from './videoEncoderConfig'
 import { workerLog } from '../../../core/log'
@@ -16,8 +17,8 @@ let forceNextKeyframe = false
 
 /// One encoder of the stream's frames. Rendition 0 takes `encoderConfig`;
 /// `renditionConfigs`, which must arrive before `videoStream`, adds the others.
-/// All encode the same frames with the same keyframes, so the outputs of one
-/// frame share a timestamp.
+/// All encode the same keyframes, so the outputs of one frame share a
+/// timestamp; a rendition with a frame rate set skips the frames above it.
 class Rendition {
   encoder: VideoEncoder | undefined
   // null makes the next frame reconfigure the encoder.
@@ -29,11 +30,21 @@ class Rendition {
   // configure, which is a warm-up output.
   private warmUpDecoderConfig: VideoDecoderConfig | undefined
   readonly captureTimestamps = new CaptureTimestamps()
+  config = videoEncoderConfig()
+  frameRateLimit: FrameRateLimit | undefined
 
   constructor(
     readonly index: number,
-    public config: VideoEncoderSettings
-  ) {}
+    config: Partial<VideoEncoderConfig>
+  ) {
+    this.setConfig(config)
+  }
+
+  setConfig(config: Partial<VideoEncoderConfig>): void {
+    this.config = videoEncoderConfig(config)
+    this.frameRateLimit = frameRateLimit(this.config, config)
+    this.configuredFrameSize = null
+  }
 
   async initialize(frame: VideoFrame): Promise<boolean> {
     const init: VideoEncoderInit = {
@@ -151,7 +162,18 @@ class Rendition {
   }
 }
 
-let renditions: Rendition[] = [new Rendition(0, videoEncoderConfig())]
+let renditions: Rendition[] = [new Rendition(0, {})]
+
+/// A limit only for a frame rate the page set: the default one is the encoder's
+/// estimate, and a camera faster than it keeps its frames.
+function frameRateLimit(
+  settings: VideoEncoderSettings,
+  config: Partial<VideoEncoderConfig>
+): FrameRateLimit | undefined {
+  return config.framerate === undefined || settings.framerate === undefined
+    ? undefined
+    : new FrameRateLimit(settings.framerate)
+}
 
 function frameSize(frame: VideoFrame): string {
   return `${frame.displayWidth}x${frame.displayHeight}`
@@ -223,7 +245,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       continue
     }
 
-    // A frame any encoder cannot take is dropped for all, so the renditions keep the same frames.
+    // A frame any encoder cannot take is dropped for all, so the renditions keep the same keyframes.
     const busiest = Math.max(...renditions.map((rendition) => rendition.encoder?.encodeQueueSize ?? 0))
     if (busiest > 5) {
       workerLog('debug', TARGET, 'encode queue full, frame dropped', { encode_queue_size: busiest })
@@ -239,6 +261,9 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     const keyFrame = keyframeSchedule.isKeyframe(videoFrame.timestamp, forceNextKeyframe || reconfigured)
     forceNextKeyframe = false
     for (const rendition of renditions) {
+      if (rendition.frameRateLimit?.admit(videoFrame.timestamp, keyFrame) === false) {
+        continue
+      }
       rendition.captureTimestamps.recordCapture(videoFrame.timestamp)
       rendition.encoder?.encode(videoFrame, { keyFrame })
     }
@@ -252,14 +277,10 @@ self.onmessage = async (event) => {
   } else if (event.data.type === 'forceKeyframe') {
     forceNextKeyframe = true
   } else if (event.data.type === 'encoderConfig') {
-    renditions[0].config = videoEncoderConfig(event.data.config)
-    renditions[0].configuredFrameSize = null
+    renditions[0].setConfig(event.data.config)
   } else if (event.data.type === 'renditionConfigs') {
     const configs: Partial<VideoEncoderConfig>[] = event.data.configs
-    renditions = [
-      renditions[0],
-      ...configs.map((config, index) => new Rendition(index + 1, videoEncoderConfig(config)))
-    ]
+    renditions = [renditions[0], ...configs.map((config, index) => new Rendition(index + 1, config))]
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream
     if (!videoReadableStream) {

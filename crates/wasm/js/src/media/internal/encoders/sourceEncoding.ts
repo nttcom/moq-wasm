@@ -38,8 +38,9 @@ export type MainVideo = {
   height?: number
   /// Bits per second; 1 Mbps by default.
   bitrate?: number
-  /// The encoder's frame rate, 30 by default, clamped to 1–120. The renditions
-  /// take it too.
+  /// Frames per second, clamped to 1–120: frames that come faster are skipped,
+  /// except keyframes. Without it every frame is encoded, and the encoder
+  /// expects 30. The renditions take it unless they set their own.
   framerate?: number
 }
 
@@ -54,6 +55,8 @@ export type Rendition = {
   height: number
   /// Bits per second.
   bitrate: number
+  /// Like `MainVideo.framerate`; the main video's by default.
+  framerate?: number
 }
 
 export type MediaKind = 'video' | 'audio'
@@ -301,7 +304,13 @@ function encodeVideo(
   if (options.renditions?.length) {
     worker.postMessage({
       type: 'renditionConfigs',
-      configs: options.renditions.map(({ width, height, bitrate }) => ({ ...config, width, height, bitrate }))
+      configs: options.renditions.map(({ width, height, bitrate, framerate }) => ({
+        ...config,
+        width,
+        height,
+        bitrate,
+        framerate: framerate ?? config.framerate
+      }))
     })
   }
   if (typeof MediaStreamTrackProcessor === 'function') {

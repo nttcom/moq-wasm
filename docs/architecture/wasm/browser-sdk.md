@@ -480,12 +480,19 @@ renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同�
 | フィールド | 効く track | 中身 |
 | --- | --- | --- |
 | `encoding` | 映像 `<source>` と全 rendition | `codec`、`keyframeIntervalSeconds`、`hardwareAcceleration` |
-| `main` | 映像 `<source>` | `width`、`height`（大きさの上限）、`bitrate`、`framerate`（rendition も引き継ぐ） |
-| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width`、`height`、`bitrate` |
+| `main` | 映像 `<source>` | `width`、`height`（大きさの上限）、`bitrate`、`framerate`（fps の上限。rendition も引き継ぐ） |
+| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width`、`height`、`bitrate`、`framerate` |
 
 `label` は source の label で、映像の label と音声の label（後ろに ` audio`）になるので、
 `main` ではなく `input` の直下に置く。`latencyMode: 'realtime'` と `scalabilityMode: 'L1T1'` は
-SDK が固定し、利用者には見せない。`source.setVideoEncoding({ encoding, main })` は2つを
+SDK が固定し、利用者には見せない。
+
+WebCodecs の `framerate` は rate control の目安で、encoder はフレームを間引かない。
+そこで `framerate` を指定したトラックは、encoder worker が timestamp を見て上限を超える
+フレームを飛ばす（`frameRateLimit.ts`）。keyframe のフレームは飛ばさないので、どの
+rendition も同じフレームで group が始まる。指定しなければ、届いたフレームをすべて
+encode する。画面共有のように変化があるときだけフレームが届く入力は、上限より遅いので
+何も飛ばさない。`source.setVideoEncoding({ encoding, main })` は2つを
 置き換えて encoder を作り直す。
 
 `video` と `audio` は次のどれかである。
