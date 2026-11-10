@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import type { LiveStats } from '../media/player/locLive'
 import type { LogRecord, SpanRecord } from './init'
 import { ClientTelemetry, type TelemetryOptions } from './telemetry'
 
@@ -56,6 +57,45 @@ test('a flush sends the queued logs and spans once', () => {
   expect(sent[0].body.page).toBe('live-viewer')
   expect(sent[0].body.logs).toEqual([log('SUBSCRIBE_OK received')])
   expect(sent[0].body.spans).toEqual([span('moqt.subscriber.subscribe')])
+})
+
+test('a flush sends the samples stats returns with the records of no session', () => {
+  // Arrange
+  const sample = {
+    trackNamespace: 'anon/meeting/room/alice',
+    mediaSource: 'camera',
+    values: { bufferMs: 120 } as LiveStats
+  }
+  const { telemetry: subject, sent } = telemetry(202, { stats: () => [sample] })
+  subject.span(span('moqt.session.connect'), 'jwt-a')
+
+  // Act
+  subject.flush()
+
+  // Assert
+  expect(sent.map(({ body }) => [body.token, body.stats])).toEqual([
+    ['jwt-a', []],
+    [undefined, [{ timeMs: expect.any(Number), ...sample }]]
+  ])
+})
+
+test('a url function picks the server at each flush', () => {
+  // Arrange
+  let url = 'http://local-observability'
+  const { telemetry: subject, sent } = telemetry(202, { url: () => url })
+  subject.log(log('first'), undefined)
+  subject.flush()
+  url = 'http://cloud-observability/'
+  subject.log(log('second'), undefined)
+
+  // Act
+  subject.flush()
+
+  // Assert
+  expect(sent.map(({ url }) => url)).toEqual([
+    'http://local-observability/api/client-telemetry',
+    'http://cloud-observability/api/client-telemetry'
+  ])
 })
 
 test('a report keeps only the newest 100 logs, the server limit', () => {

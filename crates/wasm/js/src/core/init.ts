@@ -43,8 +43,9 @@ export interface InitOptions {
   /// Receives the wasm module's closed spans, with `token` as for `onLog`. Without it or
   /// `telemetry`, they are discarded.
   onSpan?: (record: SpanRecord, token: string | undefined) => void
-  /// Sends the SDK's logs and the wasm module's spans to an observability server every 10 s, each
-  /// session's under its token. The page's own logs are not sent.
+  /// Sends the SDK's logs, the wasm module's spans and the players' stats `telemetry.stats`
+  /// returns to an observability server every 10 s, each session's under its token. The page's
+  /// own logs are sent only through `reportLog`.
   telemetry?: TelemetryOptions
 }
 

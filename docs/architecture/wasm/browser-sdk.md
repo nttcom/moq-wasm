@@ -787,8 +787,15 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
 - `init({ telemetry: { url, page } })` を渡すと、SDK が自分で wasm のログ（`logLevel` 以上）と
   span を observability サーバの `/api/client-telemetry` に送る（`core/telemetry.ts` の
   `ClientTelemetry`）。10秒ごとと `pagehide` のとき（`sendBeacon`）に、session のトークンごとに
-  1レポートにまとめる。401 が返ったトークンのレコードは、以後トークンなしで送る。アプリ自身の
-  ログは送らない。`onLog` と `onSpan` も渡せば両方に届く。
+  1レポートにまとめる。401 が返ったトークンのレコードは、以後トークンなしで送る。`onLog` と
+  `onSpan` も渡せば両方に届く。
+  - `telemetry.stats` を渡すと、送るたびに呼び、返ったプレイヤーの stats
+    （`{ trackNamespace?, mediaSource?, values }`）をトークンなしのレポートの `stats` に入れる。
+    `redact` は stats には効かない。値はページが自分で作るので、隠すならそこで隠す。
+  - `telemetry.url` は関数でもよい。送るたびに呼ぶので、ユーザーが選んだ relay に合わせて
+    送り先を変えるページ（`examples/browser` の `startPageTelemetry`）に使う。
+  - アプリ自身のログは、`reportLog(level, target, message, fields)` で渡したものだけを送る。
+    SDK のログと同じ sink に、`logLevel` 以上だけが届く。コンソールには書かない。
   - 送り先を OTel Collector ではなく observability サーバにするのは、Collector が VPC の中でしか
     待ち受けず、ブラウザに Collector の資格情報を置けないから。トークンの検証、`app_id` の付与、
     レート制限はサーバが受け持つ（`docs/architecture/observability/architecture.md` の
@@ -809,7 +816,7 @@ export function init(options?: {
   onLog?: (record: LogRecord, token: string | undefined) => void
   logLevel?: LogLevel                                          // 既定は 'warn'
   onSpan?: (record: SpanRecord, token: string | undefined) => void
-  telemetry?: { url: string; page: string }                   // observability サーバへ送る
+  telemetry?: TelemetryOptions                                 // observability サーバへ送る
 }): Promise<void>
 export function connect(url: string, options?: ConnectOptions): Promise<Session>
 
@@ -823,6 +830,18 @@ export interface LogRecord {
   traceId?: string                                             // onSpan があり、span の中で書かれたとき
   spanId?: string
 }
+export interface TelemetryOptions {
+  url: string | (() => string)                                 // 関数なら送るたびに呼ぶ
+  page: string
+  redact?: (fields: LogRecord['fields']) => LogRecord['fields']
+  stats?: () => TelemetryStatsSample[]                         // 送るたびに呼ぶ
+}
+export interface TelemetryStatsSample {
+  trackNamespace?: string                                      // 複数のトラックを再生するページだけ
+  mediaSource?: string
+  values: LiveStats
+}
+export function reportLog(level: LogLevel, target: string, message: string, fields?: Record<string, unknown>): void
 
 export interface ConnectOptions {
   token?: string | (() => Promise<string>)       // CLIENT_SETUP の AUTHORIZATION TOKEN

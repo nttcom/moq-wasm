@@ -346,7 +346,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   `docs/architecture/wasm/browser-sdk.md`), and the records of no session or
   of a session without a token go in a report without one. A client whose
   token was answered 401 sends that token's later records without it, so they
-  arrive as `anon` instead of being rejected again (`examples/browser/utils/clientTelemetry.ts`,
+  arrive as `anon` instead of being rejected again (`crates/wasm/js/src/core/telemetry.ts`,
   `moq-cli`).
 - **Logs** become OTLP log records of resource `service.name` (the report's
   `service`) and `page`, with `app_id`, `client_id`, `target` and the
