@@ -537,7 +537,11 @@ from this one; so can a namespace announced by a second publisher or by both
 a local publisher and a relay. `ControlMessageForwarder` therefore records in
 `SessionRepository` each namespace it announces on a session and sends
 PUBLISH_NAMESPACE only for one not yet announced there, and
-PUBLISH_NAMESPACE_DONE only for one that was. UNSUBSCRIBE_NAMESPACE forgets the
+PUBLISH_NAMESPACE_DONE to a client only for one that was. A relay session gets
+PUBLISH_NAMESPACE_DONE either way: a relay whose subscriber came after the
+namespace was published learns it from the route registry, never from a
+PUBLISH_NAMESPACE on its inter-relay session, and applies a DONE without a
+registration. UNSUBSCRIBE_NAMESPACE forgets the
 namespaces under its prefix, so a later SUBSCRIBE_NAMESPACE announces them
 again.
 

@@ -92,7 +92,11 @@ impl ControlMessageForwarder {
                 tracing::warn!(subscriber_session_id = %session_id, %track_namespace, "PUBLISH_NAMESPACE_DONE not forwarded: no publisher");
                 return;
             };
-            if !repository.record_namespace_withdrawn(session_id, &track_namespace) {
+            let announced = repository.record_namespace_withdrawn(session_id, &track_namespace);
+            // A relay learns a namespace published on another relay from the
+            // route registry rather than from a PUBLISH_NAMESPACE on this
+            // session, and accepts a DONE for one it never registered.
+            if !announced && repository.is_client_session(session_id) {
                 tracing::debug!("namespace not announced on the session");
                 return;
             }
@@ -235,5 +239,90 @@ impl ControlMessageForwarder {
         subscriber
             .send_unsubscribe_namespace(track_namespace_prefix)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::{
+        auth::verified_token::VerifiedToken,
+        domain::session_peer::SessionPeer,
+        session::session_repository::NewSession,
+        test_support::mock_session::{
+            RecordedControlMessages, recorded_session_answering_subscribe, session_repository,
+        },
+    };
+
+    const NAMESPACE: &str = "room/alice";
+    const SUBSCRIBER: SessionId = 1;
+
+    fn forwarder_with_subscriber(
+        peer: SessionPeer,
+    ) -> (ControlMessageForwarder, RecordedControlMessages) {
+        let (session, recorded) = recorded_session_answering_subscribe(|| ContentExists::False);
+        let (mut repository, _session_added_receiver) = session_repository();
+        repository.add(NewSession {
+            session_id: SUBSCRIBER,
+            session,
+            session_span: tracing::Span::none(),
+            peer,
+            verified_token: VerifiedToken::full_access(),
+        });
+        let forwarder = ControlMessageForwarder {
+            repository: Arc::new(tokio::sync::Mutex::new(repository)),
+        };
+        (forwarder, recorded)
+    }
+
+    #[tokio::test]
+    async fn a_relay_is_told_done_for_a_namespace_it_learned_from_the_route_registry() {
+        // Arrange
+        let (forwarder, recorded) = forwarder_with_subscriber(SessionPeer::Relay);
+
+        // Act
+        forwarder
+            .publish_namespace_done(SUBSCRIBER, NAMESPACE.to_string())
+            .await;
+
+        // Assert
+        assert_eq!(
+            recorded.publish_namespace_dones(),
+            vec![NAMESPACE.to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_is_not_told_done_for_a_namespace_never_announced_to_it() {
+        // Arrange
+        let (forwarder, recorded) = forwarder_with_subscriber(SessionPeer::Client);
+
+        // Act
+        forwarder
+            .publish_namespace_done(SUBSCRIBER, NAMESPACE.to_string())
+            .await;
+
+        // Assert
+        assert!(recorded.publish_namespace_dones().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_client_is_told_done_for_a_namespace_announced_to_it() {
+        // Arrange
+        let (forwarder, recorded) = forwarder_with_subscriber(SessionPeer::Client);
+        forwarder
+            .publish_namespace(SUBSCRIBER, NAMESPACE.to_string())
+            .await;
+
+        // Act
+        forwarder
+            .publish_namespace_done(SUBSCRIBER, NAMESPACE.to_string())
+            .await;
+
+        // Assert
+        assert_eq!(
+            recorded.publish_namespace_dones(),
+            vec![NAMESPACE.to_string()]
+        );
     }
 }
