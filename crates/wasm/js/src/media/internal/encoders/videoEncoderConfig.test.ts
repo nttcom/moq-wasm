@@ -52,3 +52,9 @@ test('a codec string is kept as given', () => {
     avc: { format: 'annexb' }
   })
 })
+
+test('the encoder falls back to software unless the page asks for hardware', () => {
+  // Act / Assert
+  expect(videoEncoderConfig().hardwareAcceleration).toBe('no-preference')
+  expect(videoEncoderConfig({ hardwareAcceleration: 'prefer-hardware' }).hardwareAcceleration).toBe('prefer-hardware')
+})

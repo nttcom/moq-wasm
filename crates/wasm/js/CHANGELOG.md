@@ -47,6 +47,10 @@
 - `encoding.codec` takes a name, `'h264'`, `'vp8'`, `'vp9'` or `'av1'`, and
   the SDK picks the profile; a WebCodecs codec string still picks it
   yourself.
+- `encoding.hardwareAcceleration` defaults to `'no-preference'` instead of
+  `'prefer-hardware'`. Chrome tries only a hardware encoder for
+  `'prefer-hardware'`, so on a machine without a hardware H.264 encoder the
+  video failed to start with a `configError`.
 
 ## 0.4.4
 
