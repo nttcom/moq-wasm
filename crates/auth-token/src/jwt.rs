@@ -1,5 +1,5 @@
+use aws_lc_rs::hmac;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use ring::hmac;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use thiserror::Error;

@@ -1,4 +1,4 @@
-# ring for ES256 verification of IAP assertions
+# aws-lc-rs for ES256 verification of IAP assertions
 
 ## Status
 
@@ -6,13 +6,13 @@ Accepted
 
 ## Date
 
-2026-10-20
+2026-11-10
 
 ## What
 
-Add `ring` as a direct dependency of the `console` crate. `iap.rs` verifies
-the ES256 signature of the IAP assertion with
-`ring::signature::ECDSA_P256_SHA256_FIXED`; the tests sign assertions with
+Add `aws-lc-rs` as a direct dependency of the `console` crate. `iap.rs`
+verifies the ES256 signature of the IAP assertion with
+`aws_lc_rs::signature::ECDSA_P256_SHA256_FIXED`; the tests sign assertions with
 `EcdsaKeyPair`.
 
 ## Context
@@ -27,10 +27,12 @@ trusts the `sub` inside.
   new crate in the tree whose key and validation types the code would still
   wrap for the JWK set and the 30-second skew.
 - `p256` (RustCrypto). ECDSA over P-256 without the rest of a JWT library, but
-  a new crate family next to the `ring` already compiled.
+  a new crate family next to the `aws-lc-rs` already compiled.
+- `ring`, used here until 2026-11-10. Same API, but a second crypto library
+  once the workspace's TLS moved to `aws-lc-rs`.
 
 ## Decision
 
-Use `ring`. It is already compiled in the workspace for QUIC, TLS and the
+Use `aws-lc-rs`. It is already compiled in the workspace for QUIC, TLS and the
 HS256 tokens in `auth-token`, and verifying a fixed-length P-256 signature is
 one call.

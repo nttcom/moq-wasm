@@ -1,4 +1,4 @@
-# ring for HMAC-SHA256
+# aws-lc-rs for HMAC-SHA256
 
 ## Status
 
@@ -6,12 +6,12 @@ Accepted
 
 ## Date
 
-2026-10-20
+2026-11-10
 
 ## What
 
-Add `ring` as a direct dependency of the `auth-token` crate. `jwt.rs` signs and
-verifies HS256 JWTs with `ring::hmac` (`HMAC_SHA256`, constant-time
+Add `aws-lc-rs` as a direct dependency of the `auth-token` crate. `jwt.rs` signs
+and verifies HS256 JWTs with `aws_lc_rs::hmac` (`HMAC_SHA256`, constant-time
 `verify`).
 
 ## Context
@@ -31,11 +31,14 @@ primitive plus base64url; the relay decides everything else about the claims.
   compile unit, and two crates instead of one.
 - `josekit`, `jwt-simple`. Larger surface and new dependencies for one
   algorithm.
+- `ring`, used here until 2026-11-10. Same API, but the workspace's TLS
+  moved to `aws-lc-rs` (see `docs/architecture/moqt/aws-lc-rs.md`), and
+  keeping `ring` for HMAC alone would compile a second crypto library.
 
 ## Decision
 
-Use `ring`. It is already compiled in the workspace as the crypto provider
-under `rustls` and `quinn`, so the relay, which depends on `auth-token` only
+Use `aws-lc-rs`. It is already compiled in the workspace as the crypto
+provider under `rustls` and `quinn`, so the relay, which depends on `auth-token` only
 for `Claims`, gains no new crate. Its HMAC API is a dozen lines for sign and
 verify, and `verify` is constant-time. Header and payload encoding use the
 `base64` crate, which `auth-token` already depends on.

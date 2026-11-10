@@ -4,7 +4,7 @@ use anyhow::Context;
 use auth_token::{
     Claims, TEMPORARY_APP_ID_PREFIX, decode_unverified_payload, sign_token, verify_signature,
 };
-use ring::rand::{SecureRandom, SystemRandom};
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 
 pub(crate) const TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
