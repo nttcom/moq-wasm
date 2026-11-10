@@ -148,6 +148,14 @@ impl TrackPublisher {
                     .update_audio_catalog(&self.tracks.audio, info)
                     .await?;
                 self.audio_config = Some(config.clone());
+                // A track published while a group is open is sent from its
+                // next group, which the audio starts at the next video
+                // keyframe.
+                if self.video_published
+                    && let Some(requested) = &self.tracks.keyframe_requests
+                {
+                    requested.notify_one();
+                }
                 Ok(())
             }
             MediaEvent::Video(sample) => self.publish_video(sample).await,
@@ -378,6 +386,11 @@ fn wall_clock() -> Timestamp {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use mediapack::{VideoConfig, vp8::Vp8Config};
+    use tokio::sync::Notify;
+
     use super::*;
     use crate::{broadcast::VIDEO_TRACK_NAME, relay_connection::RelayConnection};
 
@@ -419,6 +432,31 @@ mod tests {
             .into_iter()
             .map(|(presentation_ms, (group_id, _), _)| (presentation_ms, group_id))
             .collect()
+    }
+
+    #[tokio::test]
+    async fn audio_published_while_video_is_published_asks_for_a_keyframe() {
+        // Arrange: a source that keyframes on request has published its video
+        let requested = Arc::new(Notify::new());
+        let mut publisher = TrackPublisher::new(
+            Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]),
+            SourceTracks {
+                keyframe_requests: Some(requested.clone()),
+                ..SourceTracks::default()
+            },
+        );
+        let video = MediaEvent::VideoConfig(VideoConfig::Vp8(Vp8Config {
+            width: 64,
+            height: 48,
+        }));
+        publisher.push(&video).await.unwrap();
+
+        // Act
+        publisher.push(&opus_config()).await.unwrap();
+
+        // Assert: the audio is sent from the group that keyframe starts
+        let asked = tokio::time::timeout(Duration::ZERO, requested.notified()).await;
+        assert!(asked.is_ok());
     }
 
     #[tokio::test]
