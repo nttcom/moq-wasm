@@ -8,7 +8,9 @@ use crate::{
     logging::relay_hostname,
     modules::{
         auth::verified_token::VerifiedToken,
-        cascading::route_registry::RelayInfo,
+        cascading::{
+            relay_namespace_subscriptions::RelayNamespaceSubscriptions, route_registry::RelayInfo,
+        },
         domain::{
             session_id::{SessionId, generate_session_id},
             session_peer::SessionPeer,
@@ -33,6 +35,7 @@ pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     client_config: InterRelayClientConfig,
     sessions: DashMap<String, SessionId>,
+    pub(crate) namespace_subscriptions: RelayNamespaceSubscriptions,
 }
 
 impl InterRelayConnectionManager {
@@ -44,6 +47,7 @@ impl InterRelayConnectionManager {
             repo,
             client_config,
             sessions: DashMap::new(),
+            namespace_subscriptions: RelayNamespaceSubscriptions::default(),
         }
     }
 
@@ -52,6 +56,13 @@ impl InterRelayConnectionManager {
             .iter()
             .map(|entry| (*entry.value(), entry.key().clone()))
             .collect()
+    }
+
+    /// Makes `get_or_connect` return the session for the relay, as if it
+    /// had dialed it.
+    #[cfg(test)]
+    pub(crate) fn record_dialed(&self, relay_id: &str, session_id: SessionId) {
+        self.sessions.insert(relay_id.to_string(), session_id);
     }
 
     pub(crate) async fn get_or_connect(&self, relay: &RelayInfo) -> anyhow::Result<SessionId> {

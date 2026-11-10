@@ -25,11 +25,11 @@ use crate::modules::{
         delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
-    session::session_repository::NewSession,
+    session::session_repository::{NewSession, SessionRepository},
     test_support::{
         mock_session::{
             MockUpstreamSession, RecordedControlMessages, detached_session_repository,
-            mock_session_answering_publish, session_repository_with_session,
+            mock_session_answering_publish, session_repository,
             session_repository_with_upstream_session, wait_until,
         },
         relay_harness::fixtures::subscription::{
@@ -210,6 +210,14 @@ pub(crate) fn unused_inter_relay_client_config() -> InterRelayClientConfig {
     }
 }
 
+/// Dials no relay; call `InterRelayConnectionManager::record_dialed` to make
+/// it return a relay session of `repository`.
+pub(crate) fn inter_relay_connection_manager(
+    repository: Arc<tokio::sync::Mutex<SessionRepository>>,
+) -> InterRelayConnectionManager {
+    InterRelayConnectionManager::new(repository, unused_inter_relay_client_config())
+}
+
 pub(crate) fn local_publisher_resolver() -> UpstreamPublisherResolver {
     UpstreamPublisherResolver::new(
         Arc::new(NoopRelayRouteRegistry),
@@ -253,13 +261,25 @@ pub(crate) async fn downstream_publish_context(
     table: Arc<InMemoryLocalPubSubDirectory>,
     answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
 ) -> DownstreamPublishContext {
+    downstream_publish_context_for(SessionPeer::Client, table, answer_publish).await
+}
+
+/// `NAMESPACE_SUBSCRIBER_SESSION` is a session of `peer`.
+pub(crate) async fn downstream_publish_context_for(
+    peer: SessionPeer,
+    table: Arc<InMemoryLocalPubSubDirectory>,
+    answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
+) -> DownstreamPublishContext {
     let (session, subscriber) = mock_session_answering_publish(answer_publish);
-    let repository = session_repository_with_session(
-        NAMESPACE_SUBSCRIBER_SESSION,
+    let (mut repository, _session_added_receiver) = session_repository();
+    repository.add(NewSession {
+        session_id: NAMESPACE_SUBSCRIBER_SESSION,
         session,
-        VerifiedToken::full_access(),
-    )
-    .await;
+        session_span: tracing::Span::none(),
+        peer,
+        verified_token: VerifiedToken::full_access(),
+    });
+    let repository = Arc::new(tokio::sync::Mutex::new(repository));
     DownstreamPublishContext {
         table,
         forwarder: ControlMessageForwarder { repository },

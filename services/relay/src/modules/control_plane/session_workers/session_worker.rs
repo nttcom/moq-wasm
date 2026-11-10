@@ -243,7 +243,7 @@ impl SessionWorker {
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
                         &self.downstream_publish(),
-                        deps.route_registry.as_ref(),
+                        self.cascading_relay_context(),
                         handler.as_ref(),
                     )
                     .instrument(event_span)

@@ -348,6 +348,26 @@ impl InMemoryLocalPubSubDirectory {
         self.publisher_namespaces.contains_key(track_namespace)
     }
 
+    /// Another relay is told only of namespaces a client publishes here
+    /// (split horizon).
+    pub(crate) fn has_client_namespace_publisher(&self, track_namespace: &str) -> bool {
+        self.publisher_namespaces
+            .get(track_namespace)
+            .is_some_and(|publishers| {
+                publishers
+                    .iter()
+                    .any(|publisher| *publisher.value() == SessionPeer::Client)
+            })
+    }
+
+    /// Whether a client's namespace subscription covers the namespace.
+    pub(crate) fn is_watched_by_client(&self, track_namespace: &str) -> bool {
+        self.subscriber_namespaces.iter().any(|prefix_entry| {
+            namespace_has_prefix(track_namespace, prefix_entry.key())
+                && has_client_subscription(prefix_entry.value())
+        })
+    }
+
     /// Drops relay-origin publisher namespaces under the prefix once no
     /// client subscriber covers them anymore. Relay-learned namespaces are
     /// only withdrawn by a best-effort PUBLISH_NAMESPACE_DONE, which can be
@@ -366,12 +386,7 @@ impl InMemoryLocalPubSubDirectory {
             if !namespace_has_prefix(entry.key(), track_namespace_prefix) {
                 continue;
             }
-            // Keep namespaces that another client-subscribed prefix still covers.
-            let covered = self.subscriber_namespaces.iter().any(|prefix_entry| {
-                namespace_has_prefix(entry.key(), prefix_entry.key())
-                    && has_client_subscription(prefix_entry.value())
-            });
-            if covered {
+            if self.is_watched_by_client(entry.key()) {
                 continue;
             }
 
@@ -624,8 +639,11 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Whether the PUBLISH of the track goes to `session_id`'s namespace
-    /// `subscription`: one that asks for tracks, and leaves out its session's
-    /// own tracks (draft-18 §6.1) unless it echoes them (draft-14 §6.1).
+    /// `subscription`: a client's subscription that asks for tracks, leaving
+    /// out its session's own tracks (draft-18 §6.1) unless it echoes them
+    /// (draft-14 §6.1). A relay gets namespaces only, whatever its draft-14
+    /// SUBSCRIBE_NAMESPACE asks for; tracks reach it by their routes (split
+    /// horizon).
     pub(crate) fn offers_track(
         &self,
         session_id: SessionId,
@@ -633,7 +651,8 @@ impl InMemoryLocalPubSubDirectory {
         track_key: &TrackKey,
     ) -> bool {
         // draft-14 §6.1 echoes PUBLISH; only draft-14 asks for both.
-        subscription.interest.includes_tracks()
+        subscription.peer == SessionPeer::Client
+            && subscription.interest.includes_tracks()
             && (subscription.interest == NamespaceInterest::NamespacesAndTracks
                 || !self.publishes_track(session_id, track_key))
     }
@@ -1256,6 +1275,30 @@ mod tests {
 
         // Assert
         assert!(table.has_track_publisher(&track_key));
+    }
+
+    #[test]
+    fn a_relay_namespace_subscription_is_offered_no_track() {
+        // Arrange: a draft-14 SUBSCRIBE_NAMESPACE asks for namespaces and tracks
+        let table = InMemoryLocalPubSubDirectory::new();
+
+        // Act / Assert
+        assert!(!table.offers_track(3, &namespaces_and_tracks(SessionPeer::Relay), &track_key()));
+    }
+
+    #[test]
+    fn a_namespace_is_published_by_a_client_only_while_a_client_session_publishes_it() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(1, "ns".to_string(), SessionPeer::Client);
+        table.register_publish_namespace(2, "ns".to_string(), SessionPeer::Relay);
+
+        // Act
+        table.unregister_publish_namespace(1, "ns");
+
+        // Assert
+        assert!(!table.has_client_namespace_publisher("ns"));
+        assert!(table.has_namespace_publishers("ns"));
     }
 
     #[tokio::test]

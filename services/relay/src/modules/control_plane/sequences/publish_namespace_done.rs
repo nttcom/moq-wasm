@@ -11,7 +11,7 @@ use crate::modules::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
     },
     directory::{InMemoryLocalPubSubDirectory, PeerRemoval},
-    domain::session_id::SessionId,
+    domain::{session_id::SessionId, session_peer::SessionPeer},
 };
 
 pub(crate) struct PublishNamespaceDone;
@@ -47,6 +47,16 @@ impl PublishNamespaceDone {
 
         Self::notify_local_subscribers(session_id, track_namespace, table, forwarder).await;
 
+        if !is_origin_client {
+            Self::end_relay_namespace_subscription(
+                session_id,
+                track_namespace,
+                forwarder,
+                cascading_relay_context.inter_relay_connection_manager,
+            )
+            .await;
+        }
+
         if is_origin_client && removal == PeerRemoval::NoClientsRemain {
             Self::withdraw_namespace_publication(
                 track_namespace,
@@ -70,24 +80,48 @@ impl PublishNamespaceDone {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
     ) {
-        // Relay sessions count as publishers too (draft-14 §9.28).
-        if table.has_namespace_publishers(track_namespace) {
+        if table.has_client_namespace_publisher(track_namespace) {
             tracing::debug!(
                 track_namespace = %track_namespace,
-                "namespace still published by another session; PUBLISH_NAMESPACE_DONE not forwarded"
+                "namespace still published by a client; PUBLISH_NAMESPACE_DONE not forwarded"
             );
             return;
         }
-        for subscriber_session_id in table
-            .get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces)
-            .into_keys()
+        // A remaining relay publisher keeps the namespace for client
+        // subscribers (draft-14 §9.28); a relay subscriber was told of client
+        // publishers only (split horizon).
+        let published_by_relay = table.has_namespace_publishers(track_namespace);
+        for (subscriber_session_id, subscription) in
+            table.get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces)
         {
-            if subscriber_session_id == publisher_session_id {
+            if subscriber_session_id == publisher_session_id
+                || (published_by_relay && subscription.peer == SessionPeer::Client)
+            {
                 continue;
             }
             forwarder
                 .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
                 .await;
+        }
+    }
+
+    async fn end_relay_namespace_subscription(
+        session_id: SessionId,
+        track_namespace: &str,
+        forwarder: &ControlMessageForwarder,
+        inter_relay_connection_manager: &InterRelayConnectionManager,
+    ) {
+        if !inter_relay_connection_manager
+            .namespace_subscriptions
+            .remove(session_id, track_namespace)
+        {
+            return;
+        }
+        if let Err(error) = forwarder
+            .unsubscribe_namespace(session_id, track_namespace.to_string())
+            .await
+        {
+            tracing::debug!(%error, session_id, %track_namespace, "failed to unsubscribe the withdrawn namespace");
         }
     }
 
@@ -161,12 +195,14 @@ mod tests {
     use crate::modules::{
         auth::verified_token::VerifiedToken,
         cascading::route_registry::NoopRelayRouteRegistry,
-        domain::session_peer::SessionPeer,
+        directory::track::NamespaceSubscription,
         session::session_repository::NewSession,
         test_support::{
-            directory_fixtures::{client_subscription, namespaces_and_tracks},
+            directory_fixtures::{
+                client_subscription, inter_relay_connection_manager, namespaces_and_tracks,
+            },
             mock_session::{
-                RecordedControlMessages, detached_session_repository,
+                RecordedControlMessages, add_recorded_relay_session, detached_session_repository,
                 mock_session_with_transport_stats, recorded_session_answering_subscribe,
                 session_repository_with_sessions,
             },
@@ -265,6 +301,78 @@ mod tests {
 
         // Assert
         assert!(recorded.publish_namespace_dones().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_relay_subscriber_is_told_done_when_the_last_client_publisher_withdraws() {
+        // Arrange: the relay publisher left behind was never announced to a relay subscriber
+        let table = InMemoryLocalPubSubDirectory::new();
+        for (publisher, peer) in [
+            (LEAVING_PUBLISHER, SessionPeer::Client),
+            (REMAINING_PUBLISHER, SessionPeer::Relay),
+        ] {
+            table.register_publish_namespace(publisher, NAMESPACE.to_string(), peer);
+        }
+        table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER,
+            NAMESPACE.to_string(),
+            NamespaceSubscription {
+                interest: NamespaceInterest::Namespaces,
+                peer: SessionPeer::Relay,
+                forward: true,
+            },
+        );
+
+        // Act
+        let recorded = withdraw(&table, SessionPeer::Client).await;
+
+        // Assert
+        assert_eq!(
+            recorded.publish_namespace_dones(),
+            vec![NAMESPACE.to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_its_publisher_relay_withdraws_ends_the_subscription_there() {
+        // Arrange
+        const PUBLISHER_RELAY: SessionId = 4;
+        let repository =
+            session_repository_with_sessions(Vec::new(), VerifiedToken::full_access()).await;
+        let recorded = add_recorded_relay_session(&repository, PUBLISHER_RELAY).await;
+        let inter_relay_connection_manager = inter_relay_connection_manager(repository.clone());
+        inter_relay_connection_manager
+            .namespace_subscriptions
+            .insert(PUBLISHER_RELAY, NAMESPACE);
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(
+            PUBLISHER_RELAY,
+            NAMESPACE.to_string(),
+            SessionPeer::Relay,
+        );
+
+        // Act
+        PublishNamespaceDone
+            .handle(
+                PUBLISHER_RELAY,
+                &table,
+                &ControlMessageForwarder { repository },
+                CascadingRelayContext {
+                    route_registry: &NoopRelayRouteRegistry,
+                    inter_relay_connection_manager: &inter_relay_connection_manager,
+                },
+                &PublishNamespaceDoneHandler {
+                    track_namespace: NAMESPACE.to_string(),
+                    track_namespace_tuple: NAMESPACE.split('/').map(str::to_string).collect(),
+                },
+            )
+            .await;
+
+        // Assert
+        assert_eq!(
+            recorded.namespace_subscriptions(),
+            vec![format!("unsubscribe {NAMESPACE}")]
+        );
     }
 
     #[tokio::test]

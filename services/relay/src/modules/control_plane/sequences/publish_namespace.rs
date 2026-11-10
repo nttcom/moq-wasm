@@ -63,7 +63,7 @@ impl PublishNamespace {
             return;
         }
 
-        self.notify_to_subscribers(track_namespace, table, forwarder)
+        self.notify_to_subscribers(track_namespace, peer, table, forwarder)
             .await;
 
         let join_deps = PendingProducerDeps {
@@ -163,6 +163,8 @@ impl PublishNamespace {
         }
     }
 
+    /// A namespace another relay announced reaches client subscribers only
+    /// (split horizon).
     #[tracing::instrument(
         level = "debug",
         name = "relay.sequence.publish_namespace.notify_to_subscribers",
@@ -172,13 +174,17 @@ impl PublishNamespace {
     async fn notify_to_subscribers(
         &self,
         track_namespace: &str,
+        publisher_peer: SessionPeer,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
     ) {
         let subscribers =
             table.get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces);
         tracing::debug!("The namespace are subscribed by: {:?}", subscribers.keys());
-        for session_id in subscribers.into_keys() {
+        for (session_id, subscription) in subscribers {
+            if publisher_peer == SessionPeer::Relay && subscription.peer == SessionPeer::Relay {
+                continue;
+            }
             forwarder
                 .publish_namespace(session_id, track_namespace.to_string())
                 .await;

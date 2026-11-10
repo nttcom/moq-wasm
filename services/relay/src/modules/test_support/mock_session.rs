@@ -80,6 +80,7 @@ pub(crate) struct RecordedControlMessages {
     go_aways: Arc<Mutex<Vec<String>>>,
     publish_namespaces: Arc<Mutex<Vec<String>>>,
     publish_namespace_dones: Arc<Mutex<Vec<String>>>,
+    namespace_subscriptions: Arc<Mutex<Vec<String>>>,
     publishes: Arc<Mutex<Vec<SentPublish>>>,
     publish_dones: Arc<Mutex<Vec<(u64, PublishDoneCode)>>>,
 }
@@ -102,6 +103,7 @@ impl Default for RecordedControlMessages {
             go_aways: Arc::default(),
             publish_namespaces: Arc::default(),
             publish_namespace_dones: Arc::default(),
+            namespace_subscriptions: Arc::default(),
             publishes: Arc::default(),
             publish_dones: Arc::default(),
         }
@@ -185,6 +187,11 @@ impl RecordedControlMessages {
 
     pub(crate) fn publish_namespace_dones(&self) -> Vec<String> {
         self.publish_namespace_dones.lock().unwrap().clone()
+    }
+
+    /// `subscribe <prefix>` or `unsubscribe <prefix>` per request, in order.
+    pub(crate) fn namespace_subscriptions(&self) -> Vec<String> {
+        self.namespace_subscriptions.lock().unwrap().clone()
     }
 
     pub(crate) fn publishes(&self) -> Vec<SentPublish> {
@@ -401,6 +408,21 @@ pub(crate) async fn session_repository_with_sessions(
         });
     }
     Arc::new(tokio::sync::Mutex::new(repository))
+}
+
+pub(crate) async fn add_recorded_relay_session(
+    repository: &tokio::sync::Mutex<SessionRepository>,
+    session_id: SessionId,
+) -> RecordedControlMessages {
+    let recorded = RecordedControlMessages::default();
+    repository.lock().await.add(NewSession {
+        session_id,
+        session: Box::new(MockUpstreamSession::new(recorded.clone())),
+        session_span: tracing::Span::none(),
+        peer: SessionPeer::Relay,
+        verified_token: VerifiedToken::full_access(),
+    });
+    recorded
 }
 
 pub(crate) fn session_repository_with_session_and_mailbox(
@@ -768,8 +790,22 @@ impl Subscriber for MockUpstreamSubscriber {
         Ok(true)
     }
 
-    async fn send_unsubscribe_namespace(&self, _namespace: String) -> anyhow::Result<()> {
-        unimplemented!("not used by MockUpstreamSession tests")
+    async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        self.recorded
+            .namespace_subscriptions
+            .lock()
+            .unwrap()
+            .push(format!("subscribe {namespace}"));
+        Ok(())
+    }
+
+    async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        self.recorded
+            .namespace_subscriptions
+            .lock()
+            .unwrap()
+            .push(format!("unsubscribe {namespace}"));
+        Ok(())
     }
 
     async fn create_data_receiver(

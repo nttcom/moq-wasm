@@ -51,7 +51,7 @@ impl SubscribeNameSpace {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         downstream_publish: &DownstreamPublish,
-        route_registry: &dyn RelayRouteRegistry,
+        cascading_relay_context: CascadingRelayContext<'_>,
         handler: &dyn SubscribeNamespaceHandler,
     ) {
         let track_namespace_prefix = handler.track_namespace_prefix();
@@ -95,7 +95,10 @@ impl SubscribeNameSpace {
         );
         if is_first_client
             && let Err(error) = self
-                .register_route(route_registry, track_namespace_prefix)
+                .register_route(
+                    cascading_relay_context.route_registry,
+                    track_namespace_prefix,
+                )
                 .await
         {
             table.unregister_subscribe_namespace(
@@ -134,16 +137,15 @@ impl SubscribeNameSpace {
                 downstream_publish,
             )
             .await;
-        if subscription.interest.includes_namespaces() {
-            self.notify_remote_publish_namespaces(
-                session_id,
-                offer,
-                &local_namespaces,
-                forwarder,
-                route_registry,
-            )
-            .await;
-        }
+        self.subscribe_remote_namespaces(
+            session_id,
+            offer,
+            subscription,
+            &local_namespaces,
+            forwarder,
+            cascading_relay_context,
+        )
+        .await;
     }
 
     /// draft-18 §10.9.2: moves the session's subscription of the handler's
@@ -268,16 +270,15 @@ impl SubscribeNameSpace {
                 downstream_publish,
             )
             .await;
-        if interest.includes_namespaces() {
-            self.notify_remote_publish_namespaces(
-                session_id,
-                offer,
-                &local_namespaces,
-                forwarder,
-                cascading_relay_context.route_registry,
-            )
-            .await;
-        }
+        self.subscribe_remote_namespaces(
+            session_id,
+            offer,
+            subscription,
+            &local_namespaces,
+            forwarder,
+            cascading_relay_context,
+        )
+        .await;
     }
 
     #[tracing::instrument(
@@ -347,7 +348,11 @@ impl SubscribeNameSpace {
                     );
                 }
                 MatchingPublication::Namespace(track_namespace)
-                    if subscription.interest.includes_namespaces() =>
+                    if subscription.interest.includes_namespaces()
+                        && (subscription.peer == SessionPeer::Client
+                            || downstream_publish
+                                .table
+                                .has_client_namespace_publisher(&track_namespace)) =>
                 {
                     forwarder
                         .publish_namespace(session_id, track_namespace.clone())
@@ -360,23 +365,30 @@ impl SubscribeNameSpace {
         namespaces
     }
 
+    /// Subscribes each namespace other relays publish under the prefix at
+    /// those relays, so their NAMESPACE and NAMESPACE_DONE reach the client as
+    /// from any publisher. A relay subscriber is skipped (split horizon).
     #[tracing::instrument(
         level = "debug",
-        name = "relay.sequence.subscribe_namespace.notify_remote_publish_namespaces",
+        name = "relay.sequence.subscribe_namespace.subscribe_remote_namespaces",
         skip_all,
         fields(session_id = %session_id, track_namespace_prefix = %offer.prefix)
     )]
-    /// The route registry lists this relay's own namespaces too, which
-    /// `already_sent` holds.
-    async fn notify_remote_publish_namespaces(
+    async fn subscribe_remote_namespaces(
         &self,
         session_id: SessionId,
         offer: Offer<'_>,
-        already_sent: &HashSet<String>,
+        subscription: NamespaceSubscription,
+        local_namespaces: &HashSet<String>,
         forwarder: &ControlMessageForwarder,
-        route_registry: &dyn RelayRouteRegistry,
+        cascading_relay_context: CascadingRelayContext<'_>,
     ) {
-        let track_namespaces = match route_registry
+        if subscription.peer != SessionPeer::Client || !subscription.interest.includes_namespaces()
+        {
+            return;
+        }
+        let track_namespaces = match cascading_relay_context
+            .route_registry
             .find_namespace_publishers_by_prefix(offer.prefix)
             .await
         {
@@ -392,13 +404,59 @@ impl SubscribeNameSpace {
             }
         };
 
+        // The route registry lists this relay's own namespaces too, which
+        // `local_namespaces` holds.
         for track_namespace in track_namespaces {
-            if offer.was_offered(&track_namespace) || already_sent.contains(&track_namespace) {
+            if offer.was_offered(&track_namespace) || local_namespaces.contains(&track_namespace) {
                 continue;
             }
-            forwarder
-                .publish_namespace(session_id, track_namespace)
+            subscribe_at_publisher_relays(&track_namespace, forwarder, cascading_relay_context)
                 .await;
+        }
+    }
+}
+
+async fn subscribe_at_publisher_relays(
+    track_namespace: &str,
+    forwarder: &ControlMessageForwarder,
+    cascading_relay_context: CascadingRelayContext<'_>,
+) {
+    let relays = match cascading_relay_context
+        .route_registry
+        .find_active_namespace_publishers(track_namespace)
+        .await
+    {
+        Ok(relays) => relays,
+        Err(err) => {
+            tracing::warn!(error = ?err, %track_namespace, "failed to find publisher relays of the namespace");
+            return;
+        }
+    };
+    let manager = cascading_relay_context.inter_relay_connection_manager;
+    for relay in relays {
+        let Some(session_id) = super::connect_relay(manager, &relay).await else {
+            continue;
+        };
+        if !manager
+            .namespace_subscriptions
+            .insert(session_id, track_namespace)
+        {
+            continue;
+        }
+        if let Err(error) = forwarder
+            .subscribe_namespace(session_id, track_namespace.to_string())
+            .await
+        {
+            manager
+                .namespace_subscriptions
+                .remove(session_id, track_namespace);
+            tracing::warn!(
+                %error,
+                relay_id = %relay.relay_id,
+                session_id = session_id,
+                %track_namespace,
+                "failed to subscribe the namespace at its publisher relay"
+            );
         }
     }
 }
@@ -423,15 +481,16 @@ mod tests {
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
                 active_upstream, client_subscription, downstream_publish_context,
+                downstream_publish_context_for, inter_relay_connection_manager,
                 local_publisher_resolver, namespaces_and_tracks, producer_with,
                 table_with_upstream, track_key,
             },
             mock_session::{
                 MockPublishHandler, MockPublishNamespaceHandler, MockSubscribeNamespaceHandler,
-                MockSubscribeNamespaceUpdateHandler, PUBLISH_REQUEST_ID, SentMessages,
-                detached_session_repository,
+                MockSubscribeNamespaceUpdateHandler, PUBLISH_REQUEST_ID, RecordedControlMessages,
+                SentMessages, add_recorded_relay_session, detached_session_repository,
             },
-            stub_route_registry::StubRouteRegistry,
+            stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
     };
 
@@ -511,19 +570,15 @@ mod tests {
         ctx: &mut DownstreamPublishContext,
         sent: SentMessages,
     ) {
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                &MockSubscribeNamespaceHandler {
-                    sent,
-                    ..MockSubscribeNamespaceHandler::new("ns")
-                },
-            )
-            .await;
+        handle_subscribe_namespace(
+            ctx,
+            &NoopRelayRouteRegistry,
+            &MockSubscribeNamespaceHandler {
+                sent,
+                ..MockSubscribeNamespaceHandler::new("ns")
+            },
+        )
+        .await;
         ctx.wait_registered(PUBLISH_REQUEST_ID).await;
     }
 
@@ -569,19 +624,15 @@ mod tests {
         subscribe_namespace_until_publish_accepted(&mut ctx, sent.clone()).await;
 
         // Act
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                &MockSubscribeNamespaceHandler {
-                    sent: sent.clone(),
-                    ..MockSubscribeNamespaceHandler::new("ns/alice")
-                },
-            )
-            .await;
+        handle_subscribe_namespace(
+            &ctx,
+            &NoopRelayRouteRegistry,
+            &MockSubscribeNamespaceHandler {
+                sent: sent.clone(),
+                ..MockSubscribeNamespaceHandler::new("ns/alice")
+            },
+        )
+        .await;
 
         // Assert
         assert_eq!(
@@ -594,9 +645,61 @@ mod tests {
         );
     }
 
+    /// Calls `handle` with an inter-relay connection manager that reaches the
+    /// sessions of `ctx`'s repository.
+    async fn handle_subscribe_namespace(
+        ctx: &DownstreamPublishContext,
+        route_registry: &dyn RelayRouteRegistry,
+        handler: &dyn SubscribeNamespaceHandler,
+    ) {
+        let inter_relay_connection_manager =
+            inter_relay_connection_manager(ctx.forwarder.repository.clone());
+        handle_subscribe_namespace_with(
+            ctx,
+            route_registry,
+            &inter_relay_connection_manager,
+            handler,
+        )
+        .await;
+    }
+
+    async fn handle_subscribe_namespace_with(
+        ctx: &DownstreamPublishContext,
+        route_registry: &dyn RelayRouteRegistry,
+        inter_relay_connection_manager: &InterRelayConnectionManager,
+        handler: &dyn SubscribeNamespaceHandler,
+    ) {
+        SubscribeNameSpace
+            .handle(
+                NAMESPACE_SUBSCRIBER_SESSION,
+                &ctx.table,
+                &ctx.forwarder,
+                &ctx.downstream_publish(),
+                CascadingRelayContext {
+                    route_registry,
+                    inter_relay_connection_manager,
+                },
+                handler,
+            )
+            .await;
+    }
+
+    const PUBLISHER_RELAY_SESSION: SessionId = 40;
+
+    /// Adds the session this relay dialed to `relay-b`.
+    async fn dial_publisher_relay(
+        ctx: &DownstreamPublishContext,
+        inter_relay_connection_manager: &InterRelayConnectionManager,
+    ) -> RecordedControlMessages {
+        let recorded =
+            add_recorded_relay_session(&ctx.forwarder.repository, PUBLISHER_RELAY_SESSION).await;
+        inter_relay_connection_manager.record_dialed("relay-b", PUBLISHER_RELAY_SESSION);
+        recorded
+    }
+
     #[tokio::test]
-    async fn a_namespace_published_here_and_in_the_route_registry_is_announced_once() {
-        // Arrange: the registry lists this relay's own `ns/alice` next to `ns/bob` on another relay
+    async fn a_namespace_another_relay_publishes_is_subscribed_there_instead_of_announced() {
+        // Arrange: the registry lists this relay's own `ns/alice` next to `ns/bob` on relay-b
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
         table.register_publish_namespace(
             PUBLISHER_SESSION,
@@ -604,28 +707,77 @@ mod tests {
             SessionPeer::Client,
         );
         let ctx = downstream_publish_context(table, || Ok(true)).await;
-        let sent = SentMessages::default();
+        let manager = inter_relay_connection_manager(ctx.forwarder.repository.clone());
+        let publisher_relay = dial_publisher_relay(&ctx, &manager).await;
 
         // Act
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &StubRouteRegistry::with_namespace_routes(&["ns/alice", "ns/bob"]),
-                &MockSubscribeNamespaceHandler {
-                    sent,
-                    ..MockSubscribeNamespaceHandler::new("ns")
-                },
-            )
-            .await;
+        handle_subscribe_namespace_with(
+            &ctx,
+            &StubRouteRegistry::with_remote_namespaces(&["ns/alice", "ns/bob"], vec!["relay-b"]),
+            &manager,
+            &MockSubscribeNamespaceHandler::new("ns"),
+        )
+        .await;
+
+        // Assert: relay-b's NAMESPACE for ns/bob reaches the client later, as from any publisher
+        assert_eq!(ctx.subscriber.publish_namespaces(), vec!["ns/alice"]);
+        assert_eq!(
+            publisher_relay.namespace_subscriptions(),
+            vec!["subscribe ns/bob"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_already_subscribed_at_its_relay_is_not_subscribed_again() {
+        // Arrange
+        let ctx =
+            downstream_publish_context(Arc::new(InMemoryLocalPubSubDirectory::new()), || Ok(true))
+                .await;
+        let manager = inter_relay_connection_manager(ctx.forwarder.repository.clone());
+        let publisher_relay = dial_publisher_relay(&ctx, &manager).await;
+        manager
+            .namespace_subscriptions
+            .insert(PUBLISHER_RELAY_SESSION, "ns/bob");
+
+        // Act
+        handle_subscribe_namespace_with(
+            &ctx,
+            &StubRouteRegistry::with_remote_namespaces(&["ns/bob"], vec!["relay-b"]),
+            &manager,
+            &MockSubscribeNamespaceHandler::new("ns"),
+        )
+        .await;
 
         // Assert
-        assert_eq!(
-            ctx.subscriber.publish_namespaces(),
-            vec!["ns/alice", "ns/bob"]
+        assert!(publisher_relay.namespace_subscriptions().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_relay_subscriber_is_told_of_namespaces_clients_publish_here_only() {
+        // Arrange: ns/bob came from another relay; the route registry must not be read
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            "ns/alice".to_string(),
+            SessionPeer::Client,
         );
+        table.register_publish_namespace(
+            PUBLISHER_RELAY_SESSION,
+            "ns/bob".to_string(),
+            SessionPeer::Relay,
+        );
+        let ctx = downstream_publish_context_for(SessionPeer::Relay, table, || Ok(true)).await;
+
+        // Act
+        handle_subscribe_namespace(
+            &ctx,
+            &StubRouteRegistry::new(PublisherLookup::MustNotBeCalled),
+            &MockSubscribeNamespaceHandler::new("ns"),
+        )
+        .await;
+
+        // Assert
+        assert_eq!(ctx.subscriber.publish_namespaces(), vec!["ns/alice"]);
     }
 
     #[tokio::test]
@@ -638,16 +790,7 @@ mod tests {
         let ctx = &handler.ctx;
 
         // Act
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                &handler,
-            )
-            .await;
+        handle_subscribe_namespace(ctx, &NoopRelayRouteRegistry, &handler).await;
 
         // Assert
         assert_eq!(ctx.subscriber.publish_namespaces(), vec!["ns/alice"]);
@@ -662,16 +805,7 @@ mod tests {
         ctx: &DownstreamPublishContext,
         handler: &MockSubscribeNamespaceHandler,
     ) {
-        SubscribeNameSpace
-            .handle(
-                NAMESPACE_SUBSCRIBER_SESSION,
-                &ctx.table,
-                &ctx.forwarder,
-                &ctx.downstream_publish(),
-                &NoopRelayRouteRegistry,
-                handler,
-            )
-            .await;
+        handle_subscribe_namespace(ctx, &NoopRelayRouteRegistry, handler).await;
     }
 
     #[tokio::test(start_paused = true)]

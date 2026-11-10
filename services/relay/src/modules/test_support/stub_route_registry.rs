@@ -66,6 +66,20 @@ impl StubRouteRegistry {
         }
     }
 
+    /// `track_namespaces` are published on the relays `relay_ids`.
+    pub(crate) fn with_remote_namespaces(
+        track_namespaces: &[&str],
+        relay_ids: Vec<&'static str>,
+    ) -> Self {
+        Self {
+            publisher_lookup: PublisherLookup::Found {
+                namespace_relay_ids: relay_ids,
+                track_relay_ids: Vec::new(),
+            },
+            ..Self::with_namespace_routes(track_namespaces)
+        }
+    }
+
     pub(crate) fn with_migration_target(migration_target: Option<&str>) -> Self {
         Self {
             migration_target: migration_target.map(str::to_string),
