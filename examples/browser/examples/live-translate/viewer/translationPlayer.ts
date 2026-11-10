@@ -101,10 +101,16 @@ export class TranslationPlayer {
       log: (level, message) => callbacks.onLog(level, message)
     }
     this.stage = new PictureStage(container)
-    this.locLive = new LocLive(this.stage.liveVideo, this.stage.liveCanvas, undefined, {
-      onPresented: (picture) => this.stage.show(picture),
-      onFrameShown: () => undefined
-    })
+    this.locLive = new LocLive(
+      this.stage.liveVideo,
+      this.stage.liveCanvas,
+      undefined,
+      {
+        onPresented: (picture) => this.stage.show(picture),
+        onFrameShown: () => undefined
+      },
+      () => this.context.session
+    )
     this.locLive.setBufferPolicy({ minimumMs: this.playbackDelayMs, maximumMs: this.playbackDelayMs })
     this.locLive.playout.setCatchUp('off')
     this.locLive.playout.setLateSamples('drop')

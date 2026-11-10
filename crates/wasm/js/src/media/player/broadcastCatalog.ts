@@ -61,10 +61,10 @@ export class BroadcastCatalog {
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => {
         if (options.onLog) {
-          forwardSdkLog(level, LOG_TARGET, message)
+          forwardSdkLog(session, level, LOG_TARGET, message)
           options.onLog(level, message)
         } else {
-          sdkLog(level, LOG_TARGET, message)
+          sdkLog(session, level, LOG_TARGET, message)
         }
       }
     }

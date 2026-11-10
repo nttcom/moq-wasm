@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { setSdkLogSink } from './log'
 import { RequestError } from './requestError'
 import { MoqNamespaceWatch, MoqSession, MoqSubscription } from './session'
 
@@ -85,6 +86,26 @@ test('the objects of a group keep their status and the group is freed once read'
     [4n, 1n, 3]
   ])
   expect(groupFreed.freed).toBe(1)
+})
+
+test("a subscription's logs go with its session's newest token", async () => {
+  // Arrange
+  const tokens: (string | undefined)[] = []
+  setSdkLogSink((_record, token) => tokens.push(token), 'debug')
+  const group = { groupId: 4n, subgroupId: 0n, next: sequence([]), free: () => {} }
+  const session = new MoqSession({
+    closed: new Promise(() => {}),
+    token: 'jwt-a',
+    subscribe: async () => wasmSubscription({ nextGroup: sequence([group]) })
+  } as unknown as ConstructorParameters<typeof MoqSession>[0])
+  const subscription = await session.subscribe(['live'], 'video')
+
+  // Act
+  for await (const _group of subscription.groups()) {
+  }
+
+  // Assert: the `subgroup header received` log carries the token
+  expect(tokens).toEqual(['jwt-a'])
 })
 
 test('a request the relay rejects throws a RequestError with its code', async () => {

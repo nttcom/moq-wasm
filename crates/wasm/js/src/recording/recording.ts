@@ -73,7 +73,9 @@ export class Recording {
     readonly startedAtMs: number,
     private current: Answer,
     private readonly request: PublishRequest,
-    private readonly environment: RecordingEnvironment
+    private readonly environment: RecordingEnvironment,
+    /// The session the replay is watched on, whose token the recording's logs go with.
+    private readonly session: Pick<MoqSession, 'closed'>
   ) {
     this.closed = new Promise((resolve) => {
       this.resolveClosed = resolve
@@ -88,7 +90,7 @@ export class Recording {
     environment: RecordingEnvironment
   ): Promise<Recording> {
     const { prefix, startedAtMs, answer } = await openAnswer(request, environment, new AbortController())
-    const recording = new Recording(prefix, startedAtMs, answer, request, environment)
+    const recording = new Recording(prefix, startedAtMs, answer, request, environment, session)
     void session.closed.then(() => recording.close())
     return recording
   }
@@ -100,7 +102,7 @@ export class Recording {
   private hold(answer: Answer): void {
     void answer.ended.then(() => {
       if (answer === this.current && !this.isClosed && !this.opening) {
-        sdkLog('warn', TARGET, 'recording answer ended, opening a new one', { url: this.request.url })
+        sdkLog(this.session, 'warn', TARGET, 'recording answer ended, opening a new one', { url: this.request.url })
         void this.renew()
       }
     })
@@ -124,7 +126,7 @@ export class Recording {
       if (this.current.isEnded) {
         this.end(error instanceof Error ? error : new Error(String(error)))
       } else {
-        sdkLog('warn', TARGET, 'recording answer renewal failed', { url: this.request.url, error })
+        sdkLog(this.session, 'warn', TARGET, 'recording answer renewal failed', { url: this.request.url, error })
       }
       return
     }

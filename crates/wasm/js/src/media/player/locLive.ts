@@ -7,7 +7,7 @@ import { type LivePictureKind, type LivePictureSink, createLivePictureSink } fro
 import type { MediaKind } from './trackContext'
 import type { ReceivedObject } from '../../core/session'
 import type { MediaCatalogTrack } from '../catalog'
-import { receiveWorkerLog } from '../../core/log'
+import { type LogSession, receiveWorkerLog } from '../../core/log'
 
 const PRESENTATION_MARGIN_MS = 200
 /// An arrival more than this behind the newest one no longer counts towards the longest gap.
@@ -83,6 +83,7 @@ export class LocLive {
     canvas: HTMLCanvasElement,
     livePicture: LivePictureKind | undefined,
     private readonly callbacks: LocLiveCallbacks,
+    logSession: () => LogSession,
     audioContext?: AudioContext
   ) {
     this.picture = createLivePictureSink(video, canvas, (picture) => callbacks.onPresented(picture), livePicture)
@@ -104,7 +105,7 @@ export class LocLive {
     )
     this.applyDecoderConfig()
     this.videoWorker.onmessage = (event) => {
-      if (receiveWorkerLog(event.data)) {
+      if (receiveWorkerLog(event.data, logSession())) {
         return
       }
       if (event.data.type === 'bitrate') {
@@ -123,7 +124,7 @@ export class LocLive {
       }
     }
     this.audioWorker.onmessage = (event) => {
-      if (receiveWorkerLog(event.data)) {
+      if (receiveWorkerLog(event.data, logSession())) {
         return
       }
       if (event.data.type === 'bitrate') {

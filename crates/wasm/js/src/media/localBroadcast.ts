@@ -105,10 +105,10 @@ export async function createBroadcast(
   if (options.offerChat) {
     await broadcast.offerChat()
   }
-  return new Broadcast(namespace, broadcast, reporter(options.onError))
+  return new Broadcast(session, namespace, broadcast, reporter(session, options.onError))
 }
 
-function reporter(onError: ((error: unknown) => void) | undefined): (error: unknown) => void {
+function reporter(session: MoqSession, onError: ((error: unknown) => void) | undefined): (error: unknown) => void {
   let lastReported: string | undefined
   return (error) => {
     const message = String(error)
@@ -117,10 +117,10 @@ function reporter(onError: ((error: unknown) => void) | undefined): (error: unkn
     }
     lastReported = message
     if (onError) {
-      forwardSdkLog('error', TARGET, 'publish failed', { error })
+      forwardSdkLog(session, 'error', TARGET, 'publish failed', { error })
       onError(error)
     } else {
-      sdkLog('error', TARGET, 'publish failed', { error })
+      sdkLog(session, 'error', TARGET, 'publish failed', { error })
     }
   }
 }
@@ -136,6 +136,7 @@ class Broadcast implements LocalBroadcast {
   private closed = false
 
   constructor(
+    private readonly session: MoqSession,
     readonly namespace: string[],
     private readonly broadcast: MediaBroadcast,
     private readonly report: (error: unknown) => void
@@ -187,7 +188,8 @@ class Broadcast implements LocalBroadcast {
       new MediaStream(tracks.map(({ track }) => track)),
       options,
       this.startedAtMs,
-      this.report
+      this.report,
+      this.session
     )
     return new Source(name, trackNames, encoding, tracks, () => this.removeSource(name))
   }

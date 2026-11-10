@@ -2,43 +2,68 @@ import type { LogLevel, LogRecord } from './init'
 
 type Fields = LogRecord['fields']
 
+/// What a TypeScript log is about: a `MoqSession`, whose token it is handed to the sink with, or
+/// `undefined` for a log of no session, which goes without a token.
+export type LogSession = object | undefined
+
+const sessionTokens = new WeakMap<object, () => string | undefined>()
+
+/// Makes the logs of `session` go to the sink with the token `token` returns.
+export function bindLogToken(session: object, token: () => string | undefined): void {
+  sessionTokens.set(session, token)
+}
+
 const SEVERITY: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 }
 
-let sink: { emit: (record: LogRecord, token: undefined) => void; level: LogLevel } | undefined
+let sink: { emit: (record: LogRecord, token: string | undefined) => void; level: LogLevel } | undefined
 
-/// Hands the SDK's TypeScript logs at `level` or above to `emit`.
-export function setSdkLogSink(emit: (record: LogRecord, token: undefined) => void, level: LogLevel): void {
+/// Hands the SDK's TypeScript logs at `level` or above to `emit`, each with its session's token.
+export function setSdkLogSink(emit: (record: LogRecord, token: string | undefined) => void, level: LogLevel): void {
   sink = { emit, level }
 }
 
 /// Logs from the SDK's TypeScript: to the console, and to the sink `init` set. `target`
 /// names the module (`moq-wasm::media::live_player`). Values that are not a string, number or
 /// boolean go into `fields` as their message (errors) or JSON.
-export function sdkLog(level: LogLevel, target: string, message: string, fields: Record<string, unknown> = {}): void {
-  const values = toFields(fields)
-  const text = [`[${target}] ${message}`, ...Object.entries(values).map(([key, value]) => `${key}=${value}`)]
-  console[CONSOLE_METHOD[level]](text.join(' '))
-  emit(level, target, message, values)
-}
-
-/// `sdkLog` without the console, for a log the SDK also hands to the page's own callback
-/// (`LivePlayerCallbacks.onLog`), which shows it as the page chooses.
-export function forwardSdkLog(
+export function sdkLog(
+  session: LogSession,
   level: LogLevel,
   target: string,
   message: string,
   fields: Record<string, unknown> = {}
 ): void {
-  emit(level, target, message, toFields(fields))
+  const values = toFields(fields)
+  const text = [`[${target}] ${message}`, ...Object.entries(values).map(([key, value]) => `${key}=${value}`)]
+  console[CONSOLE_METHOD[level]](text.join(' '))
+  emit(session, level, target, message, values)
+}
+
+/// `sdkLog` without the console, for a log the SDK also hands to the page's own callback
+/// (`LivePlayerCallbacks.onLog`), which shows it as the page chooses.
+export function forwardSdkLog(
+  session: LogSession,
+  level: LogLevel,
+  target: string,
+  message: string,
+  fields: Record<string, unknown> = {}
+): void {
+  emit(session, level, target, message, toFields(fields))
 }
 
 /// Hands a page's own log to `init`'s `onLog` and `telemetry`, as `forwardSdkLog` does the SDK's,
-/// at `logLevel` or above. `target` names the page. It is not written to the console.
-export const reportLog = forwardSdkLog
+/// at `logLevel` or above, without a token. `target` names the page. It is not written to the console.
+export function reportLog(
+  level: LogLevel,
+  target: string,
+  message: string,
+  fields: Record<string, unknown> = {}
+): void {
+  forwardSdkLog(undefined, level, target, message, fields)
+}
 
-function emit(level: LogLevel, target: string, message: string, fields: Fields): void {
+function emit(session: LogSession, level: LogLevel, target: string, message: string, fields: Fields): void {
   if (sink && SEVERITY[level] <= SEVERITY[sink.level]) {
-    sink.emit({ timeMs: Date.now(), level, target, message, fields }, undefined)
+    sink.emit({ timeMs: Date.now(), level, target, message, fields }, session && sessionTokens.get(session)?.())
   }
 }
 
@@ -63,12 +88,12 @@ export function workerLog(
 }
 
 /// Passes a worker's `workerLog` to `sdkLog`. Returns whether `data` was one.
-export function receiveWorkerLog(data: { type?: unknown }): boolean {
+export function receiveWorkerLog(data: { type?: unknown }, session: LogSession): boolean {
   if (data.type !== 'log') {
     return false
   }
   const { level, target, message, fields } = data as WorkerLogMessage
-  sdkLog(level, target, message, fields)
+  sdkLog(session, level, target, message, fields)
   return true
 }
 

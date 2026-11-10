@@ -190,7 +190,7 @@ export class LivePlayer {
       namespace: [],
       observer: options.deliveryObserver ?? UNOBSERVED_DELIVERIES,
       log: (level, message) => {
-        forwardSdkLog(level, 'moq-wasm::media::live_player', message)
+        forwardSdkLog(this.context.session, level, 'moq-wasm::media::live_player', message)
         options.callbacks.onLog(level, message)
       }
     }
@@ -222,6 +222,7 @@ export class LivePlayer {
           this.callbacks.onLiveFrame()
         }
       },
+      () => this.context.session,
       options.audioContext
     )
     this.locReview = new LocReview(

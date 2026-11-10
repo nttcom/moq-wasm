@@ -34,8 +34,8 @@ export interface InitOptions {
   wasmUrl?: string | URL
   /// Receives the SDK's logs, from both the wasm module and its TypeScript. Without it or
   /// `telemetry`, they are discarded. `token` is the one the record's `MoqSession` connected
-  /// with (its provider's newest). It is `undefined` for every TypeScript log, and for a record
-  /// of no session or of a session without one. Put it only in the telemetry report's `token`:
+  /// with (its provider's newest). It is `undefined` for a record of no session, such as a
+  /// `reportLog` or a catalog parse, and of a session without one. Put it only in the telemetry report's `token`:
   /// the server stores a record's fields as they are.
   onLog?: (record: LogRecord, token: string | undefined) => void
   /// The lowest level passed to `onLog` and sent with `telemetry`. Defaults to `'warn'`.

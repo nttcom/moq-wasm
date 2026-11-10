@@ -4,7 +4,7 @@ import { capturePcm } from './pcmCapture'
 import { EncoderTimeline } from './encoderTimeline'
 import { defaultKeyframeIntervalFrames, videoEncoderConfig } from './videoEncoderConfig'
 import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
-import { receiveWorkerLog } from '../../../core/log'
+import { type LogSession, receiveWorkerLog } from '../../../core/log'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
@@ -82,7 +82,8 @@ export function publishSource(
   stream: MediaStream,
   initialOptions: SourceOptions,
   startedAtMs: number,
-  report: (error: unknown) => void
+  report: (error: unknown) => void,
+  session: LogSession
 ): SourceEncoding {
   let options = initialOptions
   const kinds = new Map<MediaKind, Encoding>()
@@ -98,8 +99,8 @@ export function publishSource(
       Math.round((performance.now() - startedAtMs) * 1000)
     )
     return kind === 'video'
-      ? encodeVideo(source, track, options, renditionIndices, timeline, videoStats, report)
-      : encodeAudio(source, track, timeline, audioStats, report)
+      ? encodeVideo(source, track, options, renditionIndices, timeline, videoStats, report, session)
+      : encodeAudio(source, track, timeline, audioStats, report, session)
   }
   for (const [kind, track] of [
     ['video', stream.getVideoTracks()[0]],
@@ -199,7 +200,8 @@ function encodeVideo(
   renditionIndices: number[],
   timeline: EncoderTimeline,
   stats: VideoEncodeStats,
-  report: (error: unknown) => void
+  report: (error: unknown) => void,
+  session: LogSession
 ): Encoder {
   const worker = new Worker(new URL('./videoEncoder.ts', import.meta.url), {
     type: 'module'
@@ -220,7 +222,7 @@ function encodeVideo(
       }
     >
   ) => {
-    if (receiveWorkerLog(event.data)) {
+    if (receiveWorkerLog(event.data, session)) {
       return
     }
     if (event.data.type === 'frameDropped') {
@@ -300,7 +302,8 @@ function encodeAudio(
   track: MediaStreamTrack,
   timeline: EncoderTimeline,
   stats: AudioEncodeStats,
-  report: (error: unknown) => void
+  report: (error: unknown) => void,
+  session: LogSession
 ): Encoder {
   const worker = new Worker(new URL('./audioEncoder.ts', import.meta.url), {
     type: 'module'
@@ -316,7 +319,7 @@ function encodeAudio(
       | { type: 'configError' | 'encoderError' }
     >
   ) => {
-    if (receiveWorkerLog(event.data)) {
+    if (receiveWorkerLog(event.data, session)) {
       return
     }
     if (event.data.type === 'configError' || event.data.type === 'encoderError') {

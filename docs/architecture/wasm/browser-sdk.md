@@ -840,9 +840,15 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
     「Client telemetry」）。
 - SDK の TypeScript 層のログも `onLog`（と `telemetry`）に届く（`core/log.ts`）。`sdkLog` は
   コンソールに書いたうえで、`init` が置いた sink に `LogRecord` で渡す。`target` は
-  `moq-wasm::media::live_player` のようなモジュール名、トークンは常に `undefined`。
+  `moq-wasm::media::live_player` のようなモジュール名。
+  - 呼び出しは最初の引数にログの対象の `MoqSession` を取り、sink にはその session の最新の
+    トークン（wasm の `Session.token`、Rust 側のレコードと同じ `SessionScope` の値）を渡す。
+    `MoqSession` は生成時に `bindLogToken` でトークンの読み方を `core/log.ts` に登録するので、
+    トークンは `MoqSession` の API に出ない。session を持たないログ（`reportLog`、`PlayerControls`、
+    catalog の解析）は `undefined` を渡し、トークンなしで渡る。`start` 前の `LivePlayer` も同じ。
   - worker（エンコーダとデコーダ）には sink がないので、`workerLog` が `{ type: 'log', … }` を
-    postMessage し、ページ側の `onmessage` が `receiveWorkerLog` で `sdkLog` に渡す。
+    postMessage し、ページ側の `onmessage` が `receiveWorkerLog` で、その worker の session を
+    添えて `sdkLog` に渡す。
   - `LivePlayerCallbacks.onLog` と `PlayerControls` の `onLog` に渡すログは、ページが自分で
     表示するので、`forwardSdkLog` でコンソールに書かずに sink にだけ渡す。
 
