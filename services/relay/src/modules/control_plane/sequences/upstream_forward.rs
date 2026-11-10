@@ -49,10 +49,14 @@ impl UpstreamForward {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
+
+    use tokio::sync::mpsc;
 
     use moqt::{
-        Session, SessionEvent, Subscription, publish::PublishOption, subscribe::SubscribeOption,
+        Session, SessionEvent, Subscription,
+        publish::{GroupBoundary, Origin, OutgoingObject, PublishOption, Retention, WriteOutcome},
+        subscribe::SubscribeOption,
     };
 
     use crate::modules::{
@@ -175,6 +179,62 @@ mod tests {
 
         // Assert: draft-18 §9.5
         assert!(published_forward);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_on_demand_origin_sends_its_track_only_while_a_subscriber_takes_it() {
+        // Arrange
+        let relay = spawn_draft18_relay(app_token(Some(""), Some("")));
+        let publisher = Arc::new(connect_draft18_client(&relay).await);
+        let origin = Origin::default();
+        origin
+            .ensure_track(NAMESPACE, TRACK, 0, Retention::NewestOnly)
+            .await;
+        let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+        origin
+            .publish_on_demand(NAMESPACE, TRACK, demand_sender)
+            .await
+            .unwrap();
+        within(origin.publish(&publisher, NAMESPACE, TRACK))
+            .await
+            .unwrap();
+        let events = tokio::spawn({
+            let (publisher, origin) = (publisher.clone(), origin.clone());
+            async move {
+                while let Ok(event) = publisher.receive_event().await {
+                    origin.handle(event).await;
+                }
+            }
+        });
+        let write = |group, payload: &'static str| {
+            origin.write(
+                NAMESPACE,
+                TRACK,
+                OutgoingObject::plain(group, payload.into()),
+            )
+        };
+        let subscriber = connect_draft18_client(&relay).await;
+
+        // Act: the track's group goes on while nobody takes it
+        let without_subscriber = write(GroupBoundary::Next, "a").await.unwrap();
+        let subscription = subscribe_track(&subscriber, SubscribeOption::default()).await;
+        let wanted = async {
+            while let Some(demand) = demand_receiver.recv().await {
+                if demand.wanted {
+                    break;
+                }
+            }
+        };
+        within(wanted).await;
+        let with_subscriber = write(GroupBoundary::Within, "b").await.unwrap();
+        let mut reader = subscriber.subscriber().track_reader(&subscription);
+        let received = within(reader.next_object()).await.unwrap().unwrap();
+        events.abort();
+
+        // Assert
+        assert_eq!(without_subscriber, WriteOutcome::NotSent);
+        assert!(matches!(with_subscriber, WriteOutcome::Sent(_)));
+        assert_eq!((received.object_id, received.payload), (1, "b".into()));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
