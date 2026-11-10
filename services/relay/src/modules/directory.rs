@@ -950,18 +950,22 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
-    /// Returns the producer from the same publisher that this one replaces;
-    /// its ingest stops when the caller drops it.
+    /// The producer starts in the Forward State `Track::upstream_forward`
+    /// gives, which is returned for the PUBLISH_OK of a PUBLISH. Also returns
+    /// the producer from the same publisher that this one replaces; its
+    /// ingest stops when the caller drops it.
     pub(crate) fn register_upstream_subscription(
         &self,
         track_key: TrackKey,
         publisher_session_id: SessionId,
-        producer: Producer,
-    ) -> Option<Producer> {
+        mut producer: Producer,
+    ) -> (bool, Option<Producer>) {
         let mut track = self
             .upstream_tracks
             .entry(track_key.clone())
             .or_insert_with(|| Track::new(CreationState::Created));
+        let forward = track.upstream_forward(&producer.state);
+        producer.state.forward = forward;
         let replaced = track.producers.insert(publisher_session_id, producer);
         track.mark_created();
         drop(track);
@@ -971,7 +975,17 @@ impl InMemoryLocalPubSubDirectory {
         {
             self.forget_published_handler(publisher_session_id, &track_key);
         }
-        replaced
+        (forward, replaced)
+    }
+
+    pub(crate) fn take_upstream_forward_update(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+    ) -> Option<(UpstreamSubscription, bool)> {
+        self.upstream_tracks
+            .get_mut(track_key)?
+            .take_upstream_forward_update(publisher_session_id)
     }
 
     pub(crate) fn published_upstream_subscription(
@@ -1111,6 +1125,7 @@ impl InMemoryLocalPubSubDirectory {
         let (consumer, signals) = Consumer::new(subscription, subscriber_peer, delivery_control);
         let key = (downstream_session_id, downstream_subscribe_id);
         track.consumers.insert(key, consumer);
+        track.report_upstream_forward(&track_key);
         self.consumer_tracks.insert(key, track_key);
         Some(signals)
     }
@@ -1138,6 +1153,7 @@ impl InMemoryLocalPubSubDirectory {
             return false;
         };
         consumer.update_delivery(requested, told_largest);
+        track.report_upstream_forward(&track_key);
         true
     }
 
@@ -1217,6 +1233,7 @@ impl InMemoryLocalPubSubDirectory {
             );
             entry.remove();
         } else {
+            track.report_upstream_forward(&track_key);
             drop(entry);
         }
         for publisher_session_id in released_published {
@@ -1254,6 +1271,8 @@ impl InMemoryLocalPubSubDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::data_plane::ingress::ingest_task::IngestTask;
+    use crate::modules::session::session_event::SessionEvent;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, producer, producer_with,
         table_with_upstream, track_key, upstream_carrying,
@@ -1263,6 +1282,7 @@ mod tests {
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn a_track_keeps_a_publisher_while_another_session_publishes_its_namespace() {
@@ -1275,6 +1295,76 @@ mod tests {
 
         // Assert
         assert!(table.has_track_publisher(&track_key));
+    }
+
+    #[tokio::test]
+    async fn an_on_demand_relay_publisher_is_forwarded_only_for_a_client_subscriber() {
+        // Arrange: a relay takes the track in Forward State 1
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let published_by = |peer| {
+            producer_with(ProducerState {
+                peer,
+                on_demand: true,
+                ..active_upstream(ProducerOrigin::Publish)
+            })
+        };
+        table.register_downstream_subscription(
+            6,
+            10,
+            SessionPeer::Relay,
+            downstream_subscription(track_key.clone(), None),
+            delivery_control(true),
+        );
+
+        // Act
+        let (relay_forward, _) = table.register_upstream_subscription(
+            track_key.clone(),
+            2,
+            published_by(SessionPeer::Relay),
+        );
+        let (client_forward, _) = table.register_upstream_subscription(
+            track_key.clone(),
+            3,
+            published_by(SessionPeer::Client),
+        );
+
+        // Assert: two relays feeding each other keep no track flowing between them
+        assert!(!relay_forward);
+        assert!(client_forward);
+    }
+
+    #[tokio::test]
+    async fn a_forward_state_the_track_no_longer_belongs_in_is_reported_to_its_publisher() {
+        // Arrange: a track published on demand that nobody takes
+        let table = InMemoryLocalPubSubDirectory::new();
+        let (mailbox_sender, mut mailbox_receiver) = mpsc::unbounded_channel();
+        let published = Producer::new(
+            ProducerState {
+                on_demand: true,
+                ..active_upstream(ProducerOrigin::Publish)
+            },
+            IngestTask::idle_notifying(mailbox_sender),
+        );
+        table.register_upstream_subscription(track_key(), PUBLISHER_SESSION, published);
+
+        // Act
+        table.register_downstream_subscription(
+            100,
+            10,
+            SessionPeer::Client,
+            downstream_subscription(track_key(), None),
+            delivery_control(true),
+        );
+        let reported = mailbox_receiver.try_recv();
+        let update = table.take_upstream_forward_update(&track_key(), PUBLISHER_SESSION);
+        let repeated = table.take_upstream_forward_update(&track_key(), PUBLISHER_SESSION);
+
+        // Assert: the update is taken once
+        assert!(
+            matches!(reported, Ok(SessionEvent::UpstreamForwardChanged(reported)) if reported == track_key())
+        );
+        assert!(matches!(update, Some((_, true))));
+        assert!(repeated.is_none());
     }
 
     #[test]

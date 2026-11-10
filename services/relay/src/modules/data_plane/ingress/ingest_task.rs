@@ -44,6 +44,7 @@ pub(crate) struct IngestStart {
 /// receiver, then reads every subgroup stream or datagram into the track's
 /// cache. Dropping it stops the readers.
 pub(crate) struct IngestTask {
+    publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
     _stop_sender: watch::Sender<bool>,
     _join_handle: JoinHandle<()>,
 }
@@ -66,11 +67,17 @@ impl IngestTask {
         );
         link_span(&span, request_span);
         link_span(&span, &start.publisher_session_span);
+        let publisher_mailbox_sender = start.publisher_mailbox_sender.clone();
         let join_handle = tokio::spawn(Self::ingest(start, stop_receiver).instrument(span));
         Self {
+            publisher_mailbox_sender,
             _stop_sender: stop_sender,
             _join_handle: join_handle,
         }
+    }
+
+    pub(crate) fn notify_publisher(&self, event: SessionEvent) {
+        let _ = self.publisher_mailbox_sender.send(event);
     }
 
     async fn ingest(start: IngestStart, mut stop_receiver: watch::Receiver<bool>) {
@@ -162,8 +169,15 @@ impl Drop for ServingPublisher<'_> {
 impl IngestTask {
     /// An ingest that reads nothing, for producers under test.
     pub(crate) fn idle() -> Self {
+        Self::idle_notifying(mpsc::unbounded_channel().0)
+    }
+
+    pub(crate) fn idle_notifying(
+        publisher_mailbox_sender: mpsc::UnboundedSender<SessionEvent>,
+    ) -> Self {
         let (stop_sender, _stop_receiver) = watch::channel(false);
         Self {
+            publisher_mailbox_sender,
             _stop_sender: stop_sender,
             _join_handle: tokio::spawn(async {}),
         }

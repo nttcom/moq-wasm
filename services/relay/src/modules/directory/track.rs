@@ -23,7 +23,7 @@ use crate::modules::{
         session_peer::SessionPeer,
         track_key::TrackKey,
     },
-    session::subscription::UpstreamSubscription,
+    session::{session_event::SessionEvent, subscription::UpstreamSubscription},
 };
 
 /// One session's subscription to a namespace prefix.
@@ -49,6 +49,12 @@ pub(crate) struct ProducerState {
     pub(crate) content_exists: ContentExists,
     pub(crate) origin: ProducerOrigin,
     pub(crate) peer: SessionPeer,
+    /// The Forward State the relay last asked the publisher for, in its
+    /// SUBSCRIBE, PUBLISH_OK or REQUEST_UPDATE.
+    pub(crate) forward: bool,
+    /// The publisher sent PUBLISH in Forward State 0: it sends the track
+    /// only while the relay asks for it (draft-18 §10.10).
+    pub(crate) on_demand: bool,
 }
 
 /// One publisher feeding a track: its upstream subscription and the ingest
@@ -56,15 +62,12 @@ pub(crate) struct ProducerState {
 /// ingest; the UNSUBSCRIBE, when one is due, is sent by whoever removed it.
 pub(crate) struct Producer {
     pub(crate) state: ProducerState,
-    _ingest: IngestTask,
+    ingest: IngestTask,
 }
 
 impl Producer {
     pub(crate) fn new(state: ProducerState, ingest: IngestTask) -> Self {
-        Self {
-            state,
-            _ingest: ingest,
-        }
+        Self { state, ingest }
     }
 }
 
@@ -292,6 +295,49 @@ impl Track {
     ) -> bool {
         !self.producers.contains_key(&publisher_session_id)
             && (self.is_creating() || self.wants(publisher_peer))
+    }
+
+    /// The Forward State the upstream subscription of `producer` belongs
+    /// in. An on-demand one is in 1 only while a subscriber its publisher
+    /// serves (see `wants`) is in Forward State 1 (draft-18 §9.5); any other
+    /// stays in 1.
+    pub(crate) fn upstream_forward(&self, producer: &ProducerState) -> bool {
+        !producer.on_demand
+            || self.consumers.values().any(|consumer| {
+                consumer.delivery_control().forward
+                    && (producer.peer == SessionPeer::Client
+                        || consumer.peer == SessionPeer::Client)
+            })
+    }
+
+    /// Reports the track to the worker of every publisher whose upstream
+    /// subscription is not in the Forward State it belongs in. The worker
+    /// sends the update (`take_upstream_forward_update`), so the updates to
+    /// one publisher go out in the order they were decided.
+    pub(crate) fn report_upstream_forward(&self, track_key: &TrackKey) {
+        for producer in self.producers.values() {
+            if producer.state.forward != self.upstream_forward(&producer.state) {
+                producer
+                    .ingest
+                    .notify_publisher(SessionEvent::UpstreamForwardChanged(track_key.clone()));
+            }
+        }
+    }
+
+    /// The upstream subscription of `publisher_session_id` and the Forward
+    /// State to update it to, which is recorded as asked for. `None` when it
+    /// is in the Forward State it belongs in.
+    pub(crate) fn take_upstream_forward_update(
+        &mut self,
+        publisher_session_id: SessionId,
+    ) -> Option<(UpstreamSubscription, bool)> {
+        let forward = self.upstream_forward(&self.producers.get(&publisher_session_id)?.state);
+        let state = &mut self.producers.get_mut(&publisher_session_id)?.state;
+        if state.forward == forward {
+            return None;
+        }
+        state.forward = forward;
+        Some((state.subscription.clone(), forward))
     }
 
     pub(crate) fn begin_forwarded_publish(&mut self, session_id: SessionId) -> bool {

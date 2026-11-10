@@ -13,6 +13,7 @@ pub(crate) mod subscribe_update;
 pub(crate) mod track_status;
 pub(crate) mod unsubscribe;
 pub(crate) mod unsubscribe_namespace;
+pub(crate) mod upstream_forward;
 pub(crate) mod upstream_publish_done;
 
 use crate::modules::{
@@ -132,17 +133,18 @@ pub(crate) async fn release_upstream(
 /// Also unsubscribes the subscription from the same publisher that this one
 /// replaces, e.g. the SUBSCRIBE this relay sent before the publisher sent
 /// PUBLISH for the track; dropping the replaced producer stops its ingest.
+/// Returns the Forward State the producer starts in.
 pub(crate) async fn register_upstream_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
     track_key: TrackKey,
     publisher_session_id: SessionId,
     producer: Producer,
-) {
-    let Some(replaced) =
-        table.register_upstream_subscription(track_key, publisher_session_id, producer)
-    else {
-        return;
+) -> bool {
+    let (forward, replaced) =
+        table.register_upstream_subscription(track_key, publisher_session_id, producer);
+    let Some(replaced) = replaced else {
+        return forward;
     };
     if let Err(error) = forwarder
         .unsubscribe(publisher_session_id, &replaced.state.subscription)
@@ -155,6 +157,7 @@ pub(crate) async fn register_upstream_subscription(
             "failed to unsubscribe the replaced upstream subscription"
         );
     }
+    forward
 }
 
 pub(crate) struct IngestRequest {

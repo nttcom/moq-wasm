@@ -294,6 +294,9 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
 - Events for control messages without relay-side logic yet
   (PUBLISH_NAMESPACE_CANCEL, FETCH_CANCEL) are logged in the
   event span and dropped by the worker; they have no `sequences` entry.
+- `UpstreamForwardChanged(track_key)` is reported by the directory to the
+  mailbox of a publisher session whose upstream subscription is not in the
+  Forward State it belongs in (see "Upstream Forward State").
 - Two relay-internal events are reported by the ingest path (not by a peer)
   to the upstream publisher session's mailbox:
   - `MalformedTrackDetected(track_key)`, raised by the reader that
@@ -370,7 +373,8 @@ Each sequence owns the relay-side protocol logic for one message
   downstream subscription, keyed by (session, request id) and indexed in
   `consumer_tracks`; consumers refer to the track, not to a publisher. A
   `Producer` is its `ProducerState` (the `moqt::Subscription` handle, origin,
-  peer, expires, Content Exists) plus the `IngestTask` reading the publisher;
+  peer, expires, Content Exists, the Forward State last asked for, whether
+  the PUBLISH was on demand) plus the `IngestTask` reading the publisher;
   sequences read a `TrackState`, the producers without their ingests. A
   `Consumer` holds the senders its egress runner selects on: the stop
   `oneshot<PublishDoneReason>`, the `DeliveryControl` watch and the
@@ -475,7 +479,8 @@ to the track the same way.
    its own subscribers'). A subscription that leaves out its session's own
    tracks (draft-18 §6.1) gets no PUBLISH for a track that session
    PUBLISHed; a draft-14 one is echoed it (draft-14 §6.1).
-4. PUBLISH_OK to the publisher.
+4. PUBLISH_OK to the publisher, with the Forward State the subscription
+   belongs in (see "Upstream Forward State").
 
 Each forward in step 3 is a `DownstreamPublish`
 (`control_plane/sequences/downstream_publish.rs`), which treats the forwarded
@@ -616,8 +621,9 @@ publisher MUST). draft-18 §10.9.1 allows both: a start moved back is served
 like a new SUBSCRIBE with that start, from just past the Largest Object at the
 update (see "Egress"), and the subscriber FETCHes what lies before it. An
 update for no registered subscription is logged and dropped. The upstream
-subscription keeps Forward 1 and its own range, so the cache keeps filling for
-FETCH. Every applied update is answered through `SubscribeUpdateHandler::ok`
+subscription keeps its own range; its Forward State follows the subscribers'
+only for a track published on demand (see "Upstream Forward State"), so the
+cache of any other track keeps filling for FETCH. Every applied update is answered through `SubscribeUpdateHandler::ok`
 with the track's Largest Object, resolved like a SUBSCRIBE's (draft-18
 §10.2.11; draft-14 sends no answer). When `ok` reports that the subscriber was
 given that location, an update that turns Forward from 0 to 1 also makes it
@@ -669,6 +675,48 @@ each relay on the path applies the interval.
 
 The request is not answered to the subscriber beyond the REQUEST_OK of its
 REQUEST_UPDATE; a subscriber cannot tell whether it was passed on.
+
+### Upstream Forward State
+A publisher that sends PUBLISH in Forward State 0 sends the track only while
+the relay asks for it (draft-18 §10.10): the track is published on demand
+(`ProducerState::on_demand`). The relay keeps such an upstream subscription in
+Forward State 1 only while a subscriber its publisher serves is in Forward
+State 1 (`Track::upstream_forward`): draft-18 §9.5 requires 1 while a
+downstream subscriber has it and allows 0 until a PUBLISH has subscribers. A
+relay publisher serves this relay's clients only (split horizon), so a relay
+subscriber does not count for it.
+
+Every other upstream subscription stays in Forward State 1. A PUBLISH in
+Forward State 1 is answered with 1, so a track that holds a state rather than
+a stream, such as a catalog, reaches the cache even when it is written before
+anyone subscribes. An upstream SUBSCRIBE asks for 1 (§9.2) and is released
+when its last subscriber leaves.
+
+- An on-demand PUBLISH is answered PUBLISH_OK with the state its subscribers
+  call for, usually 0, since a PUBLISH reaches the relay before its
+  subscribers do.
+- A downstream registration, removal or update compares each producer's
+  `ProducerState::forward`, the state the relay last asked for, with the one
+  it belongs in now, and reports the track to the mailbox of each publisher
+  session that differs (`SessionEvent::UpstreamForwardChanged`). That
+  session's worker (`sequences/upstream_forward.rs`) takes the update from the
+  directory, which records it as asked for, and sends SUBSCRIBE_UPDATE
+  (draft-14) or REQUEST_UPDATE (draft-18). A worker handles one event at a
+  time, so the updates to one publisher go out in the order they were decided,
+  a burst of changes is sent as its latest state, and none precedes the
+  PUBLISH_OK.
+
+A subscriber between the track lookup and its registration is not counted, so
+a SUBSCRIBE in Forward State 0 does not turn the publisher on for a moment.
+
+While an on-demand track has no subscriber in Forward State 1 the cache
+receives nothing: a FETCH is served what was cached before, and a subscriber
+that joins is told the Largest Location from before the pause. Its Joining
+FETCH returns that group, and the objects the publisher sends after the update
+follow on the subscription. A relay subscribing to another relay keeps its
+SUBSCRIBE in Forward State 1, so an on-demand track stays on while another
+relay holds a subscription to it, whatever the Forward State of that relay's
+subscribers.
 
 ### FETCH sequence
 Resolve the track and object range (Standalone from the message; Joining

@@ -790,6 +790,14 @@ impl Subscriber for MockUpstreamSubscriber {
         Ok(true)
     }
 
+    async fn send_forward_update(
+        &self,
+        _subscription: &UpstreamSubscription,
+        _forward: bool,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
         self.recorded
             .namespace_subscriptions
@@ -1327,6 +1335,7 @@ impl PublishHandler for MockPublishHandler {
     async fn ok(
         &self,
         _subscription: &UpstreamSubscription,
+        _forward: bool,
     ) -> Result<(), moqt::TransportSendError> {
         Ok(())
     }

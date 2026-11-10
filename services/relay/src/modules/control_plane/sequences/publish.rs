@@ -68,7 +68,7 @@ impl Publish {
             return;
         }
 
-        if let Err(error) = self
+        let forward = match self
             .register_upstream_subscription(
                 session_id,
                 publisher_peer,
@@ -80,27 +80,34 @@ impl Publish {
             )
             .await
         {
-            tracing::error!(
-                ?error,
-                session_id = %session_id,
-                track_namespace = %upstream_subscription.track_namespace(),
-                track_name = %upstream_subscription.track_name(),
-                "failed to register upstream subscription"
-            );
-            if handler
-                .error(
-                    RequestErrorCode::InternalError,
-                    "Failed to start ingress for published track".to_string(),
+            Ok(forward) => forward,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    session_id = %session_id,
+                    track_namespace = %upstream_subscription.track_namespace(),
+                    track_name = %upstream_subscription.track_name(),
+                    "failed to register upstream subscription"
+                );
+                if handler
+                    .error(
+                        RequestErrorCode::InternalError,
+                        "Failed to start ingress for published track".to_string(),
+                    )
+                    .await
+                    .is_err()
+                {
+                    tracing::error!("failed to send PUBLISH_ERROR. close session.");
+                }
+                Self::withdraw_track_route(
+                    table,
+                    cascading_relay_context.route_registry,
+                    &track_key,
                 )
-                .await
-                .is_err()
-            {
-                tracing::error!("failed to send PUBLISH_ERROR. close session.");
-            }
-            Self::withdraw_track_route(table, cascading_relay_context.route_registry, &track_key)
                 .await;
-            return;
-        }
+                return;
+            }
+        };
 
         self.notify_namespace_subscribers(
             downstream_publish,
@@ -110,7 +117,7 @@ impl Publish {
         )
         .await;
 
-        if handler.ok(&upstream_subscription).await.is_err() {
+        if handler.ok(&upstream_subscription, forward).await.is_err() {
             tracing::error!("failed to send PUBLISH_OK. close session.");
             return;
         }
@@ -119,6 +126,7 @@ impl Publish {
             track_namespace = %upstream_subscription.track_namespace(),
             track_name = %upstream_subscription.track_name(),
             track_alias = %upstream_subscription.track_alias(),
+            forward,
             "PUBLISH handled"
         );
     }
@@ -254,7 +262,7 @@ impl Publish {
         cache_store: &TrackCacheStore,
         handler: Arc<dyn PublishHandler>,
         subscription: &UpstreamSubscription,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let track_key = TrackKey::new(subscription.track_namespace(), subscription.track_name());
         let state = ProducerState {
             subscription: subscription.clone(),
@@ -262,6 +270,8 @@ impl Publish {
             content_exists: subscription.content_exists(),
             origin: ProducerOrigin::Publish,
             peer: publisher_peer,
+            forward: true,
+            on_demand: !handler._forward(),
         };
 
         handler.accept_data_receiver().await;
@@ -281,7 +291,7 @@ impl Publish {
             anyhow::bail!("publisher session not found");
         };
 
-        super::register_upstream_subscription(
+        let forward = super::register_upstream_subscription(
             table,
             forwarder,
             track_key,
@@ -290,7 +300,7 @@ impl Publish {
         )
         .await;
         table.register_publish(session_id, publisher_peer, handler);
-        Ok(())
+        Ok(forward)
     }
 
     #[tracing::instrument(

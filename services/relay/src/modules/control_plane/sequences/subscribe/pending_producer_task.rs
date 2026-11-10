@@ -70,6 +70,8 @@ pub(crate) fn subscribe_initiated(
         content_exists: subscription.content_exists(),
         origin: ProducerOrigin::Subscribe,
         peer: publisher_peer,
+        forward: true,
+        on_demand: false,
     }
 }
 
