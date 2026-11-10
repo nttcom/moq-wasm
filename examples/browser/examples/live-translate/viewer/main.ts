@@ -1,4 +1,4 @@
-import { MoqSession } from 'moq-wasm'
+import { MoqSession, reportLog } from 'moq-wasm'
 import 'moq-wasm/media/player.css'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
@@ -43,7 +43,7 @@ const player = new TranslationPlayer(
 )
 window.liveTranslateViewer = { stats: () => player.stats(), selectLanguage: (lang) => player.selectLanguage(lang) }
 
-const telemetry = startPageTelemetry('live-translate-viewer', () => urlInput.value)
+startPageTelemetry('live-translate-viewer', () => urlInput.value)
 setUpRelayUrlControls(urlInput, element('urlPresets'))
 broadcastIdInput.value = new URLSearchParams(location.search).get(BROADCAST_ID_PARAM) ?? ''
 // The streamer's link carries the broadcast ID and the relay URL; a viewer who typed the URL by hand sees the form.
@@ -187,7 +187,7 @@ function logStats(): void {
     return
   }
   const defined = (value: number | undefined) => (value === undefined ? -1 : Math.round(value * 1_000) / 1_000)
-  telemetry.log('info', 'viewer stats', {
+  reportLog('info', 'live-translate-viewer', 'viewer stats', {
     language: stats.language,
     pending_language: stats.pendingLanguage ?? '',
     playback_delay_ms: player.playbackDelayMs,

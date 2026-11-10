@@ -1,8 +1,8 @@
-import type { StatsSample } from '../../../utils/clientTelemetry'
+import type { TelemetryStatsSample } from 'moq-wasm'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let relayUrl = ''
-let samples: () => StatsSample[] = () => []
+let samples: () => TelemetryStatsSample[] = () => []
 
 startPageTelemetry(
   'remote-monitoring',
@@ -15,6 +15,6 @@ export function reportRelay(url: string): void {
   relayUrl = url
 }
 
-export function sampleCameras(next: () => StatsSample[]): void {
+export function sampleCameras(next: () => TelemetryStatsSample[]): void {
   samples = next
 }

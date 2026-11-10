@@ -1,7 +1,7 @@
 import { MoqSession } from 'moq-wasm'
 import { connectOptions, withNamespaceRoot } from '../../../../utils/access'
 import { LivePlayer } from 'moq-wasm/media'
-import type { StatsSample } from '../../../../utils/clientTelemetry'
+import type { TelemetryStatsSample } from 'moq-wasm'
 import { reportRelay, sampleCameras } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
 import 'moq-wasm/media/player.css'
@@ -72,7 +72,7 @@ export class CameraPlayers {
     }
   }
 
-  private samples(): StatsSample[] {
+  private samples(): TelemetryStatsSample[] {
     return [...this.players.values()].flatMap(({ player, trackNamespace }) =>
       player.state.started ? [{ trackNamespace, values: player.stats() }] : []
     )
