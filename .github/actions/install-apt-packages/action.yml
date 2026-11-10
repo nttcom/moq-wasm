@@ -21,22 +21,25 @@ runs:
         cache="${HOME}/.cache/apt"
         mkdir -p "${cache}/archives/partial" "${cache}/lists/partial"
         . /etc/os-release
-        # The month rotates the key so the cached packages follow distribution updates.
         packages_hash="$(printf '%s\n' "${packages[@]}" | sha256sum | cut -c1-16)"
+        key_prefix="apt-${ID}-${VERSION_ID}-$(uname -m)-${packages_hash}-"
         {
           echo "packages=${packages[*]}"
           echo "cache=${cache}"
-          echo "key-prefix=apt-${ID}-${VERSION_ID}-$(uname -m)-$(date -u +%Y-%m)-${packages_hash}-"
+          echo "key-prefix=${key_prefix}"
+          echo "month-key-prefix=${key_prefix}$(date -u +%Y-%m)-"
         } >> "$GITHUB_OUTPUT"
 
     - name: Restore apt package cache
+      id: restore
       # actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: |
           ${{ steps.apt.outputs.cache }}/archives/*.deb
           ${{ steps.apt.outputs.cache }}/lists/*_*
-        key: ${{ steps.apt.outputs.key-prefix }}${{ github.run_id }}
+        key: ${{ steps.apt.outputs.month-key-prefix }}${{ github.run_id }}
+        # An earlier month's cache still installs without the mirror.
         restore-keys: ${{ steps.apt.outputs.key-prefix }}
 
     - name: Install apt packages
@@ -45,6 +48,9 @@ runs:
       env:
         APT_CACHE: ${{ steps.apt.outputs.cache }}
         APT_PACKAGES: ${{ steps.apt.outputs.packages }}
+        # Once a month master downloads again, so the cached packages follow
+        # distribution updates. Other refs cannot save a cache master reads.
+        APT_REFRESH: ${{ github.ref == 'refs/heads/master' && !startsWith(steps.restore.outputs.cache-matched-key, steps.apt.outputs.month-key-prefix) }}
       run: |
         set -euo pipefail
         # Container jobs run as root; jobs on the runner host need sudo.
@@ -66,11 +72,13 @@ runs:
         }
         # Mirror downloads on the runner sometimes stall for minutes, so install
         # from the cached lists and .deb files first.
-        if install --no-download; then
+        if [ "${APT_REFRESH}" != "true" ] && install --no-download; then
           echo "downloaded=false" >> "$GITHUB_OUTPUT"
         else
           $privileged apt-get update "${apt_options[@]}"
           install
+          # Drops the .deb files of versions the mirror no longer offers.
+          $privileged apt-get autoclean "${apt_options[@]}"
           echo "downloaded=true" >> "$GITHUB_OUTPUT"
         fi
 
@@ -82,4 +90,4 @@ runs:
         path: |
           ${{ steps.apt.outputs.cache }}/archives/*.deb
           ${{ steps.apt.outputs.cache }}/lists/*_*
-        key: ${{ steps.apt.outputs.key-prefix }}${{ github.run_id }}
+        key: ${{ steps.apt.outputs.month-key-prefix }}${{ github.run_id }}
