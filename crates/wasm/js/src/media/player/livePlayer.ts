@@ -1003,6 +1003,11 @@ export class LivePlayer {
     const verdict = pending.splice.acceptIncoming(groupId, object.objectId)
     if (verdict.start) {
       this.startIncomingVideo(pending, next, verdict.start)
+      if (!verdict.play) {
+        // The outgoing rendition delivered this group first, so the switch
+        // starts at the next one, which a long group interval would delay.
+        void this.subscriptions.requestNewGroup(next, groupId)
+      }
     }
     if (verdict.retireOutgoing) {
       this.retireOutgoingVideo(pending)
