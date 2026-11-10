@@ -1,0 +1,17 @@
+[package]
+name = "http-server"
+version = "0.1.0"
+edition = "2024"
+description = "The HTTP/1 accept loop and JSON responses shared by the services' HTTP servers"
+
+[dependencies]
+http-body-util = "0.1.4"
+hyper = { version = "1.10.1", features = ["http1", "server"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+serde = "1.0.228"
+serde_json = "1"
+tokio = { version = "1.52.3", features = ["rt", "net"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "io-util"] }
