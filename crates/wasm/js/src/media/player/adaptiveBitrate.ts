@@ -7,6 +7,22 @@ export type Rung = { name: string; bitrate: number; height?: number }
 /// behind its capture.
 export type DeliverySample = { arrivedAtMs: number; bytes: number; lagMs: number | undefined }
 
+/// Why `decideUnderHeight` switches: the picture is shorter than the rendition
+/// (`height`), a taller picture raised the cap (`raise`), the path is congested
+/// (`congested`), or a calm spell tries the next rendition (`calm`).
+type SwitchReason = 'height' | 'raise' | 'congested' | 'calm'
+
+/// A switch with what the delivery measured when it was decided: the least lag
+/// of the last `RECENT_LAG_WINDOW_MS`, the least lag since the rendition
+/// started, and the throughput of the last `THROUGHPUT_WINDOW_MS`.
+export type RenditionChoice = {
+  name: string
+  reason: SwitchReason
+  recentLagMs: number | undefined
+  baselineLagMs: number | undefined
+  throughputBps: number
+}
+
 const THROUGHPUT_WINDOW_MS = 2_000
 /// Samples right after a switch mix the two renditions, whose capture-to-arrival
 /// lag differs by the transcoding delay, so they are left out.
@@ -157,17 +173,41 @@ export class AdaptiveBitrate {
   /// `decide` over the ladder capped to the picture's `height`: a rendition
   /// above the cap steps down to it at once, and a cap raised by a taller
   /// picture is taken as `raiseTo` allows.
-  decideUnderHeight(nowMs: number, ladder: Rung[], current: string, height: number | undefined): string | undefined {
+  decideUnderHeight(
+    nowMs: number,
+    ladder: Rung[],
+    current: string,
+    height: number | undefined
+  ): RenditionChoice | undefined {
     const capped = capLadderToHeight(ladder, height)
     const ceilingBitrate = capped.at(-1)?.bitrate
     const raised =
       this.ceilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > this.ceilingBitrate
     this.ceilingBitrate = ceilingBitrate
-    return (
-      renditionAboveHeight(ladder, current, height) ??
-      (raised ? this.raiseTo(nowMs, capped, current) : undefined) ??
-      this.decide(nowMs, capped, current)
-    )
+    const choose = (name: string, reason: SwitchReason): RenditionChoice => ({
+      name,
+      reason,
+      ...this.measure(nowMs)
+    })
+    const above = renditionAboveHeight(ladder, current, height)
+    if (above) {
+      return choose(above, 'height')
+    }
+    const raisedTo = raised ? this.raiseTo(nowMs, capped, current) : undefined
+    if (raisedTo) {
+      return choose(raisedTo, 'raise')
+    }
+    const decided = this.decide(nowMs, capped, current)
+    return decided ? choose(decided, this.lastCongestedAtMs === nowMs ? 'congested' : 'calm') : undefined
+  }
+
+  private measure(nowMs: number): Omit<RenditionChoice, 'name' | 'reason'> {
+    const recentLags = this.lagsSince(nowMs - RECENT_LAG_WINDOW_MS)
+    return {
+      recentLagMs: recentLags.length > 0 ? Math.min(...recentLags) : undefined,
+      baselineLagMs: this.baselineLagMs,
+      throughputBps: this.throughputBps(nowMs)
+    }
   }
 
   /// Returns the top of `ladder` when it lies above `current`, after something other than

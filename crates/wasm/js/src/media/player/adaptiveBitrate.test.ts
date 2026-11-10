@@ -300,7 +300,7 @@ test('a picture shrunk below the playing rendition steps down at once, before th
   const choice = abr.decideUnderHeight(1_000, TALL_LADDER, 'video', 400)
 
   // Assert
-  expect(choice).toBe('video_480p')
+  expect(choice).toMatchObject({ name: 'video_480p', reason: 'height' })
 })
 
 test('a calm path steps up no higher than the picture needs', () => {
@@ -314,7 +314,7 @@ test('a calm path steps up no higher than the picture needs', () => {
   const atCap = abr.decideUnderHeight(13_000, TALL_LADDER, 'video_480p', 400)
 
   // Assert
-  expect(fromBelow).toBe('video_480p')
+  expect(fromBelow).toMatchObject({ name: 'video_480p', reason: 'calm' })
   expect(atCap).toBeUndefined()
 })
 
@@ -329,5 +329,19 @@ test('a picture grown taller raises to the top of the new cap at once', () => {
   const choice = abr.decideUnderHeight(5_500, TALL_LADDER, 'video_480p', 1_000)
 
   // Assert
-  expect(choice).toBe('video')
+  expect(choice).toMatchObject({ name: 'video', reason: 'raise' })
+})
+
+test('a step down for congestion carries the lag and throughput it was decided on', () => {
+  // Arrange: 0.96 Mbps arrives, its least lag rising from 100 ms to 1.1 s
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  congest(abr, SETTLE_MS, 5_000)
+
+  // Act
+  const choice = abr.decideUnderHeight(5_000, TALL_LADDER, 'video_720p', undefined)
+
+  // Assert
+  expect(choice).toMatchObject({ name: 'video_360p', reason: 'congested', recentLagMs: 1_100, baselineLagMs: 100 })
+  expect(choice?.throughputBps).toBeCloseTo(4_000 * 8 * (1_000 / FRAME_MS), -5)
 })

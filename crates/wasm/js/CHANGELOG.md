@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The `adaptive quality:` log names the reason of the switch (`height`,
+  `raise`, `congested` or `calm`) with the picture height, lag and throughput
+  it was decided on.
+
 - The automatic quality no longer steps down while a picture stands still. A
   shared screen sends no frames while the screen does not change, and each
   pause dropped it to its lowest rendition, where it stayed until the screen
