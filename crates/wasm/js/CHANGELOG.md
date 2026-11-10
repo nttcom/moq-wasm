@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2
 
 - `MoqSession.connect()` without `versions` offers draft-18, then draft-14,
   instead of draft-14 only, so a relay that accepts draft-18 is reached over
