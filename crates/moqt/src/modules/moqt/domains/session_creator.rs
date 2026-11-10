@@ -4,7 +4,6 @@ use anyhow::Context;
 use tracing::{Instrument, Span};
 
 use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
-use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::domains::connection::Connection;
 use crate::modules::moqt::domains::endpoint::AuthorizationTokenSource;
 use crate::modules::moqt::domains::session::{Follow, Session};
@@ -103,7 +102,7 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
             let target = ConnectTarget::parse(&url)?;
             let connect_span = connect_span(&url);
             let transport_conn = creator.open_transport_for(&target, &connect_span).await?;
-            let (connection, control_receiver, _) = creator
+            let (connection, control_receiver) = creator
                 .set_up_in(
                     connect_span,
                     transport_conn,
@@ -148,7 +147,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             let session = if creator.follow_go_away {
                 let (connection_event_sender, connection_events) =
                     tokio::sync::mpsc::unbounded_channel();
-                let (connection, control_receiver, server_setup) = creator
+                let (connection, control_receiver) = creator
                     .set_up_in(
                         connect_span,
                         transport_conn,
@@ -161,7 +160,6 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     control_receiver,
                     SessionContext::new(connection, event_sender, true),
                     event_receiver,
-                    Some(server_setup),
                     Some(Follow {
                         reconnect: Arc::new(creator.clone()),
                         url,
@@ -171,7 +169,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     Span::current(),
                 )
             } else {
-                let (connection, control_receiver, server_setup) = creator
+                let (connection, control_receiver) = creator
                     .set_up_in(
                         connect_span,
                         transport_conn,
@@ -184,7 +182,6 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     control_receiver,
                     SessionContext::new(connection, event_sender, false),
                     event_receiver,
-                    Some(server_setup),
                     None,
                     Some(Arc::new(creator.clone())),
                     Span::current(),
@@ -233,7 +230,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         target: &ConnectTarget,
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
+    ) -> anyhow::Result<(Connection, ControlReceiver)> {
         let set_up = self
             .set_up(transport_conn, target, generation, event_sender)
             .instrument(connect_span.clone())
@@ -345,7 +342,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         target: &ConnectTarget,
         generation: u64,
         event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
-    ) -> anyhow::Result<(Connection, ControlReceiver, ServerSetup)> {
+    ) -> anyhow::Result<(Connection, ControlReceiver)> {
         let token = match &self.authorization_token {
             Some(source) => Some(
                 source
@@ -355,7 +352,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             ),
             None => None,
         };
-        let (control, control_receiver, server_setup) =
+        let (control, control_receiver) =
             match version::connect(&transport_conn, &self.versions, token.as_deref(), target).await
             {
                 Ok(established) => established,
@@ -366,7 +363,6 @@ impl<T: TransportProtocol> SessionCreator<T> {
         Ok((
             Connection::new(transport_conn, control, false, generation, event_sender),
             control_receiver,
-            server_setup,
         ))
     }
 

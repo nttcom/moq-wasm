@@ -63,7 +63,6 @@ impl Handshake {
             event_receiver,
             None,
             None,
-            None,
             session_span.clone(),
         ))
     }

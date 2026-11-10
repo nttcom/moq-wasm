@@ -8,7 +8,6 @@ use crate::Publisher;
 use crate::Subscriber;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
-use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::domains::session_creator::WaitIdle;
@@ -34,7 +33,6 @@ pub struct Session {
     /// Set by the migration task once no connection replaced a closed one;
     /// `None` for a session that does not follow GOAWAY.
     closed: Option<watch::Receiver<Option<TransportClose>>>,
-    server_setup: Option<ServerSetup>,
     /// The endpoint a client session was opened on; `None` on a server.
     endpoint: Option<Arc<dyn WaitIdle>>,
 }
@@ -55,7 +53,6 @@ impl Session {
         control_receiver: ControlReceiver,
         inner: SessionContext,
         event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
-        server_setup: Option<ServerSetup>,
         follow: Option<Follow>,
         endpoint: Option<Arc<dyn WaitIdle>>,
         parent_span: Span,
@@ -87,7 +84,6 @@ impl Session {
             event_receiver: tokio::sync::Mutex::new(event_receiver),
             _driver: driver,
             closed,
-            server_setup,
             endpoint,
         }
     }
@@ -202,12 +198,6 @@ impl Session {
             .await?;
         Ok(())
     }
-
-    /// The SERVER_SETUP this client received on its first connection; `None`
-    /// on a server session.
-    pub fn server_setup(&self) -> Option<&ServerSetup> {
-        self.server_setup.as_ref()
-    }
 }
 
 impl Drop for Session {
@@ -227,7 +217,6 @@ mod tests {
             native_client_with_config, published_track_over, receive_disconnected,
             spawn_native_server,
         },
-        wire::MOQ_TRANSPORT_VERSION,
     };
 
     #[tokio::test]
@@ -333,26 +322,6 @@ mod tests {
         assert_eq!(wt_server.url_scheme(), "https");
         assert_eq!(ws_client.url_scheme(), "wss");
         assert_eq!(ws_server.url_scheme(), "wss");
-    }
-
-    #[tokio::test]
-    async fn client_session_keeps_the_server_setup_it_received() {
-        // Arrange
-        let (port, accept) = spawn_native_server("session-server-setup");
-
-        // Act
-        let (client, server) = connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
-            .await
-            .unwrap();
-
-        // Assert
-        assert_eq!(
-            client
-                .server_setup()
-                .map(|server_setup| server_setup.selected_version),
-            Some(MOQ_TRANSPORT_VERSION)
-        );
-        assert!(server.server_setup().is_none());
     }
 
     #[tokio::test]

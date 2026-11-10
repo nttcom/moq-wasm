@@ -40,10 +40,9 @@ use crate::{
                     parameters::trace_context::TraceContext, publish::Publish,
                     publish_namespace::PublishNamespace,
                     publish_namespace_done::PublishNamespaceDone, publish_ok::PublishOk,
-                    requests_blocked::RequestsBlocked, server_setup::ServerSetup,
-                    subscribe::Subscribe, subscribe_namespace::SubscribeNamespace,
-                    subscribe_ok::SubscribeOk, subscribe_update::SubscribeUpdate,
-                    unsubscribe::Unsubscribe,
+                    requests_blocked::RequestsBlocked, subscribe::Subscribe,
+                    subscribe_namespace::SubscribeNamespace, subscribe_ok::SubscribeOk,
+                    subscribe_update::SubscribeUpdate, unsubscribe::Unsubscribe,
                 },
                 enums::{RequestId, ResponseMessage},
                 error_codes::{
@@ -1004,24 +1003,22 @@ pub(crate) async fn connect(
     offered: &[Version],
     authorization_token: Option<&str>,
     target: &ConnectTarget,
-) -> anyhow::Result<(ControlChannel, ControlReceiver, ServerSetup)> {
+) -> anyhow::Result<(ControlChannel, ControlReceiver)> {
     match negotiated_version(transport_connection, offered)? {
         Version::Draft14 => {
-            let (channel, receiver, server_setup) =
+            let (channel, receiver) =
                 draft14::setup::connect(transport_connection, authorization_token).await?;
             Ok((
                 ControlChannel::Draft14(Box::new(channel)),
                 ControlReceiver::Draft14(receiver),
-                server_setup,
             ))
         }
         Version::Draft18 => {
-            let (channel, receiver, server_setup) =
+            let (channel, receiver) =
                 draft18::setup::connect(transport_connection, authorization_token, target).await?;
             Ok((
                 ControlChannel::Draft18(Box::new(channel)),
                 ControlReceiver::Draft18(receiver),
-                server_setup,
             ))
         }
     }
