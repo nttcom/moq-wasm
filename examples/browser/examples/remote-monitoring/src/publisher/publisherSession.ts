@@ -14,12 +14,13 @@ export class PublisherSession {
     log('created', { namespace: this.namespace })
   }
 
-  async connect(relayUrl: string): Promise<void> {
+  async connect(relayUrl: string): Promise<MoqSession> {
     reportRelay(relayUrl)
     const session = await MoqSession.connect(relayUrl, connectOptions())
     this.session = session
     log('connected', { relayUrl })
     void session.closed.then(() => log('connection closed'))
+    return session
   }
 
   disconnect(): void {

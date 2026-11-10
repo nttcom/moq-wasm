@@ -9,7 +9,7 @@ import { Input } from '../../../../lib/ui/input'
 import { Label } from '../../../../lib/ui/label'
 import { useUrlSync } from '../hooks/useUrlSync'
 
-type Status = 'idle' | 'connecting' | 'connected' | 'starting' | 'live' | 'error'
+type Status = 'idle' | 'connecting' | 'starting' | 'live' | 'error'
 
 const SOURCE_LABELS: Record<VideoSourceType, string> = {
   synthetic: '合成',
@@ -37,7 +37,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   const publisherRef = useRef<CameraPublisher | null>(null)
 
   const isIdle = status === 'idle' || status === 'error'
-  const canConnect = isIdle && NAME_PATTERN.test(camId) && NAME_PATTERN.test(location)
+  const canStart = isIdle && NAME_PATTERN.test(camId) && NAME_PATTERN.test(location)
 
   useUrlSync({ mode: 'publisher', location, relay: relayUrl, cam: camId || null })
 
@@ -52,35 +52,26 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
     }
   }, [])
 
-  const handleConnect = async () => {
+  /// Connects and publishes in one step; a failure in either leaves nothing open.
+  const handleStart = async () => {
     setStatus('connecting')
     setError(null)
+    const session = new PublisherSession(location, camId)
     try {
-      const session = new PublisherSession(location, camId)
-      await session.connect(relayUrl)
+      const moqSession = await session.connect(relayUrl)
       sessionRef.current = session
-      setStatus('connected')
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Connect failed')
-      setStatus('error')
-    }
-  }
-
-  const handlePublish = async () => {
-    const publisherSession = sessionRef.current
-    if (!publisherSession?.session) return
-    setStatus('starting')
-    setError(null)
-    try {
+      setStatus('starting')
       const source: VideoSource = sourceType === 'file' ? { type: 'file', fileUrl } : { type: sourceType }
       const publisher = new CameraPublisher(camId, source)
-      const stream = await publisher.start(publisherSession.session, publisherSession.namespace)
+      const stream = await publisher.start(moqSession, session.namespace)
       publisherRef.current = publisher
       if (videoRef.current) videoRef.current.srcObject = stream
       setStatus('live')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Publish failed')
-      setStatus('connected')
+      setError(e instanceof Error ? e.message : 'Start failed')
+      session.disconnect()
+      sessionRef.current = null
+      setStatus('error')
     }
   }
 
@@ -102,25 +93,17 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
         <div className="flex items-center gap-2">
           {isIdle && (
             <Button
-              onClick={handleConnect}
-              disabled={!canConnect}
+              onClick={handleStart}
+              disabled={!canStart}
               className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40"
             >
-              接続
+              配信開始
             </Button>
           )}
           {status === 'connecting' && (
             <Button disabled variant="outline">
               接続中…
             </Button>
-          )}
-          {status === 'connected' && (
-            <>
-              <span className="font-mono text-xs text-green-400">● 接続済み</span>
-              <Button onClick={handlePublish} className="bg-blue-600 hover:bg-blue-700">
-                配信開始
-              </Button>
-            </>
           )}
           {status === 'starting' && (
             <Button disabled variant="outline">
@@ -202,7 +185,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
       {/* preview */}
       <div className="relative flex-1 rounded-xl overflow-hidden bg-zinc-900 aspect-video flex items-center justify-center">
         <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
-        {status === 'idle' && <p className="font-mono text-zinc-500 text-sm">接続 → 配信開始 で配信を開始します</p>}
+        {status === 'idle' && <p className="font-mono text-zinc-500 text-sm">配信開始 を押すと接続して配信します</p>}
         {camId && (
           <div className="absolute bottom-3 left-3 font-mono text-xs text-white bg-black/50 rounded px-2 py-1">
             {camId}
@@ -210,7 +193,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
         )}
       </div>
 
-      {/* status bar (connected or live) */}
+      {/* status bar (while starting or live) */}
       {!isIdle && (
         <div className="rounded-xl bg-zinc-900 px-4 py-3 font-mono text-sm space-y-1">
           <div className="flex gap-3 text-xs text-zinc-400">
