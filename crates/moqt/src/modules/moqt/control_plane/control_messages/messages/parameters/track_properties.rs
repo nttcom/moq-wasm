@@ -15,6 +15,7 @@ pub(crate) const MAX_CACHE_DURATION: u64 = 0x04;
 pub(crate) const IMMUTABLE_PROPERTIES: u64 = 0x0B;
 pub(crate) const DEFAULT_PUBLISHER_PRIORITY: u64 = 0x0E;
 pub(crate) const DEFAULT_PUBLISHER_GROUP_ORDER: u64 = 0x22;
+pub(crate) const DYNAMIC_GROUPS: u64 = 0x30;
 
 /// What PUBLISH, SUBSCRIBE_OK, TRACK_STATUS_OK and FETCH_OK say about the
 /// track: parameters and fields in draft-14, Track Properties in draft-18
@@ -136,6 +137,17 @@ impl TrackProperties {
     pub fn default_publisher_priority(&self) -> Option<u8> {
         self.varint(DEFAULT_PUBLISHER_PRIORITY)
             .and_then(|priority| u8::try_from(priority).ok())
+    }
+
+    /// DYNAMIC_GROUPS (draft-18 §12.6): whether a subscriber may ask the
+    /// Original Publisher to start a new group with NEW_GROUP_REQUEST
+    /// (§10.2.13). Draft-14 has neither and never sends it.
+    pub fn dynamic_groups(&self) -> bool {
+        self.varint(DYNAMIC_GROUPS) == Some(1)
+    }
+
+    pub fn set_dynamic_groups(&mut self, dynamic_groups: bool) {
+        self.set_varint(DYNAMIC_GROUPS, dynamic_groups.then_some(1));
     }
 
     /// The mutable list followed by the contents of Immutable Properties

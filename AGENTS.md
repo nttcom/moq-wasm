@@ -122,6 +122,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
 | `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
 | `track_alias` | The track alias on the session the log is about |
+| `new_group_request` | The value of a NEW_GROUP_REQUEST: the largest Group ID its sender knows plus 1, or 0 |
 | `supported_versions` / `selected_version` | The MoQT versions a CLIENT_SETUP offers, and the one its SERVER_SETUP picks |
 | `error` | The failure, as `%error` or `?error` |
 | `is_relay` | Whether a token's app is a relay |

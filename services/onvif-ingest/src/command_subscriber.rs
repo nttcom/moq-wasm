@@ -178,6 +178,7 @@ async fn subscribe_command_track(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::NextGroupStart,
+                new_group_request: None,
             },
         )
         .await;

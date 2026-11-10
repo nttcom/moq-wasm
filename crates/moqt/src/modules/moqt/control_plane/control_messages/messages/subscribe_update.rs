@@ -20,6 +20,9 @@ pub struct SubscribeUpdate {
     pub forward: bool,
     pub authorization_tokens: Vec<AuthorizationToken>,
     pub delivery_timeout: Option<u64>,
+    /// The NEW_GROUP_REQUEST of a draft-18 REQUEST_UPDATE (§10.2.13);
+    /// draft-14 has no such parameter.
+    pub new_group_request: Option<u64>,
 }
 
 impl SubscribeUpdate {
@@ -46,6 +49,7 @@ impl SubscribeUpdate {
             forward,
             authorization_tokens,
             delivery_timeout,
+            new_group_request: None,
         })
     }
 
@@ -90,6 +94,7 @@ mod tests {
                 forward: true,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                new_group_request: None,
             }
         }
 

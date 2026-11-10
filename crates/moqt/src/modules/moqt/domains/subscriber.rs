@@ -2,7 +2,8 @@ use crate::modules::telemetry::current_trace_context;
 use std::{sync::Arc, time::Duration};
 
 use crate::{
-    RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription, TrackReader,
+    RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription,
+    TrackProperties, TrackReader,
     fetch::FetchOption,
     modules::executor::now,
     modules::moqt::{
@@ -175,7 +176,7 @@ impl Subscriber {
     /// both are answered within one round trip. The peer handles requests in
     /// order, so the FETCH finds the subscription it joins (draft-14 §9.16.2).
     /// The `SentFetch` is `None` without `joining` or when the FETCH could not be
-    /// written.
+    /// written. Dropping it unanswered withdraws the FETCH.
     async fn subscribe_joining(
         &mut self,
         track_namespace: String,
@@ -258,7 +259,12 @@ impl Subscriber {
                     CarriedSubscription {
                         track_namespace: track_namespace.clone(),
                         track_name: track_name.clone(),
-                        option: option.clone(),
+                        // A SUBSCRIBE sent again after GOAWAY resumes where
+                        // this one got to; it needs no new group.
+                        option: SubscribeOption {
+                            new_group_request: None,
+                            ..option.clone()
+                        },
                     },
                 )
             });
@@ -325,6 +331,7 @@ impl Subscriber {
             filter_type: FilterType::LargestObject,
             authorization_tokens,
             delivery_timeout: None,
+            new_group_request: None,
             trace_context: None,
         };
         let response = connection
@@ -658,6 +665,7 @@ impl Subscriber {
                 forward: option.forward,
                 authorization_tokens: vec![],
                 delivery_timeout: None,
+                new_group_request: None,
             };
             connection
                 .control
@@ -665,6 +673,40 @@ impl Subscriber {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Asks the Original Publisher to start a new group, with a REQUEST_UPDATE
+    /// that carries NEW_GROUP_REQUEST (draft-18 §10.2.13). `largest_group` is
+    /// the largest Group ID of the track the caller knows; a relay passes the
+    /// request on only while the track's largest group is not beyond it.
+    /// Returns false without sending for a track without DYNAMIC_GROUPS,
+    /// which §10.2.13 forbids asking; no draft-14 track has it.
+    #[tracing::instrument(
+        level = "debug",
+        name = "moqt.subscriber.request_new_group",
+        skip_all,
+        fields(subscription_request_id = subscription.request_id())
+    )]
+    pub async fn request_new_group(
+        &self,
+        subscription: &Subscription,
+        largest_group: Option<u64>,
+    ) -> anyhow::Result<bool> {
+        if !subscription.track_properties().dynamic_groups() {
+            return Ok(false);
+        }
+        let new_group_request = largest_group.map_or(0, |group_id| group_id + 1);
+        let mut sent = false;
+        for (connection, subscription_request_id) in
+            self.on_live_connections(subscription.request_id())
+        {
+            let reservation = connection.control.reserve_request_id().await?;
+            sent |= connection
+                .control
+                .send_new_group_request(reservation, subscription_request_id, new_group_request)
+                .await?;
+        }
+        Ok(sent)
     }
 
     /// Flips Forward and repeats the subscription's current Start Location,
@@ -832,6 +874,54 @@ impl Subscriber {
         Ok((subscription, reader))
     }
 
+    /// Subscribes with Largest Object and reads the track from the first
+    /// object of a group (draft-18 §5.1.3.1). Like `subscribe_current_group`
+    /// it writes a Joining FETCH of the current group behind the SUBSCRIBE.
+    /// When the SUBSCRIBE_OK shows a track with dynamic groups (§12.6) whose
+    /// Largest Object ID is `new_group_after` or more, the FETCH is withdrawn
+    /// and the Original Publisher is asked for a new group instead
+    /// (§10.2.13); the reader then yields from that group on. When no new
+    /// group arrives within `NEW_GROUP_WAIT`, the current group is fetched
+    /// after all.
+    pub async fn subscribe_group_start(
+        &mut self,
+        track_namespace: String,
+        track_name: String,
+        new_group_after: u64,
+    ) -> Result<(Subscription, TrackReader), RequestFailure> {
+        let option = SubscribeOption {
+            filter_type: FilterType::LargestObject,
+            ..SubscribeOption::default()
+        };
+        let (subscription, joining_fetch) = self
+            .subscribe_joining(track_namespace, track_name, option, true)
+            .await?;
+        let subscriber = Subscriber {
+            session: self.session.clone(),
+        };
+        let requested = new_group_request(
+            subscription.track_properties(),
+            subscription.content_exists(),
+            new_group_after,
+        );
+        let reader = match requested {
+            Some(largest_group) => {
+                drop(joining_fetch);
+                if let Err(error) = self
+                    .request_new_group(&subscription, Some(largest_group))
+                    .await
+                {
+                    tracing::debug!(%error, "NEW_GROUP_REQUEST could not be sent");
+                }
+                TrackReader::awaiting_new_group(subscriber, subscription.clone(), largest_group)
+            }
+            None => {
+                TrackReader::joining_current_group(subscriber, subscription.clone(), joining_fetch)
+            }
+        };
+        Ok((subscription, reader))
+    }
+
     /// Each live connection that carries the request `logical_id`, with its
     /// wire id there.
     fn on_live_connections(&self, logical_id: u64) -> Vec<(Arc<Connection>, u64)> {
@@ -920,6 +1010,26 @@ impl Subscriber {
             self.session
                 .object_ledger(subscription.track_namespace(), subscription.track_name()),
         ))
+    }
+}
+
+/// The group a subscriber joining the track asks the publisher to end: the
+/// largest one, when the track has dynamic groups (draft-18 §12.6) and that
+/// group already holds more than `new_group_after` objects. `None` when
+/// fetching the group's start is the better way in (§5.1.3.1), or the track
+/// has no object.
+fn new_group_request(
+    track_properties: &TrackProperties,
+    content_exists: ContentExists,
+    new_group_after: u64,
+) -> Option<u64> {
+    match content_exists {
+        ContentExists::True { location }
+            if track_properties.dynamic_groups() && location.object_id >= new_group_after =>
+        {
+            Some(location.group_id)
+        }
+        _ => None,
     }
 }
 
@@ -1088,6 +1198,7 @@ async fn send_subscribe_request(
         filter_type: option.filter_type,
         authorization_tokens: vec![],
         delivery_timeout: None,
+        new_group_request: option.new_group_request,
         trace_context: current_trace_context(&connection.control),
     };
     let pending = connection
@@ -1172,8 +1283,9 @@ mod tests {
                 connected_sessions, data_receiver, first_subgroup_stream, location, next_subgroup,
                 notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
                 receive_disconnected, send_subgroup_object, send_without_waiting,
-                spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
-                subscribe_namespace_accepted, subscribed_track, wait_for_control_delivery, within,
+                spawn_connected_draft18_sessions, spawn_connected_native_sessions,
+                spawn_connected_native_sessions_following_go_away, subscribe_namespace_accepted,
+                subscribed_track, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -2384,6 +2496,189 @@ mod tests {
             // Assert
             assert!(subscribed.unwrap().unwrap().is_err());
         }
+    }
+
+    const NEW_GROUP_AFTER: u64 = 5;
+
+    /// The reader of a `subscribe_group_start` the server accepted with
+    /// `largest`, and the server's side of the subscription.
+    async fn start_subscribe_group_start(
+        client: &Session,
+        server: &Session,
+        largest: Location,
+        dynamic_groups: bool,
+    ) -> (TrackReader, Subscription) {
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_group_start("ns".to_string(), TRACK.to_string(), NEW_GROUP_AFTER)
+                .await
+        });
+        let SessionEvent::Subscribe(mut handler) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+        handler.track_properties.set_dynamic_groups(dynamic_groups);
+        let alias = handler
+            .ok(0, ContentExists::True { location: largest })
+            .await
+            .unwrap();
+        let (_, reader) = request.await.unwrap().unwrap();
+        (reader, handler.into_subscription(alias))
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_fetches_a_group_that_began_recently() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-recent", "moqt").await;
+
+        // Act
+        let (mut reader, served) =
+            start_subscribe_group_start(&client, &server, location(3, 1), true).await;
+        let event = within(server.receive_event()).await.unwrap();
+        let SessionEvent::Fetch(fetch) = event else {
+            panic!("expected the joining FETCH, got {event:?}");
+        };
+        serve_fetch(
+            &server,
+            &fetch,
+            location(3, 2),
+            &[
+                fetch_object(location(3, 0), b"fetched-0"),
+                fetch_object(location(3, 1), b"fetched-1"),
+            ],
+        )
+        .await;
+        send_subgroup_object(&server, &served, &fetch_object(location(3, 2), b"live")).await;
+        let payloads = read_payloads(&mut reader, 3).await;
+
+        // Assert
+        assert_eq!(payloads, ["fetched-0", "fetched-1", "live"]);
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_fetches_an_old_group_of_a_track_without_dynamic_groups() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-static", "moqt").await;
+
+        // Act
+        let _subscribed =
+            start_subscribe_group_start(&client, &server, location(3, NEW_GROUP_AFTER), false)
+                .await;
+        let event = within(server.receive_event()).await.unwrap();
+
+        // Assert: §10.2.13 forbids NEW_GROUP_REQUEST without DYNAMIC_GROUPS
+        assert!(matches!(event, SessionEvent::Fetch(_)), "{event:?}");
+    }
+
+    /// The REQUEST_UPDATE that follows the joining FETCH written behind the
+    /// SUBSCRIBE, and whether that FETCH was withdrawn before it.
+    async fn new_group_request_after_withdrawn_fetch(
+        server: &Session,
+    ) -> (crate::subscribe::SubscribeUpdateHandler, bool) {
+        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected the joining FETCH");
+        };
+        let mut withdrawn = false;
+        loop {
+            match within(server.receive_event()).await.unwrap() {
+                SessionEvent::FetchCancel(cancel) => {
+                    withdrawn = cancel.request_id() == fetch.request_id;
+                }
+                SessionEvent::SubscribeUpdate(update) => return (update, withdrawn),
+                event => panic!("expected FETCH_CANCEL or REQUEST_UPDATE, got {event:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_asks_for_a_new_group_and_yields_from_it() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-new", "moqt").await;
+
+        // Act
+        let (mut reader, served) =
+            start_subscribe_group_start(&client, &server, location(3, NEW_GROUP_AFTER), true).await;
+        let (update, fetch_withdrawn) = new_group_request_after_withdrawn_fetch(&server).await;
+        send_subgroup_object(&server, &served, &fetch_object(location(3, 6), b"rest")).await;
+        send_subgroup_object(&server, &served, &fetch_object(location(4, 0), b"new")).await;
+        let payloads = read_payloads(&mut reader, 1).await;
+
+        // Assert: the rest of group 3 cannot be decoded and is not yielded
+        assert!(fetch_withdrawn);
+        assert_eq!(update.new_group_request(), Some(4));
+        assert_eq!(update.filter(), None);
+        assert_eq!(payloads, ["new"]);
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_fetches_the_current_group_when_no_new_group_comes() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-wait", "moqt").await;
+        let (mut reader, served) =
+            start_subscribe_group_start(&client, &server, location(3, NEW_GROUP_AFTER), true).await;
+        new_group_request_after_withdrawn_fetch(&server).await;
+        send_subgroup_object(&server, &served, &fetch_object(location(3, 6), b"rest")).await;
+
+        // Act: the publisher starts no new group
+        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected a second joining FETCH");
+        };
+        serve_fetch(
+            &server,
+            &fetch,
+            location(3, 6),
+            &[fetch_object(location(3, 0), b"fetched")],
+        )
+        .await;
+        let payloads = read_payloads(&mut reader, 2).await;
+
+        // Assert
+        assert_eq!(payloads, ["fetched", "rest"]);
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_sends_the_joining_fetch_before_subscribe_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-pipelined", "moqt").await;
+        let mut subscriber = client.subscriber();
+        let _request = tokio::spawn(async move {
+            subscriber
+                .subscribe_group_start("ns".to_string(), TRACK.to_string(), NEW_GROUP_AFTER)
+                .await
+        });
+        let SessionEvent::Subscribe(_subscribe) = within(server.receive_event()).await.unwrap()
+        else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Act: the SUBSCRIBE is left unanswered
+        let event = within(server.receive_event()).await.unwrap();
+
+        // Assert
+        assert!(matches!(event, SessionEvent::Fetch(_)), "{event:?}");
+    }
+
+    #[tokio::test]
+    async fn request_new_group_is_not_sent_for_a_track_without_dynamic_groups() {
+        // Arrange
+        let track = subscribed_track("subscriber-new-group-static", Version::Draft18).await;
+
+        // Act
+        let sent = track
+            .client
+            .subscriber()
+            .request_new_group(&track.subscription, Some(3))
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(!sent);
     }
 
     async fn start_subscribe_current_group(

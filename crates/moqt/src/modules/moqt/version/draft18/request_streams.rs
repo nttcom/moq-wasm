@@ -745,7 +745,7 @@ fn emit_update(
     filter: Option<FilterType>,
 ) -> UpdateAnswerReceiver {
     let (handler, answer_receiver) =
-        SubscribeUpdateHandler::answered(&scope.connection, update, filter);
+        SubscribeUpdateHandler::answered(scope.session.clone(), &scope.connection, update, filter);
     emit(scope, SessionEvent::SubscribeUpdate(handler));
     answer_receiver
 }
@@ -875,6 +875,7 @@ fn update_baseline(
         forward,
         authorization_tokens: vec![],
         delivery_timeout,
+        new_group_request: None,
     }
 }
 
@@ -906,6 +907,8 @@ fn apply_update(
 ) -> (SubscribeUpdate, Option<FilterType>) {
     baseline.request_id = request_id;
     baseline.authorization_tokens.clear();
+    // A request of this update only, not state the next one starts from.
+    baseline.new_group_request = None;
     let mut updated_filter = None;
     for parameter in parameters {
         match parameter {
@@ -917,6 +920,7 @@ fn apply_update(
                 (baseline.start_location, baseline.end_group) = filter_range(filter);
                 updated_filter = Some(filter);
             }
+            Parameter::NewGroupRequest(group) => baseline.new_group_request = Some(group),
             _ => {}
         }
     }

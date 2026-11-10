@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::join_all;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 
 use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
@@ -17,7 +17,10 @@ use crate::{
     modules::{executor, moqt::domains::session_context::SessionContext},
     object::{ContentExists, ExtensionHeaders, Location},
     publish::PublishOption,
-    subscribe::{FilterType, SubscribeHandler, TrackStatusHandler, UnsubscribeHandler},
+    subscribe::{
+        FilterType, SubscribeHandler, SubscribeUpdateHandler, TrackStatusHandler,
+        UnsubscribeHandler,
+    },
 };
 
 mod fetch_serve_task;
@@ -137,6 +140,9 @@ struct OriginTrack {
     numbering: ObjectNumbering,
     cache: ObjectCache,
     outlets: Vec<Outlet>,
+    /// Set for a track with dynamic groups (draft-18 §12.6); notified when a
+    /// subscriber asks for a new group.
+    new_group_requested: Option<Arc<Notify>>,
 }
 
 /// One subscription to the track: a SUBSCRIBE served or a PUBLISH sent.
@@ -156,6 +162,19 @@ impl OriginTrack {
             numbering: ObjectNumbering::new(first_group_id),
             cache: ObjectCache::new(retention),
             outlets: Vec::new(),
+            new_group_requested: None,
+        }
+    }
+
+    /// draft-18 §10.2.13: a request of 0, or one beyond the current group,
+    /// asks for a new group; any other is for a group that already began.
+    fn request_new_group(&self, new_group_request: u64) {
+        let Some(requested) = &self.new_group_requested else {
+            return;
+        };
+        let current_group = self.numbering.largest().map(|largest| largest.group_id);
+        if new_group_request == 0 || current_group.is_none_or(|group| new_group_request > group) {
+            requested.notify_one();
         }
     }
 
@@ -205,6 +224,23 @@ impl Origin {
             .or_insert_with(|| OriginTrack::new(first_group_id, retention));
     }
 
+    /// Gives the track dynamic groups (draft-18 §12.6): its PUBLISH and
+    /// SUBSCRIBE_OK say so, and `requested` is notified when a subscriber
+    /// asks for a new group (NEW_GROUP_REQUEST, §10.2.13) that has not begun
+    /// yet. The caller then starts one with the next object it writes. Call
+    /// this before `publish` and before the track is subscribed to; fails
+    /// for a track that is not registered.
+    pub async fn accept_new_group_requests(
+        &self,
+        namespace: &str,
+        track_name: &str,
+        requested: Arc<Notify>,
+    ) -> Result<()> {
+        let key = track_key(namespace, track_name);
+        self.state.lock().await.track_mut(&key)?.new_group_requested = Some(requested);
+        Ok(())
+    }
+
     /// Sends PUBLISH on `session`. A no-op while the peer of `session` takes
     /// the track, and once that peer unsubscribed from a PUBLISH of it. A
     /// track released after a SUBSCRIBE is published again. A session that
@@ -219,23 +255,29 @@ impl Origin {
         let context = session.context();
         let key_of_session = session_key(context);
         let _publishing = self.publishing.lock().await;
-        if self
-            .state
-            .lock()
-            .await
-            .track_mut(&key)?
-            .outlets
-            .iter()
-            .any(|outlet| outlet.request.0 == key_of_session)
-        {
-            return Ok(());
-        }
+        let track_properties = {
+            let mut state = self.state.lock().await;
+            let track = state.track_mut(&key)?;
+            if track
+                .outlets
+                .iter()
+                .any(|outlet| outlet.request.0 == key_of_session)
+            {
+                return Ok(());
+            }
+            let mut properties = TrackProperties::default();
+            properties.set_dynamic_groups(track.new_group_requested.is_some());
+            properties
+        };
         let publisher = session.publisher();
         let subscription = publisher
             .publish(
                 namespace.to_string(),
                 track_name.to_string(),
-                PublishOption::default(),
+                PublishOption {
+                    track_properties,
+                    ..PublishOption::default()
+                },
             )
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
@@ -355,7 +397,8 @@ impl Origin {
     /// UNSUBSCRIBE of a subscription it serves, FETCH, FETCH_CANCEL and
     /// TRACK_STATUS, logging a failed answer. Returns every other event for the
     /// caller to answer, including a SUBSCRIBE to an unregistered track and an
-    /// UNSUBSCRIBE of a request it does not serve.
+    /// UNSUBSCRIBE of a request it does not serve. A SUBSCRIBE_UPDATE is
+    /// returned too, after its NEW_GROUP_REQUEST was passed to the track.
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         match event {
             SessionEvent::Subscribe(handler) => {
@@ -379,6 +422,10 @@ impl Origin {
                 }
             }
             SessionEvent::FetchCancel(handler) => self.cancel_fetch(&handler).await,
+            SessionEvent::SubscribeUpdate(handler) => {
+                self.note_new_group_request(&handler).await;
+                return Some(SessionEvent::SubscribeUpdate(handler));
+            }
             SessionEvent::TrackStatus(handler) => {
                 let request_id = handler.request_id();
                 if let Err(err) = self.answer_track_status(handler).await {
@@ -390,14 +437,39 @@ impl Origin {
         None
     }
 
+    async fn note_new_group_request(&self, handler: &SubscribeUpdateHandler) {
+        let Some(new_group_request) = handler.new_group_request() else {
+            return;
+        };
+        let request = (
+            session_key(&handler.session_context),
+            handler.subscription_request_id(),
+        );
+        let state = self.state.lock().await;
+        let track = state
+            .subscriptions
+            .get(&request)
+            .and_then(|subscription| state.tracks.get(&subscription.track));
+        if let Some(track) = track {
+            track.request_new_group(new_group_request);
+        }
+    }
+
     /// Serves the SUBSCRIBE on the session it arrived on.
-    pub async fn accept_subscribe(&self, handler: SubscribeHandler) -> Result<()> {
+    pub async fn accept_subscribe(&self, mut handler: SubscribeHandler) -> Result<()> {
         let key = (handler.track_namespace.clone(), handler.track_name.clone());
         // Hold the lock until the outlet is registered: the peer can act on
         // SUBSCRIBE_OK before then, and an `end_track` or `write` in that gap
         // would miss this subscription.
         let mut state = self.state.lock().await;
-        let largest = state.track_mut(&key)?.numbering.largest();
+        let track = state.track_mut(&key)?;
+        let largest = track.numbering.largest();
+        handler
+            .track_properties
+            .set_dynamic_groups(track.new_group_requested.is_some());
+        if let Some(new_group_request) = handler.new_group_request {
+            track.request_new_group(new_group_request);
+        }
         let track_alias = handler
             .ok(SUBSCRIBE_NEVER_EXPIRES, content_exists(largest))
             .await
@@ -806,6 +878,7 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
+    use futures::FutureExt;
 
     use super::*;
     use crate::modules::test_support::location;
@@ -1960,5 +2033,115 @@ mod tests {
             assert!(matches!(unhandled, Some(SessionEvent::PublishNamespace(_))));
             published.unwrap();
         }
+    }
+
+    /// A draft-18 track with dynamic groups and what its requests notify.
+    async fn origin_with_dynamic_groups(name: &str) -> (Peers, Arc<Notify>) {
+        let peers = origin_with_track(name, RETENTION, Version::Draft18).await;
+        let requested = Arc::new(Notify::new());
+        peers
+            .origin
+            .accept_new_group_requests(NAMESPACE, TRACK, requested.clone())
+            .await
+            .unwrap();
+        (peers, requested)
+    }
+
+    /// Has the relay ask for a new group knowing `largest_group` and the
+    /// origin handle the REQUEST_UPDATE.
+    async fn request_new_group(
+        peers: &Peers,
+        subscription: &Subscription,
+        largest_group: Option<u64>,
+    ) {
+        let sent = peers
+            .server
+            .subscriber()
+            .request_new_group(subscription, largest_group)
+            .await
+            .unwrap();
+        assert!(sent);
+        let event = within(peers.client.receive_event()).await.unwrap();
+        let returned = peers.origin.handle(event).await;
+        assert!(matches!(returned, Some(SessionEvent::SubscribeUpdate(_))));
+    }
+
+    fn is_notified(requested: &Notify) -> bool {
+        requested.notified().now_or_never().is_some()
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_on_a_published_track_is_notified() {
+        // Arrange
+        let (peers, requested) = origin_with_dynamic_groups("origin-new-group-publish").await;
+        let accepted = publish(&peers).await;
+
+        // Act
+        request_new_group(&peers, &accepted, None).await;
+
+        // Assert
+        assert!(accepted.track_properties().dynamic_groups());
+        assert!(is_notified(&requested));
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_for_a_group_that_began_is_not_notified() {
+        // Arrange: the track is in group FIRST_GROUP_ID
+        let (peers, requested) = origin_with_dynamic_groups("origin-new-group-stale").await;
+        let accepted = publish(&peers).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Act: the subscriber knows only the group before it, then the group itself
+        request_new_group(&peers, &accepted, Some(FIRST_GROUP_ID - 1)).await;
+        let for_begun_group = is_notified(&requested);
+        request_new_group(&peers, &accepted, Some(FIRST_GROUP_ID)).await;
+        let for_next_group = is_notified(&requested);
+
+        // Assert
+        assert!(!for_begun_group);
+        assert!(for_next_group);
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_with_a_new_group_request_is_notified() {
+        // Arrange
+        let (peers, requested) = origin_with_dynamic_groups("origin-new-group-subscribe").await;
+        let option = SubscribeOption {
+            new_group_request: Some(0),
+            ..SubscribeOption::default()
+        };
+        let mut subscriber = peers.server.subscriber();
+
+        // Act
+        let (subscription, ()) = within(async {
+            tokio::join!(
+                subscriber.subscribe(NAMESPACE.to_string(), TRACK.to_string(), option),
+                async {
+                    let event = peers.client.receive_event().await.unwrap();
+                    assert!(peers.origin.handle(event).await.is_none());
+                }
+            )
+        })
+        .await;
+
+        // Assert
+        assert!(subscription.unwrap().track_properties().dynamic_groups());
+        assert!(is_notified(&requested));
+    }
+
+    #[tokio::test]
+    async fn a_track_without_dynamic_groups_does_not_say_it_has_them() {
+        // Arrange
+        let peers = origin_with_track("origin-static-groups", RETENTION, Version::Draft18).await;
+
+        // Act
+        let accepted = publish(&peers).await;
+
+        // Assert
+        assert!(!accepted.track_properties().dynamic_groups());
     }
 }

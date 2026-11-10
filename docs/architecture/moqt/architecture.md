@@ -410,6 +410,9 @@ call through the adapter; a draft never gets a task of its own (see
       `UpdateAnswer::Failed`: §10.9.1 then has the publisher end the
       subscription with PUBLISH_DONE UPDATE_FAILED, which only the
       application can do once it has closed the subscription's streams.
+      A NEW_GROUP_REQUEST (§10.2.13) the update carries is read with
+      `SubscribeUpdateHandler::new_group_request()`. It belongs to that
+      update only and is not part of the state the next update starts from.
     - A REQUEST_UPDATE with TRACK_NAMESPACE_PREFIX on the peer's
       SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS raises
       `SubscribeNamespaceUpdate` (§10.9.2), which draft-14 never raises; the
@@ -631,6 +634,33 @@ use these facades instead of the data-plane factories directly:
   yields only the live objects.
   `Origin` answers the FETCH, so this works against a moqt publisher as well as
   a relay.
+- `Subscriber::subscribe_group_start(namespace, name, new_group_after)` is
+  the late join of a track whose groups are long, such as video with sparse
+  keyframes (draft-18 §5.1.3.1). It subscribes with Largest Object, writes
+  the Relative Joining FETCH behind the SUBSCRIBE as above, and looks at the
+  SUBSCRIBE_OK:
+  - The track has no DYNAMIC_GROUPS (§12.6), or its Largest Object ID is
+    below `new_group_after`: the current group is read through that FETCH,
+    within the same round trip as `subscribe_current_group`.
+  - Otherwise it withdraws the FETCH by dropping it unanswered (draft-18
+    resets its request stream, §3.3.2), so the peer sends at most what it
+    wrote before the reset arrived. It then
+    sends `request_new_group` and the `TrackReader` yields from
+    the first group after the Largest Group. The rest of the Largest Group
+    cannot be decoded without its start, so the reader holds it back. When
+    no newer group arrives within `NEW_GROUP_WAIT` (1 s), it sends a second
+    Joining FETCH for the Largest Group and yields the fetched objects, then the held ones, then
+    the live ones. A relay does not pass on every request and a publisher
+    may have no frame to encode, so the wait has to end.
+- `Subscriber::request_new_group(&subscription, largest_group)` sends a
+  REQUEST_UPDATE that carries only NEW_GROUP_REQUEST (§10.2.13: the largest
+  group the caller knows plus 1, or 0), on the stream of the SUBSCRIBE or of
+  the peer's PUBLISH. It returns `false` without sending for a track without
+  DYNAMIC_GROUPS, which §10.2.13 forbids asking, so it never sends on
+  draft-14. `SubscribeOption::new_group_request` puts the parameter in a
+  SUBSCRIBE, which needs no foreknowledge; it is not carried over to the
+  SUBSCRIBE a session sends again after GOAWAY. NEW_GROUP_REQUEST in
+  PUBLISH_OK is neither sent nor read.
 
 ### `Origin` — the tracks this endpoint originates
 
@@ -701,11 +731,20 @@ forward from their own cache through the raw stream senders.
   stream of the subscription, and its Stream Count is the number of streams
   the outlet's `TrackWriter` opened. An outlet whose writer a write holds is
   marked ending and ended when the write puts the writer back.
+- `accept_new_group_requests(namespace, name, requested)` gives a track
+  dynamic groups (draft-18 §12.6): its PUBLISH and SUBSCRIBE_OK carry
+  DYNAMIC_GROUPS, and the `Notify` is notified when a SUBSCRIBE or a
+  REQUEST_UPDATE carries a NEW_GROUP_REQUEST of 0 or of a group beyond the
+  one being written (§10.2.13); a request for a group that already began is
+  dropped. The application starts the new group with the next object it
+  writes. Requests are not delayed or counted: `Notify` keeps one permit, so
+  requests that arrive before the application looks make one new group.
 - `handle(event)` is the session event loop's shortcut to all of the above:
   it accepts a SUBSCRIBE to a registered track, releases on UNSUBSCRIBE,
   serves FETCH, aborts on FETCH_CANCEL and answers TRACK_STATUS, and hands
   back every other event, and a SUBSCRIBE or UNSUBSCRIBE for a track or
-  request it does not know, to the caller.
+  request it does not know, to the caller. A SUBSCRIBE_UPDATE is handed back
+  too, after its NEW_GROUP_REQUEST was passed to the track.
 - Left to the application: whether to accept a SUBSCRIBE for a track it
   has not registered yet (`handle` returns it), namespace
   announcements, when to PUBLISH, retention and first group ids, and

@@ -177,6 +177,7 @@ async fn bob(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         )
         .await?;

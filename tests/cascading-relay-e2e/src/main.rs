@@ -319,6 +319,7 @@ async fn run_track_properties_scenario(
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::LargestObject,
+                new_group_request: None,
             },
         ),
     )
@@ -879,6 +880,7 @@ async fn subscribe_largest_object(
         group_order: GroupOrder::Ascending,
         forward: true,
         filter_type: FilterType::LargestObject,
+        new_group_request: None,
     };
     tracing::info!(%track_namespace, %track_name, "subscriber sending SUBSCRIBE");
     Ok(session
@@ -1063,6 +1065,7 @@ async fn subscribe_and_receive_ordered_objects(
         group_order: GroupOrder::Ascending,
         forward: true,
         filter_type: FilterType::LargestObject,
+        new_group_request: None,
     };
     tracing::info!(%track_namespace, %track_name, count, "subscriber sending SUBSCRIBE for ordered objects");
     let subscription = session
@@ -1264,6 +1267,7 @@ where
         group_order: GroupOrder::Ascending,
         forward: true,
         filter_type: FilterType::LargestObject,
+        new_group_request: None,
     };
     tracing::info!(
         %track_namespace,

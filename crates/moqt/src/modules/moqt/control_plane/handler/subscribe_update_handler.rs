@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     modules::moqt::{
         control_plane::{
@@ -6,7 +8,7 @@ use crate::{
             },
             handler::update_answer::{self, SlotOutcome, UpdateAnswerSlot},
         },
-        domains::connection::Connection,
+        domains::{connection::Connection, session_context::SessionContext},
         version::Version,
     },
     object::Location,
@@ -33,6 +35,7 @@ pub enum UpdateAnswer {
 
 #[derive(Clone, Debug)]
 pub struct SubscribeUpdateHandler {
+    pub(crate) session_context: Arc<SessionContext>,
     /// `None` for draft-14, whose SUBSCRIBE_UPDATE has no answer.
     answer_slot: Option<UpdateAnswerSlot<Option<Location>>>,
     version: Version,
@@ -42,11 +45,16 @@ pub struct SubscribeUpdateHandler {
     subscriber_priority: u8,
     forward: bool,
     delivery_timeout: Option<u64>,
+    new_group_request: Option<u64>,
 }
 
 impl SubscribeUpdateHandler {
     /// For a draft-14 SUBSCRIBE_UPDATE, which states the whole range (§9.10).
-    pub(crate) fn new(connection: &Connection, subscribe_update: SubscribeUpdate) -> Self {
+    pub(crate) fn new(
+        session_context: Arc<SessionContext>,
+        connection: &Connection,
+        subscribe_update: SubscribeUpdate,
+    ) -> Self {
         let filter = match subscribe_update.end_group {
             0 => FilterType::AbsoluteStart {
                 location: subscribe_update.start_location,
@@ -56,12 +64,13 @@ impl SubscribeUpdateHandler {
                 end_group: end_group - 1,
             },
         };
-        Self::with_filter(connection, subscribe_update, Some(filter))
+        Self::with_filter(session_context, connection, subscribe_update, Some(filter))
     }
 
     /// For a draft-18 REQUEST_UPDATE, which the receiver answers (§10.9).
     /// `filter` is its SUBSCRIPTION_FILTER, `None` when it carries none.
     pub(crate) fn answered(
+        session_context: Arc<SessionContext>,
         connection: &Connection,
         subscribe_update: SubscribeUpdate,
         filter: Option<FilterType>,
@@ -69,17 +78,19 @@ impl SubscribeUpdateHandler {
         let (slot, answer_receiver) = UpdateAnswerSlot::new();
         let handler = Self {
             answer_slot: Some(slot),
-            ..Self::with_filter(connection, subscribe_update, filter)
+            ..Self::with_filter(session_context, connection, subscribe_update, filter)
         };
         (handler, answer_receiver)
     }
 
     fn with_filter(
+        session_context: Arc<SessionContext>,
         connection: &Connection,
         subscribe_update: SubscribeUpdate,
         filter: Option<FilterType>,
     ) -> Self {
         Self {
+            session_context,
             answer_slot: None,
             version: connection.control.version(),
             request_id: connection.logical_request_id(subscribe_update.request_id),
@@ -89,6 +100,7 @@ impl SubscribeUpdateHandler {
             subscriber_priority: subscribe_update.subscriber_priority,
             forward: subscribe_update.forward,
             delivery_timeout: subscribe_update.delivery_timeout,
+            new_group_request: subscribe_update.new_group_request,
         }
     }
 
@@ -119,6 +131,13 @@ impl SubscribeUpdateHandler {
 
     pub fn delivery_timeout(&self) -> Option<u64> {
         self.delivery_timeout
+    }
+
+    /// The update's NEW_GROUP_REQUEST (draft-18 §10.2.13): the largest Group
+    /// ID the subscriber knows plus 1, 0 when it knows none. `None` when the
+    /// update does not ask for a new group; always `None` for draft-14.
+    pub fn new_group_request(&self) -> Option<u64> {
+        self.new_group_request
     }
 
     /// Whether the session's draft lets the update move the Start Location

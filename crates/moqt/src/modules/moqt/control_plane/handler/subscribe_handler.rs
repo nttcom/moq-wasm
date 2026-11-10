@@ -34,6 +34,9 @@ pub struct SubscribeHandler {
     pub group_order: GroupOrder,
     pub forward: bool,
     pub filter_type: FilterType,
+    /// The SUBSCRIBE's NEW_GROUP_REQUEST (draft-18 §10.2.13): the largest
+    /// Group ID the subscriber knows plus 1, 0 when it knows none.
+    pub new_group_request: Option<u64>,
     /// Sent in the SUBSCRIBE_OK.
     pub track_properties: TrackProperties,
     trace_context: Option<TraceContext>,
@@ -74,6 +77,7 @@ impl SubscribeHandler {
             group_order: subscribe_message.group_order,
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
+            new_group_request: subscribe_message.new_group_request,
             track_properties: TrackProperties::default(),
             trace_context: subscribe_message.trace_context,
         }
