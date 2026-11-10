@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.4.3
 
 - `LivePlayer` no longer opens a live broadcast with audio about the audio
   output latency (around 190 ms in Chrome) later than its buffer target for
   the first 10 s. The audio held through the warm-up and due within the
   output latency was scheduled late and pushed the playout clock back.
+- A `RemoteBroadcast` view that is told of several visibility changes at once,
+  as on a busy page, follows the latest instead of the oldest, so a view on
+  screen no longer keeps its video unsubscribed.
 
 ## 0.4.2
 
