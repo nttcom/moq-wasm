@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::{open_hours::OpenHours, target_language::TargetLanguage};
 
@@ -18,6 +18,6 @@ impl TranslationPolicy {
     pub(crate) fn is_open(&self) -> bool {
         self.open_hours
             .as_ref()
-            .is_none_or(|open_hours| open_hours.contains(time::OffsetDateTime::now_utc()))
+            .is_none_or(|open_hours| open_hours.contains(SystemTime::now()))
     }
 }
