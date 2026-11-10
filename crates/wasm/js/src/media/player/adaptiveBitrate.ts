@@ -29,9 +29,25 @@ const THROUGHPUT_WINDOW_MS = 2_000
 const SETTLE_MS = 3_000
 /// How far the least lag of the last `RECENT_LAG_WINDOW_MS` may exceed the
 /// least lag since the rendition started before it counts as a queue building
-/// up on the path. Taking the least lag of a window ignores single large
-/// objects such as keyframes.
-const CONGESTED_EXCESS_LAG_MS = 400
+/// up on the path: `'low'` 400 ms, `'high'` 2 s, or a number of milliseconds;
+/// `Infinity` never steps down for lag. Taking the least lag of a window
+/// ignores single large objects such as keyframes.
+export type LatencyTolerance = 'low' | 'high' | number
+
+const LATENCY_TOLERANCE_MS: Record<'low' | 'high', number> = { low: 400, high: 2_000 }
+
+function latencyToleranceMs(tolerance: LatencyTolerance): number {
+  if (typeof tolerance === 'number') {
+    if (Number.isNaN(tolerance) || tolerance < 0) {
+      throw new RangeError(`latencyTolerance must be 0 or more milliseconds: ${tolerance}`)
+    }
+    return tolerance
+  }
+  if (!Object.hasOwn(LATENCY_TOLERANCE_MS, tolerance)) {
+    throw new RangeError(`latencyTolerance must be 'low', 'high' or milliseconds: ${String(tolerance)}`)
+  }
+  return LATENCY_TOLERANCE_MS[tolerance]
+}
 const RECENT_LAG_WINDOW_MS = 1_000
 /// Long enough to hold a keyframe at the meeting camera's 2 s interval.
 const SPREAD_WINDOW_MS = 3_000
@@ -126,8 +142,14 @@ export class AdaptiveBitrate {
   private lastUpAtMs: number | undefined
   private lastCongestedAtMs: number | undefined
   private ceilingBitrate: number | undefined
+  private excessLagMs = LATENCY_TOLERANCE_MS.low
 
   constructor(private readonly targetLagMs?: () => number) {}
+
+  /// Throws a RangeError for a number that is negative or NaN, or an unknown name.
+  setLatencyTolerance(tolerance: LatencyTolerance): void {
+    this.excessLagMs = latencyToleranceMs(tolerance)
+  }
 
   /// A rendition started playing.
   restart(nowMs: number): void {
@@ -237,7 +259,7 @@ export class AdaptiveBitrate {
       return false
     }
     const recentLags = this.lagsSince(nowMs - RECENT_LAG_WINDOW_MS)
-    if (recentLags.length > 0 && Math.min(...recentLags) - this.baselineLagMs > CONGESTED_EXCESS_LAG_MS) {
+    if (recentLags.length > 0 && Math.min(...recentLags) - this.baselineLagMs > this.excessLagMs) {
       return true
     }
     const targetLagMs = this.targetLagMs?.()

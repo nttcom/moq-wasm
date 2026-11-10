@@ -45,6 +45,7 @@ export {
   BroadcastCatalog
 } from './player/broadcastCatalog'
 export { type PlaybackGroupCallbacks, type PlaybackGroupState, PlaybackGroup } from './player/playbackGroup'
+export type { LatencyTolerance } from './player/adaptiveBitrate'
 export type { BufferPolicy } from './player/jitterBuffer'
 export type { CatchUp, LateSamples } from './player/livePlayout'
 export type { LivePictureKind } from './player/livePictureSink'

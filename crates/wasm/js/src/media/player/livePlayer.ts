@@ -4,7 +4,7 @@ import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
 import { type AudioLevel, readLocHeader } from '../internal/loc'
-import { AdaptiveBitrate, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
+import { AdaptiveBitrate, type LatencyTolerance, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
 import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
 import type { CatchUp } from './livePlayout'
@@ -76,6 +76,10 @@ export type LivePlayerOptions = {
   /// only disconnects its nodes and never suspends or closes it. Review and
   /// CMAF sound do not play through it.
   audioContext?: AudioContext
+  /// How much the live video may fall behind before the automatic quality
+  /// steps down; `'low'` by default. Use `'high'` for a shared screen whose
+  /// text has to stay readable. See `setLatencyTolerance`.
+  latencyTolerance?: LatencyTolerance
 }
 
 export type PlayerStatus = { text: string; state: StatusState }
@@ -200,6 +204,9 @@ export class LivePlayer {
       this.publisherEnded(kind, done, leading)
     )
     this.stallWatch = new StallWatch(() => this.changed())
+    if (options.latencyTolerance !== undefined) {
+      this.adaptiveBitrate.setLatencyTolerance(options.latencyTolerance)
+    }
     this.stage = new PictureStage(options.container)
     this.resizeObserver = new ResizeObserver(([entry]) => {
       const heightPx = entry.contentRect.height
@@ -488,6 +495,14 @@ export class LivePlayer {
     this.adaptiveVideo = enabled
     this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
     this.changed()
+  }
+
+  /// How much more the live video may lag behind its capture than it did
+  /// at its best before the automatic quality steps down: `'low'` (400 ms),
+  /// `'high'` (2 s), or milliseconds, `Infinity` for never. Throws a RangeError
+  /// for a negative number or NaN.
+  setLatencyTolerance(tolerance: LatencyTolerance): void {
+    this.adaptiveBitrate.setLatencyTolerance(tolerance)
   }
 
   selectAudioTrack(name: string): Promise<void> {

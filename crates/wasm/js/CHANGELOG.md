@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `LivePlayerOptions.latencyTolerance` and `LivePlayer.setLatencyTolerance()`
+  set how much the live video may fall behind before the automatic quality
+  steps down: `'low'` (400 ms, the default), `'high'` (2 s), or milliseconds.
+  A `SourceView` sets it through `view.player`.
+
+  ```ts
+  remote.listen({
+    onSourceAdd: (view) => {
+      if (view.name === 'screen') view.player.setLatencyTolerance('high')
+    }
+  })
+  ```
+
 - The `adaptive quality:` log names the reason of the switch (`height`,
   `raise`, `congested` or `calm`) with the picture height, lag and throughput
   it was decided on.
