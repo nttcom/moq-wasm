@@ -889,6 +889,14 @@ impl ControlChannel {
                 }
                 let kind = RequestStreamKind::PublishNamespace(done.track_namespace);
                 let stream = Self::take_by_kind(&mut self.requests().outgoing, &kind);
+                if stream.is_none() {
+                    // draft-18 withdraws a namespace only on the request that
+                    // told of it (§6.2, §10.17).
+                    tracing::debug!(
+                        ?kind,
+                        "no request told the peer of the namespace; nothing withdrawn"
+                    );
+                }
                 cancel(stream).await
             }
             Notification::PublishNamespaceCancel { namespace, .. } => {
