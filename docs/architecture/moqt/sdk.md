@@ -46,7 +46,7 @@ Rust の列は `moqt` の今の API で同じことをする方法である。
 | `MoqSession.connect(url, { token })` | `moqt.connect(url, verify_certificate=)`。**トークンが無い** | `Endpoint::create_client(&ClientConfig { authorization_token, .. })` → `connect(url).await?.await?`。イベントループは自分で書く |
 | `subscribe(ns, track, { filter, forward, priority })` | `subscribe(ns, name)`。**filter、forward、priority が無い** | `Subscriber::subscribe(ns, name, SubscribeOption)` → `accept_data_receiver` → `TrackReader::new` |
 | `subscribeCurrentGroup(ns, track)` | `subscribe(ns, name, current_group=True)` | `Subscriber::subscribe_current_group` が `(Subscription, TrackReader)` を返す |
-| `subscribeGroupStart(ns, track, newGroupAfter)`、`MoqSubscription.requestNewGroup(largestGroup)` | **無い** | `Subscriber::subscribe_group_start`、`Subscriber::request_new_group` |
+| `subscribeGroupStart(ns, track, newGroupAfter, priority?)`、`MoqSubscription.requestNewGroup(largestGroup)` | **無い** | `Subscriber::subscribe_group_start`、`Subscriber::request_new_group` |
 | `fetch(ns, track, start, end)` → `MoqFetch` | **無い** | `Subscriber::fetch` → `accept_fetch_receiver` |
 | `trackStatus(ns, track)` → `MoqLocation \| undefined` | **無い** | `Subscriber::track_status` の `content_exists` |
 | `watchNamespaces(prefix)` → `MoqNamespaceWatch` | `subscribe_namespace(prefix)` → `NamespaceEvents`。**止める手段が無い** | `NamespaceWatchers::watch` → `Subscriber::subscribe_namespace`。`unsubscribe_namespace` で止める。振り分けは自分で書く |
@@ -58,7 +58,7 @@ Rust の列は `moqt` の今の API で同じことをする方法である。
 | `MoqSubscription.groups()` → `MoqGroup` | **無い** | `StreamDataReceiverFactory` |
 | `MoqSubscription.largest` | **無い** | `Subscription::content_exists`（SUBSCRIBE_OK の Largest Location） |
 | `MoqSubscription.done`（PUBLISH_DONE） | **無い**（iterator が終わるだけ） | `SessionEvent::PublishDone` をループで受ける |
-| `setForward(forward)` / `endBeforeGroup(group)` | **無い** | `Subscriber::update_forward` / `end_before_group` |
+| `setForward(forward)` / `setPriority(priority)` / `endBeforeGroup(group)` | **無い** | `Subscriber::update_forward` / `update_priority` / `end_before_group` |
 | `MoqSubscription.close()`（UNSUBSCRIBE） | `Track.unsubscribe()` | `Subscriber::unsubscribe` |
 | `ReceivedObject` の `groupId`、`subgroupId`、`objectId`、`objectStatus`、`objectPayload`、`locHeader` | `Object` の `group_id`、`object_id`、`payload`。**subgroup、status、拡張ヘッダーが無い** | `TrackObject` |
 | `RequestError`（draft のエラーコード） | **無い**（`RuntimeError` の文字列） | `RequestFailure::Rejected { code, .. }` |

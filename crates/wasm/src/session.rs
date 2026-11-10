@@ -605,6 +605,21 @@ impl Subscription {
             .await
     }
 
+    /// SUBSCRIBE_UPDATE with the Subscriber Priority (draft-14 §7.1), by
+    /// which the relay orders what it has not sent yet.
+    #[wasm_bindgen(js_name = setPriority)]
+    pub async fn set_priority(&self, priority: u8) -> Result<(), JsValue> {
+        self.scope
+            .scoped(async {
+                self.session
+                    .subscriber()
+                    .update_priority(&self.subscription, priority)
+                    .await
+                    .map_err(anyhow_error)
+            })
+            .await
+    }
+
     /// Asks the publisher to start a new group (NEW_GROUP_REQUEST, draft-18
     /// §10.2.13). `largest_group` is the largest group ID of the track the
     /// caller has seen. Resolves to false, without sending, for a track

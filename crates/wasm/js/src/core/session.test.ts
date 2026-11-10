@@ -30,6 +30,7 @@ function wasmSubscription(overrides: Record<string, unknown>) {
     next: sequence([]),
     nextGroup: sequence([]),
     setForward: async () => {},
+    setPriority: async () => {},
     endBeforeGroup: async () => {},
     close: async () => {},
     free: () => {},
