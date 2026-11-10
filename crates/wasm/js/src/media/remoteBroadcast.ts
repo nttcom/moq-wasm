@@ -87,7 +87,7 @@ export class RemoteBroadcast {
     readonly namespace: string[],
     options: RemoteBroadcastOptions = {}
   ) {
-    this.log = options.onLog ?? ((level, message) => sdkLog(level, TARGET, message))
+    this.log = options.onLog ?? ((level, message) => sdkLog(session, level, TARGET, message))
     this.pauseHiddenVideo = options.pauseHiddenVideo ?? true
     this.audioContext = options.audioContext
     this.broadcastCatalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })

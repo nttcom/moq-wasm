@@ -1,7 +1,7 @@
 import type * as Moqt from '../../pkg/moqt'
 import { loadMoqt } from './init'
 import { RequestError } from './requestError'
-import { sdkLog } from './log'
+import { bindLogToken, sdkLog } from './log'
 
 const TARGET = 'moq-wasm::core::session'
 
@@ -57,6 +57,7 @@ export type NamespaceEvent = { readonly kind: 'announced' | 'withdrawn'; readonl
 type WasmSession = Pick<
   Moqt.Session,
   | 'closed'
+  | 'token'
   | 'transportStats'
   | 'subscribe'
   | 'subscribeCurrentGroup'
@@ -87,6 +88,7 @@ export class MoqSession {
   private open = true
 
   constructor(private readonly inner: WasmSession) {
+    bindLogToken(this, () => inner.token)
     this.closed = inner.closed.then((close: Moqt.CloseInfo) => {
       this.open = false
       const info = { code: close.code, reason: close.reason }
@@ -106,8 +108,9 @@ export class MoqSession {
       options.versions
     )
     const elapsedMs = Math.round(performance.now() - startedAtMs)
-    sdkLog('info', TARGET, 'session established', { transport: session.transport, duration_ms: elapsedMs })
-    return new MoqSession(session)
+    const moqSession = new MoqSession(session)
+    sdkLog(moqSession, 'info', TARGET, 'session established', { transport: session.transport, duration_ms: elapsedMs })
+    return moqSession
   }
 
   get isOpen(): boolean {
@@ -127,14 +130,14 @@ export class MoqSession {
     const subscription = await request('SUBSCRIBE', () =>
       this.inner.subscribe(namespace, track, options.filter, options.forward, options.priority)
     )
-    return new MoqSubscription(subscription)
+    return new MoqSubscription(subscription, this)
   }
 
   /// SUBSCRIBE with a joining FETCH (draft-14 §9.16.2): the objects of the group
   /// the largest object is in come first.
   async subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () => this.inner.subscribeCurrentGroup(namespace, track))
-    return new MoqSubscription(subscription)
+    return new MoqSubscription(subscription, this)
   }
 
   /// SUBSCRIBE that reads from the first object of a group (draft-18 §5.1.3.1).
@@ -146,7 +149,7 @@ export class MoqSession {
     const subscription = await request('SUBSCRIBE', () =>
       this.inner.subscribeGroupStart(namespace, track, newGroupAfter)
     )
-    return new MoqSubscription(subscription)
+    return new MoqSubscription(subscription, this)
   }
 
   /// `end` is the End Location of draft-14 §9.16.1: the last object plus 1,
@@ -204,7 +207,10 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
   private closed = false
   private freed = false
 
-  constructor(private readonly inner: WasmSubscription) {
+  constructor(
+    private readonly inner: WasmSubscription,
+    private readonly session?: MoqSession
+  ) {
     const largest = inner.largest
     this.largest = largest && location(largest)
     this.done = inner.done.then((done: Moqt.PublishDoneInfo | undefined) => {
@@ -230,7 +236,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
         return
       }
       const received = new MoqGroup(group)
-      sdkLog('debug', TARGET, 'subgroup header received', {
+      sdkLog(this.session, 'debug', TARGET, 'subgroup header received', {
         group_id: received.groupId,
         subgroup_id: received.subgroupId
       })

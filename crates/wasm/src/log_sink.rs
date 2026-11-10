@@ -39,6 +39,10 @@ impl SessionScope {
         SCOPE_TOKENS.with_borrow_mut(|tokens| tokens.insert(self.0, token));
     }
 
+    pub(crate) fn token(self) -> Option<String> {
+        SCOPE_TOKENS.with_borrow(|tokens| tokens.get(&self.0).cloned())
+    }
+
     pub(crate) fn scoped<F: Future>(self, future: F) -> Scoped<F> {
         scoped(self.0, future)
     }

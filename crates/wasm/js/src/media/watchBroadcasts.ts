@@ -78,6 +78,6 @@ async function follow(
       }
     }
   } catch (error) {
-    sdkLog('error', TARGET, 'watching broadcasts failed', { error: getErrorMessage(error) })
+    sdkLog(session, 'error', TARGET, 'watching broadcasts failed', { error: getErrorMessage(error) })
   }
 }

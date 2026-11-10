@@ -91,6 +91,13 @@ impl Session {
         self.closed.clone()
     }
 
+    /// The newest token the session connected with, which its TypeScript logs
+    /// are handed to `setLogSink`'s callbacks with; `undefined` without one.
+    #[wasm_bindgen(getter)]
+    pub fn token(&self) -> Option<String> {
+        self.scope.token()
+    }
+
     #[wasm_bindgen(js_name = transportStats)]
     pub fn transport_stats(&self) -> TransportStats {
         let bytes = self.session.transferred_bytes();
@@ -345,8 +352,10 @@ impl Session {
     }
 
     pub fn close(&self) {
-        self.session
-            .close_with_error(TerminationErrorCode::NoError, "closed by the application");
+        self.scope.in_scope(|| {
+            self.session
+                .close_with_error(TerminationErrorCode::NoError, "closed by the application")
+        });
     }
 }
 

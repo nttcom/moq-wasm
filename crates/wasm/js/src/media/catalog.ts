@@ -94,7 +94,7 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
   const entry = initDataList.find((item): item is Record<string, unknown> => isObject(item) && item.id === initRef)
   const data = entry?.type === 'inline' ? asString(entry.data) : undefined
   if (!data) {
-    sdkLog('warn', 'moq-wasm::media::catalog', 'initRef names no inline init data, so the track has none', {
+    sdkLog(undefined, 'warn', 'moq-wasm::media::catalog', 'initRef names no inline init data, so the track has none', {
       track_name: track.name,
       init_ref: initRef,
       init_data_type: entry?.type

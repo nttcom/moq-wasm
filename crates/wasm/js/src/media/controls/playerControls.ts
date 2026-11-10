@@ -26,7 +26,7 @@ export class PlayerControls {
     onLog: (level: LogLevel, message: string) => void
   ) {
     this.onLog = (level, message) => {
-      forwardSdkLog(level, 'moq-wasm::media::player_controls', message)
+      forwardSdkLog(undefined, level, 'moq-wasm::media::player_controls', message)
       onLog(level, message)
     }
     container.classList.add('viewer-stage')
