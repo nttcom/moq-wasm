@@ -144,49 +144,35 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let url = url.to_string();
         let handshake = async move {
             let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
-            let session = if creator.follow_go_away {
+            let (connection_event_sender, follow) = if creator.follow_go_away {
                 let (connection_event_sender, connection_events) =
                     tokio::sync::mpsc::unbounded_channel();
-                let (connection, control_receiver) = creator
-                    .set_up_in(
-                        connect_span,
-                        transport_conn,
-                        &target,
-                        0,
-                        connection_event_sender,
-                    )
-                    .await?;
-                Session::new(
-                    control_receiver,
-                    SessionContext::new(connection, event_sender, true),
-                    event_receiver,
-                    Some(Follow {
-                        reconnect: Arc::new(creator.clone()),
-                        url,
-                        connection_events,
-                    }),
-                    Some(Arc::new(creator.clone())),
-                    Span::current(),
-                )
+                let follow = Follow {
+                    reconnect: Arc::new(creator.clone()),
+                    url,
+                    connection_events,
+                };
+                (connection_event_sender, Some(follow))
             } else {
-                let (connection, control_receiver) = creator
-                    .set_up_in(
-                        connect_span,
-                        transport_conn,
-                        &target,
-                        0,
-                        event_sender.clone(),
-                    )
-                    .await?;
-                Session::new(
-                    control_receiver,
-                    SessionContext::new(connection, event_sender, false),
-                    event_receiver,
-                    None,
-                    Some(Arc::new(creator.clone())),
-                    Span::current(),
-                )
+                (event_sender.clone(), None)
             };
+            let (connection, control_receiver) = creator
+                .set_up_in(
+                    connect_span,
+                    transport_conn,
+                    &target,
+                    0,
+                    connection_event_sender,
+                )
+                .await?;
+            let session = Session::new(
+                control_receiver,
+                SessionContext::new(connection, event_sender, creator.follow_go_away),
+                event_receiver,
+                follow,
+                Some(Arc::new(creator.clone())),
+                Span::current(),
+            );
             tracing::info!("session established");
             Ok(session)
         };
