@@ -22,6 +22,9 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         subscription: &UpstreamSubscription,
         new_group_request: u64,
     ) -> anyhow::Result<bool>;
+    /// SUBSCRIBE_NAMESPACE for namespaces only; returns once the publisher
+    /// accepts it.
+    async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
     async fn send_unsubscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
     async fn create_data_receiver(
         &mut self,
@@ -77,6 +80,18 @@ impl Subscriber for moqt::Subscriber {
     ) -> anyhow::Result<bool> {
         self.request_new_group(subscription.as_moqt(), new_group_request.checked_sub(1))
             .await
+    }
+
+    #[tracing::instrument(
+        level = "debug",
+        name = "relay.subscriber.send_subscribe_namespace",
+        skip_all,
+        fields(track_namespace_prefix = %namespace)
+    )]
+    async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()> {
+        Ok(self
+            .subscribe_namespace(namespace, moqt::namespace::NamespaceInterest::Namespaces)
+            .await?)
     }
 
     #[tracing::instrument(

@@ -10,7 +10,7 @@ use anyhow::{Context as _, bail};
 use bytes::Bytes;
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, QUIC, Session, SessionEvent, Subscription,
-    TrackProperties, Version,
+    TerminationErrorCode, TrackProperties, Version,
     fetch::{Fetch, FetchOption},
     namespace::NamespaceInterest,
     object::{
@@ -240,6 +240,13 @@ async fn run(config: Config) -> anyhow::Result<()> {
     )
     .await?;
 
+    run_publisher_leave_scenario(
+        &config.relay_a_url,
+        &config.relay_b_url,
+        &scenario_namespace(&config.track_namespace, &run_id, "publisher-leave"),
+    )
+    .await?;
+
     run_lost_route_restore_scenario(
         &config.redis_url,
         "relay-a",
@@ -390,6 +397,75 @@ async fn run_namespace_cleanup_scenario(
     .await
     .context("subscriber relay did not remove SUBSCRIBE_NAMESPACE route after session close")?;
     Ok(())
+}
+
+/// A subscriber on relay-b that joins after a publisher on relay-a announced
+/// its namespace is told when the publisher leaves, though relay-b learned the
+/// namespace from the route registry, not from relay-a.
+async fn run_publisher_leave_scenario(
+    publisher_url: &str,
+    subscriber_url: &str,
+    room: &str,
+) -> anyhow::Result<()> {
+    let track_namespace = format!("{room}/alice");
+    tracing::info!(%track_namespace, "running publisher leave scenario");
+    let publisher_session = connect_with_retry(publisher_url).await?;
+    publisher_session
+        .publisher()
+        .publish_namespace(track_namespace.clone())
+        .await
+        .context("publisher failed to publish namespace")?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let subscriber_session = connect_with_retry(subscriber_url).await?;
+    subscriber_session
+        .subscriber()
+        .subscribe_namespace(room.to_string(), NamespaceInterest::Namespaces)
+        .await
+        .context("subscriber failed to subscribe namespace")?;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        next_namespace_event(&subscriber_session, &track_namespace, true),
+    )
+    .await
+    .context("subscriber was not told of the published namespace")??;
+
+    publisher_session.close_with_error(TerminationErrorCode::NoError, "leaving");
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        next_namespace_event(&subscriber_session, &track_namespace, false),
+    )
+    .await
+    .context("subscriber was not told that the publisher left")??;
+    tracing::info!("publisher leave scenario passed");
+    Ok(())
+}
+
+/// Waits for the PUBLISH_NAMESPACE of `track_namespace` when `published`, else
+/// its PUBLISH_NAMESPACE_DONE; answers every PUBLISH_NAMESPACE it reads.
+async fn next_namespace_event(
+    session: &Session,
+    track_namespace: &str,
+    published: bool,
+) -> anyhow::Result<()> {
+    loop {
+        match session.receive_event().await? {
+            SessionEvent::PublishNamespace(handler) => {
+                handler.ok().await?;
+                if published && handler.track_namespace == track_namespace {
+                    return Ok(());
+                }
+            }
+            SessionEvent::PublishNamespaceDone(handler) => {
+                if !published && handler.track_namespace() == track_namespace {
+                    return Ok(());
+                }
+            }
+            SessionEvent::ProtocolViolation() => bail!("subscriber protocol violation"),
+            SessionEvent::Disconnected() => bail!("subscriber disconnected"),
+            _ => {}
+        }
+    }
 }
 
 /// A track published with PUBLISH alone is found from the other relay through

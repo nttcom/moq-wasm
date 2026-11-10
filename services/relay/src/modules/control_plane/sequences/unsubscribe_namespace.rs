@@ -1,11 +1,9 @@
-use std::collections::HashSet;
-
 use moqt::namespace::NamespaceInterest;
 
 use crate::modules::{
     cascading::{
         inter_relay_connection_manager::InterRelayConnectionManager,
-        route_registry::{RelayInfo, RelayRouteRegistry},
+        route_registry::RelayRouteRegistry,
     },
     control_plane::{
         control_message_forwarder::ControlMessageForwarder, sequences::CascadingRelayContext,
@@ -83,74 +81,24 @@ impl UnsubscribeNamespace {
             );
         }
 
-        let routes = Self::find_publisher_relays(track_namespace_prefix, route_registry).await;
-        for route in routes {
-            let Some(session_id) =
-                super::connect_relay(inter_relay_connection_manager, &route).await
-            else {
-                continue;
-            };
-
+        let released = inter_relay_connection_manager
+            .namespace_subscriptions
+            .remove_under_prefix(track_namespace_prefix, |track_namespace| {
+                table.is_watched_by_client(track_namespace)
+            });
+        for (session_id, track_namespace) in released {
             if let Err(err) = forwarder
-                .unsubscribe_namespace(session_id, track_namespace_prefix.to_string())
+                .unsubscribe_namespace(session_id, track_namespace.clone())
                 .await
             {
                 tracing::warn!(
                     error = ?err,
-                    relay_id = %route.relay_id,
                     session_id = session_id,
-                    track_namespace_prefix = %track_namespace_prefix,
-                    "failed to forward UNSUBSCRIBE_NAMESPACE to upstream relay"
+                    %track_namespace,
+                    "failed to unsubscribe the namespace at its publisher relay"
                 );
             }
         }
-    }
-
-    async fn find_publisher_relays(
-        track_namespace_prefix: &str,
-        route_registry: &dyn RelayRouteRegistry,
-    ) -> Vec<RelayInfo> {
-        let track_namespaces = match route_registry
-            .find_namespace_publishers_by_prefix(track_namespace_prefix)
-            .await
-        {
-            Ok(track_namespaces) => track_namespaces,
-            Err(err) => {
-                tracing::warn!(
-                    error = ?err,
-                    track_namespace_prefix = %track_namespace_prefix,
-                    "failed to find namespace routes for UNSUBSCRIBE_NAMESPACE"
-                );
-                return Vec::new();
-            }
-        };
-
-        let mut relay_ids = HashSet::new();
-        let mut relays = Vec::new();
-        for track_namespace in track_namespaces {
-            let publisher_relays = match route_registry
-                .find_active_namespace_publishers(&track_namespace)
-                .await
-            {
-                Ok(publisher_relays) => publisher_relays,
-                Err(err) => {
-                    tracing::warn!(
-                        error = ?err,
-                        track_namespace = %track_namespace,
-                        "failed to find publisher relays for UNSUBSCRIBE_NAMESPACE"
-                    );
-                    continue;
-                }
-            };
-
-            for relay in publisher_relays {
-                if relay_ids.insert(relay.relay_id.clone()) {
-                    relays.push(relay);
-                }
-            }
-        }
-
-        relays
     }
 }
 
@@ -160,11 +108,17 @@ mod tests {
 
     use moqt::SessionEvent;
 
+    use super::*;
     use crate::modules::{
-        auth::test_support::{
-            app_token, connect_client, spawn_relay, spawn_relay_and_connect_client,
+        auth::{
+            test_support::{
+                app_token, connect_client, spawn_relay, spawn_relay_and_connect_client,
+            },
+            verified_token::VerifiedToken,
         },
         test_support::{
+            directory_fixtures::inter_relay_connection_manager,
+            mock_session::{add_recorded_relay_session, session_repository_with_sessions},
             relay_clients::{next_event, publish_namespace, subscribe_namespace},
             stub_route_registry::StubRouteRegistry,
         },
@@ -193,6 +147,37 @@ mod tests {
             panic!("expected PUBLISH_NAMESPACE, got {event:?}");
         };
         assert_eq!(announced.track_namespace, "APP/lobby/z");
+    }
+
+    #[tokio::test]
+    async fn the_last_client_leaving_a_prefix_ends_the_relay_subscriptions_under_it() {
+        // Arrange
+        const PUBLISHER_RELAY: SessionId = 4;
+        let repository =
+            session_repository_with_sessions(Vec::new(), VerifiedToken::full_access()).await;
+        let recorded = add_recorded_relay_session(&repository, PUBLISHER_RELAY).await;
+        let inter_relay_connection_manager = inter_relay_connection_manager(repository.clone());
+        for track_namespace in ["APP/room/alice", "APP/lobby/bob"] {
+            inter_relay_connection_manager
+                .namespace_subscriptions
+                .insert(PUBLISHER_RELAY, track_namespace);
+        }
+
+        // Act
+        UnsubscribeNamespace::cleanup_empty_namespace_subscription(
+            "APP/room",
+            &InMemoryLocalPubSubDirectory::new(),
+            &ControlMessageForwarder { repository },
+            &StubRouteRegistry::with_namespace_routes(&[]),
+            &inter_relay_connection_manager,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(
+            recorded.namespace_subscriptions(),
+            vec!["unsubscribe APP/room/alice"]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

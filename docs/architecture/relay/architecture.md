@@ -348,9 +348,10 @@ Each sequence owns the relay-side protocol logic for one message
   join keeps field boundaries because `authorize` rejects a field containing
   `/`. Each namespace entry
   carries its sessions' `SessionPeer`: client-owned Redis routes are cleaned
-  up when the last *client* leaves, while local namespace subscribers get
+  up when the last *client* leaves, while client namespace subscribers get
   PUBLISH_NAMESPACE_DONE only once no client or relay session publishes the
-  namespace. Namespace subscriptions are keyed by
+  namespace, and relay namespace subscribers once no client does (split
+  horizon, see "SUBSCRIBE_NAMESPACE sequence"). Namespace subscriptions are keyed by
   session and `NamespaceInterest` (`NamespaceSubscription`: the interest, the
   peer and the Forward State of the PUBLISH messages it receives), and
   `get_namespace_subscribers(namespace, wanted)` returns those that ask for
@@ -521,8 +522,7 @@ kind). Otherwise register the prefix under the session and interest (and,
 for the first client subscriber of the prefix, its Redis route), reply
 SUBSCRIBE_NAMESPACE_OK, and only then forward what already
 matches and the subscription asks for: for namespaces, PUBLISH_NAMESPACE for
-published namespaces (reply handled by a `PublishNamespaceResponseTask`) and
-then for remote namespace-publisher routes not sent already; for tracks, a `DownstreamPublish`
+published namespaces (reply handled by a `PublishNamespaceResponseTask`); for tracks, a `DownstreamPublish`
 with the subscription's Forward State for each published track (one per
 publisher session), except those its own session PUBLISHed when it leaves
 them out. PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go to the subscriptions
@@ -538,12 +538,42 @@ a local publisher and a relay. `ControlMessageForwarder` therefore records in
 `SessionRepository` each namespace it announces on a session and sends
 PUBLISH_NAMESPACE only for one not yet announced there, and
 PUBLISH_NAMESPACE_DONE to a client only for one that was. A relay session gets
-PUBLISH_NAMESPACE_DONE either way: a relay whose subscriber came after the
-namespace was published learns it from the route registry, never from a
-PUBLISH_NAMESPACE on its inter-relay session, and applies a DONE without a
-registration. UNSUBSCRIBE_NAMESPACE forgets the
+PUBLISH_NAMESPACE_DONE either way: on draft-14 a relay that learned the
+namespace from a route alone applies a DONE without a registration.
+UNSUBSCRIBE_NAMESPACE forgets the
 namespaces under its prefix, so a later SUBSCRIBE_NAMESPACE announces them
 again.
+
+**Namespaces other relays publish.** For a client's subscription that asks for
+namespaces, the namespaces under the prefix that the route registry lists on
+other relays and no local session publishes are not announced from the
+registry. The relay sends SUBSCRIBE_NAMESPACE for each one, with the
+namespace itself as the prefix and namespaces only, to every relay publishing
+it, over the session it dialed (`InterRelayConnectionManager`), unless a
+subscription of that session already covers it. The publishing relay answers
+NAMESPACE (draft-18) or PUBLISH_NAMESPACE (draft-14), which this relay
+handles like any relay's PUBLISH_NAMESPACE and so forwards to its client
+subscribers, and withdraws it on the same request when its publisher leaves.
+draft-18 withdraws a namespace only on the request that told of it: by
+cancelling the PUBLISH_NAMESPACE (§6.2) or with NAMESPACE_DONE on a
+SUBSCRIBE_NAMESPACE (§10.17). A namespace announced from the registry reached
+no request between the relays, so the publishing relay could never have told
+this one that it ended, and the clients kept a departed publisher. A
+publisher that left between the registry lookup and the SUBSCRIBE_NAMESPACE
+is answered with no NAMESPACE, so its namespace is not announced at all.
+`InterRelayConnectionManager::namespace_subscriptions`
+(`cascading/relay_namespace_subscriptions.rs`) holds these subscriptions by
+dialed session and namespace. One ends with UNSUBSCRIBE_NAMESPACE when its
+namespace is withdrawn on it, and when the last client subscription covering
+the namespace leaves (`cleanup_empty_namespace_subscription`); all of a
+session's end with the session.
+
+A relay's SUBSCRIBE_NAMESPACE is served from this relay's clients only (split
+horizon): it is told of the namespaces a client publishes here, never of
+those another relay announced, and is not subscribed further. A namespace a
+relay session announces reaches client subscribers only, and a relay
+subscriber is told PUBLISH_NAMESPACE_DONE once no client publishes the
+namespace, whatever relays still do.
 
 A draft-18 update of the prefix (`SubscribeNamespaceUpdate`, §10.9.2) is
 authorized for the new prefix and goes through the same sequence
@@ -1300,7 +1330,10 @@ holds on each hop.
   `SubscribeNamespace` registers the subscriber route when the first client
   subscriber for a prefix appears. Any number of relays may hold the publisher
   route of one namespace (draft-14 §8.2), and the notification reaches every
-  subscriber relay.
+  subscriber relay. A namespace published before a relay registered its
+  subscriber route is found there by prefix; that relay subscribes it at the
+  publishing relay with SUBSCRIBE_NAMESPACE, so the publishing relay can
+  withdraw it (see "SUBSCRIBE_NAMESPACE sequence").
 - **Track-publisher routes**: a track a client publishes with PUBLISH alone
   has no namespace route, so `Publish` registers
   `route:publisher:track:<namespace>:<name>` for it. The key lies outside the
@@ -1453,7 +1486,8 @@ no list of relays and no session to each.
   eviction empties it with `strong_count == 1`.
 - **Client-owned routes**: Redis namespace and track routes are
   registered/withdrawn only for client-origin sessions, and watched-namespace routes only while a
-  client watches the namespace; relay-learned namespaces are purged locally
+  client watches the namespace; relay-learned namespaces are purged locally,
+  and the namespace subscriptions at other relays released,
   when the last client subscriber for the prefix leaves.
 - **Relay subscriptions serve clients**: an upstream subscription to another
   relay only exists while a client of this relay watches the track, and a

@@ -246,6 +246,23 @@ impl ControlMessageForwarder {
 
     #[tracing::instrument(
         level = "info",
+        name = "relay.control_message_forwarder.subscribe_namespace",
+        skip_all,
+        fields(publisher_session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
+    )]
+    pub(crate) async fn subscribe_namespace(
+        &self,
+        session_id: SessionId,
+        track_namespace_prefix: String,
+    ) -> anyhow::Result<()> {
+        let subscriber = self.subscriber(session_id).await?;
+        subscriber
+            .send_subscribe_namespace(track_namespace_prefix)
+            .await
+    }
+
+    #[tracing::instrument(
+        level = "info",
         name = "relay.control_message_forwarder.unsubscribe_namespace",
         skip_all,
         fields(publisher_session_id = %session_id, track_namespace_prefix = %track_namespace_prefix)
