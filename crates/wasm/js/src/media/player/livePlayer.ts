@@ -1118,6 +1118,10 @@ export class LivePlayer {
     this.adaptVideo()
   }
 
+  /// Waits for a switch only until its incoming rendition plays. The outgoing
+  /// rendition retires only when the incoming one starts its second group, up to
+  /// a keyframe interval later; the next switch retires it at once
+  /// (`abandonVideoSwitch`).
   private adaptVideo(): void {
     const nowMs = monotonicUnixMicros() / 1_000
     const current = this.subscriptions.get('video')
@@ -1125,7 +1129,7 @@ export class LivePlayer {
       !this.adaptiveVideo ||
       this.packaging !== 'loc' ||
       this.review ||
-      this.videoSwitch ||
+      (this.videoSwitch && !this.videoSwitch.splice.incomingPlaying) ||
       !current ||
       nowMs < this.nextAdaptAtMs
     ) {
