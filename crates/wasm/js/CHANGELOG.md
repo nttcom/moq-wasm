@@ -1,11 +1,6 @@
 # Changelog
 
-## Unreleased
-
-- `LivePlayer`'s automatic quality compares a rendition's height with the
-  container's height in CSS pixels instead of device pixels, so a small tile
-  on a high-density screen takes a lower rendition: a 215 px tall tile at a
-  device pixel ratio of 2 takes 240p instead of 480p.
+## 0.5.0
 
 - Breaking: `addSource()` takes the video's encoder settings in `encoding`,
   shared by the video and its renditions (`codec`,
@@ -31,6 +26,10 @@
   })
   ```
 
+- `LivePlayer`'s automatic quality compares a rendition's height with the
+  container's height in CSS pixels instead of device pixels, so a small tile
+  on a high-density screen takes a lower rendition: a 215 px tall tile at a
+  device pixel ratio of 2 takes 240p instead of 480p.
 - `main.framerate` and the new `Rendition.framerate` cap the frames a track
   encodes; `videoEncoderConfig.framerate` was only the encoder's estimate.
   The encoder worker skips frames that come faster, except keyframes, so
@@ -51,6 +50,9 @@
   `'prefer-hardware'`. Chrome tries only a hardware encoder for
   `'prefer-hardware'`, so on a machine without a hardware H.264 encoder the
   video failed to start with a `configError`.
+- `LivePlayer`'s automatic quality follows a resized tile again as soon as
+  the rendition it switched to plays, instead of up to 30 seconds later at
+  the next group.
 
 ## 0.4.4
 
