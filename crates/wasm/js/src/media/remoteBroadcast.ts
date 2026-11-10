@@ -225,7 +225,10 @@ class View implements SourceView {
       // No video until the element shows, so a view the page never places subscribes none.
       this.shown = false
       void this.player.setVideoEnabled(false)
-      this.visibility = new IntersectionObserver(([entry]) => void this.setShown(entry.isIntersecting))
+      // A busy page gets several entries in one call, oldest first.
+      this.visibility = new IntersectionObserver(
+        (entries) => void this.setShown(entries[entries.length - 1].isIntersecting)
+      )
       this.visibility.observe(this.element)
     }
   }
