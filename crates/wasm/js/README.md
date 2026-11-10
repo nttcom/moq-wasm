@@ -154,6 +154,12 @@ in one `getUserMedia` call, or a `MediaStreamTrack` of the page; `stream` takes 
 first video and audio tracks of a `MediaStream`. The SDK stops only the tracks it
 captured. A refused permission rejects with the `getUserMedia` error.
 
+The video, each rendition and the audio are encoded and sent only while a
+subscriber takes them: a relay that implements this asks for a track when its
+first subscriber arrives and stops it when the last one leaves, so `stats()`
+reports 0 for a track nobody watches. A track taken up again starts with a
+keyframe.
+
 `stats()` on each source returns what that
 source's encoders output over the last second, `encodedKbps` and
 `encodedFramesPerSecond`, and their `encoderErrors` since it was published.

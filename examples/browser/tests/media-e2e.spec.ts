@@ -131,6 +131,9 @@ test('publisher streams video to subscriber over local MoQT server', async ({ br
     // Assert: Subscriber が映像を受信し、video 要素の再生が進行していることを確認する。
     await expectSubscriberPlayback(session.subscriber)
 
+    // Assert: 誰も購読していない映像（camera）はエンコードされず、購読中の rendition だけが出力されることを確認する。
+    await expect(session.publisher.encodeStatus).toHaveText(/camera 0 kbps \/ low [1-9]\d* kbps/)
+
     // Act / Assert: 映像のミュートで track が catalog から外れ、解除で戻ることを確認する。
     await expectVideoMuteToLeaveAndRejoinTheCatalog(session.publisher, session.subscriber)
 
