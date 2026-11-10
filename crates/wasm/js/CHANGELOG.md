@@ -44,6 +44,9 @@
 - The catalog lists a video track's `framerate` only when `main.framerate`
   or the rendition's `framerate` caps it, at that value, instead of 30 for
   every track.
+- `encoding.codec` takes a name, `'h264'`, `'vp8'`, `'vp9'` or `'av1'`, and
+  the SDK picks the profile; a WebCodecs codec string still picks it
+  yourself.
 
 ## 0.4.4
 

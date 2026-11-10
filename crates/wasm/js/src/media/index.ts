@@ -10,6 +10,7 @@ export {
   type VideoEncoding,
   type VideoEncodingOptions
 } from './internal/encoders/sourceEncoding'
+export { type VideoCodecName } from './internal/encoders/videoEncoderConfig'
 export {
   type LocalBroadcast,
   type LocalBroadcastOptions,

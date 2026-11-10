@@ -5,8 +5,22 @@ export type RenditionEncoderConfig = Partial<VideoEncoderConfig> & { scaleResolu
 
 const DEFAULT_FRAMERATE = 30
 
+export type VideoCodecName = 'h264' | 'vp8' | 'vp9' | 'av1'
+
+const CODEC_STRINGS: Record<VideoCodecName, string> = {
+  h264: 'avc1.640028', // High Profile, level 4.0 and raised to fit the encoded size
+  vp8: 'vp8',
+  vp9: 'vp09.00.10.08', // Profile 0, 8-bit
+  av1: 'av01.0.08M.08' // Main Profile, level 4.0, 8-bit
+}
+
+/// The WebCodecs codec string of `codec`: a name, or a codec string as given.
+export function codecString(codec: string): string {
+  return Object.hasOwn(CODEC_STRINGS, codec) ? CODEC_STRINGS[codec as VideoCodecName] : codec
+}
+
 const DEFAULT_CONFIG: VideoEncoderSettings = {
-  codec: 'avc1.640028', // H.264 High Profile Level 4.0
+  codec: CODEC_STRINGS.h264,
   bitrate: 1_000_000,
   framerate: DEFAULT_FRAMERATE,
   hardwareAcceleration: 'prefer-hardware',
@@ -21,9 +35,11 @@ const DEFAULT_CONFIG: VideoEncoderSettings = {
 export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): VideoEncoderSettings {
   const set = Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined))
   const merged: VideoEncoderSettings = { ...DEFAULT_CONFIG, ...set }
+  const codec = codecString(merged.codec)
   return {
     ...merged,
-    avc: merged.codec.startsWith('avc') ? { format: 'annexb' } : undefined,
+    codec,
+    avc: codec.startsWith('avc') ? { format: 'annexb' } : undefined,
     framerate:
       typeof merged.framerate === 'number' && Number.isFinite(merged.framerate) && merged.framerate > 0
         ? Math.min(120, Math.max(1, Math.round(merged.framerate)))

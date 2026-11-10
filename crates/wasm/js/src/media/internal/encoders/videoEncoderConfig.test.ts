@@ -36,3 +36,19 @@ test('the defaults leave the encoded size to the frame', () => {
   expect(config.width).toBeUndefined()
   expect(config.height).toBeUndefined()
 })
+
+test('a codec name becomes the codec string of its default profile', () => {
+  // Act / Assert
+  expect(videoEncoderConfig({ codec: 'h264' })).toMatchObject({ codec: 'avc1.640028', avc: { format: 'annexb' } })
+  expect(videoEncoderConfig({ codec: 'vp8' }).codec).toBe('vp8')
+  expect(videoEncoderConfig({ codec: 'vp9' }).codec).toBe('vp09.00.10.08')
+  expect(videoEncoderConfig({ codec: 'av1' }).codec).toBe('av01.0.08M.08')
+})
+
+test('a codec string is kept as given', () => {
+  // Act / Assert
+  expect(videoEncoderConfig({ codec: 'avc1.4d4028' })).toMatchObject({
+    codec: 'avc1.4d4028',
+    avc: { format: 'annexb' }
+  })
+})
