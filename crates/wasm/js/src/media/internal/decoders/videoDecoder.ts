@@ -2,6 +2,7 @@ import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBu
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
+import { differsOnlyInLevel } from './codecLevel'
 import { withLengthPrefixes } from './lengthPrefixes'
 import { workerLog } from '../../../core/log'
 
@@ -342,7 +343,8 @@ function applyCatalogInfo(codec?: string, descriptionBase64?: string): void {
   }
   catalogCodec = codec
   if (cachedVideoConfig && cachedVideoConfig.codec !== codec) {
-    workerLog('warn', TARGET, 'catalog codec changed after the decoder started, ignored', {
+    const level = differsOnlyInLevel(cachedVideoConfig.codec, codec) ? 'debug' : 'warn'
+    workerLog(level, TARGET, 'catalog codec changed after the decoder started, ignored', {
       initialized_codec: cachedVideoConfig.codec,
       catalog_codec: codec
     })
