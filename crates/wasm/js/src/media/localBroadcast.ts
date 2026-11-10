@@ -8,6 +8,7 @@ import {
   type SourceEncoding,
   type SourceOptions,
   type VideoEncodingOptions,
+  checkRenditions,
   publishSource,
   videoBitrate
 } from './internal/encoders/sourceEncoding'
@@ -151,6 +152,7 @@ class Broadcast implements LocalBroadcast {
     if (this.closed) {
       throw new Error('the broadcast is closed')
     }
+    checkRenditions(input.renditions)
     const trackNames = sourceTrackNames(
       name,
       (input.renditions ?? []).map((rendition) => rendition.name)

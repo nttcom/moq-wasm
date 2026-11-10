@@ -5,6 +5,7 @@ export {
   type MainVideo,
   type MediaKind,
   type Rendition,
+  type RenditionSize,
   type SourceOptions,
   type VideoEncoding,
   type VideoEncodingOptions

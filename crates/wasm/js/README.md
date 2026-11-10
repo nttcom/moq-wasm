@@ -122,8 +122,13 @@ const camera = await local.addSource('camera', {
   // `width` and `height` bound the size, `framerate` skips faster frames.
   main: { width: 1920, height: 1080, bitrate: 2_500_000, framerate: 30 },
   // Each rendition is the track `camera_<name>`, encoded from the same frames
-  // with the same keyframes. `framerate` defaults to the main video's.
-  renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000, framerate: 15 }]
+  // with the same keyframes. Its size is bounded by `width` and `height`, or
+  // the captured frame's divided by `scaleResolutionDownBy`. `framerate`
+  // defaults to the main video's.
+  renditions: [
+    { name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 },
+    { name: 'low', label: 'Low', scaleResolutionDownBy: 4, bitrate: 150_000, framerate: 15 }
+  ]
 })
 preview.srcObject = camera.stream // the tracks the source publishes
 

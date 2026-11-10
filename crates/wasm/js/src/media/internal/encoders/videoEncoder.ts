@@ -5,7 +5,12 @@ import { EncoderWarmUp } from './encoderWarmUp'
 import { fitEncodeSize } from './encodeSize'
 import { FrameRateLimit } from './frameRateLimit'
 import { KeyframeSchedule } from './keyframeSchedule'
-import { DEFAULT_KEYFRAME_INTERVAL_SECONDS, videoEncoderConfig, type VideoEncoderSettings } from './videoEncoderConfig'
+import {
+  DEFAULT_KEYFRAME_INTERVAL_SECONDS,
+  type RenditionEncoderConfig,
+  videoEncoderConfig,
+  type VideoEncoderSettings
+} from './videoEncoderConfig'
 import { workerLog } from '../../../core/log'
 
 const TARGET = 'moq-wasm::media::video_encoder'
@@ -32,17 +37,19 @@ class Rendition {
   private warmUpDecoderConfig: VideoDecoderConfig | undefined
   readonly captureTimestamps = new CaptureTimestamps()
   config = videoEncoderConfig()
+  private scaleResolutionDownBy: number | undefined
   frameRateLimit: FrameRateLimit | undefined
 
   constructor(
     readonly index: number,
-    config: Partial<VideoEncoderConfig>
+    config: RenditionEncoderConfig
   ) {
     this.setConfig(config)
   }
 
-  setConfig(config: Partial<VideoEncoderConfig>): void {
+  setConfig({ scaleResolutionDownBy, ...config }: RenditionEncoderConfig): void {
     this.config = videoEncoderConfig(config)
+    this.scaleResolutionDownBy = scaleResolutionDownBy
     this.frameRateLimit = frameRateLimit(this.config, config)
     this.configuredFrameSize = null
   }
@@ -110,7 +117,10 @@ class Rendition {
   }
 
   private configFor(frame: VideoFrame): VideoEncoderConfig {
-    const size = fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight })
+    const size = fitEncodeSize(
+      { width: this.config.width, height: this.config.height, scaleResolutionDownBy: this.scaleResolutionDownBy },
+      { width: frame.displayWidth, height: frame.displayHeight }
+    )
     const codec = avcCodecForSize(this.config.codec, size, this.config.framerate ?? 30)
     return { ...this.config, ...size, codec }
   }
@@ -280,7 +290,7 @@ self.onmessage = async (event) => {
   } else if (event.data.type === 'encoderConfig') {
     renditions[0].setConfig(event.data.config)
   } else if (event.data.type === 'renditionConfigs') {
-    const configs: Partial<VideoEncoderConfig>[] = event.data.configs
+    const configs: RenditionEncoderConfig[] = event.data.configs
     renditions = [renditions[0], ...configs.map((config, index) => new Rendition(index + 1, config))]
   } else if (event.data.type === 'videoStream') {
     const videoReadableStream: ReadableStream<VideoFrame> = event.data.videoStream

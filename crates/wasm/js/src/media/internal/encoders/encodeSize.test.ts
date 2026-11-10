@@ -50,3 +50,20 @@ test('a requested height alone bounds the size', () => {
   // Act / Assert
   expect(fitEncodeSize({ height: 720 }, { width: 2560, height: 1440 })).toEqual({ width: 1280, height: 720 })
 })
+
+test('a scale divides the frame size, whatever its aspect ratio', () => {
+  // Act / Assert
+  expect(fitEncodeSize({ scaleResolutionDownBy: 4 }, { width: 1280, height: 720 })).toEqual({ width: 320, height: 180 })
+  expect(fitEncodeSize({ scaleResolutionDownBy: 4 }, { width: 3024, height: 1890 })).toEqual({
+    width: 756,
+    height: 472
+  })
+})
+
+test('a scale below 1 does not scale the frame up', () => {
+  // Act / Assert
+  expect(fitEncodeSize({ scaleResolutionDownBy: 0.5 }, { width: 640, height: 360 })).toEqual({
+    width: 640,
+    height: 360
+  })
+})
