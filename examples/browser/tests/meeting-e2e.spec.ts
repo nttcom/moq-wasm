@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Browser, type Page } from '@playwright/test'
 import {
   MEETING_JWT,
   arrangeMeetingClient,
@@ -459,10 +459,12 @@ test('a viewer switches a member camera between renditions on the same picture',
   }
 })
 
-test('Auto follows the size of a member tile when the view changes', async ({ browser }) => {
-  // Arrange: bob publishes 640x360 and 320x180, a filmstrip tile is 126 px tall, and carol speaks so she takes the focus
+// bob publishes 640x360 and 320x180, a filmstrip tile is 126 px tall, and carol speaks so she takes the focus;
+// alice plays bob in the gallery at 640x360. VP8 starts a group only every 30 s or on request, while the H.264
+// encoder of the test browser starts one every few seconds on its own.
+async function arrangeTileSizeRoom(browser: Browser, roomPrefix: string) {
   const params = {
-    e2eVideoCodec: 'avc1.42001F',
+    e2eVideoCodec: 'vp8',
     e2eVideoWidth: '640',
     e2eVideoHeight: '360',
     e2eVideoLowHeight: '180',
@@ -471,9 +473,13 @@ test('Auto follows the size of a member tile when the view changes', async ({ br
   const alice = await arrangeMeetingClient(browser, { params })
   const bob = await arrangeMeetingClient(browser, { params })
   const carol = await arrangeMeetingClient(browser, { params })
-
+  const close = async () => {
+    await alice.context.close()
+    await bob.context.close()
+    await carol.context.close()
+  }
   try {
-    const roomName = `e2e-tile-size-${Date.now()}`
+    const roomName = `${roomPrefix}-${Date.now()}`
     await joinRoom(alice.page, roomName, 'alice', 'a')
     await joinRoom(bob.page, roomName, 'bob', 'a')
     await enableMedia(bob.page)
@@ -483,22 +489,58 @@ test('Auto follows the size of a member tile when the view changes', async ({ br
     const bobVideo = getMemberVideo(alice.page.page, 'bob')
     await expect.poll(async () => videoWidth(bobVideo), { timeout: 30_000 }).toBe(640)
     await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    return { viewer: alice.page.page, bobVideo, close }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
 
+test('Auto follows the size of a member tile when the view changes', async ({ browser }) => {
+  // Arrange
+  const { viewer, bobVideo, close } = await arrangeTileSizeRoom(browser, 'e2e-tile-size')
+
+  try {
     // Act
-    await alice.page.page.getByTestId('stage-view-button').click()
+    await viewer.getByTestId('stage-view-button').click()
 
     // Assert: bob's filmstrip tile is shorter than 180 px, so Auto drops him to 320x180
     await expect.poll(async () => videoWidth(bobVideo), { timeout: 20_000 }).toBe(320)
 
     // Act
-    await alice.page.page.getByTestId('stage-view-button').click()
+    await viewer.getByTestId('stage-view-button').click()
 
     // Assert: the gallery tile raises the ceiling and Auto takes it without the calm spell of a network step up
     await expect.poll(async () => videoWidth(bobVideo), { timeout: 8_000 }).toBe(640)
   } finally {
-    await alice.context.close()
-    await bob.context.close()
-    await carol.context.close()
+    await close()
+  }
+})
+
+test('Auto follows a tile resized long after its last switch, though the publisher keyframes every 30 seconds', async ({
+  browser
+}) => {
+  // Arrange: bob drops to 320x180, then plays past the up to 11 s of new-group requests that switch sends, so his next group comes only with the 30 s keyframe
+  const { viewer, bobVideo, close } = await arrangeTileSizeRoom(browser, 'e2e-tile-size-later')
+
+  try {
+    await viewer.getByTestId('stage-view-button').click()
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 20_000 }).toBe(320)
+    await viewer.waitForTimeout(12_000)
+
+    // Act
+    await viewer.getByTestId('stage-view-button').click()
+
+    // Assert: Auto takes 640x360 though the switch to 320x180 has not retired the outgoing rendition
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 8_000 }).toBe(640)
+
+    // Act
+    await viewer.getByTestId('stage-view-button').click()
+
+    // Assert: Auto drops to 320x180 while the switch to 640x360 still waits to retire 320x180
+    await expect.poll(async () => videoWidth(bobVideo), { timeout: 8_000 }).toBe(320)
+  } finally {
+    await close()
   }
 })
 
