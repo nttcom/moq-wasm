@@ -4,7 +4,7 @@ import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../../utils/relayPresets'
 import { offeredVersions } from '../../../utils/moqtVersion'
-import { buildVideoEncoderConfig } from '../../media/videoEncoderConfig'
+import { buildVideoEncoding } from '../../media/videoEncoding'
 import { generateBroadcastId } from '../broadcastId'
 import { type BroadcastAccess, openBroadcastAccess, viewerUrl } from '../liveTranslate'
 
@@ -53,7 +53,7 @@ async function startBroadcast(): Promise<void> {
     await broadcast.addSource('camera', {
       label: 'Camera',
       stream: mediaStream,
-      videoEncoderConfig: buildVideoEncoderConfig(mediaStream)
+      ...buildVideoEncoding(mediaStream)
     })
     setStatusText(
       'streamer-status',

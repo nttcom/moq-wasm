@@ -7,6 +7,7 @@ import {
   type MediaKind,
   type SourceEncoding,
   type SourceOptions,
+  type VideoEncodingOptions,
   publishSource,
   videoBitrate
 } from './internal/encoders/sourceEncoding'
@@ -28,7 +29,8 @@ export type LocalBroadcastOptions = {
 export type TrackInput = true | MediaTrackConstraints | MediaStreamTrack
 
 export type SourceInput = Omit<SourceOptions, 'videoLabel'> & {
-  /// The video's label in the catalog; the source name when omitted.
+  /// The source's label in the catalog: the video's, and the audio's followed
+  /// by ` audio`. The source name when omitted.
   label?: string
   video?: TrackInput
   audio?: TrackInput
@@ -66,8 +68,10 @@ export interface LocalSource {
   /// after `setVideo(false)`: the track leaves the catalog.
   setMuted(kind: MediaKind, muted: boolean): Promise<void>
   isMuted(kind: MediaKind): boolean
-  /// Restarts the video encoder with `config`; see `SourceOptions.videoEncoderConfig`.
-  setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void
+  /// Restarts the video's and the renditions' encoders with `options`, which
+  /// replace the source's `encoding` and `main`. The catalog keeps the bitrate
+  /// the source was published with.
+  setVideoEncoding(options: VideoEncodingOptions): void
   /// What the source's encoders output over the last second, and the frames
   /// they dropped and their failures since it was published.
   stats(): SourcePublicationStats
@@ -332,8 +336,8 @@ class Source implements LocalSource {
     return this.encoding.isMuted(kind)
   }
 
-  setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void {
-    this.encoding.setVideoEncoderConfig(config)
+  setVideoEncoding(options: VideoEncodingOptions): void {
+    this.encoding.setVideoEncoding(options)
   }
 
   stats(): SourcePublicationStats {

@@ -2,31 +2,56 @@ import type { MediaSource } from '../../../../pkg/moqt'
 import type { AudioLevel } from '../loc'
 import { capturePcm } from './pcmCapture'
 import { EncoderTimeline } from './encoderTimeline'
-import { defaultKeyframeIntervalFrames, videoEncoderConfig } from './videoEncoderConfig'
+import { DEFAULT_KEYFRAME_INTERVAL_SECONDS, videoEncoderConfig } from './videoEncoderConfig'
 import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
 import { type LogSession, receiveWorkerLog } from '../../../core/log'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
   videoLabel?: string
-  /// Frames between keyframes; each keyframe starts a group. By default, the
-  /// frames of 30 seconds at the encoder's frame rate: a viewer that joins or
-  /// switches rendition asks for a keyframe instead of waiting for the next.
-  keyframeIntervalFrames?: number
-  /// Fields set here replace the encoder's defaults (H.264, 1 Mbps, 30 fps,
-  /// `latencyMode: 'realtime'`) for the video and its renditions. The
-  /// broadcast takes H.264, VP8, VP9 and AV1. `width` and `height` bound the
-  /// encoded size: a frame keeps its aspect ratio and is never scaled up.
-  /// Without them a frame is encoded at its own size.
-  videoEncoderConfig?: Partial<VideoEncoderConfig>
-  /// Renditions of the video, each in the track `<video track>_<name>` and
+  /// How the video and its renditions are encoded.
+  encoding?: VideoEncoding
+  /// The video in the track `<source>`.
+  main?: MainVideo
+  /// Renditions of the video, each in the track `<source>_<name>` and
   /// encoded from the video's frames.
   renditions?: Rendition[]
 }
 
+/// Encoder settings shared by the video and its renditions.
+export type VideoEncoding = {
+  /// A WebCodecs codec string; `avc1.640028` (H.264 High) by default. The
+  /// broadcast takes H.264, VP8, VP9 and AV1. The H.264 level is raised to the
+  /// lowest one that holds each track's encoded size and frame rate.
+  codec?: string
+  /// Seconds between keyframes; each keyframe starts a group. 30 by default:
+  /// a viewer that joins or switches rendition asks for a keyframe instead of
+  /// waiting for the next. The video and its renditions take their keyframes
+  /// on the same frames.
+  keyframeIntervalSeconds?: number
+  /// `prefer-hardware` by default.
+  hardwareAcceleration?: HardwareAcceleration
+}
+
+/// `width` and `height` bound the encoded size: a frame keeps its aspect ratio
+/// and is never scaled up. Without them a frame is encoded at its own size.
+export type MainVideo = {
+  width?: number
+  height?: number
+  /// Bits per second; 1 Mbps by default.
+  bitrate?: number
+  /// The encoder's frame rate, 30 by default, clamped to 1–120. The renditions
+  /// take it too.
+  framerate?: number
+}
+
+/// The fields of `SourceOptions` `setVideoEncoding` replaces.
+export type VideoEncodingOptions = Pick<SourceOptions, 'encoding' | 'main'>
+
 export type Rendition = {
   name: string
   label: string
+  /// Bound the encoded size like `MainVideo.width` and `height`.
   width: number
   height: number
   /// Bits per second.
@@ -54,11 +79,11 @@ export type SourceEncoding = {
   setMuted(kind: MediaKind, muted: boolean): Promise<void>
   /// A muted kind stays muted. Does nothing once the source is closed.
   replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
-  /// Restarts the video encoder with `config` and the renditions' encoders
-  /// with its codec. A muted video takes it when unmuted. The catalog keeps the
-  /// bitrate the source was published with. Does nothing once the source
-  /// is closed.
-  setVideoEncoderConfig(config: Partial<VideoEncoderConfig>): void
+  /// Restarts the video's and the renditions' encoders with `options`, which
+  /// replace the source's `encoding` and `main`. A muted video takes them when
+  /// unmuted. The catalog keeps the bitrate the source was published with.
+  /// Does nothing once the source is closed.
+  setVideoEncoding(options: VideoEncodingOptions): void
   /// What the source's encoders output over the last second, and the frames
   /// they dropped and their failures since it was published.
   stats(): SourcePublicationStats
@@ -72,7 +97,15 @@ export type SourceEncoding = {
 }
 
 export function videoBitrate(options: SourceOptions): number | undefined {
-  return videoEncoderConfig(options.videoEncoderConfig).bitrate
+  return videoEncoderConfig(mainEncoderConfig(options)).bitrate
+}
+
+/// The WebCodecs fields of the video's encoder. The keyframe interval is not
+/// one: the worker applies it itself.
+function mainEncoderConfig({ encoding = {}, main = {} }: SourceOptions): Partial<VideoEncoderConfig> {
+  const { codec, hardwareAcceleration } = encoding
+  const { width, height, bitrate, framerate } = main
+  return { codec, framerate, hardwareAcceleration, width, height, bitrate }
 }
 
 /// `addSource` adds the source to the broadcast with the callback it is given,
@@ -158,15 +191,15 @@ export function publishSource(
         encoding.encoder = encode(kind, track)
       }
     },
-    setVideoEncoderConfig: (config) => {
+    setVideoEncoding: ({ encoding, main }) => {
       if (closed) {
         return
       }
-      options = { ...options, videoEncoderConfig: config }
-      const encoding = kinds.get('video')
-      if (encoding?.track && !encoding.muted) {
-        encoding.encoder?.stop()
-        encoding.encoder = encode('video', encoding.track)
+      options = { ...options, encoding, main }
+      const video = kinds.get('video')
+      if (video?.track && !video.muted) {
+        video.encoder?.stop()
+        video.encoder = encode('video', video.track)
       }
     },
     removeTrack: (kind, track) =>
@@ -260,23 +293,17 @@ function encodeVideo(
       report(error)
     }
   }
+  const config = mainEncoderConfig(options)
   worker.postMessage({
     type: 'keyframeInterval',
-    keyframeInterval: options.keyframeIntervalFrames ?? defaultKeyframeIntervalFrames(options.videoEncoderConfig)
+    keyframeIntervalMicros: (options.encoding?.keyframeIntervalSeconds ?? DEFAULT_KEYFRAME_INTERVAL_SECONDS) * 1_000_000
   })
   const forceKeyframe = () => worker.postMessage({ type: 'forceKeyframe' })
-  if (options.videoEncoderConfig) {
-    worker.postMessage({ type: 'encoderConfig', config: options.videoEncoderConfig })
-  }
+  worker.postMessage({ type: 'encoderConfig', config })
   if (options.renditions?.length) {
     worker.postMessage({
       type: 'renditionConfigs',
-      configs: options.renditions.map(({ width, height, bitrate }) => ({
-        ...options.videoEncoderConfig,
-        width,
-        height,
-        bitrate
-      }))
+      configs: options.renditions.map(({ width, height, bitrate }) => ({ ...config, width, height, bitrate }))
     })
   }
   if (typeof MediaStreamTrackProcessor === 'function') {

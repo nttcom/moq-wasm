@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Breaking: `addSource()` takes the video's encoder settings in `encoding`,
+  shared by the video and its renditions (`codec`,
+  `keyframeIntervalSeconds`, `hardwareAcceleration`), and `main`, the track
+  `<source>` (`width`, `height`, `bitrate`, `framerate`), instead of
+  `videoEncoderConfig` and `keyframeIntervalFrames`. The keyframe interval is
+  in seconds of the frames' timestamps instead of in captured frames.
+  `LocalSource.setVideoEncoderConfig()` is
+  `setVideoEncoding({ encoding, main })`. Other `VideoEncoderConfig` fields
+  are no longer taken: the SDK always encodes with `latencyMode: 'realtime'`
+  and `scalabilityMode: 'L1T1'`.
+
+  ```ts
+  // Before
+  addSource('camera', {
+    keyframeIntervalFrames: 60,
+    videoEncoderConfig: { codec, width, height, bitrate, framerate: 30 }
+  })
+  // After
+  addSource('camera', {
+    encoding: { codec, keyframeIntervalSeconds: 2 },
+    main: { width, height, bitrate, framerate: 30 }
+  })
+  ```
+
 ## 0.4.4
 
 - `addSource()` encodes a keyframe every 30 seconds by default instead of

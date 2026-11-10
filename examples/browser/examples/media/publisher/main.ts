@@ -1,7 +1,7 @@
 import { MoqSession } from 'moq-wasm'
 import { connectOptions } from '../../../utils/access'
 import { type LocalBroadcast, type LocalSource, createBroadcast } from 'moq-wasm/media'
-import { buildVideoEncoderConfig } from '../videoEncoderConfig'
+import { buildVideoEncoding } from '../videoEncoding'
 import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
@@ -64,7 +64,7 @@ async function startPublishing(): Promise<void> {
   camera = await broadcast.addSource('camera', {
     label: 'Camera',
     stream: mediaStream,
-    videoEncoderConfig: buildVideoEncoderConfig(mediaStream),
+    ...buildVideoEncoding(mediaStream),
     renditions: [{ name: 'low', label: 'Low', width: 320, height: 180, bitrate: 150_000 }]
   })
   setStatusText('publisher-send-status', `Publishing started: ${namespace.join('/')}`)
@@ -92,7 +92,7 @@ async function toggleScreenShare(): Promise<void> {
   screenShare = await broadcast.addSource('screen', {
     label: 'Screen',
     display: true,
-    videoEncoderConfig: buildVideoEncoderConfig(new MediaStream())
+    ...buildVideoEncoding(new MediaStream())
   })
   // The browser's own stop button ends the capture without a click here.
   screenShare.listen({

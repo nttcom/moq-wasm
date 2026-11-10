@@ -111,18 +111,23 @@ const local = await createBroadcast(session, ['room', 'alice'], { onError: conso
 
 // The SDK captures the devices: true, or constraints such as a deviceId.
 const camera = await local.addSource('camera', {
+  // The label of the video, and of the audio followed by " audio".
   label: 'Camera',
   video: { deviceId: cameraId },
   audio: true,
-  // Replaces the encoder's defaults: H.264, 1 Mbps, 30 fps, the frame's own size.
+  // Shared by the video and its renditions. Defaults: H.264, a keyframe every
+  // 30 seconds on the same frames in every track.
+  encoding: { codec: 'av01.0.08M.08', keyframeIntervalSeconds: 10 },
+  // The track `camera`. Defaults: 1 Mbps, 30 fps, the frame's own size;
   // `width` and `height` bound the size.
-  videoEncoderConfig: { codec: 'av01.0.08M.08', bitrate: 2_500_000 },
+  main: { width: 1920, height: 1080, bitrate: 2_500_000, framerate: 30 },
   // Each rendition is the track `camera_<name>`, encoded from the same frames.
   renditions: [{ name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 }]
 })
 preview.srcObject = camera.stream // the tracks the source publishes
 
 await camera.setVideo({ deviceId: otherCameraId }) // switch the device
+await camera.setVideoEncoding({ encoding: { codec: 'vp8' }, main: { bitrate: 1_000_000 } })
 await camera.setMuted('audio', true) // stop sending, keep the device
 await camera.setVideo(false) // stop sending and release the device
 

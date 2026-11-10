@@ -3,15 +3,15 @@ import { avcCodecForSize } from './avcLevel'
 import { CaptureTimestamps } from './captureTimestamps'
 import { EncoderWarmUp } from './encoderWarmUp'
 import { fitEncodeSize } from './encodeSize'
-import { videoEncoderConfig, type VideoEncoderSettings } from './videoEncoderConfig'
+import { KeyframeSchedule } from './keyframeSchedule'
+import { DEFAULT_KEYFRAME_INTERVAL_SECONDS, videoEncoderConfig, type VideoEncoderSettings } from './videoEncoderConfig'
 import { workerLog } from '../../../core/log'
 
 const TARGET = 'moq-wasm::media::video_encoder'
 
 /// The track a `videoTrack` message transferred; `stop` stops it.
 let capturedTrack: MediaStreamTrack | undefined
-// Default keeps periodic keyframes alive even before the first keyframeInterval message.
-let keyframeInterval: number = 30
+const keyframeSchedule = new KeyframeSchedule(DEFAULT_KEYFRAME_INTERVAL_SECONDS * 1_000_000)
 let forceNextKeyframe = false
 
 /// One encoder of the stream's frames. Rendition 0 takes `encoderConfig`;
@@ -172,7 +172,7 @@ async function initializeEncoders(frame: VideoFrame): Promise<boolean> {
 }
 
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
-  let frameCounter = 0
+  keyframeSchedule.reset()
   const warmUp = new EncoderWarmUp((error) => workerLog('warn', TARGET, 'encoder warm-up failed', { error }))
   for (const rendition of renditions) {
     if (rendition.encoder && rendition.encoder.state !== 'closed') {
@@ -201,7 +201,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       if (started) {
         workerLog('info', TARGET, 'encoders re-initializing')
       }
-      frameCounter = 0
+      keyframeSchedule.reset()
       const initialized = await initializeEncoders(videoFrame)
       if (!initialized && !started) {
         videoFrame.close()
@@ -236,24 +236,19 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     for (const rendition of renditions) {
       reconfigured = rendition.configureForFrame(videoFrame) || reconfigured
     }
-    const forced = forceNextKeyframe || reconfigured
-    const keyFrame = forced || frameCounter % keyframeInterval === 0
-    if (forced) {
-      forceNextKeyframe = false
-      frameCounter = 0
-    }
+    const keyFrame = keyframeSchedule.isKeyframe(videoFrame.timestamp, forceNextKeyframe || reconfigured)
+    forceNextKeyframe = false
     for (const rendition of renditions) {
       rendition.captureTimestamps.recordCapture(videoFrame.timestamp)
       rendition.encoder?.encode(videoFrame, { keyFrame })
     }
-    frameCounter++
     videoFrame.close()
   }
 }
 
 self.onmessage = async (event) => {
   if (event.data.type === 'keyframeInterval') {
-    keyframeInterval = event.data.keyframeInterval
+    keyframeSchedule.intervalMicros = event.data.keyframeIntervalMicros
   } else if (event.data.type === 'forceKeyframe') {
     forceNextKeyframe = true
   } else if (event.data.type === 'encoderConfig') {

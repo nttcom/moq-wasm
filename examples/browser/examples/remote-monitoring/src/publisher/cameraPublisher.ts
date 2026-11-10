@@ -4,14 +4,11 @@ import { type CameraId, type VideoSource } from '../types/monitoring'
 
 const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
-const VIDEO_CONFIG = {
+const VIDEO_ENCODING = {
   codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
-  width: 1280,
-  height: 720,
-  bitrate: 1_000_000,
-  framerate: 30,
   hardwareAcceleration: 'prefer-hardware' as const
 }
+const MAIN_VIDEO = { width: 1280, height: 720, bitrate: 1_000_000, framerate: 30 }
 
 const CAM_COLORS: Record<CameraId, string> = {
   cam01: '#7a1a1a',
@@ -32,11 +29,11 @@ export class CameraPublisher {
   ) {}
 
   async start(session: MoqSession, namespace: string[]): Promise<MediaStream> {
-    let encoderConfig: typeof VIDEO_CONFIG | typeof this.SYNTHETIC_CONFIG = VIDEO_CONFIG
+    let encoding: typeof VIDEO_ENCODING | typeof this.SYNTHETIC_ENCODING = VIDEO_ENCODING
 
     if (this.source.type === 'synthetic') {
       this.stream = this.startSyntheticCamera()
-      encoderConfig = this.SYNTHETIC_CONFIG
+      encoding = this.SYNTHETIC_ENCODING
     } else if (this.source.type === 'camera') {
       this.stream = await this.startRealCamera()
     } else {
@@ -51,19 +48,20 @@ export class CameraPublisher {
     await this.broadcast.addSource('camera', {
       label: this.camId,
       video: this.stream.getVideoTracks()[0],
-      videoEncoderConfig: encoderConfig
+      encoding,
+      main: MAIN_VIDEO
     })
     log('publishing', { camId: this.camId, source: this.source.type, namespace })
     return this.stream
   }
 
   // Canvas outputs BGRA frames. Switch to prefer-software to avoid HW encoder issues with BGRA.
-  private readonly SYNTHETIC_CONFIG = { ...VIDEO_CONFIG, hardwareAcceleration: 'prefer-software' as const }
+  private readonly SYNTHETIC_ENCODING = { ...VIDEO_ENCODING, hardwareAcceleration: 'prefer-software' as const }
 
   private startSyntheticCamera(): MediaStream {
     const canvas = document.createElement('canvas')
-    canvas.width = VIDEO_CONFIG.width
-    canvas.height = VIDEO_CONFIG.height
+    canvas.width = MAIN_VIDEO.width
+    canvas.height = MAIN_VIDEO.height
     const ctx = canvas.getContext('2d')!
     const bg = CAM_COLORS[this.camId] ?? '#333'
 
@@ -101,14 +99,14 @@ export class CameraPublisher {
       ctx.fill()
     }
     draw()
-    this.rafId = setInterval(draw, 1000 / VIDEO_CONFIG.framerate) as unknown as number
+    this.rafId = setInterval(draw, 1000 / MAIN_VIDEO.framerate) as unknown as number
 
-    return canvas.captureStream(VIDEO_CONFIG.framerate)
+    return canvas.captureStream(MAIN_VIDEO.framerate)
   }
 
   private async startRealCamera(): Promise<MediaStream> {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: VIDEO_CONFIG.width, height: VIDEO_CONFIG.height, frameRate: VIDEO_CONFIG.framerate },
+      video: { width: MAIN_VIDEO.width, height: MAIN_VIDEO.height, frameRate: MAIN_VIDEO.framerate },
       audio: false
     })
     const settings = stream.getVideoTracks()[0].getSettings()
