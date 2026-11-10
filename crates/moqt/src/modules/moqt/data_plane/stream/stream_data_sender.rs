@@ -94,6 +94,23 @@ impl<S> StreamDataSender<S> {
         Ok(())
     }
 
+    /// Fails only when no stream took the priority. A stream that did not
+    /// take it fails at its next send.
+    pub async fn set_priority(&self, priority: StreamPriority) -> anyhow::Result<()> {
+        let priority = priority.transport_priority();
+        let mut results = Vec::with_capacity(self.streams.len());
+        for stream in &self.streams {
+            results.push(
+                stream
+                    .stream_sender
+                    .set_priority(priority)
+                    .await
+                    .map_err(Into::into),
+            );
+        }
+        any_sent(results)
+    }
+
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &self.streams {
@@ -114,23 +131,6 @@ impl StreamDataSender<Uninitialized> {
             payload_remaining: 0,
             _state: PhantomData,
         }
-    }
-
-    /// Fails only when no stream took the priority; a stream that did not
-    /// fails at its next send.
-    pub async fn set_priority(&self, priority: StreamPriority) -> anyhow::Result<()> {
-        let priority = priority.transport_priority();
-        let mut results = Vec::with_capacity(self.streams.len());
-        for stream in &self.streams {
-            results.push(
-                stream
-                    .stream_sender
-                    .set_priority(priority)
-                    .await
-                    .map_err(Into::into),
-            );
-        }
-        any_sent(results)
     }
 
     /// Sends the header of the subgroup `start` describes and returns the
