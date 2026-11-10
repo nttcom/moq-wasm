@@ -17,7 +17,8 @@ import {
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
-/// The first run compiles the recorder unless CI built it beforehand.
+/// Built by the runner that starts the relay.
+const RECORDER_BINARY = join(REPO_ROOT, 'target', 'debug', 'recorder')
 const RECORDER_START_TIMEOUT_MS = 180_000
 const RECORDER_SERVE_PORT = Number(process.env.RECORDER_E2E_PORT ?? 8096)
 /// The recording job checks for a stop every 5 s, then waits up to 10 s for the participants' tracks to end.
@@ -36,13 +37,8 @@ export interface RecordingManifest {
 export async function recordFromCache(namespace: string, liveSeconds: number): Promise<string> {
   const output = join(tmpdir(), `moqt-recorder-e2e-${process.pid}-${Date.now()}.mp4`)
   const recorder = spawn(
-    'cargo',
+    RECORDER_BINARY,
     [
-      'run',
-      '-q',
-      '-p',
-      'recorder',
-      '--',
       '--relay',
       liveViewerE2EConfig.moqtUrl,
       '--insecure-skip-tls-verify',
@@ -103,13 +99,8 @@ async function startRecorderServe() {
   const dir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
   const storeDir = join(dir, 'store')
   const recorder = spawn(
-    'cargo',
+    RECORDER_BINARY,
     [
-      'run',
-      '-q',
-      '-p',
-      'recorder',
-      '--',
       'serve',
       '--listen',
       `127.0.0.1:${RECORDER_SERVE_PORT}`,

@@ -20,6 +20,7 @@ import {
 } from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
+  buildBinaries,
   buildLiveIngestFfmpegArgs,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
@@ -64,9 +65,15 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
+    // The recorder specs run target/debug/recorder.
+    const [relayBinary, liveIngestBinary] = buildBinaries([
+      "relay",
+      "live-ingest",
+      "recorder",
+    ]);
     const vts = await startVts();
     childProcesses.push(vts);
-    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
+    const server = spawnProcess("server", relayBinary, [], {
       cwd: repoRoot,
       env: { ...process.env, ...nativeRelayEnv() },
     });
@@ -87,12 +94,8 @@ async function main() {
     );
     const bridge = spawnProcess(
       "live-ingest",
-      "cargo",
+      liveIngestBinary,
       [
-        "run",
-        "-p",
-        "live-ingest",
-        "--",
         "--rtmp-addr",
         rtmpAddress,
         "--srt-addr",

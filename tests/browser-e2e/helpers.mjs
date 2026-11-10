@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { createSocket } from "node:dgram";
@@ -22,6 +23,18 @@ function assertPathExists(path, label, helpText) {
     const suffix = helpText ? ` ${helpText}` : "";
     throw new Error(`${label} not found: ${path}.${suffix}`.trim());
   }
+}
+
+/// One cargo invocation: a build per package resolves the features of the
+/// dependencies they share for that package alone, and compiles `moqt` again
+/// for each.
+export function buildBinaries(packages) {
+  execFileSync(
+    "cargo",
+    ["build", ...packages.flatMap((name) => ["-p", name])],
+    { cwd: repoRoot, stdio: "inherit" },
+  );
+  return packages.map((name) => resolve(repoRoot, "target", "debug", name));
 }
 
 export function assertE2EPrerequisites() {
