@@ -14,7 +14,7 @@ gstreamer-app = "0.25"
 moqt = { path = "../../crates/moqt" }
 mediapack = { path = "../../crates/mediapack" }
 rand = "0.10.1"
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls"] }
+reqwest = { version = "0.13.4", default-features = false }
 http-client = { path = "../../crates/http-client" }
 roxmltree = "0.21.1"
 serde = { version = "1.0.228", features = ["derive"] }

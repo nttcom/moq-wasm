@@ -16,7 +16,7 @@ bytes = "1"
 opentelemetry = { version = "0.33.1", features = ["trace"] }
 tracing-opentelemetry = "0.34.0"
 redis = { version = "1.2.2", features = ["tokio-comp", "connection-manager"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 http-client = { path = "../../crates/http-client" }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2"

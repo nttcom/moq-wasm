@@ -247,6 +247,8 @@ fn build_meter_provider(resource: Resource, protocol: OtlpProtocol) -> Result<Sd
 /// Fails when a subscriber is already installed, `OTEL_EXPORTER_OTLP_PROTOCOL`
 /// is unsupported, or an OTLP exporter cannot be built.
 pub fn init(config: TelemetryConfig) -> Result<TelemetryGuard> {
+    http_client::install_crypto_provider();
+
     let writer = match config.log_output {
         LogOutput::Stdout => BoxMakeWriter::new(std::io::stdout),
         LogOutput::Stderr => BoxMakeWriter::new(std::io::stderr),

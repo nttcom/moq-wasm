@@ -38,13 +38,18 @@ holding them in memory.
 
 ## Decision
 
-Use `object_store` with `default-features = false, features = ["fs", "gcp"]`.
+Use `object_store` with `default-features = false, features = ["fs", "gcp-base", "reqwest", "ring"]`:
+the `gcp` feature is the same set with `aws-lc-rs` in place of `ring`, and
+`aws-lc-rs` would bring the `aws-lc-sys` C build into the workspace (see
+`docs/architecture/http-client/architecture.md`).
 `fs` adds `LocalFileSystem` for `file://` URLs, so a recorder run locally keeps
 the same object layout in a directory without a bucket; it adds `walkdir` and
 `nix` to the lock file. Its
 `ObjectStore` trait is the seam: the recorder holds an `Arc<dyn ObjectStore>`
-built from the `--upload` URL, so S3 needs the `aws` feature and an `s3://`
+built from the `--upload` URL, so S3 needs the `aws-base` feature and an `s3://`
 URL, and no recorder code of its own. Credentials are read from the
 environment: a service account file, the ADC file, or the GCE metadata server
-when neither is present. The crate uses `reqwest` 0.13 and `aws-lc-rs`, both
-already in the workspace's lock file.
+when neither is present. The crate uses `reqwest` 0.13 and `ring`, both
+already in the workspace's lock file; it builds its own `reqwest` client, so
+the recorder installs the crypto provider with
+`http_client::install_crypto_provider` before it parses the URL.

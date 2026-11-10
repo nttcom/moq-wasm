@@ -19,7 +19,7 @@ mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 metadata-token = { path = "../../crates/metadata-token" }
 moqt = { path = "../../crates/moqt" }
 msf = { path = "../../crates/msf" }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 http-client = { path = "../../crates/http-client" }
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-native-certs = "0.8.4"

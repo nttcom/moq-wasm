@@ -1,3 +1,5 @@
+# reqwest panics when it builds a client before a rustls crypto provider is
+# installed; http-client installs ring first.
 disallowed-methods = [
     { path = "reqwest::Client::new", reason = "use http_client::client()" },
     { path = "reqwest::Client::builder", reason = "use http_client::builder()" },

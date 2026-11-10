@@ -16,8 +16,8 @@ hyper-util = { version = "0.1.20", features = ["tokio"] }
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
 msf = { path = "../../crates/msf" }
-object_store = { version = "0.14.2", default-features = false, features = ["fs", "gcp"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+object_store = { version = "0.14.2", default-features = false, features = ["fs", "gcp-base", "reqwest", "ring"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 http-client = { path = "../../crates/http-client" }
 serde_json = "1"
 sha2 = "0.9"

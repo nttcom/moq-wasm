@@ -13,7 +13,7 @@ http-body-util = "0.1.4"
 http-server = { path = "../../crates/http-server" }
 hyper = { version = "1.10.1", features = ["http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 http-client = { path = "../../crates/http-client" }
 ring = "0.17.14"
 serde = { version = "1.0.228", features = ["derive"] }
