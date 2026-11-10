@@ -48,12 +48,12 @@ class Rendition {
       const supported = await VideoEncoder.isConfigSupported(config)
       if (!supported.supported) {
         workerLog('error', TARGET, 'encoder config unsupported', { config, rendition: this.index })
-        self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
+        this.postConfigError('unsupported', config)
         return false
       }
     } catch (e) {
       workerLog('error', TARGET, 'encoder config support check failed', { error: e, config, rendition: this.index })
-      self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
+      this.postConfigError('unsupported', config, e)
       return false
     }
     const encoder = new VideoEncoder(init)
@@ -61,7 +61,7 @@ class Rendition {
       encoder.configure(config)
     } catch (e) {
       workerLog('error', TARGET, 'encoder configure failed', { error: e, config, rendition: this.index })
-      self.postMessage({ type: 'configError', reason: 'unsupported', config, rendition: this.index })
+      this.postConfigError('unsupported', config, e)
       return false
     }
     this.encoder = encoder
@@ -85,10 +85,16 @@ class Rendition {
       this.encoder.configure(config)
     } catch (e) {
       workerLog('error', TARGET, 'encoder reconfigure failed', { error: e, config, rendition: this.index })
-      self.postMessage({ type: 'configError', reason: 'reconfigure_failed', config, rendition: this.index })
+      this.postConfigError('reconfigure_failed', config, e)
       return false
     }
     return true
+  }
+
+  private postConfigError(reason: 'unsupported' | 'reconfigure_failed', config: VideoEncoderConfig, error?: unknown) {
+    const cause = error === undefined ? '' : `: ${error instanceof Error ? error.message : String(error)}`
+    const message = `${reason} ${config.codec} ${config.width}x${config.height} at ${config.framerate} fps${cause}`
+    self.postMessage({ type: 'configError', reason, message, config, rendition: this.index })
   }
 
   private configFor(frame: VideoFrame): VideoEncoderConfig {

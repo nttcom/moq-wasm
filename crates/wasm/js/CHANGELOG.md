@@ -6,6 +6,8 @@
   lowest one that holds the encoded size and frame rate. The default
   `avc1.640028` (level 4.0) holds at most 1920x1088 at 30 fps, so since 0.4.1
   a 1920x1200 or larger screen share failed to start with a `configError`.
+- The `onError` of a video `configError` names the codec, size and frame
+  rate the browser refused, and its error.
 
 ## 0.4.1
 

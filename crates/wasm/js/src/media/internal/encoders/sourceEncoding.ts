@@ -209,7 +209,8 @@ function encodeVideo(
     event: MessageEvent<
       (
         | ChunkMessage<EncodedVideoChunk, EncodedVideoChunkMetadata>
-        | { type: 'configError' | 'encoderError' | 'frameDropped' }
+        | { type: 'configError' | 'encoderError'; message: string }
+        | { type: 'frameDropped' }
       ) & {
         rendition: number
       }
@@ -224,7 +225,7 @@ function encodeVideo(
     }
     if (event.data.type === 'configError' || event.data.type === 'encoderError') {
       stats.encoderErrors++
-      report(new Error(`video encoder ${event.data.rendition}: ${event.data.type}`))
+      report(new Error(`video encoder ${event.data.rendition}: ${event.data.type}: ${event.data.message}`))
       return
     }
     if (event.data.type !== 'chunk') {
