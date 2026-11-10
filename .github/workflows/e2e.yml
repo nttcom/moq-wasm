@@ -424,6 +424,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+          shared-key: wasm-relay-vts
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -580,6 +581,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+          shared-key: wasm-relay-vts
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -693,6 +695,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+          shared-key: wasm-relay-vts-python
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
@@ -772,6 +775,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
         with:
           save-if: ${{ github.ref == 'refs/heads/master' }}
+          shared-key: wasm-relay-vts-python
 
       - name: Install wasm-pack
         uses: ./.github/actions/setup-wasm-pack
