@@ -61,7 +61,7 @@ impl BroadcastWriter {
         &self.broadcast
     }
 
-    pub fn shared_timing(&self) -> SharedTiming {
+    pub(crate) fn shared_timing(&self) -> SharedTiming {
         self.timing.clone()
     }
 }

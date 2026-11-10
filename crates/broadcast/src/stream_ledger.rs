@@ -11,7 +11,7 @@ const FINISHED_RETENTION: Duration = Duration::from_secs(5);
 /// they are finished so a viewer of the ledger sees groups end as well as
 /// start. Whether QUIC has delivered a finished stream is not observable here.
 #[derive(Clone, Default)]
-pub struct StreamLedger {
+pub(crate) struct StreamLedger {
     records: Arc<Mutex<Vec<StreamRecord>>>,
 }
 
@@ -79,7 +79,7 @@ impl StreamLedger {
         }
     }
 
-    pub fn snapshot(&self) -> Vec<StreamRecord> {
+    pub(crate) fn snapshot(&self) -> Vec<StreamRecord> {
         let now = executor::now();
         let mut records = self.records.lock().unwrap();
         forget_finished(&mut records, now);
