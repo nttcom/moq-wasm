@@ -18,6 +18,8 @@ export type FakeAudioContext = AudioContext & {
 
 export class FakeMediaEnvironment {
   nowMs = 1_000
+  /// How long a new AudioContext reports an output latency of 0.
+  outputStartUpMs = 0
   private timers: Timer[] = []
   private nextTimerId = 1
   private readonly originals = new Map<string, PropertyDescriptor | undefined>()
@@ -73,8 +75,8 @@ export class FakeMediaEnvironment {
       AudioContext: class {
         readonly state = 'running'
         readonly destination = {}
-        readonly outputLatency = environment.outputLatencySeconds
         readonly sampleRate: number
+        private readonly createdAtMs = environment.nowMs
         readonly lifecycleCalls: string[] = []
         readonly bufferSampleRates: number[] = []
 
@@ -84,6 +86,11 @@ export class FakeMediaEnvironment {
 
         get currentTime(): number {
           return environment.nowMs / MILLIS_PER_SECOND
+        }
+
+        get outputLatency(): number {
+          const startingUp = environment.nowMs - this.createdAtMs < environment.outputStartUpMs
+          return startingUp ? 0 : environment.outputLatencySeconds
         }
 
         createBuffer(_channelCount: number, length: number, sampleRate: number) {

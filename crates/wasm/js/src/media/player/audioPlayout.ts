@@ -200,6 +200,12 @@ export class AudioPlayout {
     }
   }
 
+  /// A context reports an output latency of 0 while it starts.
+  outputReady(): boolean {
+    const context = this.output?.context
+    return context !== undefined && isRendering(context) && context.outputLatency > 0
+  }
+
   /// How long before it is heard a chunk has to be scheduled.
   outputLatencyMs(): number {
     return (this.output?.context.outputLatency || 0) * MILLIS_PER_SECOND

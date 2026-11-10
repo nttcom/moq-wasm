@@ -57,8 +57,8 @@ export class JitterBuffer {
     return delaysMs.length === 0 ? undefined : delaysMs[Math.floor(delaysMs.length / 2)]
   }
 
-  /// Playback opens on a burst that says nothing about the spread, so the
-  /// caller passes a stand-in for it then.
+  /// Playback opens before any spread has been observed, so the caller
+  /// passes a stand-in for it then.
   targetMs(outputLatencyMs: number, spreadMs = this.spreadMs() ?? 0): number {
     const { minimumMs, maximumMs } = this.policy
     return Math.max(minimumMs, Math.min(maximumMs, spreadMs + outputLatencyMs))

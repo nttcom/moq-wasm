@@ -9,6 +9,7 @@ export type CatchUp = 'speed-up' | 'skip' | 'off'
 /// What a sample whose time has passed does: moves the clock back by its
 /// miss, or is dropped so a fixed delay never grows.
 export type LateSamples = 'move-clock' | 'drop'
+/// How long playback waits for the audio output before it opens without it.
 const WARMUP_MS = 400
 const CATCH_UP_COMPRESSION_RATE = 1.1
 const CATCH_UP_EXCESS_MS = 20
@@ -29,17 +30,19 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// time move with the sound they belong to. A sample without a capture
 /// timestamp is presented at once and leaves the clock alone.
 ///
-/// Playback opens with a warm-up: a subscription starts with a burst of what
-/// the relay had cached of the current groups, so the samples of the first
-/// `WARMUP_MS` are held and the clock is anchored on the newest of them. The
-/// burst is not observed; the buffer opens on the longest wait between two
-/// audio arrivals during the warm-up instead, because sources
-/// such as MPEG-TS over SRT deliver audio in bursts of a few hundred
-/// milliseconds. From then on the arrivals of both audio and video size the
-/// buffer, so a picture that arrives later than the sound is waited for. A
-/// buffer below its target grows by the misses it takes and, unless the
-/// catch-up is `off`, by stretching the audio while it is more than
-/// `CATCH_UP_EXCESS_MS` under. Once the buffer has settled, one above its
+/// Playback opens with a warm-up: samples are held until the audio output
+/// reports its latency, and the clock is then anchored on the newest of them.
+/// A new AudioContext reports that latency only after it has started
+/// rendering. A clock anchored earlier is short by it, and the sound breaks
+/// when the clock makes up for it. A picture whose sound has not arrived
+/// within `WARMUP_MS` opens without it. No spread has been observed by then,
+/// so the buffer opens on the longest wait between two audio arrivals so
+/// far, and on at least the duration of one audio chunk, the soonest the
+/// next chunk can follow. From then on the arrivals of both audio and
+/// video size the buffer, so a picture that arrives later than the sound is
+/// waited for. A buffer below its target grows by the misses it takes and,
+/// unless the catch-up is `off`, by stretching the audio while it is more
+/// than `CATCH_UP_EXCESS_MS` under. Once the buffer has settled, one above its
 /// target is shed as the catch-up asks: `speed-up` compresses the audio while
 /// it is more than `CATCH_UP_EXCESS_MS` over, `skip` drops the audio chunks
 /// that fit in the excess, `speed-up` skips too once it is more than
@@ -54,9 +57,9 @@ export class LivePlayout {
   private warmup: { timer: ReturnType<typeof setTimeout>; held: Held[] } | undefined
   private newestAudioCaptureMicros: number | undefined
   /// Audio that joins a playing picture is dropped while it is older than the
-  /// picture (`beforeMicros`), so the relay's cached burst cannot push the
-  /// clock, and the picture with it, back by the burst's age. The drop ends at
-  /// `untilMs` so that audio that is always behind the picture still plays.
+  /// picture (`beforeMicros`), so it cannot push the clock, and the picture
+  /// with it, back. The drop ends at `untilMs` so that audio that is always
+  /// behind the picture still plays.
   private audioJoin: { beforeMicros: number; untilMs: number } | undefined
   private paused = false
   private catchUp: CatchUp = 'skip'
@@ -389,23 +392,24 @@ export class LivePlayout {
   private hold(sample: Held): void {
     this.warmup ??= { timer: setTimeout(() => this.endWarmup(), WARMUP_MS), held: [] }
     this.warmup.held.push(sample)
+    if (this.audio.outputReady() && this.warmup.held.some((held) => held.kind === 'audio')) {
+      this.endWarmup()
+    }
   }
 
   private endWarmup(): void {
     if (!this.warmup) {
       return
     }
-    const { held } = this.warmup
+    const { held, timer } = this.warmup
+    clearTimeout(timer)
     this.warmup = undefined
     if (held.length === 0) {
       return
     }
     const nowMs = performance.now()
     const newest = Math.max(...held.map((sample) => sample.captureMicros))
-    this.clock.anchor(
-      newest,
-      nowMs + this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), longestArrivalGapMs(held))
-    )
+    this.clock.anchor(newest, nowMs + this.jitterBuffer.targetMs(this.audio.scheduleAheadMs(), openingSpreadMs(held)))
     const audioLeadMs = this.audio.outputLatencyMs()
     for (const sample of held.sort((left, right) => left.captureMicros - right.captureMicros)) {
       const due = this.clock.dueAt(sample.captureMicros) ?? nowMs
@@ -431,10 +435,10 @@ export class LivePlayout {
   }
 }
 
-function longestArrivalGapMs(held: Held[]): number {
+function openingSpreadMs(held: Held[]): number {
   const audio = held.filter((sample) => sample.kind === 'audio')
   const arrivals = (audio.length > 1 ? audio : held).map((sample) => sample.arrivedAtMs).sort((a, b) => a - b)
-  let longest = 0
+  let longest = Math.max(0, ...audio.map((sample) => sample.audioData.duration / MICROS_PER_MILLI))
   for (let i = 1; i < arrivals.length; i += 1) {
     longest = Math.max(longest, arrivals[i] - arrivals[i - 1])
   }
