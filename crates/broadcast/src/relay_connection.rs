@@ -12,11 +12,11 @@ use moqt::{
     CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
     TransportStats,
     executor::{self, JoinHandle},
-    publish::{Origin, OutgoingObject, Retention, WriteOutcome},
+    publish::{Origin, OutgoingObject, Retention, TrackDemand, WriteOutcome},
     subscribe::SubscribeHandler,
 };
 use msf::CATALOG_TRACK_NAME;
-use tokio::sync::{Mutex, Notify, watch};
+use tokio::sync::{Mutex, Notify, mpsc, watch};
 
 use crate::{
     broadcast::{CatalogMetadata, awaits_subscribe, build_catalog},
@@ -418,6 +418,19 @@ impl ConnectedRelay {
         ensure_origin_track(&self.origin, &key).await;
         self.origin
             .accept_new_group_requests(&key.0, &key.1, requested)
+            .await
+    }
+
+    pub(crate) async fn publish_on_demand(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        demand_sender: mpsc::UnboundedSender<TrackDemand>,
+    ) -> Result<()> {
+        let key = (namespace.join("/"), track_name.to_string());
+        ensure_origin_track(&self.origin, &key).await;
+        self.origin
+            .publish_on_demand(&key.0, &key.1, demand_sender)
             .await
     }
 
@@ -901,6 +914,41 @@ mod tests {
             .wait_for_request(&format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"))
             .await;
         tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn a_track_published_on_demand_asks_for_forward_state_0_and_its_catalog_for_1() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("on-demand");
+        let broadcast = live_cam(connection_to(&relay));
+        let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+
+        // Act
+        broadcast
+            .publish_on_demand(VIDEO_TRACK_NAME, demand_sender)
+            .await
+            .unwrap();
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        let mut forward = HashMap::new();
+        while !(forward.contains_key(VIDEO_TRACK_NAME) && forward.contains_key(CATALOG_TRACK_NAME))
+        {
+            let published = tokio::time::timeout(Duration::from_secs(5), relay.published.recv())
+                .await
+                .expect("the video and the catalog are published")
+                .unwrap();
+            let Subscription::PublisherInitiated(published) = published else {
+                panic!("a PUBLISH_OK gives a publisher-initiated subscription");
+            };
+            forward.insert(published.track_name, published.forward);
+        }
+
+        // Assert: a catalog written before anyone subscribes still reaches the relay
+        assert!(!forward[VIDEO_TRACK_NAME]);
+        assert!(forward[CATALOG_TRACK_NAME]);
+        assert!(!demand_receiver.recv().await.unwrap().wanted);
     }
 
     #[tokio::test]
