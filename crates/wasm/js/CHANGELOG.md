@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- `addSource()` raises the H.264 level of `videoEncoderConfig.codec` to the
+  lowest one that holds the encoded size and frame rate. The default
+  `avc1.640028` (level 4.0) holds at most 1920x1088 at 30 fps, so since 0.4.1
+  a 1920x1200 or larger screen share failed to start with a `configError`.
+
 ## 0.4.1
 
 - `addSource()` encodes each frame at its own size unless `width` and

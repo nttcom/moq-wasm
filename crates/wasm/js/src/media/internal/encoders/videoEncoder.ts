@@ -1,4 +1,5 @@
 import { monotonicUnixMicros } from '../clock'
+import { avcCodecForSize } from './avcLevel'
 import { CaptureTimestamps } from './captureTimestamps'
 import { EncoderWarmUp } from './encoderWarmUp'
 import { fitEncodeSize } from './encodeSize'
@@ -91,7 +92,9 @@ class Rendition {
   }
 
   private configFor(frame: VideoFrame): VideoEncoderConfig {
-    return { ...this.config, ...fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight }) }
+    const size = fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight })
+    const codec = avcCodecForSize(this.config.codec, size, this.config.framerate ?? 30)
+    return { ...this.config, ...size, codec }
   }
 
   /// Encodes `frame` as a keyframe and drops its output, sized like the live frames.
