@@ -3,8 +3,8 @@ use std::time::Duration;
 use anyhow::anyhow;
 use app_registry::{App, RegistryStore};
 use auth_token::{Claims, sign_token};
+use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use ring::rand::{SecureRandom, SystemRandom};
 
 pub(crate) const MAX_TOKEN_TTL_SECONDS: u64 = 24 * 60 * 60;
 pub(crate) const MAX_APPS_PER_OWNER: usize = 20;

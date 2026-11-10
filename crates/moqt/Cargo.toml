@@ -16,14 +16,16 @@ tokio = { version = "1.52.3", features = ["sync", "macros", "io-util"] }
 tokio-util = { version = "0.7.18", features = ["codec"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-quinn = "0.11.9"
+quinn = { version = "0.11.9", default-features = false, features = ["log", "platform-verifier", "runtime-tokio", "rustls-aws-lc-rs", "bloom"] }
 url = "2"
 rustls-native-certs = "0.8.4"
+# Makes rustls clients offer the post-quantum X25519MLKEM768 key share first.
+rustls = { version = "0.23.45", default-features = false, features = ["prefer-post-quantum"] }
 tokio = { version = "1.52.3", features = ["full", "tracing"] }
-web-transport-quinn = { version = "0.13", default-features = false, features = ["ring"] }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+web-transport-quinn = { version = "0.13", default-features = false, features = ["aws-lc-rs"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "logging", "tls12"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-rcgen = { version = "0.14.8", optional = true }
+rcgen = { version = "0.14.8", default-features = false, features = ["pem", "aws_lc_rs"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3.100"
@@ -59,7 +61,7 @@ self-signed-cert = ["dep:rcgen"]
 
 [dev-dependencies]
 mockall = "0.15.0"
-rcgen = "0.14.8"
+rcgen = { version = "0.14.8", default-features = false, features = ["pem", "aws_lc_rs"] }
 tokio = { version = "1.52.3", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 

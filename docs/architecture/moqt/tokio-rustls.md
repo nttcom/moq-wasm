@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Add `tokio-rustls` as a native-only dependency of the `moqt` crate, with
-`default-features = false` and the `ring`, `logging` and `tls12` features.
+`default-features = false` and the `aws_lc_rs`, `logging` and `tls12` features.
 `modules/transport/websocket` uses its `TlsAcceptor` on the relay's TCP
 listener and its `TlsConnector` in the `wss://` client.
 
@@ -36,8 +36,8 @@ handshake on.
 
 Use `tokio-rustls` directly. It is the async layer for the `rustls` version
 quinn already depends on (0.23), so the `ServerConfig` and `ClientConfig`
-types are shared and `install_default_crypto_provider` (ring) covers both.
-The default `aws_lc_rs` feature is turned off so that no second crypto
-provider enters the build. The server config sets ALPN `http/1.1`, which the
+types are shared and `install_default_crypto_provider` (aws-lc-rs) covers both.
+Default features are off and `aws_lc_rs` is named explicitly, so the
+provider is the one quinn uses (see `aws-lc-rs.md`). The server config sets ALPN `http/1.1`, which the
 WebSocket upgrade runs over; the client config for WebSocket is the QUIC
 client config with that ALPN.

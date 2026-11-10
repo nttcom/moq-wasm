@@ -4,9 +4,9 @@ use std::{
 };
 
 use anyhow::{Context, anyhow, bail};
+use aws_lc_rs::signature::{ECDSA_P256_SHA256_FIXED, UnparsedPublicKey};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::{Client, Url};
-use ring::signature::{ECDSA_P256_SHA256_FIXED, UnparsedPublicKey};
 use serde::{Deserialize, de::DeserializeOwned};
 use tokio::sync::Mutex;
 

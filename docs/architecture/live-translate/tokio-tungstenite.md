@@ -39,7 +39,7 @@ request/response HTTP. There is no official Google SDK for Rust.
 ## Decision
 
 Use `tokio-tungstenite` with rustls. The TLS configuration is built explicitly
-with rustls' `ring` provider and the platform's native roots, the same choices
+with rustls' `aws-lc-rs` provider and the platform's native roots, the same choices
 `moqt` makes for QUIC, so the process ends up with one TLS stack and one
 provider regardless of which connection is opened first.
 

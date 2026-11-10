@@ -11,6 +11,8 @@ opentelemetry = { version = "0.33.1", features = ["trace", "logs", "metrics"] }
 opentelemetry_sdk = { version = "0.33.1", features = ["rt-tokio", "logs", "metrics"] }
 opentelemetry-otlp = { version = "0.33.1", features = ["grpc-tonic", "http-proto", "reqwest-blocking-client", "reqwest-rustls", "trace", "logs", "metrics"] }
 opentelemetry-appender-tracing = "0.33.1"
+# Makes rustls clients offer the post-quantum X25519MLKEM768 key share first.
+rustls = { version = "0.23.45", default-features = false, features = ["prefer-post-quantum"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1.44"

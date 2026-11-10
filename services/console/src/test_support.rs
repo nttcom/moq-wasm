@@ -6,15 +6,15 @@ use std::{
     },
 };
 
+use aws_lc_rs::{
+    rand::SystemRandom,
+    signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair},
+};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::Full;
 use hyper::{Request, Response, body::Bytes, server::conn::http1, service::service_fn};
 use hyper_util::rt::TokioIo;
 use reqwest::Url;
-use ring::{
-    rand::SystemRandom,
-    signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair},
-};
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -32,8 +32,7 @@ impl TestIapKey {
         let pkcs8 =
             EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &random).unwrap();
         let pair =
-            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &random)
-                .unwrap();
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).unwrap();
         Self {
             kid: kid.into(),
             pair,
