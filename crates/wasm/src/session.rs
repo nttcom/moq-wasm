@@ -54,7 +54,7 @@ impl Session {
     /// GOAWAY and reconnects by itself. `wasm_load_wait_ms` is how long the
     /// caller waited for this module to load. `versions` names the drafts to
     /// offer, most preferred first, each `draft-14` or `draft-18`;
-    /// `undefined` offers draft-14 only, and an unknown name rejects.
+    /// `undefined` offers draft-18, then draft-14, and an unknown name rejects.
     pub async fn connect(
         url: String,
         token: JsValue,
@@ -613,8 +613,6 @@ impl FetchStream {
                                 return Ok(Some(object.into()));
                             }
                         }
-                        // Only draft-18 has unknown ranges, and the browser offers
-                        // draft-14 alone.
                         Fetch::UnknownRange { .. } => {}
                         Fetch::End => return Ok(None),
                     }

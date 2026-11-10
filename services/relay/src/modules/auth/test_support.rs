@@ -92,6 +92,9 @@ pub(crate) async fn spawn_relay_with_verifier(token: VerifiedToken) -> RunningRe
     spawn_relay(token, Arc::new(NoopRelayRouteRegistry)).await
 }
 
+/// The tests write and read draft-14 messages.
+pub(crate) const TEST_VERSIONS: &[moqt::Version] = &[moqt::Version::Draft14];
+
 pub(crate) async fn spawn_relay(
     token: VerifiedToken,
     route_registry: Arc<dyn RelayRouteRegistry>,
@@ -100,7 +103,7 @@ pub(crate) async fn spawn_relay(
         server,
         cert_path,
         cert_dir,
-    } = relay_server_offering(token, route_registry, moqt::DEFAULT_VERSIONS);
+    } = relay_server_offering(token, route_registry, TEST_VERSIONS);
     let handler = server.spawn_client_transport::<QUIC>(0).unwrap();
     RunningRelay {
         port: handler.local_port,

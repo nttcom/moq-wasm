@@ -245,8 +245,7 @@ Everything above the adapter states what to send and receive; the adapter
 decides how a draft carries it. draft-14 and draft-18 are implemented.
 `ClientConfig::versions` and `ServerConfig::versions` (public `moqt::Version`,
 most preferred first) choose the drafts an endpoint offers; the default,
-`DEFAULT_VERSIONS`, is draft-14 only because draft-18 has not been checked
-against other implementations.
+`DEFAULT_VERSIONS`, prefers draft-18 and falls back to draft-14.
 
 A draft is added under `modules/moqt/version/<draft>` and the wire layer.
 `modules/moqt/runtime/tasks` and `modules/transport` change only to route a

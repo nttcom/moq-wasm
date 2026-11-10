@@ -63,7 +63,7 @@ import { MoqSession, RequestError } from 'moq-wasm'
 const session = await MoqSession.connect('https://relay.example:4433', {
   // A function is called before each CLIENT_SETUP, a reconnect or a GOAWAY move included.
   token: () => fetchTokenFromMyBackend(),
-  // The MoQT drafts offered, most preferred first; draft-14 only when omitted.
+  // The MoQT drafts offered, most preferred first; draft-18, then draft-14, when omitted.
   versions: ['draft-18', 'draft-14']
 })
 session.closed.then(({ code, reason }) => console.log('session closed', code, reason))

@@ -374,7 +374,8 @@ mod tests {
             cert_path,
             key_path,
             keep_alive_interval_sec: 5,
-            versions: moqt::DEFAULT_VERSIONS.to_vec(),
+            // The tests write and read draft-14 messages.
+            versions: vec![moqt::Version::Draft14],
         })
         .unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());

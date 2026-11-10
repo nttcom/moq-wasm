@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `MoqSession.connect()` without `versions` offers draft-18, then draft-14,
+  instead of draft-14 only, so a relay that accepts draft-18 is reached over
+  it. Pass `versions: ['draft-14']` to stay on draft-14.
 - `addSource()` raises the H.264 level of `videoEncoderConfig.codec` to the
   lowest one that holds the encoded size and frame rate. The default
   `avc1.640028` (level 4.0) holds at most 1920x1088 at 30 fps, so since 0.4.1

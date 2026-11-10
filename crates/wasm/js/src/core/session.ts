@@ -30,7 +30,7 @@ export type TransportStats = { readonly sentBytes: number; readonly receivedByte
 export type MoqConnectOptions = {
   /// Called before each CLIENT_SETUP, a reconnect or a GOAWAY move included.
   token?: string | (() => Promise<string>)
-  /// The drafts offered to the relay, most preferred first; draft-14 only when omitted.
+  /// The drafts offered to the relay, most preferred first; draft-18, then draft-14, when omitted.
   versions?: MoqVersion[]
 }
 
