@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.4
+
+- `addSource()` encodes a keyframe every 30 seconds by default instead of
+  every 60 frames, and encodes one when a subscriber asks for a new group
+  (draft-18 NEW_GROUP_REQUEST). `LivePlayer` asks for one when it switches
+  rendition or goes live, and when it joins a broadcast whose current group
+  is 60 objects or longer. A viewer on 0.4.3 or older, or on a draft-14
+  session, does not ask: set `keyframeIntervalFrames: 60` to keep the old
+  interval while such viewers remain.
+- `MoqSession.subscribeGroupStart()` subscribes from the first object of a
+  group and asks the publisher for a new group when the current one is
+  `newGroupAfter` objects or longer. `MoqSubscription.requestNewGroup()` asks
+  for a new group on an open subscription.
+- The SDK's logs that belong to a session (playback, publishing, encoders,
+  session setup and close) reach the telemetry sink with that session's
+  token.
+- `LivePlayer` changes rendition automatically for a viewer that subscribed
+  to a video before the catalog listed its renditions.
+
 ## 0.4.3
 
 - `LivePlayer` no longer opens a live broadcast with audio about the audio

@@ -1,6 +1,6 @@
 {
   "name": "moq-wasm",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "private": true,
   "description": "Media over QUIC Transport in the browser: sessions, publishing and playback",
   "type": "module",
