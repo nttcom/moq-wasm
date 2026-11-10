@@ -5,7 +5,6 @@ export type RenditionEncoderConfig = Partial<VideoEncoderConfig> & { scaleResolu
 
 const DEFAULT_FRAMERATE = 30
 
-/// A codec by name, which the SDK turns into a WebCodecs codec string.
 export type VideoCodecName = 'h264' | 'vp8' | 'vp9' | 'av1'
 
 const CODEC_STRINGS: Record<VideoCodecName, string> = {
