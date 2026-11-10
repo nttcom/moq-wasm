@@ -479,13 +479,12 @@ renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同�
 
 | フィールド | 効く track | 中身 |
 | --- | --- | --- |
-| `encoding` | 映像 `<source>` と全 rendition | `codec`、`keyframeIntervalSeconds`、`hardwareAcceleration` |
+| `encoding` | 映像 `<source>` と全 rendition | `codec`、`keyframeIntervalSeconds`、`hardwareAcceleration`、`latencyMode`（既定は `'realtime'`） |
 | `main` | 映像 `<source>` | `width`、`height`（大きさの上限）、`bitrate`、`framerate`（fps の上限。rendition も引き継ぐ） |
 | `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width` と `height` か `scaleResolutionDownBy`、`bitrate`、`framerate` |
 
 `label` は source の label で、映像の label と音声の label（後ろに ` audio`）になるので、
-`main` ではなく `input` の直下に置く。`latencyMode: 'realtime'` と `scalabilityMode: 'L1T1'` は
-SDK が固定し、利用者には見せない。
+`main` ではなく `input` の直下に置く。`scalabilityMode: 'L1T1'` は SDK が固定し、利用者には見せない。
 
 rendition の大きさは、`width`/`height`（上限）か `scaleResolutionDownBy`（取り込んだフレームの
 縦横を割る。WebRTC と同じ名前と意味）のどちらかで指定する。倍率で指定すると、配信者は

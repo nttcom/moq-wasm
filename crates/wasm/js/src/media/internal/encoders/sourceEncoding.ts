@@ -40,6 +40,9 @@ export type VideoEncoding = {
   keyframeIntervalSeconds?: number
   /// `no-preference` by default, which falls back to a software encoder.
   hardwareAcceleration?: HardwareAcceleration
+  /// `'realtime'` by default. `'quality'` lets the encoder spend more time on
+  /// each frame for a sharper picture, such as text on a shared screen.
+  latencyMode?: LatencyMode
 }
 
 /// `width` and `height` bound the encoded size: a frame keeps its aspect ratio
@@ -108,9 +111,9 @@ export function videoFramerate(options: SourceOptions): number | undefined {
 /// The WebCodecs fields of the video's encoder. The keyframe interval is not
 /// one: the worker applies it itself.
 function mainEncoderConfig({ encoding = {}, main = {} }: SourceOptions): Partial<VideoEncoderConfig> {
-  const { codec, hardwareAcceleration } = encoding
+  const { codec, hardwareAcceleration, latencyMode } = encoding
   const { width, height, bitrate, framerate } = main
-  return { codec, framerate, hardwareAcceleration, width, height, bitrate }
+  return { codec, framerate, hardwareAcceleration, latencyMode, width, height, bitrate }
 }
 
 /// `addSource` adds the source to the broadcast with the callback it is given,
