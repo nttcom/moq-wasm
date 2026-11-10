@@ -1,6 +1,10 @@
 export type VideoEncoderSettings = Omit<VideoEncoderConfig, 'width' | 'height'> &
   Partial<Pick<VideoEncoderConfig, 'width' | 'height'>>
 
+/// What the worker is sent for one rendition: `scaleResolutionDownBy` divides
+/// the frame's size, before `width` and `height` bound it.
+export type RenditionEncoderConfig = Partial<VideoEncoderConfig> & { scaleResolutionDownBy?: number }
+
 const DEFAULT_FRAMERATE = 30
 
 const DEFAULT_CONFIG: VideoEncoderSettings = {

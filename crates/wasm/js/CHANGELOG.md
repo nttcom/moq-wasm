@@ -32,6 +32,10 @@
   every rendition still starts its groups on the same frames. A rendition
   takes the main video's frame rate unless it sets its own. Without
   `framerate` every frame is encoded, as before.
+- A rendition takes `scaleResolutionDownBy` in place of `width` and
+  `height`: it divides the captured frame's size, as in WebRTC, so a page
+  asks for a quarter of the camera without knowing its size. `addSource()`
+  rejects a value below 1 with a `RangeError`.
 
 ## 0.4.4
 

@@ -2,9 +2,16 @@ import type { MediaSource } from '../../../../pkg/moqt'
 import type { AudioLevel } from '../loc'
 import { capturePcm } from './pcmCapture'
 import { EncoderTimeline } from './encoderTimeline'
-import { DEFAULT_KEYFRAME_INTERVAL_SECONDS, videoEncoderConfig } from './videoEncoderConfig'
+import {
+  DEFAULT_KEYFRAME_INTERVAL_SECONDS,
+  type RenditionEncoderConfig,
+  videoEncoderConfig
+} from './videoEncoderConfig'
 import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
 import { type LogSession, receiveWorkerLog } from '../../../core/log'
+import type { Rendition } from './rendition'
+
+export { type Rendition, type RenditionSize, checkRenditions } from './rendition'
 
 export type SourceOptions = {
   /// The video's label in the catalog.
@@ -46,18 +53,6 @@ export type MainVideo = {
 
 /// The `SourceOptions` fields that `setVideoEncoding` replaces.
 export type VideoEncodingOptions = Pick<SourceOptions, 'encoding' | 'main'>
-
-export type Rendition = {
-  name: string
-  label: string
-  /// Bound the encoded size like `MainVideo.width` and `height`.
-  width: number
-  height: number
-  /// Bits per second.
-  bitrate: number
-  /// Like `MainVideo.framerate`; the main video's by default.
-  framerate?: number
-}
 
 export type MediaKind = 'video' | 'audio'
 
@@ -304,13 +299,16 @@ function encodeVideo(
   if (options.renditions?.length) {
     worker.postMessage({
       type: 'renditionConfigs',
-      configs: options.renditions.map(({ width, height, bitrate, framerate }) => ({
-        ...config,
-        width,
-        height,
-        bitrate,
-        framerate: framerate ?? config.framerate
-      }))
+      configs: options.renditions.map(
+        ({ width, height, scaleResolutionDownBy, bitrate, framerate }): RenditionEncoderConfig => ({
+          ...config,
+          width,
+          height,
+          scaleResolutionDownBy,
+          bitrate,
+          framerate: framerate ?? config.framerate
+        })
+      )
     })
   }
   if (typeof MediaStreamTrackProcessor === 'function') {

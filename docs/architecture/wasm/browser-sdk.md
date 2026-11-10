@@ -481,11 +481,17 @@ renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同�
 | --- | --- | --- |
 | `encoding` | 映像 `<source>` と全 rendition | `codec`、`keyframeIntervalSeconds`、`hardwareAcceleration` |
 | `main` | 映像 `<source>` | `width`、`height`（大きさの上限）、`bitrate`、`framerate`（fps の上限。rendition も引き継ぐ） |
-| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width`、`height`、`bitrate`、`framerate` |
+| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width` と `height` か `scaleResolutionDownBy`、`bitrate`、`framerate` |
 
 `label` は source の label で、映像の label と音声の label（後ろに ` audio`）になるので、
 `main` ではなく `input` の直下に置く。`latencyMode: 'realtime'` と `scalabilityMode: 'L1T1'` は
 SDK が固定し、利用者には見せない。
+
+rendition の大きさは、`width`/`height`（上限）か `scaleResolutionDownBy`（取り込んだフレームの
+縦横を割る。WebRTC と同じ名前と意味）のどちらかで指定する。倍率で指定すると、配信者は
+カメラや画面の元の大きさを知らなくてよい。フレームの大きさが変わると encoder を設定し直す
+仕組み（`configureForFrame`）は今もあるので、画面共有のウィンドウの大きさが変わっても
+倍率から計算し直すだけで済む。bitrate は大きさに比例しないので、倍率で指定しても必須にする。
 
 WebCodecs の `framerate` は rate control の目安で、encoder はフレームを間引かない。
 そこで `framerate` を指定したトラックは、encoder worker が timestamp を見て上限を超える
