@@ -312,7 +312,7 @@ listener になる。publisher がいないときの再購読と、catalog の P
 | 機能 | API | meeting での使い方 |
 | --- | --- | --- |
 | ソースの選択 | `LivePlayerOptions.source`（`{ video, audio? }`）。名前の映像 track と、その altGroup（draft-ietf-moq-msf-01 §5.2.12）の rendition、名前の音声 track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
-| 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`） | 小さいタイルは低い rendition を受ける |
+| 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを CSS ピクセルで監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`）。devicePixelRatio は掛けない。高密度の画面では rendition をその倍率まで拡大して表示する | 小さいタイルは低い rendition を受ける |
 | Audio Level | `LivePlayerCallbacks.onAudioLevel?(level: AudioLevel)`。音声 object の LOC Audio Level property（draft-ietf-moq-loc-04 §2.3.3.2）を渡す。`AudioLevel` を export する | 話者の検出（`dominantSpeaker.ts`） |
 | 最初の映像を group の先頭から取る | 映像の最初の購読は `subscribeGroupStart` にする（下の「keyframe の間隔と NEW_GROUP_REQUEST」）。rendition の切り替えは新しい group を要求し、その先頭で切り替える | 静止した画面共有も、参加した直後に映る |
 | 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
