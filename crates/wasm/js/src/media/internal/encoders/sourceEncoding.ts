@@ -9,7 +9,6 @@ import { type LogSession, receiveWorkerLog } from '../../../core/log'
 export type SourceOptions = {
   /// The video's label in the catalog.
   videoLabel?: string
-  /// How the video and its renditions are encoded.
   encoding?: VideoEncoding
   /// The video in the track `<source>`.
   main?: MainVideo
@@ -24,8 +23,7 @@ export type VideoEncoding = {
   /// broadcast takes H.264, VP8, VP9 and AV1. The H.264 level is raised to the
   /// lowest one that holds each track's encoded size and frame rate.
   codec?: string
-  /// Seconds between keyframes; each keyframe starts a group. 30 by default:
-  /// a viewer that joins or switches rendition asks for a keyframe instead of
+  /// Each keyframe starts a group. 30 by default, since a viewer that joins or switches rendition asks for a keyframe instead of
   /// waiting for the next. The video and its renditions take their keyframes
   /// on the same frames.
   keyframeIntervalSeconds?: number
@@ -45,7 +43,7 @@ export type MainVideo = {
   framerate?: number
 }
 
-/// The fields of `SourceOptions` `setVideoEncoding` replaces.
+/// The `SourceOptions` fields that `setVideoEncoding` replaces.
 export type VideoEncodingOptions = Pick<SourceOptions, 'encoding' | 'main'>
 
 export type Rendition = {

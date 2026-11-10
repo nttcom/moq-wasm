@@ -69,8 +69,9 @@ export interface LocalSource {
   setMuted(kind: MediaKind, muted: boolean): Promise<void>
   isMuted(kind: MediaKind): boolean
   /// Restarts the video's and the renditions' encoders with `options`, which
-  /// replace the source's `encoding` and `main`. The catalog keeps the bitrate
-  /// the source was published with.
+  /// replace the source's `encoding` and `main`. A muted video takes them when
+  /// unmuted. The catalog keeps the bitrate the source was published with.
+  /// Does nothing once the source is closed.
   setVideoEncoding(options: VideoEncodingOptions): void
   /// What the source's encoders output over the last second, and the frames
   /// they dropped and their failures since it was published.

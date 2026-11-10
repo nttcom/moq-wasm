@@ -10,8 +10,8 @@ export class KeyframeSchedule {
     this.lastKeyframeMicros = undefined
   }
 
-  /// Whether the frame at `timestampMicros` is a keyframe: the first frame,
-  /// a `forced` one, or the first `intervalMicros` or more after the last keyframe.
+  /// Records the frame as the last keyframe when it returns true, so call it
+  /// once per frame in timestamp order.
   isKeyframe(timestampMicros: number, forced: boolean): boolean {
     const keyframe =
       forced ||
