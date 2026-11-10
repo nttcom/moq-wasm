@@ -7,7 +7,6 @@ use crate::modules::transport::transport_connection_creator::TransportConnection
 use crate::modules::transport::{
     native::native_connection_creator::NativeConnectionCreator,
     quic::quic_connection_creator::QUICConnectionCreator,
-    webtransport::wt_connection_creator::WtConnectionCreator,
 };
 
 // Prevent `TransportConnectionCreator` from public
@@ -25,16 +24,6 @@ pub struct QUIC;
 #[cfg(not(target_arch = "wasm32"))]
 impl TransportProtocol for QUIC {
     type ConnectionCreator = QUICConnectionCreator;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[allow(warnings)]
-#[derive(Debug)]
-pub struct WEBTRANSPORT;
-
-#[cfg(not(target_arch = "wasm32"))]
-impl TransportProtocol for WEBTRANSPORT {
-    type ConnectionCreator = WtConnectionCreator;
 }
 
 #[cfg(not(target_arch = "wasm32"))]

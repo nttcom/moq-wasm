@@ -443,7 +443,8 @@ impl Origin {
     /// Whether the peer of `session` still takes objects of any track: a
     /// SUBSCRIBE it sent or a PUBLISH it accepted that it has not
     /// unsubscribed from.
-    pub async fn is_serving(&self, session: &Session) -> bool {
+    #[cfg(test)]
+    async fn is_serving(&self, session: &Session) -> bool {
         let key = session_key(session.context());
         self.state
             .lock()

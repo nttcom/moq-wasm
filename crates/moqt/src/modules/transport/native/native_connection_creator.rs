@@ -25,7 +25,7 @@ use crate::modules::transport::{
     },
     webtransport::{
         wt_connection::WtConnection,
-        wt_connection_creator::{accept_session, connect_session},
+        wt_session::{accept_session, connect_session},
     },
 };
 
@@ -257,8 +257,8 @@ mod tests {
     use crate::modules::{
         moqt::version::{DEFAULT_VERSIONS, application_protocols},
         test_support::{
-            HANDSHAKE_TIMEOUT, connect_sessions, native_client, self_signed_server_config,
-            server_transport_creator, spawn_native_server,
+            HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions, native_client,
+            self_signed_server_config, server_transport_creator, spawn_native_server,
         },
         transport::{
             accept_error::AcceptError,
@@ -353,6 +353,23 @@ mod tests {
         };
         assert_eq!(client.negotiated_protocol(), expected);
         assert_eq!(server.negotiated_protocol(), expected);
+    }
+
+    #[tokio::test]
+    async fn web_transport_sessions_keep_more_than_a_hundred_bidirectional_streams_open() {
+        // Arrange
+        let protocols = application_protocols(DEFAULT_VERSIONS).unwrap();
+        let (client, server) = connect_transports(
+            "native-wt-bidi-streams",
+            "https",
+            "/moq",
+            protocols.clone(),
+            protocols,
+        )
+        .await;
+
+        // Act / Assert
+        assert_both_sides_open_bi_streams(&client, &server).await;
     }
 
     #[tokio::test]

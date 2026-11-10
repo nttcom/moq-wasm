@@ -8,12 +8,7 @@ use super::{
 };
 use crate::modules::{
     moqt::{
-        control_plane::control_messages::messages::{
-            parameters::{
-                authorization_token::AuthorizationToken, setup_parameters::SetupParameter,
-            },
-            server_setup::ServerSetup,
-        },
+        control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
         data_plane::stream::stream_sender::StreamSender,
     },
     telemetry::{current_traceparent, server_declares_trace_context},
@@ -21,9 +16,6 @@ use crate::modules::{
 };
 
 const IMPLEMENTATION: &str = "MOQ-WASM";
-/// draft-18 negotiates its version through ALPN and carries no version in
-/// SETUP; the model's SERVER_SETUP names it with the draft's number.
-const DRAFT18_VERSION: u32 = 0xff00_0012;
 
 async fn receive_setup(peer: &mut MessageReceiver) -> anyhow::Result<SetupMessage> {
     match peer.receive().await {
@@ -54,28 +46,12 @@ fn client_setup(target: &ConnectTarget, authorization_token: Option<&str>) -> Se
     }
 }
 
-fn server_setup(setup: SetupMessage) -> ServerSetup {
-    ServerSetup::new(
-        DRAFT18_VERSION,
-        SetupParameter {
-            path: setup.path,
-            max_request_id: 0,
-            authorization_token: setup.authorization_tokens,
-            max_auth_token_cache_size: Some(setup.max_auth_token_cache_size),
-            authority: setup.authority,
-            moq_implementation: setup.implementation,
-            trace_context: setup.declares_trace_context,
-            traceparent: None,
-        },
-    )
-}
-
 /// Sends the client's SETUP and reads the server's.
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
     target: &ConnectTarget,
-) -> anyhow::Result<(ControlChannel, MessageReceiver, ServerSetup)> {
+) -> anyhow::Result<(ControlChannel, MessageReceiver)> {
     let control = StreamSender::new(transport_connection.open_uni().await?);
     control
         .send(&encode_setup(&client_setup(target, authorization_token))?)
@@ -86,7 +62,6 @@ pub(crate) async fn connect(
     Ok((
         ControlChannel::new(control, 0, setup.declares_trace_context),
         peer,
-        server_setup(setup),
     ))
 }
 

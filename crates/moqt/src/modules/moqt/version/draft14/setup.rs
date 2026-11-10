@@ -127,7 +127,7 @@ async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<(
 pub(crate) async fn connect(
     transport_connection: &BoxedConnection,
     authorization_token: Option<&str>,
-) -> anyhow::Result<(ControlChannel, BiStreamReceiver, ServerSetup)> {
+) -> anyhow::Result<(ControlChannel, BiStreamReceiver)> {
     let (send_stream, receive_stream) = transport_connection.open_bi().await?;
     let mut send_stream = BiStreamSender::new(send_stream);
     let mut receive_stream = BiStreamReceiver::new(receive_stream, ControlMessageDecoder);
@@ -141,7 +141,6 @@ pub(crate) async fn connect(
             server_setup.setup_parameters.trace_context,
         ),
         receive_stream,
-        server_setup,
     ))
 }
 
