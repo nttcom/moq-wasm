@@ -167,20 +167,27 @@ impl Session {
     /// with the SUBSCRIBE, or, when the track has dynamic groups and its
     /// largest object ID is `new_group_after` or more, a new group it asks
     /// the publisher to start (NEW_GROUP_REQUEST, §10.2.13) after
-    /// withdrawing the FETCH.
+    /// withdrawing the FETCH. `priority` is the Subscriber Priority, as in
+    /// `subscribe`.
     #[wasm_bindgen(js_name = subscribeGroupStart)]
     pub async fn subscribe_group_start(
         &self,
         namespace: Vec<String>,
         track: String,
         new_group_after: u32,
+        priority: Option<u8>,
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
                 let (subscription, reader) = self
                     .session
                     .subscriber()
-                    .subscribe_group_start(namespace.join("/"), track, new_group_after.into())
+                    .subscribe_group_start(
+                        namespace.join("/"),
+                        track,
+                        new_group_after.into(),
+                        priority.unwrap_or(SubscribeOption::default().subscriber_priority),
+                    )
                     .await
                     .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
                 Ok(Subscription::new(
@@ -592,6 +599,21 @@ impl Subscription {
                 self.session
                     .subscriber()
                     .update_forward(&self.subscription, forward)
+                    .await
+                    .map_err(anyhow_error)
+            })
+            .await
+    }
+
+    /// SUBSCRIBE_UPDATE with the Subscriber Priority (draft-14 §7.1), by
+    /// which the relay orders what it has not sent yet.
+    #[wasm_bindgen(js_name = setPriority)]
+    pub async fn set_priority(&self, priority: u8) -> Result<(), JsValue> {
+        self.scope
+            .scoped(async {
+                self.session
+                    .subscriber()
+                    .update_priority(&self.subscription, priority)
                     .await
                     .map_err(anyhow_error)
             })

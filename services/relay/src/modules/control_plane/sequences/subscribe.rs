@@ -432,7 +432,12 @@ impl Subscribe {
                 filter_type,
                 joining_location: largest_location,
             },
-            DeliveryControl::new(handler.forward(), &filter_type, largest_location),
+            DeliveryControl::new(
+                downstream_subscription.subscriber_priority(),
+                handler.forward(),
+                &filter_type,
+                largest_location,
+            ),
         ) else {
             tracing::debug!(
                 request_id = handler.subscribe_id(),

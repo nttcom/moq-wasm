@@ -356,7 +356,7 @@ mod tests {
         let (task_sender, task_receiver) = mpsc::channel(16);
         let (ready_sender, ready_receiver) = oneshot::channel();
         let (delivery_control_sender, delivery_control_receiver) = watch::channel(
-            DeliveryControl::new(forward, &filter_type, largest_location),
+            DeliveryControl::new(128, forward, &filter_type, largest_location),
         );
         let scheduler = EgressScheduler::new(
             cache,

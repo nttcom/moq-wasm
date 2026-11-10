@@ -593,9 +593,9 @@ reports `PrefixUpdateAnswer::Failed`, the new prefix is released again and
 nothing is offered.
 
 ### SUBSCRIBE_UPDATE sequence
-Forward State, Start Location and End Group are applied; Subscriber Priority
-is not. Every downstream registration owns a `watch::Sender<DeliveryControl>`
-(`domain/delivery_control.rs`: the Forward State, the Start Location resolved
+Subscriber Priority, Forward State, Start Location and End Group are applied.
+Every downstream registration owns a `watch::Sender<DeliveryControl>`
+(`domain/delivery_control.rs`: the Subscriber Priority, the Forward State, the Start Location resolved
 from the filter and the Largest Location, the End Group, the track's Largest
 Object at the latest update, and counts of the updates that moved the start
 back and of those that turned Forward on) next to its runner stop sender. The End Group is kept as the first group
@@ -605,8 +605,9 @@ SUBSCRIBE's Forward State (§5.1 of draft-14 and draft-18: no object is sent at
 Forward 0), while the relay's own upstream SUBSCRIBE always asks for Forward
 1; a forwarded PUBLISH starts it at its PUBLISH_OK's Forward.
 An update applies to the (session, Subscription Request ID) registration
-through `session::handler::SubscribeUpdateHandler`: Forward is taken as sent,
-and the filter `filter()` returns is resolved against the track's Largest
+through `session::handler::SubscribeUpdateHandler`: Subscriber Priority and
+Forward are taken as sent (moqt gives a draft-18 REQUEST_UPDATE without
+SUBSCRIBER_PRIORITY the subscription's current value), and the filter `filter()` returns is resolved against the track's Largest
 Object like a SUBSCRIBE's (a draft-14 SUBSCRIBE_UPDATE states its range as an
 absolute filter; a draft-18 REQUEST_UPDATE without SUBSCRIPTION_FILTER keeps
 the range). An update that moves the Start Location back or the End Group out
@@ -1202,12 +1203,16 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   the scheduler blocks on sending the next one; once it reads open events
   again, its lag scan schedules the missed groups that are still cached.
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
-  the subscription's subscriber priority, the first object's publisher
+  the subscriber priority `DeliveryControl` holds then, the first object's publisher
   priority, the subscription's group order with a per-subscription
   `GroupSequence` (incremented for every newer group id the sender sees,
   shared by the subgroups of one group), and the subgroup id.
   `StreamSenderFactory::next(priority)` applies it before the header
-  is written. That call waits for the subscriber's stream credit, so the task
+  is written. An update that changes the subscriber priority also reaches a
+  stream that is open (§7.1: a best effort SHOULD be made for the objects not
+  yet scheduled): its task sets the new priority with `DataSender::set_priority`
+  before it reads the next object, so a task waiting inside a write applies it
+  once that write returns. `next` waits for the subscriber's stream credit, so the task
   keeps only the publisher priority across it and reads the first object from
   the cache again afterwards: a subscriber that withholds credit cannot keep an
   object alive past its cache expiry. A task that has not opened its stream
@@ -1477,8 +1482,9 @@ no list of relays and no session to each.
   it opened — so every `*_or_wait` is bounded.
 - **Ledger lock is never held across an await**.
 - **Egress streams are prioritized at open**: a downstream subgroup stream's
-  transport priority is fixed before its header (§7.2 order: subscriber
-  priority, publisher priority, group order, subgroup id); the control stream
+  transport priority is set before its header (§7.2 order: subscriber
+  priority, publisher priority, group order, subgroup id), and only an update
+  of the subscriber priority changes it afterwards; the control stream
   keeps the transport default and so outranks all data streams.
 - **Knowledge follows objects**: evicting an object releases the knowledge at
   exactly that location.

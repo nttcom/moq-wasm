@@ -21,14 +21,14 @@ pub(crate) enum UpdateVerdict {
 }
 
 impl SubscribeUpdate {
-    /// Applies the Forward State and the range of the update's filter;
-    /// Subscriber Priority keeps the value of the SUBSCRIBE. An update that
-    /// widens the range is applied only if the session's draft allows it
-    /// (`may_widen`); otherwise the session is closed with
-    /// PROTOCOL_VIOLATION (draft-14 §9.10). The update is accepted with the
-    /// track's Largest Object (draft-18 §10.2.11); only when `ok` reports
-    /// that the subscriber was given it does an update that turns Forward on
-    /// make it the subscription's Joining Location (draft-18 §5.1).
+    /// Applies the Subscriber Priority, the Forward State and the range of
+    /// the update's filter. An update that widens the range is applied only
+    /// if the session's draft allows it (`may_widen`); otherwise the session
+    /// is closed with PROTOCOL_VIOLATION (draft-14 §9.10). The update is
+    /// accepted with the track's Largest Object (draft-18 §10.2.11); only
+    /// when `ok` reports that the subscriber was given it does an update
+    /// that turns Forward on make it the subscription's Joining Location
+    /// (draft-18 §5.1).
     ///
     /// The subscription ends with UPDATE_FAILED when `ok` reports the update
     /// failed: moqt answered it REQUEST_ERROR for coming too late, and
@@ -58,7 +58,12 @@ impl SubscribeUpdate {
             Some(track) => existing_track_largest(cache_store, track_key, &track),
             None => cached_largest(cache_store, track_key),
         };
-        let requested = current.requested(handler.forward(), handler.filter(), largest);
+        let requested = current.requested(
+            handler.subscriber_priority(),
+            handler.forward(),
+            handler.filter(),
+            largest,
+        );
         if current.widens_to(&requested) && !handler.may_widen() {
             tracing::warn!(
                 session_id,
@@ -187,7 +192,7 @@ mod tests {
     }
 
     fn starting_at(location: Location) -> DeliveryControl {
-        DeliveryControl::new(true, &FilterType::AbsoluteStart { location }, None)
+        DeliveryControl::new(128, true, &FilterType::AbsoluteStart { location }, None)
     }
 
     #[tokio::test]
@@ -206,6 +211,26 @@ mod tests {
 
         // Assert
         assert!(!updated.control().forward);
+    }
+
+    #[tokio::test]
+    async fn subscriber_priority_reaches_the_egress_runner_of_the_subscription() {
+        // Arrange
+        let mut updated = subscription_with(delivery_control(true));
+        let handler = MockSubscribeUpdateHandler::new(
+            UpdateDraft::Draft14,
+            SUBSCRIPTION,
+            true,
+            Some(FROM_START),
+        )
+        .with_subscriber_priority(7);
+
+        // Act
+        update(&mut updated, SUBSCRIBER_SESSION, &handler);
+
+        // Assert
+        assert_eq!(updated.control().subscriber_priority, 7);
+        assert!(!updated.closed_the_session());
     }
 
     #[tokio::test]
@@ -256,7 +281,7 @@ mod tests {
             location: location(0, 0),
             end_group: 4,
         };
-        let mut updated = subscription_with(DeliveryControl::new(true, &range, None));
+        let mut updated = subscription_with(DeliveryControl::new(128, true, &range, None));
         let handler = MockSubscribeUpdateHandler::new(
             UpdateDraft::Draft14,
             SUBSCRIPTION,
@@ -279,7 +304,7 @@ mod tests {
             location: location(5, 0),
             end_group: 6,
         };
-        let mut updated = subscription_with(DeliveryControl::new(true, &range, None));
+        let mut updated = subscription_with(DeliveryControl::new(128, true, &range, None));
         let wider = FilterType::AbsoluteStart {
             location: location(2, 0),
         };

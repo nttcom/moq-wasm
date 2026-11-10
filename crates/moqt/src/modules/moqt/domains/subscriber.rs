@@ -726,6 +726,23 @@ impl Subscriber {
         .await
     }
 
+    /// Changes the Subscriber Priority (draft-14 §7.1) and repeats the
+    /// subscription's current Start Location, End Group and Forward State.
+    pub async fn update_priority(
+        &self,
+        subscription: &Subscription,
+        subscriber_priority: u8,
+    ) -> anyhow::Result<()> {
+        self.repeat(
+            subscription,
+            SubscribeUpdateOption {
+                subscriber_priority,
+                ..repeated_update(subscription)
+            },
+        )
+        .await
+    }
+
     /// Ends the subscription before `group_id`: groups below it are still
     /// delivered and the publisher answers with PUBLISH_DONE once it has sent
     /// them (draft-14 §9.10, §9.12). The current Start Location, priority and
@@ -892,8 +909,10 @@ impl Subscriber {
         track_namespace: String,
         track_name: String,
         new_group_after: u64,
+        subscriber_priority: u8,
     ) -> Result<(Subscription, TrackReader), RequestFailure> {
         let option = SubscribeOption {
+            subscriber_priority,
             filter_type: FilterType::LargestObject,
             ..SubscribeOption::default()
         };
@@ -2185,6 +2204,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_priority_repeats_the_subscription_fields_with_the_new_priority() {
+        for version in DRAFTS {
+            // Arrange
+            let (client, server) = connected_sessions("subscriber-update-priority", version).await;
+            let (subscription, handler) = subscribed(&client, &server).await;
+
+            // Act
+            client
+                .subscriber()
+                .update_priority(&subscription, 7)
+                .await
+                .unwrap();
+
+            // Assert
+            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
+            else {
+                panic!("expected SUBSCRIBE_UPDATE from the client");
+            };
+            assert_eq!(update.subscription_request_id(), handler.request_id());
+            assert_eq!(update.subscriber_priority(), 7);
+            assert!(update.forward());
+            assert_eq!(
+                update.filter(),
+                Some(FilterType::AbsoluteStart {
+                    location: Location {
+                        group_id: 3,
+                        object_id: 2
+                    }
+                })
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn update_forward_after_update_priority_repeats_that_priority() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_native_sessions("subscriber-update-forward-after-priority").await;
+        let (subscription, _handler) = subscribe_after_group_3(&client, &server).await;
+        client
+            .subscriber()
+            .update_priority(&subscription, 7)
+            .await
+            .unwrap();
+        receive_subscribe_update(&server).await;
+
+        // Act
+        client
+            .subscriber()
+            .update_forward(&subscription, false)
+            .await
+            .unwrap();
+
+        // Assert: repeating the SUBSCRIBE's priority would undo the update
+        let update = receive_subscribe_update(&server).await;
+        assert!(!update.forward());
+        assert_eq!(update.subscriber_priority(), 7);
+    }
+
+    #[tokio::test]
     async fn accepting_an_update_tells_the_subscriber_the_largest_object_only_on_draft18() {
         for version in DRAFTS {
             // Arrange
@@ -2565,6 +2644,7 @@ mod tests {
     }
 
     const NEW_GROUP_AFTER: u64 = 5;
+    const SUBSCRIBER_PRIORITY: u8 = 7;
 
     /// The reader of a `subscribe_group_start` the server accepted with
     /// `largest`, and the server's side of the subscription.
@@ -2577,7 +2657,12 @@ mod tests {
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
-                .subscribe_group_start("ns".to_string(), TRACK.to_string(), NEW_GROUP_AFTER)
+                .subscribe_group_start(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    NEW_GROUP_AFTER,
+                    SUBSCRIBER_PRIORITY,
+                )
                 .await
         });
         let SessionEvent::Subscribe(mut handler) = within(server.receive_event()).await.unwrap()
@@ -2591,6 +2676,20 @@ mod tests {
             .unwrap();
         let (_, reader) = request.await.unwrap().unwrap();
         (reader, handler.into_subscription(alias))
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_sends_its_subscriber_priority() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-priority", "moqt").await;
+
+        // Act
+        let (_reader, served) =
+            start_subscribe_group_start(&client, &server, location(3, 1), true).await;
+
+        // Assert
+        assert_eq!(served.subscriber_priority(), SUBSCRIBER_PRIORITY);
     }
 
     #[tokio::test]
@@ -2715,7 +2814,12 @@ mod tests {
         let mut subscriber = client.subscriber();
         let _request = tokio::spawn(async move {
             subscriber
-                .subscribe_group_start("ns".to_string(), TRACK.to_string(), NEW_GROUP_AFTER)
+                .subscribe_group_start(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    NEW_GROUP_AFTER,
+                    SUBSCRIBER_PRIORITY,
+                )
                 .await
         });
         let SessionEvent::Subscribe(_subscribe) = within(server.receive_event()).await.unwrap()

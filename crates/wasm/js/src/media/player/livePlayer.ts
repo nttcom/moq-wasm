@@ -529,6 +529,17 @@ export class LivePlayer {
     })
   }
 
+  /// Sets the Subscriber Priority of the video (draft-14 §7.2), an integer
+  /// from 0 to 255 that is 128 until set: among the tracks a session
+  /// receives, the relay sends those of a lower value first. The audio stays
+  /// at 0, ahead of every video. Throws a `RangeError` for any other value.
+  setVideoPriority(priority: number): void {
+    if (!Number.isInteger(priority) || priority < 0 || priority > 255) {
+      throw new RangeError(`video priority ${priority} is not an integer from 0 to 255`)
+    }
+    this.subscriptions.setVideoPriority(priority)
+  }
+
   private selectTrack(kind: MediaKind, name: string): Promise<void> {
     return this.queueTrackChange(async () => {
       if (kind === 'video') {

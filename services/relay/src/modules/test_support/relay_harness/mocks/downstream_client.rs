@@ -17,6 +17,7 @@ use crate::modules::session::{
 pub(crate) enum Sent {
     Object(DataObject),
     Datagram(moqt::object::Object),
+    Reprioritized(moqt::object::StreamPriority),
     Closed,
     Reset(DataStreamResetCode),
 }
@@ -30,6 +31,12 @@ impl DataSender for MockDataSender {
     async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
         self.sent
             .send(Sent::Object(object))
+            .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+
+    async fn set_priority(&mut self, priority: moqt::object::StreamPriority) -> anyhow::Result<()> {
+        self.sent
+            .send(Sent::Reprioritized(priority))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
     }
 

@@ -15,7 +15,8 @@ import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
 
 /// draft-14 §7.2: the relay sends the lower subscriber priority value first,
 /// so audio takes the downlink ahead of video.
-const SUBSCRIBER_PRIORITY: Record<MediaKind, number> = { video: 128, audio: 0 }
+const AUDIO_PRIORITY = 0
+const DEFAULT_VIDEO_PRIORITY = 128
 
 /// A group whose largest object ID is below this is read from its start
 /// through a joining FETCH; a longer one is not worth catching up on when the
@@ -32,6 +33,8 @@ const NEW_GROUP_ATTEMPTS = 5
 export type TrackSubscription = PlayedTrack & {
   id: bigint
   handle: MoqSubscription
+  /// The Subscriber Priority last sent for it.
+  priority: number
   /// Set once the player let go of it, so objects still in flight are dropped.
   forgotten: boolean
   /// The first objects of groups received so far.
@@ -44,7 +47,10 @@ export class TrackSubscriptions {
   private readonly subscriptions = new Map<MediaKind, TrackSubscription>()
   private readonly retiring = new Set<TrackSubscription>()
   private forwardPaused = false
-  private forwardUpdate = Promise.resolve()
+  private videoPriority = DEFAULT_VIDEO_PRIORITY
+  /// The SUBSCRIBE_UPDATEs sent so far: each repeats what the one before it
+  /// set, so they are sent one after another.
+  private updates = Promise.resolve()
 
   constructor(
     private readonly context: TrackContext,
@@ -93,15 +99,14 @@ export class TrackSubscriptions {
     const namespace = catalogTrackNamespace(track, this.context.namespace)
     const session = sessionOf(this.context)
     const joining = groupStart && !this.forwardPaused
+    const priority = this.priorityOf(kind)
     const handle = joining
-      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS)
-      : await session.subscribe(namespace, wireName, {
-          forward: !this.forwardPaused,
-          priority: SUBSCRIBER_PRIORITY[kind]
-        })
+      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, priority)
+      : await session.subscribe(namespace, wireName, { forward: !this.forwardPaused, priority })
     const subscription: TrackSubscription = {
       id: streamId(),
       handle,
+      priority,
       name: wireName,
       track,
       forgotten: false,
@@ -150,6 +155,8 @@ export class TrackSubscriptions {
   handOver(kind: MediaKind, next: TrackSubscription): TrackSubscription | undefined {
     const previous = this.subscriptions.get(kind)
     this.subscriptions.set(kind, next)
+    // The priority may have changed since `open` subscribed `next`.
+    this.updatePriority(kind)
     if (previous) {
       this.retiring.add(previous)
     }
@@ -227,6 +234,37 @@ export class TrackSubscriptions {
     this.context.observer.forget(subscription.id)
   }
 
+  /// The video subscribed now takes `priority` with a SUBSCRIBE_UPDATE; a
+  /// video subscribed later is subscribed with it.
+  setVideoPriority(priority: number): void {
+    this.videoPriority = priority
+    this.updatePriority('video')
+  }
+
+  private priorityOf(kind: MediaKind): number {
+    return kind === 'video' ? this.videoPriority : AUDIO_PRIORITY
+  }
+
+  private updatePriority(kind: MediaKind): void {
+    this.updates = this.updates.then(() => this.sendPriority(kind))
+  }
+
+  private async sendPriority(kind: MediaKind): Promise<void> {
+    const subscription = this.subscriptions.get(kind)
+    const priority = this.priorityOf(kind)
+    if (!subscription || subscription.priority === priority || !this.context.session?.isOpen) {
+      return
+    }
+    try {
+      await subscription.handle.setPriority(priority)
+    } catch (error) {
+      this.context.log('error', `priority ${subscription.name}: ${getErrorMessage(error)}`)
+      return
+    }
+    subscription.priority = priority
+    this.context.log('info', `${subscription.name} priority ${priority}`)
+  }
+
   pauseForward(): void {
     if (this.forwardPaused) {
       return
@@ -247,7 +285,7 @@ export class TrackSubscriptions {
   /// A pause and a resume in quick succession must reach every subscription in
   /// that order, so the updates are chained rather than sent concurrently.
   private updateForward(forward: boolean): void {
-    this.forwardUpdate = this.forwardUpdate.then(() => this.setForward(forward))
+    this.updates = this.updates.then(() => this.setForward(forward))
   }
 
   private async setForward(forward: boolean): Promise<void> {

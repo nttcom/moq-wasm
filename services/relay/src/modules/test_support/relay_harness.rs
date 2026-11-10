@@ -89,7 +89,7 @@ impl EgressRunnerHandle {
     /// An update that turns Forward to 0 and keeps the range.
     pub(crate) fn pause(&self) {
         self.delivery_control_sender.send_modify(|control| {
-            control.apply_update(control.requested(false, None, None));
+            control.apply_update(control.requested(control.subscriber_priority, false, None, None));
         });
     }
 
@@ -97,7 +97,24 @@ impl EgressRunnerHandle {
     /// `largest`, and keeps the range.
     pub(crate) fn resume(&self, largest: Option<moqt::object::Location>) {
         self.delivery_control_sender.send_modify(|control| {
-            control.apply_update(control.requested(true, None, largest));
+            control.apply_update(control.requested(
+                control.subscriber_priority,
+                true,
+                None,
+                largest,
+            ));
+        });
+    }
+
+    /// An update that changes the Subscriber Priority and keeps the rest.
+    pub(crate) fn update_subscriber_priority(&self, subscriber_priority: u8) {
+        self.delivery_control_sender.send_modify(|control| {
+            control.apply_update(control.requested(
+                subscriber_priority,
+                control.forward,
+                None,
+                control.largest_at_update,
+            ));
         });
     }
 
@@ -432,8 +449,14 @@ impl RelayHarness {
         largest_location: Option<moqt::object::Location>,
     ) -> EgressRunnerHandle {
         let (ready_sender, ready_receiver) = oneshot::channel();
+        let subscription = make_subscription(filter_type);
         let (delivery_control_sender, delivery_control_receiver) =
-            watch::channel(DeliveryControl::new(true, &filter_type, largest_location));
+            watch::channel(DeliveryControl::new(
+                subscription.subscriber_priority(),
+                true,
+                &filter_type,
+                largest_location,
+            ));
         let (stop_sender, stop_receiver) = oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = oneshot::channel();
         let delivery_stats = Arc::new(DeliveryStats::default());
@@ -443,7 +466,7 @@ impl RelayHarness {
             Downstream {
                 session_id: DOWNSTREAM_SESSION_ID,
                 publisher: Arc::new(publisher),
-                subscription: make_subscription(filter_type),
+                subscription,
             },
             ready_sender,
             largest_location,

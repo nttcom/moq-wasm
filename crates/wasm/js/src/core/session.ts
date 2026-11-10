@@ -72,7 +72,16 @@ type WasmSession = Pick<
 >
 type WasmSubscription = Pick<
   Moqt.Subscription,
-  'largest' | 'done' | 'next' | 'nextGroup' | 'setForward' | 'requestNewGroup' | 'endBeforeGroup' | 'close' | 'free'
+  | 'largest'
+  | 'done'
+  | 'next'
+  | 'nextGroup'
+  | 'setForward'
+  | 'setPriority'
+  | 'requestNewGroup'
+  | 'endBeforeGroup'
+  | 'close'
+  | 'free'
 >
 type WasmGroup = Pick<Moqt.Group, 'groupId' | 'subgroupId' | 'next' | 'free'>
 type WasmObject = Pick<
@@ -145,9 +154,15 @@ export class MoqSession {
   /// unless the track starts a group on request and the largest object ID is
   /// `newGroupAfter` or more: then the publisher is asked for a new
   /// group (NEW_GROUP_REQUEST, §10.2.13) and the objects start with it.
-  async subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number): Promise<MoqSubscription> {
+  /// `priority` is the Subscriber Priority, as in `subscribe`.
+  async subscribeGroupStart(
+    namespace: string[],
+    track: string,
+    newGroupAfter: number,
+    priority?: number
+  ): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () =>
-      this.inner.subscribeGroupStart(namespace, track, newGroupAfter)
+      this.inner.subscribeGroupStart(namespace, track, newGroupAfter, priority)
     )
     return new MoqSubscription(subscription, this)
   }
@@ -246,6 +261,12 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
 
   async setForward(forward: boolean): Promise<void> {
     await this.call(() => this.inner.setForward(forward))
+  }
+
+  /// Changes the Subscriber Priority (draft-14 §7.1): the relay sends a lower
+  /// value first, and orders what it has not sent yet by the new value.
+  async setPriority(priority: number): Promise<void> {
+    await this.call(() => this.inner.setPriority(priority))
   }
 
   /// Asks the publisher to start a new group (NEW_GROUP_REQUEST, draft-18
