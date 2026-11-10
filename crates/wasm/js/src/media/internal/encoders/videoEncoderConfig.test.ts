@@ -27,3 +27,12 @@ test('a frame rate outside 1 to 120 is clamped', () => {
   // Act / Assert
   expect(videoEncoderConfig({ codec: 'avc1.640028', width: 640, height: 360, framerate: 240 }).framerate).toBe(120)
 })
+
+test('the defaults leave the encoded size to the frame', () => {
+  // Act
+  const config = videoEncoderConfig({ bitrate: 2_500_000, framerate: 15 })
+
+  // Assert
+  expect(config.width).toBeUndefined()
+  expect(config.height).toBeUndefined()
+})

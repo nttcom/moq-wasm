@@ -1,7 +1,8 @@
-const DEFAULT_CONFIG: VideoEncoderConfig = {
+export type VideoEncoderSettings = Omit<VideoEncoderConfig, 'width' | 'height'> &
+  Partial<Pick<VideoEncoderConfig, 'width' | 'height'>>
+
+const DEFAULT_CONFIG: VideoEncoderSettings = {
   codec: 'avc1.640028', // H.264 High Profile Level 4.0
-  width: 1280,
-  height: 720,
   bitrate: 1_000_000,
   framerate: 30,
   hardwareAcceleration: 'prefer-hardware',
@@ -13,9 +14,9 @@ const DEFAULT_CONFIG: VideoEncoderConfig = {
 /// `config` over `DEFAULT_CONFIG`, skipping fields set to `undefined`. H.264 is
 /// always Annex B, the form the broadcast reads, and the frame rate is clamped
 /// to 1–120.
-export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): VideoEncoderConfig {
+export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): VideoEncoderSettings {
   const set = Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined))
-  const merged: VideoEncoderConfig = { ...DEFAULT_CONFIG, ...set }
+  const merged: VideoEncoderSettings = { ...DEFAULT_CONFIG, ...set }
   return {
     ...merged,
     avc: merged.codec.startsWith('avc') ? { format: 'annexb' } : undefined,

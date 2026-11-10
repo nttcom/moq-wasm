@@ -11,11 +11,11 @@ export type SourceOptions = {
   videoLabel?: string
   /// Frames between keyframes; each keyframe starts a group.
   keyframeIntervalFrames?: number
-  /// Fields set here replace the encoder's defaults (H.264, at most 1280x720,
-  /// 1 Mbps, 30 fps, `latencyMode: 'realtime'`) for the video and its
-  /// renditions. The broadcast takes H.264, VP8, VP9 and AV1. `width` and
-  /// `height` bound the encoded size: a frame keeps its aspect ratio and is
-  /// never scaled up.
+  /// Fields set here replace the encoder's defaults (H.264, 1 Mbps, 30 fps,
+  /// `latencyMode: 'realtime'`) for the video and its renditions. The
+  /// broadcast takes H.264, VP8, VP9 and AV1. `width` and `height` bound the
+  /// encoded size: a frame keeps its aspect ratio and is never scaled up.
+  /// Without them a frame is encoded at its own size.
   videoEncoderConfig?: Partial<VideoEncoderConfig>
   /// Renditions of the video, each in the track `<video track>_<name>` and
   /// encoded from the video's frames.

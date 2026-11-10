@@ -1,7 +1,7 @@
 import { monotonicUnixMicros } from '../clock'
 import { CaptureTimestamps } from './captureTimestamps'
 import { fitEncodeSize } from './encodeSize'
-import { videoEncoderConfig } from './videoEncoderConfig'
+import { videoEncoderConfig, type VideoEncoderSettings } from './videoEncoderConfig'
 import { workerLog } from '../../../core/log'
 
 const TARGET = 'moq-wasm::media::video_encoder'
@@ -25,10 +25,10 @@ class Rendition {
 
   constructor(
     readonly index: number,
-    public config: VideoEncoderConfig
+    public config: VideoEncoderSettings
   ) {}
 
-  async initialize(): Promise<boolean> {
+  async initialize(frame: VideoFrame): Promise<boolean> {
     const init: VideoEncoderInit = {
       output: (chunk, metadata) => this.send(chunk, metadata),
       error: (e: DOMException) => {
@@ -36,7 +36,7 @@ class Rendition {
         self.postMessage({ type: 'encoderError', message: e.message, rendition: this.index })
       }
     }
-    const config = this.config
+    const config = this.configFor(frame)
     try {
       const supported = await VideoEncoder.isConfigSupported(config)
       if (!supported.supported) {
@@ -58,7 +58,7 @@ class Rendition {
       return false
     }
     this.encoder = encoder
-    this.configuredFrameSize = null
+    this.configuredFrameSize = frameSize(frame)
     this.encodedAny = false
     workerLog('info', TARGET, 'encoder initialized', { config, rendition: this.index })
     return true
@@ -66,15 +66,12 @@ class Rendition {
 
   /// Whether the encoder was reconfigured for a new frame size, which needs a keyframe.
   configureForFrame(frame: VideoFrame): boolean {
-    const frameSize = `${frame.displayWidth}x${frame.displayHeight}`
-    if (!this.encoder || frameSize === this.configuredFrameSize) {
+    const size = frameSize(frame)
+    if (!this.encoder || size === this.configuredFrameSize) {
       return false
     }
-    this.configuredFrameSize = frameSize
-    const config = {
-      ...this.config,
-      ...fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight })
-    }
+    this.configuredFrameSize = size
+    const config = this.configFor(frame)
     try {
       this.encoder.configure(config)
     } catch (e) {
@@ -83,6 +80,10 @@ class Rendition {
       return false
     }
     return true
+  }
+
+  private configFor(frame: VideoFrame): VideoEncoderConfig {
+    return { ...this.config, ...fitEncodeSize(this.config, { width: frame.displayWidth, height: frame.displayHeight }) }
   }
 
   private send(chunk: EncodedVideoChunk, metadata: EncodedVideoChunkMetadata | undefined) {
@@ -109,15 +110,19 @@ class Rendition {
 
 let renditions: Rendition[] = [new Rendition(0, videoEncoderConfig())]
 
+function frameSize(frame: VideoFrame): string {
+  return `${frame.displayWidth}x${frame.displayHeight}`
+}
+
 function needsEncoder(rendition: Rendition): boolean {
   return !rendition.encoder || rendition.encoder.state === 'closed'
 }
 
 /// Whether rendition 0 has an encoder. A rendition whose encoder fails is
 /// dropped, after its `configError`, so the video goes on without it.
-async function initializeEncoders(): Promise<boolean> {
+async function initializeEncoders(frame: VideoFrame): Promise<boolean> {
   const pending = renditions.filter(needsEncoder)
-  const initialized = await Promise.all(pending.map((rendition) => rendition.initialize()))
+  const initialized = await Promise.all(pending.map((rendition) => rendition.initialize(frame)))
   const failed = new Set(pending.filter((_, index) => !initialized[index]))
   renditions = renditions.filter((rendition) => rendition.index === 0 || !failed.has(rendition))
   return !needsEncoder(renditions[0])
@@ -132,9 +137,7 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     rendition.encoder = undefined
     rendition.captureTimestamps.reset()
   }
-  if (!(await initializeEncoders())) {
-    return
-  }
+  let started = false
   const videoReader = videoReadableStream.getReader()
   while (true) {
     let videoResult: ReadableStreamReadResult<VideoFrame>
@@ -151,9 +154,17 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     const videoFrame = videoResult.value
 
     if (renditions.some(needsEncoder)) {
-      workerLog('info', TARGET, 'encoders re-initializing')
+      if (started) {
+        workerLog('info', TARGET, 'encoders re-initializing')
+      }
       frameCounter = 0
-      if (!(await initializeEncoders())) {
+      const initialized = await initializeEncoders(videoFrame)
+      if (!initialized && !started) {
+        videoFrame.close()
+        return
+      }
+      started = true
+      if (!initialized) {
         workerLog('error', TARGET, 'encoders failed to initialize, frame dropped')
         self.postMessage({ type: 'frameDropped' })
         videoFrame.close()
