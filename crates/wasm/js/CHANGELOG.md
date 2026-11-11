@@ -1,6 +1,44 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
+
+- Breaking: the video, each rendition and the audio of a source are encoded
+  and sent only while a subscriber takes them, so `stats()` reports 0 for a
+  track nobody watches. A track taken up again starts with a keyframe. Deploy
+  a relay that turns on a track published in Forward State 0 before upgrading
+  the SDK; with an older relay no video or audio is sent.
+
+- Breaking: `MoqSubscription.endBeforeGroup(groupId)` no longer takes the
+  Forward State, which the subscription now keeps. Drop the second argument:
+
+  ```ts
+  // before
+  await subscription.endBeforeGroup(groupId, forward)
+  // after
+  await subscription.endBeforeGroup(groupId)
+  ```
+
+- `LivePlayer.setVideoPriority(priority)` sets the Subscriber Priority of the
+  video a player receives: on a congested downlink the relay sends the video
+  of a lower value first. It is an integer from 0 to 255, 128 by default; the
+  audio stays at 0, ahead of every video. A `SourceView` sets it through
+  `view.player`.
+
+  ```ts
+  remote.listen({
+    onSourceAdd: (view) => {
+      if (view.name === 'screen') view.player.setVideoPriority(64)
+    }
+  })
+  ```
+
+- `MoqSubscription.setPriority(priority)` changes the Subscriber Priority of
+  a subscription, and `MoqSession.subscribeGroupStart()` takes one as its
+  fourth argument.
+
+- `addSource` takes `encoding.latencyMode` (`'realtime'` by default), which
+  applies to the video and its renditions. `'quality'` can be set again, for
+  example for text on a shared screen.
 
 - `LivePlayerOptions.latencyTolerance` and `LivePlayer.setLatencyTolerance()`
   set how much the live video may fall behind before the automatic quality
@@ -32,6 +70,18 @@
   changed after the decoder started, when it switches to a rendition whose
   codec string differs only in its level, such as `avc1.64001E` and
   `avc1.64000B`.
+
+- `LivePlayer` and `RemoteBroadcast` start a live broadcast with audio as soon
+  as the audio output reports its latency. Playback waited 400 ms before it
+  presented anything. A picture without audio, and a browser without
+  `AudioContext.outputLatency`, still wait 400 ms.
+
+- Under `Auto`, `LivePlayer` waits for its container to have a height before
+  it subscribes to the video, and starts on the rendition that fits it. A
+  player of a `RemoteBroadcast` source started on the top rendition and
+  switched down about 80 ms later, so the first picture waited for a keyframe
+  of the top rendition. A container that never gets a height, such as one the
+  page never places, subscribes to no video.
 
 ## 0.5.0
 
