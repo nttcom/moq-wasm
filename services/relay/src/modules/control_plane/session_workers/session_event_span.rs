@@ -237,7 +237,7 @@ mod tests {
         let provider = SdkTracerProvider::builder().build();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
-        let _default = tracing::subscriber::set_default(subscriber);
+        let _default = telemetry::testing::set_default(subscriber);
         let event = MoqtSessionEvent::Subscribe(Box::new(MockSubscribeHandler {
             trace_context: moqt::TraceContext::parse(TRACEPARENT.as_bytes()),
             ..MockSubscribeHandler::default()

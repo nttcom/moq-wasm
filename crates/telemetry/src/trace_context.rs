@@ -99,7 +99,7 @@ mod tests {
             .build();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
-        tracing::subscriber::set_default(subscriber)
+        crate::testing::set_default(subscriber)
     }
 
     fn span_id(span: &Span) -> SpanId {

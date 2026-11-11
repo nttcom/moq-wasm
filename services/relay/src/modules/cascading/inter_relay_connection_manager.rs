@@ -181,7 +181,7 @@ mod tests {
     async fn the_request_that_dials_a_relay_closes_while_the_session_lives() {
         // Arrange
         let closed_spans = ClosedSpans::default();
-        let _default = tracing::subscriber::set_default(
+        let _default = telemetry::testing::set_default(
             tracing_subscriber::registry().with(closed_spans.clone()),
         );
         let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
@@ -206,10 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_relay_whose_certificate_is_not_trusted_is_not_dialed() {
-        // Arrange: a callsite first reached on a thread without a subscriber can
-        // be cached as disabled for every thread, which would disable
-        // `relay.inter_relay.session` in a test that records spans while dialing.
-        let _default = tracing::subscriber::set_default(tracing_subscriber::registry());
+        // Arrange
         let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
         let other_cert_dir = TempDir::new("inter-relay-untrusted");
         let other_cert =

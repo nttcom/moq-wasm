@@ -264,7 +264,7 @@ mod tests {
     async fn the_request_span_closes_while_the_ingest_runs() {
         // Arrange
         let closed_spans = ClosedSpans::default();
-        let _default = tracing::subscriber::set_default(
+        let _default = telemetry::testing::set_default(
             tracing_subscriber::registry().with(closed_spans.clone()),
         );
         let cache = Arc::new(TrackCache::new());

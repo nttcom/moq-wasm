@@ -513,7 +513,7 @@ mod tests {
             random_byte: next_byte,
             emit: move |record, _scope| sink.lock().unwrap().push(record),
         });
-        let _default = tracing::subscriber::set_default(subscriber);
+        let _default = telemetry::testing::set_default(subscriber);
         moqt::set_trace_context_provider(current_traceparent);
 
         // Act

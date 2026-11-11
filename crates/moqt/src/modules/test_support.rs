@@ -1107,7 +1107,7 @@ fn named(captured: &Mutex<Vec<Captured>>, name: &str) -> Vec<Captured> {
 pub(crate) fn capture_telemetry() -> (CapturedTelemetry, DefaultGuard) {
     let telemetry = CapturedTelemetry::default();
     let subscriber = tracing_subscriber::registry().with(telemetry.clone());
-    (telemetry, tracing::subscriber::set_default(subscriber))
+    (telemetry, telemetry::testing::set_default(subscriber))
 }
 
 #[derive(Default)]
