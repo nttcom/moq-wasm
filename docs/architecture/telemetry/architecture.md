@@ -127,9 +127,9 @@ captures spans or events calls instead of `tracing::subscriber::set_default`.
 While only one dispatcher exists, `tracing-core` caches a callsite's interest
 from the default of the thread that registers it first, so a concurrent test
 without a subscriber would cache `never` for a callsite the capturing test
-needs. `set_default` first keeps a second, idle dispatcher alive for the
-process, so interest is combined over all dispatchers instead. `moqt` takes
-`telemetry` only as a dev-dependency; `telemetry` does not depend on `moqt`.
+needs. `set_default` first keeps a second, idle dispatcher alive, so interest
+is combined over all dispatchers. `moqt` takes `telemetry` only as a
+dev-dependency; `telemetry` does not depend on `moqt`.
 
 ## Dependencies
 
