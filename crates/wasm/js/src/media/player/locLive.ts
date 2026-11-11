@@ -30,6 +30,8 @@ type AudioCatalogMessage = {
 export type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void
   onFrameShown(ids: DecodedFrameIds | undefined, captureMicros: number): void
+  /// The decoder lost group `groupId` and drops its deltas until a keyframe.
+  onKeyFrameNeeded(groupId: bigint): void
 }
 
 export type LiveStats = {
@@ -110,6 +112,10 @@ export class LocLive {
       }
       if (event.data.type === 'bitrate') {
         this.receivedKbps = event.data.kbps ?? this.receivedKbps
+        return
+      }
+      if (event.data.type === 'keyFrameNeeded') {
+        callbacks.onKeyFrameNeeded(event.data.groupId as bigint)
         return
       }
       if (event.data.type === 'frame') {
