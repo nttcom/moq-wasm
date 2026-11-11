@@ -5,13 +5,16 @@ use crate::{
     aac::AudioSpecificConfig,
     av1,
     h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
+    hevc::HevcDecoderConfigurationRecord,
     mp4::atom::{Atom, FullAtom, find, find_full_atom, full_atom, read_u32},
+    parameter_sets::NalDecoderConfig,
     sample::{AudioConfig, VideoConfig},
     vp8::Vp8Config,
     vp9::Vp9Config,
 };
 
 const AVC_SAMPLE_ENTRIES: [&[u8]; 2] = [b"avc1", b"avc3"];
+const HEVC_SAMPLE_ENTRIES: [&[u8]; 2] = [b"hvc1", b"hev1"];
 const VP8_SAMPLE_ENTRY: &[u8] = b"vp08";
 const VP9_SAMPLE_ENTRY: &[u8] = b"vp09";
 const AV1_SAMPLE_ENTRY: &[u8] = b"av01";
@@ -86,14 +89,14 @@ pub(super) fn read_track(trak: &Atom) -> Result<Option<(u32, Track)>> {
     )))
 }
 
-/// Keyframes carry the SPS / PPS of `config` in-band, as the LOC payload
+/// Keyframes carry the parameter sets of `config` in-band, as the LOC payload
 /// format and the other demuxers of this crate deliver them.
 pub(super) fn annexb_access_unit(
-    config: &AvcDecoderConfigurationRecord,
-    avcc: &[u8],
+    config: &impl NalDecoderConfig,
+    sample: &[u8],
     is_sync: bool,
 ) -> Result<Bytes> {
-    let annexb = avcc_to_annexb(avcc, config.nal_length_size as usize)?;
+    let annexb = avcc_to_annexb(sample, usize::from(config.nal_length_size()))?;
     Ok(if is_sync {
         config.with_parameter_sets(annexb)
     } else {
@@ -129,6 +132,7 @@ fn read_sample_entry(body: &[u8]) -> Result<Option<Media>> {
 
 fn read_video_entry(kind: &[u8], payload: &[u8]) -> Result<Option<VideoConfig>> {
     let is_video = AVC_SAMPLE_ENTRIES.contains(&kind)
+        || HEVC_SAMPLE_ENTRIES.contains(&kind)
         || [VP8_SAMPLE_ENTRY, VP9_SAMPLE_ENTRY, AV1_SAMPLE_ENTRY].contains(&kind);
     if !is_video {
         return Ok(None);
@@ -144,6 +148,10 @@ fn read_video_entry(kind: &[u8], payload: &[u8]) -> Result<Option<VideoConfig>> 
         VP8_SAMPLE_ENTRY => VideoConfig::Vp8(Vp8Config { width, height }),
         VP9_SAMPLE_ENTRY => VideoConfig::Vp9(read_vp9(children, width, height)?),
         AV1_SAMPLE_ENTRY => VideoConfig::Av1(read_av1(children)?),
+        kind if HEVC_SAMPLE_ENTRIES.contains(&kind) => {
+            let hvcc = find(children, b"hvcC").context("video sample entry has no hvcC")?;
+            VideoConfig::Hevc(HevcDecoderConfigurationRecord::parse(hvcc.payload)?)
+        }
         _ => {
             let avcc = find(children, b"avcC").context("video sample entry has no avcC")?;
             VideoConfig::Avc(AvcDecoderConfigurationRecord::parse(avcc.payload)?)

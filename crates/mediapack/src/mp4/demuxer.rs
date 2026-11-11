@@ -166,6 +166,7 @@ impl SampleEntry {
             Media::Video(config) => MediaEvent::Video(VideoSample {
                 data: match config {
                     VideoConfig::Avc(record) => annexb_access_unit(record, &data, self.is_sync)?,
+                    VideoConfig::Hevc(record) => annexb_access_unit(record, &data, self.is_sync)?,
                     VideoConfig::Vp8(_) | VideoConfig::Vp9(_) | VideoConfig::Av1(_) => data,
                 },
                 is_keyframe: self.is_sync,
@@ -313,7 +314,7 @@ mod tests {
         sample::AudioConfig,
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_MP4, FIXTURE_TS, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF,
-            audio_samples, count_events, ivf_events, video_samples,
+            audio_samples, count_events, hevc_events, ivf_events, video_samples,
         },
     };
 
@@ -410,15 +411,24 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_vp8_vp9_and_av1_video_the_muxer_wrote() {
+    fn round_trips_vp8_vp9_av1_and_h265_video_the_muxer_wrote() {
         let cases = [
-            (loc::VideoCodec::Vp8, FIXTURE_VP8_IVF),
-            (loc::VideoCodec::Vp9, FIXTURE_VP9_IVF),
-            (loc::VideoCodec::Av1, FIXTURE_AV1_IVF),
+            (
+                loc::VideoCodec::Vp8,
+                ivf_events(loc::VideoCodec::Vp8, FIXTURE_VP8_IVF),
+            ),
+            (
+                loc::VideoCodec::Vp9,
+                ivf_events(loc::VideoCodec::Vp9, FIXTURE_VP9_IVF),
+            ),
+            (
+                loc::VideoCodec::Av1,
+                ivf_events(loc::VideoCodec::Av1, FIXTURE_AV1_IVF),
+            ),
+            (loc::VideoCodec::H265, hevc_events()),
         ];
-        for (codec, fixture) in cases {
+        for (codec, source) in cases {
             // Arrange
-            let source = ivf_events(codec, fixture);
             let mut muxer = Fmp4Muxer::new();
             let mut stream = BytesMut::new();
             for event in &source {

@@ -61,7 +61,7 @@ both tracks into one init segment and one fragment stream.
    for every source, and 720 keeps a shared screen's text legible. Audio
    takes the highest bitrate, which viewers start on as well, and Opus is
    cheap to encode. The video codec
-   comes from the catalog's `codec`, a WebCodecs codec string naming H.264, VP8, VP9 or AV1,
+   comes from the catalog's `codec`, a WebCodecs codec string naming H.264, H.265, VP8, VP9 or AV1,
    the audio codec from its `codec`, `sampleRate` and `channelConfig`, and an AAC track's
    AudioSpecificConfig from the `initDataList` entry its `initRef` names, the
    way `broadcast::build_catalog` writes it. While the catalog lists neither
@@ -643,7 +643,7 @@ the recorder started with.
   `broadcast` publisher whose first audio configuration comes before its
   first keyframe lists the audio first, so a recording that starts with that
   publisher can begin with a short audio-only file.
-- Video outside H.264, VP8, VP9 and AV1 in the catalog a recording starts
+- Video outside H.264, H.265, VP8, VP9 and AV1 in the catalog a recording starts
   from ends the recorder with an error before anything is recorded. Listed
   later, it is logged and the recording goes on without it.
 - A screen share is told from the camera only by the default source's track

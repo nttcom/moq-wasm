@@ -7,7 +7,7 @@ use crate::{
     sample::{MediaEvent, Timestamp},
 };
 
-/// Emits an H.264 payload in Annex-B form, so parameter sets travel in band
+/// Emits an H.264 or H.265 payload in Annex-B form, so parameter sets travel in band
 /// and no video config extension is attached: a decoder configured from
 /// extradata expects length-prefixed samples instead. Every start code is
 /// rewritten to 4 bytes, as draft-ietf-moq-loc-04 §2.1.4 recommends, so a
@@ -44,7 +44,9 @@ impl Muxer {
         let (payload, pts, audio_level) = match event {
             MediaEvent::Video(sample) => {
                 let payload = match self.video_codec {
-                    VideoCodec::H264 => with_start_codes(nal_units(&sample.data)),
+                    VideoCodec::H264 | VideoCodec::H265 => {
+                        with_start_codes(nal_units(&sample.data))
+                    }
                     VideoCodec::Vp8 | VideoCodec::Vp9 | VideoCodec::Av1 => sample.data.clone(),
                 };
                 (payload, sample.pts, None)
@@ -75,7 +77,10 @@ mod tests {
     use super::*;
     use crate::{
         sample::{AudioLevel, AudioSample, StreamSet, VideoSample},
-        test_support::{fixture_video_config, keyframe_annexb, keyframe_sample},
+        test_support::{
+            FIXTURE_HEVC, fixture_video_config, hevc_delta_frame_annexb, hevc_keyframe_annexb,
+            keyframe_annexb, keyframe_sample,
+        },
     };
 
     fn muxer() -> Muxer {
@@ -141,6 +146,28 @@ mod tests {
             object.capture_timestamp(),
             Some(Timestamp::from_micros(1_700_000_000_021_000))
         );
+    }
+
+    #[test]
+    fn writes_h265_with_4_byte_start_codes() {
+        // Arrange: the keyframe as ffmpeg wrote it, with a 3-byte start code
+        // before its slice
+        let keyframe_length = FIXTURE_HEVC.len() - hevc_delta_frame_annexb().len();
+        let sample = VideoSample {
+            data: Bytes::from_static(&FIXTURE_HEVC[..keyframe_length]),
+            is_keyframe: true,
+            pts: Timestamp::ZERO,
+            dts: Timestamp::ZERO,
+        };
+
+        // Act
+        let object = muxer()
+            .with_video_codec(VideoCodec::H265)
+            .push(&MediaEvent::Video(sample))
+            .unwrap();
+
+        // Assert
+        assert_eq!(object.payload, hevc_keyframe_annexb());
     }
 
     #[test]

@@ -2,7 +2,11 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use gstreamer::{self as gst, prelude::*};
-use mediapack::{MediaEvent, Timestamp, VideoSample, loc, mpegts};
+use mediapack::{
+    MediaEvent, Timestamp, VideoSample,
+    h264::annexb::{nal_units, with_start_codes},
+    loc, mpegts,
+};
 
 use crate::{Rendition, TranscodedEvent, Transcoder, compositor::EventSource};
 
@@ -13,6 +17,9 @@ pub(crate) const FIXTURE_VP9_IVF: &[u8] =
     include_bytes!("../../mediapack/fixtures/testsrc_vp9.ivf");
 pub(crate) const FIXTURE_AV1_IVF: &[u8] =
     include_bytes!("../../mediapack/fixtures/testsrc_av1.ivf");
+const FIXTURE_HEVC: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc_hevc.h265");
+/// The VPS, SPS, PPS and slice of the keyframe `FIXTURE_HEVC` starts with.
+const HEVC_KEYFRAME_NAL_UNITS: usize = 4;
 
 /// H.264 + AAC events of `testsrc.ts` in demux order.
 pub(crate) fn fixture_events() -> Vec<MediaEvent> {
@@ -70,11 +77,27 @@ fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
     frames
 }
 
-/// Timestamps the frames 30 fps apart.
 pub(crate) fn ivf_events(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<MediaEvent> {
+    loc_events(codec, ivf_frames(fixture))
+}
+
+/// The keyframe and the inter frame of `FIXTURE_HEVC`.
+pub(crate) fn hevc_events() -> Vec<MediaEvent> {
+    let nals: Vec<&[u8]> = nal_units(FIXTURE_HEVC).collect();
+    let (keyframe, inter_frame) = nals.split_at(HEVC_KEYFRAME_NAL_UNITS);
+    loc_events(
+        loc::VideoCodec::H265,
+        [keyframe, inter_frame]
+            .map(|nals| with_start_codes(nals.iter().copied()))
+            .to_vec(),
+    )
+}
+
+/// Timestamps the frames 30 fps apart.
+fn loc_events(codec: loc::VideoCodec, payloads: Vec<Bytes>) -> Vec<MediaEvent> {
     let mut demuxer = loc::Demuxer::video(codec);
     let mut events = Vec::new();
-    for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
+    for (index, payload) in payloads.into_iter().enumerate() {
         let object = loc::LocObject {
             extensions: vec![loc::LocExtension::varint(
                 loc::TIMESTAMP_ID,

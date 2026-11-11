@@ -2,7 +2,11 @@ use bytes::Bytes;
 
 use crate::{
     aac::{AudioSpecificConfig, adts::HEADER_LENGTH},
-    h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
+    h264::{
+        AvcDecoderConfigurationRecord,
+        annexb::{nal_units, with_start_codes},
+    },
+    hevc::{self, HevcDecoderConfigurationRecord},
     loc,
     mpegts::parser::{PACKET_SIZE, SYNC_BYTE},
     sample::{
@@ -21,6 +25,57 @@ pub(crate) const FIXTURE_MP3_MP4: &[u8] = include_bytes!("../fixtures/testsrc_mp
 pub(crate) const FIXTURE_VP8_IVF: &[u8] = include_bytes!("../fixtures/testsrc_vp8.ivf");
 pub(crate) const FIXTURE_VP9_IVF: &[u8] = include_bytes!("../fixtures/testsrc_vp9.ivf");
 pub(crate) const FIXTURE_AV1_IVF: &[u8] = include_bytes!("../fixtures/testsrc_av1.ivf");
+
+/// Two 64x48 4:2:0 frames as ffmpeg writes them with libx265: an IDR picture
+/// after its VPS, SPS and PPS, then an inter frame.
+pub(crate) const FIXTURE_HEVC: &[u8] = include_bytes!("../fixtures/testsrc_hevc.h265");
+/// The `hvcC` payload ffmpeg writes when it remuxes `FIXTURE_HEVC` to MP4.
+pub(crate) const FIXTURE_HVCC: &[u8] = &[
+    0x01, 0x01, 0x60, 0x00, 0x00, 0x00, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1e, 0xf0, 0x00, 0xfc,
+    0xfd, 0xf8, 0xf8, 0x00, 0x00, 0x0f, 0x03, 0xa0, 0x00, 0x01, 0x00, 0x18, 0x40, 0x01, 0x0c, 0x01,
+    0xff, 0xff, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00,
+    0x1e, 0x92, 0x80, 0x90, 0xa1, 0x00, 0x01, 0x00, 0x27, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00,
+    0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x1e, 0xa0, 0x20, 0x83, 0x16, 0x59,
+    0x2a, 0xe4, 0xca, 0xf0, 0x16, 0x80, 0x80, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x0f, 0x04,
+    0xa2, 0x00, 0x01, 0x00, 0x06, 0x44, 0x01, 0xc1, 0x73, 0xd0, 0x89,
+];
+const HEVC_IDR_SLICE: u8 = 20;
+const HEVC_TRAILING_SLICE: u8 = 1;
+
+/// The first NAL unit of `FIXTURE_HEVC` with this nal_unit_type.
+pub(crate) fn hevc_fixture_nal(nal_unit_type: u8) -> Bytes {
+    nal_units(FIXTURE_HEVC)
+        .find(|nal| hevc::nal::nal_unit_type(nal) == Some(nal_unit_type))
+        .map(Bytes::copy_from_slice)
+        .unwrap()
+}
+
+pub(crate) fn hevc_fixture_record() -> HevcDecoderConfigurationRecord {
+    HevcDecoderConfigurationRecord::from_parameter_sets(
+        vec![hevc_fixture_nal(hevc::nal::VPS)],
+        vec![hevc_fixture_nal(hevc::nal::SPS)],
+        vec![hevc_fixture_nal(hevc::nal::PPS)],
+    )
+    .unwrap()
+}
+
+pub(crate) fn hevc_keyframe_annexb() -> Bytes {
+    with_start_codes(
+        [
+            hevc::nal::VPS,
+            hevc::nal::SPS,
+            hevc::nal::PPS,
+            HEVC_IDR_SLICE,
+        ]
+        .map(hevc_fixture_nal)
+        .iter()
+        .map(|nal| nal.as_ref()),
+    )
+}
+
+pub(crate) fn hevc_delta_frame_annexb() -> Bytes {
+    with_start_codes([&hevc_fixture_nal(HEVC_TRAILING_SLICE)[..]])
+}
 
 pub(crate) const FIXTURE_SPS: [u8; 24] = [
     0x67, 0x42, 0xd0, 0x0b, 0xda, 0x0a, 0x37, 0xe4, 0xc0, 0x44, 0x00, 0x00, 0x03, 0x00, 0x04, 0x00,
@@ -270,9 +325,22 @@ pub(crate) fn ivf_frames(file: &[u8]) -> Vec<Bytes> {
 }
 
 pub(crate) fn ivf_events(codec: loc::VideoCodec, fixture: &[u8]) -> Vec<MediaEvent> {
+    loc_events(codec, ivf_frames(fixture))
+}
+
+/// The keyframe and the inter frame of `FIXTURE_HEVC`.
+pub(crate) fn hevc_events() -> Vec<MediaEvent> {
+    loc_events(
+        loc::VideoCodec::H265,
+        vec![hevc_keyframe_annexb(), hevc_delta_frame_annexb()],
+    )
+}
+
+/// What a LOC track of `payloads`, 33 ms apart, demuxes to.
+fn loc_events(codec: loc::VideoCodec, payloads: Vec<Bytes>) -> Vec<MediaEvent> {
     let mut demuxer = loc::Demuxer::video(codec);
     let mut events = Vec::new();
-    for (index, payload) in ivf_frames(fixture).into_iter().enumerate() {
+    for (index, payload) in payloads.into_iter().enumerate() {
         let object = loc::LocObject {
             extensions: vec![loc::LocExtension::varint(
                 loc::TIMESTAMP_ID,

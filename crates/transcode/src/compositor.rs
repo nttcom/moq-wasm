@@ -388,11 +388,15 @@ fn end_of_stream(source: &AppSrc) -> Result<()> {
         .map_err(|error| anyhow!("signal end of stream: {error:?}"))
 }
 
-/// H.264 samples are Annex-B with in-band parameter sets, so a resolution
-/// change keeps the same caps.
+/// H.264 and H.265 samples are Annex-B with in-band parameter sets, so a
+/// resolution change keeps the same caps.
 fn video_caps(config: &VideoConfig) -> gst::Caps {
     match config {
         VideoConfig::Avc(_) => gst::Caps::builder("video/x-h264")
+            .field("stream-format", "byte-stream")
+            .field("alignment", "au")
+            .build(),
+        VideoConfig::Hevc(_) => gst::Caps::builder("video/x-h265")
             .field("stream-format", "byte-stream")
             .field("alignment", "au")
             .build(),
@@ -457,7 +461,8 @@ mod tests {
     use super::*;
     use crate::test_support::{
         FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, audio_events, decode_in_software,
-        fixture_events, fixture_video_samples, ivf_events, shifted, source, transcode_54p,
+        fixture_events, fixture_video_samples, hevc_events, ivf_events, shifted, source,
+        transcode_54p,
     };
 
     const SETTINGS: CompositeSettings = CompositeSettings {
@@ -681,12 +686,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn decodes_vp8_vp9_and_av1_inputs() {
-        // Arrange
+    async fn decodes_vp8_vp9_av1_and_h265_inputs() {
+        // Arrange: VideoToolbox cannot open an H.265 picture as small as the fixture's
+        decode_in_software();
         let vp8 = ivf_events(VideoCodec::Vp8, FIXTURE_VP8_IVF);
         let vp9 = ivf_events(VideoCodec::Vp9, FIXTURE_VP9_IVF);
         let av1 = ivf_events(VideoCodec::Av1, FIXTURE_AV1_IVF);
-        let inputs = [vp8, vp9, av1]
+        let inputs = [vp8, vp9, av1, hevc_events()]
             .into_iter()
             .map(|events| CompositeInput {
                 video: source(events),

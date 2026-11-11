@@ -400,10 +400,7 @@ mod tests {
             in_source(sized_video("video", "avc1.640028", 1080, 1_000_000), 2),
             in_source(sized_video("video_720p", "avc1.42001F", 720, 500_000), 2),
             in_source(sized_video("video_480p", "avc1.42001F", 480, 200_000), 2),
-            in_source(
-                sized_video("video_hevc", "hvc1.1.6.L93.B0", 480, 100_000),
-                2,
-            ),
+            in_source(sized_video("video_vvc", "vvc1.1.L51.CQA", 480, 100_000), 2),
             in_source(opus_track("audio", 32_000), 2),
             in_source(opus_track("audio_128kbps", 128_000), 2),
             chat(),
@@ -466,7 +463,7 @@ mod tests {
         let under = select_video(&catalog, choice(SourceChoice::Main, 480)).unwrap();
         let over = select_video(&catalog, choice(SourceChoice::Main, 240)).unwrap();
 
-        // Assert: video_hevc cannot be recorded, so video_480p wins both ties at 480 pixels
+        // Assert: video_vvc cannot be recorded, so video_480p wins both ties at 480 pixels
         assert_eq!(under.unwrap().name, "video_480p");
         assert_eq!(over.unwrap().name, "video_480p");
     }
@@ -633,7 +630,7 @@ mod tests {
     #[test]
     fn fails_when_no_video_track_of_the_source_can_be_recorded() {
         // Arrange
-        let catalog = catalog(vec![sized_video("video", "hvc1.1.6.L93.B0", 1080, 0)]);
+        let catalog = catalog(vec![sized_video("video", "vvc1.1.L51.CQA", 1080, 0)]);
 
         // Act
         let error = select_tracks(&catalog, choice(SourceChoice::Main, 720)).unwrap_err();
@@ -641,7 +638,7 @@ mod tests {
         // Assert
         assert_eq!(
             error.to_string(),
-            "no video track in the catalog can be recorded: video (hvc1.1.6.L93.B0)"
+            "no video track in the catalog can be recorded: video (vvc1.1.L51.CQA)"
         );
     }
 
@@ -766,17 +763,22 @@ mod tests {
         let mut hevc = video_track();
         hevc.name = "hevc".to_string();
         hevc.codec = Some("hvc1.1.6.L93.B0".to_string());
-        let catalog = catalog(vec![av1, hevc]);
+        let mut vvc = video_track();
+        vvc.name = "vvc".to_string();
+        vvc.codec = Some("vvc1.1.L51.CQA".to_string());
+        let catalog = catalog(vec![av1, hevc, vvc]);
 
         // Act
-        let selection = select_video(&catalog, named("video", "audio")).unwrap();
-        let error = select_video(&catalog, named("hevc", "audio")).unwrap_err();
+        let av1 = select_video(&catalog, named("video", "audio")).unwrap();
+        let hevc = select_video(&catalog, named("hevc", "audio")).unwrap();
+        let error = select_video(&catalog, named("vvc", "audio")).unwrap_err();
 
         // Assert
-        assert_eq!(selection.unwrap().codec, VideoCodec::Av1);
+        assert_eq!(av1.unwrap().codec, VideoCodec::Av1);
+        assert_eq!(hevc.unwrap().codec, VideoCodec::H265);
         assert_eq!(
             error.to_string(),
-            "video track hevc has codec hvc1.1.6.L93.B0, which cannot be recorded"
+            "video track vvc has codec vvc1.1.L51.CQA, which cannot be recorded"
         );
     }
 
