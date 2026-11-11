@@ -309,8 +309,9 @@ impl MediaSource {
     }
 
     /// `codec` is the WebCodecs codec string: `avc1.*` or `avc3.*` with
-    /// `avc: { format: 'annexb' }`, `vp8`, `vp09.*` or `av01.*`; fails for any
-    /// other.
+    /// `avc: { format: 'annexb' }`, `hvc1.*` or `hev1.*` with
+    /// `hevc: { format: 'annexb' }`, `vp8`, `vp09.*` or `av01.*`; fails for
+    /// any other.
     #[wasm_bindgen(js_name = configureVideo)]
     pub fn configure_video(&mut self, codec: String) -> Result<(), JsValue> {
         self.video = Some(video_demuxer(&codec)?);
@@ -318,7 +319,8 @@ impl MediaSource {
     }
 
     /// Call `configureVideo` first. A keyframe sets the track's configuration
-    /// (for H.264, its SPS and PPS), published again when it changes.
+    /// (for H.264 and H.265, its parameter sets), published again when it
+    /// changes.
     /// `timestamp_micros` must not run backwards.
     #[wasm_bindgen(js_name = pushVideo)]
     pub fn push_video(&mut self, data: Vec<u8>, timestamp_micros: f64) -> Result<(), JsValue> {

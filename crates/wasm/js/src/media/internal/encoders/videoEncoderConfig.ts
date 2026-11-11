@@ -1,14 +1,19 @@
+import { isHevcCodec } from '../hevc'
+
+/// `hevc` is the member of the WebCodecs HEVC registration, which TypeScript's
+/// DOM types do not carry.
 export type VideoEncoderSettings = Omit<VideoEncoderConfig, 'width' | 'height'> &
-  Partial<Pick<VideoEncoderConfig, 'width' | 'height'>>
+  Partial<Pick<VideoEncoderConfig, 'width' | 'height'>> & { hevc?: { format: 'annexb' } }
 
 export type RenditionEncoderConfig = Partial<VideoEncoderConfig> & { scaleResolutionDownBy?: number }
 
 const DEFAULT_FRAMERATE = 30
 
-export type VideoCodecName = 'h264' | 'vp8' | 'vp9' | 'av1'
+export type VideoCodecName = 'h264' | 'h265' | 'vp8' | 'vp9' | 'av1'
 
 const CODEC_STRINGS: Record<VideoCodecName, string> = {
   h264: 'avc1.640028', // High Profile, level 4.0 and raised to fit the encoded size
+  h265: 'hvc1.1.6.L93.B0', // Main Profile; the encoder writes the level the encoded size needs
   vp8: 'vp8',
   vp9: 'vp09.00.10.08', // Profile 0, 8-bit
   av1: 'av01.0.08M.08' // Main Profile, level 4.0, 8-bit
@@ -31,9 +36,9 @@ const DEFAULT_CONFIG: VideoEncoderSettings = {
   latencyMode: 'realtime'
 }
 
-/// `config` over `DEFAULT_CONFIG`, skipping fields set to `undefined`. H.264 is
-/// always Annex B, the form the broadcast reads, and the frame rate is clamped
-/// to 1–120.
+/// `config` over `DEFAULT_CONFIG`, skipping fields set to `undefined`. H.264
+/// and H.265 are always Annex B, the form the broadcast reads, and the frame
+/// rate is clamped to 1–120.
 export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): VideoEncoderSettings {
   const set = Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined))
   const merged: VideoEncoderSettings = { ...DEFAULT_CONFIG, ...set }
@@ -42,6 +47,7 @@ export function videoEncoderConfig(config: Partial<VideoEncoderConfig> = {}): Vi
     ...merged,
     codec,
     avc: codec.startsWith('avc') ? { format: 'annexb' } : undefined,
+    hevc: isHevcCodec(codec) ? { format: 'annexb' } : undefined,
     framerate:
       typeof merged.framerate === 'number' && Number.isFinite(merged.framerate) && merged.framerate > 0
         ? Math.min(120, Math.max(1, Math.round(merged.framerate)))

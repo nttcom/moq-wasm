@@ -28,10 +28,12 @@ export type SourceOptions = {
 
 /// Encoder settings shared by the video and its renditions.
 export type VideoEncoding = {
-  /// `'h264'` (the default), `'vp8'`, `'vp9'` or `'av1'`, for which the SDK
-  /// picks the profile, or a WebCodecs codec string such as `'avc1.4d4028'`
-  /// to pick it yourself. The H.264 level is raised to the lowest one that
-  /// holds each track's encoded size and frame rate.
+  /// `'h264'` (the default), `'h265'`, `'vp8'`, `'vp9'` or `'av1'`, for which
+  /// the SDK picks the profile, or a WebCodecs codec string such as
+  /// `'avc1.4d4028'` to pick it yourself. The H.264 level is raised to the
+  /// lowest one that holds each track's encoded size and frame rate. H.265
+  /// takes a browser with a hardware encoder for it, and a viewer needs a
+  /// hardware decoder.
   codec?: VideoCodecName | (string & {})
   /// Each keyframe starts a group. 30 by default, since a viewer that joins
   /// or switches rendition asks for a keyframe instead of waiting for the

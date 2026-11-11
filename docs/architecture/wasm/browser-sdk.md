@@ -1105,12 +1105,17 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 ## 決定事項
 1.0 の範囲として決めたもの。
 
-1. **codec: 映像は H.264、VP8、VP9、AV1、音声は Opus と AAC。** 既定は
+1. **codec: 映像は H.264、H.265、VP8、VP9、AV1、音声は Opus と AAC。** 既定は
    `avc1.640028` と `opus`。`addSource` の `encoding.codec` で選び、ブラウザが encode できない
    codec を指定したら reject する（「配信を `crates/broadcast` に寄せる」の変更6）。
-   `encoding.codec` は名前（`'h264'`、`'vp8'`、`'vp9'`、`'av1'`）か WebCodecs の codec 文字列を
-   取る。名前のときは SDK が profile を決める（H.264 は High、VP9 は Profile 0、AV1 は Main）。
-   H.264 の level はトラックごとの大きさと frame rate から上げる。VP9 と AV1 の level は固定。
+   `encoding.codec` は名前（`'h264'`、`'h265'`、`'vp8'`、`'vp9'`、`'av1'`）か WebCodecs の codec
+   文字列を取る。名前のときは SDK が profile を決める（H.264 は High、H.265 は Main、VP9 は
+   Profile 0、AV1 は Main）。H.264 の level はトラックごとの大きさと frame rate から上げる。
+   VP9 と AV1 の level は固定。H.265 の level は encoder が大きさに合わせてビットストリームに
+   書き、catalog の `codec` はそこから作る。H.265 は H.264 と同じく Annex-B で送り、parameter
+   set は keyframe に in-band で載る。Chrome は H.265 をハードウェアでしか encode / decode
+   できないので、player は H.265 のときだけ decoder の `hardwareAcceleration` を
+   `'no-preference'` にする（ほかの codec は `'prefer-software'`）。
 2. **認証トークン: 文字列か、更新用の非同期関数。** 関数は、接続、GOAWAY による移動、
    再接続のたびに呼ぶ（「core API」の「認証トークン」）。
 3. **再接続: 自動。** GOAWAY 無しの切断でも session が接続し直し、handle はそのまま
