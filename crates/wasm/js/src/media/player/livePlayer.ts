@@ -224,7 +224,8 @@ export class LivePlayer {
             this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
           }
           this.callbacks.onLiveFrame()
-        }
+        },
+        onKeyFrameNeeded: (groupId) => this.requestGroupAfterCut(groupId)
       },
       () => this.context.session,
       options.audioContext
@@ -1319,6 +1320,17 @@ export class LivePlayer {
       this.cmafLive.sink?.resumeAtNewestRange()
       this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
     }
+  }
+
+  /// Skipped when a later group already arrived: its keyframe comes sooner
+  /// than a new group's would.
+  private requestGroupAfterCut(groupId: bigint): void {
+    const video = this.subscriptions.get('video')
+    if (!video || this.review || (this.newestVideoGroup !== undefined && this.newestVideoGroup > groupId)) {
+      return
+    }
+    this.context.log('info', `video group ${groupId} cut short, asking for a new group`)
+    void this.subscriptions.requestNewGroup(video, groupId)
   }
 
   /// The media timeline lists the groups of the tracks it depends on. A group

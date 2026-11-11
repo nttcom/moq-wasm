@@ -6,6 +6,7 @@ import { isHevcCodec } from '../hevc'
 import { differsOnlyInLevel } from './codecLevel'
 import { withLengthPrefixes } from './lengthPrefixes'
 import { workerLog } from '../../../core/log'
+import { KeyFrameWait } from './keyFrameWait'
 
 const TARGET = 'moq-wasm::media::video_decoder'
 
@@ -21,7 +22,7 @@ const MAX_HOLD_MS = 30_000
 const HOLD_TIMELINE_SLACK_MS = 1_000
 
 let videoDecoder: VideoDecoder | undefined
-let waitingForKeyFrame = true
+const keyFrames = new KeyFrameWait()
 let newestKeyframeGroupId: bigint | undefined
 
 /// Each group travels on its own stream, so the tail of a group can arrive
@@ -39,7 +40,7 @@ async function initializeVideoDecoder(config: VideoDecoderConfig) {
       workerLog('warn', TARGET, 'decoder error', { error: e })
       videoDecoder = undefined
       cachedVideoConfig = null
-      waitingForKeyFrame = true
+      keyFrames.cut()
       clearOutputQueue()
     }
   }
@@ -165,7 +166,8 @@ function decodeBufferedEntry(entry: VideoJitterBufferEntry): void {
 
 async function submitForDecode(entry: VideoJitterBufferEntry): Promise<void> {
   const { groupId, objectId, receivedAtMs, chunk } = entry
-  if (waitingForKeyFrame && chunk.type !== 'key') {
+  if (keyFrames.waiting && chunk.type !== 'key') {
+    dropDelta(groupId)
     return
   }
   const pending = outputPendingIds.get(chunk.timestamp) ?? []
@@ -280,28 +282,25 @@ async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBuff
       return
     }
     cachedVideoConfig = resolvedConfig
-    waitingForKeyFrame = true
     // The current keyframe's output IDs were registered before decode();
     // keep them across the first decoder configuration so the first frame is not dropped.
     lastOutputMetaResetAtMs = performance.now()
-    if (chunk.type !== 'key') {
-      return
-    }
   }
 
-  if (waitingForKeyFrame && chunk.type !== 'key') {
+  if (keyFrames.waiting && chunk.type !== 'key') {
+    dropDelta(groupId)
     return
   }
 
   try {
     videoDecoder.decode(lengthPrefixedChunk(chunk, resolvedConfig))
     if (chunk.type === 'key') {
-      waitingForKeyFrame = false
+      keyFrames.keyFrameDecoded()
       newestKeyframeGroupId = groupId
     }
   } catch (error) {
     if (isKeyFrameRequiredError(error)) {
-      waitingForKeyFrame = true
+      keyFrames.cut()
       clearOutputQueue()
       workerLog('warn', TARGET, 'decode needs a key frame, waiting for the next one', {
         group_id: groupId,
@@ -311,6 +310,13 @@ async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBuff
       return
     }
     throw error
+  }
+}
+
+/// The page asks the publisher for a new group on `keyFrameNeeded`.
+function dropDelta(groupId: bigint): void {
+  if (keyFrames.deltaDropped()) {
+    self.postMessage({ type: 'keyFrameNeeded', groupId })
   }
 }
 

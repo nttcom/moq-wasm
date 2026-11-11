@@ -351,9 +351,16 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
 - **rendition の切り替えと `goLive`。** どちらも group の先頭からしか始められない
   ので、切り替え先を購読した直後と、Forward を 1 に戻した直後に
   `Subscription.requestNewGroup` を呼ぶ。
+- **decode できなくなった group。** decoder がエラーで閉じたり keyframe を求めたりすると、
+  video decoder worker は次の keyframe まで delta を捨てる。その待ちで最初に delta を
+  捨てたとき、worker は `keyFrameNeeded` を一度だけ page に送り、`LivePlayer` は
+  その group を指して `requestNewGroup` を呼ぶ。後の group がもう届いていれば、その
+  keyframe を待つので要求しない。購読を始めた直後の待ちは最初の購読が group の先頭から
+  取るので、要求しない。relay がサブグループのストリームを途中でリセットした group は、
+  まだ要求しない。
 - **relay。** 同じ track への要求は、2 秒に 1 回だけ上流へ送る。その間に来た要求は
   送らず、送らなかったことも知らせない。最初の購読は上の FETCH で追いつく。切り替えと
-  `goLive` は group の先頭が届くまで、2.2 秒おきに最大 5 回まで要求を送り直す。
+  `goLive`、decode できなくなった group は group の先頭が届くまで、2.2 秒おきに最大 5 回まで要求を送り直す。
 
 ソースは映像と音声の track 名で渡す。rendition は、catalog が switching set ごとに
 付ける altGroup から見つかる。映像だけがミュートされて catalog から外れても、音声は名前で
