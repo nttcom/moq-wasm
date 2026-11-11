@@ -3,8 +3,10 @@ use bytes::Bytes;
 
 use crate::{
     av1::{self, Av1Config},
-    h264::{AvcDecoderConfigurationRecord, ParameterSetTracker, avcc::avcc_to_annexb},
+    h264::{AvcDecoderConfigurationRecord, avcc::avcc_to_annexb},
+    hevc::HevcDecoderConfigurationRecord,
     loc::object::LocObject,
+    parameter_sets::{NalDecoderConfig, ParameterSetTracker},
     sample::{
         AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoConfig, VideoSample,
     },
@@ -17,6 +19,7 @@ const DEFAULT_NAL_LENGTH_SIZE: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoCodec {
     H264,
+    H265,
     Vp8,
     Vp9,
     Av1,
@@ -26,6 +29,7 @@ impl From<&VideoConfig> for VideoCodec {
     fn from(config: &VideoConfig) -> Self {
         match config {
             VideoConfig::Avc(_) => Self::H264,
+            VideoConfig::Hevc(_) => Self::H265,
             VideoConfig::Vp8(_) => Self::Vp8,
             VideoConfig::Vp9(_) => Self::Vp9,
             VideoConfig::Av1(_) => Self::Av1,
@@ -40,6 +44,7 @@ impl VideoCodec {
         let family = codec.split('.').next().unwrap_or_default();
         match family {
             "avc1" | "avc3" => Some(Self::H264),
+            "hvc1" | "hev1" => Some(Self::H265),
             "vp8" => Some(Self::Vp8),
             "vp09" => Some(Self::Vp9),
             "av01" => Some(Self::Av1),
@@ -59,7 +64,8 @@ pub struct Demuxer {
 
 /// The VP8, VP9 and AV1 variants hold the configuration last reported.
 enum Track {
-    H264(H264Track),
+    H264(NalTrack<AvcDecoderConfigurationRecord>),
+    H265(NalTrack<HevcDecoderConfigurationRecord>),
     Vp8(Option<Vp8Config>),
     Vp9(Option<Vp9Config>),
     Av1(Option<Av1Config>),
@@ -69,10 +75,8 @@ enum Track {
 impl Demuxer {
     pub fn video(codec: VideoCodec) -> Self {
         Self::new(match codec {
-            VideoCodec::H264 => Track::H264(H264Track {
-                parameter_sets: ParameterSetTracker::new(),
-                nal_length_size: None,
-            }),
+            VideoCodec::H264 => Track::H264(NalTrack::default()),
+            VideoCodec::H265 => Track::H265(NalTrack::default()),
             VideoCodec::Vp8 => Track::Vp8(None),
             VideoCodec::Vp9 => Track::Vp9(None),
             VideoCodec::Av1 => Track::Av1(None),
@@ -117,16 +121,14 @@ impl Demuxer {
         let pts = self.presentation_timestamp(object);
         let payload = &object.payload;
         let (data, is_keyframe) = match &mut self.track {
-            Track::H264(track) => {
-                let annexb = track.read_annexb(object)?;
-                let Some(unit) = track.parameter_sets.track(&annexb)? else {
-                    return Ok(events);
-                };
-                if let Some(config) = unit.config_changed {
-                    events.push(MediaEvent::VideoConfig(VideoConfig::Avc(config)));
-                }
-                (unit.data, unit.is_keyframe)
-            }
+            Track::H264(track) => match track.read(object, &mut events)? {
+                Some(unit) => unit,
+                None => return Ok(events),
+            },
+            Track::H265(track) => match track.read(object, &mut events)? {
+                Some(unit) => unit,
+                None => return Ok(events),
+            },
             Track::Vp8(current) => {
                 let frame = vp8::parse_frame(payload)?;
                 events.extend(config_change(current, frame.config, VideoConfig::Vp8));
@@ -182,23 +184,50 @@ fn config_change<T: Clone + PartialEq>(
     Some(MediaEvent::VideoConfig(to_video_config(parsed)))
 }
 
-struct H264Track {
-    parameter_sets: ParameterSetTracker,
+struct NalTrack<C> {
+    parameter_sets: ParameterSetTracker<C>,
     /// The NAL length size of the last Video Config; `Some` once the track has
     /// carried one.
     nal_length_size: Option<usize>,
 }
 
-impl H264Track {
+impl<C: NalDecoderConfig> Default for NalTrack<C> {
+    fn default() -> Self {
+        Self {
+            parameter_sets: ParameterSetTracker::new(),
+            nal_length_size: None,
+        }
+    }
+}
+
+impl<C: NalDecoderConfig> NalTrack<C> {
+    /// The access unit in Annex-B form and whether it is a keyframe, after
+    /// pushing a `VideoConfig` event to `events` when its parameter sets
+    /// changed; `None` for an object without NAL units.
+    fn read(
+        &mut self,
+        object: &LocObject,
+        events: &mut Vec<MediaEvent>,
+    ) -> Result<Option<(Bytes, bool)>> {
+        let annexb = self.read_annexb(object)?;
+        let Some(unit) = self.parameter_sets.track(&annexb)? else {
+            return Ok(None);
+        };
+        if let Some(config) = unit.config_changed {
+            events.push(MediaEvent::VideoConfig(config.into()));
+        }
+        Ok(Some((unit.data, unit.is_keyframe)))
+    }
+
     /// draft-ietf-moq-loc-04 §2.1.3–2.1.4: a length of 1 is a 4-byte start code,
     /// and a 3-byte start code is allowed only on a track that never carried
     /// Video Config, so only such a track reads `00 00 01` as one.
     fn read_annexb(&mut self, object: &LocObject) -> Result<Bytes> {
         if let Some(config) = object
             .video_config()
-            .and_then(|config| AvcDecoderConfigurationRecord::parse(&config).ok())
+            .and_then(|config| C::parse(&config).ok())
         {
-            self.nal_length_size = Some(config.nal_length_size as usize);
+            self.nal_length_size = Some(usize::from(config.nal_length_size()));
         }
         let payload = &object.payload;
         if payload.starts_with(&[0, 0, 0, 1])
@@ -222,8 +251,9 @@ mod tests {
         sample::AudioLevel,
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
-            fixture_record, fixture_video_config, ivf_frames, keyframe_annexb, keyframe_sample,
-            mono_48k, video_samples,
+            fixture_record, fixture_video_config, hevc_delta_frame_annexb, hevc_fixture_record,
+            hevc_keyframe_annexb, ivf_frames, keyframe_annexb, keyframe_sample, mono_48k,
+            video_samples,
         },
     };
 
@@ -533,7 +563,61 @@ mod tests {
             VideoCodec::from_codec_string("av01.0.08M.08"),
             Some(VideoCodec::Av1)
         );
-        assert_eq!(VideoCodec::from_codec_string("hvc1.1.6.L93.B0"), None);
+        for codec in ["hvc1.1.6.L93.B0", "hev1.1.6.L93.B0"] {
+            assert_eq!(VideoCodec::from_codec_string(codec), Some(VideoCodec::H265));
+        }
+        assert_eq!(VideoCodec::from_codec_string("theora"), None);
+    }
+
+    #[test]
+    fn reads_an_h265_track_with_parameter_sets_in_band() {
+        // Arrange
+        let mut demuxer = Demuxer::video(VideoCodec::H265);
+
+        // Act
+        let mut events = demuxer
+            .push(&video_object(0, hevc_keyframe_annexb()))
+            .unwrap();
+        events.extend(
+            demuxer
+                .push(&video_object(40_000, hevc_delta_frame_annexb()))
+                .unwrap(),
+        );
+
+        // Assert
+        assert_eq!(
+            events[1],
+            MediaEvent::VideoConfig(VideoConfig::Hevc(hevc_fixture_record()))
+        );
+        let samples = video_samples(&events);
+        assert_eq!(samples[0].data, hevc_keyframe_annexb());
+        assert!(samples[0].is_keyframe);
+        assert_eq!(samples[1].data, hevc_delta_frame_annexb());
+        assert!(!samples[1].is_keyframe);
+    }
+
+    #[test]
+    fn reads_an_h265_track_with_parameter_sets_in_the_video_config() {
+        // Arrange: 2-byte NAL lengths, as the Video Config says
+        let mut record = hevc_fixture_record();
+        record.nal_length_size = 2;
+        let mut demuxer = Demuxer::video(VideoCodec::H265);
+
+        // Act
+        let events = demuxer
+            .push(&LocObject {
+                extensions: vec![
+                    LocExtension::varint(TIMESTAMP_ID, 0),
+                    LocExtension::bytes(VIDEO_CONFIG_ID, record.to_bytes()),
+                ],
+                payload: annexb_to_avcc(&hevc_keyframe_annexb(), 2),
+            })
+            .unwrap();
+
+        // Assert
+        let samples = video_samples(&events);
+        assert_eq!(samples[0].data, hevc_keyframe_annexb());
+        assert!(samples[0].is_keyframe);
     }
 
     #[test]

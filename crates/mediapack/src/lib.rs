@@ -6,6 +6,7 @@ pub mod aac;
 pub mod av1;
 pub mod flv;
 pub mod h264;
+pub mod hevc;
 pub mod loc;
 pub mod mp4;
 pub mod mpegts;

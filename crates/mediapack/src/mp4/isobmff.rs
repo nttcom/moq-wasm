@@ -5,7 +5,9 @@ use crate::{
     aac::asc::SAMPLES_PER_FRAME,
     av1::{self, Av1Config},
     h264::annexb::annexb_to_avcc_without_parameter_sets,
+    hevc::HevcDecoderConfigurationRecord,
     mp4::track::{MPEG1_AUDIO_OBJECT_TYPE_INDICATION, MPEG2_AUDIO_OBJECT_TYPE_INDICATION},
+    parameter_sets::NalDecoderConfig,
     sample::{AudioConfig, AudioSample, VideoConfig, VideoSample},
     vp9::{self, Vp9Config},
 };
@@ -61,6 +63,10 @@ pub(super) fn video_fragment(
         VideoConfig::Avc(record) => {
             annexb_to_avcc_without_parameter_sets(&sample.data, record.nal_length_size as usize)
         }
+        VideoConfig::Hevc(record) => HevcDecoderConfigurationRecord::sample_without_parameter_sets(
+            &sample.data,
+            usize::from(record.nal_length_size),
+        ),
         VideoConfig::Vp8(_) | VideoConfig::Vp9(_) => sample.data.clone(),
         VideoConfig::Av1(_) => av1::without_temporal_delimiters(&sample.data)?,
     };
@@ -205,6 +211,15 @@ pub(super) fn video_trak(track_id: u32, config: &VideoConfig) -> Result<Bytes> {
                 sps.height,
                 b"avc1",
                 plain_box(b"avcC", &record.to_bytes()),
+            )
+        }
+        VideoConfig::Hevc(record) => {
+            let sps = record.sequence_parameter_set()?;
+            (
+                sps.width,
+                sps.height,
+                b"hvc1",
+                plain_box(b"hvcC", &record.to_bytes()),
             )
         }
         VideoConfig::Vp8(config) => (

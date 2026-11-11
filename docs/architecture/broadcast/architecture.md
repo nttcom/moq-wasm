@@ -70,7 +70,7 @@ again.
 
 ## Track format
 Video and audio objects are LOC (draft-ietf-moq-loc-04): the payload is the
-codec bitstream, H.264 in Annex-B, VP8 or VP9 frames, AV1 temporal units and
+codec bitstream, H.264 or H.265 in Annex-B, VP8 or VP9 frames, AV1 temporal units and
 raw AAC, G.711 A-law, Opus or MP3 frames, and the capture timestamp travels as the Timestamp property, MoQT extension
 header 0x10, with no Timescale, so it reads as Unix µs. An audio sample whose
 source measured its level carries it as the Audio Level property, extension

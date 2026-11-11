@@ -2,8 +2,8 @@ use anyhow::{Result, bail};
 use bytes::Bytes;
 
 use crate::{
-    aac::AudioSpecificConfig, av1::Av1Config, h264::AvcDecoderConfigurationRecord, vp8::Vp8Config,
-    vp9::Vp9Config,
+    aac::AudioSpecificConfig, av1::Av1Config, h264::AvcDecoderConfigurationRecord,
+    hevc::HevcDecoderConfigurationRecord, vp8::Vp8Config, vp9::Vp9Config,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
@@ -57,9 +57,10 @@ impl Timestamp {
     }
 }
 
-/// `data` is one access unit of the track's `VideoConfig` codec: an H.264
-/// Annex-B access unit whose keyframes carry their SPS/PPS in-band, a VP8 or
-/// VP9 frame, or an AV1 temporal unit in the low-overhead bitstream format.
+/// `data` is one access unit of the track's `VideoConfig` codec: an H.264 or
+/// H.265 Annex-B access unit whose keyframes carry their parameter sets
+/// in-band, a VP8 or VP9 frame, or an AV1 temporal unit in the low-overhead
+/// bitstream format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoSample {
     pub data: Bytes,
@@ -111,6 +112,7 @@ impl AudioLevel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VideoConfig {
     Avc(AvcDecoderConfigurationRecord),
+    Hevc(HevcDecoderConfigurationRecord),
     Vp8(Vp8Config),
     Vp9(Vp9Config),
     Av1(Av1Config),
@@ -121,6 +123,7 @@ impl VideoConfig {
     pub fn codec_string(&self) -> String {
         match self {
             Self::Avc(record) => record.codec_string(),
+            Self::Hevc(record) => record.codec_string(),
             Self::Vp8(_) => "vp8".to_string(),
             Self::Vp9(config) => config.codec_string(),
             Self::Av1(config) => config.codec_string(),
@@ -131,6 +134,7 @@ impl VideoConfig {
     pub fn avc(&self) -> Result<&AvcDecoderConfigurationRecord> {
         let codec = match self {
             Self::Avc(record) => return Ok(record),
+            Self::Hevc(_) => "H.265",
             Self::Vp8(_) => "VP8",
             Self::Vp9(_) => "VP9",
             Self::Av1(_) => "AV1",

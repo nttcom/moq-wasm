@@ -264,6 +264,10 @@ impl VideoTrackInfo {
                 let sps = record.sequence_parameter_set()?;
                 (sps.width, sps.height)
             }
+            VideoConfig::Hevc(record) => {
+                let sps = record.sequence_parameter_set()?;
+                (sps.width, sps.height)
+            }
             VideoConfig::Vp8(config) => (config.width, config.height),
             VideoConfig::Vp9(config) => (config.width, config.height),
             VideoConfig::Av1(config) => (config.max_width, config.max_height),
@@ -487,6 +491,7 @@ fn video_mime_type(codec: &str) -> &'static str {
         Some(VideoCodec::Vp8) => "video/vp8",
         Some(VideoCodec::Vp9) => "video/vp9",
         Some(VideoCodec::Av1) => "video/av1",
+        Some(VideoCodec::H265) => "video/h265",
         Some(VideoCodec::H264) | None => "video/h264",
     }
 }
