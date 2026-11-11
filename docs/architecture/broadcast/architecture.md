@@ -202,7 +202,10 @@ publishes the track, so `Origin` sends the track with DYNAMIC_GROUPS
 (draft-ietf-moq-transport-18 §12.6) and notifies it when a subscriber sends
 NEW_GROUP_REQUEST (§10.2.13). One `Notify` serves the source and all its
 renditions: the source keyframes them together, so a request on any of the
-tracks starts a new group on each. The browser sets it (`MediaBroadcast`'s
+tracks starts a new group on each. The `BroadcastWriter` queue also
+notifies it when it starts dropping media because the relay is not keeping up,
+and again whenever it drops a keyframe, so video resumes once the queue drains
+rather than at the source's next periodic keyframe. The browser sets it (`MediaBroadcast`'s
 `onKeyframeRequest`); `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`
 cannot ask their encoders for a keyframe and leave it unset. CMAF siblings do
 not get dynamic groups.

@@ -22,7 +22,10 @@ impl BroadcastWriter {
     pub fn run(broadcast: Broadcast, source_tracks: SourceTracks) -> Self {
         let tracks = TrackPublisher::new(broadcast.clone(), source_tracks.clone());
         let timing = tracks.shared_timing();
-        let (queue, consumer) = PublishQueue::open(broadcast.connection().clone());
+        let (queue, consumer) = PublishQueue::open(
+            broadcast.connection().clone(),
+            source_tracks.keyframe_requests.clone(),
+        );
         Self {
             broadcast,
             source_tracks,

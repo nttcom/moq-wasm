@@ -1,8 +1,9 @@
-use std::future::Future;
+use std::{future::Future, sync::Arc};
 
 use anyhow::{Result, anyhow, bail};
 use mediapack::MediaEvent;
 use tokio::sync::{
+    Notify,
     mpsc::{self, error::TrySendError},
     oneshot,
 };
@@ -30,9 +31,11 @@ const BACKLOG_CLEARED_DEPTH: usize = BACKLOG_WARN_DEPTH / 2;
 /// Hands media to the publish task without ever waiting for the relay. When
 /// the queue is full, samples are dropped, and video stays dropped until a
 /// keyframe fits so that no viewer receives a group it cannot decode from its
-/// start.
+/// start. A source that sets `SourceTracks::keyframe_requests` is asked for a
+/// keyframe when the dropping starts and again each time a keyframe is dropped.
 pub(crate) struct PublishQueue {
     connection: RelayConnection,
+    keyframe_requests: Option<Arc<Notify>>,
     event_sender: mpsc::Sender<Queued>,
     failure_receiver: oneshot::Receiver<anyhow::Error>,
     awaiting_keyframe: bool,
@@ -68,12 +71,16 @@ impl DroppedSamples {
 }
 
 impl PublishQueue {
-    pub(crate) fn open(connection: RelayConnection) -> (Self, QueueConsumer) {
+    pub(crate) fn open(
+        connection: RelayConnection,
+        keyframe_requests: Option<Arc<Notify>>,
+    ) -> (Self, QueueConsumer) {
         let (event_sender, event_receiver) = mpsc::channel(CAPACITY);
         let (failure_sender, failure_receiver) = oneshot::channel();
         (
             Self {
                 connection,
+                keyframe_requests,
                 event_sender,
                 failure_receiver,
                 awaiting_keyframe: false,
@@ -95,12 +102,12 @@ impl PublishQueue {
                 if !has_room || (self.awaiting_keyframe && !sample.is_keyframe) =>
             {
                 self.dropped.video += 1;
-                self.record_drop();
+                self.record_drop(sample.is_keyframe);
                 return Ok(());
             }
             MediaEvent::Audio(_) if !has_room => {
                 self.dropped.audio += 1;
-                self.record_drop();
+                self.record_drop(false);
                 return Ok(());
             }
             MediaEvent::Streams(_) if !has_room => return Ok(()),
@@ -159,7 +166,12 @@ impl PublishQueue {
         }
     }
 
-    fn record_drop(&mut self) {
+    fn record_drop(&mut self, dropped_keyframe: bool) {
+        if (!self.awaiting_keyframe || dropped_keyframe)
+            && let Some(requested) = &self.keyframe_requests
+        {
+            requested.notify_one();
+        }
         if !self.awaiting_keyframe {
             tracing::warn!(
                 capacity = CAPACITY,
@@ -199,6 +211,8 @@ impl PublishQueue {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bytes::Bytes;
     use mediapack::{AudioConfig, AudioSample, Timestamp, VideoSample, aac::AudioSpecificConfig};
 
@@ -228,11 +242,24 @@ mod tests {
     }
 
     fn stalled_queue() -> (PublishQueue, QueueConsumer) {
-        let (mut queue, consumer) = PublishQueue::open(RelayConnection::new(None));
+        stalled_queue_requesting_keyframes(None)
+    }
+
+    fn stalled_queue_requesting_keyframes(
+        keyframe_requests: Option<Arc<Notify>>,
+    ) -> (PublishQueue, QueueConsumer) {
+        let (mut queue, consumer) =
+            PublishQueue::open(RelayConnection::new(None), keyframe_requests);
         for _ in 0..SAMPLE_SLOTS {
             queue.push(video(false)).unwrap();
         }
         (queue, consumer)
+    }
+
+    async fn keyframe_requested(requested: &Notify) -> bool {
+        tokio::time::timeout(Duration::ZERO, requested.notified())
+            .await
+            .is_ok()
     }
 
     fn free_slots(consumer: &mut QueueConsumer, count: usize) {
@@ -252,7 +279,7 @@ mod tests {
     #[tokio::test]
     async fn a_removal_is_taken_after_the_events_queued_before_it() {
         // Arrange
-        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None));
+        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None), None);
         queue.push(audio_config()).unwrap();
 
         // Act
@@ -279,7 +306,7 @@ mod tests {
     #[test]
     fn reports_a_backlog_once_it_reaches_the_warn_depth() {
         // Arrange
-        let (mut queue, _consumer) = PublishQueue::open(RelayConnection::new(None));
+        let (mut queue, _consumer) = PublishQueue::open(RelayConnection::new(None), None);
         for _ in 0..BACKLOG_WARN_DEPTH {
             queue.push(audio()).unwrap();
         }
@@ -295,7 +322,7 @@ mod tests {
     #[test]
     fn clears_the_backlog_report_only_after_the_queue_drains_below_half_the_warn_depth() {
         // Arrange
-        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None));
+        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None), None);
         for _ in 0..=BACKLOG_WARN_DEPTH {
             queue.push(audio()).unwrap();
         }
@@ -343,6 +370,38 @@ mod tests {
         let events = queued(&mut consumer);
         assert_eq!(events.len(), SAMPLE_SLOTS - 4 + 2);
         assert_eq!(events[events.len() - 2..], [video(true), video(false)]);
+    }
+
+    #[tokio::test]
+    async fn asks_the_source_for_a_keyframe_once_when_it_starts_dropping_video() {
+        // Arrange
+        let requested = Arc::new(Notify::new());
+        let (mut queue, _consumer) = stalled_queue_requesting_keyframes(Some(requested.clone()));
+
+        // Act
+        queue.push(video(false)).unwrap();
+        let first = keyframe_requested(&requested).await;
+        queue.push(video(false)).unwrap();
+        let second = keyframe_requested(&requested).await;
+
+        // Assert
+        assert!(first);
+        assert!(!second);
+    }
+
+    #[tokio::test]
+    async fn asks_again_when_the_requested_keyframe_is_dropped_too() {
+        // Arrange
+        let requested = Arc::new(Notify::new());
+        let (mut queue, _consumer) = stalled_queue_requesting_keyframes(Some(requested.clone()));
+        queue.push(audio()).unwrap();
+        assert!(keyframe_requested(&requested).await);
+
+        // Act
+        queue.push(video(true)).unwrap();
+
+        // Assert
+        assert!(keyframe_requested(&requested).await);
     }
 
     #[test]
@@ -396,7 +455,7 @@ mod tests {
     #[test]
     fn reports_why_publishing_stopped() {
         // Arrange
-        let (mut queue, consumer) = PublishQueue::open(RelayConnection::new(None));
+        let (mut queue, consumer) = PublishQueue::open(RelayConnection::new(None), None);
         let QueueConsumer {
             event_receiver,
             failure_sender,
