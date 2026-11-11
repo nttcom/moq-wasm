@@ -849,6 +849,27 @@ impl InMemoryLocalPubSubDirectory {
         }
     }
 
+    /// See `Track::begin_upstream_subscribe`; false when the track is gone.
+    pub(crate) fn begin_upstream_subscribe(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+    ) -> bool {
+        self.upstream_tracks
+            .get_mut(track_key)
+            .is_some_and(|mut track| track.begin_upstream_subscribe(publisher_session_id))
+    }
+
+    pub(crate) fn end_upstream_subscribe(
+        &self,
+        track_key: &TrackKey,
+        publisher_session_id: SessionId,
+    ) {
+        if let Some(mut track) = self.upstream_tracks.get_mut(track_key) {
+            track.end_upstream_subscribe(publisher_session_id);
+        }
+    }
+
     /// An upstream SUBSCRIBE for the track ended without a producer. When it
     /// was the last one of a track still being created, the creation fails
     /// and the entry goes.

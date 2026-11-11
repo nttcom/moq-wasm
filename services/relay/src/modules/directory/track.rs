@@ -175,6 +175,9 @@ pub(crate) struct Track {
     creation: watch::Sender<CreationState>,
     /// Upstream SUBSCRIBEs sent for the track and not yet answered.
     pending_producers: usize,
+    /// Publisher sessions an upstream SUBSCRIBE is on its way to, until its
+    /// answer adds or drops the producer.
+    subscribing: HashSet<SessionId>,
     last_failure: Option<CreationFailure>,
     reservations: Reservations,
     /// Sessions a forwarded PUBLISH is on its way to.
@@ -189,6 +192,7 @@ impl Track {
             consumers: HashMap::new(),
             creation: watch::channel(state).0,
             pending_producers: 0,
+            subscribing: HashSet::new(),
             last_failure: None,
             reservations: Reservations::default(),
             pending_consumers: HashSet::new(),
@@ -216,6 +220,20 @@ impl Track {
 
     pub(crate) fn add_pending_producers(&mut self, count: usize) {
         self.pending_producers += count;
+    }
+
+    /// Claims the upstream SUBSCRIBE to `publisher_session_id`. Returns
+    /// false when the publisher already feeds the track or another SUBSCRIBE
+    /// to it is in flight: a second subscription would start after the
+    /// objects the first one carries and could replace it. Pair with
+    /// `end_upstream_subscribe` once the answer is handled.
+    pub(crate) fn begin_upstream_subscribe(&mut self, publisher_session_id: SessionId) -> bool {
+        !self.producers.contains_key(&publisher_session_id)
+            && self.subscribing.insert(publisher_session_id)
+    }
+
+    pub(crate) fn end_upstream_subscribe(&mut self, publisher_session_id: SessionId) {
+        self.subscribing.remove(&publisher_session_id);
     }
 
     /// One upstream SUBSCRIBE ended without a producer. Returns true, failing
