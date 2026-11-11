@@ -1,9 +1,13 @@
-# [M] Move browser sessions to another relay on GOAWAY
+# [S] Confirm browser sessions move to another relay on GOAWAY in production
 
-Next: open a browser session on a local relay, stop the relay with SIGTERM, and check whether the page logs `GOAWAY received; migrating the session` (`crates/moqt/src/modules/moqt/domains/session/migration_task.rs:158`).
+Next: after the next production relay restart, search browser telemetry for `GOAWAY received; migrating the session` (`crates/moqt/src/modules/moqt/domains/session/migration_task.rs:158`) and the relay's `sending GOAWAY to every session` (`services/relay/src/relay_server/drain.rs:53`).
 
 ## Goal
 
-A browser on a draining relay moves to the relay in the GOAWAY instead of waiting for the connection to drop.
-Evidence: in the week up to 2026-11-10, browser telemetry never logged `GOAWAY received`, while moq-cli did and browsers logged `connection lost; reconnecting` (`migration_task.rs:182`) when relays restarted.
-Unknown: whether GOAWAY reaches the wasm session at all; `crates/wasm/src/session.rs:908` takes `ClientConfig::default()`, which keeps `follow_go_away` on.
+A browser on a draining relay logs `GOAWAY received` and `moved to the new connection`, not `connection lost; reconnecting` (`migration_task.rs:182`).
+The wasm path already follows GOAWAY: `run-goaway-e2e.mjs` passes on master, with the live viewer moving from relay A to relay B over WebTransport without a frame gap.
+
+## Plan
+
+Until 2026-11-10 the deployment named `localhost:443` in GOAWAY and killed the relay 10 s into its 30 s drain, losing its last logs; both are fixed on the deployment side, and no relay has drained since.
+Open: browsers reach the relays through a UDP passthrough load balancer, while moq-cli dials a relay directly. On 2026-11-10 a browser lost its connection 6 s before the next relay began draining, so the balancer may move or drop the flow before the GOAWAY arrives; if browsers still log `connection lost`, look there first.
