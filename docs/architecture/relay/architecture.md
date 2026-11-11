@@ -409,7 +409,10 @@ Each sequence owns the relay-side protocol logic for one message
    the publishers and sends upstream SUBSCRIBE to every one of them at once,
    draft-14 §8.4). Each upstream SUBSCRIBE runs in its own
    `PendingProducerTask` (`sequences/subscribe/pending_producer_task.rs`):
-   on SUBSCRIBE_OK it starts the ingest (`sequences::start_ingest`, which
+   it skips a publisher that already feeds the track or that another task is
+   subscribing to (`Track::subscribing`): a second subscription would start
+   after the objects the first one carries and could replace it. On
+   SUBSCRIBE_OK it starts the ingest (`sequences::start_ingest`, which
    needs the publisher session's `Subscriber`, mailbox and span) and adds the
    `Producer`, which completes the creation; a publisher the track does not
    take any more — it ended, nobody watches it or is reserved on it, or the

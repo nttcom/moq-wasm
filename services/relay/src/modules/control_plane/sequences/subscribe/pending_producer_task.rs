@@ -96,7 +96,7 @@ impl PendingProducerTask {
     ) -> Self {
         let join_handle = tokio::spawn(
             async move {
-                let failure = Self::answer(
+                let failure = Self::subscribe_once(
                     &deps,
                     &track_key,
                     subscriber_session_id,
@@ -123,7 +123,7 @@ impl PendingProducerTask {
 
     /// `Some` when no producer came of this SUBSCRIBE because of a failure
     /// a subscriber waiting for the track should hear about.
-    async fn answer(
+    async fn subscribe_once(
         deps: &PendingProducerDeps,
         track_key: &TrackKey,
         subscriber_session_id: SessionId,
@@ -136,6 +136,38 @@ impl PendingProducerTask {
                 reason: "no upstream publisher could be reached".to_string(),
             });
         };
+        if !deps
+            .table
+            .begin_upstream_subscribe(track_key, publisher_session_id)
+        {
+            tracing::debug!(
+                publisher_session_id = %publisher_session_id,
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                "upstream SUBSCRIBE skipped: the track is gone or the publisher is already subscribed"
+            );
+            return None;
+        }
+        let failure = Self::answer(
+            deps,
+            track_key,
+            subscriber_session_id,
+            publisher_session_id,
+            new_group_request,
+        )
+        .await;
+        deps.table
+            .end_upstream_subscribe(track_key, publisher_session_id);
+        failure
+    }
+
+    async fn answer(
+        deps: &PendingProducerDeps,
+        track_key: &TrackKey,
+        subscriber_session_id: SessionId,
+        publisher_session_id: SessionId,
+        new_group_request: Option<u64>,
+    ) -> Option<CreationFailure> {
         let publisher_peer = session_peer(publisher_session_id, &deps.forwarder).await;
         let subscription = match deps
             .forwarder
@@ -312,7 +344,8 @@ mod tests {
             },
             mock_session::{
                 RecordedControlMessages, mock_session_answering_subscribe,
-                recorded_session_answering_subscribe, session_repository_with_session,
+                recorded_session_answering_subscribe, recorded_session_answering_subscribe_after,
+                session_repository_with_session, wait_until,
             },
         },
     };
@@ -395,11 +428,21 @@ mod tests {
 
     #[tokio::test]
     async fn a_publisher_answering_after_the_track_ended_is_unsubscribed() {
-        // Arrange
+        // Arrange: the track ends as the publisher sends SUBSCRIBE_OK
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(_creation, _reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        let ending_table = table.clone();
+        let (session, recorded) = recorded_session_answering_subscribe(move || {
+            ending_table.remove_upstream_track(&track_key());
+            ContentExists::False
+        });
 
         // Act
-        let recorded = answer_recorded(table.clone(), LATE_PUBLISHER_SESSION).await;
+        answer_from(table.clone(), LATE_PUBLISHER_SESSION, session).await;
 
         // Assert
         assert_eq!(
@@ -411,7 +454,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_publisher_already_feeding_the_track_keeps_its_ingest() {
+    async fn a_publisher_already_feeding_the_track_is_not_subscribed_again() {
         // Arrange
         let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
         let table = Arc::new(table);
@@ -419,16 +462,68 @@ mod tests {
         // Act
         let recorded = answer_recorded(table.clone(), PUBLISHER_SESSION).await;
 
-        // Assert: the second answer is unsubscribed without an ingest; the first stays
-        assert_eq!(
-            recorded.unsubscribed_request_ids(),
-            vec![LATE_UPSTREAM_REQUEST_ID]
-        );
-        assert!(recorded.data_receivers().is_empty());
+        // Assert
+        assert!(recorded.subscribed_track_names().is_empty());
         assert!(table.has_upstream_subscription(
             &track_key(),
             PUBLISHER_SESSION,
             UPSTREAM_REQUEST_ID
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_publisher_with_a_subscribe_in_flight_is_not_subscribed_again() {
+        // Arrange: the first SUBSCRIBE waits for its answer
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        let TrackLookup::Started(creation, _reservation) =
+            table.track_or_begin_creation(&track_key(), SessionPeer::Client)
+        else {
+            panic!("the first SUBSCRIBE starts the creation");
+        };
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let (session, recorded) = recorded_session_answering_subscribe_after(gate.clone());
+        let repository = session_repository_with_session(
+            LATE_PUBLISHER_SESSION,
+            session,
+            VerifiedToken::full_access(),
+        )
+        .await;
+        let deps = deps(table.clone(), repository);
+        table.add_pending_producers(&track_key(), 2);
+        let first = PendingProducerTask::run(
+            deps.clone(),
+            track_key(),
+            SUBSCRIBER_SESSION,
+            UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
+            None,
+        );
+        wait_until(|| recorded.subscribed_track_names().len() == 1)
+            .await
+            .expect("the first SUBSCRIBE should be sent");
+
+        // Act
+        let second = PendingProducerTask::run(
+            deps,
+            track_key(),
+            SUBSCRIBER_SESSION,
+            UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
+            None,
+        );
+        tokio::time::timeout(Duration::from_secs(1), second._join_handle)
+            .await
+            .expect("the second task should end without waiting for the first")
+            .unwrap();
+        gate.notify_one();
+        first._join_handle.await.unwrap();
+
+        // Assert
+        assert_eq!(recorded.subscribed_track_names().len(), 1);
+        assert!(recorded.unsubscribed_request_ids().is_empty());
+        assert_eq!(*creation.borrow(), CreationState::Created);
+        assert!(table.has_upstream_subscription(
+            &track_key(),
+            LATE_PUBLISHER_SESSION,
+            LATE_UPSTREAM_REQUEST_ID
         ));
     }
 
