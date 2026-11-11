@@ -2,6 +2,7 @@ import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBu
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
+import { isHevcCodec } from '../hevc'
 import { differsOnlyInLevel } from './codecLevel'
 import { withLengthPrefixes } from './lengthPrefixes'
 import { workerLog } from '../../../core/log'
@@ -366,7 +367,8 @@ function resolveVideoConfig(videoConfig: Uint8Array | undefined): VideoDecoderCo
   return {
     codec: catalogCodec,
     description: videoConfig ?? catalogDescription,
-    hardwareAcceleration: 'prefer-software',
+    // Chrome decodes H.265 only in hardware.
+    hardwareAcceleration: isHevcCodec(catalogCodec) ? 'no-preference' : 'prefer-software',
     optimizeForLatency: true
   }
 }

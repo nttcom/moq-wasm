@@ -6,6 +6,8 @@ ensureLinuxEnvironment()
 const certificateSpki = computeCertificateSpkiBase64()
 const fakeVideoPath = ensureFakeVideoCaptureFile()
 const baseURL = process.env.MEDIA_E2E_BASE_URL ?? 'http://127.0.0.1:4173'
+// `chrome` runs Google Chrome, which has the H.265 codecs the bundled Chromium lacks.
+const channel = process.env.PLAYWRIGHT_CHANNEL
 const forceQuicOrigins = new Set(
   [
     process.env.MEETING_E2E_RELAY_A_URL ?? 'https://127.0.0.1:4433',
@@ -26,6 +28,7 @@ export default defineConfig({
   use: {
     baseURL,
     browserName: 'chromium',
+    channel,
     headless: process.env.PLAYWRIGHT_HEADLESS !== 'false',
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone'],
@@ -38,7 +41,9 @@ export default defineConfig({
         '--ignore-certificate-errors',
         // getDisplayMedia captures the calling tab, at its viewport size, instead of a fake monitor.
         '--use-fake-device-for-media-stream=display-media-type=browser',
-        '--use-file-for-fake-video-capture=' + fakeVideoPath,
+        // With a hardware encoder, Google Chrome on macOS stops getting frames from the file-backed
+        // fake camera once the encoder has warmed up, so a run in Google Chrome takes the built-in one.
+        ...(channel ? [] : ['--use-file-for-fake-video-capture=' + fakeVideoPath]),
         '--use-fake-ui-for-media-stream',
         '--autoplay-policy=no-user-gesture-required',
         // A runner that needs speech on the fake microphone points this at a WAV file.

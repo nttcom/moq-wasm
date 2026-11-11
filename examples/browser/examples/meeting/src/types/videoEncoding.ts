@@ -60,6 +60,7 @@ export const VIDEO_CODEC_OPTIONS: VideoCodecOption[] = [
     codec: 'avc1.42001F',
     maxEncodePixels: 1280 * 720
   },
+  { id: 'h265-main', label: 'H.265 Main (hvc1.1.6.L93.B0)', codec: 'hvc1.1.6.L93.B0' },
   { id: 'av1-main-8bit-l3', label: 'AV1 Main 8bit (av01.0.08M.08)', codec: 'av01.0.08M.08' },
   { id: 'av1-high-8bit-l4', label: 'AV1 High 8bit (av01.1.08M.08)', codec: 'av01.1.08M.08' },
   { id: 'vp8', label: 'VP8 (vp8)', codec: 'vp8' },
