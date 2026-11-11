@@ -688,7 +688,10 @@ mod tests {
     ) -> (Subscription, Subscription) {
         let (request, handler) = pending_publish(client, server, track_name).await;
         handler.accept_data_receiver().await;
-        let accepted = handler.ok(128, FilterType::LargestObject).await.unwrap();
+        let accepted = handler
+            .ok(128, FilterType::LargestObject, true)
+            .await
+            .unwrap();
         (within(request).await.unwrap().unwrap(), accepted)
     }
 
@@ -704,7 +707,10 @@ mod tests {
             request.abort();
             let cancelled = request.await.unwrap_err();
             let (done, received) = within(async {
-                handler.ok(128, FilterType::LargestObject).await.unwrap();
+                handler
+                    .ok(128, FilterType::LargestObject, true)
+                    .await
+                    .unwrap();
                 let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
                     panic!("expected PUBLISH_DONE after the late PUBLISH_OK");
                 };
@@ -739,7 +745,10 @@ mod tests {
         else {
             panic!("expected PUBLISH from the client");
         };
-        handler.ok(128, FilterType::LargestObject).await.unwrap();
+        handler
+            .ok(128, FilterType::LargestObject, true)
+            .await
+            .unwrap();
         wait_for_control_delivery(&server, &client).await;
 
         // Act
@@ -845,12 +854,12 @@ mod tests {
             let (first, second, first_peer, second_peer, first_received, second_received) =
                 within(async {
                     let second_peer = second_handler
-                        .ok(17, FilterType::NextGroupStart)
+                        .ok(17, FilterType::NextGroupStart, true)
                         .await
                         .unwrap();
                     let second = second_request.await.unwrap().unwrap();
                     let first_peer = first_handler
-                        .ok(241, FilterType::LargestObject)
+                        .ok(241, FilterType::LargestObject, true)
                         .await
                         .unwrap();
                     let first = first_request.await.unwrap().unwrap();

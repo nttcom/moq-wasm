@@ -295,6 +295,8 @@ mod tests {
                     content_exists: ContentExists::False,
                     origin: ProducerOrigin::Publish,
                     peer: SessionPeer::Client,
+                    forward: true,
+                    on_demand: false,
                 }),
             );
             track_key

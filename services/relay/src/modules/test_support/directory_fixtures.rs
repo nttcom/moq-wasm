@@ -95,6 +95,8 @@ pub(crate) fn active_upstream(origin: ProducerOrigin) -> ProducerState {
         content_exists: ContentExists::False,
         origin,
         peer: SessionPeer::Client,
+        forward: true,
+        on_demand: false,
     }
 }
 

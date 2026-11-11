@@ -31,6 +31,7 @@ use crate::modules::{
         track_status::TrackStatus,
         unsubscribe::Unsubscribe,
         unsubscribe_namespace::UnsubscribeNamespace,
+        upstream_forward::UpstreamForward,
         upstream_publish_done::UpstreamPublishDone,
     },
     domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
@@ -143,6 +144,17 @@ impl SessionWorker {
                         &self.deps.control_message_forwarder,
                     )
                     .instrument(event_span)
+                    .await;
+            }
+            SessionEvent::UpstreamForwardChanged(track_key) => {
+                UpstreamForward
+                    .handle(
+                        session_id,
+                        &track_key,
+                        self.deps.local_pub_sub_directory.as_ref(),
+                        &self.deps.control_message_forwarder,
+                    )
+                    .instrument(self.session_span.clone())
                     .await;
             }
             SessionEvent::GoAwaySent => {

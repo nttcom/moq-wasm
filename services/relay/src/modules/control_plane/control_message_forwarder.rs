@@ -199,6 +199,16 @@ impl ControlMessageForwarder {
             .await
     }
 
+    pub(crate) async fn update_forward(
+        &self,
+        session_id: SessionId,
+        subscription: &UpstreamSubscription,
+        forward: bool,
+    ) -> anyhow::Result<()> {
+        let subscriber = self.subscriber(session_id).await?;
+        subscriber.send_forward_update(subscription, forward).await
+    }
+
     #[tracing::instrument(
         level = "info",
         name = "relay.control_message_forwarder.fetch",

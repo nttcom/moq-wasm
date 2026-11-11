@@ -26,8 +26,12 @@ pub(crate) trait PublishHandler: 'static + Send + Sync + Debug {
         filter_type: FilterType,
     ) -> UpstreamSubscription;
     async fn accept_data_receiver(&self);
-    async fn ok(&self, subscription: &UpstreamSubscription)
-    -> Result<(), moqt::TransportSendError>;
+    /// `forward` is the Forward State the subscription starts in.
+    async fn ok(
+        &self,
+        subscription: &UpstreamSubscription,
+        forward: bool,
+    ) -> Result<(), moqt::TransportSendError>;
     async fn error(
         &self,
         code: RequestErrorCode,
@@ -86,12 +90,15 @@ impl PublishHandler for moqt::publish::PublishHandler {
     async fn ok(
         &self,
         subscription: &UpstreamSubscription,
+        forward: bool,
     ) -> Result<(), moqt::TransportSendError> {
         let Some((subscriber_priority, filter_type)) = subscription.publish_accept_options() else {
             tracing::error!("PUBLISH_OK requires publisher-initiated upstream subscription");
             return Ok(());
         };
-        self.ok(subscriber_priority, filter_type).await.map(|_| ())
+        self.ok(subscriber_priority, filter_type, forward)
+            .await
+            .map(|_| ())
     }
 
     async fn accept_data_receiver(&self) {

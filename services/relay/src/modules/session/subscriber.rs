@@ -22,6 +22,13 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         subscription: &UpstreamSubscription,
         new_group_request: u64,
     ) -> anyhow::Result<bool>;
+    /// Sets the Forward State of `subscription`, with a SUBSCRIBE_UPDATE
+    /// (draft-14 §9.10) or REQUEST_UPDATE (draft-18 §10.9.1).
+    async fn send_forward_update(
+        &self,
+        subscription: &UpstreamSubscription,
+        forward: bool,
+    ) -> anyhow::Result<()>;
     /// SUBSCRIBE_NAMESPACE for namespaces only; returns once the publisher
     /// accepts it.
     async fn send_subscribe_namespace(&self, namespace: String) -> anyhow::Result<()>;
@@ -80,6 +87,14 @@ impl Subscriber for moqt::Subscriber {
     ) -> anyhow::Result<bool> {
         self.request_new_group(subscription.as_moqt(), new_group_request.checked_sub(1))
             .await
+    }
+
+    async fn send_forward_update(
+        &self,
+        subscription: &UpstreamSubscription,
+        forward: bool,
+    ) -> anyhow::Result<()> {
+        self.update_forward(subscription.as_moqt(), forward).await
     }
 
     #[tracing::instrument(
