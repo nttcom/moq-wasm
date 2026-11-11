@@ -1,3 +1,4 @@
+mod demand_task;
 mod keyframe_request_task;
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
 use crate::{anyhow_error, js_error, log_sink::SessionScope};
+use demand_task::DemandTask;
 use keyframe_request_task::KeyframeRequestTask;
 
 /// An MSF broadcast of media the page encodes: it publishes the catalog, the
@@ -42,6 +44,7 @@ pub struct MediaSource {
     video: Option<LocDemuxer>,
     renditions: Vec<Rendition>,
     _keyframe_requests: KeyframeRequestTask,
+    _demand: DemandTask,
 }
 
 /// One rendition of the video, written by a task of its own in the order its
@@ -114,7 +117,13 @@ impl MediaBroadcast {
     /// `on_keyframe_request` is called, without arguments, when a subscriber
     /// asks for a new group, and the page then encodes the next frame of the
     /// video and of every rendition as a keyframe.
+    /// The video, its renditions and the audio are published on demand
+    /// (draft-18 §10.10), so the relay has each one sent only while a
+    /// subscriber takes it: `on_demand_change` is called with a track's name
+    /// and whether one does, when the track is published and at every change,
+    /// and the page need not encode a track nobody takes.
     #[wasm_bindgen(js_name = addSource)]
+    #[allow(clippy::too_many_arguments)]
     pub fn add_source(
         &self,
         video: String,
@@ -123,7 +132,12 @@ impl MediaBroadcast {
         video_framerate: Option<f64>,
         audio: String,
         on_keyframe_request: Function,
+        on_demand_change: Function,
     ) -> MediaSource {
+        let (demand_sender, demand_receiver) = mpsc::unbounded_channel();
+        let demand_task = self
+            .scope
+            .in_scope(|| DemandTask::run(demand_receiver, on_demand_change));
         let keyframe_requests = Arc::new(Notify::new());
         let keyframe_request_task = self
             .scope
@@ -138,6 +152,7 @@ impl MediaBroadcast {
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
             video_framerate: video_framerate.map(|framerate| framerate as u32),
             keyframe_requests: Some(keyframe_requests),
+            demand_sender: Some(demand_sender),
         };
         MediaSource {
             writer: self
@@ -148,6 +163,7 @@ impl MediaBroadcast {
             video: None,
             renditions: Vec::new(),
             _keyframe_requests: keyframe_request_task,
+            _demand: demand_task,
         }
     }
 }

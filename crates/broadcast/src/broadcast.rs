@@ -6,13 +6,16 @@ use std::{
 use anyhow::Result;
 use base64::{Engine, engine::general_purpose};
 use mediapack::{AudioConfig, VideoConfig, loc::VideoCodec, mp4::Fmp4TrackMuxer};
-use moqt::{executor, publish::OutgoingObject};
+use moqt::{
+    executor,
+    publish::{OutgoingObject, TrackDemand},
+};
 use msf::{
     Catalog, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 
-use tokio::sync::Notify;
+use tokio::sync::{Notify, mpsc};
 
 use crate::relay_connection::RelayConnection;
 
@@ -98,6 +101,23 @@ impl Broadcast {
             .await
     }
 
+    /// Has the track published on demand (draft-18 §10.10): the relay has it
+    /// sent only while a subscriber takes it, and `demand_sender` is sent
+    /// whether one does, now and at every change. Call before the catalog
+    /// update that publishes the track.
+    pub async fn publish_on_demand(
+        &self,
+        track_name: &str,
+        demand_sender: mpsc::UnboundedSender<TrackDemand>,
+    ) -> Result<()> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay
+            .publish_on_demand(&self.namespace, track_name, demand_sender)
+            .await
+    }
+
     pub async fn update_video_catalog(&self, track_name: &str, info: VideoTrackInfo) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
@@ -180,6 +200,10 @@ pub struct SourceTracks {
     /// subscriber of the video or of one of its renditions asks for a new
     /// group (draft-18 §10.2.13), which the next keyframe starts.
     pub keyframe_requests: Option<Arc<Notify>>,
+    /// Set by a source that stops encoding a track nobody takes: the video,
+    /// its renditions and the audio are published on demand
+    /// (`Broadcast::publish_on_demand`) and report their demand here.
+    pub demand_sender: Option<mpsc::UnboundedSender<TrackDemand>>,
 }
 
 impl Default for SourceTracks {
@@ -194,6 +218,7 @@ impl Default for SourceTracks {
             video_bitrate: None,
             video_framerate: None,
             keyframe_requests: None,
+            demand_sender: None,
         }
     }
 }

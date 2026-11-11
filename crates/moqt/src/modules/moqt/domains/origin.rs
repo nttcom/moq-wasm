@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::join_all;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::{Mutex, Notify, mpsc};
 
 use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
@@ -143,6 +143,22 @@ struct OriginTrack {
     /// Set for a track with dynamic groups (draft-18 §12.6); notified when a
     /// subscriber asks for a new group.
     new_group_requested: Option<Arc<Notify>>,
+    /// Set for a track published on demand.
+    demand: Option<Demand>,
+}
+
+/// Whether a subscription to a track published on demand is in Forward State
+/// 1, as `Origin::publish_on_demand` reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TrackDemand {
+    pub track_name: String,
+    pub wanted: bool,
+}
+
+struct Demand {
+    /// The last one sent.
+    reported: TrackDemand,
+    demand_sender: mpsc::UnboundedSender<TrackDemand>,
 }
 
 /// One subscription to the track: a SUBSCRIBE served or a PUBLISH sent.
@@ -151,6 +167,9 @@ struct Outlet {
     publication: Publication,
     /// The Start Location (draft-14 §9.7); objects before it are not sent.
     start: Location,
+    /// The Forward State (draft-14 §5.1, draft-18 §5.1); no object is sent
+    /// while it is 0.
+    forward: bool,
     writer: Option<TrackWriter>,
     publisher: Publisher,
     subscription: Subscription,
@@ -163,6 +182,25 @@ impl OriginTrack {
             cache: ObjectCache::new(retention),
             outlets: Vec::new(),
             new_group_requested: None,
+            demand: None,
+        }
+    }
+
+    fn wanted(&self) -> bool {
+        self.outlets
+            .iter()
+            .any(|outlet| outlet.serving() && outlet.forward)
+    }
+
+    /// Call after the outlets or their Forward State changed.
+    fn refresh_demand(&mut self) {
+        let wanted = self.wanted();
+        let Some(demand) = &mut self.demand else {
+            return;
+        };
+        if demand.reported.wanted != wanted {
+            demand.reported.wanted = wanted;
+            let _ = demand.demand_sender.send(demand.reported.clone());
         }
     }
 
@@ -241,6 +279,34 @@ impl Origin {
         Ok(())
     }
 
+    /// Marks the track as published on demand: `publish` then asks for
+    /// Forward State 0, so the peer has the track sent only while it wants
+    /// the objects (draft-18 §10.10). `demand_sender` is sent whether a
+    /// subscription to the track is in Forward State 1, now and at every
+    /// change; while none is, no object written is sent, so the caller need
+    /// not produce any. Call this before `publish`; fails for a track that is
+    /// not registered.
+    pub async fn publish_on_demand(
+        &self,
+        namespace: &str,
+        track_name: &str,
+        demand_sender: mpsc::UnboundedSender<TrackDemand>,
+    ) -> Result<()> {
+        let key = track_key(namespace, track_name);
+        let mut state = self.state.lock().await;
+        let track = state.track_mut(&key)?;
+        let reported = TrackDemand {
+            track_name: track_name.to_string(),
+            wanted: track.wanted(),
+        };
+        let _ = demand_sender.send(reported.clone());
+        track.demand = Some(Demand {
+            reported,
+            demand_sender,
+        });
+        Ok(())
+    }
+
     /// Sends PUBLISH on `session`. A no-op while the peer of `session` takes
     /// the track, and once that peer unsubscribed from a PUBLISH of it. A
     /// track released after a SUBSCRIBE is published again. A session that
@@ -255,7 +321,7 @@ impl Origin {
         let context = session.context();
         let key_of_session = session_key(context);
         let _publishing = self.publishing.lock().await;
-        let track_properties = {
+        let option = {
             let mut state = self.state.lock().await;
             let track = state.track_mut(&key)?;
             if track
@@ -265,24 +331,27 @@ impl Origin {
             {
                 return Ok(());
             }
-            let mut properties = TrackProperties::default();
-            properties.set_dynamic_groups(track.new_group_requested.is_some());
-            properties
+            let mut track_properties = TrackProperties::default();
+            track_properties.set_dynamic_groups(track.new_group_requested.is_some());
+            PublishOption {
+                forward: track.demand.is_none(),
+                track_properties,
+                ..PublishOption::default()
+            }
         };
         let publisher = session.publisher();
         let subscription = publisher
-            .publish(
-                namespace.to_string(),
-                track_name.to_string(),
-                PublishOption {
-                    track_properties,
-                    ..PublishOption::default()
-                },
-            )
+            .publish(namespace.to_string(), track_name.to_string(), option)
             .await
             .with_context(|| format!("publish {namespace}/{track_name}"))?;
         let request = (key_of_session, subscription.request_id());
         let track_alias = subscription.track_alias();
+        let forward = match &subscription {
+            Subscription::PublisherInitiated(accepted) => accepted.forward,
+            Subscription::SubscriberInitiated(_) => {
+                unreachable!("a PUBLISH_OK gives a publisher-initiated subscription")
+            }
+        };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
         let next_group_id = track.numbering.next_group_id();
@@ -291,6 +360,7 @@ impl Origin {
             request,
             publication: Publication::Published,
             start,
+            forward,
             writer: Some(TrackWriter::new(
                 publisher.create_stream(&subscription),
                 next_group_id,
@@ -298,6 +368,7 @@ impl Origin {
             publisher,
             subscription,
         });
+        track.refresh_demand();
         state.subscriptions.insert(
             request,
             OriginSubscription {
@@ -398,7 +469,8 @@ impl Origin {
     /// TRACK_STATUS, logging a failed answer. Returns every other event for the
     /// caller to answer, including a SUBSCRIBE to an unregistered track and an
     /// UNSUBSCRIBE of a request it does not serve. A SUBSCRIBE_UPDATE is
-    /// returned too, after its NEW_GROUP_REQUEST was passed to the track.
+    /// returned too, after its Forward State and NEW_GROUP_REQUEST were
+    /// applied to the subscription it updates.
     pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         match event {
             SessionEvent::Subscribe(handler) => {
@@ -423,7 +495,7 @@ impl Origin {
             }
             SessionEvent::FetchCancel(handler) => self.cancel_fetch(&handler).await,
             SessionEvent::SubscribeUpdate(handler) => {
-                self.note_new_group_request(&handler).await;
+                self.apply_update(&handler).await;
                 return Some(SessionEvent::SubscribeUpdate(handler));
             }
             SessionEvent::TrackStatus(handler) => {
@@ -437,20 +509,27 @@ impl Origin {
         None
     }
 
-    async fn note_new_group_request(&self, handler: &SubscribeUpdateHandler) {
-        let Some(new_group_request) = handler.new_group_request() else {
-            return;
-        };
+    async fn apply_update(&self, handler: &SubscribeUpdateHandler) {
         let request = (
             session_key(&handler.session_context),
             handler.subscription_request_id(),
         );
-        let state = self.state.lock().await;
-        let track = state
+        let mut state = self.state.lock().await;
+        let Some(key) = state
             .subscriptions
             .get(&request)
-            .and_then(|subscription| state.tracks.get(&subscription.track));
-        if let Some(track) = track {
+            .map(|subscription| subscription.track.clone())
+        else {
+            return;
+        };
+        let Some(track) = state.tracks.get_mut(&key) else {
+            return;
+        };
+        if let Some(outlet) = track.outlet_mut(request) {
+            outlet.forward = handler.forward();
+        }
+        track.refresh_demand();
+        if let Some(new_group_request) = handler.new_group_request() {
             track.request_new_group(new_group_request);
         }
     }
@@ -489,6 +568,7 @@ impl Origin {
             request,
             publication: Publication::Subscribed,
             start,
+            forward: handler.forward,
             writer: Some(TrackWriter::new(
                 publisher.create_stream(&subscription),
                 next_group_id,
@@ -496,6 +576,7 @@ impl Origin {
             publisher,
             subscription,
         });
+        track.refresh_demand();
         state.subscriptions.insert(
             request,
             OriginSubscription {
@@ -555,6 +636,7 @@ impl Origin {
                 outlet.publication = Publication::Released;
                 true
             });
+            track.refresh_demand();
         }
         drop(state);
         if let Some(writer) = released {
@@ -587,6 +669,7 @@ impl Origin {
                     None => {}
                 }
             }
+            track.refresh_demand();
             for request in requests {
                 state.subscriptions.remove(&request);
             }
@@ -739,6 +822,7 @@ impl Origin {
                 }
             }
         }
+        track.refresh_demand();
         drop(state);
         for writer in orphaned {
             writer.cancel().await;
@@ -800,11 +884,20 @@ fn fetch_target(
     Ok((track.clone(), start, end))
 }
 
+/// The writers of the subscriptions an object is sent on: those in Forward
+/// State 1. One in Forward State 0 leaves its open group, which the object
+/// is omitted from, and takes the group up again once it is back in 1.
 fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWriter)> {
     track
         .outlets
         .iter_mut()
         .filter_map(|outlet| {
+            if !outlet.forward {
+                if let Some(writer) = &mut outlet.writer {
+                    writer.abandon_group();
+                }
+                return None;
+            }
             let writer = outlet.writer.take()?;
             Some((outlet.request, outlet.start, writer))
         })
@@ -837,8 +930,9 @@ fn content_exists(largest: Option<Location>) -> ContentExists {
     }
 }
 
-/// A writer that has sent nothing joins the group the object is in; one whose
-/// group a peer stopped or the transport reset resumes at the next group.
+/// A writer that has sent nothing joins the group the object is in, and so
+/// does one that left the group in Forward State 0; one whose group a peer
+/// stopped or the transport reset resumes at the next group.
 async fn send_placed(
     writer: &mut TrackWriter,
     start: Location,
@@ -857,6 +951,11 @@ async fn send_placed(
             .start_group_at(group_id)
             .await
             .context("start group")?;
+    } else if writer.abandoned_group_id() == Some(group_id) {
+        writer
+            .rejoin_group_at(object_id)
+            .await
+            .context("rejoin group")?;
     } else if writer.current_group_id() != Some(group_id) {
         if writer.groups() > 0 {
             return Ok(false);
@@ -1091,6 +1190,113 @@ mod tests {
     async fn next_object(peers: &Peers, subscription: &Subscription) -> TrackObject {
         let mut reader = subscribed_track_reader(&peers.server, subscription).await;
         within(reader.next_object()).await.unwrap().unwrap()
+    }
+
+    /// Publishes the track to a peer that accepts it in the Forward State the
+    /// PUBLISH asks for.
+    async fn publish_accepted_as_asked(peers: &Peers) -> Subscription {
+        let (published, accepted) = within(async {
+            tokio::join!(
+                peers.origin.publish(&peers.client, NAMESPACE, TRACK),
+                async {
+                    let SessionEvent::Publish(handler) =
+                        peers.server.receive_event().await.unwrap()
+                    else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    let accepted = handler
+                        .ok(128, FilterType::LargestObject, handler.forward)
+                        .await
+                        .unwrap();
+                    handler.accept_data_receiver().await;
+                    accepted
+                }
+            )
+        })
+        .await;
+        published.unwrap();
+        accepted
+    }
+
+    /// The peer sets the Forward State of `subscription` and the origin
+    /// applies the update.
+    async fn update_forward(peers: &Peers, subscription: &Subscription, forward: bool) {
+        let subscriber = peers.server.subscriber();
+        let (updated, ()) = within(async {
+            tokio::join!(subscriber.update_forward(subscription, forward), async {
+                let event = peers.client.receive_event().await.unwrap();
+                assert!(matches!(event, SessionEvent::SubscribeUpdate(_)));
+                peers.origin.handle(event).await;
+            })
+        })
+        .await;
+        updated.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_track_published_on_demand_is_sent_only_while_a_subscription_forwards() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-on-demand", RETENTION, version).await;
+            let origin = &peers.origin;
+            let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+            origin
+                .publish_on_demand(NAMESPACE, TRACK, demand_sender)
+                .await
+                .unwrap();
+            let accepted = publish_accepted_as_asked(&peers).await;
+
+            // Act
+            let before_update = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            update_forward(&peers, &accepted, true).await;
+            let after_update = origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+                .await
+                .unwrap();
+            let received = next_object(&peers, &accepted).await;
+
+            // Assert
+            let demand = |wanted| TrackDemand {
+                track_name: TRACK.to_string(),
+                wanted,
+            };
+            assert_eq!(demand_receiver.try_recv(), Ok(demand(false)));
+            assert_eq!(demand_receiver.try_recv(), Ok(demand(true)));
+            assert_eq!(before_update, WriteOutcome::NotSent);
+            assert_eq!(after_update, sent(FIRST_GROUP_ID + 1, 0, true));
+            assert_eq!(
+                (received.group_id, received.object_id),
+                (FIRST_GROUP_ID + 1, 0)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_subscription_back_in_forward_state_1_takes_its_group_up_past_what_it_missed() {
+        for version in DRAFTS {
+            // Arrange: the subscription is in the middle of a group
+            let peers = origin_with_track("origin-forward-off", RETENTION, version).await;
+            let origin = &peers.origin;
+            let accepted = publish(&peers).await;
+            let write = |group, payload| origin.write(NAMESPACE, TRACK, plain(group, payload));
+            let first = write(GroupBoundary::Next, b"a").await.unwrap();
+
+            // Act
+            update_forward(&peers, &accepted, false).await;
+            let in_forward_state_0 = write(GroupBoundary::Within, b"b").await.unwrap();
+            update_forward(&peers, &accepted, true).await;
+            let same_group = write(GroupBoundary::Within, b"c").await.unwrap();
+            let next_group = write(GroupBoundary::Next, b"d").await.unwrap();
+
+            // Assert
+            assert_eq!(first, sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(in_forward_state_0, WriteOutcome::NotSent);
+            assert_eq!(same_group, sent(FIRST_GROUP_ID, 2, false));
+            assert_eq!(next_group, sent(FIRST_GROUP_ID + 1, 0, true));
+        }
     }
 
     #[tokio::test]

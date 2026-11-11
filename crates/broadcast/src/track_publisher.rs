@@ -127,6 +127,11 @@ impl TrackPublisher {
                         .accept_keyframe_requests(&self.tracks.video, requested.clone())
                         .await?;
                 }
+                if let Some(demand_sender) = &self.tracks.demand_sender {
+                    self.broadcast
+                        .publish_on_demand(&self.tracks.video, demand_sender.clone())
+                        .await?;
+                }
                 self.broadcast
                     .update_video_catalog(&self.tracks.video, info)
                     .await
@@ -145,6 +150,11 @@ impl TrackPublisher {
                     switching_set: self.tracks.switching_set.clone(),
                     source: self.tracks.video.clone(),
                 };
+                if let Some(demand_sender) = &self.tracks.demand_sender {
+                    self.broadcast
+                        .publish_on_demand(&self.tracks.audio, demand_sender.clone())
+                        .await?;
+                }
                 self.broadcast
                     .update_audio_catalog(&self.tracks.audio, info)
                     .await?;

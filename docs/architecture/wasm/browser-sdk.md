@@ -330,6 +330,19 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
   届くと wasm が callback を呼び、`sourceEncoding.ts` が encoder worker に
   `forceKeyframe` を送る。worker は次のフレームを全 rendition で keyframe にする
   ので、group id は rendition の間で揃ったままである。
+- **誰も受け取らない track。** `MediaBroadcast.addSource` は `onDemandChange` も受け取り、
+  映像・rendition・音声の track を Forward State 0 の PUBLISH で配信する（§10.10）。relay は
+  Forward State 1 の購読者がいる間だけ Forward を 1 にし、wasm はその変化を track 名と
+  一緒に callback へ渡す。`sourceEncoding.ts` は、映像と rendition なら encoder worker に
+  `wanted` を送る。worker は `wanted` でない rendition にフレームを渡さず、再び `wanted` に
+  なったら次のフレームを全 rendition で keyframe にする。音声は encoder を止め、再開の
+  ときに新しい timeline で作り直す（音声の encoder は渡された sample 数で時刻を付けるので、
+  入力を飛ばせない）。catalog と media timeline は Forward State 1 のまま配信する。
+  track は最初の chunk で catalog に載るので、encoder は一度は動く。
+  動きのない画面共有は track の開始時にしかフレームを出さないので、rendition が再び `wanted` に
+  なったとき、page は track の clone を作って 1 フレームを読み、worker に `frame` として渡す
+  （`refreshFrame`）。worker はそれを、すでに encode したフレームの後ろの時刻に置いて encode する。
+  Safari（worker が track を読む経路）ではこの読み直しをしない。
 - **最初の購読。** `subscribeGroupStart(namespace, track, 60)` を使う。SUBSCRIBE と
   joining FETCH を続けて送る。SUBSCRIBE_OK の Largest Object が 60 object（30 fps で
   2 秒）より手前なら、その FETCH で今の group を先頭から取る。それ以降なら FETCH を

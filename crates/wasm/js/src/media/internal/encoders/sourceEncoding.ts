@@ -72,9 +72,18 @@ type ChunkMessage<Chunk, Metadata> = {
 
 /// Stops one kind's encoder worker and what feeds it. `forceKeyframe` makes
 /// the next video frame a keyframe of the video and of every rendition.
-type Encoder = { stop: () => void; forceKeyframe?: () => void }
+/// `setWanted` tells the video's encoders whether a subscriber takes the video
+/// (rendition 0) or its rendition `rendition - 1`; one nobody takes encodes
+/// no frame.
+type Encoder = {
+  stop: () => void
+  forceKeyframe?: () => void
+  setWanted?: (rendition: number, wanted: boolean) => void
+}
 
-type Encoding = { track?: MediaStreamTrack; muted: boolean; encoder?: Encoder }
+/// `paused` is set while the audio is published but not encoded, because no
+/// subscriber takes it.
+type Encoding = { track?: MediaStreamTrack; muted: boolean; encoder?: Encoder; paused?: boolean }
 
 export type SourceEncoding = {
   /// A muted kind is not encoded and its track leaves the catalog with
@@ -116,10 +125,16 @@ function mainEncoderConfig({ encoding = {}, main = {} }: SourceOptions): Partial
   return { codec, framerate, hardwareAcceleration, latencyMode, width, height, bitrate }
 }
 
-/// `addSource` adds the source to the broadcast with the callback it is given,
-/// which the broadcast calls when a subscriber asks for a new group.
+/// `addSource` adds the source to the broadcast with the callbacks it is
+/// given: the broadcast calls the first when a subscriber asks for a new
+/// group, and the second with a track of the source and whether a subscriber
+/// takes it, when the track is published and at every change.
 export function publishSource(
-  addSource: (onKeyframeRequest: () => void) => MediaSource,
+  addSource: (
+    onKeyframeRequest: () => void,
+    onDemandChange: (trackName: string, wanted: boolean) => void
+  ) => MediaSource,
+  trackNames: Record<MediaKind, string>,
   stream: MediaStream,
   initialOptions: SourceOptions,
   startedAtMs: number,
@@ -128,7 +143,44 @@ export function publishSource(
 ): SourceEncoding {
   let options = initialOptions
   const kinds = new Map<MediaKind, Encoding>()
-  const source = addSource(() => kinds.get('video')?.encoder?.forceKeyframe?.())
+  let closed = false
+  const videoTrackNames = [
+    trackNames.video,
+    ...(options.renditions ?? []).map(({ name }) => `${trackNames.video}_${name}`)
+  ]
+  // The audio encoder stamps its chunks from the samples it was given, so it
+  // cannot skip input like the video's: it is stopped, and a new one started
+  // on a new timeline.
+  const setAudioWanted = (wanted: boolean) => {
+    const audio = kinds.get('audio')
+    if (!audio?.track || audio.muted) {
+      return
+    }
+    if (!wanted && audio.encoder) {
+      audio.encoder.stop()
+      audio.encoder = undefined
+      audio.paused = true
+    } else if (wanted && audio.paused) {
+      audio.paused = false
+      audio.encoder = encode('audio', audio.track)
+    }
+  }
+  const source = addSource(
+    () => kinds.get('video')?.encoder?.forceKeyframe?.(),
+    (trackName, wanted) => {
+      if (closed) {
+        return
+      }
+      if (trackName === trackNames.audio) {
+        setAudioWanted(wanted)
+        return
+      }
+      const rendition = videoTrackNames.indexOf(trackName)
+      if (rendition >= 0) {
+        kinds.get('video')?.encoder?.setWanted?.(rendition, wanted)
+      }
+    }
+  )
   const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate, framerate }) =>
     source.addRendition(name, label, bitrate, framerateCap(framerate ?? options.main?.framerate))
   )
@@ -154,7 +206,6 @@ export function publishSource(
   // An unmute that publishes the track before the mute's removal finishes
   // would leave it removed, so mutes, unmutes, removals and the close run one
   // at a time.
-  let closed = false
 
   // A source without audio removes the `audio` placeholder the catalog lists
   // with the default `video`, queued before its first configuration.
@@ -162,11 +213,12 @@ export function publishSource(
   const serialized = (operation: () => Promise<void>) => (queue = queue.then(operation, operation))
   const stop = async (kind: MediaKind) => {
     const encoding = kinds.get(kind)
-    if (!encoding?.encoder) {
+    if (!encoding?.encoder && !encoding?.paused) {
       return
     }
-    encoding.encoder.stop()
+    encoding.encoder?.stop()
     encoding.encoder = undefined
+    encoding.paused = false
     await source.removeTrack(kind)
   }
   return {
@@ -196,6 +248,7 @@ export function publishSource(
       kinds.set(kind, encoding)
       if (!encoding.muted) {
         encoding.encoder?.stop()
+        encoding.paused = false
         encoding.encoder = encode(kind, track)
       }
     },
@@ -307,6 +360,7 @@ function encodeVideo(
     keyframeIntervalMicros: (options.encoding?.keyframeIntervalSeconds ?? DEFAULT_KEYFRAME_INTERVAL_SECONDS) * 1_000_000
   })
   const forceKeyframe = () => worker.postMessage({ type: 'forceKeyframe' })
+  const setWanted = (rendition: number, wanted: boolean) => worker.postMessage({ type: 'wanted', rendition, wanted })
   worker.postMessage({ type: 'encoderConfig', config })
   if (options.renditions?.length) {
     worker.postMessage({
@@ -326,7 +380,16 @@ function encodeVideo(
   if (typeof MediaStreamTrackProcessor === 'function') {
     const videoStream = new MediaStreamTrackProcessor({ track }).readable
     worker.postMessage({ type: 'videoStream', videoStream }, [videoStream])
-    return { stop: () => worker.terminate(), forceKeyframe }
+    return {
+      stop: () => worker.terminate(),
+      forceKeyframe,
+      setWanted: (rendition, wanted) => {
+        setWanted(rendition, wanted)
+        if (wanted) {
+          refreshFrame(track, worker)
+        }
+      }
+    }
   }
   // Safari reads a track only in a worker. The worker stops the clone it was
   // given, which `terminate` would leave running.
@@ -337,8 +400,32 @@ function encodeVideo(
       worker.onmessage = null
       worker.postMessage({ type: 'stop' })
     },
-    forceKeyframe
+    forceKeyframe,
+    setWanted
   }
+}
+
+const REFRESH_FRAME_WAIT_MS = 1_000
+
+/// The capture of a still picture, such as a shared tab, sends a frame only
+/// when a track starts, so a rendition taken up again would wait for the
+/// picture to change before its first keyframe. Starting a clone of `track`
+/// has the capture send its picture again, which the worker encodes.
+function refreshFrame(track: MediaStreamTrack, worker: Worker): void {
+  const clone = track.clone()
+  const stop = setTimeout(() => clone.stop(), REFRESH_FRAME_WAIT_MS)
+  new MediaStreamTrackProcessor({ track: clone }).readable
+    .getReader()
+    .read()
+    .then(
+      ({ value }: ReadableStreamReadResult<VideoFrame>) =>
+        value && worker.postMessage({ type: 'frame', frame: value }, [value]),
+      () => {}
+    )
+    .finally(() => {
+      clearTimeout(stop)
+      clone.stop()
+    })
 }
 
 function encodeAudio(

@@ -192,15 +192,17 @@ class Broadcast implements LocalBroadcast {
     // knows the track's name may subscribe before that.
     await this.broadcast.declareTracks([name, audioName])
     const encoding = publishSource(
-      (onKeyframeRequest) =>
+      (onKeyframeRequest, onDemandChange) =>
         this.broadcast.addSource(
           name,
           label,
           videoBitrate(options),
           videoFramerate(options),
           audioName,
-          onKeyframeRequest
+          onKeyframeRequest,
+          onDemandChange
         ),
+      { video: name, audio: audioName },
       new MediaStream(tracks.map(({ track }) => track)),
       options,
       this.startedAtMs,

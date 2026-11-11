@@ -14,10 +14,29 @@ let camera: LocalSource | undefined
 let videoMuted = false
 let screenShare: LocalSource | undefined
 
+setInterval(showEncodeStatus, 1000)
+
 function initializeStatuses(): void {
   setStatusText('publisher-connection-status', 'Not connected')
   setStatusText('publisher-capture-status', 'Capture idle')
   setStatusText('publisher-send-status', 'Not publishing')
+}
+
+/// What the camera's encoders output over the last second: a track nobody
+/// subscribes to is not encoded.
+function showEncodeStatus(): void {
+  const video = camera?.stats().video
+  if (!video) {
+    setStatusText('publisher-encode-status', '-')
+    return
+  }
+  const tracks = { camera: video, ...video.renditions }
+  setStatusText(
+    'publisher-encode-status',
+    Object.entries(tracks)
+      .map(([name, { encodedKbps }]) => `${name} ${Math.round(encodedKbps)} kbps`)
+      .join(' / ')
+  )
 }
 
 async function connect(): Promise<void> {

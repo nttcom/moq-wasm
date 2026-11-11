@@ -16,6 +16,8 @@ pub struct TrackWriter {
     first_group_id: u64,
     next_group_id: u64,
     group: Option<GroupSender>,
+    /// A group left by `abandon_group`.
+    abandoned: Option<GroupSender>,
     pending_group_gap: Option<u64>,
     opened_streams: u64,
 }
@@ -27,9 +29,39 @@ impl TrackWriter {
             first_group_id,
             next_group_id: first_group_id,
             group: None,
+            abandoned: None,
             pending_group_gap: None,
             opened_streams: 0,
         }
+    }
+
+    /// Leaves the open group because one of its objects is not sent, as in
+    /// Forward State 0 (draft-18 §5.1). Its stream is reset once the next
+    /// stream opens or the writer ends: a FIN would tell the receiver it has
+    /// the whole subgroup (draft-14 §10.4.3).
+    pub(crate) fn abandon_group(&mut self) {
+        if let Some(group) = self.group.take() {
+            self.abandoned = Some(group);
+        }
+    }
+
+    pub(crate) fn abandoned_group_id(&self) -> Option<u64> {
+        self.abandoned.as_ref().map(|group| group.group_id)
+    }
+
+    /// Takes the group left by `abandon_group` up again on a new stream
+    /// whose first object id is `object_id`, which draft-18 §11.4.3 allows
+    /// once the Forward State is 1 again. Does nothing without such a group.
+    pub(crate) async fn rejoin_group_at(&mut self, object_id: u64) -> anyhow::Result<()> {
+        let Some(group_id) = self.abandoned_group_id() else {
+            return Ok(());
+        };
+        self.reset_abandoned_group().await;
+        self.next_group_id = group_id;
+        let mut group = self.open_group().await?;
+        group.next_object_id = object_id;
+        self.group = Some(group);
+        Ok(())
     }
 
     pub async fn start_group(&mut self) -> anyhow::Result<()> {
@@ -135,7 +167,12 @@ impl TrackWriter {
     /// ends before the group, because a FIN tells the receiver it has the whole
     /// subgroup.
     pub(crate) async fn cancel(mut self) {
-        if let Some(mut group) = self.group.take()
+        self.abandon_group();
+        self.reset_abandoned_group().await;
+    }
+
+    async fn reset_abandoned_group(&mut self) {
+        if let Some(mut group) = self.abandoned.take()
             && let Err(error) = group.sender.reset(DataStreamResetCode::Cancelled).await
         {
             tracing::debug!(?error, "open group could not be reset");
@@ -143,6 +180,7 @@ impl TrackWriter {
     }
 
     pub async fn finish(mut self) -> anyhow::Result<()> {
+        self.reset_abandoned_group().await;
         match self.group.take() {
             Some(group) => group.finish().await,
             None => Ok(()),
@@ -180,6 +218,7 @@ impl TrackWriter {
     /// finished, and its stream is gone either way, so the next group opens
     /// on a new stream regardless.
     async fn finish_current_group(&mut self) {
+        self.reset_abandoned_group().await;
         if let Some(group) = self.group.take()
             && let Err(error) = group.finish().await
         {

@@ -723,6 +723,17 @@ forward from their own cache through the raw stream senders.
   reported no content, and closes the session with PROTOCOL_VIOLATION when the
   filter is not Largest Object (`FetchHandler::close_for_protocol_violation`);
   `answer_track_status` fills TRACK_STATUS_OK like a SUBSCRIBE_OK.
+- Each outlet keeps its Forward State, from its SUBSCRIBE or PUBLISH_OK and
+  from every SUBSCRIBE_UPDATE / REQUEST_UPDATE `handle` sees, and `write`
+  skips an outlet in Forward State 0 (draft-18 §5.1). An outlet that skipped
+  an object of its open group leaves that group (`TrackWriter::abandon_group`)
+  and, once back in Forward State 1, takes it up again on a new stream from
+  the next object written (§11.4.3); the left stream is reset, not finished.
+  `publish_on_demand(namespace, name, demand_sender)` makes the track's PUBLISH
+  ask for Forward State 0, so the peer has it sent only while it wants the
+  objects (§10.10), and sends a `TrackDemand` — whether any outlet of the
+  track is in Forward State 1 — when called and at every change, so the
+  application can stop producing a track nobody takes.
 - `end_track(namespace, name)` ends every outlet of the track with
   PUBLISH_DONE (TRACK_ENDED, draft-14 §9.12) and keeps its numbering and
   cache, so a later `publish` or SUBSCRIBE takes it up again at the next

@@ -24,9 +24,10 @@ let forceNextKeyframe = false
 /// `renditionConfigs`, which must arrive before `videoStream`, adds the others.
 /// All encode the same keyframes, and the outputs of one frame share its
 /// timestamp. A rendition with a frame rate skips the frames that come faster
-/// than it.
+/// than it, and one nobody takes (`wanted`) encodes no frame.
 class Rendition {
   encoder: VideoEncoder | undefined
+  wanted = true
   // null makes the next frame reconfigure the encoder.
   configuredFrameSize: string | null = null
   private encodedAny = false
@@ -204,9 +205,83 @@ async function initializeEncoders(frame: VideoFrame): Promise<boolean> {
   return !needsEncoder(renditions[0])
 }
 
+const warmUp = new EncoderWarmUp((error) => workerLog('warn', TARGET, 'encoder warm-up failed', { error }))
+let started = false
+let lastFrameTimestamp: number | undefined
+/// The frames read from the stream and those a `frame` message brings are
+/// encoded one at a time.
+let encoding: Promise<unknown> = Promise.resolve()
+
+function encodeInTurn(videoFrame: VideoFrame): Promise<boolean> {
+  const encoded = encoding.then(() => encodeFrame(videoFrame))
+  encoding = encoded.catch(() => {})
+  return encoded
+}
+
+/// Closes `videoFrame`. False when no encoder could be configured for the
+/// stream's first frame, which ends the encoding.
+async function encodeFrame(videoFrame: VideoFrame): Promise<boolean> {
+  // The frame a `frame` message brings can be one the stream brings as well.
+  if (lastFrameTimestamp !== undefined && videoFrame.timestamp <= lastFrameTimestamp) {
+    videoFrame.close()
+    return true
+  }
+  lastFrameTimestamp = videoFrame.timestamp
+
+  if (renditions.some(needsEncoder)) {
+    if (started) {
+      workerLog('info', TARGET, 'encoders re-initializing')
+    }
+    keyframeSchedule.reset()
+    const initialized = await initializeEncoders(videoFrame)
+    if (!initialized && !started) {
+      videoFrame.close()
+      return false
+    }
+    started = true
+    if (!initialized) {
+      workerLog('error', TARGET, 'encoders failed to initialize, frame dropped')
+      self.postMessage({ type: 'frameDropped' })
+      videoFrame.close()
+      return true
+    }
+    warmUp.reset()
+  }
+
+  if (!warmUp.admit(videoFrame, renditions)) {
+    self.postMessage({ type: 'frameDropped' })
+    videoFrame.close()
+    return true
+  }
+
+  // A frame any encoder cannot take is dropped for all, so the renditions keep the same keyframes.
+  const busiest = Math.max(...renditions.map((rendition) => rendition.encoder?.encodeQueueSize ?? 0))
+  if (busiest > 5) {
+    workerLog('debug', TARGET, 'encode queue full, frame dropped', { encode_queue_size: busiest })
+    self.postMessage({ type: 'frameDropped' })
+    videoFrame.close()
+    return true
+  }
+
+  let reconfigured = false
+  for (const rendition of renditions) {
+    reconfigured = rendition.configureForFrame(videoFrame) || reconfigured
+  }
+  const keyFrame = keyframeSchedule.isKeyframe(videoFrame.timestamp, forceNextKeyframe || reconfigured)
+  forceNextKeyframe = false
+  for (const rendition of renditions) {
+    if (!rendition.wanted || rendition.frameRateLimit?.admit(videoFrame.timestamp, keyFrame) === false) {
+      continue
+    }
+    rendition.captureTimestamps.recordCapture(videoFrame.timestamp)
+    rendition.encoder?.encode(videoFrame, { keyFrame })
+  }
+  videoFrame.close()
+  return true
+}
+
 async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>) {
   keyframeSchedule.reset()
-  const warmUp = new EncoderWarmUp((error) => workerLog('warn', TARGET, 'encoder warm-up failed', { error }))
   for (const rendition of renditions) {
     if (rendition.encoder && rendition.encoder.state !== 'closed') {
       rendition.encoder.close()
@@ -214,7 +289,6 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
     rendition.encoder = undefined
     rendition.captureTimestamps.reset()
   }
-  let started = false
   const videoReader = videoReadableStream.getReader()
   while (true) {
     let videoResult: ReadableStreamReadResult<VideoFrame>
@@ -228,58 +302,19 @@ async function startVideoEncode(videoReadableStream: ReadableStream<VideoFrame>)
       workerLog('info', TARGET, 'video stream ended')
       return
     }
-    const videoFrame = videoResult.value
-
-    if (renditions.some(needsEncoder)) {
-      if (started) {
-        workerLog('info', TARGET, 'encoders re-initializing')
-      }
-      keyframeSchedule.reset()
-      const initialized = await initializeEncoders(videoFrame)
-      if (!initialized && !started) {
-        videoFrame.close()
-        return
-      }
-      started = true
-      if (!initialized) {
-        workerLog('error', TARGET, 'encoders failed to initialize, frame dropped')
-        self.postMessage({ type: 'frameDropped' })
-        videoFrame.close()
-        continue
-      }
-      warmUp.reset()
+    if (!(await encodeInTurn(videoResult.value))) {
+      return
     }
-
-    if (!warmUp.admit(videoFrame, renditions)) {
-      self.postMessage({ type: 'frameDropped' })
-      videoFrame.close()
-      continue
-    }
-
-    // A frame any encoder cannot take is dropped for all, so the renditions keep the same keyframes.
-    const busiest = Math.max(...renditions.map((rendition) => rendition.encoder?.encodeQueueSize ?? 0))
-    if (busiest > 5) {
-      workerLog('debug', TARGET, 'encode queue full, frame dropped', { encode_queue_size: busiest })
-      self.postMessage({ type: 'frameDropped' })
-      videoFrame.close()
-      continue
-    }
-
-    let reconfigured = false
-    for (const rendition of renditions) {
-      reconfigured = rendition.configureForFrame(videoFrame) || reconfigured
-    }
-    const keyFrame = keyframeSchedule.isKeyframe(videoFrame.timestamp, forceNextKeyframe || reconfigured)
-    forceNextKeyframe = false
-    for (const rendition of renditions) {
-      if (rendition.frameRateLimit?.admit(videoFrame.timestamp, keyFrame) === false) {
-        continue
-      }
-      rendition.captureTimestamps.recordCapture(videoFrame.timestamp)
-      rendition.encoder?.encode(videoFrame, { keyFrame })
-    }
-    videoFrame.close()
   }
+}
+
+/// Encodes a frame the page read from a clone of the track, placed after
+/// the frames already encoded.
+function encodeRefreshFrame(frame: VideoFrame): void {
+  const timestamp = Math.max(frame.timestamp, (lastFrameTimestamp ?? frame.timestamp - 1) + 1)
+  const refresh = new VideoFrame(frame, { timestamp })
+  frame.close()
+  void encodeInTurn(refresh)
 }
 
 self.onmessage = async (event) => {
@@ -287,6 +322,15 @@ self.onmessage = async (event) => {
     keyframeSchedule.intervalMicros = event.data.keyframeIntervalMicros
   } else if (event.data.type === 'forceKeyframe') {
     forceNextKeyframe = true
+  } else if (event.data.type === 'wanted') {
+    const rendition = renditions.find(({ index }) => index === event.data.rendition)
+    if (rendition && rendition.wanted !== event.data.wanted) {
+      rendition.wanted = event.data.wanted
+      // A rendition taken up again starts with a keyframe, on the same frame as the others.
+      forceNextKeyframe ||= rendition.wanted
+    }
+  } else if (event.data.type === 'frame') {
+    encodeRefreshFrame(event.data.frame)
   } else if (event.data.type === 'encoderConfig') {
     renditions[0].setConfig(event.data.config)
   } else if (event.data.type === 'renditionConfigs') {

@@ -207,6 +207,17 @@ tracks starts a new group on each. The browser sets it (`MediaBroadcast`'s
 cannot ask their encoders for a keyframe and leave it unset. CMAF siblings do
 not get dynamic groups.
 
+A source that can stop encoding a track sets `SourceTracks::demand_sender`.
+`TrackPublisher` (for the video and the audio) and each `RenditionTrack` then
+call `Broadcast::publish_on_demand` before the catalog update that publishes
+the track, so `Origin` sends its PUBLISH in Forward State 0 and reports on
+that channel whether a subscriber takes the track (draft-ietf-moq-transport-18
+§10.10). The catalog, the media timeline and the chat stay in Forward State 1:
+they hold a state a late subscriber needs, which a relay could not hand it
+had it never received it. The browser sets the sender (`MediaBroadcast`'s
+`onDemandChange`); the other sources encode whether or not anyone watches and
+leave it unset, so their tracks are sent as before.
+
 The audio tracks follow the same boundaries: an audio sample belongs to the
 group of the latest video keyframe at or before it, so audio groups start at
 the same keyframes with the same ids as the video groups. Audio before the

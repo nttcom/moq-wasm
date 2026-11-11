@@ -6,8 +6,8 @@ use mediapack::{
     loc::{VideoCodec, to_extension_headers},
     mp4::Fmp4TrackMuxer,
 };
-use moqt::publish::{GroupBoundary, OutgoingObject};
-use tokio::sync::Notify;
+use moqt::publish::{GroupBoundary, OutgoingObject, TrackDemand};
+use tokio::sync::{Notify, mpsc};
 
 use crate::{
     broadcast::{Broadcast, VideoTrackInfo, cmaf_track_name},
@@ -57,6 +57,7 @@ pub struct RenditionTrack {
     /// The source's `SourceTracks::keyframe_requests`: the rendition keyframes
     /// on the same frames as the source.
     keyframe_requests: Option<Arc<Notify>>,
+    demand_sender: Option<mpsc::UnboundedSender<TrackDemand>>,
 }
 
 impl RenditionTrack {
@@ -70,6 +71,7 @@ impl RenditionTrack {
             video_codec: VideoCodec::H264,
             cmaf: None,
             keyframe_requests: writer.source_tracks().keyframe_requests.clone(),
+            demand_sender: writer.source_tracks().demand_sender.clone(),
         }
     }
 
@@ -95,6 +97,11 @@ impl RenditionTrack {
                 if let Some(requested) = &self.keyframe_requests {
                     self.broadcast
                         .accept_keyframe_requests(&self.config.track, requested.clone())
+                        .await?;
+                }
+                if let Some(demand_sender) = &self.demand_sender {
+                    self.broadcast
+                        .publish_on_demand(&self.config.track, demand_sender.clone())
                         .await?;
                 }
                 self.broadcast

@@ -7,4 +7,5 @@ pub use crate::modules::moqt::domains::origin::Origin;
 pub use crate::modules::moqt::domains::origin::OutgoingObject;
 pub use crate::modules::moqt::domains::origin::Placement;
 pub use crate::modules::moqt::domains::origin::Retention;
+pub use crate::modules::moqt::domains::origin::TrackDemand;
 pub use crate::modules::moqt::domains::origin::WriteOutcome;
