@@ -61,6 +61,7 @@ self-signed-cert = ["dep:rcgen"]
 
 [dev-dependencies]
 mockall = "0.15.0"
+telemetry = { path = "../telemetry", features = ["testing"] }
 rcgen = { version = "0.14.8", default-features = false, features = ["pem", "aws_lc_rs"] }
 tokio = { version = "1.52.3", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -188,7 +188,10 @@ mod tests {
     fn logged_levels<T>(f: impl FnOnce() -> T) -> (T, Vec<tracing::Level>) {
         let levels = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(LoggedLevels(levels.clone()));
-        let value = tracing::subscriber::with_default(subscriber, f);
+        let value = {
+            let _default = telemetry::testing::set_default(subscriber);
+            f()
+        };
         let levels = levels.lock().unwrap().clone();
         (value, levels)
     }

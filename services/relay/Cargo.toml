@@ -24,4 +24,5 @@ thiserror = "2"
 opentelemetry_sdk = "0.33.1"
 tracing-subscriber = "0.3.23"
 serde_json = "1"
+telemetry = { path = "../../crates/telemetry", features = ["testing"] }
 tokio = { version = "1.52.3", features = ["test-util"] }

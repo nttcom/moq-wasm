@@ -1927,7 +1927,7 @@ mod tests {
 
         let fin_read = Arc::new(tokio::sync::Notify::new());
         let _logging =
-            tracing::subscriber::set_default(tracing_subscriber::layer::SubscriberExt::with(
+            telemetry::testing::set_default(tracing_subscriber::layer::SubscriberExt::with(
                 tracing_subscriber::registry(),
                 LoggedMessage {
                     message: "FETCH requester finished its request stream",

@@ -29,6 +29,7 @@ wasm-bindgen-futures = "0.4.73"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 moqt = { path = "../moqt", features = ["self-signed-cert"] }
+telemetry = { path = "../telemetry", features = ["testing"] }
 tokio = { version = "1", features = ["macros", "rt", "time"] }
 
 [package.metadata.wasm-pack.profile.release]

@@ -18,6 +18,8 @@ use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
 mod event_logger;
 pub mod relay_stats;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 mod trace_context;
 
 pub use event_logger::EventLogger;
