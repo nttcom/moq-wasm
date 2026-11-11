@@ -1,118 +1,18 @@
-use anyhow::Result;
-use bytes::Bytes;
+use crate::{h264::AvcDecoderConfigurationRecord, parameter_sets};
 
-use crate::{
-    h264::{
-        AvcDecoderConfigurationRecord, NalUnitType,
-        annexb::{nal_units, with_start_codes},
-        nal::nal_unit_type,
-    },
-    sample::{MediaEvent, Timestamp, VideoConfig, VideoSample},
-};
-
-#[derive(Default)]
-pub struct ParameterSetTracker {
-    sps: Vec<Bytes>,
-    pps: Vec<Bytes>,
-    config: Option<AvcDecoderConfigurationRecord>,
-}
-
-pub struct TrackedAccessUnit {
-    pub data: Bytes,
-    pub is_keyframe: bool,
-    pub config_changed: Option<AvcDecoderConfigurationRecord>,
-}
-
-impl TrackedAccessUnit {
-    /// The `VideoConfig` first when the parameter sets changed, then the
-    /// sample.
-    pub fn into_events(self, pts: Timestamp, dts: Timestamp) -> Vec<MediaEvent> {
-        let config = self
-            .config_changed
-            .map(|config| MediaEvent::VideoConfig(VideoConfig::Avc(config)));
-        let sample = MediaEvent::Video(VideoSample {
-            data: self.data,
-            is_keyframe: self.is_keyframe,
-            pts,
-            dts,
-        });
-        config.into_iter().chain([sample]).collect()
-    }
-}
-
-impl ParameterSetTracker {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Starts with parameter sets announced out of band, so a keyframe that
-    /// arrives without them is still completed and the configuration is not
-    /// reported again unless the in-band sets differ.
-    pub fn from_record(record: &AvcDecoderConfigurationRecord) -> Self {
-        Self {
-            sps: record.sps.clone(),
-            pps: record.pps.clone(),
-            config: Some(record.clone()),
-        }
-    }
-
-    pub fn track(&mut self, annexb: &[u8]) -> Result<Option<TrackedAccessUnit>> {
-        let nals: Vec<&[u8]> = nal_units(annexb).collect();
-        if nals.is_empty() {
-            return Ok(None);
-        }
-        let mut is_keyframe = false;
-        let mut inline_sps = Vec::new();
-        let mut inline_pps = Vec::new();
-        for nal in &nals {
-            match nal_unit_type(nal) {
-                Some(NalUnitType::IdrSlice) => is_keyframe = true,
-                Some(NalUnitType::Sps) => inline_sps.push(Bytes::copy_from_slice(nal)),
-                Some(NalUnitType::Pps) => inline_pps.push(Bytes::copy_from_slice(nal)),
-                _ => {}
-            }
-        }
-        let has_inline_sps = !inline_sps.is_empty();
-        if has_inline_sps {
-            self.sps = inline_sps;
-        }
-        if !inline_pps.is_empty() {
-            self.pps = inline_pps;
-        }
-        let mut config_changed = None;
-        if !self.sps.is_empty() && !self.pps.is_empty() {
-            let config = AvcDecoderConfigurationRecord::from_parameter_sets(
-                self.sps.clone(),
-                self.pps.clone(),
-            )?;
-            if self.config.as_ref() != Some(&config) {
-                self.config = Some(config.clone());
-                config_changed = Some(config);
-            }
-        }
-        let data = with_start_codes(nals);
-        let data = if is_keyframe {
-            self.config.as_ref().map_or_else(
-                || data.clone(),
-                |config| config.with_parameter_sets(data.clone()),
-            )
-        } else {
-            data
-        };
-        Ok(Some(TrackedAccessUnit {
-            data,
-            is_keyframe,
-            config_changed,
-        }))
-    }
-}
+pub type ParameterSetTracker = parameter_sets::ParameterSetTracker<AvcDecoderConfigurationRecord>;
+pub type TrackedAccessUnit = parameter_sets::TrackedAccessUnit<AvcDecoderConfigurationRecord>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{
-        IDR_SLICE, delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb,
-        keyframe_sample,
+    use crate::{
+        h264::annexb::with_start_codes,
+        sample::{MediaEvent, Timestamp},
+        test_support::{
+            IDR_SLICE, delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb,
+            keyframe_sample,
+        },
     };
 
     #[test]
