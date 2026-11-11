@@ -1,9 +1,13 @@
 use anyhow::{Result, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::h264::{
-    annexb::{nal_units, with_start_codes},
-    nal::{NalUnitType, SequenceParameterSet, nal_unit_type},
+use crate::{
+    h264::{
+        annexb::with_start_codes,
+        nal::{NalUnitType, SequenceParameterSet, nal_unit_type},
+    },
+    parameter_sets::{NalDecoderConfig, NalKind},
+    sample::VideoConfig,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,39 +101,52 @@ impl AvcDecoderConfigurationRecord {
         SequenceParameterSet::parse(sps)
     }
 
-    /// Keyframes must be decodable on their own, so a keyframe that carries no
-    /// SPS gets the record's parameter sets. They follow an access unit
-    /// delimiter, which H.264 §7.4.1.2.3 requires to stay first.
     pub fn with_parameter_sets(&self, annexb: Bytes) -> Bytes {
-        let units: Vec<&[u8]> = nal_units(&annexb).collect();
-        if units
-            .iter()
-            .any(|nal| nal_unit_type(nal) == Some(NalUnitType::Sps))
-        {
-            return annexb;
-        }
-        let parameter_sets = self.parameter_sets_annexb();
-        let Some((delimiter, rest)) = units
-            .split_first()
-            .filter(|(first, _)| nal_unit_type(first) == Some(NalUnitType::AccessUnitDelimiter))
-        else {
-            return Bytes::from([parameter_sets.as_ref(), &annexb].concat());
-        };
-        with_start_codes(
-            [*delimiter]
-                .into_iter()
-                .chain(nal_units(&parameter_sets))
-                .chain(rest.iter().copied()),
-        )
+        NalDecoderConfig::with_parameter_sets(self, annexb)
     }
 
     pub fn parameter_sets_annexb(&self) -> Bytes {
-        with_start_codes(
-            self.sps
-                .iter()
-                .chain(self.pps.iter())
-                .map(|set| set.as_ref()),
-        )
+        NalDecoderConfig::parameter_sets_annexb(self)
+    }
+}
+
+impl NalDecoderConfig for AvcDecoderConfigurationRecord {
+    const PARAMETER_SET_KINDS: usize = 2;
+    const SEQUENCE_PARAMETER_SET: usize = 0;
+
+    fn nal_kind(nal: &[u8]) -> NalKind {
+        match nal_unit_type(nal) {
+            Some(NalUnitType::IdrSlice) => NalKind::KeyframeSlice,
+            Some(NalUnitType::Sps) => NalKind::ParameterSet(0),
+            Some(NalUnitType::Pps) => NalKind::ParameterSet(1),
+            Some(NalUnitType::AccessUnitDelimiter) => NalKind::AccessUnitDelimiter,
+            Some(NalUnitType::Other(_)) | None => NalKind::Other,
+        }
+    }
+
+    fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self> {
+        let [sps, pps]: [Vec<Bytes>; 2] = sets
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("H.264 takes SPS and PPS"))?;
+        Self::from_parameter_sets(sps, pps)
+    }
+
+    fn parameter_sets(&self) -> Vec<&[Bytes]> {
+        vec![&self.sps, &self.pps]
+    }
+
+    fn parse(data: &[u8]) -> Result<Self> {
+        Self::parse(data)
+    }
+
+    fn nal_length_size(&self) -> u8 {
+        self.nal_length_size
+    }
+}
+
+impl From<AvcDecoderConfigurationRecord> for VideoConfig {
+    fn from(record: AvcDecoderConfigurationRecord) -> Self {
+        Self::Avc(record)
     }
 }
 

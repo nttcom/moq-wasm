@@ -1,8 +1,8 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::h264::{
-    avcc::length_prefixed,
-    nal::{NalUnitType, nal_unit_type},
+use crate::{
+    h264::avcc::{AvcDecoderConfigurationRecord, length_prefixed},
+    parameter_sets::NalDecoderConfig,
 };
 
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
@@ -59,9 +59,7 @@ pub fn annexb_to_avcc(data: &[u8], nal_length_size: usize) -> Bytes {
 }
 
 pub fn annexb_to_avcc_without_parameter_sets(data: &[u8], nal_length_size: usize) -> Bytes {
-    let nals = nal_units(data)
-        .filter(|nal| !nal_unit_type(nal).is_some_and(NalUnitType::is_parameter_set));
-    length_prefixed(nals, nal_length_size)
+    AvcDecoderConfigurationRecord::sample_without_parameter_sets(data, nal_length_size)
 }
 
 #[cfg(test)]
