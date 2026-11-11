@@ -1,14 +1,13 @@
 # [M] Find why the tile size E2E fails when a viewer starts on the low rendition
 
-Next: repeat `Auto follows the size of a member tile when the view changes` (`examples/browser/tests/meeting-e2e.spec.ts:462`) 500 times in CI with the `LivePlayer` video switch and the received audio levels logged, and read a run that fails at line 484 or 485.
+Next: run `Auto follows the size of a member tile when the view changes` (`examples/browser/tests/meeting-e2e.spec.ts:499`) 500 times in CI, with alice's `pause`/`play` events of each `live-player-video` and bob's player log on the console, and read a run that fails at `:490` or `:491`.
 
 ## Goal
 
-The test passes when a member's first catalog lists `camera_low` alone. Of 2,200 runs, 12 failed this way (3 of the 1,100 without the fix of the track definition kept by a subscription, so that fix does not cause them): bob's video stayed 320 wide for 30 s (line 484), or carol's speaking ring never showed (line 485).
+The test passes when a member's first catalog lists `camera_low` alone. Of 2,200 runs, when the test still encoded H.264, 12 failed this way: bob's video stayed 320 wide (now `:490`), or carol's speaking ring never showed (now `:491`).
+Forcing it locally (main rendition held back 1.5 s, bob's mic muted 4 s later), the step up waited 13 s, then took 2.3 s: its first `camera` group was one `camera_low` had played, and the relay held back the new-group request for 2 s (`trackSubscriptions.ts:28`). Carol's audio levels kept their voice activity. Neither failure came back in 32 runs.
 
 ## Plan
 
-The publisher lists a rendition once its first chunk is encoded, so a viewer can see `camera_low` before `camera`; it then starts low and steps up after the 13 s of `SETTLE_MS` and `INITIAL_UP_HOLD_MS`.
-
-- Line 484: Auto chose `camera_low -> camera` and subscribed to `camera`, but the switch never completed in the remaining 17 s. Find what the switch waits for.
-- Line 485: alice subscribed to carol's audio, yet no audio level reached the ring. Find whether the objects did not arrive or arrived without voice activity.
+Lead for `:490`: a `<video>` the page detaches across tasks stays paused, and a splice keeps the element, so its width freezes even when the switch completes (`wasm-live-video-paused-after-container-move.md`). Check whether bob's element was paused when it failed.
+Open for `:491`: whether carol's audio objects stopped, or her view lost the `onAudioLevel` listener when her catalog first named the source after `camera_low` (`sourceNames.ts:58`).
