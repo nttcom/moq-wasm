@@ -160,6 +160,10 @@ export class LivePlayer {
   private readonly cmafReview = new CmafReview()
   private readonly stallWatch: StallWatch
   private readonly reviewHost: ReviewHost
+  /// Going live leaves the review picture on screen until a live frame is
+  /// shown: the live picture still holds the frame from when it was paused or
+  /// its delivery stopped.
+  private awaitingLiveFrame = false
   private tracks: Record<MediaKind, MediaCatalogTrack[]> = { video: [], audio: [] }
   private cmafTracks: MediaCatalogTrack[] = []
   private selected: Record<MediaKind, string> = { video: '', audio: '' }
@@ -225,6 +229,10 @@ export class LivePlayer {
       {
         onPresented: (picture) => this.notePresentedFrame(picture),
         onFrameShown: (ids, captureMicros) => {
+          if (this.awaitingLiveFrame) {
+            this.awaitingLiveFrame = false
+            this.stage.show(this.livePicture())
+          }
           const trackAlias = this.subscriptions.get('video')?.id
           if (ids && trackAlias !== undefined) {
             this.context.observer.setPlayhead({ kind: 'subscribe', trackAlias, ...ids, captureMicros })
@@ -477,6 +485,7 @@ export class LivePlayer {
     this.cmafLive.close()
     this.locLive.reset()
     this.stallWatch.clear()
+    this.awaitingLiveFrame = false
     this.stage.show(this.locLive.picture.element)
     this.abandonVideoSwitch()
     await unsubscribing
@@ -670,6 +679,7 @@ export class LivePlayer {
   private beginReview(target: GroupMark | undefined, captureMicros: number): ReviewSession {
     this.review?.end()
     this.ended = false
+    this.awaitingLiveFrame = false
     this.abandonVideoSwitch()
     const session = new ReviewSession(
       this.context,
@@ -732,7 +742,11 @@ export class LivePlayer {
     this.reviewClock.reset()
     this.playbackRate = 1
     this.applyVolume()
-    this.stage.show(this.livePicture())
+    if (this.cmafLive.sink) {
+      this.stage.show(this.livePicture())
+    } else {
+      this.awaitingLiveFrame = true
+    }
     this.cmafReview.close()
     this.rewindStatus = { text: 'Live', state: 'ok' }
     this.changed()
