@@ -134,6 +134,10 @@ struct RequestStream {
     /// Notified when this side cancels the request: the task reading the
     /// stream then stops the peer's half with STOP_SENDING (§3.3.2).
     reader_stop: Arc<tokio::sync::Notify>,
+    /// For a SUBSCRIBE_NAMESPACE the peer sent, until it is answered: the
+    /// namespaces to send as NAMESPACE after its REQUEST_OK, as the first
+    /// message of the response is REQUEST_OK or REQUEST_ERROR (§10.18).
+    held_namespaces: Option<HashSet<Vec<String>>>,
 }
 
 impl RequestStream {
@@ -145,6 +149,7 @@ impl RequestStream {
             fetch_end: FetchEnd::default(),
             fetch_response: None,
             reader_stop: Arc::default(),
+            held_namespaces: None,
         }
     }
 }
@@ -292,7 +297,15 @@ impl ControlChannel {
     /// Registers the peer's request and runs `emit`, which hands its event
     /// over, under one lock, so a request `wait_delivered` holds back is
     /// handed over after it.
-    fn deliver_request(&self, request_id: RequestId, stream: RequestStream, emit: impl FnOnce()) {
+    fn deliver_request(
+        &self,
+        request_id: RequestId,
+        mut stream: RequestStream,
+        emit: impl FnOnce(),
+    ) {
+        if matches!(stream.kind, RequestStreamKind::SubscribeNamespace(_)) {
+            stream.held_namespaces = Some(HashSet::new());
+        }
         let mut requests = self.requests();
         requests.incoming.insert(request_id, stream);
         requests.delivered.insert(request_id);
@@ -355,12 +368,58 @@ impl ControlChannel {
             })
     }
 
+    /// The namespaces held for the peer's unanswered SUBSCRIBE_NAMESPACE
+    /// `namespace` falls under.
+    fn held_namespaces<'a>(
+        requests: &'a mut Requests,
+        namespace: &[String],
+    ) -> Option<&'a mut HashSet<Vec<String>>> {
+        requests
+            .incoming
+            .values_mut()
+            .find(|stream| stream.kind.namespace_prefix_of(namespace).is_some())?
+            .held_namespaces
+            .as_mut()
+    }
+
+    /// REQUEST_OK for the peer's SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS
+    /// `request_id`, then a NAMESPACE for each namespace held for it.
+    async fn accept_namespace_subscription(
+        &self,
+        request_id: RequestId,
+    ) -> Result<(), TransportSendError> {
+        let _namespace_writes = self.namespace_writes.lock().await;
+        let message = messages::encode_empty_request_ok();
+        self.send_on_incoming(request_id, message, false).await?;
+        let held = self
+            .requests()
+            .incoming
+            .get_mut(&request_id)
+            .and_then(|stream| Some((stream.held_namespaces.take()?, stream.clone())));
+        let Some((held_namespaces, stream)) = held else {
+            return Ok(());
+        };
+        for namespace in held_namespaces {
+            let Some(prefix) = stream.kind.namespace_prefix_of(&namespace) else {
+                continue;
+            };
+            let message =
+                messages::encode_namespace(messages::NAMESPACE, &namespace[prefix.len()..])
+                    .map_err(encode_error)?;
+            stream.sender.send(&message).await?;
+            self.requests().advertised.insert(namespace, request_id);
+        }
+        Ok(())
+    }
+
     /// draft-14 announces a namespace to a namespace subscriber with
     /// PUBLISH_NAMESPACE; draft-18 sends NAMESPACE on the subscription's
     /// stream instead (§6.1), once: a namespace the subscription already
     /// heard of is not sent again. The announcement is accepted at once, as
-    /// no response follows. `None` when the peer has no SUBSCRIBE_NAMESPACE
-    /// for it, so it goes as PUBLISH_NAMESPACE.
+    /// no response follows. While the SUBSCRIBE_NAMESPACE is unanswered, the
+    /// NAMESPACE is held and sent after its REQUEST_OK (§10.18). `None` when
+    /// the peer has no SUBSCRIBE_NAMESPACE for it, so it goes as
+    /// PUBLISH_NAMESPACE.
     async fn advertise_namespace(
         &self,
         request_id: RequestId,
@@ -374,6 +433,10 @@ impl ControlChannel {
         };
         let accepted = PendingResponse::resolved(ResponseMessage::PublishNamespaceOk(request_id));
         if self.requests().advertised.get(namespace) == Some(&subscription_request_id) {
+            return Ok(Some(accepted));
+        }
+        if let Some(held_namespaces) = Self::held_namespaces(&mut self.requests(), namespace) {
+            held_namespaces.insert(namespace.to_vec());
             return Ok(Some(accepted));
         }
         let message = messages::encode_namespace(messages::NAMESPACE, &namespace[prefix_len..])
@@ -813,10 +876,12 @@ impl ControlChannel {
                 self.advance_fetch(ok.request_id, |end| end.fetch_ok_sent = true)
                     .await
             }
-            OutgoingResponse::PublishNamespaceOk(ok)
-            | OutgoingResponse::SubscribeNamespaceOk(ok) => {
+            OutgoingResponse::PublishNamespaceOk(ok) => {
                 let message = messages::encode_empty_request_ok();
                 self.send_on_incoming(ok.request_id, message, false).await
+            }
+            OutgoingResponse::SubscribeNamespaceOk(ok) => {
+                self.accept_namespace_subscription(ok.request_id).await
             }
             OutgoingResponse::Error {
                 request_id,
@@ -868,6 +933,12 @@ impl ControlChannel {
             }
             Notification::PublishNamespaceDone(done) => {
                 let _namespace_writes = self.namespace_writes.lock().await;
+                if let Some(held_namespaces) =
+                    Self::held_namespaces(&mut self.requests(), &done.track_namespace)
+                    && held_namespaces.remove(&done.track_namespace)
+                {
+                    return Ok(());
+                }
                 let advertised = self.requests().advertised.remove(&done.track_namespace);
                 if let Some(subscription_request_id) = advertised {
                     let stream = self
@@ -3706,16 +3777,16 @@ mod tests {
 
     /// A SUBSCRIBE_NAMESPACE for "live" that `client` sends on a stream it
     /// reads itself, or a SUBSCRIBE_TRACKS with `tracks`; returns the stream
-    /// after `server` accepted it.
-    async fn raw_namespace_subscription(
+    /// and the unanswered handler `server` receives.
+    async fn raw_namespace_subscription_requested(
         client: &crate::Session,
         server: &crate::Session,
         tracks: bool,
-    ) -> (StreamSender, MessageReceiver) {
+    ) -> (StreamSender, MessageReceiver, SubscribeNamespaceHandler) {
         let connection = client.publisher().session.connection();
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let sender = StreamSender::new(send_stream);
-        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let receiver = MessageReceiver::new(receive_stream, MessageDecoder);
         let request_id = connection.control.take_request_id().await;
         let prefix = vec!["live".to_string()];
         let request = if tracks {
@@ -3738,6 +3809,17 @@ mod tests {
         let SessionEvent::SubscribeNameSpace(handler) = next_event(server).await else {
             panic!("expected SUBSCRIBE_NAMESPACE");
         };
+        (sender, receiver, handler)
+    }
+
+    /// `raw_namespace_subscription_requested`, after `server` accepted it.
+    async fn raw_namespace_subscription(
+        client: &crate::Session,
+        server: &crate::Session,
+        tracks: bool,
+    ) -> (StreamSender, MessageReceiver) {
+        let (sender, mut receiver, handler) =
+            raw_namespace_subscription_requested(client, server, tracks).await;
         handler.ok().await.unwrap();
         let response = receiver.receive().await.unwrap();
         assert!(
@@ -3745,6 +3827,101 @@ mod tests {
             "{response:?}"
         );
         (sender, receiver)
+    }
+
+    #[tokio::test]
+    async fn a_namespace_published_before_the_subscribe_namespace_answer_follows_the_request_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-before-ok", "moqt").await;
+        let (_sender, mut receiver, handler) =
+            raw_namespace_subscription_requested(&client, &server, false).await;
+
+        // Act
+        let published = server
+            .publisher()
+            .publish_namespace("live/room".into())
+            .await;
+        handler.ok().await.unwrap();
+        let first = receiver.receive().await.unwrap();
+        let second = receiver.receive().await.unwrap();
+
+        // Assert: §10.18
+        assert!(published.is_ok(), "{published:?}");
+        assert!(
+            matches!(first, Some(messages::Message::RequestOk(_))),
+            "{first:?}"
+        );
+        assert_eq!(
+            second,
+            Some(messages::Message::Namespace(vec!["room".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_withdrawn_before_the_subscribe_namespace_answer_is_not_announced() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-done-before-ok", "moqt").await;
+        let (_sender, mut receiver, handler) =
+            raw_namespace_subscription_requested(&client, &server, false).await;
+        let publisher = server.publisher();
+        publisher
+            .publish_namespace("live/room".into())
+            .await
+            .unwrap();
+
+        // Act
+        publisher
+            .publish_namespace_done("live/room".into())
+            .await
+            .unwrap();
+        handler.ok().await.unwrap();
+        publisher
+            .publish_namespace("live/hall".into())
+            .await
+            .unwrap();
+        let first = receiver.receive().await.unwrap();
+        let second = receiver.receive().await.unwrap();
+
+        // Assert: "live/room" was withdrawn, so only "live/hall" follows the REQUEST_OK
+        assert!(
+            matches!(first, Some(messages::Message::RequestOk(_))),
+            "{first:?}"
+        );
+        assert_eq!(
+            second,
+            Some(messages::Message::Namespace(vec!["hall".to_string()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_subscribe_namespace_is_answered_without_the_namespaces_published_before() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-before-error", "moqt").await;
+        let (_sender, mut receiver, handler) =
+            raw_namespace_subscription_requested(&client, &server, false).await;
+        let publisher = server.publisher();
+        publisher
+            .publish_namespace("live/room".into())
+            .await
+            .unwrap();
+
+        // Act
+        handler
+            .error(RequestErrorCode::Unauthorized, "refused".to_string())
+            .await
+            .unwrap();
+        let first = receiver.receive().await.unwrap();
+        let second = receiver.receive().await.unwrap();
+
+        // Assert: §10.18, REQUEST_ERROR and then FIN
+        assert!(
+            matches!(first, Some(messages::Message::RequestError(_))),
+            "{first:?}"
+        );
+        assert_eq!(second, None);
     }
 
     /// Sends a REQUEST_UPDATE moving the subscription on `stream` to

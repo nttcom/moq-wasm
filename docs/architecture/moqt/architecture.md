@@ -361,6 +361,9 @@ call through the adapter; a draft never gets a task of its own (see
   - Messages draft-14 lacks map onto its events:
     - A `publish_namespace` matching the peer's SUBSCRIBE_NAMESPACE is sent as
       NAMESPACE on that stream, once per namespace, and accepted at once.
+      While the SUBSCRIBE_NAMESPACE is unanswered the namespace is held and
+      sent after its REQUEST_OK, which §10.18 makes the first message of the
+      response; a REQUEST_ERROR or a `publish_namespace_done` drops it.
     - NAMESPACE / NAMESPACE_DONE on our SUBSCRIBE_NAMESPACE raise
       `PublishNamespace` / `PublishNamespaceDone`. `PublishNamespace` gets a
       synthetic Request ID counting down from `u64::MAX`; responses to it
