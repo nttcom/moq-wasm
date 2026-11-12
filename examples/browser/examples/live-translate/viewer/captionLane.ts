@@ -1,60 +1,21 @@
-import type { LivePlayout } from 'moq-wasm/media/player/livePlayout'
-
 const CAPTION_HOLD_MS = 4_000
-const MAX_LATE_MS = 3_000
 const MAX_LINE_CHARS = 120
 
 type Piece = { text: string; final: boolean }
 
-/// The transcript of one language, shown on the live playout's clock: each
-/// piece appears when the audio it was spoken with plays, pieces of an
-/// utterance accumulate into one line, and the line clears once pieces stop.
+/// The transcript of one language as a caption line: pieces of an utterance
+/// accumulate into one line, and the line clears once pieces stop. The player
+/// hands each piece over when the audio it was spoken with plays.
 export class CaptionLane {
   private line = ''
   private clearTimer: ReturnType<typeof setTimeout> | undefined
-  private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private closed = false
 
-  constructor(
-    private readonly playout: Pick<LivePlayout, 'dueAt'>,
-    private readonly onCaption: (text: string) => void
-  ) {}
+  constructor(private readonly onCaption: (text: string) => void) {}
 
-  push(payload: Uint8Array, captureMicros: number | undefined): void {
+  push(payload: string): void {
     const piece = parsePiece(payload)
-    if (!piece || captureMicros === undefined) {
-      return
-    }
-    const dueMs = this.playout.dueAt(captureMicros)
-    const waitMs = dueMs === undefined ? 0 : dueMs - performance.now()
-    if (waitMs < -MAX_LATE_MS) {
-      return
-    }
-    const timer = setTimeout(
-      () => {
-        this.timers.delete(timer)
-        this.show(piece)
-      },
-      Math.max(0, waitMs)
-    )
-    this.timers.add(timer)
-  }
-
-  close(): void {
-    this.closed = true
-    for (const timer of this.timers) {
-      clearTimeout(timer)
-    }
-    this.timers.clear()
-    clearTimeout(this.clearTimer)
-    if (this.line) {
-      this.line = ''
-      this.onCaption('')
-    }
-  }
-
-  private show(piece: Piece): void {
-    if (this.closed) {
+    if (!piece || this.closed) {
       return
     }
     this.line = (this.line + piece.text).slice(-MAX_LINE_CHARS)
@@ -69,11 +30,20 @@ export class CaptionLane {
       this.line = ''
     }
   }
+
+  close(): void {
+    this.closed = true
+    clearTimeout(this.clearTimer)
+    if (this.line) {
+      this.line = ''
+      this.onCaption('')
+    }
+  }
 }
 
-function parsePiece(payload: Uint8Array): Piece | undefined {
+function parsePiece(payload: string): Piece | undefined {
   try {
-    const parsed = JSON.parse(new TextDecoder().decode(payload)) as { text?: unknown; final?: unknown }
+    const parsed = JSON.parse(payload) as { text?: unknown; final?: unknown }
     return typeof parsed.text === 'string' ? { text: parsed.text, final: parsed.final === true } : undefined
   } catch {
     return undefined
