@@ -52,7 +52,10 @@ closed before a viewer picks a language, and
 A page holds `/events` while it is in use: a Cloud Run instance lives while a
 request is in flight, so that stream is what keeps the translator running
 between the pages' other requests, and lets the service scale to zero when
-every page is closed. The service does not identify its callers: anyone who
+every page is closed. Outside the open hours the stream ends at its next
+heartbeat and a new one gets 204, which stops an `EventSource` from
+reconnecting, so a tab left open does not keep the instance up past closing
+time. The service does not identify its callers: anyone who
 reaches it gets a token and may publish or watch any broadcast id. The ids are
 random, so the service does not tie an id to the page that first used it. What
 a caller can make the translation cost is bounded instead, by the limits above
