@@ -752,7 +752,7 @@ transition — seek, skip, `LIVE`, a packaging or quality change — resumes.
 Pausing a review freezes the picture and the sound where they are and resuming
 carries on from there; pausing live playback stops both, and resuming returns
 to the live edge (live CMAF jumps to the end of what is buffered, live LOC
-warms up again). The volume slider next to the speed control drives the live audio output
+with sound warms up again, and a LOC picture alone runs on with its clock). The volume slider next to the speed control drives the live audio output
 (the `AudioContext` gain for LOC, the MediaSource element for CMAF).
 
 The `LIVE` button returns to the live edge. It is translucent with a red dot
