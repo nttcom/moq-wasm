@@ -115,6 +115,12 @@ export function temporaryAppToken(): string | undefined {
   return access.kind === 'temporary' ? access.current().token : undefined
 }
 
+/// For a service that keeps the token it is handed until that token expires, such as the live
+/// translator: the page's app, signed for a new hour.
+export async function renewedTemporaryToken(): Promise<string | undefined> {
+  return access.kind === 'temporary' ? (await refresh(access.current())).token : undefined
+}
+
 export function withNamespaceRoot(namespace: string[]): string[] {
   return namespace[0] === PUBLIC_NAMESPACE_ROOT ? [access.namespaceRoot, ...namespace.slice(1)] : namespace
 }

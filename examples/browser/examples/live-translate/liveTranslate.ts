@@ -1,71 +1,71 @@
+import { access, bearerToken, renewedTemporaryToken, withNamespaceRoot } from '../../utils/access'
+import { type ServiceUrls, resolveServiceUrl } from '../../utils/serviceUrl'
+
 export const BROADCAST_ID_PARAM = 'id'
-const PUBLIC_NAMESPACE_PREFIX = ['anon', 'live-translate']
 const TRANSLATED_NAMESPACE_SUFFIX = 'translated'
+const TOKEN_FRAGMENT = 'jwt'
 
-export type BroadcastRole = 'streamer' | 'viewer'
-
-/// Served by the live-translate service, a page gets a token for its one
-/// broadcast and holds the service's event stream so the instance stays up
-/// while the page is in use. Served without one (vite, GitHub Pages), the
-/// broadcast is public under `anon/live-translate` and needs no token.
-export type BroadcastAccess = {
-  namespace: string[]
-  relayUrl: string | undefined
-  token: (() => Promise<string>) | undefined
-  /// Set while the translator is outside its open hours, for the page to
-  /// show before a viewer picks a language.
-  closedNotice: string | undefined
-  release(): void
+const TRANSLATOR_URLS: ServiceUrls = {
+  param: 'liveTranslateUrl',
+  local: 'http://localhost:18090',
+  cloud: 'https://moqt-relay-live-translate-2wygx2l4sq-an.a.run.app'
 }
 
-export async function openBroadcastAccess(broadcastId: string, role: BroadcastRole): Promise<BroadcastAccess> {
-  const grant = await fetchGrant(broadcastId, role)
-  if (!grant) {
-    return {
-      namespace: [...PUBLIC_NAMESPACE_PREFIX, broadcastId],
-      relayUrl: undefined,
-      token: undefined,
-      closedNotice: undefined,
-      release: () => {}
-    }
-  }
-  const events = new EventSource('/events')
-  return {
-    namespace: grant.namespace,
-    relayUrl: grant.relayUrl,
-    token: async () => (await fetchGrant(broadcastId, role))?.token ?? grant.token,
-    closedNotice: grant.openHours && !grant.open ? `翻訳は稼働時間外です（稼働時間: ${grant.openHours}）` : undefined,
-    release: () => events.close()
-  }
+const REFUSALS: Record<string, string> = {
+  full: '翻訳は満席です。しばらくしてから配信し直してください',
+  relay_refused: '翻訳サービスが relay に接続できませんでした'
 }
 
-type Grant = { token: string; namespace: string[]; relayUrl: string; openHours: string | null; open: boolean }
-
-/// Only an answer that shows the page is served without the service, a 404
-/// or a dev server's page itself, means the broadcast is public. Any other
-/// failure is reported rather than quietly publishing in public.
-async function fetchGrant(broadcastId: string, role: BroadcastRole): Promise<Grant | undefined> {
-  const response = await fetch(`/token?id=${encodeURIComponent(broadcastId)}&role=${role}`)
-  const json = response.headers.get('content-type')?.includes('application/json') ?? false
-  if (response.ok && json) {
-    const body = (await response.json()) as Omit<Grant, 'namespace'> & { namespace: string }
-    return { ...body, namespace: body.namespace.split('/') }
-  }
-  if (response.status === 404 || (response.ok && !json)) {
-    return undefined
-  }
-  const error = json ? ((await response.json()) as { error?: string }).error : undefined
-  throw new Error(`relay token: ${error ?? response.statusText ?? response.status}`)
+export function broadcastNamespace(broadcastId: string): string[] {
+  return withNamespaceRoot(['anon', 'live-translate', broadcastId])
 }
 
 export function translatedNamespace(broadcastNamespace: string[]): string[] {
   return [...broadcastNamespace, TRANSLATED_NAMESPACE_SUFFIX]
 }
 
+export type TranslationRequest = {
+  /// Why the broadcast is not translated now, for the streamer to show.
+  notice: string | undefined
+  release(): void
+}
+
+/// Has the translator translate the broadcasts of the page's temporary app. The translator reaches
+/// the app only with one of its tokens and keeps the one it is handed for that token's lifetime, so
+/// it gets a newly signed one, good for an hour. The event stream held until `release` keeps the
+/// translator's instance running. A public broadcast needs neither: the translator watches
+/// `anon/live-translate` by itself.
+export async function requestTranslation(relayUrl: string): Promise<TranslationRequest> {
+  if (access.kind !== 'temporary') {
+    return { notice: undefined, release: () => {} }
+  }
+  const translatorUrl = resolveServiceUrl(window.location.search, relayUrl, TRANSLATOR_URLS)
+  const response = await fetch(`${translatorUrl}/sessions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${await renewedTemporaryToken()}` }
+  })
+  const answer = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    return {
+      notice: REFUSALS[answer.error] ?? `翻訳を始められませんでした（${answer.error ?? response.status}）`,
+      release: () => {}
+    }
+  }
+  const events = new EventSource(`${translatorUrl}/events`)
+  return {
+    notice: answer.openHours && !answer.open ? `翻訳は稼働時間外です（稼働時間: ${answer.openHours}）` : undefined,
+    release: () => events.close()
+  }
+}
+
+/// The Viewer's link for `broadcastId`, carrying the page's token so that whoever opens it joins the
+/// same app.
 export function viewerUrl(broadcastId: string, relayUrl: string, from: string = location.href): string {
   const url = new URL('../viewer/index.html', from)
   url.search = ''
   url.searchParams.set(BROADCAST_ID_PARAM, broadcastId)
   url.searchParams.set('relayUrl', relayUrl)
+  const token = bearerToken()
+  url.hash = token ? `${TOKEN_FRAGMENT}=${token}` : ''
   return url.toString()
 }
