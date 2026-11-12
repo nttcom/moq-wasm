@@ -9,6 +9,7 @@ import { type MediaKind, formatLiveStats } from 'moq-wasm/media'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
+let videoSubscription: MoqSubscription | undefined
 const form = element<HTMLFormElement>('form')
 startPageTelemetry(
   'media-subscriber',
@@ -39,6 +40,11 @@ const locLive = new LocLive(
         canvasFramesShown += 1
         setStatusText('subscriber-playback-status', `Playing: canvas frames=${canvasFramesShown}`)
       }
+    },
+    onKeyFrameNeeded: (groupId) => {
+      videoSubscription
+        ?.requestNewGroup(groupId)
+        .catch((error) => console.warn('[MediaSubscriber] new video group', error))
     }
   },
   () => session
@@ -108,7 +114,8 @@ function sendSubscribeButtonClickHandler(): void {
       return
     }
 
-    receiveObjects('video', await session.subscribe(trackNamespace, selectedVideoTrack))
+    videoSubscription = await session.subscribe(trackNamespace, selectedVideoTrack)
+    receiveObjects('video', videoSubscription)
     if (selectedAudioTrack) {
       receiveObjects('audio', await session.subscribe(trackNamespace, selectedAudioTrack))
     }
@@ -176,6 +183,7 @@ function setupCloseButtonHandler(): void {
   closeBtn.addEventListener('click', async () => {
     session?.close()
     session = undefined
+    videoSubscription = undefined
     locLive.reset()
     setPlaybackObjectStatus('video', 'Waiting for objects')
     receivedObjectCounts.video = 0

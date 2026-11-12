@@ -107,7 +107,8 @@ export class TranslationPlayer {
       undefined,
       {
         onPresented: (picture) => this.stage.show(picture),
-        onFrameShown: () => undefined
+        onFrameShown: () => undefined,
+        onKeyFrameNeeded: (groupId) => this.requestVideoGroup(groupId)
       },
       () => this.context.session
     )
@@ -164,6 +165,13 @@ export class TranslationPlayer {
       arrivalDelayMs: live.fastestArrivalDelayMs,
       bufferMs: live.bufferMs
     }
+  }
+
+  private requestVideoGroup(groupId: bigint): void {
+    this.callbacks.onLog('info', `video group ${groupId} cut short, asking for a new group`)
+    this.video?.handle
+      .requestNewGroup(groupId)
+      .catch((error) => this.callbacks.onLog('warn', `new video group: ${getErrorMessage(error)}`))
   }
 
   private translationOffsetMs(): number | undefined {
