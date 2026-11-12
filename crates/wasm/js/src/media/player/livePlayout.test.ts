@@ -164,6 +164,28 @@ test('a picture without sound opens after the warm-up limit', () => {
   expect(playout.dueAt(firstCaptureMicros)).toBeDefined()
 })
 
+test('a picture without sound resumed from a pause shows the next frame without warming up again', () => {
+  // Arrange
+  const shownAtMs: number[] = []
+  const playout = new LivePlayout((frame) => {
+    shownAtMs.push(environment.nowMs)
+    frame.close()
+  })
+  streamLiveVideo(playout, WARMUP_LIMIT_MS + 10 * VIDEO_FRAME_MS)
+  playout.setPaused(true)
+  streamLiveVideo(playout, 10 * VIDEO_FRAME_MS)
+  const shownBefore = shownAtMs.length
+
+  // Act
+  playout.setPaused(false)
+  const resumedAtMs = environment.nowMs
+  streamLiveVideo(playout, WARMUP_LIMIT_MS / 2)
+
+  // Assert
+  expect(shownAtMs.length).toBeGreaterThan(shownBefore)
+  expect(shownAtMs[shownBefore] - resumedAtMs).toBeLessThan(WARMUP_LIMIT_MS / 2)
+})
+
 function streamLiveVideo(playout: LivePlayout, durationMs: number): void {
   const startMs = environment.nowMs
   for (let elapsedMs = 0; elapsedMs < durationMs; elapsedMs += VIDEO_FRAME_MS) {

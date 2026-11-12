@@ -250,7 +250,10 @@ export class LivePlayout {
       this.audio.flush()
       void this.audio.suspend()
     } else {
-      this.clock.reset()
+      // Sound warms up again for its suspended output; a picture alone runs on with its clock.
+      if (this.newestAudioCaptureMicros !== undefined) {
+        this.clock.reset()
+      }
       this.newestAudioCaptureMicros = undefined
       void this.audio.resume()
     }
