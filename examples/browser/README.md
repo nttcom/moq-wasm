@@ -46,6 +46,10 @@ example `anon/live/test` or `temp-…/live/test`; keep that root when typing
 your own. `utils/access.ts` resolves the mode once per page, and
 `utils/accessBar.ts` shows it at the top of every example.
 
+`?access=public` opens a page as public whatever the tabs say, so a link can
+show something published under `anon`; a token in the URL still wins. The choice is not stored: the examples
+opened after it keep the visitor's own mode.
+
 `?jwt=<token>` connects with any app-scoped JWT instead (for example one
 signed with the `auth-token` CLI or by the console). Its namespace root then
 becomes the token's appId; the token is used as is and never refreshed.

@@ -34,6 +34,9 @@ const TOKEN_KEY = 'moqt.temporaryToken'
 /// The app this tab joined, kept across its reloads; a fragment naming another app is a shared link.
 const TAB_APP_KEY = 'moqt.tabAppId'
 const TOKEN_FRAGMENT = 'jwt'
+/// `?access=public` opens a page as the public app. It is not stored, so the examples opened after
+/// it keep the mode their reader chose.
+export const ACCESS_MODE_PARAM = 'access'
 /// A token is refreshed this long before it expires, so a reconnect never presents an expired one.
 const REFRESH_MARGIN_SECONDS = 5 * 60
 
@@ -43,9 +46,13 @@ const TOKEN_MINT_URLS = {
   cloud: 'https://token-mint.moqt.research.skyway.io'
 }
 
-/// The stored choice. Without one, a page served from this machine talks to local relays nobody else
-/// reaches, so it starts public; a deployed page starts temporary.
+/// The mode `?access=public` asks for, else the stored choice. Without one, a page served from this
+/// machine talks to local relays nobody else reaches, so it starts public; a deployed page starts
+/// temporary.
 function readAccessMode(): AccessMode {
+  if (new URLSearchParams(window.location.search).get(ACCESS_MODE_PARAM) === 'public') {
+    return 'public'
+  }
   const stored = localStorage.getItem(MODE_KEY)
   if (stored === 'temporary' || stored === 'public') {
     return stored

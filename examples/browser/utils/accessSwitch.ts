@@ -1,4 +1,4 @@
-import { type AccessMode, access, accessMode, startNewTemporaryApp, writeAccessMode } from './access'
+import { ACCESS_MODE_PARAM, type AccessMode, access, accessMode, startNewTemporaryApp, writeAccessMode } from './access'
 import { temporaryStatus } from './temporaryStatus'
 
 /// The example list's mode tabs. A change is stored and the page reloads, so `access` is resolved
@@ -43,8 +43,11 @@ switch (access.kind) {
 }
 
 /// The fragment names the current app; reloading with it would adopt that app again as a shared link.
+/// Also drops the access mode a link asked for, which would override the tab just chosen.
 function reloadWithoutToken(): void {
-  window.location.replace(window.location.pathname + window.location.search)
+  const query = new URLSearchParams(window.location.search)
+  query.delete(ACCESS_MODE_PARAM)
+  window.location.replace(window.location.pathname + (query.size > 0 ? `?${query}` : ''))
 }
 
 function button(label: string, onClick: () => Promise<void>): HTMLButtonElement {
