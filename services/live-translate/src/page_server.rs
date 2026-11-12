@@ -71,7 +71,7 @@ async fn handle(request: Request<Incoming>, state: Arc<PageServerState>) -> Page
         match (&head.method, head.uri.path()) {
             (&Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
             (&Method::GET, "/token") => issue_token(&state, head.uri.query()),
-            (&Method::GET, "/events") => events(),
+            (&Method::GET, "/events") => events(&state),
             (&Method::GET, "/") => redirect(STREAMER_PAGE),
             (&Method::GET, path) => static_file(&state, path).await,
             _ => error_response(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"),
@@ -160,9 +160,17 @@ fn is_broadcast_id(id: &str) -> bool {
 }
 
 /// `GET /events`: a server-sent event stream of heartbeat comments only; a
-/// page holds it open for the reason on `PageServer`.
-fn events() -> PageResponse {
-    let mut response = Response::new(Heartbeat::new().boxed());
+/// page holds it open for the reason on `PageServer`. Outside the open hours
+/// nothing is translated, so the stream ends and a new one gets 204. 204
+/// tells an `EventSource` not to reconnect, so a tab left open lets the
+/// instance stop.
+fn events(state: &PageServerState) -> PageResponse {
+    if !state.policy.is_open() {
+        let mut response = Response::new(Full::default().boxed());
+        *response.status_mut() = StatusCode::NO_CONTENT;
+        return response;
+    }
+    let mut response = Response::new(Heartbeat::new(state.policy.clone()).boxed());
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -171,12 +179,14 @@ fn events() -> PageResponse {
 
 struct Heartbeat {
     ticks: Interval,
+    policy: Arc<TranslationPolicy>,
 }
 
 impl Heartbeat {
-    fn new() -> Self {
+    fn new(policy: Arc<TranslationPolicy>) -> Self {
         Self {
             ticks: tokio::time::interval(EVENTS_HEARTBEAT),
+            policy,
         }
     }
 }
@@ -190,6 +200,9 @@ impl Body for Heartbeat {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         ready!(self.ticks.poll_tick(cx));
+        if !self.policy.is_open() {
+            return Poll::Ready(None);
+        }
         Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b": alive\n\n")))))
     }
 }
@@ -233,6 +246,8 @@ fn error_response(status: StatusCode, error: &str) -> PageResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use auth_token::{decode_unverified_payload, verify_signature};
 
     use super::*;
@@ -256,6 +271,18 @@ mod tests {
         );
         std::mem::forget(server);
         port
+    }
+
+    /// Hours that are open only on the weekday three days from now.
+    fn closed_hours() -> String {
+        let days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            / 86_400;
+        // 1970-01-01 was a Thursday, so indexing from Sunday names the weekday three days ahead.
+        let weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(days % 7) as usize];
+        format!("{weekday}-{weekday} 00:00-23:59 +00:00")
     }
 
     fn app() -> Arc<AppAccess> {
@@ -324,6 +351,51 @@ mod tests {
 
         // Assert
         assert_eq!(response.status(), 404);
+    }
+
+    #[tokio::test]
+    async fn the_event_stream_is_held_inside_the_open_hours() {
+        // Arrange: no open hours, so always open
+        let port = serve(Some(app()), None).await;
+
+        // Act
+        let response = reqwest::get(format!("http://127.0.0.1:{port}/events"))
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()[CONTENT_TYPE], "text/event-stream");
+    }
+
+    #[tokio::test]
+    async fn the_event_stream_is_refused_outside_the_open_hours() {
+        // Arrange
+        let port = serve(Some(app()), Some(&closed_hours())).await;
+
+        // Act
+        let response = reqwest::get(format!("http://127.0.0.1:{port}/events"))
+            .await
+            .unwrap();
+
+        // Assert: 204 stops an EventSource from reconnecting
+        assert_eq!(response.status(), 204);
+    }
+
+    #[tokio::test]
+    async fn a_held_event_stream_ends_when_the_open_hours_are_over() {
+        // Arrange
+        let mut heartbeat = Heartbeat::new(Arc::new(TranslationPolicy {
+            open_hours: Some(closed_hours().parse().unwrap()),
+            language_time_limit: Duration::from_secs(3600),
+            always_on: Vec::new(),
+        }));
+
+        // Act
+        let frame = heartbeat.frame().await;
+
+        // Assert
+        assert!(frame.is_none());
     }
 
     #[test]
