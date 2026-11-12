@@ -33,7 +33,7 @@ const MODE_KEY = 'moqt.accessMode'
 const TOKEN_KEY = 'moqt.temporaryToken'
 /// The app this tab joined, kept across its reloads; a fragment naming another app is a shared link.
 const TAB_APP_KEY = 'moqt.tabAppId'
-const TOKEN_FRAGMENT = 'jwt'
+export const TOKEN_FRAGMENT = 'jwt'
 /// `?access=public` opens a page as the public app. It is not stored, so the examples opened after
 /// it keep the mode their reader chose.
 export const ACCESS_MODE_PARAM = 'access'
@@ -113,6 +113,12 @@ export function bearerToken(): string | undefined {
 /// over.
 export function temporaryAppToken(): string | undefined {
   return access.kind === 'temporary' ? access.current().token : undefined
+}
+
+/// For a service that keeps the token it is handed until that token expires, such as the live
+/// translator: the page's app, signed for a new hour.
+export async function renewedTemporaryToken(): Promise<string | undefined> {
+  return access.kind === 'temporary' ? (await refresh(access.current())).token : undefined
 }
 
 export function withNamespaceRoot(namespace: string[]): string[] {
