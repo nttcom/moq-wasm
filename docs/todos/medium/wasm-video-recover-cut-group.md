@@ -10,3 +10,4 @@ A decoder that loses its group already asks for a new one (`LivePlayer.requestGr
 ## Plan
 
 The relay also resets streams the player expects to end (`group_sender.rs`: Forward 0 during review, `PastEnd` of an outgoing rendition), so asking on every reset would ask for groups nobody needs.
+Cover the incoming rendition of a switch too: `TrackSubscriptions.requestNewGroup` asks once, so a group it asked for that is reset before its first object arrives leaves the switch waiting for the next keyframe.
