@@ -575,6 +575,9 @@ track の持ち主: SDK が取った track は、SDK が `setVideo`、`removeSou
 | `view.setVideoEnabled(enabled)` | 映像の購読を止めて音声を残す |
 | `view.player` | seek や track の選択など、ほかの `LivePlayer` の操作 |
 
+`RemoteBroadcast` の option のうち `audioContext` と `keepLiveWhileReviewing` は、各 view の
+`LivePlayer` にそのまま渡る。
+
 `view.element` の決まり:
 
 - 要素はページが与えた箱いっぱいに広がり、映像の収め方は CSS 変数 `--moq-object-fit`

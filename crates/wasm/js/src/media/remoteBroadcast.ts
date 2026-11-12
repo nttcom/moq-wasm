@@ -67,6 +67,8 @@ export type RemoteBroadcastOptions = {
   /// `LivePlayerOptions.audioContext` does: the page resumes it from a user
   /// gesture and picks the speaker with its `setSinkId`.
   audioContext?: AudioContext
+  /// As `LivePlayerOptions.keepLiveWhileReviewing`, for every view's player.
+  keepLiveWhileReviewing?: boolean
 }
 
 /// A broadcast someone else publishes, played source by source: it
@@ -78,18 +80,14 @@ export class RemoteBroadcast {
   private readonly broadcastCatalog: BroadcastCatalog
   private readonly unlistenCatalog: () => void
   private readonly log: (level: LogLevel, message: string) => void
-  private readonly pauseHiddenVideo: boolean
-  private readonly audioContext: AudioContext | undefined
   private disposed = false
 
   constructor(
     readonly session: MoqSession,
     readonly namespace: string[],
-    options: RemoteBroadcastOptions = {}
+    private readonly options: RemoteBroadcastOptions = {}
   ) {
     this.log = options.onLog ?? ((level, message) => sdkLog(session, level, TARGET, message))
-    this.pauseHiddenVideo = options.pauseHiddenVideo ?? true
-    this.audioContext = options.audioContext
     this.broadcastCatalog = new BroadcastCatalog(session, namespace, { onLog: options.onLog })
     this.unlistenCatalog = this.broadcastCatalog.listen({
       onCatalog: (text) => this.applyCatalog(text),
@@ -159,9 +157,7 @@ export class RemoteBroadcast {
         existing.update(source)
         continue
       }
-      const view = new View(source, this.log, this.pauseHiddenVideo, this.audioContext, (level) =>
-        this.audioLevel(view, level)
-      )
+      const view = new View(source, this.log, this.options, (level) => this.audioLevel(view, level))
       this.views.set(source.name, view)
       view.player
         .start(this.session, this.namespace, this.catalog)
@@ -195,8 +191,7 @@ class View implements SourceView {
   constructor(
     source: CatalogSource,
     log: (level: LogLevel, message: string) => void,
-    pauseHiddenVideo: boolean,
-    audioContext: AudioContext | undefined,
+    options: RemoteBroadcastOptions,
     onAudioLevel: (level: AudioLevel) => void
   ) {
     this.name = source.name
@@ -208,7 +203,8 @@ class View implements SourceView {
     this.player = new LivePlayer({
       container: this.element,
       source: liveSource(source),
-      audioContext,
+      audioContext: options.audioContext,
+      keepLiveWhileReviewing: options.keepLiveWhileReviewing,
       callbacks: {
         onStateChange: () => {
           for (const listener of this.listeners) {
@@ -221,7 +217,7 @@ class View implements SourceView {
       }
     })
     this.showState()
-    if (pauseHiddenVideo) {
+    if (options.pauseHiddenVideo ?? true) {
       // No video until the element shows, so a view the page never places subscribes none.
       this.shown = false
       void this.player.setVideoEnabled(false)
