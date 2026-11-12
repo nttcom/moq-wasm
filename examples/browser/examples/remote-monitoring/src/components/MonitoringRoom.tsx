@@ -66,7 +66,6 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
       await players.watchCameras(location, ({ kind, camId }) => {
         if (kind === 'added') {
           setCameras((prev) => (prev.includes(camId) ? prev : [...prev, camId]))
-          // The first camera, or the one that follows a withdrawn stage, takes the stage.
           setStageId((current) => (current === undefined || stageLostRef.current ? camId : current))
           setStageLost(false)
         } else {
@@ -104,19 +103,28 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
     setStageLost(false)
   }
 
+  const switchStage = (offset: 1 | -1) => {
+    if (cameras.length === 0 || stageId === undefined) return
+    // A withdrawn stage camera is no longer listed: → takes the first camera and ← the last.
+    const index = Math.max(cameras.indexOf(stageId), offset > 0 ? -1 : 0)
+    setStageId(cameras[(index + offset + cameras.length) % cameras.length])
+    setStageLost(false)
+  }
+
   const canStepBack = mode === 'review' && stageState !== undefined && stageState.seek.seekable
   const canStepForward = stageState?.mode === 'review'
 
-  // Arrow keys drive the stage: ← → step through a review, ↓ enters it, ↑ returns to live.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
       switch (event.key) {
         case 'ArrowLeft':
-          if (canStepBack) handleStepBack()
+          if (mode === 'live') switchStage(-1)
+          else if (canStepBack) handleStepBack()
           break
         case 'ArrowRight':
-          if (canStepForward) handleStepForward()
+          if (mode === 'live') switchStage(1)
+          else if (canStepForward) handleStepForward()
           break
         case 'ArrowDown':
           enterReview()
@@ -177,8 +185,8 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
       {/* hint */}
       {cameras.length > 0 && (
         <p className="text-xs text-zinc-500">
-          ステージをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
-          に戻る）。右のプレビューをクリックでステージと入替。
+          ← → でステージのカメラを切替。ステージをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
+          に戻る）。右のプレビューをクリックでもステージと入替。
         </p>
       )}
 
