@@ -748,8 +748,16 @@ forward from their own cache through the raw stream senders.
   REQUEST_UPDATE carries a NEW_GROUP_REQUEST of 0 or of a group beyond the
   one being written (§10.2.13); a request for a group that already began is
   dropped. The application starts the new group with the next object it
-  writes. Requests are not delayed or counted: `Notify` keeps one permit, so
-  requests that arrive before the application looks make one new group.
+  writes. `origin/new_group_requests.rs` keeps a group from getting shorter
+  than `MIN_GROUP_DURATION` (2 s) and `MIN_GROUP_OBJECTS` (60), the delay
+  §10.2.13 allows an Original Publisher: a request is notified at once when
+  the open group is that old or holds that many objects, and otherwise by
+  `NewGroupDelayTask` as soon as it is either. A subscriber that joins a
+  shorter group fetches it, so only a request made for another reason (a
+  rendition switch, a decoder that lost its group) waits. A request is
+  notified once per open group: those that follow it before the next group
+  begins add nothing, and a group the application starts on its own answers
+  a request still held back.
 - `handle(event)` is the session event loop's shortcut to all of the above:
   it accepts a SUBSCRIBE to a registered track, releases on UNSUBSCRIBE,
   serves FETCH, aborts on FETCH_CANCEL and answers TRACK_STATUS, and hands

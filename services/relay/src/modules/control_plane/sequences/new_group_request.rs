@@ -78,7 +78,7 @@ mod tests {
 
     use moqt::{
         Session,
-        publish::{GroupBoundary, Origin, OutgoingObject, Retention},
+        publish::{GroupBoundary, MIN_GROUP_OBJECTS, Origin, OutgoingObject, Retention},
         subscribe::SubscribeOption,
     };
     use tokio::{sync::Notify, task::JoinHandle};
@@ -129,13 +129,21 @@ mod tests {
             }
         }
 
-        /// Sends PUBLISH for the track and starts its first group.
+        /// Sends PUBLISH for the track and writes its first group, long
+        /// enough for the origin to end it on request.
         async fn publish(&self) {
             within(self.origin.publish(&self.session, NAMESPACE, TRACK))
                 .await
                 .unwrap();
-            let object = OutgoingObject::plain(GroupBoundary::Next, "a".into());
-            self.origin.write(NAMESPACE, TRACK, object).await.unwrap();
+            for object_id in 0..MIN_GROUP_OBJECTS {
+                let group = if object_id == 0 {
+                    GroupBoundary::Next
+                } else {
+                    GroupBoundary::Within
+                };
+                let object = OutgoingObject::plain(group, "a".into());
+                self.origin.write(NAMESPACE, TRACK, object).await.unwrap();
+            }
         }
 
         async fn is_asked_for_a_new_group(&self) -> bool {

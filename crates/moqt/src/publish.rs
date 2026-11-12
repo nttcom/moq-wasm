@@ -3,6 +3,8 @@ pub use crate::modules::moqt::control_plane::handler::publish_done_handler::Publ
 pub use crate::modules::moqt::control_plane::handler::publish_handler::PublishHandler;
 pub use crate::modules::moqt::control_plane::options::PublishOption;
 pub use crate::modules::moqt::domains::origin::GroupBoundary;
+pub use crate::modules::moqt::domains::origin::MIN_GROUP_DURATION;
+pub use crate::modules::moqt::domains::origin::MIN_GROUP_OBJECTS;
 pub use crate::modules::moqt::domains::origin::Origin;
 pub use crate::modules::moqt::domains::origin::OutgoingObject;
 pub use crate::modules::moqt::domains::origin::Placement;
