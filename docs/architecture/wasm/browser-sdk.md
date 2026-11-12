@@ -343,10 +343,10 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
   なったとき、page は track の clone を作って 1 フレームを読み、worker に `frame` として渡す
   （`refreshFrame`）。worker はそれを、すでに encode したフレームの後ろの時刻に置いて encode する。
   Safari（worker が track を読む経路）ではこの読み直しをしない。
-- **最初の購読。** `subscribeGroupStart(namespace, track, 60)` を使う。SUBSCRIBE と
-  joining FETCH を続けて送る。SUBSCRIBE_OK の Largest Object が 60 object（30 fps で
-  2 秒）より手前なら、その FETCH で今の group を先頭から取る。それ以降なら FETCH を
-  取り消して NEW_GROUP_REQUEST を送り、新しい group から読む。1 秒待っても新しい group が来なければ、今の group を FETCH する。
+- **最初の購読。** `subscribeGroupStart(namespace, track, 60)` を使う。SUBSCRIBE を送り、
+  SUBSCRIBE_OK を受け取ってから次の要求を選ぶ。Largest Object が 60 object（30 fps で
+  2 秒）より手前なら、joining FETCH を送って今の group を先頭から取る。それ以降なら
+  NEW_GROUP_REQUEST を送り、新しい group から読む。1 秒待っても新しい group が来なければ、今の group を FETCH する。
   DYNAMIC_GROUPS の無い track と draft-14 の session は、いつも joining FETCH になる。
 - **rendition の切り替えと `goLive`。** どちらも group の先頭からしか始められない
   ので、切り替え先を購読した直後と、Forward を 1 に戻した直後に

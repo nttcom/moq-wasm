@@ -636,22 +636,21 @@ use these facades instead of the data-plane factories directly:
   a relay.
 - `Subscriber::subscribe_group_start(namespace, name, new_group_after)` is
   the late join of a track whose groups are long, such as video with sparse
-  keyframes (draft-18 §5.1.3.1). It subscribes with Largest Object, writes
-  the Relative Joining FETCH behind the SUBSCRIBE as above, and looks at the
-  SUBSCRIBE_OK:
+  keyframes (draft-18 §5.1.3.1). It subscribes with Largest Object, waits
+  for the SUBSCRIBE_OK and sends one request more, chosen by what the
+  SUBSCRIBE_OK tells, so it sends no request it withdraws:
   - The track has no DYNAMIC_GROUPS (§12.6), or its Largest Object ID is
-    below `new_group_after`: the current group is read through that FETCH,
-    within the same round trip as `subscribe_current_group`.
-  - Otherwise it withdraws the FETCH by dropping it unanswered (draft-18
-    resets its request stream, §3.3.2), so the peer sends at most what it
-    wrote before the reset arrived. It then
-    sends `request_new_group` and the `TrackReader` yields from
+    below `new_group_after`: it sends the Relative Joining FETCH (offset 0)
+    and the `TrackReader` yields the current group from its start, then the
+    live objects. A track without content has no group to fetch and is read
+    live.
+  - Otherwise it sends `request_new_group` and the `TrackReader` yields from
     the first group after the Largest Group. The rest of the Largest Group
     cannot be decoded without its start, so the reader holds it back. When
-    no newer group arrives within `NEW_GROUP_WAIT` (1 s), it sends a second
+    no newer group arrives within `NEW_GROUP_WAIT` (1 s), it sends the
     Joining FETCH for the Largest Group and yields the fetched objects, then the held ones, then
-    the live ones. A relay does not pass on every request and a publisher
-    may have no frame to encode, so the wait has to end.
+    the live ones. A publisher may hold the request back or have no frame
+    to encode, so the wait has to end.
 - `Subscriber::request_new_group(&subscription, largest_group)` sends a
   REQUEST_UPDATE that carries only NEW_GROUP_REQUEST (§10.2.13: the largest
   group the caller knows plus 1, or 0), on the stream of the SUBSCRIBE or of
