@@ -114,7 +114,8 @@ const ANIMALS = [
   'walrus'
 ]
 
-export function generateBroadcastId(): string {
+/// A short, readable id for a URL: an adjective and an animal, such as `brave-otter`.
+export function randomName(): string {
   return `${pick(ADJECTIVES)}-${pick(ANIMALS)}`
 }
 

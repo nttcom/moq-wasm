@@ -4,7 +4,7 @@ import { CameraId, ConnState } from '../types/monitoring'
 interface Props {
   connState: ConnState
   relayUrl: string
-  subscribedCameras: CameraId[]
+  cameras: CameraId[]
   reviewingCamera: CameraId | null
   reviewStatus: string | null
 }
@@ -24,7 +24,7 @@ const connTextClass: Record<ConnState, string> = {
   closed: 'text-red-400'
 }
 
-export function DebugBar({ connState, relayUrl, subscribedCameras, reviewingCamera, reviewStatus }: Props) {
+export function DebugBar({ connState, relayUrl, cameras, reviewingCamera, reviewStatus }: Props) {
   const isUnhealthy = connState !== 'connected'
 
   return (
@@ -36,11 +36,11 @@ export function DebugBar({ connState, relayUrl, subscribedCameras, reviewingCame
         <span className="text-zinc-500">— {relayUrl}</span>
       </div>
 
-      {/* subscribe row */}
+      {/* cameras row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-blue-400 w-24 shrink-0">SUBSCRIBE</span>
-        {subscribedCameras.length > 0 ? (
-          subscribedCameras.map((id) => (
+        <span className="text-blue-400 w-24 shrink-0">CAMERAS</span>
+        {cameras.length > 0 ? (
+          cameras.map((id) => (
             <span
               key={id}
               className={cn(

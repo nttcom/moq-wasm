@@ -6,15 +6,22 @@ const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
 const VIDEO_ENCODING = {
   codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
-  hardwareAcceleration: 'prefer-hardware' as const
+  hardwareAcceleration: 'prefer-hardware' as const,
+  // The monitor steps back through the recent past a group at a time, so the
+  // groups stay a second long instead of the SDK's 30 seconds.
+  keyframeIntervalSeconds: 1
 }
 const MAIN_VIDEO = { width: 1280, height: 720, bitrate: 1_000_000, framerate: 30 }
 
-const CAM_COLORS: Record<CameraId, string> = {
-  cam01: '#7a1a1a',
-  cam02: '#1a3a7a',
-  cam03: '#1a6a35',
-  cam04: '#7a4a10'
+/// A dark background that tells the synthetic cameras of a location apart, derived from the name.
+function cameraColor(camId: CameraId): string {
+  let hash = 0
+  for (const ch of camId) {
+    hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  }
+  // Names that differ in their last character would otherwise land on neighbouring hues.
+  const hue = (Math.imul(hash, 0x9e3779b1) >>> 0) % 360
+  return `hsl(${hue} 60% 22%)`
 }
 
 export class CameraPublisher {
@@ -63,7 +70,7 @@ export class CameraPublisher {
     canvas.width = MAIN_VIDEO.width
     canvas.height = MAIN_VIDEO.height
     const ctx = canvas.getContext('2d')!
-    const bg = CAM_COLORS[this.camId] ?? '#333'
+    const bg = cameraColor(this.camId)
 
     const draw = () => {
       const now = new Date().toISOString().replace('T', ' ').substring(0, 23)

@@ -5,12 +5,12 @@ import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../../utils/relayPresets'
 import { offeredVersions } from '../../../utils/moqtVersion'
 import { buildVideoEncoding } from '../../media/videoEncoding'
-import { generateBroadcastId } from '../broadcastId'
+import { randomName } from '../../../utils/randomName'
 import { type BroadcastAccess, openBroadcastAccess, viewerUrl } from '../liveTranslate'
 
 const COPIED_LABEL_MS = 1_500
 
-const broadcastId = generateBroadcastId()
+const broadcastId = randomName()
 const urlInput = element<HTMLInputElement>('url')
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
