@@ -10,6 +10,8 @@ use std::{
 };
 
 use bytes::Bytes;
+use futures::FutureExt;
+use tokio::sync::Notify;
 use tracing::{
     Event,
     field::{Field, Visit},
@@ -433,6 +435,17 @@ pub(crate) async fn within<F: Future>(future: F) -> F::Output {
     tokio::time::timeout(HANDSHAKE_TIMEOUT, future)
         .await
         .expect("the exchange timed out")
+}
+
+/// Whether `notify` holds a permit, which this takes.
+pub(crate) fn is_notified(notify: &Notify) -> bool {
+    notify.notified().now_or_never().is_some()
+}
+
+pub(crate) async fn notified_within(notify: &Notify, duration: Duration) -> bool {
+    tokio::time::timeout(duration, notify.notified())
+        .await
+        .is_ok()
 }
 
 /// Polls `request` only until `peer` receives what it sends, so its response

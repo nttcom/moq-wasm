@@ -200,7 +200,8 @@ then register that `Notify` for their video track with
 `Broadcast::accept_keyframe_requests` before the catalog update that
 publishes the track, so `Origin` sends the track with DYNAMIC_GROUPS
 (draft-ietf-moq-transport-18 §12.6) and notifies it when a subscriber sends
-NEW_GROUP_REQUEST (§10.2.13). One `Notify` serves the source and all its
+NEW_GROUP_REQUEST (§10.2.13), once the track's open group is 2 seconds old
+or holds 60 objects. One `Notify` serves the source and all its
 renditions: the source keyframes them together, so a request on any of the
 tracks starts a new group on each. The `BroadcastWriter` queue also
 notifies it when it starts dropping media because the relay is not keeping up,

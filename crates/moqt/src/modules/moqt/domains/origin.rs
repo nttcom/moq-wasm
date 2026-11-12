@@ -24,13 +24,17 @@ use crate::{
 };
 
 mod fetch_serve_task;
+mod new_group_delay_task;
+mod new_group_requests;
 mod object_cache;
 mod object_numbering;
 
+pub use new_group_requests::{MIN_GROUP_DURATION, MIN_GROUP_OBJECTS};
 pub use object_cache::Retention;
 pub use object_numbering::{GroupBoundary, Placement};
 
 use fetch_serve_task::FetchServeTask;
+use new_group_requests::NewGroupRequests;
 use object_cache::{CachedObject, FetchRange, ObjectCache};
 use object_numbering::ObjectNumbering;
 
@@ -140,9 +144,8 @@ struct OriginTrack {
     numbering: ObjectNumbering,
     cache: ObjectCache,
     outlets: Vec<Outlet>,
-    /// Set for a track with dynamic groups (draft-18 §12.6); notified when a
-    /// subscriber asks for a new group.
-    new_group_requested: Option<Arc<Notify>>,
+    /// Set for a track with dynamic groups (draft-18 §12.6).
+    new_group_requests: Option<NewGroupRequests>,
     /// Set for a track published on demand.
     demand: Option<Demand>,
 }
@@ -181,7 +184,7 @@ impl OriginTrack {
             numbering: ObjectNumbering::new(first_group_id),
             cache: ObjectCache::new(retention),
             outlets: Vec::new(),
-            new_group_requested: None,
+            new_group_requests: None,
             demand: None,
         }
     }
@@ -206,14 +209,29 @@ impl OriginTrack {
 
     /// draft-18 §10.2.13: a request of 0, or one beyond the current group,
     /// asks for a new group; any other is for a group that already began.
-    fn request_new_group(&self, new_group_request: u64) {
-        let Some(requested) = &self.new_group_requested else {
+    fn request_new_group(&mut self, new_group_request: u64) {
+        let current_group = self.numbering.largest().map(|largest| largest.group_id);
+        let Some(requests) = &mut self.new_group_requests else {
             return;
         };
-        let current_group = self.numbering.largest().map(|largest| largest.group_id);
         if new_group_request == 0 || current_group.is_none_or(|group| new_group_request > group) {
-            requested.notify_one();
+            requests.request(executor::now());
         }
+    }
+
+    fn store(&mut self, placement: Placement, extension_headers: ExtensionHeaders, payload: Bytes) {
+        let now = executor::now();
+        if let Some(requests) = &mut self.new_group_requests {
+            requests.object_placed(placement, now);
+        }
+        self.cache.insert(
+            CachedObject {
+                location: placement.location,
+                extension_headers,
+                payload,
+            },
+            now,
+        );
     }
 
     fn outlet_mut(&mut self, request: RequestKey) -> Option<&mut Outlet> {
@@ -265,9 +283,12 @@ impl Origin {
     /// Gives the track dynamic groups (draft-18 §12.6): its PUBLISH and
     /// SUBSCRIBE_OK say so, and `requested` is notified when a subscriber
     /// asks for a new group (NEW_GROUP_REQUEST, §10.2.13) that has not begun
-    /// yet. The caller then starts one with the next object it writes. Call
-    /// this before `publish` and before the track is subscribed to; fails
-    /// for a track that is not registered.
+    /// yet. The caller then starts one with the next object it writes. While
+    /// the open group is younger than `MIN_GROUP_DURATION` and holds fewer
+    /// than `MIN_GROUP_OBJECTS` objects, the notification waits until the
+    /// group reaches either, and is not sent when the caller starts a group
+    /// before that. Call this before `publish` and before the track is
+    /// subscribed to; fails for a track that is not registered.
     pub async fn accept_new_group_requests(
         &self,
         namespace: &str,
@@ -275,7 +296,8 @@ impl Origin {
         requested: Arc<Notify>,
     ) -> Result<()> {
         let key = track_key(namespace, track_name);
-        self.state.lock().await.track_mut(&key)?.new_group_requested = Some(requested);
+        self.state.lock().await.track_mut(&key)?.new_group_requests =
+            Some(NewGroupRequests::new(requested));
         Ok(())
     }
 
@@ -332,7 +354,7 @@ impl Origin {
                 return Ok(());
             }
             let mut track_properties = TrackProperties::default();
-            track_properties.set_dynamic_groups(track.new_group_requested.is_some());
+            track_properties.set_dynamic_groups(track.new_group_requests.is_some());
             PublishOption {
                 forward: track.demand.is_none(),
                 track_properties,
@@ -400,13 +422,10 @@ impl Origin {
             let Some(placement) = track.numbering.place(object.group)? else {
                 return Ok(WriteOutcome::NotSent);
             };
-            track.cache.insert(
-                CachedObject {
-                    location: placement.location,
-                    extension_headers: object.extension_headers.clone(),
-                    payload: object.payload.clone(),
-                },
-                executor::now(),
+            track.store(
+                placement,
+                object.extension_headers.clone(),
+                object.payload.clone(),
             );
             (placement, take_writers(track))
         };
@@ -435,14 +454,7 @@ impl Origin {
                 .numbering
                 .place(GroupBoundary::Next)?
                 .context("a new group always places its first object")?;
-            track.cache.insert(
-                CachedObject {
-                    location: placement.location,
-                    extension_headers: ExtensionHeaders::default(),
-                    payload: payload.clone(),
-                },
-                executor::now(),
-            );
+            track.store(placement, ExtensionHeaders::default(), payload.clone());
             (placement, take_writers(track))
         };
         let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
@@ -545,7 +557,7 @@ impl Origin {
         let largest = track.numbering.largest();
         handler
             .track_properties
-            .set_dynamic_groups(track.new_group_requested.is_some());
+            .set_dynamic_groups(track.new_group_requests.is_some());
         if let Some(new_group_request) = handler.new_group_request {
             track.request_new_group(new_group_request);
         }
@@ -977,7 +989,6 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use futures::FutureExt;
 
     use super::*;
     use crate::modules::test_support::location;
@@ -985,7 +996,7 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject, Version,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            DRAFTS, accept_publish, connected_sessions, data_receiver, next_subgroup,
+            DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_subgroup,
             read_fetch_objects, rejection, subscribed_track_reader, within,
         },
         object::{DataReceiver, GroupOrder, Object, ObjectStatus, StreamDataReceiver, Subgroup},
@@ -2275,8 +2286,21 @@ mod tests {
         assert!(matches!(returned, Some(SessionEvent::SubscribeUpdate(_))));
     }
 
-    fn is_notified(requested: &Notify) -> bool {
-        requested.notified().now_or_never().is_some()
+    /// Writes `objects` objects: the first at `group`, the rest in the same
+    /// group.
+    async fn write_objects(peers: &Peers, group: GroupBoundary, objects: u64) {
+        for object_id in 0..objects {
+            let group = if object_id == 0 {
+                group
+            } else {
+                GroupBoundary::Within
+            };
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(group, b"a"))
+                .await
+                .unwrap();
+        }
     }
 
     #[tokio::test]
@@ -2295,14 +2319,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_new_group_request_for_a_group_that_began_is_not_notified() {
-        // Arrange: the track is in group FIRST_GROUP_ID
+        // Arrange: the track is in group FIRST_GROUP_ID, long enough to be ended
         let (peers, requested) = origin_with_dynamic_groups("origin-new-group-stale").await;
         let accepted = publish(&peers).await;
-        peers
-            .origin
-            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
-            .await
-            .unwrap();
+        write_objects(&peers, GroupBoundary::Next, MIN_GROUP_OBJECTS).await;
 
         // Act: the subscriber knows only the group before it, then the group itself
         request_new_group(&peers, &accepted, Some(FIRST_GROUP_ID - 1)).await;
@@ -2313,6 +2333,26 @@ mod tests {
         // Assert
         assert!(!for_begun_group);
         assert!(for_next_group);
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_in_a_short_group_is_notified_once_the_group_is_long_enough() {
+        // Arrange
+        let (peers, requested) = origin_with_dynamic_groups("origin-new-group-short").await;
+        let accepted = publish(&peers).await;
+        write_objects(&peers, GroupBoundary::Next, 1).await;
+
+        // Act
+        request_new_group(&peers, &accepted, None).await;
+        let in_short_group = is_notified(&requested);
+        write_objects(&peers, GroupBoundary::Within, MIN_GROUP_OBJECTS - 1).await;
+        let in_long_group = tokio::time::timeout(MIN_GROUP_DURATION / 2, requested.notified())
+            .await
+            .is_ok();
+
+        // Assert: the objects made the group long enough before its age did
+        assert!(!in_short_group);
+        assert!(in_long_group);
     }
 
     #[tokio::test]
