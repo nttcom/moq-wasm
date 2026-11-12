@@ -12,18 +12,15 @@ use crate::{
     translation_engine::TranslationEngine, translation_policy::TranslationPolicy,
 };
 
-/// What every broadcast translates with, whichever root it is under.
-/// `capacity` holds one permit per Gemini session that may run at once.
 #[derive(Clone)]
 pub(crate) struct TranslationResources {
     pub(crate) engine: TranslationEngine,
+    /// One permit per Gemini session that may run at once.
     pub(crate) capacity: Arc<Semaphore>,
     pub(crate) policy: Arc<TranslationPolicy>,
 }
 
-/// One relay session that watches a root namespace and translates the
-/// broadcasts under it. It is the only reader of the session's events and
-/// routes each to the broadcast it is about.
+/// The only reader of `Session::receive_event` on its session.
 pub(crate) struct RootTranslation {
     _endpoint: Endpoint<QUIC>,
     session: Arc<Session>,
