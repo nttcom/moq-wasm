@@ -124,3 +124,24 @@ test('a viewer who joins after the translation started hears the original audio'
     await context.close()
   }
 })
+
+test('a broadcast of a temporary app is translated once the streamer hands its token over', async ({ browser }) => {
+  // Arrange: the examples' temporary mode, which a page on this machine does not start in
+  const context = await browser.newContext()
+  await context.addInitScript(() => localStorage.setItem('moqt.accessMode', 'temporary'))
+  const viewerHref = await startStreamer(context)
+
+  try {
+    // Act
+    const viewer = await watch(context, viewerHref)
+    await listenTo(viewer, 'en')
+
+    // Assert: the viewer link carries the app's token, and the translator reached the app
+    expect(viewerHref).toContain('#jwt=')
+    await expect
+      .poll(async () => (await viewerStats(viewer)).forwardedAudioObjects['audio_en'] ?? 0, { timeout: 30_000 })
+      .toBeGreaterThan(100)
+  } finally {
+    await context.close()
+  }
+})

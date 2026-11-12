@@ -3,10 +3,10 @@ import { type LocalBroadcast, createBroadcast } from 'moq-wasm/media'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 import { setUpRelayUrlControls } from '../../../utils/relayPresets'
-import { offeredVersions } from '../../../utils/moqtVersion'
+import { connectOptions } from '../../../utils/access'
 import { buildVideoEncoding } from '../../media/videoEncoding'
 import { randomName } from '../../../utils/randomName'
-import { type BroadcastAccess, openBroadcastAccess, viewerUrl } from '../liveTranslate'
+import { type TranslationRequest, broadcastNamespace, requestTranslation, viewerUrl } from '../liveTranslate'
 
 const COPIED_LABEL_MS = 1_500
 
@@ -15,7 +15,7 @@ const urlInput = element<HTMLInputElement>('url')
 let mediaStream: MediaStream | undefined
 let session: MoqSession | undefined
 let broadcast: LocalBroadcast | undefined
-let access: BroadcastAccess | undefined
+let translation: TranslationRequest | undefined
 
 startPageTelemetry('live-translate-streamer', () => urlInput.value)
 setUpRelayUrlControls(urlInput, element('urlPresets'))
@@ -34,10 +34,6 @@ element<HTMLButtonElement>('stopBtn').addEventListener('click', () => void stopB
 async function startBroadcast(): Promise<void> {
   try {
     await stopBroadcast()
-    access = await openBroadcastAccess(broadcastId, 'streamer')
-    if (access.relayUrl) {
-      urlInput.value = access.relayUrl
-    }
     const url = urlInput.value.trim()
     setStatusText('streamer-status', 'Requesting camera and microphone')
     mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -45,8 +41,8 @@ async function startBroadcast(): Promise<void> {
       video: { width: { ideal: 1280 }, height: { ideal: 720 } }
     })
     element<HTMLVideoElement>('preview').srcObject = mediaStream
-    session = await MoqSession.connect(url, { token: access.token, versions: offeredVersions() })
-    const namespace = access.namespace
+    session = await MoqSession.connect(url, connectOptions())
+    const namespace = broadcastNamespace(broadcastId)
     broadcast = await createBroadcast(session, namespace, {
       onError: (error) => setStatusText('streamer-status', `Publish failed: ${getErrorMessage(error)}`)
     })
@@ -55,14 +51,15 @@ async function startBroadcast(): Promise<void> {
       stream: mediaStream,
       ...buildVideoEncoding(mediaStream)
     })
+    translation = await requestTranslation(url)
     setStatusText(
       'streamer-status',
-      [`Broadcasting ${namespace.join('/')}`, access.closedNotice].filter((text) => text !== undefined).join(' / ')
+      [`Broadcasting ${namespace.join('/')}`, translation.notice].filter((text) => text !== undefined).join(' / ')
     )
     showViewerLink(viewerUrl(broadcastId, url))
   } catch (error) {
-    access?.release()
-    access = undefined
+    translation?.release()
+    translation = undefined
     setStatusText('streamer-status', `Failed: ${getErrorMessage(error)}`)
   }
 }
@@ -73,8 +70,8 @@ async function stopBroadcast(): Promise<void> {
   broadcast = undefined
   session?.close()
   session = undefined
-  access?.release()
-  access = undefined
+  translation?.release()
+  translation = undefined
   for (const track of mediaStream?.getTracks() ?? []) {
     track.stop()
   }
