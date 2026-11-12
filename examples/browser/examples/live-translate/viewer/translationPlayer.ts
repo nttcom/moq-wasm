@@ -223,8 +223,12 @@ export class TranslationPlayer {
 
   /// The broadcast has one source: the streamer's camera with its audio in every language.
   private async show(view: SourceView): Promise<void> {
-    if (this.view || !this.broadcast) {
+    if (!this.broadcast) {
       return
+    }
+    // The broadcast reports a source that came back before it reports the old one gone.
+    if (this.view) {
+      this.reset()
     }
     this.view = view
     this.container.replaceChildren(view.element)
@@ -259,6 +263,7 @@ export class TranslationPlayer {
     this.captions = undefined
     this.view = undefined
     this.languages = []
+    this.droppedLateTranslatedAudio = 0
   }
 
   /// The original is heard at its highest bitrate, the track its language option names.
@@ -270,7 +275,9 @@ export class TranslationPlayer {
     const languages = languageOptions(audioTracks)
     const original = languages.find((option) => option.lang === ORIGINAL_LANGUAGE)?.track.name
     if (original && original !== selectedAudioTrack) {
-      void this.view.player.selectAudioTrack(original)
+      this.view.player
+        .selectAudioTrack(original)
+        .catch((error: unknown) => this.callbacks.onLog('error', getErrorMessage(error)))
     }
     // The player reports every state change, most of which leave the languages as they are.
     const names = (options: LanguageOption[]) => options.map((option) => option.track.name).join()

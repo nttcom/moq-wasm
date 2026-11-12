@@ -34,10 +34,9 @@ export class CaptionLane {
   close(): void {
     this.closed = true
     clearTimeout(this.clearTimer)
-    if (this.line) {
-      this.line = ''
-      this.onCaption('')
-    }
+    // Also when the line is empty: a finished utterance stays on screen until its hold ends.
+    this.line = ''
+    this.onCaption('')
   }
 }
 
