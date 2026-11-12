@@ -7,7 +7,6 @@ interface Props {
   onClick: () => void
 }
 
-/// A camera's live picture at a small size, in the strip beside the stage.
 export function PreviewCamera({ cameraId, host, onClick }: Props) {
   return (
     <div

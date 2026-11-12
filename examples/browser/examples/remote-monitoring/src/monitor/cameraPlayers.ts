@@ -14,9 +14,7 @@ export type CameraEvent = { kind: 'added' | 'removed'; camId: CameraId }
 /// into a host element the page places on the stage or in the strip; the host
 /// moves with the camera, so the player never notices the layout.
 ///
-/// The cameras of a location are the namespaces published under
-/// `[root, location]`: `watchCameras` reports each one as it is announced and
-/// starts its player, and stops the player when the namespace is withdrawn.
+/// The cameras of a location are the namespaces published under `[root, location]`.
 export class CameraPlayers {
   private session: MoqSession | undefined
   private watch: MoqNamespaceWatch | undefined

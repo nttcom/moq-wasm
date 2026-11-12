@@ -193,7 +193,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
         )}
       </div>
 
-      {/* status bar (while starting or live) */}
+      {/* status bar */}
       {!isIdle && (
         <div className="rounded-xl bg-zinc-900 px-4 py-3 font-mono text-sm space-y-1">
           <div className="flex gap-3 text-xs text-zinc-400">

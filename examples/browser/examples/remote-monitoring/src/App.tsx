@@ -7,14 +7,13 @@ import { randomName } from '../../../utils/randomName'
 
 const DEFAULT_RELAY = RELAY_PRESETS[0].value
 
-/// The query's value when it is a namespace element, else undefined.
 function nameParam(params: URLSearchParams, key: string): string | undefined {
   const value = params.get(key)?.trim()
   return value && NAME_PATTERN.test(value) ? value : undefined
 }
 
-/// The location is the page's room: given by the URL that was shared, or made
-/// here and written into the URL so this page's link can be shared.
+/// A URL without a valid `location` gets a random one; the page writes it back
+/// into the URL so its link can be shared.
 function readParams() {
   const p = new URLSearchParams(window.location.search)
   return {

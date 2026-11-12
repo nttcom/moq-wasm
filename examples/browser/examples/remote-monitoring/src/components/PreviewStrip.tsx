@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { CameraId } from '../types/monitoring'
 import { PreviewCamera } from './PreviewCamera'
 
-/// Previews shown at once; the rest are reached by paging, never by scrolling.
 const PAGE_SIZE = 4
 
 interface Props {
