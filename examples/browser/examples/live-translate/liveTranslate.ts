@@ -43,10 +43,9 @@ type Grant = { token: string; namespace: string[]; relayUrl: string; openHours: 
 
 /// Only an answer that shows the page is served without the service, a 404
 /// or a dev server's page itself, means the broadcast is public. Any other
-/// failure, such as an expired IAP session (a redirect to the login page), is
-/// reported rather than quietly publishing in public.
+/// failure is reported rather than quietly publishing in public.
 async function fetchGrant(broadcastId: string, role: BroadcastRole): Promise<Grant | undefined> {
-  const response = await fetch(`/token?id=${encodeURIComponent(broadcastId)}&role=${role}`, { redirect: 'manual' })
+  const response = await fetch(`/token?id=${encodeURIComponent(broadcastId)}&role=${role}`)
   const json = response.headers.get('content-type')?.includes('application/json') ?? false
   if (response.ok && json) {
     const body = (await response.json()) as Omit<Grant, 'namespace'> & { namespace: string }
@@ -54,9 +53,6 @@ async function fetchGrant(broadcastId: string, role: BroadcastRole): Promise<Gra
   }
   if (response.status === 404 || (response.ok && !json)) {
     return undefined
-  }
-  if (response.type === 'opaqueredirect') {
-    throw new Error('ログインの期限が切れています。ページを読み込み直してください')
   }
   const error = json ? ((await response.json()) as { error?: string }).error : undefined
   throw new Error(`relay token: ${error ?? response.statusText ?? response.status}`)

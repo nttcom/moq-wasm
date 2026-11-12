@@ -10,7 +10,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use http_server::HttpServer;
 use hyper::{
-    HeaderMap, Method, Request, Response, StatusCode,
+    Method, Request, Response, StatusCode,
     body::{Body, Frame, Incoming},
     header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue, LOCATION},
 };
@@ -27,9 +27,6 @@ use crate::{
 const STREAMER_PAGE: &str = "/examples/live-translate/streamer/";
 const EVENTS_HEARTBEAT: Duration = Duration::from_secs(15);
 const MAX_BROADCAST_ID_CHARS: usize = 64;
-/// IAP puts the caller's email here as `accounts.google.com:<email>`. Only
-/// IAP can reach the service, so the header is trusted as it is.
-const IAP_EMAIL_HEADER: &str = "x-goog-authenticated-user-email";
 
 /// The pages, their relay tokens and the stream a page holds open while it is
 /// in use. A Cloud Run instance lives while a request is in flight, so the
@@ -73,7 +70,7 @@ async fn handle(request: Request<Incoming>, state: Arc<PageServerState>) -> Page
     let response = async {
         match (&head.method, head.uri.path()) {
             (&Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
-            (&Method::GET, "/token") => issue_token(&state, head.uri.query(), &head.headers),
+            (&Method::GET, "/token") => issue_token(&state, head.uri.query()),
             (&Method::GET, "/events") => events(),
             (&Method::GET, "/") => redirect(STREAMER_PAGE),
             (&Method::GET, path) => static_file(&state, path).await,
@@ -92,7 +89,7 @@ async fn handle(request: Request<Incoming>, state: Arc<PageServerState>) -> Page
 /// when unlimited) and whether they are open now, so a page can say so before
 /// a viewer picks a language. Refused without an app, where the broadcasts
 /// are public and need no token.
-fn issue_token(state: &PageServerState, query: Option<&str>, headers: &HeaderMap) -> PageResponse {
+fn issue_token(state: &PageServerState, query: Option<&str>) -> PageResponse {
     let Some(app) = &state.app else {
         return error_response(StatusCode::NOT_FOUND, "no_app");
     };
@@ -110,15 +107,7 @@ fn issue_token(state: &PageServerState, query: Option<&str>, headers: &HeaderMap
             return error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal_error");
         }
     };
-    tracing::info!(
-        broadcast_id,
-        role = role.as_str(),
-        issued_to = headers
-            .get(IAP_EMAIL_HEADER)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or(""),
-        "relay token issued"
-    );
+    tracing::info!(broadcast_id, role = role.as_str(), "relay token issued");
     json_response(
         StatusCode::OK,
         json!({
