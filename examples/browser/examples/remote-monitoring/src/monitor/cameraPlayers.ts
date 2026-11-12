@@ -1,6 +1,12 @@
-import { MoqSession, type MoqNamespaceWatch } from 'moq-wasm'
+import { MoqSession } from 'moq-wasm'
 import { connectOptions, withNamespaceRoot } from '../../../../utils/access'
-import { LivePlayer } from 'moq-wasm/media'
+import {
+  type BroadcastWatch,
+  type LivePlayer,
+  type RemoteBroadcast,
+  type SourceView,
+  watchBroadcasts
+} from 'moq-wasm/media'
 import type { TelemetryStatsSample } from 'moq-wasm'
 import { reportRelay, sampleCameras } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
@@ -10,15 +16,13 @@ const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 
 export type CameraEvent = { kind: 'added' | 'removed'; camId: CameraId }
 
-/// One Live Player per camera on the page's session. A camera's player draws
-/// into a host element the page places on the stage or in the strip; the host
-/// moves with the camera, so the player never notices the layout.
-///
-/// The cameras of a location are the namespaces published under `[root, location]`.
+/// The cameras of a location are the broadcasts published under `[root, location]`, and a camera
+/// is the first source of its broadcast. Its view sits in a host element the page places on the
+/// stage or in the strip; the host moves with the camera, so the player never notices the layout.
 export class CameraPlayers {
   private session: MoqSession | undefined
-  private watch: MoqNamespaceWatch | undefined
-  private readonly players = new Map<CameraId, { player: LivePlayer; trackNamespace: string }>()
+  private watch: BroadcastWatch | undefined
+  private readonly views = new Map<CameraId, { view: SourceView; trackNamespace: string }>()
   private readonly hosts = new Map<CameraId, HTMLDivElement>()
 
   constructor(private readonly onStateChange: (camId: CameraId) => void) {}
@@ -36,40 +40,53 @@ export class CameraPlayers {
     log('connected', { relayUrl })
   }
 
-  /// SUBSCRIBE_NAMESPACE for the location. Every camera published under it,
-  /// now or later, is reported once as `added` with its player started, and
-  /// as `removed` once its publisher withdraws the namespace.
+  /// Every camera published under the location, now or later, is reported as `added` once its
+  /// catalog lists a source, and as `removed` once the source or the broadcast is gone.
   async watchCameras(location: string, onEvent: (event: CameraEvent) => void): Promise<void> {
     if (!this.session) {
       throw new Error('not connected')
     }
     const prefix = withNamespaceRoot(['anon', location])
-    const watch = await this.session.watchNamespaces(prefix)
-    this.watch = watch
-    void (async () => {
-      for await (const { kind, namespace } of watch) {
-        if (namespace.length !== prefix.length + 1) {
-          log('namespace ignored', { namespace })
-          continue
-        }
-        const camId = namespace[prefix.length]
-        if (kind === 'announced') {
-          if (this.players.has(camId)) {
-            continue
-          }
-          try {
-            await this.start(camId, namespace)
-          } catch (error) {
-            log('watch failed', { camId, error: String(error) })
-            continue
-          }
-          onEvent({ kind: 'added', camId })
-        } else {
-          await this.stop(camId)
-          onEvent({ kind: 'removed', camId })
-        }
+    const remove = (camId: CameraId) => {
+      if (this.views.delete(camId)) {
+        log('stopped', { camId })
+        onEvent({ kind: 'removed', camId })
       }
-    })().catch((error: unknown) => log('namespace watch ended', String(error)))
+    }
+    this.watch = await watchBroadcasts(this.session, prefix, {
+      keepLiveWhileReviewing: true,
+      filter: (namespace) => namespace.length === prefix.length + 1,
+      onLog: (level, message) => log(level, message),
+      onAdd: (broadcast: RemoteBroadcast) => {
+        const camId = broadcast.namespace[prefix.length]
+        const show = (view: SourceView) => {
+          this.views.set(camId, { view, trackNamespace: broadcast.namespace.join('/') })
+          this.host(camId).replaceChildren(view.element)
+          view.listen({ onPlayerChange: () => this.onStateChange(camId) })
+          log('watching', { camId })
+          onEvent({ kind: 'added', camId })
+        }
+        broadcast.listen({
+          onSourceAdd: (view) => {
+            if (!this.views.has(camId)) {
+              show(view)
+            }
+          },
+          // A source that replaced this one was added before this one finished leaving.
+          onSourceRemove: (view) => {
+            if (this.views.get(camId)?.view !== view) {
+              return
+            }
+            remove(camId)
+            const [next] = broadcast.sources.values()
+            if (next) {
+              show(next)
+            }
+          }
+        })
+      },
+      onRemove: (broadcast) => remove(broadcast.namespace[prefix.length])
+    })
   }
 
   host(camId: CameraId): HTMLDivElement {
@@ -83,46 +100,12 @@ export class CameraPlayers {
   }
 
   get(camId: CameraId): LivePlayer | undefined {
-    return this.players.get(camId)?.player
-  }
-
-  private async start(camId: CameraId, trackNamespace: string[]): Promise<void> {
-    if (!this.session) {
-      throw new Error('not connected')
-    }
-    const player = new LivePlayer({
-      container: this.host(camId),
-      livePicture: 'canvas',
-      keepLiveWhileReviewing: true,
-      callbacks: {
-        onStateChange: () => this.onStateChange(camId),
-        onLiveFrame: () => {},
-        onLog: (level, message) => log(level, { camId, message })
-      }
-    })
-    this.players.set(camId, { player, trackNamespace: trackNamespace.join('/') })
-    try {
-      await player.start(this.session, trackNamespace)
-    } catch (error) {
-      this.players.delete(camId)
-      throw error
-    }
-    log('watching', { camId })
-  }
-
-  private async stop(camId: CameraId): Promise<void> {
-    const entry = this.players.get(camId)
-    if (!entry) {
-      return
-    }
-    this.players.delete(camId)
-    await entry.player.stop()
-    log('stopped', { camId })
+    return this.views.get(camId)?.view.player
   }
 
   private samples(): TelemetryStatsSample[] {
-    return [...this.players.values()].flatMap(({ player, trackNamespace }) =>
-      player.state.started ? [{ trackNamespace, values: player.stats() }] : []
+    return [...this.views.values()].flatMap(({ view, trackNamespace }) =>
+      view.player.state.started ? [{ trackNamespace, values: view.stats() }] : []
     )
   }
 
@@ -131,10 +114,7 @@ export class CameraPlayers {
     this.session = undefined
     await this.watch?.close()
     this.watch = undefined
-    for (const { player } of this.players.values()) {
-      await player.stop()
-    }
-    this.players.clear()
+    this.views.clear()
     session?.close()
     log('disconnected')
   }
