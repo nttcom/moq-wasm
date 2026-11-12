@@ -665,17 +665,19 @@ all subscribers together. A request is not sent when:
 2. its value is not 0 and not above the track's Largest Group, resolved like
    a SUBSCRIBE's: the group it asks for already began (§10.2.13);
 3. the last request sent is still outstanding and is not smaller. It is
-   outstanding until the Largest Group increases (§10.2.13);
-4. the last request was sent less than 2 seconds ago
-   (`NEW_GROUP_REQUEST_INTERVAL`).
+   outstanding until the Largest Group increases (§10.2.13). The request the
+   upstream SUBSCRIBEs carried was sent before the track had a Largest
+   Group, so `PendingProducerTask` tells the gate the one each SUBSCRIBE_OK
+   reports: the publisher was in that group when it was asked, and the
+   request is outstanding until the track gets beyond the largest of them.
+   After a SUBSCRIBE_OK without content the track's first group answers it.
 
-Rule 4 is not in the draft, whose §10.2.13 has the relay send every request
-that passes rules 1 to 3. It bounds the keyframes a publisher encodes when
-many subscribers join, and the group the earlier request started is then at
-most 2 seconds long, so the subscriber held back joins it by Joining FETCH
-(`moqt::Subscriber::subscribe_group_start` does so on its own). A relay
-subscribing to another relay sends and gates the request the same way, so
-each relay on the path applies the interval.
+Every other request is sent, as §10.2.13 requires: the relay keeps no
+interval between two requests. Rule 3 leaves one request per group, and the
+Original Publisher bounds how short a group gets: it delays a request for a
+group shorter than its minimum, which §10.2.13 allows it (`moqt`'s `Origin`
+does, see `MIN_GROUP_DURATION` and `MIN_GROUP_OBJECTS`). A relay subscribing
+to another relay sends and gates the request the same way.
 
 The request is not answered to the subscriber beyond the REQUEST_OK of its
 REQUEST_UPDATE; a subscriber cannot tell whether it was passed on.

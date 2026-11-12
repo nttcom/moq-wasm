@@ -13,8 +13,7 @@ impl NewGroupRequest {
     /// established upstream subscription to its publishers, in a
     /// REQUEST_UPDATE (draft-18 §10.2.13). Nothing is sent for a track
     /// without dynamic groups, nor for a request the track's
-    /// `NewGroupRequestGate` holds back; the subscriber then reaches the
-    /// start of the current group by FETCH.
+    /// `NewGroupRequestGate` does not admit.
     pub(crate) async fn handle(
         &self,
         session_id: SessionId,
@@ -74,10 +73,16 @@ impl NewGroupRequest {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
 
     use moqt::{
-        Session,
+        Session, SessionEvent,
         publish::{GroupBoundary, MIN_GROUP_OBJECTS, Origin, OutgoingObject, Retention},
         subscribe::SubscribeOption,
     };
@@ -91,12 +96,14 @@ mod tests {
     };
 
     /// A client that announces `NAMESPACE` and serves `TRACK`, a track with
-    /// dynamic groups, from `origin`; `requested` is notified of each new
-    /// group request that reaches it.
+    /// dynamic groups, from `origin`; `requested` is notified when a request
+    /// for a new group reaches it, once per group. `request_updates` counts
+    /// the REQUEST_UPDATEs it receives, each of which carries such a request.
     struct DynamicGroupPublisher {
         session: Arc<Session>,
         origin: Origin,
         requested: Arc<Notify>,
+        request_updates: Arc<AtomicUsize>,
         events: JoinHandle<()>,
     }
 
@@ -113,10 +120,15 @@ mod tests {
                 .await
                 .unwrap();
             publish_namespace(&session, NAMESPACE).await;
+            let request_updates = Arc::new(AtomicUsize::new(0));
             let events = tokio::spawn({
                 let (session, origin) = (session.clone(), origin.clone());
+                let request_updates = request_updates.clone();
                 async move {
                     while let Ok(event) = session.receive_event().await {
+                        if matches!(event, SessionEvent::SubscribeUpdate(_)) {
+                            request_updates.fetch_add(1, Ordering::Relaxed);
+                        }
                         origin.handle(event).await;
                     }
                 }
@@ -125,16 +137,21 @@ mod tests {
                 session,
                 origin,
                 requested,
+                request_updates,
                 events,
             }
         }
 
-        /// Sends PUBLISH for the track and writes its first group, long
-        /// enough for the origin to end it on request.
+        /// Sends PUBLISH for the track and writes its first group.
         async fn publish(&self) {
             within(self.origin.publish(&self.session, NAMESPACE, TRACK))
                 .await
                 .unwrap();
+            self.write_group().await;
+        }
+
+        /// Writes a group long enough for the origin to end it on request.
+        async fn write_group(&self) {
             for object_id in 0..MIN_GROUP_OBJECTS {
                 let group = if object_id == 0 {
                     GroupBoundary::Next
@@ -150,6 +167,13 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(500), self.requested.notified())
                 .await
                 .is_ok()
+        }
+
+        /// The REQUEST_UPDATEs received, after waiting long enough for one
+        /// the relay sent to arrive.
+        async fn request_updates(&self) -> usize {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            self.request_updates.load(Ordering::Relaxed)
         }
     }
 
@@ -182,8 +206,8 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_new_group_request_soon_after_another_stays_at_the_relay() {
-        // Arrange: one subscriber's request already went upstream
+    async fn a_new_group_request_stays_at_the_relay_while_another_is_outstanding() {
+        // Arrange: one subscriber's request went upstream, and the publisher started no group
         let relay = spawn_draft18_relay(app_token(Some(""), Some("")));
         let publisher = DynamicGroupPublisher::run(connect_draft18_client(&relay).await).await;
         publisher.publish().await;
@@ -201,10 +225,10 @@ mod tests {
             .request_new_group(&subscription, None)
             .await
             .unwrap();
-        let asked_again = publisher.is_asked_for_a_new_group().await;
+        let request_updates = publisher.request_updates().await;
 
-        // Assert
-        assert!(!asked_again);
+        // Assert: only the first request went upstream
+        assert_eq!(request_updates, 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -221,10 +245,38 @@ mod tests {
         // Act
         let _subscription = subscribe_track(&subscriber, option).await;
         let asked = publisher.is_asked_for_a_new_group().await;
-        let asked_again = publisher.is_asked_for_a_new_group().await;
+        let request_updates = publisher.request_updates().await;
 
         // Assert: the SUBSCRIBE carried it, and no REQUEST_UPDATE repeated it
         assert!(asked);
-        assert!(!asked_again);
+        assert_eq!(request_updates, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_new_group_request_stays_at_the_relay_while_the_one_of_the_upstream_subscribe_is_outstanding()
+     {
+        // Arrange: the publisher is in a group when the upstream SUBSCRIBE asks it for a new one
+        let relay = spawn_draft18_relay(app_token(Some(""), Some("")));
+        let publisher = DynamicGroupPublisher::run(connect_draft18_client(&relay).await).await;
+        publisher.write_group().await;
+        let subscriber = connect_draft18_client(&relay).await;
+        let option = SubscribeOption {
+            new_group_request: Some(0),
+            ..SubscribeOption::default()
+        };
+        let subscription = subscribe_track(&subscriber, option).await;
+        assert!(publisher.is_asked_for_a_new_group().await);
+
+        // Act: the publisher has not started the group yet
+        let sent = subscriber
+            .subscriber()
+            .request_new_group(&subscription, None)
+            .await
+            .unwrap();
+        let request_updates = publisher.request_updates().await;
+
+        // Assert
+        assert!(sent, "the relay did not pass DYNAMIC_GROUPS downstream");
+        assert_eq!(request_updates, 0);
     }
 }
