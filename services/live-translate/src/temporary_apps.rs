@@ -19,7 +19,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// gives its place to another app.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Why an app's translation was not started.
 pub(crate) enum Refusal {
     NotATemporaryAppToken,
     Expired,

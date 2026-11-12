@@ -107,9 +107,6 @@ fn with_cors(mut response: PageResponse) -> PageResponse {
     response
 }
 
-/// `POST /sessions` with `Authorization: Bearer <token of a temporary app>`:
-/// translates the broadcasts of that app until the token expires. Answers
-/// with the open hours, as `/token` does.
 async fn start_session(state: &PageServerState, headers: &HeaderMap) -> PageResponse {
     let Some(token) = headers
         .get(AUTHORIZATION)
