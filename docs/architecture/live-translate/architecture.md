@@ -52,11 +52,11 @@ closed before a viewer picks a language, and
 A page holds `/events` while it is in use: a Cloud Run instance lives while a
 request is in flight, so that stream is what keeps the translator running
 between the pages' other requests, and lets the service scale to zero when
-every page is closed. Only IAP can reach the service, so `/token` trusts the
-`x-goog-authenticated-user-email` header IAP sets and logs it with each token.
-Anyone IAP lets in may publish or watch any broadcast id; the ids are random
-and the audience is the company, so the service does not tie an id to the
-person who first used it.
+every page is closed. The service does not identify its callers: anyone who
+reaches it gets a token and may publish or watch any broadcast id. The ids are
+random, so the service does not tie an id to the page that first used it. What
+a caller can make the translation cost is bounded instead, by the limits above
+and by the deployment's limit on what the Gemini API may be billed.
 The server listens before the relay is dialed, so the port is open as soon as
 the container is.
 
