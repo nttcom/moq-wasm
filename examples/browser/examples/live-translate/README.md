@@ -22,6 +22,15 @@ The viewer shows captions on the picture: the transcript of the language heard (
 
 Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chrome` for the real camera and microphone), press 配信開始, and open the viewer link it shows.
 
+## Access
+
+The pages follow the access mode of the example list (`utils/access.ts`).
+
+- Public (the default on this machine): the broadcast is `anon/live-translate/<id>`, which the translator watches by itself.
+- Temporary app (the default when deployed): the broadcast is `<appId>/live-translate/<id>`. The translator reaches an app only with one of its tokens, so the streamer page hands it a newly signed one (`POST /sessions`) and holds its event stream (`GET /events`) while it broadcasts. The translator keeps that token until it expires, so a broadcast is translated for an hour at most; start it again for another hour. The viewer link carries the token, and opening it joins the app.
+
+To try a temporary app locally, run the token mint and the VTS (`docker compose up -d vts token-mint`), start the translator with `PORT=18090`, and choose the temporary mode on the example list. `?liveTranslateUrl=` points the streamer at another translator.
+
 To judge a translation without hearing your own voice five seconds later, let the fake microphone play prepared speech instead (a 16-bit PCM WAV, looped):
 
 ```shell

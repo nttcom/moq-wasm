@@ -2,9 +2,9 @@ import { MoqSession, reportLog } from 'moq-wasm'
 import 'moq-wasm/media/player.css'
 import { element, getErrorMessage, setStatusText } from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
-import { offeredVersions } from '../../../utils/moqtVersion'
 import { relayUrlFromQuery, setUpRelayUrlControls } from '../../../utils/relayPresets'
-import { type BroadcastAccess, BROADCAST_ID_PARAM, openBroadcastAccess, translatedNamespace } from '../liveTranslate'
+import { connectOptions } from '../../../utils/access'
+import { BROADCAST_ID_PARAM, broadcastNamespace, translatedNamespace } from '../liveTranslate'
 import { TranslationPlayer, type TranslationPlayerStats } from './translationPlayer'
 
 declare global {
@@ -27,7 +27,6 @@ const languageBar = element<HTMLElement>('language-bar')
 const languageOptions = element<HTMLDivElement>('language-options')
 const connection = element<HTMLDetailsElement>('connection')
 let session: MoqSession | undefined
-let access: BroadcastAccess | undefined
 const delaySeconds = Number(new URLSearchParams(location.search).get(DELAY_SECONDS_PARAM))
 const player = new TranslationPlayer(
   element<HTMLDivElement>('stage'),
@@ -68,12 +67,8 @@ async function watch(): Promise<void> {
   try {
     await stop()
     setStatusText('viewer-status', '接続しています')
-    access = await openBroadcastAccess(broadcastId, 'viewer')
-    if (access.relayUrl) {
-      urlInput.value = access.relayUrl
-    }
-    session = await MoqSession.connect(urlInput.value.trim(), { token: access.token, versions: offeredVersions() })
-    await player.start(session, translatedNamespace(access.namespace))
+    session = await MoqSession.connect(urlInput.value.trim(), connectOptions())
+    await player.start(session, translatedNamespace(broadcastNamespace(broadcastId)))
     renderOverlay()
   } catch (error) {
     setStatusText('viewer-status', `接続できませんでした: ${getErrorMessage(error)}`)
@@ -84,8 +79,6 @@ async function stop(): Promise<void> {
   await player.stop()
   session?.close()
   session = undefined
-  access?.release()
-  access = undefined
   languageBar.hidden = true
   watchOverlay.hidden = false
   watchButton.hidden = false
@@ -138,7 +131,6 @@ function renderLanguages(): void {
   setStatusText(
     'language-status',
     player.languageNotice ??
-      access?.closedNotice ??
       (player.pendingLanguage ? `${player.pendingLanguage} に切り替えています` : `聞いている言語: ${player.language}`)
   )
 }
