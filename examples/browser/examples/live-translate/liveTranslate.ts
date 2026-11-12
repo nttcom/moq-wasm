@@ -30,36 +30,40 @@ export type TranslationRequest = {
   release(): void
 }
 
-/// Has the translator translate the broadcasts of the page's temporary app. The translator reaches
-/// the app only with one of its tokens and keeps the one it is handed for that token's lifetime, so
-/// it gets a newly signed one, good for an hour. The event stream held until `release` keeps the
-/// translator's instance running. A public broadcast needs neither: the translator watches
-/// `anon/live-translate` by itself.
+/// The translator reaches a temporary app only with one of its tokens and keeps the one it is
+/// handed until it expires, so it gets a newly signed one. The event stream held until `release`
+/// keeps the translator's instance running. A public broadcast needs neither: the translator
+/// watches `anon/live-translate` by itself. A failure is a notice, since the broadcast runs
+/// without its translation.
 export async function requestTranslation(relayUrl: string): Promise<TranslationRequest> {
   if (access.kind !== 'temporary') {
     return { notice: undefined, release: () => {} }
   }
   const translatorUrl = resolveServiceUrl(window.location.search, relayUrl, TRANSLATOR_URLS)
-  const response = await fetch(`${translatorUrl}/sessions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${await renewedTemporaryToken()}` }
+  const refused = (reason: unknown): TranslationRequest => ({
+    notice: REFUSALS[String(reason)] ?? `翻訳を始められませんでした（${reason}）`,
+    release: () => {}
   })
-  const answer = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    return {
-      notice: REFUSALS[answer.error] ?? `翻訳を始められませんでした（${answer.error ?? response.status}）`,
-      release: () => {}
+  try {
+    const response = await fetch(`${translatorUrl}/sessions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${await renewedTemporaryToken()}` }
+    })
+    const answer = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      return refused(answer.error ?? response.status)
     }
-  }
-  const events = new EventSource(`${translatorUrl}/events`)
-  return {
-    notice: answer.openHours && !answer.open ? `翻訳は稼働時間外です（稼働時間: ${answer.openHours}）` : undefined,
-    release: () => events.close()
+    const events = new EventSource(`${translatorUrl}/events`)
+    return {
+      notice: answer.openHours && !answer.open ? `翻訳は稼働時間外です（稼働時間: ${answer.openHours}）` : undefined,
+      release: () => events.close()
+    }
+  } catch (error) {
+    return refused(error instanceof Error ? error.message : error)
   }
 }
 
-/// The Viewer's link for `broadcastId`, carrying the page's token so that whoever opens it joins the
-/// same app.
+/// Carries the page's token, so whoever opens the link joins the same app.
 export function viewerUrl(broadcastId: string, relayUrl: string, from: string = location.href): string {
   const url = new URL('../viewer/index.html', from)
   url.search = ''
