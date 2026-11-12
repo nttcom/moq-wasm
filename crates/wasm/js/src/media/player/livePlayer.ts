@@ -113,7 +113,13 @@ export type LivePlayerState = {
   catalogStatus: PlayerStatus
   playbackStatus: PlayerStatus
   rewindStatus: PlayerStatus
-  seek: SeekAxis & { anchorSeconds: number | undefined; playheadSeconds: number | undefined }
+  seek: SeekAxis & {
+    anchorSeconds: number | undefined
+    playheadSeconds: number | undefined
+    /// The capture time of the review frame on screen; undefined while the
+    /// frame of a seek is still being fetched, and outside a review.
+    shownSeconds: number | undefined
+  }
   delivery: {
     liveVideoAlias: bigint | undefined
     liveAudioAlias: bigint | undefined
@@ -239,7 +245,7 @@ export class LivePlayer {
           }
           this.stage.show(this.locReview.canvas)
           this.notePresentedFrame(this.locReview.canvas)
-          this.advanceReviewPlayhead(captureMicros)
+          this.noteReviewFrameShown(captureMicros)
         },
         onLog: this.context.log
       },
@@ -293,7 +299,8 @@ export class LivePlayer {
       seek: {
         ...axis,
         anchorSeconds: review && review.anchorMicros / MICROS_PER_SECOND,
-        playheadSeconds: review && review.playheadMicros / MICROS_PER_SECOND
+        playheadSeconds: review && review.playheadMicros / MICROS_PER_SECOND,
+        shownSeconds: review?.shownMicros === undefined ? undefined : review.shownMicros / MICROS_PER_SECOND
       },
       delivery: {
         liveVideoAlias: this.subscriptions.get('video')?.id,
@@ -1380,7 +1387,7 @@ export class LivePlayer {
         },
         (secondsFromStart) => {
           if (session.isCurrent()) {
-            this.advanceReviewPlayhead(origin + secondsFromStart * MICROS_PER_SECOND)
+            this.noteReviewFrameShown(origin + secondsFromStart * MICROS_PER_SECOND)
           }
         }
       )
@@ -1412,6 +1419,21 @@ export class LivePlayer {
       sampleRate: track.samplerate,
       numberOfChannels: parseAudioChannelCount(track.channelConfig) ?? 2,
       description: track.initData ? Uint8Array.fromBase64(track.initData) : undefined
+    }
+  }
+
+  /// The first frame a review shows is reported at once, so a readout that
+  /// follows the picture moves when the picture does.
+  private noteReviewFrameShown(captureMicros: number): void {
+    const review = this.review
+    if (!review) {
+      return
+    }
+    const first = review.shownMicros === undefined
+    review.shownMicros = captureMicros
+    this.advanceReviewPlayhead(captureMicros)
+    if (first) {
+      this.changed()
     }
   }
 

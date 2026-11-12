@@ -47,6 +47,8 @@ export class ReviewSession {
   readonly originMicros: number
   readonly anchorMicros: number
   playheadMicros: number
+  /// The capture time of the frame on screen, once this review has shown one.
+  shownMicros: number | undefined
   behindSeconds = 0
   readonly fetchWindows: ReviewFetchWindow[] = []
   private ended = false
