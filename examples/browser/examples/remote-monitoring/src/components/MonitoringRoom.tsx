@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
+import type { LivePlayerState } from 'moq-wasm/media'
 import { CameraId, MonitorMode } from '../types/monitoring'
 import { StageCamera } from './StageCamera'
 import { PreviewStrip } from './PreviewStrip'
@@ -18,6 +19,15 @@ interface Props {
 type ConnStatus = 'idle' | 'connecting' | 'connected' | 'error'
 
 const STEP_SECONDS = 1
+
+/// A step that reaches the live edge would take the player live, where → switches the stage camera.
+function stepsForwardWithinReview({ mode, seek }: LivePlayerState): boolean {
+  return (
+    mode === 'review' &&
+    seek.playheadSeconds !== undefined &&
+    seek.playheadSeconds + STEP_SECONDS < seek.liveEdgeSeconds
+  )
+}
 const MICROS_PER_SECOND = 1_000_000
 
 export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
@@ -97,7 +107,12 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   }
 
   const handleStepBack = () => stagePlayer?.skip(-STEP_SECONDS)
-  const handleStepForward = () => stagePlayer?.skip(STEP_SECONDS)
+  const handleStepForward = () => {
+    // Read when the key arrives: a held key repeats faster than the page renders.
+    if (stagePlayer && stepsForwardWithinReview(stagePlayer.state)) {
+      stagePlayer.skip(STEP_SECONDS)
+    }
+  }
   const handleJump = (seconds: number) => stagePlayer?.seek(seconds * MICROS_PER_SECOND)
   const handleReturnToLive = () => stagePlayer?.goLive()
 
@@ -118,7 +133,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   }
 
   const canStepBack = mode === 'review' && stageState !== undefined && stageState.seek.seekable
-  const canStepForward = stageState?.mode === 'review'
+  const canStepForward = stageState !== undefined && stepsForwardWithinReview(stageState)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
