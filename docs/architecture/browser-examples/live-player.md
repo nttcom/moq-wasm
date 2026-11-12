@@ -345,11 +345,12 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
   live object and drift ahead while the main thread is busy.
   `LIVE` restores Forward 1; the relay resumes from the next group it opens.
   The player asks the publisher for a new group (NEW_GROUP_REQUEST) right
-  after, so the live picture moves with that group; when the relay holds
-  the request back or the track has no dynamic groups, it takes up to one
-  GOP. The review picture stays on screen until a live frame is shown: the
-  live picture still holds the frame from when it was paused or its delivery
-  stopped. `stop` during a review
+  after, so the live picture moves with that group, which the publisher
+  starts once its open group is 2 s old or holds 60 objects; when the
+  track has no dynamic groups, it takes up to one GOP. The review picture
+  stays on screen until a live frame is shown: the live picture still holds
+  the frame from when it was paused or its delivery stopped. `stop` during a
+  review
   unsubscribes instead, with no SUBSCRIBE_UPDATE. Against a relay that does
   not answer TRACK_STATUS the subscriptions stay on Forward 1 during review.
 

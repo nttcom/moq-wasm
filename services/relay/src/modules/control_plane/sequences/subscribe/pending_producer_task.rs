@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use moqt::RequestErrorCode;
+use moqt::{RequestErrorCode, object::ContentExists};
 use tokio::task::JoinHandle;
 use tracing::{Instrument, Span};
 
@@ -204,6 +204,14 @@ impl PendingProducerTask {
             expires = subscription.expires().unwrap_or(0),
             "upstream SUBSCRIBE_OK received"
         );
+        if new_group_request.is_some() {
+            let largest_group = match subscription.content_exists() {
+                ContentExists::True { location } => Some(location.group_id),
+                ContentExists::False => None,
+            };
+            deps.table
+                .new_group_request_subscribe_answered(track_key, largest_group);
+        }
 
         // The publisher sent PUBLISH for the track while the SUBSCRIBE was
         // pending: unsubscribing that PUBLISH would fail the publisher's writes.

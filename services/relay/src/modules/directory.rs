@@ -29,7 +29,7 @@ use crate::modules::{
     },
     session::{handler::publish::PublishHandler, subscription::UpstreamSubscription},
 };
-use tokio::{sync::watch, time::Instant};
+use tokio::sync::watch;
 
 /// What a SUBSCRIBE finds for its track. Each holds a `TrackReservation`,
 /// so the track wants its producers for the caller already.
@@ -899,7 +899,7 @@ impl InMemoryLocalPubSubDirectory {
         if subscriptions.is_empty()
             || !track
                 .new_group_requests
-                .admit(new_group_request, largest_group, Instant::now())
+                .admit(new_group_request, largest_group)
         {
             return Vec::new();
         }
@@ -912,7 +912,20 @@ impl InMemoryLocalPubSubDirectory {
         if let Some(mut track) = self.upstream_tracks.get_mut(track_key) {
             track
                 .new_group_requests
-                .record(new_group_request, None, Instant::now());
+                .record_in_subscribe(new_group_request);
+        }
+    }
+
+    /// Records the Largest Group in the SUBSCRIBE_OK of an upstream SUBSCRIBE
+    /// that carried a NEW_GROUP_REQUEST. Call it before the SUBSCRIBE_OK's
+    /// producer is added, which lets the subscribers' requests through.
+    pub(crate) fn new_group_request_subscribe_answered(
+        &self,
+        track_key: &TrackKey,
+        largest_group: Option<u64>,
+    ) {
+        if let Some(mut track) = self.upstream_tracks.get_mut(track_key) {
+            track.new_group_requests.subscribe_answered(largest_group);
         }
     }
 

@@ -21,12 +21,12 @@ const DEFAULT_VIDEO_PRIORITY = 128
 /// A group whose largest object ID is below this is read from its start
 /// through a joining FETCH; a longer one is not worth catching up on when the
 /// publisher starts a new group on request. 2 seconds of video at 30 fps,
-/// the time within which the relay passes on only one such request.
+/// and the length from which a publisher ends a group on request without
+/// delay (`MIN_GROUP_OBJECTS` in moqt).
 const FETCHED_GROUP_OBJECTS = 60
 
-/// The relay passes on one request for a new group of a track per 2 seconds
-/// and does not say when it holds one back, so a request is repeated until
-/// a group starts.
+/// The relay does not say when it holds a request for a new group back, so
+/// a request is repeated until a group starts.
 const NEW_GROUP_RETRY_MS = 2_200
 const NEW_GROUP_ATTEMPTS = 5
 

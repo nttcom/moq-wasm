@@ -22,8 +22,8 @@ use crate::{
 const OBJECT_CHANNEL_CAPACITY: usize = 64;
 
 /// How long a reader that asked for a new group waits for it before it
-/// fetches the current group instead: a relay does not pass on a request that
-/// follows another closely, and a publisher may have no frame to encode.
+/// fetches the current group instead: a publisher may hold the request back
+/// until its group is long enough, or have no frame to encode.
 const NEW_GROUP_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone)]
