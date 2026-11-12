@@ -16,6 +16,7 @@ use crate::{
     broadcast_namespace::translated_namespace,
     catalog_publication::CatalogPublication,
     language_translation::{LanguageTranslation, WriterUpdate},
+    root_translation::TranslationResources,
     source_audio::SourceAudio,
     source_catalog::SourceCatalog,
     target_language::{
@@ -54,11 +55,14 @@ pub(crate) struct BroadcastTranslation {
 impl BroadcastTranslation {
     pub(crate) fn run(
         session: Arc<Session>,
-        engine: TranslationEngine,
-        capacity: Arc<Semaphore>,
-        policy: Arc<TranslationPolicy>,
+        resources: TranslationResources,
         broadcast_namespace: String,
     ) -> Self {
+        let TranslationResources {
+            engine,
+            capacity,
+            policy,
+        } = resources;
         let translated_namespace = translated_namespace(&broadcast_namespace);
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let join_handle = tokio::spawn({
