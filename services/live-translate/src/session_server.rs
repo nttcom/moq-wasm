@@ -289,7 +289,6 @@ mod tests {
         .unwrap()
     }
 
-    /// A token of `app_id` good for an hour.
     fn token_of(app_id: &str) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
