@@ -30,6 +30,13 @@ async fn publish_stdin(session: &Arc<Session>, namespace: &Namespace) -> Result<
         .context("failed to publish the namespace")?;
     info!(track_namespace = %namespace.0.join("/"), "broadcast started");
     let mut writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+    // The catalog lists an `audio` placeholder next to `video` until an audio
+    // configuration arrives; this publisher sends video only.
+    let audio_track = writer.source_tracks().audio.clone();
+    writer
+        .remove_track(&audio_track)
+        .await
+        .context("failed to remove the audio track")?;
     let mut demuxer = ElementaryStreamDemuxer::new();
     let started = Instant::now();
     let arrival = || Timestamp::from_micros(started.elapsed().as_micros() as u64);
