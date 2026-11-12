@@ -63,10 +63,25 @@ and by the deployment's limit on what the Gemini API may be billed.
 The server listens before the relay is dialed, so the port is open as soon as
 the container is.
 
+`POST /sessions` with `Authorization: Bearer <token>` has the translator
+serve a temporary app (`services/token-mint`), the namespace root the
+examples run under (`temporary_apps.rs`). An app is reached only with its own
+tokens, so the streamer's page hands one over and the translator opens a
+relay session of its own with it, watching `{appId}/live-translate` as it
+watches the root it was started with. Nobody renews the token: the relay
+closes the session when it expires, an hour after it was signed at most,
+which ends the app's translation. A request for an app already served starts
+it over with the new token. At most `--max-apps` apps (5) are served at once;
+one whose last broadcast ended a minute ago, or that never had one, gives its
+place up. Every response allows any origin, since those pages are served from
+another one.
+
 ## Runtime flow
 
 ```
-PageServer                   one http_server::HttpServer; pages, /token, /events, /healthz
+PageServer                   one http_server::HttpServer; pages, /token, /events, /sessions, /healthz
+ └─ TemporaryApps            POST /sessions: one AppTranslation task per temporary app,
+                             each running a RootTranslation of its own
 RootTranslation              one relay session; the only reader of Session::receive_event
  ├─ PUBLISH_NAMESPACE        direct children of the root start a BroadcastTranslation
  ├─ PUBLISH_NAMESPACE_DONE   drops it
@@ -113,14 +128,17 @@ difference between the actual and the estimated delay.
 
 ## Invariants
 
-- Exactly one task calls `Session::receive_event`.
+- Exactly one task calls `Session::receive_event` of a session.
+- The translator never verifies a temporary app's token: the relay refuses
+  the session of one it cannot verify, and the token is kept only in that
+  session's configuration, never logged.
 - A `LanguageTranslation` owns its `TrackWriter`; after the last viewer leaves
   it keeps the Gemini session for 5 s and resumes with a new writer if a
   SUBSCRIBE returns in time. The `text_ja` subscription is held beside the
   languages, not among a language's own, so a transcript viewer never keeps a
   language from idling; it ends with the language that writes it.
 - At most `--max-sessions` languages (5) are translated at once across all
-  broadcasts, so the Gemini cost has a ceiling; a SUBSCRIBE beyond that is
+  broadcasts of every root, so the Gemini cost has a ceiling; a SUBSCRIBE beyond that is
   rejected at once rather than left waiting on a connection the project's
   quota, set to the same number, would refuse.
 - The root is the served app's id (`LIVE_TRANSLATE_APP_ID`), under which the

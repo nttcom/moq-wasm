@@ -1,11 +1,14 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use moqt::{
     ClientConfig, Endpoint, QUIC, RequestErrorCode, Session, SessionEvent,
     namespace::NamespaceInterest, subscribe::SubscribeHandler,
 };
-use tokio::sync::Semaphore;
+use tokio::{
+    sync::Semaphore,
+    time::{Instant, timeout_at},
+};
 
 use crate::{
     broadcast_namespace::BroadcastNamespaces, broadcast_translation::BroadcastTranslation,
@@ -57,9 +60,22 @@ impl RootTranslation {
         })
     }
 
-    pub(crate) async fn route_events(&mut self) -> Result<()> {
+    /// Runs until the session fails. With `idle_timeout` it also returns,
+    /// with `Ok`, once no broadcast has been under the root for that long.
+    pub(crate) async fn route_events(&mut self, idle_timeout: Option<Duration>) -> Result<()> {
+        let mut last_broadcast_at = Instant::now();
         loop {
-            match self.session.receive_event().await? {
+            let event = match idle_timeout.filter(|_| self.broadcasts.is_empty()) {
+                Some(idle_timeout) => {
+                    let deadline = last_broadcast_at + idle_timeout;
+                    match timeout_at(deadline, self.session.receive_event()).await {
+                        Ok(event) => event?,
+                        Err(_) => return Ok(()),
+                    }
+                }
+                None => self.session.receive_event().await?,
+            };
+            match event {
                 SessionEvent::PublishNamespace(handler) => {
                     let namespace = handler.track_namespace.clone();
                     if let Err(error) = handler.ok().await {
@@ -79,6 +95,9 @@ impl RootTranslation {
                 SessionEvent::Disconnected() => bail!("relay closed the session"),
                 SessionEvent::ProtocolViolation() => bail!("relay reported a protocol violation"),
                 _ => {}
+            }
+            if !self.broadcasts.is_empty() {
+                last_broadcast_at = Instant::now();
             }
         }
     }

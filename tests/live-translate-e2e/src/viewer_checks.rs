@@ -2,9 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use mediapack::loc::{LocObject, from_extension_headers};
-use moqt::{
-    CertificateVerification, ClientConfig, Endpoint, QUIC, Session, subscribe::SubscribeOption,
-};
+use moqt::{ClientConfig, Endpoint, QUIC, Session, subscribe::SubscribeOption};
 use msf::{CATALOG_TRACK_NAME, Catalog};
 
 use crate::{source_streamer::SOURCE_AUDIO_TRACK, unix_micros};
@@ -16,11 +14,12 @@ const FRAME_MICROS: u64 = 20_000;
 const GROUP_MICROS: u64 = 2_000_000;
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub(crate) async fn run(relay_url: &str, broadcast_namespace: &str) -> Result<()> {
-    let endpoint = Endpoint::<QUIC>::create_client(&ClientConfig {
-        certificate_verification: CertificateVerification::Disabled,
-        ..ClientConfig::default()
-    })?;
+pub(crate) async fn run(
+    config: &ClientConfig,
+    relay_url: &str,
+    broadcast_namespace: &str,
+) -> Result<()> {
+    let endpoint = Endpoint::<QUIC>::create_client(config)?;
     let session = endpoint.connect(relay_url).await?.await?;
     let translated_namespace = format!("{broadcast_namespace}/translated");
     let catalog = tokio::time::timeout(

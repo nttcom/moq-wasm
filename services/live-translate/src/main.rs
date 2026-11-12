@@ -13,6 +13,7 @@ mod root_translation;
 mod source_audio;
 mod source_catalog;
 mod target_language;
+mod temporary_apps;
 mod translated_audio;
 mod translated_catalog;
 mod translation_engine;
@@ -36,6 +37,7 @@ use crate::{
     page_server::{PageServer, PageServerState},
     root_translation::{RootTranslation, TranslationResources},
     target_language::find_by_code,
+    temporary_apps::TemporaryApps,
     translation_engine::TranslationEngine,
     translation_policy::TranslationPolicy,
 };
@@ -125,6 +127,14 @@ struct Args {
 
     #[arg(
         long,
+        env = "LIVE_TRANSLATE_MAX_APPS",
+        default_value_t = 5,
+        help = "Temporary apps translated at once, each over a relay session of its own"
+    )]
+    max_apps: usize,
+
+    #[arg(
+        long,
         env = "LIVE_TRANSLATE_OPEN_HOURS",
         help = "Translate only inside these weekly hours, like 'Mon-Fri 09:00-17:30 +09:00'; always when unset"
     )]
@@ -173,6 +183,11 @@ async fn main() -> Result<()> {
         language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
         always_on,
     });
+    let resources = TranslationResources {
+        engine,
+        capacity: Arc::new(Semaphore::new(args.max_sessions)),
+        policy: policy.clone(),
+    };
     let namespaces = BroadcastNamespaces::new(
         app.as_ref()
             .map(|app| app.app_id.clone())
@@ -191,6 +206,12 @@ async fn main() -> Result<()> {
                     app: app.clone(),
                     namespaces: namespaces.clone(),
                     policy: policy.clone(),
+                    temporary_apps: TemporaryApps::new(
+                        args.relay.clone(),
+                        args.insecure,
+                        resources.clone(),
+                        args.max_apps,
+                    ),
                     public_relay_url: args
                         .public_relay_url
                         .clone()
@@ -213,14 +234,9 @@ async fn main() -> Result<()> {
         }),
         ..ClientConfig::default()
     };
-    let resources = TranslationResources {
-        engine,
-        capacity: Arc::new(Semaphore::new(args.max_sessions)),
-        policy,
-    };
     RootTranslation::connect(&args.relay, &config, namespaces, resources)
         .await?
-        .route_events()
+        .route_events(None)
         .await
 }
 
