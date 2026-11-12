@@ -40,7 +40,7 @@ echo "Using relay URL: $RELAY_URL"
 cargo build -p live-translate -p live-translate-e2e
 cargo build -p auth-token --features cli
 RUST_LOG="${LIVE_TRANSLATE_LOG:-live_translate=info,moqt=warn}" PORT="$LIVE_TRANSLATE_PORT" \
-  ./target/debug/live-translate --relay "$RELAY_URL" --insecure --echo &
+  ./target/debug/live-translate --relay "$RELAY_URL" --insecure --echo --public-root &
 LIVE_TRANSLATE_PID=$!
 
 echo "== a public broadcast under anon/live-translate"

@@ -6,14 +6,14 @@ A broadcaster streams camera and microphone; viewers pick a language and hear th
 
 ```shell
 make relay
-cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --echo   # --echo returns the source audio after each language's delay, without Gemini
+cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --public-root --echo   # --echo returns the source audio after each language's delay, without Gemini
 make browser
 ```
 
 To translate for real, name the project and the service account; `gcloud`, logged in as a user with `roles/iam.serviceAccountTokenCreator` on that account, borrows its token for each connection:
 
 ```shell
-cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --gcp-project <project id> --gcloud-impersonate <service account email>
+cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --public-root --gcp-project <project id> --gcloud-impersonate <service account email>
 ```
 
 A language is translated for at most 60 minutes at a stretch (`--language-time-limit-minutes`) and, with `--open-hours 'Mon-Fri 09:00-17:30 +09:00'`, only inside those hours; the viewer returns to the original audio when the translation ends. `--always-on en,ko` keeps those languages translating for the whole broadcast, so switching to them takes about a second instead of waiting for Gemini's first answer.
@@ -26,7 +26,7 @@ Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chro
 
 The pages follow the access mode of the example list (`utils/access.ts`).
 
-- Public (the default on this machine): the broadcast is `anon/live-translate/<id>`, which the translator watches by itself.
+- Public (the default on this machine): the broadcast is `anon/live-translate/<id>`, which the translator watches by itself when started with `--public-root`.
 - Temporary app (the default when deployed): the broadcast is `<appId>/live-translate/<id>`. The translator reaches an app only with one of its tokens, so the streamer page hands it a newly signed one (`POST /sessions`) and holds its event stream (`GET /events`) while it broadcasts. The translator keeps that token until it expires, so a broadcast is translated for an hour at most; start it again for another hour. The viewer link carries the token, and opening it joins the app.
 
 To try a temporary app locally, run the token mint and the VTS (`docker compose up -d vts token-mint`), start the translator with `PORT=18090`, and choose the temporary mode on the example list. `?liveTranslateUrl=` points the streamer at another translator.

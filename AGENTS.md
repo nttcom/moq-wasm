@@ -41,14 +41,14 @@ Application and integration components (draft reference is normally not required
 | `crates/client-telemetry` | The log and span records of the observability server's `/api/client-telemetry`, built from `tracing` by the wasm module and `moq-cli` |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/metadata-token` | The access token of the service account a Google Cloud workload runs as, read from the metadata server and cached until it expires; used by `app-registry` for Cloud Storage and by `live-translate` for the Agent Platform |
-| `crates/static-files` | Serves the built files of a web page from a directory, for `console` and `live-translate`: path checks, content types and the cache hint of hashed assets |
+| `crates/static-files` | Serves the built files of a web page from a directory, for `console`: path checks, content types and the cache hint of hashed assets |
 | `crates/http-server` | The HTTP/1 accept loop and JSON response helpers shared by the services' HTTP servers (`console`, `vts`, `token-mint`, `observability`, `live-translate`, `recorder`) |
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
 | `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
 | `services/token-mint` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under |
 | `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
-| `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate` with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
+| `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate`, or under the temporary app a streamer hands it the token of, with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
 | `examples/` | Usage examples and test clients |
 
 - `moqt` is the central crate — all other crates depend on it. Changes to `moqt` affect the entire workspace.

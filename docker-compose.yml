@@ -155,7 +155,7 @@ services:
         required: false
     environment:
       LIVE_TRANSLATE_RELAY_URL: moqt://relay-a:443
-    command: ["/usr/local/bin/live-translate", "--insecure"]
+    command: ["/usr/local/bin/live-translate", "--insecure", "--public-root"]
     depends_on:
       - relay-a
 

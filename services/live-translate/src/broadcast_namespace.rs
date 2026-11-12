@@ -1,8 +1,8 @@
 const TRANSLATED_SUFFIX: &str = "translated";
 
 /// Where the broadcasts live: `{root}/{id}` is a broadcast and
-/// `{root}/{id}/translated` its translation. The root is the served app's id,
-/// whose token the relay checks, or the public `anon/live-translate`.
+/// `{root}/{id}/translated` its translation. The root is the public
+/// `anon/live-translate` or a temporary app's `{appId}/live-translate`.
 #[derive(Clone)]
 pub(crate) struct BroadcastNamespaces {
     root: String,
