@@ -4,10 +4,12 @@ import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
 import { type AudioLevel, readLocHeader } from '../internal/loc'
+import { AddedAudioTrack, type AddedAudioTrackListener } from './addedAudioTrack'
+import { AddedTextTrack, type AddedTextTrackListener } from './addedTextTrack'
 import { AdaptiveBitrate, type LatencyTolerance, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
 import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
-import type { CatchUp } from './livePlayout'
+import type { CatchUp, LateSamples } from './livePlayout'
 import type { LivePictureKind } from './livePictureSink'
 import { BroadcastCatalog } from './broadcastCatalog'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
@@ -136,7 +138,8 @@ export type LivePlayerState = {
   }
 }
 
-export type LivePlayerStats = LiveStats & { videoObjects: number }
+/// Live objects received since the player started or its publisher last left; `audioObjects` counts LOC audio only.
+export type LivePlayerStats = LiveStats & { videoObjects: number; audioObjects: number }
 
 /// A live LOC video rendition change in progress: `next` is subscribed next
 /// to `outgoing` until the splice has handed playback over to it.
@@ -153,6 +156,7 @@ export class LivePlayer {
   private readonly keepLiveWhileReviewing: boolean
   private readonly source: LiveSource | undefined
   private readonly textTracks: TextTracks
+  private readonly addedTracks = new Set<AddedAudioTrack | AddedTextTrack>()
   /// The catalog the player listens to since `start`; `owned` when the
   /// player created it and closes it at `stop`.
   private catalog: { catalog: BroadcastCatalog; owned: boolean; unlisten: () => void } | undefined
@@ -191,6 +195,7 @@ export class LivePlayer {
   private volume = 1
   private playbackRate = 1
   private videoObjectCount = 0
+  private audioObjectCount = 0
   private progressNotifiedAt = Number.NEGATIVE_INFINITY
   private newestVideoGroup: bigint | undefined
   private videoSwitch: VideoSwitch | undefined
@@ -330,7 +335,7 @@ export class LivePlayer {
   }
 
   stats(): LivePlayerStats {
-    return { ...this.locLive.stats(), videoObjects: this.videoObjectCount }
+    return { ...this.locLive.stats(), videoObjects: this.videoObjectCount, audioObjects: this.audioObjectCount }
   }
 
   elapsedMsAt(captureMicros: number): number | undefined {
@@ -503,9 +508,12 @@ export class LivePlayer {
     this.newestVideoGroup = undefined
     await this.textTracks.unsubscribeAll()
     this.tracks = { video: [], audio: [] }
+    // After the list is replaced: an add answered from here on sees the stop and closes itself.
+    await Promise.all([...this.addedTracks].map((added) => added.close()))
     this.cmafTracks = []
     this.selected = { video: '', audio: '' }
     this.videoObjectCount = 0
+    this.audioObjectCount = 0
     this.catalogStatus = { text: catalogText, state: 'idle' }
     this.playbackStatus = { text: playbackText, state: 'idle' }
     this.changed()
@@ -534,6 +542,55 @@ export class LivePlayer {
 
   selectAudioTrack(name: string): Promise<void> {
     return this.selectTrack('audio', name)
+  }
+
+  /// Plays another live LOC audio track of the catalog next to the selected
+  /// one, on the same clock, without touching the selected one: it starts
+  /// silent, and the page sets both volumes. It plays on behind a review.
+  /// The player closes it when it stops or its publisher leaves. Rejects when
+  /// the catalog does not list `name`, the player plays CMAF, the SUBSCRIBE
+  /// is refused, or the player stops before it is answered.
+  async addAudioTrack(name: string, listener: AddedAudioTrackListener = {}): Promise<AddedAudioTrack> {
+    const track = this.tracks.audio.find((candidate) => candidate.name === name)
+    if (!track) {
+      throw new Error(`the catalog lists no audio track ${name}`)
+    }
+    if (this.packaging !== 'loc') {
+      throw new Error('an added audio track plays on the LOC clock, and the player plays CMAF')
+    }
+    return this.keepAdded(name, (onClosed) =>
+      AddedAudioTrack.open(this.context, this.locLive.playout, track, listener, onClosed)
+    )
+  }
+
+  /// Delivers the objects of a text track in the catalog's namespace, such as
+  /// captions, when the live LOC sound captured with them plays. The player
+  /// closes it when it stops or its publisher leaves. Rejects when the player
+  /// plays CMAF, the SUBSCRIBE is refused, or the player stops before it is
+  /// answered.
+  async addTextTrack(name: string, listener: AddedTextTrackListener): Promise<AddedTextTrack> {
+    if (this.packaging !== 'loc') {
+      throw new Error('an added text track follows the LOC clock, and the player plays CMAF')
+    }
+    return this.keepAdded(name, (onClosed) =>
+      AddedTextTrack.open(this.context, this.locLive.playout, name, listener, onClosed)
+    )
+  }
+
+  /// A stop during the SUBSCRIBE has already closed the tracks it knew of, so
+  /// a track opened across one closes itself.
+  private async keepAdded<Added extends AddedAudioTrack | AddedTextTrack>(
+    name: string,
+    open: (onClosed: () => void) => Promise<Added>
+  ): Promise<Added> {
+    const tracks = this.tracks
+    const added = await open(() => this.addedTracks.delete(added))
+    if (this.tracks !== tracks) {
+      await added.close()
+      throw new Error(`the player stopped before ${name} was subscribed`)
+    }
+    this.addedTracks.add(added)
+    return added
   }
 
   /// Unsubscribes the live video and leaves the audio playing, so a page that
@@ -609,6 +666,10 @@ export class LivePlayer {
 
   setCatchUp(catchUp: CatchUp): void {
     this.locLive.playout.setCatchUp(catchUp)
+  }
+
+  setLateSamples(lateSamples: LateSamples): void {
+    this.locLive.playout.setLateSamples(lateSamples)
   }
 
   /// Skips from the position on screen: the review playhead, the live frame
@@ -815,9 +876,11 @@ export class LivePlayer {
 
   /// Review carries its own sound, so whatever live audio is still buffered when
   /// a review starts is silenced, and it is heard again on the way back to live.
-  setVolume(volume: number): void {
+  /// The live LOC sound approaches `volume` with this time constant, as in
+  /// `AudioParam.setTargetAtTime`.
+  setVolume(volume: number, timeConstantSeconds?: number): void {
     this.volume = volume
-    this.applyVolume()
+    this.applyVolume(timeConstantSeconds)
   }
 
   setPlaybackRate(rate: number): void {
@@ -1178,6 +1241,7 @@ export class LivePlayer {
       this.notePlaying(trackName)
     } else {
       this.timeline.audio.record(groupId, object.locHeader)
+      this.audioObjectCount += 1
       if (!this.subscriptions.get('video')) {
         this.notePlaying(trackName)
       }
@@ -1558,9 +1622,9 @@ export class LivePlayer {
     return live instanceof HTMLMediaElement ? [live] : []
   }
 
-  private applyVolume(): void {
+  private applyVolume(timeConstantSeconds?: number): void {
     const liveVolume = this.review ? 0 : this.volume
-    this.locLive.playout.setVolume(liveVolume)
+    this.locLive.playout.setVolume(liveVolume, timeConstantSeconds)
     this.locReview.playout.setVolume(this.volume)
     if (this.cmafLive.sink) {
       this.cmafLive.sink.element.volume = liveVolume
