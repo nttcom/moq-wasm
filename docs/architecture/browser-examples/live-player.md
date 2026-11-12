@@ -113,6 +113,8 @@ class LivePlayer {
   selectVideoTrack(name: string): Promise<void>
   setAdaptiveVideo(enabled: boolean): void
   selectAudioTrack(name: string): Promise<void>
+  addAudioTrack(name: string, listener?: AddedAudioTrackListener): Promise<AddedAudioTrack>
+  addTextTrack(name: string, listener: AddedTextTrackListener): Promise<AddedTextTrack>
   setVideoEnabled(enabled: boolean): Promise<void>
   setVideoPriority(priority: number): void
   setPackaging(packaging: Packaging): Promise<void>
@@ -120,10 +122,11 @@ class LivePlayer {
   skip(seconds: number): void
   goLive(): void
   setPaused(paused: boolean): void
-  setVolume(volume: number): void
+  setVolume(volume: number, rampSeconds?: number): void
   setPlaybackRate(rate: number): void
   setBufferPolicy(policy: BufferPolicy): void
   setCatchUp(catchUp: CatchUp): void
+  setLateSamples(lateSamples: LateSamples): void
   readonly state: LivePlayerState
   stats(): LivePlayerStats
   elapsedMsAt(captureMicros: number): number | undefined
@@ -226,7 +229,10 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
-| `audioLane` | A second audio track on a `LivePlayout`'s clock: its own decoder worker and input, scheduled at the time its capture timestamps are due, for a page that crossfades a translation with the original |
+| `audioLane` | A second audio track on a `LivePlayout`'s clock: its own decoder worker and input, scheduled at the time its capture timestamps are due; `addedAudioTrack` opens one per added track |
+| `addedAudioTrack` | A track `LivePlayer.addAudioTrack` plays next to the selected one: its SUBSCRIBE with a joining FETCH, its `audioLane`, the PUBLISH_DONE of its publisher; the player closes it when it stops |
+| `addedTextTrack` | A text track `LivePlayer.addTextTrack` delivers when the live sound captured with each object plays, such as captions; late objects are delivered at once with their lateness |
+| `addedTrack` | The subscription both share: a SUBSCRIBE with a joining FETCH, the publisher's PUBLISH_DONE, and an unsubscribe that is safe to repeat |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
 | `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
@@ -886,11 +892,10 @@ named `live-player-*`.
   hidden `<canvas>`, configured from the MSF catalog tracks the page selects
   and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
   buffer bypass checkbox.
-- `examples/remote-monitoring`: one player per camera on the page's session,
-  following the catalog of the camera's `publish()`, on a canvas picture,
-  video only. Each player draws into a host element the page moves between
-  the stage and the strip, so the stage and the thumbnails are layout over
-  four players. Clicking the stage pauses its player, which is the first
+- `examples/remote-monitoring`: `watchBroadcasts` over the location's
+  namespace, one `RemoteBroadcast` and so one player per camera. Each view's
+  element sits in a host element the page moves between the stage and the
+  strip, so the stage and the thumbnails are layout over the players. Clicking the stage pauses its player, which is the first
   still picture of a review; the step buttons skip a second with the pause
   kept, the seek bar is the player's capture-time axis, and the debug bar
   shows the player's rewind status. The players keep live while reviewing,

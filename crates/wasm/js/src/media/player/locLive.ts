@@ -53,6 +53,12 @@ export type LiveStats = {
   /// Since playback started: video frames never shown, and frames shown more than a frame period late.
   videoDroppedFrames: number
   videoLateFrames: number
+  /// Samples dropped for arriving after their time, which happens only with
+  /// late samples set to `drop`.
+  audioDroppedLateSamples: number
+  videoDroppedLateFrames: number
+  /// The capture timestamp of the sound heard now; undefined while none plays.
+  audioCaptureMicros: number | undefined
   shedMs: number
   /// Longest wait between two objects of that kind within the last
   /// `ARRIVAL_GAP_WINDOW_MS`; undefined until two have arrived.
@@ -215,6 +221,9 @@ export class LocLive {
       audioConcealedMs: this.playout.audioConcealedMs(),
       videoDroppedFrames: this.playout.videoDroppedFrames(),
       videoLateFrames: this.playout.videoLateFrames(),
+      audioDroppedLateSamples: this.playout.droppedLateAudio,
+      videoDroppedLateFrames: this.playout.droppedLateVideo,
+      audioCaptureMicros: this.playout.audioPositionMicros(),
       shedMs: this.playout.shedMs(),
       maxArrivalGapMs: { video: longestGapMs(this.arrivalsMs.video), audio: longestGapMs(this.arrivalsMs.audio) },
       arrivalDelayMs: { video: this.playout.arrivalDelayMs('video'), audio: this.playout.arrivalDelayMs('audio') }

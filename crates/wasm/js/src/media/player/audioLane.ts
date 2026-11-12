@@ -47,7 +47,7 @@ export class AudioLane {
     this.worker.postMessage(message, transfer)
   }
 
-  fadeTo(volume: number, rampSeconds: number): void {
+  fadeTo(volume: number, rampSeconds?: number): void {
     this.audio.setVolume(volume, rampSeconds)
   }
 
