@@ -33,7 +33,7 @@ const MODE_KEY = 'moqt.accessMode'
 const TOKEN_KEY = 'moqt.temporaryToken'
 /// The app this tab joined, kept across its reloads; a fragment naming another app is a shared link.
 const TAB_APP_KEY = 'moqt.tabAppId'
-const TOKEN_FRAGMENT = 'jwt'
+export const TOKEN_FRAGMENT = 'jwt'
 /// `?access=public` opens a page as the public app. It is not stored, so the examples opened after
 /// it keep the mode their reader chose.
 export const ACCESS_MODE_PARAM = 'access'

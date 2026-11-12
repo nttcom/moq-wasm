@@ -1,9 +1,8 @@
-import { access, bearerToken, renewedTemporaryToken, withNamespaceRoot } from '../../utils/access'
-import { type ServiceUrls, resolveServiceUrl } from '../../utils/serviceUrl'
+import { TOKEN_FRAGMENT, access, bearerToken, renewedTemporaryToken, withNamespaceRoot } from '../../utils/access'
+import { LOCAL_HOSTS, type ServiceUrls, resolveServiceUrl } from '../../utils/serviceUrl'
 
 export const BROADCAST_ID_PARAM = 'id'
 const TRANSLATED_NAMESPACE_SUFFIX = 'translated'
-const TOKEN_FRAGMENT = 'jwt'
 
 const TRANSLATOR_URLS: ServiceUrls = {
   param: 'liveTranslateUrl',
@@ -32,12 +31,14 @@ export type TranslationRequest = {
 
 /// The translator reaches a temporary app only with one of its tokens and keeps the one it is
 /// handed until it expires, so it gets a newly signed one. The event stream held until `release`
-/// keeps the translator's instance running. A public broadcast needs neither: the translator
-/// watches `anon/live-translate` by itself. A failure is a notice, since the broadcast runs
-/// without its translation.
+/// keeps the translator's instance running. A public broadcast needs neither: a translator
+/// on this machine watches `anon/live-translate` by itself, and a deployed one does not translate
+/// it. A failure is a notice, since the broadcast runs without its translation.
 export async function requestTranslation(relayUrl: string): Promise<TranslationRequest> {
   if (access.kind !== 'temporary') {
-    return { notice: undefined, release: () => {} }
+    // Only a translator on this machine watches the public root.
+    const local = URL.canParse(relayUrl) && LOCAL_HOSTS.has(new URL(relayUrl).hostname)
+    return { notice: local ? undefined : '翻訳は一時トークンのモードでのみ使えます', release: () => {} }
   }
   const translatorUrl = resolveServiceUrl(window.location.search, relayUrl, TRANSLATOR_URLS)
   const refused = (reason: unknown): TranslationRequest => ({
