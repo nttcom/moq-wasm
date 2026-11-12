@@ -50,7 +50,6 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   }
   const players = playersRef.current
 
-  const previewIds = cameras.filter((id) => id !== stageId)
   const isConnected = connStatus === 'connected'
   const stagePlayer = stageId ? players.get(stageId) : undefined
   const stageState = stagePlayer?.state
@@ -207,7 +206,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
       {cameras.length > 0 && (
         <p className="text-xs text-zinc-500">
           ← → でステージのカメラを切替。ステージをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
-          に戻る）。右のプレビューをクリックでもステージと入替。
+          に戻る）。右のカメラをクリックでもステージに出せる。
         </p>
       )}
 
@@ -245,7 +244,12 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
           )}
         </div>
 
-        <PreviewStrip cameraIds={previewIds} hostOf={(id) => players.host(id)} onSelect={handlePreviewSelect} />
+        <PreviewStrip
+          cameraIds={cameras}
+          stageId={stageId}
+          hostOf={(id) => players.host(id)}
+          onSelect={handlePreviewSelect}
+        />
       </div>
 
       {/* debug bar */}
