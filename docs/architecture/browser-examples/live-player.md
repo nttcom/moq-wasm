@@ -901,3 +901,10 @@ named `live-player-*`.
   kept, the seek bar is the player's capture-time axis, and the debug bar
   shows the player's rewind status. The players keep live while reviewing,
   so `LIVE 復帰` shows the live picture at once.
+- `examples/live-translate/viewer`: one `RemoteBroadcast` on the translated
+  namespace, whose single source carries the original audio and every
+  translation as alternates. The page fixes the delay (`setBufferPolicy`,
+  `setCatchUp('off')`, `setLateSamples('drop')`), adds the chosen
+  translation with `addAudioTrack` and crossfades it with the original once
+  `onFirstScheduled` says it has caught up, and shows the captions `addTextTrack`
+  delivers.
