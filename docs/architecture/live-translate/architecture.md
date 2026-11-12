@@ -67,7 +67,7 @@ the container is.
 
 ```
 PageServer                   one http_server::HttpServer; pages, /token, /events, /healthz
-main (Router)                one task; the only reader of Session::receive_event
+RootTranslation              one relay session; the only reader of Session::receive_event
  ├─ PUBLISH_NAMESPACE        direct children of the root start a BroadcastTranslation
  ├─ PUBLISH_NAMESPACE_DONE   drops it
  ├─ SUBSCRIBE                routed to the BroadcastTranslation by namespace
