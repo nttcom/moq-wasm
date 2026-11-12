@@ -46,9 +46,15 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const stageState = stagePlayer?.state
   // A paused live picture is the first still frame of a review, before any skip.
   const mode: MonitorMode = stageState && (stageState.mode === 'review' || stageState.paused) ? 'review' : 'live'
-  const playheadSeconds = stageState?.seek.playheadSeconds ?? stageState?.seek.liveEdgeSeconds
-  const behindSeconds =
-    stageState && playheadSeconds !== undefined ? stageState.seek.liveEdgeSeconds - playheadSeconds : null
+  // The readout and the seek bar follow the frame on screen, not the position a
+  // step asked for: they stay on the last frame until the step's frame arrives.
+  const shownSeconds = stageState?.mode === 'review' ? stageState.seek.shownSeconds : stageState?.seek.liveEdgeSeconds
+  const lastShownRef = useRef<number | undefined>(undefined)
+  if (shownSeconds !== undefined) {
+    lastShownRef.current = shownSeconds
+  }
+  const thumbSeconds = shownSeconds ?? lastShownRef.current
+  const behindSeconds = stageState && thumbSeconds !== undefined ? stageState.seek.liveEdgeSeconds - thumbSeconds : null
 
   useUrlSync({ location, relay: relayUrl })
 
@@ -205,11 +211,11 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
           />
           {mode === 'review' && stageState && (
             <div className="mt-3 space-y-2">
-              {stageState.seek.seekable && playheadSeconds !== undefined && (
+              {stageState.seek.seekable && thumbSeconds !== undefined && (
                 <SeekBar
                   replayableStartSeconds={stageState.seek.replayableStartSeconds}
                   liveEdgeSeconds={stageState.seek.liveEdgeSeconds}
-                  playheadSeconds={playheadSeconds}
+                  playheadSeconds={thumbSeconds}
                   onJump={handleJump}
                 />
               )}
