@@ -137,14 +137,18 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+      // A held key repeats whether or not the last step's frame has arrived. Taking every repeat
+      // moves the position ahead of the picture, which then catches up after the key is released.
+      const review = stagePlayer?.state
+      const stepPending = event.repeat && review?.mode === 'review' && review.seek.shownSeconds === undefined
       switch (event.key) {
         case 'ArrowLeft':
           if (mode === 'live') switchStage(-1)
-          else if (canStepBack) handleStepBack()
+          else if (canStepBack && !stepPending) handleStepBack()
           break
         case 'ArrowRight':
           if (mode === 'live') switchStage(1)
-          else if (canStepForward) handleStepForward()
+          else if (canStepForward && !stepPending) handleStepForward()
           break
         case 'ArrowDown':
           enterReview()
