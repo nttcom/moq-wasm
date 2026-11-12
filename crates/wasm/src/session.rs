@@ -163,12 +163,11 @@ impl Session {
     }
 
     /// Subscribes and reads the track from the first object of a group
-    /// (draft-18 §5.1.3.1): the current group, through a joining FETCH sent
-    /// with the SUBSCRIBE, or, when the track has dynamic groups and its
-    /// largest object ID is `new_group_after` or more, a new group it asks
-    /// the publisher to start (NEW_GROUP_REQUEST, §10.2.13) after
-    /// withdrawing the FETCH. `priority` is the Subscriber Priority, as in
-    /// `subscribe`.
+    /// (draft-18 §5.1.3.1), chosen once the SUBSCRIBE_OK arrives: the
+    /// current group, through a joining FETCH, or, when the track has
+    /// dynamic groups and its largest object ID is `new_group_after` or
+    /// more, a new group it asks the publisher to start (NEW_GROUP_REQUEST,
+    /// §10.2.13). `priority` is the Subscriber Priority, as in `subscribe`.
     #[wasm_bindgen(js_name = subscribeGroupStart)]
     pub async fn subscribe_group_start(
         &self,

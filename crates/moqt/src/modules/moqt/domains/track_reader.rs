@@ -12,8 +12,8 @@ use crate::{
         moqt::domains::subscriber::{SentFetch, joining_remainder},
     },
     object::{
-        DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError, Object,
-        ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
+        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, MalformedTrackError,
+        Object, ObjectStatus, StreamDataReceiver, Subgroup, TrackData,
     },
 };
 
@@ -98,6 +98,32 @@ impl TrackReader {
                 let option = FetchOption::default();
                 let remainder = joining_remainder(&subscription, 0, &option);
                 let fetch = subscriber.fetch_answered(sent, &option, remainder).await;
+                send_fetched_group(&mut subscriber, fetch, fetch_sender).await;
+            }
+            subscriber.accept_data_receiver(&subscription).await
+        };
+        Self {
+            object_receiver,
+            _track_read_task: TrackReadTask::run(receiver, object_sender),
+        }
+    }
+
+    /// Sends a Joining FETCH of the group the subscription's Largest Object
+    /// is in and yields its objects before the live ones: the track's data
+    /// is read only after the FETCH ends. A subscription without a Largest
+    /// Object has no group to fetch, so its live objects are read at once.
+    pub(crate) fn fetching_current_group(
+        subscriber: Subscriber,
+        subscription: Subscription,
+    ) -> Self {
+        let (object_sender, object_receiver) = mpsc::channel(OBJECT_CHANNEL_CAPACITY);
+        let fetch_sender = object_sender.clone();
+        let receiver = async move {
+            let mut subscriber = subscriber;
+            if matches!(subscription.content_exists(), ContentExists::True { .. }) {
+                let fetch = subscriber
+                    .fetch_relative_joining(&subscription, 0, FetchOption::default())
+                    .await;
                 send_fetched_group(&mut subscriber, fetch, fetch_sender).await;
             }
             subscriber.accept_data_receiver(&subscription).await

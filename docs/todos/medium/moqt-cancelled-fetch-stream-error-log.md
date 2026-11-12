@@ -4,7 +4,7 @@ Next: in `crates/moqt/src/modules/moqt/runtime/dispatch/fetch_notifier.rs:36`, t
 
 ## Goal
 
-A browser viewer subscribing to `camera` logs `no fetch stream sender for the request` at ERROR (`request_id` 14) 2 ms after SUBSCRIBE_OK. `subscribe_group_start` dropped its Joining FETCH (FETCH_CANCEL) to send NEW_GROUP_REQUEST, and the relay's FETCH stream crossed it. That race is expected, so it logs at DEBUG; a stream for a request this side never sent stays an ERROR.
+A FETCH this side cancels (FETCH_CANCEL) can cross the peer's FETCH stream, which then logs `no fetch stream sender for the request` at ERROR. A reader dropped while its Joining FETCH is unanswered does that, as when a viewer leaves right after `subscribe_current_group`. That race is expected, so it logs at DEBUG; a stream for a request this side never sent stays an ERROR.
 
 ## Plan
 
