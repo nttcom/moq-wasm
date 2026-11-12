@@ -138,7 +138,7 @@ export type LivePlayerState = {
   }
 }
 
-/// `videoObjects` and `audioObjects` count the live objects received since the tracks were subscribed.
+/// Live objects received since the player started or its publisher last left; `audioObjects` counts LOC audio only.
 export type LivePlayerStats = LiveStats & { videoObjects: number; audioObjects: number }
 
 /// A live LOC video rendition change in progress: `next` is subscribed next
@@ -558,17 +558,9 @@ export class LivePlayer {
     if (this.packaging !== 'loc') {
       throw new Error('an added audio track plays on the LOC clock, and the player plays CMAF')
     }
-    const tracks = this.tracks
-    const added = await AddedAudioTrack.open(this.context, this.locLive.playout, track, listener, () =>
-      this.addedTracks.delete(added)
+    return this.keepAdded(name, (onClosed) =>
+      AddedAudioTrack.open(this.context, this.locLive.playout, track, listener, onClosed)
     )
-    // A stop during the SUBSCRIBE has already closed the tracks it knew of.
-    if (this.tracks !== tracks) {
-      await added.close()
-      throw new Error(`the player stopped before ${name} was subscribed`)
-    }
-    this.addedTracks.add(added)
-    return added
   }
 
   /// Delivers the objects of a text track in the catalog's namespace, such as
@@ -580,11 +572,19 @@ export class LivePlayer {
     if (this.packaging !== 'loc') {
       throw new Error('an added text track follows the LOC clock, and the player plays CMAF')
     }
-    const tracks = this.tracks
-    const added = await AddedTextTrack.open(this.context, this.locLive.playout, name, listener, () =>
-      this.addedTracks.delete(added)
+    return this.keepAdded(name, (onClosed) =>
+      AddedTextTrack.open(this.context, this.locLive.playout, name, listener, onClosed)
     )
-    // A stop during the SUBSCRIBE has already closed the tracks it knew of.
+  }
+
+  /// A stop during the SUBSCRIBE has already closed the tracks it knew of, so
+  /// a track opened across one closes itself.
+  private async keepAdded<Added extends AddedAudioTrack | AddedTextTrack>(
+    name: string,
+    open: (onClosed: () => void) => Promise<Added>
+  ): Promise<Added> {
+    const tracks = this.tracks
+    const added = await open(() => this.addedTracks.delete(added))
     if (this.tracks !== tracks) {
       await added.close()
       throw new Error(`the player stopped before ${name} was subscribed`)

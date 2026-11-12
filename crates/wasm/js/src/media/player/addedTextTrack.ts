@@ -1,4 +1,3 @@
-import type { PublishDone } from '../../core/session'
 import { readLocHeader } from '../internal/loc'
 import { subscribeAddedTrack } from './addedTrack'
 import type { LivePlayout } from './livePlayout'
@@ -8,15 +7,11 @@ export type AddedTextTrackListener = {
   /// The payload of an object, as UTF-8 text, when the sound captured with it
   /// plays, in the order received. `lateMs` is how long after that time it is
   /// delivered: 0 unless the object arrived late. An object without a capture
-  /// timestamp, or one that arrives before the player's sound has started,
-  /// has no time to wait for and is delivered at once with `lateMs` 0.
+  /// timestamp, or one that arrives before the player's live playback has
+  /// started, has no time to wait for and is delivered at once with `lateMs` 0.
   onText(text: string, lateMs: number): void
-  /// The publisher ended the track with PUBLISH_DONE.
-  onEnded?(done: PublishDone): void
 }
 
-/// A text track `LivePlayer.addTextTrack` delivers on the live clock, such
-/// as the captions of the sound.
 export class AddedTextTrack {
   private readonly timers = new Set<ReturnType<typeof setTimeout>>()
   private lastDeliveryMs = 0
@@ -51,7 +46,7 @@ export class AddedTextTrack {
         }, added.lastDeliveryMs - nowMs)
         added.timers.add(timer)
       },
-      listener.onEnded
+      undefined
     )
     return added
   }
