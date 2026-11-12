@@ -7,7 +7,7 @@ import { RelayUrlField } from '../components/RelayUrlField'
 import { Button } from '../../../../lib/ui/button'
 import { Input } from '../../../../lib/ui/input'
 import { Label } from '../../../../lib/ui/label'
-import { useUrlSync } from '../hooks/useUrlSync'
+import { pageHref, useUrlSync } from '../hooks/useUrlSync'
 
 type Status = 'idle' | 'connecting' | 'starting' | 'live' | 'error'
 
@@ -83,7 +83,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
           <h1 className="text-xl font-bold font-mono">Publisher</h1>
           {isIdle && (
             <a
-              href={`?location=${encodeURIComponent(location)}&relay=${encodeURIComponent(relayUrl)}`}
+              href={pageHref({ mode: null, cam: null, location, relay: relayUrl })}
               className="text-xs text-zinc-500 hover:text-zinc-300 font-mono underline"
             >
               Monitor へ
