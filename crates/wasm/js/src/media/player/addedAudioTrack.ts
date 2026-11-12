@@ -10,7 +10,6 @@ export type AddedAudioTrackListener = {
   /// the page clock (`performance.now()`). The track has caught up with the
   /// picture from then on, so raising its volume at `dueMs` loses nothing.
   onFirstScheduled?(dueMs: number): void
-  /// The publisher ended the track with PUBLISH_DONE.
   onEnded?(done: PublishDone): void
 }
 
@@ -74,7 +73,7 @@ export class AddedAudioTrack {
     return this.lane.droppedLate
   }
 
-  /// Unsubscribes and releases the decoder. A second call does nothing.
+  /// A second call does nothing.
   async close(): Promise<void> {
     this.onClosed()
     this.lane.close()

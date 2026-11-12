@@ -3,10 +3,9 @@ import { getErrorMessage } from '../internal/status'
 import { type ObjectHandler, type TrackContext, readJoinedObjects, sessionOf, streamId } from './trackContext'
 
 /// Subscribes a track a page added to a player, with a joining FETCH so the
-/// group under way is read from its start. `onEnded` is the publisher's
-/// PUBLISH_DONE. Returns the function that unsubscribes: it never rejects (a
-/// failed UNSUBSCRIBE is logged), and calling it again does nothing. Rejects
-/// when the SUBSCRIBE does.
+/// group under way is read from its start. Returns the function that
+/// unsubscribes: it never rejects (a failed UNSUBSCRIBE is logged), and
+/// calling it again does nothing. Rejects when the SUBSCRIBE does.
 export async function subscribeAddedTrack(
   context: TrackContext,
   namespace: string[],

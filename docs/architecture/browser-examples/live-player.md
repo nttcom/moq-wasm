@@ -122,7 +122,7 @@ class LivePlayer {
   skip(seconds: number): void
   goLive(): void
   setPaused(paused: boolean): void
-  setVolume(volume: number, rampSeconds?: number): void
+  setVolume(volume: number, timeConstantSeconds?: number): void
   setPlaybackRate(rate: number): void
   setBufferPolicy(policy: BufferPolicy): void
   setCatchUp(catchUp: CatchUp): void
@@ -895,8 +895,9 @@ named `live-player-*`.
 - `examples/remote-monitoring`: `watchBroadcasts` over the location's
   namespace, one `RemoteBroadcast` and so one player per camera. Each view's
   element sits in a host element the page moves between the stage and the
-  strip, so the stage and the thumbnails are layout over the players. Clicking the stage pauses its player, which is the first
-  still picture of a review; the step buttons skip a second with the pause
+  strip, so the stage and the thumbnails are layout over the players.
+  Clicking the stage pauses its player, which is the first still picture of a
+  review; the step buttons skip a second with the pause
   kept, the seek bar is the player's capture-time axis, and the debug bar
   shows the player's rewind status. The players keep live while reviewing,
   so `LIVE 復帰` shows the live picture at once.
