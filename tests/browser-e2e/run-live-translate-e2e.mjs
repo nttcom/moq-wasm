@@ -81,7 +81,7 @@ async function main() {
     const liveTranslate = spawnProcess(
       "live-translate",
       "cargo",
-      ["run", "-p", "live-translate", "--", "--relay", nativeRelayUrl, "--insecure", "--echo"],
+      ["run", "-p", "live-translate", "--", "--relay", nativeRelayUrl, "--insecure", "--echo", "--public-root"],
       { cwd: repoRoot, env: { ...process.env, PORT: String(liveTranslatePort) } },
     );
     childProcesses.push(liveTranslate);

@@ -59,9 +59,10 @@ the container is.
 serve a temporary app (`services/token-mint`), the namespace root the
 examples run under (`temporary_apps.rs`). An app is reached only with its own
 tokens, so the streamer's page hands one over and the translator opens a
-relay session of its own with it, watching `{appId}/live-translate` as the
-process watches the public `anon/live-translate` by itself. With
-`--temporary-apps-only`, as deployed, it watches no public root. Nobody renews the token: the relay
+relay session of its own with it, watching `{appId}/live-translate`. With
+`--public-root`, which local development and the e2e suites pass, the
+process also watches the public `anon/live-translate` over a session without
+a token. Nobody renews the token of an app: the relay
 closes the session when it expires, an hour after it was signed at most,
 which ends the app's translation. A request for an app already served starts
 it over with the new token. At most `--max-apps` apps (5) are served at once;

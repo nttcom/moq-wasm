@@ -61,11 +61,9 @@ struct Args {
 
     #[arg(
         long,
-        env = "LIVE_TRANSLATE_TEMPORARY_APPS_ONLY",
-        requires = "http_port",
-        help = "Translate only the temporary apps the pages ask for, not the public anon/live-translate"
+        help = "Also translate the broadcasts under the public anon/live-translate, which need no token: for local development and the e2e suites"
     )]
-    temporary_apps_only: bool,
+    public_root: bool,
 
     #[arg(
         long,
@@ -182,7 +180,10 @@ async fn main() -> Result<()> {
         }
         None => None,
     };
-    if args.temporary_apps_only {
+    if !args.public_root {
+        if args.http_port.is_none() {
+            bail!("nothing to translate: set PORT to serve temporary apps, or pass --public-root");
+        }
         tracing::info!("waiting for temporary apps");
         return pending().await;
     }
