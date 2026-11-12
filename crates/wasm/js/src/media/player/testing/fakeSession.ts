@@ -21,7 +21,8 @@ export type SubscribeCall = {
 }
 
 /// Every SUBSCRIBE answers with `largest` and delivers `objects`; a FETCH
-/// delivers the objects `fetchable` lists for its track in its group range.
+/// delivers the objects `fetchable` lists for its track in its group range and
+/// is recorded in `fetches`, such as `video 100-104`.
 /// `drained` resolves once a reader has taken them all. `updates` records each
 /// UNSUBSCRIBE and SUBSCRIBE_UPDATE sent on a subscription, such as
 /// `close video`, `setForward audio true`, `setPriority video 7` or
@@ -32,6 +33,7 @@ export type SubscribeCall = {
 export class FakeSession {
   readonly calls: SubscribeCall[] = []
   readonly updates: string[] = []
+  readonly fetches: string[] = []
   private readonly endings = new Map<string, (done: PublishDone) => void>()
   failedClose: Error | undefined
   drained: Promise<void> = Promise.resolve()
@@ -76,6 +78,7 @@ export class FakeSession {
   }
 
   async fetch(_namespace: string[], track: string, start: MoqLocation, end: MoqLocation): Promise<MoqFetch> {
+    this.fetches.push(`${track} ${start.groupId}-${end.groupId}`)
     const objects = (this.fetchable[track] ?? []).filter(
       ({ groupId }) => groupId >= start.groupId && groupId <= end.groupId
     )

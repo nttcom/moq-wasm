@@ -19,7 +19,15 @@ import { PictureStage } from './pictureStage'
 import { type GroupLink, type GroupMember, registerGroupMember } from './groupMember'
 import { RenditionSplice, type SpliceStart } from './renditionSplice'
 import { ReviewClock } from './reviewClock'
-import { type ReviewFetchWindow, type ReviewHost, ReviewSession, type ReviewWindow } from './reviewSession'
+import { ReviewGroupStore } from './reviewGroupStore'
+import {
+  type ReviewFetchWindow,
+  type ReviewHost,
+  ReviewSession,
+  type ReviewWindow,
+  type ReviewWindowResult,
+  reviewWindowBytes
+} from './reviewSession'
 import type { GroupMark } from './rewind'
 import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
@@ -160,6 +168,7 @@ export class LivePlayer {
   private readonly cmafReview = new CmafReview()
   private readonly stallWatch: StallWatch
   private readonly reviewHost: ReviewHost
+  private readonly reviewGroups = new ReviewGroupStore<ReviewWindowResult>(reviewWindowBytes)
   /// Going live leaves the review picture on screen until a live frame is
   /// shown: the live picture still holds the frame from when it was paused or
   /// its delivery stopped.
@@ -264,6 +273,7 @@ export class LivePlayer {
       playWindow: (window, session) => this.playReviewWindow(window, session),
       reachedEnd: (session, throughMicros) => void this.endPlayback(session, throughMicros),
       windowStarted: () => this.renderReviewStatus(),
+      paused: () => this.paused,
       fastForwardDrained: () => this.playbackRateAdjustable() && this.playbackRate > 1 && this.cmafReview.drained(),
       observeLiveVideoGroup: (groupId) => this.observeLiveVideoGroup(groupId),
       resumeLiveForward: () => this.resumeLiveForward(),
@@ -481,6 +491,7 @@ export class LivePlayer {
     // subscriptions being unsubscribed.
     const unsubscribing = this.subscriptions.unsubscribeAll()
     this.timeline.reset()
+    this.reviewGroups.clear()
     this.endReview()
     this.cmafLive.close()
     this.locLive.reset()
@@ -677,6 +688,7 @@ export class LivePlayer {
 
   /// Without a `target`, the review holds a position outside the player's range.
   private beginReview(target: GroupMark | undefined, captureMicros: number): ReviewSession {
+    const from = this.positionMicros()
     this.review?.end()
     this.ended = false
     this.awaitingLiveFrame = false
@@ -687,7 +699,9 @@ export class LivePlayer {
       this.subscriptions,
       this.reviewHost,
       target,
-      captureMicros
+      captureMicros,
+      this.reviewGroups,
+      from !== undefined && captureMicros > from ? 1n : -1n
     )
     this.review = session
     if (!this.keepLiveWhileReviewing && this.timeline.live) {
@@ -732,6 +746,7 @@ export class LivePlayer {
   private returnToLive(): void {
     this.review?.end()
     this.review = undefined
+    this.reviewGroups.clear()
     this.ended = false
     this.locLive.shownCaptureMicros = undefined
     this.resumeLiveForward()

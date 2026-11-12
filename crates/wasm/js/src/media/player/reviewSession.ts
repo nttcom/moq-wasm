@@ -1,5 +1,6 @@
 import { type GroupMark, type ReviewFrame, sortReviewFrames } from './rewind'
 import { type FetchFailure, fetchFrames, isFetchFailure } from './reviewFetch'
+import type { ReviewGroupStore } from './reviewGroupStore'
 import type { GroupRange } from './audioGroups'
 import type { SeekTimeline } from './seekTimeline'
 import { type MediaKind, type PlayedTrack, type TrackContext, sessionOf } from './trackContext'
@@ -7,6 +8,7 @@ import type { TrackSubscriptions } from './trackSubscriptions'
 import { getErrorMessage } from '../internal/status'
 
 const REWIND_GROUP_COUNT = 4n
+const PAUSED_PREFETCH_GROUPS = 2n
 const CLOSED_GROUP_POLL_MS = 200
 const TRACK_STATUS_POLL_MS = 500
 const AUDIO_GROUP_CLOSE_WAIT_MS = 2_000
@@ -23,6 +25,19 @@ type ReviewWindowFailure = FetchFailure & { start: bigint }
 /// The window after the last group of a broadcast that is not live.
 const END_OF_TRACK = 'end of track'
 
+export type ReviewWindowResult = ReviewWindow | ReviewWindowFailure | typeof END_OF_TRACK | undefined
+
+function isReviewWindow(result: ReviewWindowResult): result is ReviewWindow {
+  return typeof result === 'object' && 'frames' in result
+}
+
+export function reviewWindowBytes(result: ReviewWindowResult): number {
+  if (!isReviewWindow(result)) {
+    return 0
+  }
+  return [...result.frames, ...result.audio].reduce((bytes, frame) => bytes + frame.data.byteLength, 0)
+}
+
 export type ReviewFetchWindow = { video?: bigint; audio?: bigint }
 
 export type ReviewHost = {
@@ -32,6 +47,8 @@ export type ReviewHost = {
   /// when known, is the capture timestamp of the last frame shown.
   reachedEnd(session: ReviewSession, throughMicros: number | undefined): void
   windowStarted(): void
+  /// A paused review is stepped rather than played.
+  paused(): boolean
   fastForwardDrained(): boolean
   observeLiveVideoGroup(groupId: bigint): void
   resumeLiveForward(): void
@@ -61,7 +78,10 @@ export class ReviewSession {
     private readonly subscriptions: TrackSubscriptions,
     private readonly host: ReviewHost,
     private readonly target: GroupMark | undefined,
-    captureMicros: number
+    captureMicros: number,
+    private readonly groups: ReviewGroupStore<ReviewWindowResult>,
+    /// Which way the position moved to get here: 1n toward the live edge, -1n away from it.
+    private readonly direction: 1n | -1n
   ) {
     this.originMicros = target?.captureMicros ?? captureMicros
     this.anchorMicros = Math.max(captureMicros, this.originMicros)
@@ -87,25 +107,55 @@ export class ReviewSession {
   /// Review playback is paced by capture timestamps, so it trails the live edge
   /// until the viewer asks to go back. The FETCH for the next window is issued
   /// while the current one plays, so a window boundary does not stall on the
-  /// request.
+  /// request. The first window is the target group alone, so the frame at the
+  /// seek position does not wait for the groups after it. A paused review is
+  /// stepped instead: the next step is most likely one more the same way, so
+  /// the groups on that side are fetched in place of the window after this one.
   private async run(target: GroupMark): Promise<void> {
-    let pending = await this.fetchWindow(target.groupId)
+    let pending = await this.groupWindow(target.groupId)
     let previous: ReviewWindow | undefined
     while (pending && this.isCurrent()) {
       if (pending === END_OF_TRACK) {
         this.host.reachedEnd(this, previous && lastShownMicros(previous.frames))
         return
       }
-      if (!('frames' in pending)) {
+      if (!isReviewWindow(pending)) {
         this.recover(pending)
         return
       }
-      const upcoming = this.fetchWindow(pending.nextGroup)
+      this.fetchWindows.push({ video: pending.frames[0]?.requestId, audio: pending.audio[0]?.requestId })
+      const stepped = this.host.paused()
+      const upcoming = stepped ? undefined : this.fetchWindow(pending.nextGroup)
+      if (stepped) {
+        void this.fetchBeside(pending.start)
+      }
       this.behindSeconds = this.timeline.groups.secondsBehindLive(pending.start)
       this.host.windowStarted()
       const played = await this.host.playWindow({ ...pending, audio: this.unplayedAudio(pending.audio) }, this)
       previous = pending
-      pending = played ? await upcoming : undefined
+      pending = played ? await (upcoming ?? this.fetchWindow(pending.nextGroup)) : undefined
+    }
+  }
+
+  /// One group, from the player's store when it holds it. The fetch belongs to
+  /// the store, so it runs on after this review has ended and serves the next.
+  private groupWindow(groupId: bigint): Promise<ReviewWindowResult> {
+    const video = this.host.playedTrack('video')
+    if (!video) {
+      return Promise.resolve(undefined)
+    }
+    const tracks = `${video.name} ${this.host.playedTrack('audio')?.name ?? ''}`
+    return this.groups.fetched(tracks, groupId, (isCurrent) => this.fetchWindow(groupId, 0n, isCurrent))
+  }
+
+  private async fetchBeside(groupId: bigint): Promise<void> {
+    for (let step = 1n; step <= PAUSED_PREFETCH_GROUPS && this.isCurrent(); step += 1n) {
+      const beside = groupId + this.direction * step
+      const { oldest, newestClosed } = this.timeline.groups
+      if (!oldest || !newestClosed || beside < oldest.groupId || beside > newestClosed.groupId) {
+        return
+      }
+      await this.groupWindow(beside)
     }
   }
 
@@ -169,9 +219,11 @@ export class ReviewSession {
   }
 
   private async fetchWindow(
-    start: bigint
-  ): Promise<ReviewWindow | ReviewWindowFailure | typeof END_OF_TRACK | undefined> {
-    const end = await this.awaitClosedWindowEnd(start)
+    start: bigint,
+    groupsAfterStart = REWIND_GROUP_COUNT,
+    isCurrent = this.isCurrent
+  ): Promise<ReviewWindowResult> {
+    const end = await this.awaitClosedWindowEnd(start, groupsAfterStart, isCurrent)
     if (end === END_OF_TRACK) {
       return end
     }
@@ -181,8 +233,8 @@ export class ReviewSession {
     }
     const audioName = this.host.playedTrack('audio')?.name
     const [frames, audio] = await Promise.all([
-      fetchFrames(this.context, video.name, start, end, this.isCurrent),
-      audioName ? this.fetchAudio(audioName, start, end) : Promise.resolve([])
+      fetchFrames(this.context, video.name, start, end, isCurrent),
+      audioName ? this.fetchAudio(audioName, start, end, isCurrent) : Promise.resolve([])
     ])
     if (!frames || !audio) {
       return undefined
@@ -205,24 +257,24 @@ export class ReviewSession {
     }
     const audioFrames = isFetchFailure(audio) ? [] : audio
     this.context.log('info', `fetched ${frames.length} objects from group ${start}`)
-    this.fetchWindows.push({ video: frames[0]?.requestId, audio: audioFrames[0]?.requestId })
     return { start, nextGroup: end + 1n, frames: sorted, audio: sortReviewFrames(audioFrames) }
   }
 
   private async fetchAudio(
     trackName: string,
     start: bigint,
-    end: bigint
+    end: bigint,
+    isCurrent: () => boolean
   ): Promise<ReviewFrame[] | FetchFailure | undefined> {
-    const range = await this.awaitAudioRange(trackName, start, end)
-    if (!this.isCurrent()) {
+    const range = await this.awaitAudioRange(trackName, start, end, isCurrent)
+    if (!isCurrent()) {
       return undefined
     }
     if (!range) {
       this.context.log('warn', `no audio group covers video groups ${start}-${end}`)
       return []
     }
-    return fetchFrames(this.context, trackName, range.start, range.end, this.isCurrent)
+    return fetchFrames(this.context, trackName, range.start, range.end, isCurrent)
   }
 
   /// The audio of a group ends a little after its video: the source interleaves
@@ -233,7 +285,12 @@ export class ReviewSession {
   /// the same group range; otherwise it is the range of audio groups whose
   /// capture times cover the window's. A broadcast that is not live has every
   /// group closed, so there is nothing to wait for.
-  private async awaitAudioRange(trackName: string, start: bigint, end: bigint): Promise<GroupRange | undefined> {
+  private async awaitAudioRange(
+    trackName: string,
+    start: bigint,
+    end: bigint,
+    isCurrent: () => boolean
+  ): Promise<GroupRange | undefined> {
     const { audio, groups } = this.timeline
     const fromMicros = groups.startOf(start)
     const untilMicros = groups.startAfter(end)
@@ -245,7 +302,7 @@ export class ReviewSession {
       !groups.live ||
       (byCapture ? audio.closedUntil(untilMicros) : audio.newestGroupId !== undefined && audio.newestGroupId > end)
     const deadline = performance.now() + AUDIO_GROUP_CLOSE_WAIT_MS
-    while (this.isCurrent() && !movedOn() && performance.now() < deadline) {
+    while (isCurrent() && !movedOn() && performance.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, CLOSED_GROUP_POLL_MS))
     }
     return byCapture ? audio.covering(fromMicros, untilMicros) : { start, end }
@@ -270,11 +327,15 @@ export class ReviewSession {
   /// at more than real time that wait would recur on every group from then on,
   /// so review that has played out everything fetched goes live instead. A
   /// broadcast that is not live has no group to wait for.
-  private async awaitClosedWindowEnd(start: bigint): Promise<bigint | typeof END_OF_TRACK | undefined> {
-    while (this.isCurrent()) {
+  private async awaitClosedWindowEnd(
+    start: bigint,
+    groupsAfterStart: bigint,
+    isCurrent: () => boolean
+  ): Promise<bigint | typeof END_OF_TRACK | undefined> {
+    while (isCurrent()) {
       const newestClosed = this.timeline.groups.newestClosed
       if (newestClosed && start <= newestClosed.groupId) {
-        const bounded = start + REWIND_GROUP_COUNT
+        const bounded = start + groupsAfterStart
         return bounded < newestClosed.groupId ? bounded : newestClosed.groupId
       }
       if (!this.timeline.live) {

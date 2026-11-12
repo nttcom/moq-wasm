@@ -234,6 +234,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `audioGroups` | Where the audio groups start, whether they share the video group ids, which of them cover a window |
 | `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery, the end of a VOD broadcast; `isCurrent` replaces generation counters |
 | `reviewFetch` | One bounded FETCH of a window, its stream end and failure codes |
+| `reviewGroupStore` | The single-group windows a player has fetched, kept across its reviews and shared while a fetch is under way; emptied by a video or audio track change, going live and `stop`, bounded by payload bytes |
 | `locReview` / `cmafReview` | Playing a fetched window through `ReviewPlayout` or a review `MseSink` |
 | `reviewClock` | The clock `ReviewPlayout` presents a review on: capture time onto local time from where it is anchored, the pause, the AudioContext of the review's sound, and which review's drift moves it |
 | `playbackGroup` / `groupMember` | One position for several players: where the group puts each of them (live, aligned or held) as the position moves, and the commands a player in the group hands to it |
@@ -276,6 +277,8 @@ group can span two windows.
 - Only one review runs at a time; a new seek, `goLive`, a video track change
   of a live broadcast or `stop` ends the current one, and nothing an ended
   review started may touch the picture, the playouts or the state afterwards.
+  A single-group FETCH it started for the review group store runs on, since
+  it only fills the store.
 - A broadcast whose tracks are not live has no media subscription and no
   TRACK_STATUS: everything it plays is FETCHed.
 - A review FETCH never reaches into the open live edge group.
@@ -319,6 +322,15 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
 - A review FETCHes from the closed keyframe group that contains the target,
   decodes the frames before the target without pacing and draws from the target
   on; in MSE the same amount is added to `currentTime` before playing.
+- The first window of a review is the target group alone, so the frame at the
+  target does not wait for the groups after it; the windows after it span up
+  to five groups. That first group comes from the review group store when an
+  earlier review of the player fetched it, with no FETCH.
+- A paused review is stepped rather than played. Instead of the window after
+  the target group, it fetches the two groups next to it on the side the
+  position was moving toward and leaves them in the store, so one more step
+  the same way finds its group there. The window after the target is fetched
+  once the review plays through it.
 - The range is limited to groups the publisher has closed. A range that reaches
   into an open group leaves the relay cache, is forwarded upstream and answered
   from the publisher's 60 s cache.
