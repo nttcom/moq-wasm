@@ -4,32 +4,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends pkg-config libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# The browser SDK's wasm, which the pages bundle.
-FROM chef AS wasm
-ARG WASM_PACK_VERSION=v0.15.0
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
- && rm -rf /var/lib/apt/lists/* \
- && rustup target add wasm32-unknown-unknown \
- && curl -fsSL --retry 8 --retry-all-errors --retry-delay 10 -o /tmp/wasm-pack.tar.gz \
-    "https://github.com/wasm-bindgen/wasm-pack/releases/download/${WASM_PACK_VERSION}/wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
- && tar -xzf /tmp/wasm-pack.tar.gz --strip-components=1 -C /usr/local/bin "wasm-pack-${WASM_PACK_VERSION}-x86_64-unknown-linux-musl/wasm-pack" \
- && rm /tmp/wasm-pack.tar.gz
-COPY . .
-RUN cd crates/wasm/js && wasm-pack build ../ --target web --out-name moqt --out-dir=js/pkg
-
-# The Streamer and Viewer pages, built at the root the service serves them from.
-FROM node:22.23.4-bookworm-slim@sha256:5991875dfb80938dd8a6ba3fe3e96fd04929e70792762b3319d8caadbbe229bc AS web
-WORKDIR /workspace
-COPY package.json package-lock.json ./
-COPY crates/wasm/js/package.json crates/wasm/js/
-COPY examples/browser/package.json examples/browser/
-RUN npm ci
-COPY crates/wasm/js crates/wasm/js
-COPY --from=wasm /workspace/crates/wasm/js/pkg crates/wasm/js/pkg
-COPY examples/browser examples/browser
-RUN cd examples/browser && npx vite build --base=/
-
 FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
@@ -46,9 +20,6 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 65532 nonroot
 COPY --from=builder /workspace/target/release/live-translate /usr/local/bin/
-COPY --from=web /workspace/examples/browser/dist/examples/live-translate /srv/live-translate/examples/live-translate
-COPY --from=web /workspace/examples/browser/dist/assets /srv/live-translate/assets
-ENV LIVE_TRANSLATE_STATIC_DIR=/srv/live-translate
 EXPOSE 8080
 USER nonroot
 CMD ["/usr/local/bin/live-translate"]

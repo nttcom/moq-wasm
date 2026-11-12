@@ -7,8 +7,8 @@ module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
 
-`static-files` serves the built files of a web page from a directory for the
-services that ship their page in their image: `console` and `live-translate`.
+`static-files` serves the built files of a web page from a directory for a
+service that ships its page in its image: `console`.
 `StaticFiles::get` maps a URI path to a file under the root and reads it whole.
 
 ## Invariants

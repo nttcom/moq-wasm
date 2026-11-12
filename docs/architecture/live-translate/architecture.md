@@ -41,25 +41,17 @@ connection with a policy violation (the API disabled, the account refused), or
 quick failures in a row have backed off all the way to 30 s. Reconnecting
 cannot mend either, and a viewer waiting on it would otherwise wait forever.
 
-With `PORT` set the process also serves HTTP (`page_server.rs`): the built
-Streamer and Viewer pages from `LIVE_TRANSLATE_STATIC_DIR` (through the
-`static-files` crate), `GET /token?id&role` for a page's token to publish
-(streamer) or subscribe (viewer) its one broadcast of the served app, with the
-namespace and the relay URL (`LIVE_TRANSLATE_PUBLIC_RELAY_URL`) to use and the
-open hours with whether they are open now, so the pages say the translation is
-closed before a viewer picks a language, and
-`GET /events`, a server-sent event stream that only sends a comment every 15 s.
-A page holds `/events` while it is in use: a Cloud Run instance lives while a
-request is in flight, so that stream is what keeps the translator running
-between the pages' other requests, and lets the service scale to zero when
-every page is closed. Outside the open hours the stream ends at its next
-heartbeat and a new one gets 204, which stops an `EventSource` from
-reconnecting, so a tab left open does not keep the instance up past closing
-time. The service does not identify its callers: anyone who
-reaches it gets a token and may publish or watch any broadcast id. The ids are
-random, so the service does not tie an id to the page that first used it. What
-a caller can make the translation cost is bounded instead, by the limits above
-and by the deployment's limit on what the Gemini API may be billed.
+With `PORT` set the process also serves the requests of the streamers' pages
+(`session_server.rs`): `POST /sessions`, below, and `GET /events`, a
+server-sent event stream that only sends a comment every 15 s. A streamer's
+page holds `/events` while it broadcasts: a Cloud Run instance lives while a
+request is in flight, so that stream is what keeps the translator running, and
+lets the service scale to zero when every page is closed. Outside the open
+hours the stream ends at its next heartbeat and a new one gets 204, which
+stops an `EventSource` from reconnecting, so a tab left open does not keep the
+instance up past closing time. The service does not identify its callers.
+What a caller can make the translation cost is bounded instead, by the limits
+above and by the deployment's limit on what the Gemini API may be billed.
 The server listens before the relay is dialed, so the port is open as soon as
 the container is.
 
@@ -67,8 +59,9 @@ the container is.
 serve a temporary app (`services/token-mint`), the namespace root the
 examples run under (`temporary_apps.rs`). An app is reached only with its own
 tokens, so the streamer's page hands one over and the translator opens a
-relay session of its own with it, watching `{appId}/live-translate` as it
-watches the root it was started with. Nobody renews the token: the relay
+relay session of its own with it, watching `{appId}/live-translate` as the
+process watches the public `anon/live-translate` by itself. With
+`--temporary-apps-only`, as deployed, it watches no public root. Nobody renews the token: the relay
 closes the session when it expires, an hour after it was signed at most,
 which ends the app's translation. A request for an app already served starts
 it over with the new token. At most `--max-apps` apps (5) are served at once;
@@ -79,7 +72,7 @@ another one.
 ## Runtime flow
 
 ```
-PageServer                   one http_server::HttpServer; pages, /token, /events, /sessions, /healthz
+SessionServer                one http_server::HttpServer; /sessions, /events, /healthz
  └─ TemporaryApps            POST /sessions: one AppTranslation task per temporary app,
                              each running a RootTranslation of its own
 RootTranslation              one relay session; the only reader of Session::receive_event
@@ -141,12 +134,9 @@ difference between the actual and the estimated delay.
   broadcasts of every root, so the Gemini cost has a ceiling; a SUBSCRIBE beyond that is
   rejected at once rather than left waiting on a connection the project's
   quota, set to the same number, would refuse.
-- The root is the served app's id (`LIVE_TRANSLATE_APP_ID`), under which the
-  relay admits only tokens signed with the app's secret: the translator signs
-  its own (`app_access.rs`, publish and subscribe the whole app) and presents it
-  through the session's token provider, so a reconnect gets a fresh one.
-  Without an app the root is the public `anon/live-translate`, which needs no
-  token; that is how the e2e suites and local development run.
+- The translator holds no secret of the relay's: the public root needs no
+  token, and a temporary app is reached with the token its streamer hands
+  over.
 - Translated timestamps never decrease, so group ids never decrease.
 
 ## Testing conventions

@@ -1,4 +1,3 @@
-mod app_access;
 mod broadcast_namespace;
 mod broadcast_translation;
 mod catalog_publication;
@@ -7,9 +6,9 @@ mod gemini;
 mod language_translation;
 mod open_hours;
 mod opus_codec;
-mod page_server;
 mod pcm_framer;
 mod root_translation;
+mod session_server;
 mod source_audio;
 mod source_catalog;
 mod target_language;
@@ -19,23 +18,21 @@ mod translated_catalog;
 mod translation_engine;
 mod translation_policy;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{future::pending, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use metadata_token::MetadataToken;
-use moqt::{AuthorizationTokenSource, CertificateVerification, ClientConfig};
-use static_files::StaticFiles;
+use moqt::{CertificateVerification, ClientConfig};
 use tokio::{net::TcpListener, sync::Semaphore};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{
-    app_access::AppAccess,
     broadcast_namespace::BroadcastNamespaces,
     gemini::{AgentPlatform, GeminiCredentials},
     open_hours::OpenHours,
-    page_server::{PageServer, PageServerState},
     root_translation::{RootTranslation, TranslationResources},
+    session_server::{SessionServer, SessionServerState},
     target_language::find_by_code,
     temporary_apps::TemporaryApps,
     translation_engine::TranslationEngine,
@@ -57,41 +54,18 @@ struct Args {
 
     #[arg(
         long,
-        env = "LIVE_TRANSLATE_APP_ID",
-        requires = "app_secret",
-        help = "The relay app the broadcasts live under; without it they are read from the public anon/live-translate"
-    )]
-    app_id: Option<String>,
-
-    #[arg(
-        long,
-        env = "LIVE_TRANSLATE_APP_SECRET",
-        hide_env_values = true,
-        requires = "app_id",
-        help = "The app's secret, which signs the translator's and the pages' relay tokens"
-    )]
-    app_secret: Option<String>,
-
-    #[arg(
-        long,
         env = "PORT",
-        help = "Serve the pages, their relay tokens and the keep-alive stream on this port; without it only the relay is served"
+        help = "Serve the requests of the streamers' pages on this port: a temporary app to translate, and the stream that keeps the instance running"
     )]
     http_port: Option<u16>,
 
     #[arg(
         long,
-        env = "LIVE_TRANSLATE_STATIC_DIR",
-        help = "The built pages to serve, with examples/live-translate/{streamer,viewer}/index.html and assets/ under it"
+        env = "LIVE_TRANSLATE_TEMPORARY_APPS_ONLY",
+        requires = "http_port",
+        help = "Translate only the temporary apps the pages ask for, not the public anon/live-translate"
     )]
-    static_dir: Option<PathBuf>,
-
-    #[arg(
-        long,
-        env = "LIVE_TRANSLATE_PUBLIC_RELAY_URL",
-        help = "The relay URL the pages connect to; defaults to --relay"
-    )]
-    public_relay_url: Option<String>,
+    temporary_apps_only: bool,
 
     #[arg(
         long,
@@ -177,7 +151,6 @@ async fn main() -> Result<()> {
             find_by_code(code).with_context(|| format!("--always-on: unknown language {code}"))
         })
         .collect::<Result<Vec<_>>>()?;
-    let app = app_access(&args);
     let policy = Arc::new(TranslationPolicy {
         open_hours: args.open_hours.clone(),
         language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
@@ -188,23 +161,15 @@ async fn main() -> Result<()> {
         capacity: Arc::new(Semaphore::new(args.max_sessions)),
         policy: policy.clone(),
     };
-    let namespaces = BroadcastNamespaces::new(
-        app.as_ref()
-            .map(|app| app.app_id.clone())
-            .unwrap_or_else(|| BroadcastNamespaces::PUBLIC_ROOT.to_string()),
-    );
-    let _page_server = match args.http_port {
+    let _session_server = match args.http_port {
         Some(port) => {
             let listener = TcpListener::bind(("0.0.0.0", port))
                 .await
                 .with_context(|| format!("listen on port {port}"))?;
-            tracing::info!(port, "serving the pages");
-            Some(PageServer::run(
+            tracing::info!(port, "serving the pages' requests");
+            Some(SessionServer::run(
                 listener,
-                PageServerState {
-                    static_files: args.static_dir.clone().map(StaticFiles::new),
-                    app: app.clone(),
-                    namespaces: namespaces.clone(),
+                SessionServerState {
                     policy: policy.clone(),
                     temporary_apps: TemporaryApps::new(
                         args.relay.clone(),
@@ -212,39 +177,25 @@ async fn main() -> Result<()> {
                         resources.clone(),
                         args.max_apps,
                     ),
-                    public_relay_url: args
-                        .public_relay_url
-                        .clone()
-                        .filter(|url| !url.is_empty())
-                        .unwrap_or_else(|| args.relay.clone()),
                 },
             ))
         }
         None => None,
     };
+    if args.temporary_apps_only {
+        tracing::info!("waiting for temporary apps");
+        return pending().await;
+    }
     let config = ClientConfig {
         port: 0,
         certificate_verification: CertificateVerification::native_roots_or_disabled(!args.insecure),
-        authorization_token: app.as_ref().map(|app| {
-            let app = app.clone();
-            AuthorizationTokenSource::provider(move || {
-                let app = app.clone();
-                async move { app.translator_token() }
-            })
-        }),
         ..ClientConfig::default()
     };
+    let namespaces = BroadcastNamespaces::new(BroadcastNamespaces::PUBLIC_ROOT.to_string());
     RootTranslation::connect(&args.relay, &config, namespaces, resources)
         .await?
         .route_events(None)
         .await
-}
-
-fn app_access(args: &Args) -> Option<Arc<AppAccess>> {
-    args.app_id
-        .clone()
-        .zip(args.app_secret.clone())
-        .map(|(app_id, secret)| Arc::new(AppAccess::new(app_id, secret)))
 }
 
 fn translation_engine(args: &Args) -> Result<TranslationEngine> {

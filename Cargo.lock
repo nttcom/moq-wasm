@@ -1782,7 +1782,6 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
- "static-files",
  "tokio",
  "tokio-tungstenite",
  "tracing",
