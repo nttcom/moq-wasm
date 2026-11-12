@@ -6,7 +6,10 @@ const log = (...args: unknown[]) => console.log('[pub][camera]', ...args)
 
 const VIDEO_ENCODING = {
   codec: 'avc3.640028', // H.264 High Profile Level 4.0 (in-band SPS/PPS; encoder emits annex-b)
-  hardwareAcceleration: 'prefer-hardware' as const
+  hardwareAcceleration: 'prefer-hardware' as const,
+  // The monitor steps back through the recent past a group at a time, so the
+  // groups stay a second long instead of the SDK's 30 seconds.
+  keyframeIntervalSeconds: 1
 }
 const MAIN_VIDEO = { width: 1280, height: 720, bitrate: 1_000_000, framerate: 30 }
 
