@@ -8,7 +8,7 @@ import { TransportControls } from './TransportControls'
 import { RelayUrlField } from './RelayUrlField'
 import { Button } from '../../../../lib/ui/button'
 import { CameraPlayers } from '../monitor/cameraPlayers'
-import { useUrlSync } from '../hooks/useUrlSync'
+import { pageHref, useUrlSync } from '../hooks/useUrlSync'
 
 interface Props {
   location: string
@@ -147,7 +147,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown)
   })
 
-  const publisherHref = `?mode=publisher&location=${encodeURIComponent(location)}&relay=${encodeURIComponent(relayUrl)}`
+  const publisherHref = pageHref({ mode: 'publisher', location, relay: relayUrl })
 
   return (
     <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 p-4 gap-4">
