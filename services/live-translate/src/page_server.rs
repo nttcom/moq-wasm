@@ -10,9 +10,12 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
 use http_server::HttpServer;
 use hyper::{
-    Method, Request, Response, StatusCode,
+    HeaderMap, Method, Request, Response, StatusCode,
     body::{Body, Frame, Incoming},
-    header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue, LOCATION},
+    header::{
+        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+        AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderValue, LOCATION,
+    },
 };
 use serde_json::json;
 use static_files::StaticFiles;
@@ -20,7 +23,9 @@ use tokio::{net::TcpListener, time::Interval};
 use tracing::Instrument;
 
 use crate::{
-    app_access::AppAccess, broadcast_namespace::BroadcastNamespaces,
+    app_access::AppAccess,
+    broadcast_namespace::BroadcastNamespaces,
+    temporary_apps::{Refusal, TemporaryApps},
     translation_policy::TranslationPolicy,
 };
 
@@ -41,6 +46,7 @@ pub(crate) struct PageServerState {
     pub(crate) app: Option<Arc<AppAccess>>,
     pub(crate) namespaces: BroadcastNamespaces,
     pub(crate) policy: Arc<TranslationPolicy>,
+    pub(crate) temporary_apps: TemporaryApps,
     /// The relay URL the pages connect to, which may differ from the
     /// translator's own.
     pub(crate) public_relay_url: String,
@@ -72,6 +78,8 @@ async fn handle(request: Request<Incoming>, state: Arc<PageServerState>) -> Page
             (&Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
             (&Method::GET, "/token") => issue_token(&state, head.uri.query()),
             (&Method::GET, "/events") => events(&state),
+            (&Method::POST, "/sessions") => start_session(&state, &head.headers).await,
+            (&Method::OPTIONS, "/sessions") => empty_response(StatusCode::NO_CONTENT),
             (&Method::GET, "/") => redirect(STREAMER_PAGE),
             (&Method::GET, path) => static_file(&state, path).await,
             _ => error_response(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed"),
@@ -80,6 +88,56 @@ async fn handle(request: Request<Incoming>, state: Arc<PageServerState>) -> Page
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
+    with_cors(response)
+}
+
+/// The pages are served from another origin once they use a temporary app, so
+/// every response allows any origin, as the token mint's do.
+fn with_cors(mut response: PageResponse) -> PageResponse {
+    let headers = response.headers_mut();
+    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
+    headers.insert(
+        ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("authorization"),
+    );
+    response
+}
+
+async fn start_session(state: &PageServerState, headers: &HeaderMap) -> PageResponse {
+    let Some(token) = headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+    else {
+        return error_response(StatusCode::UNAUTHORIZED, "missing_token");
+    };
+    match state.temporary_apps.start(token).await {
+        Ok(()) => json_response(
+            StatusCode::OK,
+            json!({
+                "openHours": state.policy.open_hours.as_ref().map(ToString::to_string),
+                "open": state.policy.is_open(),
+            }),
+        ),
+        Err(Refusal::NotATemporaryAppToken) => {
+            error_response(StatusCode::FORBIDDEN, "not_a_temporary_app_token")
+        }
+        Err(Refusal::Expired) => error_response(StatusCode::UNAUTHORIZED, "expired_token"),
+        Err(Refusal::Full) => error_response(StatusCode::SERVICE_UNAVAILABLE, "full"),
+        Err(Refusal::Relay(error)) => {
+            tracing::warn!(?error, "connect to the relay for a temporary app");
+            error_response(StatusCode::BAD_GATEWAY, "relay_refused")
+        }
+    }
+}
+
+fn empty_response(status: StatusCode) -> PageResponse {
+    let mut response = Response::new(Full::default().boxed());
+    *response.status_mut() = status;
     response
 }
 
@@ -166,9 +224,7 @@ fn is_broadcast_id(id: &str) -> bool {
 /// instance stop.
 fn events(state: &PageServerState) -> PageResponse {
     if !state.policy.is_open() {
-        let mut response = Response::new(Full::default().boxed());
-        *response.status_mut() = StatusCode::NO_CONTENT;
-        return response;
+        return empty_response(StatusCode::NO_CONTENT);
     }
     let mut response = Response::new(Heartbeat::new(state.policy.clone()).boxed());
     let headers = response.headers_mut();
@@ -249,23 +305,38 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use auth_token::{decode_unverified_payload, verify_signature};
+    use tokio::sync::Semaphore;
+
+    use crate::{root_translation::TranslationResources, translation_engine::TranslationEngine};
 
     use super::*;
 
     async fn serve(app: Option<Arc<AppAccess>>, open_hours: Option<&str>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let policy = Arc::new(TranslationPolicy {
+            open_hours: open_hours.map(|text| text.parse().unwrap()),
+            language_time_limit: Duration::from_secs(3600),
+            always_on: Vec::new(),
+        });
         let server = PageServer::run(
             listener,
             PageServerState {
                 static_files: None,
                 app,
                 namespaces: BroadcastNamespaces::new("app-1".to_string()),
-                policy: Arc::new(TranslationPolicy {
-                    open_hours: open_hours.map(|text| text.parse().unwrap()),
-                    language_time_limit: Duration::from_secs(3600),
-                    always_on: Vec::new(),
-                }),
+                policy: policy.clone(),
+                // No place for an app, so no test dials the relay.
+                temporary_apps: TemporaryApps::new(
+                    "moqt://relay.example:443".to_string(),
+                    false,
+                    TranslationResources {
+                        engine: TranslationEngine::Echo,
+                        capacity: Arc::new(Semaphore::new(1)),
+                        policy,
+                    },
+                    0,
+                ),
                 public_relay_url: "https://relay.example:443".to_string(),
             },
         );
@@ -283,6 +354,13 @@ mod tests {
         // 1970-01-01 was a Thursday, so indexing from Sunday names the weekday three days ahead.
         let weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(days % 7) as usize];
         format!("{weekday}-{weekday} 00:00-23:59 +00:00")
+    }
+
+    /// A token of `app_id` good for an hour.
+    fn app_token(app_id: &str, secret: &str) -> String {
+        AppAccess::new(app_id.to_string(), secret.to_string())
+            .translator_token()
+            .unwrap()
     }
 
     fn app() -> Arc<AppAccess> {
@@ -396,6 +474,78 @@ mod tests {
 
         // Assert
         assert!(frame.is_none());
+    }
+
+    async fn post_session(port: u16, token: Option<&str>) -> reqwest::Response {
+        let request = reqwest::Client::new().post(format!("http://127.0.0.1:{port}/sessions"));
+        match token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        }
+        .send()
+        .await
+        .unwrap()
+    }
+
+    fn token_of(app_id: &str) -> String {
+        app_token(app_id, "s3cret")
+    }
+
+    #[tokio::test]
+    async fn a_session_request_without_a_token_is_unauthorized_for_any_origin() {
+        // Arrange
+        let port = serve(None, None).await;
+
+        // Act
+        let response = post_session(port, None).await;
+
+        // Assert
+        assert_eq!(response.status(), 401);
+        assert_eq!(response.headers()[ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+    }
+
+    #[tokio::test]
+    async fn a_session_request_with_a_registered_app_token_is_forbidden() {
+        // Arrange
+        let port = serve(None, None).await;
+
+        // Act
+        let response = post_session(port, Some(&token_of("app-1"))).await;
+
+        // Assert
+        assert_eq!(response.status(), 403);
+    }
+
+    #[tokio::test]
+    async fn a_session_request_beyond_the_app_limit_is_unavailable() {
+        // Arrange: the server translates no app at once
+        let port = serve(None, None).await;
+
+        // Act
+        let response = post_session(port, Some(&token_of("temp-3f9a"))).await;
+
+        // Assert
+        assert_eq!(response.status(), 503);
+    }
+
+    #[tokio::test]
+    async fn a_preflight_allows_the_authorization_header() {
+        // Arrange
+        let port = serve(None, None).await;
+
+        // Act
+        let response = reqwest::Client::new()
+            .request(Method::OPTIONS, format!("http://127.0.0.1:{port}/sessions"))
+            .send()
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(response.status(), 204);
+        assert_eq!(
+            response.headers()[ACCESS_CONTROL_ALLOW_HEADERS],
+            "authorization"
+        );
     }
 
     #[test]

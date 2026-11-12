@@ -9,24 +9,22 @@ mod open_hours;
 mod opus_codec;
 mod page_server;
 mod pcm_framer;
+mod root_translation;
 mod source_audio;
 mod source_catalog;
 mod target_language;
+mod temporary_apps;
 mod translated_audio;
 mod translated_catalog;
 mod translation_engine;
 mod translation_policy;
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use metadata_token::MetadataToken;
-use moqt::{
-    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, QUIC,
-    RequestErrorCode, Session, SessionEvent, namespace::NamespaceInterest,
-    subscribe::SubscribeHandler,
-};
+use moqt::{AuthorizationTokenSource, CertificateVerification, ClientConfig};
 use static_files::StaticFiles;
 use tokio::{net::TcpListener, sync::Semaphore};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};
@@ -34,11 +32,12 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use crate::{
     app_access::AppAccess,
     broadcast_namespace::BroadcastNamespaces,
-    broadcast_translation::BroadcastTranslation,
     gemini::{AgentPlatform, GeminiCredentials},
     open_hours::OpenHours,
     page_server::{PageServer, PageServerState},
+    root_translation::{RootTranslation, TranslationResources},
     target_language::find_by_code,
+    temporary_apps::TemporaryApps,
     translation_engine::TranslationEngine,
     translation_policy::TranslationPolicy,
 };
@@ -128,6 +127,14 @@ struct Args {
 
     #[arg(
         long,
+        env = "LIVE_TRANSLATE_MAX_APPS",
+        default_value_t = 5,
+        help = "Temporary apps translated at once, each over a relay session of its own"
+    )]
+    max_apps: usize,
+
+    #[arg(
+        long,
         env = "LIVE_TRANSLATE_OPEN_HOURS",
         help = "Translate only inside these weekly hours, like 'Mon-Fri 09:00-17:30 +09:00'; always when unset"
     )]
@@ -149,15 +156,6 @@ struct Args {
         help = "Languages translated for the whole broadcast whether or not anyone listens, like 'en,es', so their first viewer hears them at once; each costs a Gemini session"
     )]
     always_on: Vec<String>,
-}
-
-struct Router {
-    session: Arc<Session>,
-    namespaces: BroadcastNamespaces,
-    engine: TranslationEngine,
-    capacity: Arc<Semaphore>,
-    policy: Arc<TranslationPolicy>,
-    broadcasts: HashMap<String, BroadcastTranslation>,
 }
 
 #[tokio::main]
@@ -185,6 +183,11 @@ async fn main() -> Result<()> {
         language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
         always_on,
     });
+    let resources = TranslationResources {
+        engine,
+        capacity: Arc::new(Semaphore::new(args.max_sessions)),
+        policy: policy.clone(),
+    };
     let namespaces = BroadcastNamespaces::new(
         app.as_ref()
             .map(|app| app.app_id.clone())
@@ -203,6 +206,12 @@ async fn main() -> Result<()> {
                     app: app.clone(),
                     namespaces: namespaces.clone(),
                     policy: policy.clone(),
+                    temporary_apps: TemporaryApps::new(
+                        args.relay.clone(),
+                        args.insecure,
+                        resources.clone(),
+                        args.max_apps,
+                    ),
                     public_relay_url: args
                         .public_relay_url
                         .clone()
@@ -225,27 +234,10 @@ async fn main() -> Result<()> {
         }),
         ..ClientConfig::default()
     };
-    let endpoint = Endpoint::<QUIC>::create_client(&config)?;
-    let session = Arc::new(endpoint.connect(&args.relay).await?.await?);
-    tracing::info!(relay = %args.relay, "connected to relay");
-    session
-        .subscriber()
-        .subscribe_namespace(namespaces.root().to_string(), NamespaceInterest::Namespaces)
+    RootTranslation::connect(&args.relay, &config, namespaces, resources)
+        .await?
+        .route_events(None)
         .await
-        .context("subscribe to the broadcasts' namespace")?;
-    tracing::info!(
-        track_namespace_prefix = namespaces.root(),
-        "waiting for broadcasts"
-    );
-    let mut router = Router {
-        session,
-        namespaces,
-        engine,
-        capacity: Arc::new(Semaphore::new(args.max_sessions)),
-        policy,
-        broadcasts: HashMap::new(),
-    };
-    router.route_events().await
 }
 
 fn app_access(args: &Args) -> Option<Arc<AppAccess>> {
@@ -287,76 +279,4 @@ fn translation_engine(args: &Args) -> Result<TranslationEngine> {
     Ok(TranslationEngine::Gemini {
         platform: Arc::new(platform),
     })
-}
-
-impl Router {
-    async fn route_events(&mut self) -> Result<()> {
-        loop {
-            match self.session.receive_event().await? {
-                SessionEvent::PublishNamespace(handler) => {
-                    let namespace = handler.track_namespace.clone();
-                    if let Err(error) = handler.ok().await {
-                        tracing::warn!(%namespace, ?error, "answer PUBLISH_NAMESPACE");
-                    }
-                    self.start_broadcast(namespace);
-                }
-                SessionEvent::PublishNamespaceDone(handler) => {
-                    self.stop_broadcast(handler.track_namespace());
-                }
-                SessionEvent::Subscribe(handler) => self.route_subscribe(handler).await,
-                SessionEvent::Unsubscribe(handler) => {
-                    for broadcast in self.broadcasts.values() {
-                        broadcast.unsubscribe(handler.subscribe_id());
-                    }
-                }
-                SessionEvent::Disconnected() => bail!("relay closed the session"),
-                SessionEvent::ProtocolViolation() => bail!("relay reported a protocol violation"),
-                _ => {}
-            }
-        }
-    }
-
-    fn start_broadcast(&mut self, namespace: String) {
-        if !self.namespaces.is_broadcast(&namespace) || self.broadcasts.contains_key(&namespace) {
-            return;
-        }
-        tracing::info!(%namespace, "broadcast started");
-        let broadcast = BroadcastTranslation::run(
-            self.session.clone(),
-            self.engine.clone(),
-            self.capacity.clone(),
-            self.policy.clone(),
-            namespace.clone(),
-        );
-        self.broadcasts.insert(namespace, broadcast);
-    }
-
-    fn stop_broadcast(&mut self, namespace: &str) {
-        if self.broadcasts.remove(namespace).is_some() {
-            tracing::info!(%namespace, "broadcast ended");
-        }
-    }
-
-    async fn route_subscribe(&mut self, handler: SubscribeHandler) {
-        let target = self
-            .namespaces
-            .broadcast_of_translated(&handler.track_namespace)
-            .filter(|namespace| self.broadcasts.contains_key(*namespace))
-            .map(str::to_string);
-        let Some(namespace) = target else {
-            if let Err(error) = handler
-                .error(
-                    RequestErrorCode::TrackDoesNotExist,
-                    "not a translated namespace".to_string(),
-                )
-                .await
-            {
-                tracing::warn!(?error, "send SUBSCRIBE_ERROR");
-            }
-            return;
-        };
-        if let Some(broadcast) = self.broadcasts.get(&namespace) {
-            broadcast.subscribe(handler);
-        }
-    }
 }
