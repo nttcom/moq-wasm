@@ -566,7 +566,13 @@ fn decode_subscribe(buf: &mut Bytes, allowed: &[u64]) -> Result<Subscribe, Decod
             Parameter::ObjectDeliveryTimeout(timeout) => subscribe.delivery_timeout = Some(timeout),
             Parameter::NewGroupRequest(group) => subscribe.new_group_request = Some(group),
             Parameter::TraceContext(trace_context) => subscribe.trace_context = trace_context,
-            _ => {}
+            // Allowed in SUBSCRIBE and not acted on.
+            Parameter::SubgroupDeliveryTimeout(_) | Parameter::RendezvousTimeout(_) => {}
+            // `get_parameters` refused these: no caller's `allowed` lists them.
+            Parameter::Expires(_)
+            | Parameter::LargestObject(_)
+            | Parameter::FillTimeout(_)
+            | Parameter::TrackNamespacePrefix(_) => {}
         }
     }
     Ok(subscribe)
@@ -801,7 +807,16 @@ fn decode_fetch(buf: &mut Bytes) -> Result<Fetch, DecodeError> {
             Parameter::AuthorizationToken(token) => fetch.authorization_tokens.push(token),
             Parameter::FillTimeout(milliseconds) => fetch.fill_timeout = Some(milliseconds),
             Parameter::TraceContext(trace_context) => fetch.trace_context = trace_context,
-            _ => {}
+            // `get_parameters` refused these: `FETCH_PARAMETERS` does not list them.
+            Parameter::ObjectDeliveryTimeout(_)
+            | Parameter::RendezvousTimeout(_)
+            | Parameter::SubgroupDeliveryTimeout(_)
+            | Parameter::Expires(_)
+            | Parameter::LargestObject(_)
+            | Parameter::Forward(_)
+            | Parameter::SubscriptionFilter(_)
+            | Parameter::NewGroupRequest(_)
+            | Parameter::TrackNamespacePrefix(_) => {}
         }
     }
     Ok(fetch)
@@ -1029,7 +1044,18 @@ impl RequestOkMessage {
                 Parameter::ObjectDeliveryTimeout(timeout) => {
                     publish_ok.delivery_timeout = Some(timeout)
                 }
-                _ => {}
+                // `REQUEST_OK_PARAMETERS` lists these and they are not acted on.
+                Parameter::SubgroupDeliveryTimeout(_)
+                | Parameter::Expires(_)
+                | Parameter::LargestObject(_)
+                | Parameter::NewGroupRequest(_) => {}
+                // `get_parameters` refused these: `REQUEST_OK_PARAMETERS`
+                // does not list them.
+                Parameter::AuthorizationToken(_)
+                | Parameter::RendezvousTimeout(_)
+                | Parameter::FillTimeout(_)
+                | Parameter::TrackNamespacePrefix(_)
+                | Parameter::TraceContext(_) => {}
             }
         }
         publish_ok

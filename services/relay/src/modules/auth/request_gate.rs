@@ -38,13 +38,26 @@ pub(crate) fn requested_access(event: &MoqtSessionEvent) -> Option<(Operation, V
             } => Some((Operation::Subscribe, track_namespace)),
             FetchParams::RelativeJoining { .. } | FetchParams::AbsoluteJoining { .. } => None,
         },
-        MoqtSessionEvent::TrackStatus(handler) if handler.authorization_tokens().is_empty() => {
-            Some((
-                Operation::Subscribe,
-                handler.track_namespace_tuple().to_vec(),
-            ))
+        // With a token it refreshes the session's token and reads no track.
+        MoqtSessionEvent::TrackStatus(handler) => {
+            handler.authorization_tokens().is_empty().then(|| {
+                (
+                    Operation::Subscribe,
+                    handler.track_namespace_tuple().to_vec(),
+                )
+            })
         }
-        _ => None,
+        // These are only logged, or act on what is registered under their own session.
+        MoqtSessionEvent::GoAway(_)
+        | MoqtSessionEvent::PublishNamespaceCancel(_)
+        | MoqtSessionEvent::UnsubscribeNamespace(_)
+        | MoqtSessionEvent::PublishBlocked(_)
+        | MoqtSessionEvent::PublishDone(_)
+        | MoqtSessionEvent::SubscribeUpdate(_)
+        | MoqtSessionEvent::Unsubscribe(_)
+        | MoqtSessionEvent::FetchCancel(_)
+        | MoqtSessionEvent::Disconnected()
+        | MoqtSessionEvent::ProtocolViolation() => None,
     }
 }
 
@@ -98,7 +111,21 @@ pub(crate) async fn reject_unauthorized(event: MoqtSessionEvent, denied: Denied)
         MoqtSessionEvent::TrackStatus(handler) => {
             handler.error(RequestErrorCode::Unauthorized, reason).await
         }
-        _ => unreachable!("only events with a requested_access are rejected"),
+        MoqtSessionEvent::PublishNamespaceDone(_)
+        | MoqtSessionEvent::GoAway(_)
+        | MoqtSessionEvent::PublishNamespaceCancel(_)
+        | MoqtSessionEvent::UnsubscribeNamespace(_)
+        | MoqtSessionEvent::PublishBlocked(_)
+        | MoqtSessionEvent::PublishDone(_)
+        | MoqtSessionEvent::SubscribeUpdate(_)
+        | MoqtSessionEvent::Unsubscribe(_)
+        | MoqtSessionEvent::FetchCancel(_)
+        | MoqtSessionEvent::Disconnected()
+        | MoqtSessionEvent::ProtocolViolation() => {
+            unreachable!(
+                "PUBLISH_NAMESPACE_DONE returned above; the others have no requested_access"
+            )
+        }
     };
     if let Err(error) = sent {
         tracing::warn!(%error, "failed to send UNAUTHORIZED error");
