@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from functools import partial
 
 import aiohttp
-import moqt
+import moq_wasm
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import BotRoom
@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def follow_prompts(session: moqt.Session, viewer_namespace: list[str], latest_target: LatestTarget):
+async def follow_prompts(session: moq_wasm.Session, viewer_namespace: list[str], latest_target: LatestTarget):
     while True:
         try:
             async for prompt_object in await session.subscribe(viewer_namespace, PROMPT_TRACK):
@@ -120,7 +120,7 @@ async def follow_prompts(session: moqt.Session, viewer_namespace: list[str], lat
 
 
 async def forward_video(
-    session: moqt.Session,
+    session: moq_wasm.Session,
     camera_namespace: list[str],
     video_track: str,
     latest_target: LatestTarget,
@@ -158,7 +158,7 @@ async def forward_video(
 
 
 async def forward_camera(
-    session: moqt.Session, camera_namespace: list[str], latest_target: LatestTarget, worker: PipelineWorker
+    session: moq_wasm.Session, camera_namespace: list[str], latest_target: LatestTarget, worker: PipelineWorker
 ):
     """Subscribes to the camera only while a target is set, because onvif-ingest streams the profile
     its first subscriber picks and rejects the others."""
@@ -179,7 +179,7 @@ async def forward_camera(
 
 
 async def track_in_session(
-    session: moqt.Session,
+    session: moq_wasm.Session,
     namespaces: RoomNamespaces,
     timeline: EventTimeline,
     status: SystemOneStatus,
@@ -195,9 +195,9 @@ async def track_in_session(
         (namespaces.tracker, STATUS_TRACK, status),
         (namespaces.command, COMMAND_TRACK, commands),
     ):
-        await publisher.publish_on(await session.track(namespace, track_name, retention_seconds=RETENTION_SECONDS))
-    await session.publish_namespace(namespaces.tracker)
-    await session.publish_namespace(namespaces.command)
+        await publisher.publish_on(await session.publish_track(namespace, track_name, retention_seconds=RETENTION_SECONDS))
+    await session.announce(namespaces.tracker)
+    await session.announce(namespaces.command)
     forwarding = asyncio.create_task(
         while_published(
             session, namespaces.camera, partial(forward_camera, session, namespaces.camera, latest_target, worker)

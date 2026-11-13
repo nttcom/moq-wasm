@@ -8,7 +8,7 @@ dependencies = [
     "av>=14",
     "moq-bot-rooms",
     "faster-whisper~=1.2.1",
-    "moqt",
+    "moq-wasm",
     "pipecat-ai[silero]>=1.12",
     "torch>=2.11",
     "torchaudio>=2.11",
@@ -25,7 +25,7 @@ override-dependencies = ["pillow>=13"]
 
 [tool.uv.sources]
 moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
-moqt = { path = "../../../crates/python" }
+moq-wasm = { path = "../../../crates/python" }
 # PyPI's Linux torch carries the CUDA libraries, several GB that a bot on the CPU never loads.
 torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
 torchaudio = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }

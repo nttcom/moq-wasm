@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-import moqt
+import moq_wasm
 from loguru import logger
 from moq_bot_rooms.app_token import while_fresh
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
@@ -42,7 +42,7 @@ class Room:
         session ends. Raises once the room's token cannot be kept fresh."""
         while True:
             try:
-                session = await moqt.connect(
+                session = await moq_wasm.connect(
                     self._relay_url, verify_certificate=self._verify_certificate, token=self._room.relay_token
                 )
             except RuntimeError as error:
@@ -58,18 +58,18 @@ class Room:
             logger.warning(f"room {self._room.key}: relay session closed")
             await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
-    async def _transcribe(self, session: moqt.Session) -> bool:
+    async def _transcribe(self, session: moq_wasm.Session) -> bool:
         """True once the room has had no participant for the grace period; False when the relay session closed."""
         bot_namespace = [*room_namespace(self._room), *BOT_NAMESPACE]
         # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
-        publication = await session.track(bot_namespace, TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
+        publication = await session.publish_track(bot_namespace, TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
         timeline = TranscriptTimeline(publication)
         await timeline.open()
-        status_publication = await session.track(
+        status_publication = await session.publish_track(
             bot_namespace, status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS
         )
         await status.write_status(status_publication, self._recognizer.name, status.STARTING)
-        await session.publish_namespace(bot_namespace)
+        await session.announce(bot_namespace)
         following = asyncio.create_task(self._follow_participants(session, timeline, status_publication))
         # The binding's methods return futures, not coroutines.
         closed = asyncio.ensure_future(session.closed())
@@ -85,7 +85,7 @@ class Room:
                 task.cancel()
 
     async def _follow_participants(
-        self, session: moqt.Session, timeline: TranscriptTimeline, status_publication: Publication
+        self, session: moq_wasm.Session, timeline: TranscriptTimeline, status_publication: Publication
     ) -> None:
         # Audio is subscribed only once the recognizer answers, so a GPU service starting from zero
         # does not receive every utterance of its startup minutes at once.
@@ -103,7 +103,7 @@ class Room:
         participants: dict[str, asyncio.Task] = {}
         loop = asyncio.get_running_loop()
         empty_until = loop.time() + GRACE_SECONDS
-        events = aiter(await session.subscribe_namespace(room_namespace(self._room)))
+        events = aiter(await session.watch_namespaces(room_namespace(self._room)))
         try:
             while True:
                 try:

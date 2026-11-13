@@ -1194,7 +1194,7 @@ dependencies = [
     { name = "av", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "faster-whisper" },
     { name = "moq-bot-rooms" },
-    { name = "moqt" },
+    { name = "moq-wasm" },
     { name = "pipecat-ai" },
     { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
     { name = "torch", version = "2.14.1+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
@@ -1215,7 +1215,7 @@ requires-dist = [
     { name = "av", specifier = ">=14" },
     { name = "faster-whisper", specifier = "~=1.2.1" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
-    { name = "moqt", directory = "../../../crates/python" },
+    { name = "moq-wasm", directory = "../../../crates/python" },
     { name = "pipecat-ai", extras = ["silero"], specifier = ">=1.12" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.11" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cpu" },
@@ -1231,7 +1231,7 @@ dev = [
 ]
 
 [[package]]
-name = "moqt"
+name = "moq-wasm"
 version = "0.1.0"
 source = { directory = "../../../crates/python" }
 

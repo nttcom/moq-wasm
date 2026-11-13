@@ -69,7 +69,7 @@ class IssuedToken:
 
 
 class TokenRefreshingSession(Protocol):
-    """The part of `moqt.Session` that takes a new token."""
+    """The part of `moq_wasm.Session` that takes a new token."""
 
     def refresh_token(self, token: str, *, app_id: str) -> Awaitable[None]: ...
 

@@ -15,7 +15,9 @@ use pyo3::{
     prelude::*,
 };
 
-use crate::{namespaces::NamespaceEvents, publication::TrackPublication, track::Track};
+use crate::{
+    namespace_watch::NamespaceWatch, subscription::Subscription, track_writer::TrackWriter,
+};
 
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
 /// token refresh; it reads neither the namespace `[app id]` nor this name.
@@ -114,7 +116,7 @@ async fn route_events(session: Arc<moqt::Session>, origin: Origin, watchers: Nam
     watchers.close();
 }
 
-#[pyclass(module = "moqt")]
+#[pyclass(module = "moq_wasm")]
 pub struct Session {
     session: Arc<moqt::Session>,
     origin: Origin,
@@ -132,17 +134,34 @@ impl Drop for Session {
     }
 }
 
+impl Session {
+    fn start_subscription<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+        current_group: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Subscription::subscribe(session, namespace.join("/"), name, current_group)
+                .await
+                .map_err(PyErr::from)
+        })
+    }
+}
+
 #[pymethods]
 impl Session {
-    /// Iterates the namespaces published and withdrawn under `prefix`.
-    fn subscribe_namespace<'py>(
+    /// SUBSCRIBE_NAMESPACE: iterates the namespaces published and withdrawn under `prefix`.
+    fn watch_namespaces<'py>(
         &self,
         py: Python<'py>,
         prefix: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         // Registered before the request, since the relay answers with the namespaces it knows at once.
-        let events = NamespaceEvents::from(self.watchers.watch(prefix.clone()));
+        let events = NamespaceWatch::from(self.watchers.watch(prefix.clone()));
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
                 .subscriber()
@@ -153,23 +172,26 @@ impl Session {
         })
     }
 
-    #[pyo3(signature = (namespace, name, *, current_group = false))]
     fn subscribe<'py>(
         &self,
         py: Python<'py>,
         namespace: Vec<String>,
         name: String,
-        current_group: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Track::subscribe(session, namespace.join("/"), name, current_group)
-                .await
-                .map_err(PyErr::from)
-        })
+        self.start_subscription(py, namespace, name, false)
     }
 
-    fn publish_namespace<'py>(
+    fn subscribe_current_group<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.start_subscription(py, namespace, name, true)
+    }
+
+    /// PUBLISH_NAMESPACE.
+    fn announce<'py>(
         &self,
         py: Python<'py>,
         namespace: Vec<String>,
@@ -190,7 +212,7 @@ impl Session {
     /// wall-clock time in µs, so a later run of the same publisher does not
     /// reuse a location the relay still caches.
     #[pyo3(signature = (namespace, name, *, retention_seconds))]
-    fn track<'py>(
+    fn publish_track<'py>(
         &self,
         py: Python<'py>,
         namespace: Vec<String>,
@@ -205,7 +227,7 @@ impl Session {
             origin
                 .ensure_track(&namespace, &name, first_group_id, retention)
                 .await;
-            Ok(TrackPublication {
+            Ok(TrackWriter {
                 origin,
                 namespace,
                 name,

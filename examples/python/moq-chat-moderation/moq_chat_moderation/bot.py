@@ -3,7 +3,7 @@ import asyncio
 from functools import partial
 
 import aiohttp
-import moqt
+import moq_wasm
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import BotRoom
@@ -49,7 +49,7 @@ def room_namespace(room: BotRoom) -> list[str]:
     return [room.namespace_root, DEMO_NAME, room.room_id]
 
 
-async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker: PipelineWorker) -> None:
+async def forward_chat(session: moq_wasm.Session, chat_namespace: list[str], worker: PipelineWorker) -> None:
     while True:
         try:
             track = await session.subscribe(chat_namespace, CHAT_TRACK)
@@ -69,16 +69,16 @@ async def forward_chat(session: moqt.Session, chat_namespace: list[str], worker:
 
 
 async def moderate_session(
-    session: moqt.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
+    session: moq_wasm.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> bool:
     """True once no page has published the room's chat for the grace period; False when the relay session closed."""
     moderator_namespace = [*room_namespace(room), "moderator"]
     # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
     for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
         await publisher.publish_on(
-            await session.track(moderator_namespace, track_name, retention_seconds=RETENTION_SECONDS)
+            await session.publish_track(moderator_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
-    await session.publish_namespace(moderator_namespace)
+    await session.announce(moderator_namespace)
     chat_namespace = [*room_namespace(room), "chat"]
     return await until_room_empty(session, chat_namespace, partial(forward_chat, session, chat_namespace, worker))
 

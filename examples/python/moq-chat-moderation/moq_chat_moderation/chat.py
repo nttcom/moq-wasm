@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 
-import moqt
+import moq_wasm
 from moq_system_one_bot.event_timeline import Location
 from pipecat.frames.frames import DataFrame
 
@@ -25,7 +25,7 @@ class ChatMessage(DataFrame):
     location: Location
 
     @classmethod
-    def parse(cls, chat_object: moqt.Object) -> "ChatMessage":
+    def parse(cls, chat_object: moq_wasm.Object) -> "ChatMessage":
         """Raises ValueError for a payload that is not a valid `{"text", "labels": [{"name", "description"}]}`
         within the length and count limits."""
         body = json.loads(chat_object.payload)

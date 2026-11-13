@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use moqt::{Session, Subscription, TrackObject, TrackReader, subscribe::SubscribeOption};
+use moqt::{Session, TrackObject, TrackReader, subscribe::SubscribeOption};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
 
-#[pyclass(frozen, module = "moqt")]
+#[pyclass(frozen, module = "moq_wasm")]
 pub struct Object {
     #[pyo3(get)]
     group_id: u64,
@@ -32,14 +32,14 @@ impl From<TrackObject> for Object {
 }
 
 /// A subscription, iterated for its objects until the publisher ends it.
-#[pyclass(module = "moqt")]
-pub struct Track {
+#[pyclass(module = "moq_wasm")]
+pub struct Subscription {
     session: Arc<Session>,
-    subscription: Arc<Subscription>,
+    subscription: Arc<moqt::Subscription>,
     reader: Arc<tokio::sync::Mutex<TrackReader>>,
 }
 
-impl Track {
+impl Subscription {
     /// The SUBSCRIBE starts after the largest object. With `current_group`, the
     /// objects of that object's group up to and including it are read first.
     pub(crate) async fn subscribe(
@@ -67,7 +67,7 @@ impl Track {
 }
 
 #[pymethods]
-impl Track {
+impl Subscription {
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
@@ -83,7 +83,7 @@ impl Track {
     }
 
     /// Sends UNSUBSCRIBE; the iterator ends once the relay stops the track.
-    fn unsubscribe<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         let subscription = self.subscription.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

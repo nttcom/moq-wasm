@@ -4,7 +4,7 @@ import time
 from functools import partial
 
 import aiohttp
-import moqt
+import moq_wasm
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
 from moq_bot_rooms.rooms import BotRoom
@@ -64,7 +64,7 @@ class LatestPrompt:
     def __init__(self):
         self.prompt: Prompt | None = None
 
-    async def follow(self, track: moqt.Track):
+    async def follow(self, track: moq_wasm.Subscription):
         try:
             async for prompt_object in track:
                 location = (prompt_object.group_id, prompt_object.object_id)
@@ -78,7 +78,7 @@ class LatestPrompt:
             logger.info(f"prompt track ended: {error}")
 
 
-async def forward_pictures(video: moqt.Track, latest_prompt: LatestPrompt, worker: PipelineWorker):
+async def forward_pictures(video: moq_wasm.Subscription, latest_prompt: LatestPrompt, worker: PipelineWorker):
     next_sample_at = 0.0
     decoder: GroupDecoder | None = None
     group_id: int | None = None
@@ -104,20 +104,20 @@ async def forward_pictures(video: moqt.Track, latest_prompt: LatestPrompt, worke
             )
 
 
-async def video_track_name(session: moqt.Session, camera_namespace: list[str]) -> str:
+async def video_track_name(session: moq_wasm.Session, camera_namespace: list[str]) -> str:
     # The joining FETCH brings the catalog the relay holds for the page's other viewers.
-    catalog = await session.subscribe(camera_namespace, CATALOG_TRACK, current_group=True)
+    catalog = await session.subscribe_current_group(camera_namespace, CATALOG_TRACK)
     try:
         async for catalog_object in catalog:
             track = camera_video_track(catalog_object.payload)
             if track:
                 return track
     finally:
-        await catalog.unsubscribe()
+        await catalog.close()
     raise RuntimeError("the catalog ended before it listed a video track")
 
 
-async def forward_camera(session: moqt.Session, camera_namespace: list[str], worker: PipelineWorker):
+async def forward_camera(session: moq_wasm.Session, camera_namespace: list[str], worker: PipelineWorker):
     while True:
         try:
             latest_prompt = LatestPrompt()
@@ -137,16 +137,16 @@ async def forward_camera(session: moqt.Session, camera_namespace: list[str], wor
 
 
 async def detect_in_session(
-    session: moqt.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
+    session: moq_wasm.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
 ) -> bool:
     """True once no page has published the room's camera for the grace period; False when the relay session closed."""
     detector_namespace = [*room_namespace(room), "detector"]
     # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
     for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
         await publisher.publish_on(
-            await session.track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
+            await session.publish_track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
         )
-    await session.publish_namespace(detector_namespace)
+    await session.announce(detector_namespace)
     camera_namespace = [*room_namespace(room), "camera"]
     return await until_room_empty(session, camera_namespace, partial(forward_camera, session, camera_namespace, worker))
 

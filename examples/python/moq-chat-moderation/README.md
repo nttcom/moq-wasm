@@ -39,7 +39,7 @@ make browser
 make chrome
 ```
 
-- bot は `moqt` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
+- bot は `moq-wasm` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
 - bot は `http://127.0.0.1:8097` で待ち受けます（同時に 10 ルームまで）。オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 - `make chrome` の Chrome でハブから MoQ Chat Moderation を開き、Local relay-a を選んで Join します。モデレーター接続済みになったら送信できます。
 

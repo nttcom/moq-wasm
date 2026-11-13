@@ -48,7 +48,7 @@ class FakeNamespaceSession:
     def publish(self, namespace: list[str], *, active: bool = True) -> None:
         self._events.put_nowait(SimpleNamespace(namespace=namespace, active=active))
 
-    async def subscribe_namespace(self, prefix: list[str]):
+    async def watch_namespaces(self, prefix: list[str]):
         self.prefixes.append(prefix)
         return self._iterate()
 
