@@ -2,8 +2,8 @@ import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBu
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
-import { isHevcCodec } from '../hevc'
 import { differsOnlyInLevel } from './codecLevel'
+import { videoDecoderConfig } from './videoDecoderConfig'
 import { withLengthPrefixes } from './lengthPrefixes'
 import { workerLog } from '../../../core/log'
 import { KeyFrameWait } from './keyFrameWait'
@@ -390,14 +390,4 @@ function resolveVideoConfig(codec: string | undefined, videoConfig: Uint8Array |
   }
   missingCatalogCodecWarned = false
   return videoDecoderConfig(codec, videoConfig ?? catalogDescription)
-}
-
-function videoDecoderConfig(codec: string, description: Uint8Array | undefined): VideoDecoderConfig {
-  return {
-    codec,
-    description,
-    // Chrome decodes H.265 only in hardware.
-    hardwareAcceleration: isHevcCodec(codec) ? 'no-preference' : 'prefer-software',
-    optimizeForLatency: true
-  }
 }

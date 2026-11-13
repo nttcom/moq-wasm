@@ -1168,6 +1168,18 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
     以外のアプリが1つ、それで配信と再生をするまで 1.0 未満のままにする。両方を
     1パッケージで出すので、media API が 1.0 未満であることは、バージョンを分けず、
     doc comment と README に書く。
+11. **マルチコーデック: 1つの altGroup に別 codec の rendition を並べる。** MSF の altGroup
+    （draft-ietf-moq-msf-01 §5.2.12）は selection property の違う同じ内容の track で、codec
+    もその1つなので、たとえば H.265 の映像と H.264 の rendition を同じ altGroup に置く。
+    altGroup は time-aligned（§4.2）なので、encoder worker が全 rendition で同じフレームを
+    keyframe にする今の仕組みのまま codec が混ざってよい。player は altGroup の中から、
+    ブラウザが decode できる track（`VideoDecoder.isConfigSupported`）だけを候補にし、
+    同じ幅と高さの track が複数残ったら bitrate の一番低いものだけを残す
+    （`playableVideoTracks.ts`）。decode できる track が1つも無ければ全部を残し、decoder に
+    理由を報告させる。codec の違う rendition への切り替えは、その rendition の最初の
+    keyframe で decoder を `configure` し直す（level だけの違いでは設定し直さない）。
+    これより前の SDK の player は codec を見ずに ladder を作るので、decode できない
+    rendition を選んで止まりうる。
 
 ## 配布
 
