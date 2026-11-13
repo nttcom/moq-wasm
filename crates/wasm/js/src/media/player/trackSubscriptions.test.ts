@@ -14,10 +14,13 @@ function recordingHandler(): { handler: ObjectHandler; received: [bigint, bigint
   }
 }
 
-test('the delivery timeout is sent with a subscription from a group start and with a plain one', async () => {
+test('the delivery timeout and the group order are sent with a subscription from a group start and with a plain one', async () => {
   // Arrange
   const session = new FakeSession(undefined, [])
-  const subscriptions = new TrackSubscriptions(session.context(), () => {}, 2_000)
+  const subscriptions = new TrackSubscriptions(session.context(), () => {}, {
+    deliveryTimeoutMs: 2_000,
+    groupOrder: 'descending'
+  })
   const { handler } = recordingHandler()
 
   // Act
@@ -30,9 +33,13 @@ test('the delivery timeout is sent with a subscription from a group start and wi
       method: 'subscribeGroupStart',
       track: 'video',
       newGroupAfter: 60,
-      options: { priority: 128, deliveryTimeoutMs: 2_000 }
+      options: { priority: 128, deliveryTimeoutMs: 2_000, groupOrder: 'descending' }
     },
-    { method: 'subscribe', track: 'audio', options: { forward: true, priority: 0, deliveryTimeoutMs: 2_000 } }
+    {
+      method: 'subscribe',
+      track: 'audio',
+      options: { forward: true, priority: 0, deliveryTimeoutMs: 2_000, groupOrder: 'descending' }
+    }
   ])
 })
 
@@ -42,7 +49,9 @@ test('a delivery timeout that is not a whole number of milliseconds from 1 up is
 
   // Act / Assert
   for (const timeout of [0, -1, 1500.5, Number.NaN, 2 ** 32]) {
-    expect(() => new TrackSubscriptions(session.context(), () => {}, timeout)).toThrow(RangeError)
+    expect(() => new TrackSubscriptions(session.context(), () => {}, { deliveryTimeoutMs: timeout })).toThrow(
+      RangeError
+    )
   }
 })
 

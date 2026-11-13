@@ -10,7 +10,7 @@ use moqt::{
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     namespace::NamespaceInterest,
     object::{
-        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, Location,
+        ContentExists, DataReceiver, ExtensionHeaders, ForwardingPreference, GroupOrder, Location,
         MalformedTrackError, Object, StreamDataReceiver, Subgroup, TrackData,
     },
     publish::{GroupBoundary, OutgoingObject, Retention, WriteOutcome},
@@ -114,6 +114,8 @@ impl Session {
     /// the relay sends a lower value first. `delivery_timeout_ms` is the
     /// DELIVERY TIMEOUT (draft-14 §9.2.1.2): the relay stops sending an object that
     /// many milliseconds after receiving it; without it every object is sent.
+    /// `group_order` is `"ascending"` (the default) or `"descending"` (§7).
+    #[allow(clippy::too_many_arguments)]
     pub async fn subscribe(
         &self,
         namespace: Vec<String>,
@@ -122,6 +124,7 @@ impl Session {
         forward: Option<bool>,
         priority: Option<u8>,
         delivery_timeout_ms: Option<u32>,
+        group_order: Option<String>,
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
@@ -131,6 +134,7 @@ impl Session {
                     forward: forward.unwrap_or(true),
                     subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
                     delivery_timeout: delivery_timeout_ms.map(u64::from),
+                    group_order: parse_group_order(group_order.as_deref())?,
                     ..defaults
                 };
                 let mut subscriber = self.session.subscriber();
@@ -173,8 +177,8 @@ impl Session {
     /// current group, through a joining FETCH, or, when the track has
     /// dynamic groups and its largest object ID is `new_group_after` or
     /// more, a new group it asks the publisher to start (NEW_GROUP_REQUEST,
-    /// §10.2.13). `priority` is the Subscriber Priority and
-    /// `delivery_timeout_ms` the DELIVERY TIMEOUT, as in `subscribe`.
+    /// §10.2.13). `priority`, `delivery_timeout_ms` and `group_order` are as in
+    /// `subscribe`.
     #[wasm_bindgen(js_name = subscribeGroupStart)]
     pub async fn subscribe_group_start(
         &self,
@@ -183,6 +187,7 @@ impl Session {
         new_group_after: u32,
         priority: Option<u8>,
         delivery_timeout_ms: Option<u32>,
+        group_order: Option<String>,
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
@@ -197,6 +202,7 @@ impl Session {
                         SubscribeOption {
                             subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
                             delivery_timeout: delivery_timeout_ms.map(u64::from),
+                            group_order: parse_group_order(group_order.as_deref())?,
                             ..defaults
                         },
                     )
@@ -1037,6 +1043,14 @@ fn filter_type(filter: Option<&str>) -> Result<FilterType, JsValue> {
         None | Some("largestObject") => Ok(FilterType::LargestObject),
         Some("nextGroupStart") => Ok(FilterType::NextGroupStart),
         Some(other) => Err(js_error(format!("unknown subscribe filter: {other}"))),
+    }
+}
+
+fn parse_group_order(group_order: Option<&str>) -> Result<GroupOrder, JsValue> {
+    match group_order {
+        None | Some("ascending") => Ok(GroupOrder::Ascending),
+        Some("descending") => Ok(GroupOrder::Descending),
+        Some(other) => Err(js_error(format!("unknown group order: {other}"))),
     }
 }
 

@@ -151,6 +151,7 @@ export type MoqSubscribeOptions = {
     forward?: boolean;
     priority?: number;
     deliveryTimeoutMs?: number;
+    groupOrder?: 'ascending' | 'descending';
 };
 
 // @public (undocumented)

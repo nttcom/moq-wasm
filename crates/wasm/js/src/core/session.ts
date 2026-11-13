@@ -61,6 +61,13 @@ export type MoqSubscribeOptions = {
   /// subgroup. A congested link then carries recent objects instead of a
   /// growing backlog. Without it every object is delivered.
   deliveryTimeoutMs?: number
+  /// The Group Order (draft-14 §7), `'ascending'` by default: which of the
+  /// track's groups the relay sends first when more than one waits on a
+  /// congested link. `'ascending'` sends the oldest first, so the delay
+  /// grows; `'descending'` sends the newest first, so
+  /// the rest of an older group arrives late or, with `deliveryTimeoutMs`,
+  /// not at all. It cannot be changed after the SUBSCRIBE.
+  groupOrder?: 'ascending' | 'descending'
 }
 
 /// `subscribeGroupStart` chooses the filter itself and always asks for Forward 1.
@@ -159,7 +166,8 @@ export class MoqSession {
         options.filter,
         options.forward,
         options.priority,
-        options.deliveryTimeoutMs
+        options.deliveryTimeoutMs,
+        options.groupOrder
       )
     )
     return new MoqSubscription(subscription, this)
@@ -184,7 +192,14 @@ export class MoqSession {
     options: MoqSubscribeGroupStartOptions = {}
   ): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () =>
-      this.inner.subscribeGroupStart(namespace, track, newGroupAfter, options.priority, options.deliveryTimeoutMs)
+      this.inner.subscribeGroupStart(
+        namespace,
+        track,
+        newGroupAfter,
+        options.priority,
+        options.deliveryTimeoutMs,
+        options.groupOrder
+      )
     )
     return new MoqSubscription(subscription, this)
   }

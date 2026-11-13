@@ -71,6 +71,8 @@ export type RemoteBroadcastOptions = {
   keepLiveWhileReviewing?: boolean
   /// As `LivePlayerOptions.deliveryTimeoutMs`, for every view's player.
   deliveryTimeoutMs?: number
+  /// As `LivePlayerOptions.groupOrder`, for every view's player.
+  groupOrder?: 'ascending' | 'descending'
 }
 
 /// A broadcast someone else publishes, played source by source: it
@@ -208,6 +210,7 @@ class View implements SourceView {
       audioContext: options.audioContext,
       keepLiveWhileReviewing: options.keepLiveWhileReviewing,
       deliveryTimeoutMs: options.deliveryTimeoutMs,
+      groupOrder: options.groupOrder,
       callbacks: {
         onStateChange: () => {
           for (const listener of this.listeners) {

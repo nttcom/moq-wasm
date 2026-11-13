@@ -1302,6 +1302,7 @@ mod tests {
     use futures::FutureExt;
 
     use crate::namespace::NamespaceInterest;
+    use crate::object::GroupOrder;
 
     use tokio::task::JoinHandle;
 
@@ -2721,7 +2722,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribe_group_start_sends_its_delivery_timeout() {
+    async fn subscribe_group_start_sends_its_delivery_timeout_and_group_order() {
         // Arrange
         let (client, server) =
             spawn_connected_draft18_sessions("subscriber-group-start-timeout", "moqt").await;
@@ -2736,6 +2737,7 @@ mod tests {
                     NEW_GROUP_AFTER,
                     SubscribeOption {
                         delivery_timeout: Some(2_000),
+                        group_order: GroupOrder::Descending,
                         ..SubscribeOption::default()
                     },
                 )
@@ -2747,6 +2749,7 @@ mod tests {
 
         // Assert
         assert_eq!(handler.delivery_timeout, Some(2_000));
+        assert_eq!(handler.group_order, GroupOrder::Descending);
         request.abort();
     }
 
