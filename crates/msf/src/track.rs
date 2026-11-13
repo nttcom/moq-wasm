@@ -137,14 +137,6 @@ impl Track {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TrackRef {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub namespace: Option<String>,
-    pub name: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
