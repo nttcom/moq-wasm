@@ -1237,7 +1237,8 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   datagram track sends 0 and its datagrams can still follow PUBLISH_DONE. The data receiver then ends, and
   `TrackReader` returns `Ok(None)` once the streams it already accepted are
   drained. A stream beyond the Stream Count is not a PROTOCOL_VIOLATION (a
-  MAY not taken), and no STOP_SENDING is sent.
+  MAY not taken), and no STOP_SENDING is sent. A second PUBLISH_DONE for a
+  subscription that is still waiting is ignored.
 - **Duplicate track alias**: if SUBSCRIBE_OK carries a track alias that already
   has a registered receiver, the subscriber closes the session with
   `DuplicateTrackAlias` (draft-14 §9.8). A cancelled subscription's alias does
@@ -1250,12 +1251,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   a Subscription Request ID at or above the next one of its parity closes the
   session with `ProtocolViolation`. An update of a subscription that has
   ended still reaches the application.
-- **Control response timeout**: `PendingResponse::response` bounds every
 - **PUBLISH_DONE for a Request ID that never existed** (draft-14 §9.1): the
   same check closes the session with `InvalidRequestId` before
   `PublishDoneExpiryTask` sees it. A Request ID that existed but names no
   subscription still gets the wait, and its cancel finds nothing: the sink of
   a subscription may be installed after its PUBLISH_DONE arrives.
+- **Control response timeout**: `PendingResponse::response` bounds every
   request/response wait to 10 s; a timeout fails only that request with
   `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
   Every request that waits for a response returns `RequestFailure`, so
