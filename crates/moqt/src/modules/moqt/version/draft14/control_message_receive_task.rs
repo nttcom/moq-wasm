@@ -415,7 +415,30 @@ fn new_request_id(message: &ReceivedMessage) -> Option<RequestId> {
         ReceivedMessage::Publish(m) => Some(m.request_id),
         ReceivedMessage::PublishNamespace(m) => Some(m.request_id),
         ReceivedMessage::SubscribeNamespace(m) => Some(m.request_id),
-        _ => None,
+        ReceivedMessage::ClientSetup(_)
+        | ReceivedMessage::ServerSetup(_)
+        | ReceivedMessage::GoAway(_)
+        | ReceivedMessage::MaxRequestId(_)
+        | ReceivedMessage::RequestsBlocked(_)
+        | ReceivedMessage::PublishNamespaceOk(_)
+        | ReceivedMessage::PublishNamespaceError(_)
+        | ReceivedMessage::PublishNamespaceDone(_)
+        | ReceivedMessage::PublishNamespaceCancel(_)
+        | ReceivedMessage::SubscribeNamespaceOk(_)
+        | ReceivedMessage::SubscribeNamespaceError(_)
+        | ReceivedMessage::UnsubscribeNamespace(_)
+        | ReceivedMessage::PublishOk(_)
+        | ReceivedMessage::PublishError(_)
+        | ReceivedMessage::PublishDone(_)
+        | ReceivedMessage::SubscribeOk(_)
+        | ReceivedMessage::SubscribeError(_)
+        | ReceivedMessage::Unsubscribe(_)
+        | ReceivedMessage::FetchOk(_)
+        | ReceivedMessage::FetchError(_)
+        | ReceivedMessage::FetchCancel(_)
+        | ReceivedMessage::TrackStatusOk(_)
+        | ReceivedMessage::TrackStatusError(_)
+        | ReceivedMessage::FatalError(_) => None,
     }
 }
 
@@ -436,7 +459,35 @@ fn reference_to_unused_request_id(
             TerminationErrorCode::InvalidRequestId,
             "PUBLISH_DONE for a Request ID that never existed",
         ),
-        _ => return None,
+        ReceivedMessage::ClientSetup(_)
+        | ReceivedMessage::ServerSetup(_)
+        | ReceivedMessage::GoAway(_)
+        | ReceivedMessage::MaxRequestId(_)
+        | ReceivedMessage::RequestsBlocked(_)
+        | ReceivedMessage::PublishNamespace(_)
+        | ReceivedMessage::PublishNamespaceOk(_)
+        | ReceivedMessage::PublishNamespaceError(_)
+        | ReceivedMessage::PublishNamespaceDone(_)
+        | ReceivedMessage::PublishNamespaceCancel(_)
+        | ReceivedMessage::SubscribeNamespace(_)
+        | ReceivedMessage::SubscribeNamespaceOk(_)
+        | ReceivedMessage::SubscribeNamespaceError(_)
+        | ReceivedMessage::UnsubscribeNamespace(_)
+        | ReceivedMessage::Publish(_)
+        | ReceivedMessage::PublishOk(_)
+        | ReceivedMessage::PublishError(_)
+        | ReceivedMessage::Subscribe(_)
+        | ReceivedMessage::SubscribeOk(_)
+        | ReceivedMessage::SubscribeError(_)
+        | ReceivedMessage::Unsubscribe(_)
+        | ReceivedMessage::Fetch(_)
+        | ReceivedMessage::FetchOk(_)
+        | ReceivedMessage::FetchError(_)
+        | ReceivedMessage::FetchCancel(_)
+        | ReceivedMessage::TrackStatus(_)
+        | ReceivedMessage::TrackStatusOk(_)
+        | ReceivedMessage::TrackStatusError(_)
+        | ReceivedMessage::FatalError(_) => return None,
     };
     (!ControlChannel::of(connection).request_id_has_existed(reference.0)).then_some(reference)
 }

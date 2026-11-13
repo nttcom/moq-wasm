@@ -873,8 +873,11 @@ impl ControlChannel {
         connection: &Arc<Connection>,
         request_id: RequestId,
     ) {
-        if let Self::Draft18(_) = self {
-            draft18::ControlChannel::fetch_response_stopped(connection, request_id).await;
+        match self {
+            Self::Draft14(_) => {}
+            Self::Draft18(_) => {
+                draft18::ControlChannel::fetch_response_stopped(connection, request_id).await;
+            }
         }
     }
 
@@ -907,7 +910,8 @@ impl ControlChannel {
             (Self::Draft18(_), NamespaceInterest::NamespacesAndTracks) => {
                 vec![NamespaceInterest::Namespaces, NamespaceInterest::Tracks]
             }
-            _ => vec![interest],
+            (Self::Draft18(_), NamespaceInterest::Namespaces | NamespaceInterest::Tracks)
+            | (Self::Draft14(_), _) => vec![interest],
         }
     }
 
