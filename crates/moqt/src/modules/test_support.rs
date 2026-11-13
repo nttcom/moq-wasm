@@ -9,9 +9,10 @@ use std::{
     time::Duration,
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::FutureExt;
 use tokio::sync::Notify;
+use tokio_util::codec::Decoder;
 use tracing::{
     Event,
     field::{Field, Visit},
@@ -430,6 +431,73 @@ pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
     .await??;
     let server = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept).await??;
     Ok((client, server))
+}
+
+/// Byte strings that get further into a decoder than uniform noise does:
+/// mostly values below 8, as types, counts and lengths are, and the first
+/// bytes on either side of every change in the length of a variable-length
+/// integer of either draft. Every run yields the same strings.
+pub(crate) fn wire_noise() -> impl Iterator<Item = Vec<u8>> {
+    const STRINGS: usize = 256;
+    const MAX_LENGTH: u64 = 48;
+    const SIZE_EDGES: [u8; 17] = [
+        0x3f, 0x40, 0x7f, 0x80, 0xbf, 0xc0, 0xdf, 0xe0, 0xef, 0xf0, 0xf7, 0xf8, 0xfb, 0xfc, 0xfd,
+        0xfe, 0xff,
+    ];
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+    // xorshift64
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    (0..STRINGS).map(move |_| {
+        (0..next() % MAX_LENGTH)
+            .map(|_| {
+                let random = next();
+                let byte = (random >> 8) as u8;
+                match random % 8 {
+                    0 => byte,
+                    1 => SIZE_EDGES[usize::from(byte) % SIZE_EDGES.len()],
+                    _ => byte % 8,
+                }
+            })
+            .collect()
+    })
+}
+
+/// Reads `bytes` as a whole stream that arrives in two parts, up to its
+/// first error. Panics when `decoder` returns more frames than bytes, which
+/// one that takes no bytes does.
+pub(crate) fn decode_stream<D: Decoder>(mut decoder: D, bytes: &[u8]) {
+    let (first, rest) = bytes.split_at(bytes.len() / 2);
+    let mut buffer = BytesMut::from(first);
+    let mut frames_left = bytes.len();
+    // Whether the decoder read on to where it needs more bytes.
+    let mut read = |buffer: &mut BytesMut, at_end: bool| loop {
+        let frame = if at_end {
+            decoder.decode_eof(buffer)
+        } else {
+            decoder.decode(buffer)
+        };
+        match frame {
+            Ok(Some(_)) => {
+                frames_left = frames_left
+                    .checked_sub(1)
+                    .expect("the decoder returns frames without taking bytes");
+            }
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
+    };
+    if !read(&mut buffer, false) {
+        return;
+    }
+    buffer.extend_from_slice(rest);
+    if read(&mut buffer, false) {
+        read(&mut buffer, true);
+    }
 }
 
 /// Long enough for control messages already sent to reach a session that

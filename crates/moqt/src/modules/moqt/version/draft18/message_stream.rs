@@ -27,3 +27,35 @@ impl Decoder for MessageDecoder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tokio_util::codec::Decoder;
+
+    use super::MessageDecoder;
+    use crate::modules::{
+        moqt::version::draft18::messages::{SETUP, frame},
+        test_support::wire_noise,
+    };
+
+    #[test]
+    fn a_framed_message_of_every_type_decodes_or_is_refused() {
+        // SETUP is the one type above a single byte.
+        for message_type in (0..=0x7f).chain([SETUP]) {
+            for payload in wire_noise() {
+                // Arrange
+                let mut frame = frame(message_type, &payload).unwrap();
+
+                // Act
+                let decoded = MessageDecoder.decode(&mut frame);
+
+                // Assert: a malformed payload does not wait for more bytes
+                assert!(
+                    matches!(decoded, Ok(Some(_))) && frame.is_empty() || decoded.is_err(),
+                    "{message_type:#x} {payload:02x?}: {decoded:?}, {} bytes left",
+                    frame.len()
+                );
+            }
+        }
+    }
+}
