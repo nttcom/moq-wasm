@@ -6,11 +6,31 @@ use crate::modules::data_plane::{
     cache::subgroup_key::SubgroupKey,
     cache::{
         cached_object::CachedObject,
-        track_cache::{FetchCursor, FetchInterrupted, OpenSubgroupGuard, TrackCache},
+        track_cache::{
+            FetchCursor, FetchInterrupted, MAX_SUBGROUPS_PER_GROUP, OpenSubgroupGuard, TrackCache,
+        },
     },
 };
 
 pub(crate) const FIXTURE_PRIORITY: u8 = 128;
+
+pub(crate) fn subgroup_key(group_id: u64, subgroup_id: u64) -> SubgroupKey {
+    SubgroupKey::Stream {
+        group_id,
+        subgroup_id,
+    }
+}
+
+/// Leaves group `group_id` tracking `MAX_SUBGROUPS_PER_GROUP` subgroups without
+/// objects: subgroup 0 aborted, the rest finished.
+pub(crate) fn fill_group_with_subgroups(cache: &TrackCache, group_id: u64) {
+    for subgroup_id in 0..MAX_SUBGROUPS_PER_GROUP as u64 {
+        let open = cache.open_subgroup(subgroup_key(group_id, subgroup_id));
+        if subgroup_id > 0 {
+            open.finish();
+        }
+    }
+}
 
 pub(crate) fn stream_key(group_id: u64) -> SubgroupKey {
     SubgroupKey::Stream {

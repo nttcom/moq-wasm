@@ -147,45 +147,70 @@ impl NextObject {
     }
 }
 
+fn open_in(ledger: &mut Ledger, key: SubgroupKey) -> Opened {
+    if ledger.finished_subgroups.contains(&key) {
+        return Opened::Finished;
+    }
+    ledger.start_run_if_reopening_aborted(key);
+    let next_open_epoch = &mut ledger.next_open_epoch;
+    let open = ledger
+        .live_groups
+        .entry(key.group_id())
+        .or_default()
+        .open_subgroups
+        .entry(key)
+        .or_insert_with(|| {
+            *next_open_epoch += 1;
+            OpenSubgroup {
+                guards: 0,
+                epoch: *next_open_epoch,
+                earliest_first_object_id: None,
+                any_finished: false,
+            }
+        });
+    open.guards += 1;
+    let epoch = open.epoch;
+    Opened::Run {
+        run: ledger.latest_run(key),
+        epoch,
+    }
+}
+
+enum Opened {
+    Finished,
+    Run { run: SubgroupRun, epoch: u64 },
+}
+
 impl TrackCache {
     /// A stream subgroup some publisher already finished stays finished: a later
     /// stream for it only re-delivers objects that are already complete.
     pub(crate) fn open_subgroup(&self, key: SubgroupKey) -> OpenSubgroupGuard<'_> {
-        let (run, epoch) = {
-            let mut guard = self.write();
-            let ledger: &mut Ledger = &mut guard;
-            if ledger.finished_subgroups.contains(&key) {
-                return OpenSubgroupGuard {
-                    cache: self,
-                    key,
-                    epoch: FINISHED_SUBGROUP_EPOCH,
-                    first_object_id: OnceLock::new(),
-                    finished: false,
-                };
+        let opened = open_in(&mut self.write(), key);
+        self.guard_for(key, opened)
+    }
+
+    /// `open_subgroup` for a subgroup stream; `None` for a Subgroup ID new to its
+    /// group once the group tracks `MAX_SUBGROUPS_PER_GROUP` subgroups.
+    pub(crate) fn open_stream_subgroup(&self, key: SubgroupKey) -> Option<OpenSubgroupGuard<'_>> {
+        let opened = {
+            let mut ledger = self.write();
+            if ledger.refuses_new_subgroup(key) {
+                return None;
             }
-            ledger.start_run_if_reopening_aborted(key);
-            let next_open_epoch = &mut ledger.next_open_epoch;
-            let open = ledger
-                .live_groups
-                .entry(key.group_id())
-                .or_default()
-                .open_subgroups
-                .entry(key)
-                .or_insert_with(|| {
-                    *next_open_epoch += 1;
-                    OpenSubgroup {
-                        guards: 0,
-                        epoch: *next_open_epoch,
-                        earliest_first_object_id: None,
-                        any_finished: false,
-                    }
-                });
-            open.guards += 1;
-            let epoch = open.epoch;
-            (ledger.latest_run(key), epoch)
+            open_in(&mut ledger, key)
         };
-        self.notify.notify_waiters();
-        let _ = self.subgroup_opened_sender.send(run);
+        Some(self.guard_for(key, opened))
+    }
+
+    fn guard_for(&self, key: SubgroupKey, opened: Opened) -> OpenSubgroupGuard<'_> {
+        let epoch = match opened {
+            Opened::Finished => FINISHED_SUBGROUP_EPOCH,
+            Opened::Run { run, epoch } => {
+                self.notify.notify_waiters();
+                let _ = self.subgroup_opened_sender.send(run);
+                epoch
+            }
+        };
         OpenSubgroupGuard {
             cache: self,
             key,
@@ -384,9 +409,12 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::modules::test_support::relay_harness::fixtures::cached_object::{
-        arriving_object, datagram_object, insert_aborted_group, open_group, stream_key,
-        stream_object, stream_object_in_subgroup,
+    use crate::modules::{
+        data_plane::cache::track_cache::MAX_SUBGROUPS_PER_GROUP,
+        test_support::relay_harness::fixtures::cached_object::{
+            arriving_object, datagram_object, fill_group_with_subgroups, insert_aborted_group,
+            open_group, stream_key, stream_object, stream_object_in_subgroup, subgroup_key,
+        },
     };
 
     async fn next_at(cache: &TrackCache, object_id: u64) -> NextObject {
@@ -831,6 +859,47 @@ mod tests {
         // Assert: the tail of the group stays unknown (§10.4.3)
         assert!(!cache.covers(location(0, 1), location(0, 0)));
         assert!(cache.covers(location(0, 0), location(0, 1)));
+    }
+
+    #[test]
+    fn a_group_tracking_the_limit_refuses_a_new_stream_subgroup() {
+        // Arrange
+        let cache = TrackCache::new();
+        fill_group_with_subgroups(&cache, 0);
+
+        // Act
+        let opened = cache.open_stream_subgroup(subgroup_key(0, MAX_SUBGROUPS_PER_GROUP as u64));
+
+        // Assert
+        assert!(opened.is_none());
+    }
+
+    #[test]
+    fn a_full_group_still_opens_the_subgroups_it_tracks() {
+        // Arrange
+        let cache = TrackCache::new();
+        fill_group_with_subgroups(&cache, 0);
+
+        // Act
+        let aborted = cache.open_stream_subgroup(subgroup_key(0, 0));
+        let finished = cache.open_stream_subgroup(subgroup_key(0, 1));
+
+        // Assert
+        assert!(aborted.is_some());
+        assert!(finished.is_some());
+    }
+
+    #[test]
+    fn the_subgroup_limit_counts_per_group() {
+        // Arrange
+        let cache = TrackCache::new();
+        fill_group_with_subgroups(&cache, 0);
+
+        // Act
+        let opened = cache.open_stream_subgroup(subgroup_key(1, 0));
+
+        // Assert
+        assert!(opened.is_some());
     }
 
     #[test]
