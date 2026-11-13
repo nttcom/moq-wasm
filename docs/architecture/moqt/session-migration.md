@@ -195,7 +195,8 @@ previous connection handed out. A group that never ends is bounded by the
 5 s grace after every subscription cut over (10 s limit for a track that
 delivers nothing on the new connection). A SUBSCRIBE the
 previous server sent and never unsubscribed ends then with an `Unsubscribe`
-event, as `moqtClient.ts` reports it today.
+event, as `moqtClient.ts` reports it today, and so does a PUBLISH the new
+server rejected, which no connection takes any more.
 
 ## What `moqtClient.ts` does that this design covers
 

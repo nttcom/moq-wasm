@@ -264,12 +264,19 @@ impl SessionContext {
             .map(|connection| (connection, wire_part(logical_id)))
     }
 
-    /// Drops the closed `connection` from every publication.
-    pub(crate) fn forget_connection(&self, connection: &Connection) {
-        for publication in self.publications().values_mut() {
-            publication.leave(connection);
-        }
+    /// Drops the closed `connection` from every publication and removes each
+    /// publication left on no connection; returns the removed ids.
+    pub(crate) fn forget_connection(&self, connection: &Connection) -> Vec<u64> {
+        let mut ended = Vec::new();
+        self.publications().retain(|request_id, publication| {
+            let still_published = publication.leave(connection);
+            if !still_published {
+                ended.push(*request_id);
+            }
+            still_published
+        });
         self.served_changed.send_replace(());
+        ended
     }
 
     fn publications(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Publication>> {

@@ -303,21 +303,27 @@ impl Router {
 
     /// Closes the previous connection with NO_ERROR; a subscription that has
     /// not cut over takes its next group start from the current one, and a
-    /// SUBSCRIBE served on the previous connection ends as if its subscriber
-    /// unsubscribed.
+    /// SUBSCRIBE served on the previous connection, or a PUBLISH no other
+    /// connection took, ends as if its subscriber unsubscribed.
     fn retire(&self, previous: Previous) {
         previous
             .live
             .connection
             .close(TerminationErrorCode::NoError, "");
-        for request_id in previous.live.connection.take_served() {
+        self.session.forget_previous(&previous.live.connection);
+        let ended_publications = self.session.forget_connection(&previous.live.connection);
+        for request_id in previous
+            .live
+            .connection
+            .take_served()
+            .into_iter()
+            .chain(ended_publications)
+        {
             self.forward(SessionEvent::Unsubscribe(UnsubscribeHandler::ended(
                 self.session.clone(),
                 request_id,
             )));
         }
-        self.session.forget_previous(&previous.live.connection);
-        self.session.forget_connection(&previous.live.connection);
         for cutover in previous.cutovers {
             cutover
                 .lock()
@@ -799,8 +805,8 @@ mod tests {
 
     use crate::{
         AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig,
-        Endpoint, NATIVE, Session, SessionEvent, Subscription, TerminationErrorCode, TrackReader,
-        TrackWriter,
+        Endpoint, NATIVE, RequestErrorCode, Session, SessionEvent, Subscription,
+        TerminationErrorCode, TrackReader, TrackWriter,
         fetch::{Fetch, FetchDataSender, FetchOption, FetchParams},
         modules::{
             moqt::version::Version,
@@ -1775,6 +1781,40 @@ mod tests {
                 panic!("expected UNSUBSCRIBE, got {event:?}");
             };
             assert_eq!(handler.subscribe_id(), served.request_id());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_the_new_server_rejected_ends_when_the_old_server_closes() {
+        for version in DRAFTS {
+            // Arrange
+            let Migration {
+                client,
+                server_a,
+                server_b,
+            } = Migration::connect("migration-publish-rejected", Hop::within(version)).await;
+            let (published, _) = publish(&client, &server_a).await;
+            let server_b = server_b.named_by(&server_a).await;
+            accept_namespace(&server_b).await;
+            let SessionEvent::Publish(handler) = server_b.receive_event().await.unwrap() else {
+                panic!("expected PUBLISH from the client");
+            };
+            handler
+                .error(RequestErrorCode::InternalError, String::new())
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // Act
+            server_a.close_with_error(TerminationErrorCode::NoError, "");
+            let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event()).await;
+
+            // Assert: the track has no subscriber left, and no later migration sends its PUBLISH
+            let Ok(Ok(SessionEvent::Unsubscribe(handler))) = event else {
+                panic!("expected UNSUBSCRIBE, got {event:?}");
+            };
+            assert_eq!(handler.subscribe_id(), published.request_id());
+            assert!(!client.context().has_publication(published.request_id()));
         }
     }
 
