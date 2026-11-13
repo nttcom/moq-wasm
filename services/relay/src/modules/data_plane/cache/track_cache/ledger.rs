@@ -73,9 +73,9 @@ pub(super) struct Ledger {
 
 impl Ledger {
     pub(super) fn is_group_aborted(&self, group_id: u64) -> bool {
-        self.aborted_subgroups
-            .iter()
-            .any(|key| key.group_id() == group_id)
+        subgroup_keys_of(group_id)
+            .into_iter()
+            .any(|keys| self.aborted_subgroups.range(keys).next().is_some())
     }
 
     /// Checks only the groups of `removed` and the ones closed since the last
