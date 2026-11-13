@@ -4,8 +4,7 @@ An experimental archive is available with `--archive` and with the room API's
 `format: "moq"`. It stores catalogs, selected LOC media and available meeting
 event tracks without muxing. Closed data and index chunks are uploaded before
 their manifest. `POST /recordings/{id}/publish` replays a finished archive
-through the relay as MSF VOD broadcasts. The separate experimental archive
-player handles a local single-broadcast JSON Lines file.
+through the relay as MSF VOD broadcasts.
 
 ## Status
 Living document. Update this file in the same change whenever the track
