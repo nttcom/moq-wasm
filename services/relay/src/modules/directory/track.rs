@@ -166,6 +166,12 @@ struct Reservations {
     relay: usize,
 }
 
+pub(crate) enum PendingProducersOutcome {
+    Kept,
+    CreationFailed,
+    Ended(PublishDoneReason),
+}
+
 /// The relay's state for one track: every publisher feeding it and every
 /// subscriber receiving it (draft-14 §8.2). Session ids grow with time, so
 /// the last producer is the newest publisher's.
@@ -179,6 +185,7 @@ pub(crate) struct Track {
     /// answer adds or drops the producer.
     subscribing: HashSet<SessionId>,
     last_failure: Option<CreationFailure>,
+    last_producer_end: Option<PublishDoneReason>,
     reservations: Reservations,
     /// Sessions a forwarded PUBLISH is on its way to.
     pending_consumers: HashSet<SessionId>,
@@ -194,6 +201,7 @@ impl Track {
             pending_producers: 0,
             subscribing: HashSet::new(),
             last_failure: None,
+            last_producer_end: None,
             reservations: Reservations::default(),
             pending_consumers: HashSet::new(),
             new_group_requests: NewGroupRequestGate::default(),
@@ -236,23 +244,49 @@ impl Track {
         self.subscribing.remove(&publisher_session_id);
     }
 
-    /// One upstream SUBSCRIBE ended without a producer. Returns true, failing
-    /// the creation with the last failure, when it was the last one and no
-    /// producer came; the caller then removes the entry.
-    pub(crate) fn pending_producer_ended(&mut self, failure: Option<CreationFailure>) -> bool {
+    /// Keeps the track its last producer left while an upstream SUBSCRIBE is
+    /// in flight, so its consumers wait for that publisher instead of ending;
+    /// `end` ends them if no producer comes of it. Returns false, keeping
+    /// nothing, when no SUBSCRIBE is in flight.
+    pub(crate) fn outlive_last_producer(&mut self, end: PublishDoneReason) -> bool {
+        if self.pending_producers == 0 {
+            return false;
+        }
+        self.last_producer_end = Some(end);
+        true
+    }
+
+    pub(crate) fn forget_last_producer_end(&mut self) {
+        self.last_producer_end = None;
+    }
+
+    /// One upstream SUBSCRIBE ended without a producer. When it was the last
+    /// one and the track has no producer, the creation fails with the last
+    /// failure, or a track kept by `outlive_last_producer` ends; the caller
+    /// then removes the entry.
+    pub(crate) fn pending_producer_ended(
+        &mut self,
+        failure: Option<CreationFailure>,
+    ) -> PendingProducersOutcome {
         self.pending_producers = self.pending_producers.saturating_sub(1);
         if failure.is_some() {
             self.last_failure = failure;
         }
-        if self.pending_producers > 0 || !self.producers.is_empty() || !self.is_creating() {
-            return false;
+        if self.pending_producers > 0 || !self.producers.is_empty() {
+            return PendingProducersOutcome::Kept;
+        }
+        if !self.is_creating() {
+            return match self.last_producer_end.take() {
+                Some(end) => PendingProducersOutcome::Ended(end),
+                None => PendingProducersOutcome::Kept,
+            };
         }
         let failure = self.last_failure.take().unwrap_or(CreationFailure {
             code: RequestErrorCode::TrackDoesNotExist,
             reason: "Designated namespace and track name do not exist.".to_string(),
         });
         let _ = self.creation.send(CreationState::Failed(failure));
-        true
+        PendingProducersOutcome::CreationFailed
     }
 
     pub(crate) fn reserve(&mut self, peer: SessionPeer) {

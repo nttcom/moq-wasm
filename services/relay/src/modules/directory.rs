@@ -11,7 +11,7 @@ use moqt::{namespace::NamespaceInterest, object::Location};
 use crate::modules::{
     directory::track::{
         Consumer, CreationFailure, CreationState, DownstreamSubscription, MatchingPublication,
-        NamespaceSubscription, Producer, ProducerOrigin, ProducerState,
+        NamespaceSubscription, PendingProducersOutcome, Producer, ProducerOrigin, ProducerState,
         ReleasedUpstreamSubscription, RemovedDownstreamSubscription, RemovedSessionSubscriptions,
         Track, TrackState,
     },
@@ -870,16 +870,30 @@ impl InMemoryLocalPubSubDirectory {
         }
     }
 
-    /// An upstream SUBSCRIBE for the track ended without a producer. When it
-    /// was the last one of a track still being created, the creation fails
-    /// and the entry goes.
+    /// An upstream SUBSCRIBE for the track ended without a producer. Returns
+    /// true when it ended a track its last producer left (see
+    /// `Track::outlive_last_producer`); the caller then tells the cache its
+    /// publisher left.
     pub(crate) fn pending_producer_ended(
         &self,
         track_key: &TrackKey,
         failure: Option<CreationFailure>,
-    ) {
-        self.upstream_tracks
-            .remove_if_mut(track_key, |_, track| track.pending_producer_ended(failure));
+    ) -> bool {
+        let Entry::Occupied(mut track) = self.upstream_tracks.entry(track_key.clone()) else {
+            return false;
+        };
+        match track.get_mut().pending_producer_ended(failure) {
+            PendingProducersOutcome::Kept => false,
+            PendingProducersOutcome::CreationFailed => {
+                track.remove();
+                false
+            }
+            PendingProducersOutcome::Ended(end) => {
+                self.end_downstream_subscriptions(track.get_mut(), track_key, end);
+                track.remove();
+                true
+            }
+        }
     }
 
     /// The upstream subscriptions to send `new_group_request` on, for a
@@ -1064,6 +1078,7 @@ impl InMemoryLocalPubSubDirectory {
             return false;
         }
         track.producers.insert(publisher_session_id, producer);
+        track.forget_last_producer_end();
         track.mark_created();
         true
     }
@@ -1132,7 +1147,7 @@ impl InMemoryLocalPubSubDirectory {
             return None;
         };
         let ended = track.get_mut().producers.remove(&publisher_session_id)?;
-        if !track.get().producers.is_empty() {
+        if !track.get().producers.is_empty() || track.get_mut().outlive_last_producer(end.clone()) {
             return Some((ended, Vec::new()));
         }
         let removed = self.end_downstream_subscriptions(track.get_mut(), track_key, end);
@@ -1316,7 +1331,7 @@ mod tests {
     };
     use crate::modules::test_support::mock_session::{MockPublishHandler, runner_stopped};
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
-    use tokio::sync::mpsc;
+    use tokio::sync::{mpsc, oneshot::error::TryRecvError};
 
     #[tokio::test]
     async fn a_track_keeps_a_publisher_while_another_session_publishes_its_namespace() {
@@ -2399,6 +2414,68 @@ mod tests {
                 ..active_upstream(origin)
             }),
         );
+    }
+
+    #[tokio::test]
+    async fn the_last_publisher_leaving_keeps_the_track_for_a_subscribe_in_flight() {
+        // Arrange: an upstream SUBSCRIBE to another publisher is unanswered
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let mut runner_stop_receiver = table
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                downstream_subscription(track_key.clone(), None),
+                delivery_control(true),
+            )
+            .unwrap()
+            .stop_receiver;
+        table.add_pending_producers(&track_key, 1);
+
+        // Act
+        table.remove_session(PUBLISHER_SESSION);
+        let taken = table.add_upstream_subscription_to_track(
+            &track_key,
+            SECOND_PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+        let ended = table.pending_producer_ended(&track_key, None);
+
+        // Assert: the subscriber goes on with the publisher that answered
+        assert!(taken);
+        assert!(!ended);
+        assert_eq!(runner_stop_receiver.try_recv(), Err(TryRecvError::Empty));
+    }
+
+    #[tokio::test]
+    async fn a_track_kept_for_a_subscribe_in_flight_ends_when_no_publisher_answers() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let mut runner_stop_receiver = table
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                downstream_subscription(track_key.clone(), None),
+                delivery_control(true),
+            )
+            .unwrap()
+            .stop_receiver;
+        table.add_pending_producers(&track_key, 1);
+        table.remove_session(PUBLISHER_SESSION);
+        let kept = runner_stop_receiver.try_recv() == Err(TryRecvError::Empty);
+
+        // Act
+        let ended = table.pending_producer_ended(&track_key, None);
+
+        // Assert: the subscriber hears the end of the publisher that left
+        assert!(kept);
+        assert!(ended);
+        assert_eq!(
+            runner_stop_receiver.try_recv(),
+            Ok(PublishDoneReason::publisher_session_closed())
+        );
+        assert!(!table.upstream_tracks.contains_key(&track_key));
     }
 
     #[tokio::test]

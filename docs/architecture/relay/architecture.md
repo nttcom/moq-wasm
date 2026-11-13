@@ -1176,7 +1176,9 @@ may destroy its state). Removal because the track's last upstream ended — its 
 away (TRACK_ENDED) or it sent PUBLISH_DONE (its status code) — sends a `PublishDoneReason`
 instead, and the runner answers it with PUBLISH_DONE carrying that status and the number
 of streams it opened, after its senders stopped (§9.12: no state is destroyed without
-PUBLISH_DONE). A malformed track ends the runner the same way with MALFORMED_TRACK. A
+PUBLISH_DONE). While an upstream SUBSCRIBE to another publisher is still unanswered, the
+track and its registrations stay, and the reason is sent only if that SUBSCRIBE brings no
+producer. A malformed track ends the runner the same way with MALFORMED_TRACK. A
 subscription with an End Group ends the runner once its range is delivered (see
 `EgressScheduler`): it sends PUBLISH_DONE SUBSCRIPTION_ENDED after every stream it opened
 was closed or reset (§9.12), and the task then sends
