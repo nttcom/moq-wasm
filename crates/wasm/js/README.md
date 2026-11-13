@@ -353,6 +353,10 @@ for await (const event of await session.watchNamespaces(['room'])) {
 - `publishTrack(namespace, track, { datagram: true })` sends each object in
   its own datagram: a lost object is not resent and never delays the next
   one. Keep an object under about 1 KB.
+- A page that packages its own media, such as CMAF fragments, publishes
+  `buildMsfCatalogJson(tracks)` from `moq-wasm/media` on the
+  `CATALOG_TRACK_NAME` track so `LivePlayer` finds its tracks; with
+  `retentionMs: 0` each joining FETCH gets the newest catalog.
 
 ## Logs
 

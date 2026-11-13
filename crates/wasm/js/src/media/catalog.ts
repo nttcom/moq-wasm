@@ -73,6 +73,8 @@ export type MediaCatalogTrack = {
   trackDuration?: number
 }
 
+/// The JSON of an MSF catalog listing `tracks` (draft-ietf-moq-msf-01 §5);
+/// publish it on the `CATALOG_TRACK_NAME` track.
 export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitData[] = []): string {
   const catalog: MsfCatalog = {
     version: MSF_VERSION,

@@ -1,7 +1,5 @@
-import type { MsfTrack } from 'moq-wasm/media/catalog'
-import { buildMsfCatalogJson } from 'moq-wasm/media/catalog'
+import { type MsfTrack, buildMsfCatalogJson } from 'moq-wasm/media'
 import { getMediaVideoCodecOverride } from './common'
-import { formatAudioChannelConfig } from 'moq-wasm/media/internal/audioChannelConfig'
 
 export type MediaVideoProfile = {
   trackName: string
@@ -54,7 +52,7 @@ export function buildMediaCatalogJson(
     codec: profile.codec,
     bitrate: profile.bitrate,
     samplerate: profile.sampleRate,
-    channelConfig: formatAudioChannelConfig(profile.channels)
+    channelConfig: profile.channels === 1 ? 'mono' : 'stereo'
   }))
   return buildMsfCatalogJson([...videoTracks, ...audioTracks])
 }
