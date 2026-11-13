@@ -2,14 +2,14 @@ use std::sync::OnceLock;
 
 use tokio::time::Instant;
 
-/// `StreamPriority` compares 12 bits of a sequence, so the tick count wraps
-/// about every 17 minutes.
-const TICK_MILLIS: u128 = 250;
+/// A tick is 2^8 ms, so the 12 bits of a sequence `StreamPriority` compares
+/// cover 2^20 ms: the tick count wraps about every 17 minutes.
+const TICK_MILLIS_SHIFT: u32 = 8;
 
 /// Ticks since the first call, on one clock for every subscription of the relay.
 pub(super) fn current_tick() -> u64 {
     static STARTED: OnceLock<Instant> = OnceLock::new();
-    (STARTED.get_or_init(Instant::now).elapsed().as_millis() / TICK_MILLIS) as u64
+    (STARTED.get_or_init(Instant::now).elapsed().as_millis() >> TICK_MILLIS_SHIFT) as u64
 }
 
 struct NewestGroup {
