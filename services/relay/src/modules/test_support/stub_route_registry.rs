@@ -40,6 +40,9 @@ pub(crate) struct StubRouteRegistry {
     /// The namespaces other relays publish; `None` leaves the namespace routes
     /// unused, so a call fails the test.
     namespace_routes: Option<Vec<String>>,
+    /// The relays `find_namespace_subscribers` returns for any namespace;
+    /// `None` makes it and `register_track_publisher` fail the test.
+    namespace_subscriber_relay_ids: Option<Vec<&'static str>>,
 }
 
 impl StubRouteRegistry {
@@ -51,6 +54,15 @@ impl StubRouteRegistry {
             migration_target: None,
             draining: AtomicBool::new(false),
             namespace_routes: None,
+            namespace_subscriber_relay_ids: None,
+        }
+    }
+
+    /// Clients of the relays `relay_ids` subscribe to every namespace.
+    pub(crate) fn with_namespace_subscribers(relay_ids: Vec<&'static str>) -> Self {
+        Self {
+            namespace_subscriber_relay_ids: Some(relay_ids),
+            ..Self::new(PublisherLookup::MustNotBeCalled)
         }
     }
 
@@ -133,7 +145,10 @@ impl RelayRouteRegistry for StubRouteRegistry {
     }
 
     async fn register_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
-        unimplemented!("not used with the stub route registry")
+        if self.namespace_subscriber_relay_ids.is_none() {
+            unimplemented!("not used with the stub route registry")
+        }
+        Ok(())
     }
 
     async fn unregister_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
@@ -213,6 +228,9 @@ impl RelayRouteRegistry for StubRouteRegistry {
         &self,
         _track_namespace: &str,
     ) -> anyhow::Result<Vec<RelayInfo>> {
-        unimplemented!("not used with the stub route registry")
+        let Some(relay_ids) = &self.namespace_subscriber_relay_ids else {
+            unimplemented!("not used with the stub route registry")
+        };
+        Ok(relays(relay_ids))
     }
 }

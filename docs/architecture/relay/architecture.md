@@ -478,10 +478,12 @@ to the track the same way.
    SUBSCRIBE_TRACKS, not a SUBSCRIBE_NAMESPACE), with that subscription's
    Forward State (draft-18 §10.19), and, for a client-origin PUBLISH, to every
    remote relay holding a namespace-subscriber route, dialled via
-   `InterRelayConnectionManager` (Forward State 1: the remote relay applies
-   its own subscribers'). A subscription that leaves out its session's own
-   tracks (draft-18 §6.1) gets no PUBLISH for a track that session
-   PUBLISHed; a draft-14 one is echoed it (draft-14 §6.1).
+   `InterRelayConnectionManager`. It is forwarded in the Forward State of
+   the PUBLISH received, so a track published on demand stays on demand on
+   the remote relay, which asks for it only while a client there takes it. A
+   subscription that leaves out its session's own tracks (draft-18 §6.1)
+   gets no PUBLISH for a track that session PUBLISHed; a draft-14 one is
+   echoed it (draft-14 §6.1).
 4. PUBLISH_OK to the publisher, with the Forward State the subscription
    belongs in (see "Upstream Forward State").
 

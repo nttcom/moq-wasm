@@ -1275,6 +1275,7 @@ pub(crate) struct MockPublishHandler {
     track_namespace_tuple: Vec<String>,
     track_name: String,
     track_alias: u64,
+    forward: bool,
 }
 
 impl MockPublishHandler {
@@ -1284,7 +1285,14 @@ impl MockPublishHandler {
             track_namespace_tuple: track_namespace.split('/').map(str::to_string).collect(),
             track_name: track_name.to_string(),
             track_alias,
+            forward: true,
         }
+    }
+
+    /// A PUBLISH in Forward State 0, which publishes the track on demand.
+    pub(crate) fn on_demand(mut self) -> Self {
+        self.forward = false;
+        self
     }
 }
 
@@ -1318,7 +1326,7 @@ impl PublishHandler for MockPublishHandler {
     }
 
     fn _forward(&self) -> bool {
-        true
+        self.forward
     }
 
     fn subscription(
@@ -1334,7 +1342,7 @@ impl PublishHandler for MockPublishHandler {
             group_order: GroupOrder::Ascending,
             content_exists: ContentExists::False,
             subscriber_priority,
-            forward: true,
+            forward: self.forward,
             filter_type,
             delivery_timeout: None,
             track_properties: TrackProperties::default(),

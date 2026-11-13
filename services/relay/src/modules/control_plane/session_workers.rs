@@ -119,6 +119,7 @@ mod tests {
                 MockFetchHandler, MockPublishHandler, MockPublishNamespaceHandler,
                 RecordedControlMessages, SentPublish, mock_new_session, session_repository,
             },
+            stub_route_registry::StubRouteRegistry,
         },
     };
     use moqt::namespace::NamespaceInterest;
@@ -129,15 +130,19 @@ mod tests {
         _session_workers: SessionWorkers,
         repo: Arc<tokio::sync::Mutex<SessionRepository>>,
         local_pub_sub_directory: Arc<InMemoryLocalPubSubDirectory>,
+        inter_relay_connection_manager: Arc<InterRelayConnectionManager>,
         cache_store: Arc<TrackCacheStore>,
         cache_store_references_without_workers: usize,
     }
 
     impl RunningSessionWorkers {
         fn start() -> Self {
+            Self::start_with_route_registry(Arc::new(NoopRelayRouteRegistry))
+        }
+
+        fn start_with_route_registry(route_registry: Arc<dyn RelayRouteRegistry>) -> Self {
             let (repo, session_added_receiver) = session_repository();
             let repo = Arc::new(tokio::sync::Mutex::new(repo));
-            let route_registry: Arc<dyn RelayRouteRegistry> = Arc::new(NoopRelayRouteRegistry);
             let inter_relay_connection_manager = Arc::new(InterRelayConnectionManager::new(
                 repo.clone(),
                 unused_inter_relay_client_config(),
@@ -157,7 +162,7 @@ mod tests {
                     repo: repo.clone(),
                     local_pub_sub_directory: local_pub_sub_directory.clone(),
                     route_registry,
-                    inter_relay_connection_manager,
+                    inter_relay_connection_manager: inter_relay_connection_manager.clone(),
                     upstream_publisher_resolver,
                     cache_store: cache_store.clone(),
                     token_verifier: Arc::new(StubVerifier(StubOutcome::Unauthorized)),
@@ -169,9 +174,21 @@ mod tests {
                 _session_workers: session_workers,
                 repo,
                 local_pub_sub_directory,
+                inter_relay_connection_manager,
                 cache_store,
                 cache_store_references_without_workers,
             }
+        }
+
+        async fn register_remote_relay(
+            &self,
+            relay_id: &str,
+            session_id: SessionId,
+        ) -> RecordedControlMessages {
+            let recorded = self.register_session(session_id).await;
+            self.inter_relay_connection_manager
+                .record_dialed(relay_id, session_id);
+            recorded
         }
 
         async fn register_session(&self, session_id: SessionId) -> RecordedControlMessages {
@@ -320,6 +337,33 @@ mod tests {
         let draft14 = wait_for_publishes(&draft14, 1).await.unwrap();
         assert!(!paused[0].forward);
         assert!(draft14[0].forward);
+    }
+
+    #[tokio::test]
+    async fn publish_reaches_another_relay_in_the_forward_state_it_was_published_in() {
+        // Arrange
+        let workers = RunningSessionWorkers::start_with_route_registry(Arc::new(
+            StubRouteRegistry::with_namespace_subscribers(vec!["relay-2"]),
+        ));
+        let remote_relay = workers.register_remote_relay("relay-2", 2).await;
+        let publisher = workers.register_session(1).await;
+
+        // Act
+        publisher.send_event(MoqtSessionEvent::Publish(Box::new(
+            MockPublishHandler::new("ns", "on-demand", 0).on_demand(),
+        )));
+        publisher.send_event(publish("ns", "forwarded"));
+
+        // Assert: the on-demand track arrives in Forward State 0, the other in Forward State 1
+        let publishes = wait_for_publishes(&remote_relay, 2).await.unwrap();
+        let forward_of = |track_name: &str| {
+            publishes
+                .iter()
+                .find(|publish| publish.track_name == track_name)
+                .map(|publish| publish.forward)
+        };
+        assert_eq!(forward_of("on-demand"), Some(false));
+        assert_eq!(forward_of("forwarded"), Some(true));
     }
 
     #[tokio::test]
