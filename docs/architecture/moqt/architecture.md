@@ -1251,6 +1251,11 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   session with `ProtocolViolation`. An update of a subscription that has
   ended still reaches the application.
 - **Control response timeout**: `PendingResponse::response` bounds every
+- **PUBLISH_DONE for a Request ID that never existed** (draft-14 §9.1): the
+  same check closes the session with `InvalidRequestId` before
+  `PublishDoneExpiryTask` sees it. A Request ID that existed but names no
+  subscription still gets the wait, and its cancel finds nothing: the sink of
+  a subscription may be installed after its PUBLISH_DONE arrives.
   request/response wait to 10 s; a timeout fails only that request with
   `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
   Every request that waits for a response returns `RequestFailure`, so
