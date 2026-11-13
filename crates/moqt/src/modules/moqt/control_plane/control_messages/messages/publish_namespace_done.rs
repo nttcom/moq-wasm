@@ -1,4 +1,5 @@
-use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use crate::modules::extensions::buf_put_ext::BufPutExt;
+use crate::modules::moqt::control_plane::control_messages::util;
 use anyhow::Context;
 use bytes::BytesMut;
 
@@ -13,7 +14,7 @@ impl PublishNamespaceDone {
     }
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
-        let track_namespace_tuple = buf.try_get_tuple().context("track namespace")?;
+        let track_namespace_tuple = util::get_track_namespace(buf).context("track namespace")?;
 
         Ok(Self {
             track_namespace: track_namespace_tuple,

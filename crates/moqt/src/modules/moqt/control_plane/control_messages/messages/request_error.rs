@@ -1,4 +1,5 @@
 use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use crate::modules::moqt::control_plane::control_messages::util;
 use anyhow::Context;
 use bytes::BytesMut;
 use std::fmt;
@@ -26,7 +27,7 @@ impl RequestError {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
         let error_code = buf.try_get_varint().context("error code")?;
-        let reason_phrase = buf.try_get_string().context("reason phrase")?;
+        let reason_phrase = util::get_reason_phrase(buf).context("reason phrase")?;
 
         Ok(RequestError {
             request_id,

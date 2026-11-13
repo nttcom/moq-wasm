@@ -1,4 +1,5 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::control_plane::control_messages::util;
 use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::control_plane::control_messages::{
@@ -33,7 +34,8 @@ impl SubscribeNamespace {
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_prefix = buf.try_get_tuple().context("track namespace prefix")?;
+        let track_namespace_prefix =
+            util::get_track_namespace(buf).context("track namespace prefix")?;
         let parameters = KeyValuePair::decode_list(buf)?;
         let authorization_token = odd_values(&parameters, 0x03)
             .filter_map(|value| AuthorizationToken::decode_parameter(value))

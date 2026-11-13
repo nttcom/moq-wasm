@@ -1,4 +1,5 @@
 use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use crate::modules::moqt::control_plane::control_messages::util;
 use anyhow::Context;
 use bytes::BytesMut;
 
@@ -24,7 +25,7 @@ impl PublishDone {
         let request_id = buf.try_get_varint().context("request id")?;
         let status_code = buf.try_get_varint().context("status code")?;
         let stream_count = buf.try_get_varint().context("stream count")?;
-        let error_reason = buf.try_get_string().context("error reason")?;
+        let error_reason = util::get_reason_phrase(buf).context("error reason")?;
 
         Ok(Self {
             request_id,
