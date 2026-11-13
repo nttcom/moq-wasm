@@ -55,6 +55,12 @@ export type MoqSubscribeOptions = {
   /// The Subscriber Priority (draft-14 §7.2), 128 by default: the relay sends a
   /// lower value first.
   priority?: number
+  /// The DELIVERY TIMEOUT (draft-14 §9.2.1.2) in milliseconds. When the relay
+  /// has not delivered an object that long after receiving it, it resets the
+  /// stream of the object's subgroup and sends no later object of that
+  /// subgroup. A congested link then carries recent objects instead of a
+  /// growing backlog. Without it every object is delivered.
+  deliveryTimeoutMs?: number
 }
 
 /// `withdrawn` follows PUBLISH_NAMESPACE_DONE.
@@ -144,7 +150,14 @@ export class MoqSession {
 
   async subscribe(namespace: string[], track: string, options: MoqSubscribeOptions = {}): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () =>
-      this.inner.subscribe(namespace, track, options.filter, options.forward, options.priority)
+      this.inner.subscribe(
+        namespace,
+        track,
+        options.filter,
+        options.forward,
+        options.priority,
+        options.deliveryTimeoutMs
+      )
     )
     return new MoqSubscription(subscription, this)
   }
@@ -161,15 +174,17 @@ export class MoqSession {
   /// unless the track starts a group on request and the largest object ID is
   /// `newGroupAfter` or more: then the publisher is asked for a new
   /// group (NEW_GROUP_REQUEST, §10.2.13) and the objects start with it.
-  /// `priority` is the Subscriber Priority, as in `subscribe`.
+  /// `priority` is the Subscriber Priority and `deliveryTimeoutMs` the
+  /// DELIVERY TIMEOUT, as in `subscribe`.
   async subscribeGroupStart(
     namespace: string[],
     track: string,
     newGroupAfter: number,
-    priority?: number
+    priority?: number,
+    deliveryTimeoutMs?: number
   ): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () =>
-      this.inner.subscribeGroupStart(namespace, track, newGroupAfter, priority)
+      this.inner.subscribeGroupStart(namespace, track, newGroupAfter, priority, deliveryTimeoutMs)
     )
     return new MoqSubscription(subscription, this)
   }

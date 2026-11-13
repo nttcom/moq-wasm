@@ -142,6 +142,7 @@ async fn subscribe_live(namespace: &str) -> anyhow::Result<Session> {
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;

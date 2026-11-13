@@ -111,7 +111,9 @@ impl Session {
 
     /// `filter` is `"largestObject"` (the default) or `"nextGroupStart"`.
     /// `priority` is the Subscriber Priority (draft-14 §7.2), 128 by default:
-    /// the relay sends a lower value first.
+    /// the relay sends a lower value first. `delivery_timeout_ms` is the
+    /// DELIVERY TIMEOUT (draft-14 §9.2.1.2): the relay stops sending an object that
+    /// many milliseconds after receiving it; without it every object is sent.
     pub async fn subscribe(
         &self,
         namespace: Vec<String>,
@@ -119,6 +121,7 @@ impl Session {
         filter: Option<String>,
         forward: Option<bool>,
         priority: Option<u8>,
+        delivery_timeout_ms: Option<u32>,
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
@@ -127,6 +130,7 @@ impl Session {
                     filter_type: filter_type(filter.as_deref())?,
                     forward: forward.unwrap_or(true),
                     subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
+                    delivery_timeout: delivery_timeout_ms.map(u64::from),
                     ..defaults
                 };
                 let mut subscriber = self.session.subscriber();
@@ -169,7 +173,8 @@ impl Session {
     /// current group, through a joining FETCH, or, when the track has
     /// dynamic groups and its largest object ID is `new_group_after` or
     /// more, a new group it asks the publisher to start (NEW_GROUP_REQUEST,
-    /// §10.2.13). `priority` is the Subscriber Priority, as in `subscribe`.
+    /// §10.2.13). `priority` is the Subscriber Priority and
+    /// `delivery_timeout_ms` the DELIVERY TIMEOUT, as in `subscribe`.
     #[wasm_bindgen(js_name = subscribeGroupStart)]
     pub async fn subscribe_group_start(
         &self,
@@ -177,6 +182,7 @@ impl Session {
         track: String,
         new_group_after: u32,
         priority: Option<u8>,
+        delivery_timeout_ms: Option<u32>,
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
@@ -188,6 +194,7 @@ impl Session {
                         track,
                         new_group_after.into(),
                         priority.unwrap_or(SubscribeOption::default().subscriber_priority),
+                        delivery_timeout_ms.map(u64::from),
                     )
                     .await
                     .map_err(|error| request_error(RequestKind::Subscribe, &error))?;

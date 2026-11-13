@@ -178,6 +178,7 @@ async fn subscribe_command_track(
                 forward: true,
                 filter_type: FilterType::NextGroupStart,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await;
