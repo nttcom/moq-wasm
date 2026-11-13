@@ -332,14 +332,6 @@ element('disconnect-btn').addEventListener('click', () => {
   })
 })
 
-const settingsModal = element<HTMLDialogElement>('settings-modal')
-element('settings-btn').addEventListener('click', () => settingsModal.showModal())
-settingsModal.addEventListener('click', (event) => {
-  if (event.target === settingsModal) {
-    settingsModal.close()
-  }
-})
-
 buildCommandUI()
 createRelayPicker(element('relay-picker'), relayUrl, (url) => {
   relayUrl = url
