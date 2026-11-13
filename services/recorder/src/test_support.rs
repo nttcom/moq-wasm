@@ -187,7 +187,7 @@ pub(crate) async fn stored_room(
     members: Vec<(&str, Vec<StoredArchive<'_>>)>,
 ) -> (RecordingStore, StoredRecording) {
     let store = RecordingStore::open(&url::Url::parse("memory:///").unwrap()).unwrap();
-    let prefix = store.recording_prefix("id");
+    let prefix = store.recording_prefix("anon/room", "id");
     let mut listed = Vec::new();
     for (member_index, (namespace, archives)) in members.into_iter().enumerate() {
         let mut keys = Vec::new();

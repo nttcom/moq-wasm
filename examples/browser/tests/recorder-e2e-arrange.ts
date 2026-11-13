@@ -135,13 +135,17 @@ async function startRecorderServe() {
     }
     await sleep(POLL_INTERVAL_MS)
   }
-  // The rooms these tests record are under the public root, which needs no token.
+  // The recorder runs with --insecure-skip-auth against a relay without authorization.
   const api: Recorder = { url, token: () => undefined }
   const current = async (recording: RoomRecording) =>
     (await listRecordings(api, recording.namespace_prefix)).find((candidate) => candidate.id === recording.id)
+  /// A recording's files are under its app, the first element of its room.
+  const recordingDir = (recording: RoomRecording) =>
+    join(storeDir, recording.namespace_prefix.split('/')[0], recording.id)
   return {
     url,
     storeDir,
+    recordingDir,
     /// Returns once the recording job has joined the room, so that the recording covers what follows.
     async start(
       namespacePrefix: string,
@@ -173,14 +177,14 @@ async function startRecorderServe() {
         }
         await sleep(POLL_INTERVAL_MS)
       }
-      const recordingDir = join(storeDir, recording.id)
-      return readdirSync(recordingDir, { recursive: true, encoding: 'utf8' })
+      const dir = recordingDir(recording)
+      return readdirSync(dir, { recursive: true, encoding: 'utf8' })
         .filter((name) => name.endsWith('.mp4') && name !== 'composite.mp4')
-        .map((name) => join(recordingDir, name))
+        .map((name) => join(dir, name))
     },
     /// Throws until the recording is `finished`: `recorder serve` writes `manifest.json` only then.
     manifest(recording: RoomRecording): RecordingManifest {
-      return JSON.parse(readFileSync(join(storeDir, recording.id, 'manifest.json'), 'utf8')) as RecordingManifest
+      return JSON.parse(readFileSync(join(recordingDir(recording), 'manifest.json'), 'utf8')) as RecordingManifest
     },
     /// Waits for a stopped recording's composite and returns its path.
     async composite(recording: RoomRecording): Promise<string> {
@@ -188,7 +192,7 @@ async function startRecorderServe() {
       for (;;) {
         const state = (await current(recording))?.composite?.state
         if (state === 'done') {
-          return join(storeDir, recording.id, 'composite.mp4')
+          return join(recordingDir(recording), 'composite.mp4')
         }
         if (state === 'failed' || state === 'skipped' || Date.now() > deadline) {
           throw new Error(`recording ${recording.id} was not composited: ${JSON.stringify(await current(recording))}`)

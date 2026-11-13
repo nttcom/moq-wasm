@@ -103,7 +103,7 @@ impl StoredRecording {
     pub(crate) async fn open(store: &RecordingStore, id: &str, room: &str) -> Result<Self> {
         let mut recording = Self {
             store: store.object_store(),
-            prefix: store.recording_prefix(id),
+            prefix: store.recording_prefix(room, id),
             room: room.to_string(),
             started_at_ms: 0,
             tracks: Vec::new(),
@@ -112,7 +112,10 @@ impl StoredRecording {
         let manifest: Value = serde_json::from_slice(
             &recording
                 .read(
-                    store.recording_prefix(id).join("manifest.json").as_ref(),
+                    store
+                        .recording_prefix(room, id)
+                        .join("manifest.json")
+                        .as_ref(),
                     MAX_MANIFEST_BYTES,
                 )
                 .await?,
