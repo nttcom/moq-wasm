@@ -30,7 +30,7 @@ cargo run -p recorder -- \
 | `--auth-token` (`MOQT_AUTH_TOKEN`) | — | JWT for namespaces outside `anon/**`; never refreshed |
 | `--auth-token-file` (`MOQT_AUTH_TOKEN_FILE`) | — | File holding the JWT; re-read every 10 s and a changed token is sent to the relay |
 | `--insecure-skip-tls-verify` | off | Accept the local relay's development certificate |
-| `--archive` | off | Experimental: record the objects as JSON Lines instead of MP4, for `examples/archive-player` |
+| `--archive` | off | Experimental: record the objects as JSON Lines instead of MP4 |
 
 - Recording starts at the next keyframe and ends on Ctrl-C, when the relay
   closes the session, or 10 s after the publisher ends its tracks.
@@ -103,5 +103,4 @@ cargo run -p recorder -- serve \
 
 ```bash
 LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/recorder-archive-e2e.spec.ts
-LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/archive-player-e2e.spec.ts
 ```
