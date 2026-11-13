@@ -114,67 +114,6 @@ test('objects held up on the path step down once they arrive', () => {
   expect(choice).toBe('video_360p')
 })
 
-test('a lag above the target steps down even while it holds', () => {
-  // Arrange: 1.7 Mbps arrives 300 ms behind its capture throughout
-  const abr = new AdaptiveBitrate(() => 250)
-  abr.restart(0)
-  deliver(abr, SETTLE_MS, 6_000, 7_000, () => 300)
-
-  // Act
-  const choice = abr.decide(6_000, LADDER, 'video')
-
-  // Assert: 0.8 × 1.7 Mbps fits 480p but not 720p
-  expect(choice).toBe('video_480p')
-})
-
-test('a lag within the target does not step down', () => {
-  // Arrange
-  const abr = new AdaptiveBitrate(() => 250)
-  abr.restart(0)
-  deliver(abr, SETTLE_MS, 6_000, 7_000, () => 200)
-
-  // Act / Assert
-  expect(abr.decide(6_000, LADDER, 'video')).toBeUndefined()
-})
-
-test('a target lowered after construction applies at the next decision', () => {
-  // Arrange: 1.7 Mbps arrives 200 ms behind its capture
-  let targetLagMs = 250
-  const abr = new AdaptiveBitrate(() => targetLagMs)
-  abr.restart(0)
-  deliver(abr, SETTLE_MS, 6_000, 7_000, () => 200)
-  targetLagMs = 150
-
-  // Act
-  const choice = abr.decide(6_000, LADDER, 'video')
-
-  // Assert: 0.8 × 1.7 Mbps fits 480p but not 720p
-  expect(choice).toBe('video_480p')
-})
-
-test('keyframes arriving later than the target step down while the least lag holds', () => {
-  // Arrange: 1.7 Mbps arrives 100 ms behind its capture, every keyframe of a 2 s interval 300 ms
-  const abr = new AdaptiveBitrate(() => 250)
-  abr.restart(0)
-  deliver(abr, SETTLE_MS, 6_000, 7_000, (atMs) => (atMs % 2_000 < FRAME_MS ? 300 : 100))
-
-  // Act
-  const choice = abr.decide(6_000, LADDER, 'video')
-
-  // Assert: 0.8 × 1.7 Mbps fits 480p but not 720p
-  expect(choice).toBe('video_480p')
-})
-
-test('a late keyframe older than the spread window does not step down', () => {
-  // Arrange: the only late object arrives 4 s before the decision
-  const abr = new AdaptiveBitrate(() => 250)
-  abr.restart(0)
-  deliver(abr, SETTLE_MS, 8_000, 7_000, (atMs) => (atMs > 4_000 && atMs < 4_000 + FRAME_MS ? 300 : 100))
-
-  // Act / Assert
-  expect(abr.decide(8_000, LADDER, 'video')).toBeUndefined()
-})
-
 test('a single late keyframe is not taken for congestion', () => {
   // Arrange
   const abr = new AdaptiveBitrate()

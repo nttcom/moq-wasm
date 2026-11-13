@@ -49,8 +49,6 @@ function latencyToleranceMs(tolerance: LatencyTolerance): number {
   return LATENCY_TOLERANCE_MS[tolerance]
 }
 const RECENT_LAG_WINDOW_MS = 1_000
-/// Long enough to hold a keyframe at the meeting camera's 2 s interval.
-const SPREAD_WINDOW_MS = 3_000
 /// The share of the measured throughput a lower rendition may use.
 const THROUGHPUT_SAFETY = 0.8
 const INITIAL_UP_HOLD_MS = 10_000
@@ -124,11 +122,7 @@ function estimateBitrate(track: MediaCatalogTrack, reference: MediaCatalogTrack 
 ///   throughput measured then is what the path carries. A gap in arrivals
 ///   does not count: a publisher sends nothing while its source does not
 ///   change, such as a shared screen, and objects a congested path holds up
-///   show the queue in their lag once they arrive. With a
-///   `targetLagMs`, the largest lag of the last `SPREAD_WINDOW_MS` standing
-///   above it also counts as not fitting, since the jitter buffer holds the
-///   playout back by the spread keyframes add to the least lag. The target is
-///   read at every decision.
+///   show the queue in their lag once they arrive.
 /// - A step down goes to the highest rendition that fits that throughput.
 /// - A step up tries the next rendition after a calm spell; a failed trial
 ///   doubles the spell before the next one.
@@ -143,8 +137,6 @@ export class AdaptiveBitrate {
   private lastCongestedAtMs: number | undefined
   private ceilingBitrate: number | undefined
   private excessLagMs = LATENCY_TOLERANCE_MS.low
-
-  constructor(private readonly targetLagMs?: () => number) {}
 
   /// Throws a RangeError for a number that is negative or NaN, or an unknown name.
   setLatencyTolerance(tolerance: LatencyTolerance): void {
@@ -164,7 +156,7 @@ export class AdaptiveBitrate {
       return
     }
     this.samples.push(sample)
-    const horizon = sample.arrivedAtMs - Math.max(THROUGHPUT_WINDOW_MS, RECENT_LAG_WINDOW_MS, SPREAD_WINDOW_MS)
+    const horizon = sample.arrivedAtMs - Math.max(THROUGHPUT_WINDOW_MS, RECENT_LAG_WINDOW_MS)
     while (this.samples.length > 0 && this.samples[0].arrivedAtMs < horizon) {
       this.samples.shift()
     }
@@ -259,12 +251,7 @@ export class AdaptiveBitrate {
       return false
     }
     const recentLags = this.lagsSince(nowMs - RECENT_LAG_WINDOW_MS)
-    if (recentLags.length > 0 && Math.min(...recentLags) - this.baselineLagMs > this.excessLagMs) {
-      return true
-    }
-    const targetLagMs = this.targetLagMs?.()
-    const spreadLags = this.lagsSince(nowMs - SPREAD_WINDOW_MS)
-    return targetLagMs !== undefined && spreadLags.length > 0 && Math.max(...spreadLags) > targetLagMs
+    return recentLags.length > 0 && Math.min(...recentLags) - this.baselineLagMs > this.excessLagMs
   }
 
   private lagsSince(fromMs: number): number[] {
