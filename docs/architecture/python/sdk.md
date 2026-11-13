@@ -106,7 +106,7 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as sessi
 
 ```python
 async with moq_wasm.connect(...) as session:
-    await session.run(work())  # cancelled when the session fails; re-raises its failure
+    await session.run(work())
 ```
 
 The request methods keep the bindings' shape (`subscribe`,
@@ -176,6 +176,7 @@ transport = MoqWasmTransport(
         video_in_enabled=True,
         video_in_max_fps=10,
         video_out_enabled=True,
+        video_out_codec="h264",
         video_out_width=1280,
         video_out_height=720,
     ),
@@ -212,11 +213,12 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `Catalog` to a track name) picks another track, as PTZ tracking picks the
   profile its viewer chose.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
-  `OutputImageRawFrame` to H.264 with PyAV (`video_out_width`,
-  `video_out_height` and `video_out_framerate` of pipecat's
-  `TransportParams`), and both are pushed into the transport's broadcast,
-  so the browser plays it with `RemoteBroadcast`. A NEW_GROUP_REQUEST from a
-  subscriber makes the encoder emit a keyframe.
+  `OutputImageRawFrame` with PyAV to `video_out_codec` (`"h264"` by default,
+  the codec the browser SDK publishes; `"vp8"` is royalty-free), at
+  `video_out_width`, `video_out_height` and `video_out_framerate` of
+  pipecat's `TransportParams`. Both are pushed into the transport's
+  broadcast, so the browser plays it with `RemoteBroadcast`. A
+  NEW_GROUP_REQUEST from a subscriber makes the encoder emit a keyframe.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
@@ -241,8 +243,22 @@ await media.announce()
 
 `create_broadcast` in the media layer owns one, so the tracks a bot writes
 itself (`track`, `event_timeline`) and the media tracks share one namespace
-and one catalog. Encoding stays in Python: PyAV's wheels carry libx264 and
-libopus, and the `pipecat` extra already depends on PyAV for decoding.
+and one catalog. Encoding stays in Python with PyAV, which the `pipecat`
+extra already depends on for decoding.
+
+### No codec in the wheel
+The `moq-wasm` wheel holds this repository's code (MIT) and Rust crates
+under permissive licenses, and no codec: it packs encoded H.264 and Opus
+into LOC objects and never encodes or decodes them. Encoding and decoding go
+through PyAV, which the user's pip or uv installs from PyPI for the
+`pipecat` extra. PyAV's wheels are built with libx264 and libx265, so they
+are under the GPL, and H.264 is covered by patents (the Via LA AVC pool) for
+encoders and decoders alike. Keeping codecs out of the wheel keeps both out
+of what this repository distributes. The SDK's documentation tells its
+users to check them before they distribute PyAV with their app (an image,
+an installer) or charge for the H.264 video they serve. Bundling FFmpeg
+into the wheel to spare users the install would bring both into the
+release, and is not done.
 
 ## Consequences
 
