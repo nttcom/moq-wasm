@@ -97,8 +97,8 @@ pub struct Origin {
     state: Arc<Mutex<OriginState>>,
     /// Makes `publish` calls run one at a time while `state` is not held across
     /// the PUBLISH_OK wait, so two calls cannot both send PUBLISH. `release`
-    /// waits on it for a request it does not know yet. Taken before `state`,
-    /// never while holding it.
+    /// waits on it for a request it does not know yet, and `end_track` for a
+    /// PUBLISH in flight. Taken before `state`, never while holding it.
     publishing: Arc<Mutex<()>>,
 }
 
@@ -659,11 +659,13 @@ impl Origin {
 
     /// Ends every subscription to the track with PUBLISH_DONE (TRACK_ENDED,
     /// draft-ietf-moq-transport-14 §9.12). Does nothing for a track that is
-    /// not registered. The track keeps its numbering and cache, so `publish`
+    /// not registered. Waits for a `publish` in flight, whose subscription is
+    /// then ended too. The track keeps its numbering and cache, so `publish`
     /// or a SUBSCRIBE takes it up again at the next group.
     pub async fn end_track(&self, namespace: &str, track_name: &str) -> Result<()> {
         let key = track_key(namespace, track_name);
         let ended = {
+            let _publishing = self.publishing.lock().await;
             let mut state = self.state.lock().await;
             let Some(track) = state.tracks.get_mut(&key) else {
                 return Ok(());
@@ -1653,6 +1655,46 @@ mod tests {
             (received.group_id, received.payload),
             (FIRST_GROUP_ID + 2, Bytes::from_static(b"c"))
         );
+    }
+
+    #[tokio::test]
+    async fn a_track_ended_while_its_publish_awaits_publish_ok_is_done_once_accepted() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-end-track-publishing", RETENTION, version).await;
+            let origin = &peers.origin;
+
+            // Act
+            let (published, (ended, (accepted, done))) = within(async {
+                tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
+                    let SessionEvent::Publish(handler) =
+                        peers.server.receive_event().await.unwrap()
+                    else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    tokio::join!(origin.end_track(NAMESPACE, TRACK), async {
+                        let accepted = handler
+                            .ok(128, FilterType::LargestObject, true)
+                            .await
+                            .unwrap();
+                        handler.accept_data_receiver().await;
+                        let SessionEvent::PublishDone(done) =
+                            peers.server.receive_event().await.unwrap()
+                        else {
+                            panic!("expected PUBLISH_DONE");
+                        };
+                        (accepted, done)
+                    })
+                })
+            })
+            .await;
+
+            // Assert
+            published.unwrap();
+            ended.unwrap();
+            assert_eq!(done.request_id(), accepted.request_id());
+            assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
+        }
     }
 
     #[tokio::test]
