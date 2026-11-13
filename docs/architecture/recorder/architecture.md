@@ -305,14 +305,19 @@ flowchart LR
 
 `store::RecordingStore` lays the objects out so that each has one writer, and
 so needs neither compare-and-swap nor a database: a `file://` directory and
-GCS behave the same.
+GCS behave the same. The exception is a room's lock, which concurrent API
+requests may each find left by an ended recording and release. A release reads
+the lock and deletes it only if it names the recording; in GCS the delete goes
+through the JSON API with `ifGenerationMatch` (`cloud_storage::CloudStorageBucket`,
+since `object_store` 0.14 has no conditional delete), so a lock another request
+took after the read stays.
 
 | Object | Writer | Holds |
 | --- | --- | --- |
 | `state/<id>.json` | the API once (`starting`), then the recording job | `room_state::RoomRecord`: prefix, layout, whether to composite, state, members, `updated_at_ms` |
 | `state/<id>.stop` | the API | a stop request |
 | `state/<id>.composite.json` | the composite job, or the recording job when it cannot start one | the composite's state |
-| `locks/<prefix>` | the API, only if absent (`PutMode::Create`); deleted by the recording job | the id recording the room |
+| `locks/<prefix>` | the API, only if absent (`PutMode::Create`); deleted by the recording job, or by the API once that recording is no longer active | the id recording the room |
 | `rooms/<prefix>/<id>` | the API | an empty marker, so a room's recordings are listed without reading the others |
 | `<id>/<namespace>/...`, `<id>/manifest.json` | the recording job | the files and the manifest |
 
@@ -663,6 +668,12 @@ the recorder started with.
 - A lock left by a request that ended between taking it and writing the
   state counts toward `--max-recordings`, and its room answers `409`, for
   90 s after its id was made.
+- A `file://` store releases a lock by reading it and then deleting it, so
+  two API processes sharing one directory may delete a lock taken in
+  between and record a room twice.
+- With a `gs://` store outside Google Cloud, a lock cannot be released: the
+  conditional delete needs the metadata server even when `object_store`
+  reads credentials from a key file.
 - A single recording (`recorder --upload`) writes no manifest; the capture
   origin of its files is only logged.
 - Clocks of the participants' devices are trusted as they are; a skewed
