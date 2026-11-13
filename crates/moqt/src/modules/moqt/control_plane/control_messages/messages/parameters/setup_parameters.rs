@@ -49,6 +49,19 @@ pub struct SetupParameter {
     pub traceparent: Option<TraceContext>,
 }
 
+/// The value of the first parameter of the odd type `key`.
+fn bytes_value(kv_pairs: &[KeyValuePair], key: u64) -> Option<&Bytes> {
+    kv_pairs
+        .iter()
+        .find(|kv_pair| kv_pair.key == key)
+        .map(|kv_pair| match &kv_pair.value {
+            VariantType::Odd(value) => value,
+            VariantType::Even(_) => {
+                unreachable!("`KeyValuePair::decode` reads the value of an odd type as bytes")
+            }
+        })
+}
+
 impl SetupParameter {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let mut kv_pairs = Vec::new();
@@ -57,14 +70,9 @@ impl SetupParameter {
             let key_value_pair = KeyValuePair::decode(buf)?;
             kv_pairs.push(key_value_pair);
         }
-        let path =
-            kv_pairs
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x01)
-                .map(|kv_pair| match &kv_pair.value {
-                    VariantType::Odd(value) => String::from_utf8(value.to_vec()).unwrap(),
-                    VariantType::Even(_) => unreachable!(),
-                });
+        let path = bytes_value(&kv_pairs, 0x01)
+            .map(|value| String::from_utf8(value.to_vec()).context("PATH is not UTF-8"))
+            .transpose()?;
         let max_request_id = kv_pairs
             .iter()
             .find(|kv_pair| kv_pair.key == 0x02)
@@ -89,21 +97,11 @@ impl SetupParameter {
                     VariantType::Odd(_) => unreachable!(),
                     VariantType::Even(value) => value,
                 });
-        let authority = kv_pairs
-            .iter()
-            .find(|kv_pair| kv_pair.key == 0x05)
-            .map(|kv_pair| match &kv_pair.value {
-                VariantType::Odd(value) => String::from_utf8(value.to_vec()).unwrap(),
-                VariantType::Even(_) => unreachable!(),
-            });
+        let authority = bytes_value(&kv_pairs, 0x05)
+            .map(|value| String::from_utf8(value.to_vec()).context("AUTHORITY is not UTF-8"))
+            .transpose()?;
         let moq_implementation =
-            kv_pairs
-                .iter()
-                .find(|kv_pair| kv_pair.key == 0x07)
-                .map(|kv_pair| match &kv_pair.value {
-                    VariantType::Odd(value) => String::from_utf8(value.to_vec()).unwrap(),
-                    VariantType::Even(_) => unreachable!(),
-                });
+            bytes_value(&kv_pairs, 0x07).map(|value| String::from_utf8_lossy(value).into_owned());
         let trace_context = kv_pairs.iter().any(|kv_pair| kv_pair.key == TRACE_CONTEXT);
         let traceparent = TraceContext::find(&kv_pairs);
 
@@ -199,6 +197,34 @@ impl SetupParameter {
 
 #[cfg(test)]
 mod tests {
+    use super::SetupParameter;
+
+    #[test]
+    fn a_path_or_authority_that_is_not_utf8_fails_to_decode() {
+        for parameter_type in [0x01, 0x05] {
+            // Arrange: one parameter whose value is the byte 0xff
+            let bytes = [1, parameter_type, 1, 0xff];
+
+            // Act
+            let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&bytes[..]));
+
+            // Assert
+            assert!(decoded.is_err(), "{parameter_type:#x}: {decoded:?}");
+        }
+    }
+
+    #[test]
+    fn an_implementation_that_is_not_utf8_is_read_with_the_bytes_replaced() {
+        // Arrange
+        let bytes = [1, 0x07, 2, b'm', 0xff];
+
+        // Act
+        let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
+
+        // Assert
+        assert_eq!(decoded.moq_implementation.as_deref(), Some("m\u{fffd}"));
+    }
+
     mod success {
         use bytes::{Bytes, BytesMut};
 
