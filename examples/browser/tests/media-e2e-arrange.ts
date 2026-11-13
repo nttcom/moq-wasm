@@ -94,7 +94,7 @@ function createSubscriberPageModel(page: Page) {
     trackSubscribeButton: page.getByTestId('subscriber-track-subscribe-button'),
     receiveStatus: page.getByTestId('subscriber-receive-status'),
     playbackStatus: page.getByTestId('subscriber-playback-status'),
-    video: page.getByTestId('subscriber-video')
+    video: page.getByTestId('live-player-video')
   }
 }
 
