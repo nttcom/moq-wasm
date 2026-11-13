@@ -174,12 +174,12 @@ pub(crate) fn continuous_move(
     )
 }
 
-pub(crate) fn stop(profile: &str, pan_tilt: bool, zoom: bool) -> OnvifRequest {
+pub(crate) fn stop(profile: &str) -> OnvifRequest {
     build(
         PTZ_ACTION_NS,
         "Stop",
         format!(
-            r#"<Stop xmlns="{PTZ_ACTION_NS}"><ProfileToken>{profile}</ProfileToken><PanTilt>{pan_tilt}</PanTilt><Zoom>{zoom}</Zoom></Stop>"#
+            r#"<Stop xmlns="{PTZ_ACTION_NS}"><ProfileToken>{profile}</ProfileToken><PanTilt>true</PanTilt><Zoom>true</Zoom></Stop>"#
         ),
     )
 }
