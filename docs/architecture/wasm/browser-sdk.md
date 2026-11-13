@@ -383,7 +383,7 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
 ### 移行の手順
 1手順を1 PR にする。
 
-手順 1 から 7 は実装した。
+手順 1 から 8 は実装した。
 
 1. **feat(wasm): `LivePlayerOptions.source`。**
 2. **feat(wasm): 表示の高さによる ABR の上限。**
