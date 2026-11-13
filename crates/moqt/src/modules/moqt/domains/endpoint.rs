@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc};
 
 use crate::{
     Connecting, TransportProtocol,
@@ -106,7 +106,6 @@ pub struct ClientConfig {
     /// for an expired token and `authorization_token` is a provider. With `false`,
     /// GOAWAY arrives as a `SessionEvent` and the session stays on its connection.
     pub follow_go_away: bool,
-    pub web_socket_fallback: WebSocketFallback,
     /// The drafts offered to the server, most preferred first; the server
     /// picks one of them. `create_client` fails when it is empty.
     pub versions: Vec<Version>,
@@ -119,25 +118,9 @@ impl Default for ClientConfig {
             certificate_verification: CertificateVerification::NativeRoots,
             authorization_token: None,
             follow_go_away: true,
-            web_socket_fallback: WebSocketFallback::default(),
             versions: DEFAULT_VERSIONS.to_vec(),
         }
     }
-}
-
-/// Whether a `NATIVE` or `BROWSER` client also dials QMux over WebSocket
-/// (`wss://`, same host and port) for a `moqt://` or `https://` URL; a browser
-/// does so for `https://` only. QUIC or WebTransport gets a head start, then
-/// WebSocket is dialed alongside it and the first to open is used; a failure
-/// within the head start dials WebSocket at once. Only opening the transport
-/// races; a failed SETUP does not fall back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum WebSocketFallback {
-    Disabled,
-    /// The endpoint's own head start: 200 ms for `NATIVE`, 500 ms for `BROWSER`.
-    #[default]
-    Enabled,
-    HeadStart(Duration),
 }
 
 #[derive(Clone)]
@@ -169,7 +152,6 @@ impl<T: TransportProtocol> Endpoint<T> {
             client,
             config.authorization_token.clone(),
             config.follow_go_away,
-            config.web_socket_fallback,
             config.versions.clone(),
         );
         Ok(Self {
@@ -189,7 +171,6 @@ impl<T: TransportProtocol> Endpoint<T> {
             server,
             None,
             false,
-            WebSocketFallback::Disabled,
             server_config.versions.clone(),
         );
         Ok(Self {
@@ -233,6 +214,14 @@ impl<T: TransportProtocol> Endpoint<T> {
     /// it is the port the OS picked. Fails on `BROWSER`, which has no socket.
     pub fn local_port(&self) -> anyhow::Result<u16> {
         self.session_creator.transport_creator.local_port()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_web_socket_head_start(mut self, head_start: std::time::Duration) -> Self {
+        Arc::get_mut(&mut self.session_creator)
+            .expect("no session has been created yet")
+            .web_socket_head_start = Some(head_start);
+        self
     }
 }
 

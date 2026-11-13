@@ -17,8 +17,7 @@ pub(crate) type TransportAccepting = BoxFuture<anyhow::Result<BoxedConnection>>;
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
     /// The head start `moqt://` or `https://` gets before `wss://` is dialed
-    /// alongside it, unless `WebSocketFallback::HeadStart` sets another; `None`
-    /// for a client that cannot open `wss://`.
+    /// alongside it; `None` for a client that cannot open `wss://`.
     const WEB_SOCKET_HEAD_START: Option<Duration> = None;
 
     fn client(

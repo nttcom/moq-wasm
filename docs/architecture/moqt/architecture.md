@@ -121,9 +121,8 @@ Client-side helpers shared by the creators:
   to open is used and the other is dropped. A failure within the head start
   dials `wss://` at once, so a browser without the WebTransport API does not
   wait. Only creators with a `WEB_SOCKET_HEAD_START` do this, `NATIVE` (200 ms)
-  and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP;
-  `ClientConfig::web_socket_fallback` turns it off or sets another head
-  start. Which transport won is not remembered: each connect races again,
+  and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP.
+  Which transport won is not remembered: each connect races again,
   and a session that landed on WebSocket stays there until it ends. The
   host is resolved once before the head start, so a slow DNS server does
   not use it up, and both dials go to the same address. Only opening the
