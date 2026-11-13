@@ -5,6 +5,9 @@ import base64
 import json
 from types import SimpleNamespace
 
+from moq_wasm._session import Session, _Connecting
+from moq_wasm._token import TokenKeeper
+
 
 def unsigned_token(app_id: str, expires_at: float | None) -> str:
     """A JWT carrying `app_id` and `exp`; the SDK reads its claims without verifying it."""
@@ -24,11 +27,39 @@ class FakeWriter:
         self.objects.append((payload, new_group))
 
 
+class FakeSubscription:
+    """Yields `payloads` as objects of group 0, then ends as a track its publisher ended."""
+
+    def __init__(self, payloads: list[bytes]):
+        self._objects = iter(
+            SimpleNamespace(group_id=0, object_id=index, payload=payload) for index, payload in enumerate(payloads)
+        )
+        self.closed = False
+
+    def __aiter__(self) -> "FakeSubscription":
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._objects)
+        except StopIteration:
+            raise StopAsyncIteration from None
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 class FakeNativeSession:
-    """One connection. `calls` lists its requests in order; `drop()` ends it as the relay would."""
+    """One connection. `calls` lists its requests in order; `drop()` ends it as the relay would.
+    `tracks[name]` lists, for each SUBSCRIBE to `name` in turn, the payloads it yields; a SUBSCRIBE
+    beyond them fails."""
 
     def __init__(self, token: str | None):
         self.token = token
+        self.tracks: dict[str, list[list[bytes]]] = {}
+        # While set and not released, PUBLISH_NAMESPACE waits for the relay's answer.
+        self.announce_gate: asyncio.Event | None = None
+        self.subscriptions: list[FakeSubscription] = []
         self.calls: list[tuple] = []
         self.writers: dict[str, FakeWriter] = {}
         self.refreshed: list[str] = []
@@ -48,6 +79,8 @@ class FakeNativeSession:
 
     async def announce(self, namespace: list[str]) -> None:
         self.calls.append(("announce", namespace))
+        if self.announce_gate is not None:
+            await self.announce_gate.wait()
 
     async def watch_namespaces(self, prefix: list[str]):
         self.calls.append(("watch_namespaces", prefix))
@@ -57,9 +90,23 @@ class FakeNativeSession:
         while True:
             yield await self._namespace_events.get()
 
-    async def subscribe(self, namespace: list[str], name: str):
+    async def subscribe(self, namespace: list[str], name: str) -> FakeSubscription:
         self.calls.append(("subscribe", name))
-        return SimpleNamespace(namespace=namespace, name=name)
+        return self._subscription(name)
+
+    async def subscribe_current_group(self, namespace: list[str], name: str) -> FakeSubscription:
+        self.calls.append(("subscribe_current_group", name))
+        return self._subscription(name)
+
+    def _subscription(self, name: str) -> FakeSubscription:
+        if not self.tracks.get(name):
+            raise RuntimeError("TrackDoesNotExist")
+        subscription = FakeSubscription(self.tracks[name].pop(0))
+        self.subscriptions.append(subscription)
+        return subscription
+
+    async def unannounce(self, namespace: list[str]) -> None:
+        self.calls.append(("unannounce", namespace))
 
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         self.refreshed.append(token)
@@ -94,3 +141,13 @@ class FakeRelay:
             self._dialed.clear()
             await self._dialed.wait()
         return self.sessions[count - 1]
+
+
+async def open_session(relay: FakeRelay, keeper: TokenKeeper | None = None, token: str | None = None) -> Session:
+    return await _Connecting(relay.dial, keeper, token)
+
+
+async def restored_on(session: Session, native: FakeNativeSession) -> None:
+    """Waits until `session` has restored its state on `native`."""
+    while session._native is not native:
+        await asyncio.sleep(0)

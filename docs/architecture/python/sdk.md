@@ -128,7 +128,7 @@ with the reconnection above.
 ### Media: `moq_wasm.media`
 
 ```python
-from moq_wasm.media import EventTimeline, create_broadcast, watch_broadcasts
+from moq_wasm.media import RemoteBroadcast, create_broadcast, watch_broadcasts
 
 async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot:
     transcript = bot.event_timeline("transcript", retention_seconds=3600)
@@ -146,28 +146,38 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
 
 - **`create_broadcast(session, namespace)`** publishes the namespace when its
   `async with` block is entered, after the tracks declared on it before the
-  first `await`, and withdraws it on exit. Tracks added later are registered
-  at once; the relay forwards their SUBSCRIBEs to the published namespace.
-  This replaces the register-then-publish rule each bot comments.
+  first `await`, and withdraws it on exit (PUBLISH_NAMESPACE_DONE, through
+  the `Announcement` that `Session.announce` returns). `publish_track`
+  and `event_timeline` are synchronous so that a block can declare its
+  tracks before anything yields; `published()` waits for the
+  PUBLISH_NAMESPACE. A track added later is registered on its own, and
+  what is written to it before that is dropped. This replaces the
+  register-then-publish rule each bot comments.
 - **`EventTimeline`** writes a draft-ietf-moq-msf-01 §8 event timeline: each
   connection's first group opens with the record list (every record so far
   with `replay=True`, empty otherwise), and each later record is one object.
+  A `TrackWriter` calls it back each time a connection registers the track.
   It replaces the two copies.
-- **`watch_broadcasts(session, prefix, handler, *, empty_timeout=None)`** runs
-  `handler` as a task for each broadcast published under `prefix`, cancels it
-  when the broadcast is withdrawn, and runs it again when the broadcast is
-  published anew, as `watchBroadcasts` does in the browser. With
-  `empty_timeout`, it returns once no broadcast has been published for that
-  long. Like `watchBroadcasts`, it skips the broadcasts this session created.
+- **`watch_broadcasts(session, prefix, handler, *, filter=None,
+  empty_timeout=None)`** runs `handler` as a task for each broadcast
+  published under `prefix` that `filter` accepts, cancels it when the
+  broadcast is withdrawn, and runs it again when the broadcast is published
+  anew, as `watchBroadcasts` does in the browser. A handler's exception is
+  logged. With `empty_timeout`, it returns once no broadcast has been
+  published for that long. Like `watchBroadcasts`, it skips the broadcasts
+  this session publishes.
 - **`RemoteBroadcast`** is one published namespace:
   - `catalogs()` yields a `Catalog` each time the publisher changes it,
     starting from the one the relay holds (a joining FETCH), and skips a
     catalog that does not parse, logging it.
-  - `follow(name)` yields the track's objects, and subscribes again when the
-    track ends while the broadcast is still published.
+  - `follow(name)` yields the track's objects, and subscribes again a second
+    after the track ends or its SUBSCRIBE fails; the handler's cancellation
+    ends it.
 - **`Catalog`** is a typed draft-ietf-moq-msf-01 catalog (`tracks` of
-  `CatalogTrack` with `name`, `role`, `packaging`, `codec`, `bitrate`,
-  `width`, `height`, `samplerate`). `select` picks one track by its fields.
+  `CatalogTrack` with `name`, `namespace`, `role`, `packaging`, `codec`,
+  `bitrate`, `width`, `height`, `framerate`, `samplerate`, and every field in
+  `fields`). `select` picks one track by its fields; `codec="avc1"` matches
+  `avc1.42e01f`.
   `parse_catalog`'s dict stays in the bindings.
 
 ### pipecat: `moq_wasm.pipecat`

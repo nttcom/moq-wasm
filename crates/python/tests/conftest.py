@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from moq_wasm import _session
+from moq_wasm.media import _remote_broadcast
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGET = REPO_ROOT / "target" / "debug"
 APPS_FILE = "services/vts/apps.example.json"
@@ -80,6 +83,13 @@ def signed_token(app_id: str, secret: str, ttl: str = "1h") -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+@pytest.fixture
+def no_reconnect_delay(monkeypatch):
+    """A session redials and resubscribes at once, for the tests on fake native sessions."""
+    monkeypatch.setattr(_session, "FIRST_RECONNECT_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(_remote_broadcast, "RESUBSCRIBE_DELAY_SECONDS", 0.0)
 
 
 @pytest.fixture

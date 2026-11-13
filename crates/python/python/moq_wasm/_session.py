@@ -91,12 +91,31 @@ class TrackWriter:
         self.name = name
         self.retention_seconds = retention_seconds
         self._writer: _native.TrackWriter | None = None
+        # Called each time a connection registers the track.
+        self._on_bound: list[Callable[[], Awaitable[None]]] = []
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
         """The object is cached for FETCH whether or not a subscriber takes it. While the session
         reconnects, it is dropped."""
         if self._writer is not None:
             await self._writer.write(payload, new_group=new_group)
+
+    async def _bind(self, writer: _native.TrackWriter) -> None:
+        self._writer = writer
+        for bound in self._on_bound:
+            await bound()
+
+
+class Announcement:
+    """A namespace the session publishes on each connection until `close()`."""
+
+    def __init__(self, session: "Session", namespace: list[str]):
+        self.namespace = namespace
+        self._session = session
+
+    async def close(self) -> None:
+        """PUBLISH_NAMESPACE_DONE; the session stops publishing the namespace."""
+        await self._session._unannounce(self.namespace)
 
 
 class Session:
@@ -145,7 +164,7 @@ class Session:
             self._watches.append(watch)
         return watch
 
-    async def announce(self, namespace: list[str]) -> None:
+    async def announce(self, namespace: list[str]) -> Announcement:
         """PUBLISH_NAMESPACE, sent again on each connection. Raises RuntimeError when the relay
         refuses it."""
         async with self._state:
@@ -153,19 +172,36 @@ class Session:
             if self._native is not None:
                 await self._native.announce(namespace)
             self._announced.append(namespace)
+        return Announcement(self, namespace)
 
     async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for. Register it before
         `announce`, since the relay may forward a SUBSCRIBE at once."""
         writer = TrackWriter(namespace, name, retention_seconds)
+        await self._register(writer)
+        return writer
+
+    async def _register(self, writer: TrackWriter) -> None:
         async with self._state:
             self._check_open()
             if self._native is not None:
-                writer._writer = await self._native.publish_track(
-                    namespace, name, retention_seconds=retention_seconds
+                await writer._bind(
+                    await self._native.publish_track(
+                        writer.namespace, writer.name, retention_seconds=writer.retention_seconds
+                    )
                 )
             self._writers.append(writer)
-        return writer
+
+    async def _unannounce(self, namespace: list[str]) -> None:
+        async with self._state:
+            if namespace not in self._announced:
+                return
+            self._announced.remove(namespace)
+            if self._native is not None:
+                await self._native.unannounce(namespace)
+
+    def _publishes(self, namespace: list[str]) -> bool:
+        return namespace in self._announced
 
     async def run(self, work: Awaitable[T]) -> T:
         """Awaits `work`, cancelling it when the session ends. Raises what ended the session, such as
@@ -226,8 +262,8 @@ class Session:
         """Registers the tracks before the namespaces are published, since the relay may forward a
         SUBSCRIBE at once."""
         for writer in self._writers:
-            writer._writer = await native.publish_track(
-                writer.namespace, writer.name, retention_seconds=writer.retention_seconds
+            await writer._bind(
+                await native.publish_track(writer.namespace, writer.name, retention_seconds=writer.retention_seconds)
             )
         for namespace in self._announced:
             try:
