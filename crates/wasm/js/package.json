@@ -28,6 +28,7 @@
     "wasm:dev": "wasm-pack build --dev ../ --target web --out-name moqt --out-dir=js/pkg",
     "build": "vite build && tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
+    "lint:promises": "oxlint --type-aware src",
     "test": "playwright test --config playwright.unit.config.ts",
     "check:pack": "node scripts/check-pack.mjs"
   },
@@ -37,5 +38,9 @@
     "pkg/moqt.d.ts",
     "src/media/player/livePlayer.css",
     "src/media/controls/playerControls.css"
-  ]
+  ],
+  "devDependencies": {
+    "oxlint": "^1.93.0",
+    "oxlint-tsgolint": "^7.0.2007"
+  }
 }

@@ -241,6 +241,8 @@ jobs:
       # The build skips the tests and fakes, and the browser examples only run vite build.
       - name: Type check the SDK and the browser examples
         run: npm run lint -w moq-wasm && npm run lint -w browser-examples
+      - name: Check the SDK for unawaited promises
+        run: npm run lint:promises -w moq-wasm
       - name: Build a Vite project from the packed tarball
         run: npm run check:pack -w moq-wasm
   console-web:
