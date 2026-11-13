@@ -1,4 +1,11 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use dashmap::DashMap;
 use moqt::CertificateVerification;
@@ -31,10 +38,21 @@ pub(crate) struct InterRelayClientConfig {
     pub(crate) versions: Vec<moqt::Version>,
 }
 
+#[derive(Default)]
+struct RelayDial {
+    /// Held while the relay is dialed, so the requests that need it at once
+    /// share one session: a track's upstream SUBSCRIBE is claimed per session.
+    lock: tokio::sync::Mutex<()>,
+    /// A request that waited for a dial that failed fails with it instead of
+    /// dialing again a relay that does not answer.
+    failures: AtomicU64,
+}
+
 pub(crate) struct InterRelayConnectionManager {
     repo: Arc<tokio::sync::Mutex<SessionRepository>>,
     client_config: InterRelayClientConfig,
     sessions: DashMap<String, SessionId>,
+    dials: DashMap<String, Arc<RelayDial>>,
     pub(crate) namespace_subscriptions: RelayNamespaceSubscriptions,
 }
 
@@ -47,6 +65,7 @@ impl InterRelayConnectionManager {
             repo,
             client_config,
             sessions: DashMap::new(),
+            dials: DashMap::new(),
             namespace_subscriptions: RelayNamespaceSubscriptions::default(),
         }
     }
@@ -66,12 +85,31 @@ impl InterRelayConnectionManager {
     }
 
     pub(crate) async fn get_or_connect(&self, relay: &RelayInfo) -> anyhow::Result<SessionId> {
-        if let Some(session_id) = self.sessions.get(&relay.relay_id)
-            && self.repo.lock().await.has_session(*session_id)
+        let dial = self
+            .dials
+            .entry(relay.relay_id.clone())
+            .or_default()
+            .clone();
+        let failures_before = dial.failures.load(Ordering::Relaxed);
+        let _dialing = dial.lock.lock().await;
+        let dialed = self.sessions.get(&relay.relay_id).map(|entry| *entry);
+        if let Some(session_id) = dialed
+            && self.repo.lock().await.has_session(session_id)
         {
-            return Ok(*session_id);
+            return Ok(session_id);
         }
+        if dial.failures.load(Ordering::Relaxed) != failures_before {
+            anyhow::bail!(
+                "the dial of relay {} this request waited for failed",
+                relay.relay_id
+            );
+        }
+        self.dial(relay).await.inspect_err(|_| {
+            dial.failures.fetch_add(1, Ordering::Relaxed);
+        })
+    }
 
+    async fn dial(&self, relay: &RelayInfo) -> anyhow::Result<SessionId> {
         let session_id = generate_session_id();
         let relay_hostname = relay_hostname();
         // A session outlives the request that dials it, so its span roots its own trace.
@@ -205,6 +243,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requests_that_need_the_same_relay_at_once_share_one_session() {
+        // Arrange
+        let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
+        let manager = manager_trusting(relay.cert_path.clone());
+        let relay_info = relay_info(&relay);
+
+        // Act
+        let (first, second) = tokio::join!(
+            manager.get_or_connect(&relay_info),
+            manager.get_or_connect(&relay_info)
+        );
+
+        // Assert
+        assert_eq!(first.unwrap(), second.unwrap());
+    }
+
+    #[tokio::test]
     async fn a_relay_whose_certificate_is_not_trusted_is_not_dialed() {
         // Arrange
         let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
@@ -220,6 +275,29 @@ mod tests {
         let error = format!("{:#}", result.unwrap_err());
         assert!(error.contains("invalid peer certificate"), "{error}");
         assert!(manager.dialed_relay_ids().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_request_that_waited_for_a_failed_dial_does_not_dial_again() {
+        // Arrange: a relay whose certificate the manager does not trust
+        let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;
+        let other_cert_dir = TempDir::new("inter-relay-shared-failure");
+        let other_cert =
+            write_self_signed_cert(other_cert_dir.path(), &["localhost", "127.0.0.1"]).unwrap();
+        let manager = manager_trusting(PathBuf::from(other_cert.cert_path));
+        let relay_info = relay_info(&relay);
+
+        // Act
+        let (dialing, waiting) = tokio::join!(
+            manager.get_or_connect(&relay_info),
+            manager.get_or_connect(&relay_info)
+        );
+
+        // Assert
+        let dialing = format!("{:#}", dialing.unwrap_err());
+        let waiting = format!("{:#}", waiting.unwrap_err());
+        assert!(dialing.contains("invalid peer certificate"), "{dialing}");
+        assert!(waiting.contains("waited for failed"), "{waiting}");
     }
 
     #[tokio::test]

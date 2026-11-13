@@ -1422,8 +1422,11 @@ holds on each hop.
   over raw QUIC (`moqt::QUIC`), presenting this relay's own JWT
   (`AUTH_RELAY_TOKEN`) in CLIENT_SETUP, and registers the
   session as `SessionPeer::Relay` with `VerifiedToken::full_access()` naming
-  the dialed relay in `relay_id`, reusing it afterwards. From then on the remote relay behaves like any upstream
-  publisher session.
+  the dialed relay in `relay_id`, reusing it afterwards. Requests that need
+  an undialed relay at once wait for one dial and share its session, or its
+  failure: a second session would let each send its own SUBSCRIBE for one
+  track, which the track claims per publisher session. From then on the
+  remote relay behaves like any upstream publisher session.
 - The dialing relay verifies the remote relay's certificate against
   `InterRelayClientConfig::certificate_verification` before CLIENT_SETUP, so
   the relay token, which grants full access and is long-lived, never reaches
