@@ -508,7 +508,10 @@ establishes a subscription):
   SUBSCRIBE_UPDATE and the split-horizon counts treat it like a SUBSCRIBE —
   and `start_egress` starts its runner with the parameters of the
   PUBLISH_OK. The runner's acknowledgement signal is already resolved,
-  since the PUBLISH_OK has been received;
+  since the PUBLISH_OK has been received. If the subscriber session left the
+  repository and was cleaned up before the registration, `start_egress`
+  removes the registration and releases the upstream subscriptions it held,
+  as an UNSUBSCRIBE would; SUBSCRIBE takes the same path;
 - a track that ended before the PUBLISH_OK arrived is answered with
   PUBLISH_DONE TRACK_ENDED instead of a registration; a PUBLISH_ERROR or
   timeout registers nothing.

@@ -130,6 +130,7 @@ impl DownstreamPublish {
         let (publish_ok_sender, publish_ok_receiver) = oneshot::channel();
         let _ = publish_ok_sender.send(());
         if !start_egress(
+            &self.table,
             &self.forwarder,
             &self.cache_store,
             EgressRequest {
@@ -159,6 +160,7 @@ mod tests {
     use crate::modules::{
         directory::track::{NamespaceSubscription, ProducerOrigin},
         domain::session_peer::SessionPeer,
+        session::session_repository::SessionRepository,
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
@@ -319,6 +321,34 @@ mod tests {
             ctx.subscriber.publish_dones(),
             vec![(PUBLISH_REQUEST_ID, PublishDoneCode::TrackEnded)]
         );
+        assert!(ctx.table.downstream_subscription_states().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_cleaned_up_before_its_publish_ok_is_handled_keeps_no_subscription() {
+        // Arrange
+        let table = published_table();
+        let repository = Arc::new(std::sync::OnceLock::new());
+        let ctx = downstream_publish_context(table.clone(), {
+            let repository = repository.clone();
+            move || {
+                let repository: &Arc<tokio::sync::Mutex<SessionRepository>> =
+                    repository.get().unwrap();
+                repository
+                    .try_lock()
+                    .unwrap()
+                    .remove(NAMESPACE_SUBSCRIBER_SESSION);
+                table.remove_session(NAMESPACE_SUBSCRIBER_SESSION);
+                Ok(true)
+            }
+        })
+        .await;
+        let _ = repository.set(ctx.forwarder.repository.clone());
+
+        // Act
+        let _ = send_publish(&ctx).await;
+
+        // Assert
         assert!(ctx.table.downstream_subscription_states().is_empty());
     }
 
