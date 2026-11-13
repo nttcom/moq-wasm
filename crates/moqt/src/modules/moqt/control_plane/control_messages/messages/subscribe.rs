@@ -34,8 +34,8 @@ pub struct Subscribe {
 impl Subscribe {
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let request_id = buf.try_get_varint().context("request id")?;
-        let track_namespace_tuple = buf.try_get_tuple().context("track namespace")?;
-        let track_name = buf.try_get_string().context("track name")?;
+        let (track_namespace_tuple, track_name) =
+            util::get_full_track_name(buf).context("full track name")?;
         let subscriber_priority = buf.try_get_u8().context("subscriber priority")?;
         let group_order_u8 = buf.try_get_u8().context("group order u8")?;
         let group_order = GroupOrder::try_from(group_order_u8).context("group order")?;

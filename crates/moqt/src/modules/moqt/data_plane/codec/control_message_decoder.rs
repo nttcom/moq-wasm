@@ -370,6 +370,71 @@ mod tests {
         );
     }
 
+    fn decode_one(message_type: ControlMessageType, payload: BytesMut) -> ReceivedMessage {
+        ControlMessageDecoder
+            .decode(&mut frame(message_type, payload))
+            .expect("framing should succeed")
+            .expect("frame should be complete")
+    }
+
+    #[test]
+    fn decode_reason_phrase_over_1024_bytes_yields_fatal_error() {
+        // Arrange
+        let error = RequestError {
+            request_id: 7,
+            error_code: 1,
+            reason_phrase: "a".repeat(1025),
+        };
+
+        // Act
+        let message = decode_one(ControlMessageType::SubscribeError, error.encode());
+
+        // Assert: draft-14 §1.4.3 PROTOCOL_VIOLATION
+        assert!(
+            matches!(message, ReceivedMessage::FatalError(_)),
+            "{message:?}"
+        );
+    }
+
+    #[test]
+    fn decode_track_namespace_of_0_or_33_fields_yields_fatal_error() {
+        for fields in [0, 33] {
+            // Arrange
+            let subscribe = Subscribe {
+                track_namespace: vec!["n".to_string(); fields],
+                ..make_subscribe()
+            };
+
+            // Act
+            let message = decode_one(ControlMessageType::Subscribe, subscribe.encode());
+
+            // Assert: draft-14 §2.4.1 PROTOCOL_VIOLATION
+            assert!(
+                matches!(message, ReceivedMessage::FatalError(_)),
+                "{fields} fields: {message:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_full_track_name_over_4096_bytes_yields_fatal_error() {
+        // Arrange
+        let subscribe = Subscribe {
+            track_namespace: vec!["n".repeat(4000)],
+            track_name: "t".repeat(97),
+            ..make_subscribe()
+        };
+
+        // Act
+        let message = decode_one(ControlMessageType::Subscribe, subscribe.encode());
+
+        // Assert: draft-14 §2.4.1 PROTOCOL_VIOLATION
+        assert!(
+            matches!(message, ReceivedMessage::FatalError(_)),
+            "{message:?}"
+        );
+    }
+
     #[test]
     fn decode_control_messages_added_in_draft14() {
         let mut decoder = ControlMessageDecoder;

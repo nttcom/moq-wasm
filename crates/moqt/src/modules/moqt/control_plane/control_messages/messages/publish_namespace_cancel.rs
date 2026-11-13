@@ -1,4 +1,5 @@
 use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use crate::modules::moqt::control_plane::control_messages::util;
 use anyhow::Context;
 use bytes::BytesMut;
 
@@ -19,9 +20,9 @@ impl PublishNamespaceCancel {
     }
 
     pub fn decode(buf: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
-        let track_namespace = buf.try_get_tuple().context("track namespace")?;
+        let track_namespace = util::get_track_namespace(buf).context("track namespace")?;
         let error_code = buf.try_get_varint().context("error code")?;
-        let error_reason = buf.try_get_string().context("error reason")?;
+        let error_reason = util::get_reason_phrase(buf).context("error reason")?;
 
         Ok(Self {
             track_namespace,

@@ -1,4 +1,5 @@
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
+use crate::modules::moqt::control_plane::control_messages::util;
 use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
@@ -63,8 +64,8 @@ impl FetchParams {
         let wire_type = FetchTypeValue::try_from(fetch_type_value).context("fetch type value")?;
         match wire_type {
             FetchTypeValue::Standalone => {
-                let track_namespace = buf.try_get_tuple().context("namespace")?;
-                let track_name = buf.try_get_string().context("track name")?;
+                let (track_namespace, track_name) =
+                    util::get_full_track_name(buf).context("full track name")?;
                 let start_location = Location::decode(buf)?;
                 let end_location = Location::decode(buf)?;
                 Ok(FetchParams::Standalone {
