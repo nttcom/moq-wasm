@@ -228,6 +228,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `trackSubscriptions` | SUBSCRIBE / UNSUBSCRIBE per media kind, Forward updates chained in order, the hand-over of a kind to another subscription and the retiring one it replaces |
 | `adaptiveBitrate` | The bitrate ladder of the playing track's `altGroup` and the choice of rendition from capture-to-arrival lag, stalls and throughput |
 | `renditionSplice` | Where an incoming video rendition takes over from the outgoing one: the group boundary, or at once when their group ids do not line up |
+| `videoSwitcher` | A live LOC rendition switch in progress: subscribing the incoming rendition, routing both renditions' objects through `renditionSplice`, the hand-over, retiring the outgoing subscription, and settling the switch on a seek or another track change |
 | `locLive` | Live LOC: decoder workers, `LivePlayout`, picture sink, the worker's pre-decode hold; its stats and its disposal, so pages other than `LivePlayer` can hold one per stream |
 | `audioLane` | A second audio track on a `LivePlayout`'s clock: its own decoder worker and input, scheduled at the time its capture timestamps are due; `addedAudioTrack` opens one per added track |
 | `addedAudioTrack` | A track `LivePlayer.addAudioTrack` plays next to the selected one: its SUBSCRIBE with a joining FETCH, its `audioLane`, the PUBLISH_DONE of its publisher; the player closes it when it stops |
