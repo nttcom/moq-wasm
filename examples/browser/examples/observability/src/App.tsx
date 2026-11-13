@@ -7,7 +7,8 @@ import { layoutTopology } from './layout'
 import { type Filters, type Selection, narrowedFilters, routesOf, visibility, widenedFilters } from './selection'
 import { RANGE_NAMES, RANGES, type RangeName } from './timeRange'
 import { TopologyView } from './TopologyView'
-import { appIdOf, buildTopology, relativeNamespace } from './topology'
+import { buildTopology, relativeNamespace } from './topology'
+import { access } from '../../../utils/access'
 
 const POLL_MS = 1_000
 const PAST_RATE_WINDOW_MS = 2_000
@@ -41,6 +42,16 @@ function seekLabel(atMs: number): string {
   })
 }
 
+const shortAppId = (appId: string) => (appId.length > 12 ? `${appId.slice(0, 8)}…` : appId)
+
+/** Whose stats the page shows: the API answers only the app of the page's token, `anon` without one. */
+const appTitle = {
+  public: 'The public anonymous app: everyone can see its stats',
+  temporary: 'The temporary app the examples share in this browser',
+  given: 'The app of the token in the URL',
+  unavailable: 'No temporary app could be started, so the public anonymous app is shown'
+}[access.kind]
+
 const handlesArrowKeys = (target: EventTarget | null) =>
   target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)
 
@@ -48,8 +59,7 @@ export default function App() {
   const [snapshots, setSnapshots] = useState<RelaySnapshot[]>([])
   const [previous, setPrevious] = useState<Map<string, RelaySnapshot>>(new Map())
   const [error, setError] = useState<string | null>(null)
-  const [filters, setFilters] = useState<Filters>({ appId: '', namespacePrefix: '' })
-  const [chosenAppId, setChosenAppId] = useState('')
+  const [filters, setFilters] = useState<Filters>({ namespacePrefix: '' })
   const [selection, setSelection] = useState<Selection>(null)
   const [drawerClosed, setDrawerClosed] = useState(false)
   const [namespacesOpen, setNamespacesOpen] = useState(false)
@@ -141,19 +151,14 @@ export default function App() {
     if (!exists) setSelection(null)
   }, [topology, visible, selection])
 
-  const appIds = useMemo(
-    () => [...new Set([...topology.clients.values()].map((client) => client.appId))].sort(),
-    [topology]
-  )
   const namespaceOptions = useMemo(() => {
     const prefixes = new Set<string>()
     for (const route of topology.routes) {
-      if (filters.appId && route.appId !== filters.appId) continue
       const elements = relativeNamespace(route.namespace).split('/')
       elements.forEach((_, index) => prefixes.add(elements.slice(0, index + 1).join('/')))
     }
     return [...prefixes].sort()
-  }, [topology, filters.appId])
+  }, [topology])
 
   const focusOn = (next: Selection) => {
     if (next?.kind !== 'mesh') setFilters(narrowedFilters(routesOf(topology, next, visible), filters))
@@ -162,7 +167,7 @@ export default function App() {
   }
 
   const openNamespace = (summary: NamespaceSummary, stillPublished: boolean) => {
-    setFilters({ appId: appIdOf(summary.namespace), namespacePrefix: relativeNamespace(summary.namespace) })
+    setFilters({ namespacePrefix: relativeNamespace(summary.namespace) })
     setSelection(null)
     if (stillPublished) setAtMs(null)
     else seekTo(summary.last_seen_ms)
@@ -170,7 +175,7 @@ export default function App() {
   }
 
   const onBackground = () => {
-    setFilters(widenedFilters(filters, chosenAppId))
+    setFilters(widenedFilters(filters))
     setSelection(null)
   }
 
@@ -191,23 +196,9 @@ export default function App() {
     <div className="app">
       <header>
         <h1>MoQ Observability</h1>
-        <label className="filter">
-          App
-          <select
-            value={filters.appId}
-            onChange={(event) => {
-              setChosenAppId(event.target.value)
-              setFilters({ appId: event.target.value, namespacePrefix: '' })
-            }}
-          >
-            <option value="">All apps</option>
-            {appIds.map((appId) => (
-              <option key={appId} value={appId}>
-                {appId.length > 12 ? `${appId.slice(0, 8)}…` : appId}
-              </option>
-            ))}
-          </select>
-        </label>
+        <span className="app-badge" title={appTitle}>
+          App <b>{shortAppId(access.namespaceRoot)}</b>
+        </span>
         <label className="filter">
           Track Namespace
           <input
@@ -292,7 +283,6 @@ export default function App() {
             spanMs={RANGES[range]}
             toMs={nowMs}
             live={live}
-            appId={filters.appId}
             onPick={openNamespace}
             onClose={() => setNamespacesOpen(false)}
           />

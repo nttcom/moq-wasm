@@ -1,4 +1,4 @@
-import type { Id, RelaySnapshot, SessionStats, SubscriptionStats, TrackStats } from './api'
+import type { Id, RelaySession, RelaySnapshot, SessionStats, SubscriptionStats, TrackStats } from './api'
 
 const MAX_RELAY_HOPS = 4
 const BITS_PER_BYTE = 8
@@ -25,7 +25,6 @@ export interface ClientNode {
 export interface Route {
   key: string
   trackKey: string
-  appId: string
   namespace: string
   name: string
   publisher: string
@@ -35,9 +34,17 @@ export interface Route {
   hops: string[]
 }
 
+/** The client session at one end of an uplink or downlink; its counters give the link's figures. */
 export interface MeasuredSession {
   relayId: string
   session: SessionStats
+  bySender: boolean
+}
+
+/** The relay session an inter-relay link's tracks are counted on. */
+export interface RelayedVia {
+  relayId: string
+  sessionId: Id
   bySender: boolean
 }
 
@@ -48,6 +55,7 @@ export interface Link {
   kind: LinkKind
   routes: string[]
   measured: MeasuredSession | null
+  relayedVia: RelayedVia | null
   trackMbps: Map<string, number>
   lossPercent: number | null
 }
@@ -62,7 +70,6 @@ export interface Topology {
 export const clientKey = (relayId: string, sessionId: Id) => `${relayId}:${sessionId}`
 export const linkKey = (from: string, to: string) => `${from}>${to}`
 export const trackKeyOf = (namespace: string, name: string) => `${namespace}/${name}`
-export const appIdOf = (namespace: string) => namespace.split('/')[0] ?? ''
 export const relativeNamespace = (namespace: string) => namespace.split('/').slice(1).join('/')
 
 const normalizeIp = (ip: string | null) => (ip ? ip.replace(/^::ffff:/, '') : null)
@@ -94,8 +101,12 @@ class RateSource {
     return (current - previous) / elapsed
   }
 
-  previousSession(snapshot: RelaySnapshot, sessionId: Id): SessionStats | undefined {
-    return this.previous.get(snapshot.relay_id)?.sessions.find((session) => session.session_id === sessionId)
+  private previousClientSession(snapshot: RelaySnapshot, sessionId: Id): SessionStats | undefined {
+    return this.previous
+      .get(snapshot.relay_id)
+      ?.sessions.find(
+        (session): session is SessionStats => session.peer === 'client' && session.session_id === sessionId
+      )
   }
 
   trackMbps(snapshot: RelaySnapshot, track: TrackStats): number {
@@ -122,7 +133,7 @@ class RateSource {
   }
 
   lossPercent(snapshot: RelaySnapshot, session: SessionStats): number | null {
-    const previous = this.previousSession(snapshot, session.session_id)
+    const previous = this.previousClientSession(snapshot, session.session_id)
     if (!previous) return null
     const sent = session.sent_packets - previous.sent_packets
     const lost = session.lost_packets - previous.lost_packets
@@ -158,11 +169,11 @@ class RelayIndex {
     return addresses
   }
 
-  session(relayId: string, sessionId: Id): SessionStats | undefined {
+  session(relayId: string, sessionId: Id): SessionStats | RelaySession | undefined {
     return this.byId.get(relayId)?.sessions.find((session) => session.session_id === sessionId)
   }
 
-  peerRelayOf(relayId: string, session: SessionStats): string | null {
+  peerRelayOf(relayId: string, session: RelaySession): string | null {
     if (session.dialed_relay_id) return session.dialed_relay_id
     const remoteIp = ipOf(session.remote_address)
     if (!remoteIp) return null
@@ -172,19 +183,20 @@ class RelayIndex {
     return null
   }
 
-  private sessionsTowards(relayId: string, peerRelayId: string): SessionStats[] {
+  private sessionsTowards(relayId: string, peerRelayId: string): RelaySession[] {
     return (this.byId.get(relayId)?.sessions ?? []).filter(
-      (session) => session.peer === 'relay' && this.peerRelayOf(relayId, session) === peerRelayId
+      (session): session is RelaySession =>
+        session.peer === 'relay' && this.peerRelayOf(relayId, session) === peerRelayId
     )
   }
 
-  senderSessionTowards(relayId: string, peerRelayId: string): SessionStats | undefined {
+  senderSessionTowards(relayId: string, peerRelayId: string): RelaySession | undefined {
     const candidates = this.sessionsTowards(relayId, peerRelayId)
     const subscribers = new Set(this.byId.get(relayId)?.subscriptions.map((sub) => sub.subscriber_session_id))
     return candidates.find((session) => subscribers.has(session.session_id)) ?? candidates[0]
   }
 
-  receiverSessionTowards(relayId: string, peerRelayId: string): SessionStats | undefined {
+  receiverSessionTowards(relayId: string, peerRelayId: string): RelaySession | undefined {
     const candidates = this.sessionsTowards(relayId, peerRelayId)
     const publishers = new Set(this.byId.get(relayId)?.tracks.map((track) => track.publisher_session_id))
     return candidates.find((session) => publishers.has(session.session_id)) ?? candidates[0]
@@ -194,16 +206,6 @@ class RelayIndex {
     return this.byId.get(relayId)?.tracks.find((track) => track.namespace === namespace && track.name === name)
       ?.publisher_session_id
   }
-}
-
-/** Seconds the relay had been draining at the time of its snapshot; null while it serves. */
-export function drainingSeconds(snapshot: RelaySnapshot): number | null {
-  const since = snapshot.process.draining_since_ms
-  return since === null ? null : Math.max(0, Math.round((snapshot.timestamp_ms - since) / 1000))
-}
-
-export function isStatsSession(session: SessionStats): boolean {
-  return session.peer === 'stats_publisher' || session.peer === 'stats_subscriber'
 }
 
 const clientLabel = (session: SessionStats) => session.remote_address ?? `session ${session.session_id}`
@@ -250,7 +252,7 @@ export function buildTopology(snapshots: RelaySnapshot[], previous: Map<string, 
       let publisher: string | null = null
       for (let hop = 0; hop < MAX_RELAY_HOPS && publisherSessionId !== undefined; hop++) {
         const session = index.session(relayId, publisherSessionId)
-        if (!session || isStatsSession(session)) break
+        if (!session) break
         if (session.peer === 'client') {
           publisher = clientKey(relayId, publisherSessionId)
           hops.unshift(linkKey(publisher, relayId))
@@ -268,7 +270,6 @@ export function buildTopology(snapshots: RelaySnapshot[], previous: Map<string, 
       routes.push({
         key: `${snapshot.relay_id}:${subscription.subscriber_session_id}:${subscription.request_id}`,
         trackKey: trackKeyOf(subscription.namespace, subscription.name),
-        appId: appIdOf(subscription.namespace),
         namespace: subscription.namespace,
         name: subscription.name,
         publisher,
@@ -320,6 +321,7 @@ function describeLink(
       ...base,
       kind: 'uplink',
       measured: { relayId: to, session: publisher.session, bySender: false },
+      relayedVia: null,
       lossPercent: null
     }
   }
@@ -338,6 +340,7 @@ function describeLink(
       ...base,
       kind: 'downlink',
       measured: { relayId: from, session: subscriber.session, bySender: true },
+      relayedVia: null,
       lossPercent: rates.lossPercent(snapshot, subscriber.session)
     }
   }
@@ -355,8 +358,9 @@ function describeLink(
     return {
       ...base,
       kind: 'inter-relay',
-      measured: { relayId: from, session: sender, bySender: true },
-      lossPercent: rates.lossPercent(senderSnapshot, sender)
+      measured: null,
+      relayedVia: { relayId: from, sessionId: sender.session_id, bySender: true },
+      lossPercent: null
     }
   }
   const receiver = index.receiverSessionTowards(to, from)
@@ -370,7 +374,8 @@ function describeLink(
   return {
     ...base,
     kind: 'inter-relay',
-    measured: receiver ? { relayId: to, session: receiver, bySender: false } : null,
+    measured: null,
+    relayedVia: receiver ? { relayId: to, sessionId: receiver.session_id, bySender: false } : null,
     lossPercent: null
   }
 }

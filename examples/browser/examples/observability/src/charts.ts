@@ -1,6 +1,6 @@
 import type { Id, SeriesTarget } from './api'
 import type { Selection, Visibility } from './selection'
-import { type Route, type Topology, relativeNamespace, trackKeyOf } from './topology'
+import { type RelayedVia, type Route, type Topology, relativeNamespace, trackKeyOf } from './topology'
 
 export interface LineRef {
   label: string
@@ -70,19 +70,11 @@ function trackLines(topology: Topology, relayId: string, publisherSessionId: Id,
     }))
 }
 
+/** The app's client sessions on the relay. The relay's own figures are in HyperDX, for operators only. */
 function relayCharts(relayId: string): ChartGroup[] {
-  const process: SeriesTarget = { target: 'process' }
   const relay: SeriesTarget = { target: 'relay' }
   const line = (label: string, target: SeriesTarget, metric: string): LineRef => ({ label, relayId, target, metric })
   return groups([
-    [
-      'Resources',
-      [
-        chart('Memory', 'MB', [line('Memory', process, 'rss_mb'), line('Cache payload', process, 'cache_mb')]),
-        chart('Storage', 'MB', [line('Used', process, 'disk_cache_mb'), line('Limit', process, 'disk_cache_max_mb')]),
-        chart('Cache objects', '', [line('Objects', process, 'cache_objects')])
-      ]
-    ],
     [
       'Network',
       [
@@ -90,13 +82,13 @@ function relayCharts(relayId: string): ChartGroup[] {
         chart('Egress loss (bitrate-weighted)', '%', [line('Loss', relay, 'egress_loss_percent')]),
         chart('Congestion events', '/s', [line('Events', relay, 'congestion_per_s')]),
         chart('Flow-control blocked', '/s', [
-          line('Peers by relay window', relay, 'peers_blocked_per_s'),
-          line('Relay by peer windows', relay, 'relay_blocked_per_s')
+          line('Clients by relay window', relay, 'peers_blocked_per_s'),
+          line('Relay by client windows', relay, 'relay_blocked_per_s')
         ]),
-        chart('Streams reset by peers', '/s', [line('Resets', relay, 'peer_resets_per_s')])
+        chart('Streams reset by clients', '/s', [line('Resets', relay, 'peer_resets_per_s')])
       ]
     ],
-    ['Sessions', [chart('Sessions', '', [line('All', relay, 'sessions'), line('Clients', process, 'client_sessions')])]]
+    ['Sessions', [chart('Client sessions', '', [line('Clients', relay, 'sessions')])]]
   ])
 }
 
@@ -105,7 +97,6 @@ interface Direction {
   downlink: boolean
   /** 'session' charts the whole session's bitrate. */
   bitrate: 'session' | ChartSpec | null
-  peer: 'client' | 'peer relay'
 }
 
 function sessionCharts(
@@ -118,7 +109,7 @@ function sessionCharts(
 ): ChartGroup[] {
   const session: SeriesTarget = { target: 'session', session_id: sessionId }
   const line = (label: string, metric: string): LineRef => ({ label, relayId, target: session, metric })
-  const { uplink, downlink, bitrate, peer } = direction
+  const { uplink, downlink, bitrate } = direction
   return groups([
     [
       'Media',
@@ -152,10 +143,10 @@ function sessionCharts(
       'Streams',
       [
         chart('Flow-control blocked', '/s', [
-          uplink && line(`${UP} ${peer} by relay window`, 'peer_blocked_per_s'),
-          downlink && line(`${DOWN} relay by ${peer} window`, 'relay_blocked_per_s')
+          uplink && line(`${UP} client by relay window`, 'peer_blocked_per_s'),
+          downlink && line(`${DOWN} relay by client window`, 'relay_blocked_per_s')
         ]),
-        chart(`Stream signals from ${peer}`, '/s', [
+        chart('Stream signals from client', '/s', [
           uplink && line(`${UP} RESET_STREAM`, 'peer_resets_per_s'),
           downlink && line(`${DOWN} STOP_SENDING`, 'stop_sending_per_s')
         ]),
@@ -169,19 +160,9 @@ function meshCharts(topology: Topology): ChartGroup[] {
   const relayIds = topology.relays.map((relay) => relay.id).sort()
   const perRelay = (target: SeriesTarget, metric: string): LineRef[] =>
     relayIds.map((relayId) => ({ label: relayId, relayId, target, metric }))
-  const process: SeriesTarget = { target: 'process' }
   const relay: SeriesTarget = { target: 'relay' }
   const total = 'All relays'
   return groups([
-    [
-      'Resources',
-      [
-        { title: 'Memory', unit: 'MB', lines: perRelay(process, 'rss_mb') },
-        { title: 'Cache payload', unit: 'MB', lines: perRelay(process, 'cache_mb'), totalLabel: total },
-        { title: 'Storage used', unit: 'MB', lines: perRelay(process, 'disk_cache_mb'), totalLabel: total },
-        { title: 'Storage limit', unit: 'MB', lines: perRelay(process, 'disk_cache_max_mb'), totalLabel: total }
-      ]
-    ],
     [
       'Network',
       [
@@ -191,13 +172,7 @@ function meshCharts(topology: Topology): ChartGroup[] {
         { title: 'Congestion events', unit: '/s', lines: perRelay(relay, 'congestion_per_s'), totalLabel: total }
       ]
     ],
-    [
-      'Sessions',
-      [
-        { title: 'Sessions', unit: '', lines: perRelay(relay, 'sessions'), totalLabel: total },
-        { title: 'Client sessions', unit: '', lines: perRelay(process, 'client_sessions'), totalLabel: total }
-      ]
-    ]
+    ['Sessions', [{ title: 'Client sessions', unit: '', lines: perRelay(relay, 'sessions'), totalLabel: total }]]
   ])
 }
 
@@ -212,39 +187,49 @@ export function chartGroups(topology: Topology, selection: Selection, visible: V
     return sessionCharts(topology, client.relayId, client.session.session_id, visible, received, {
       uplink: client.trackCount > 0,
       downlink: received.length > 0,
-      bitrate: 'session',
-      peer: 'client'
+      bitrate: 'session'
     })
   }
   const link = topology.links.get(selection.id)
-  if (!link?.measured) return []
-  const { relayId, session, bySender } = link.measured
+  if (!link) return []
   const carried = visible.routes.filter((route) => link.routes.includes(route.key))
+  if (link.relayedVia) return interRelayCharts(topology, link.relayedVia, carried, visible)
+  if (!link.measured) return []
+  const { relayId, session } = link.measured
   if (link.kind === 'uplink') {
     return sessionCharts(topology, relayId, session.session_id, visible, [], {
       uplink: true,
       downlink: false,
-      bitrate: chart('Bitrate', 'Mbps', trackLines(topology, relayId, session.session_id, visible, 'received_mbps')),
-      peer: 'client'
+      bitrate: chart('Bitrate', 'Mbps', trackLines(topology, relayId, session.session_id, visible, 'received_mbps'))
     })
   }
-  if (link.kind === 'downlink') {
-    return sessionCharts(topology, relayId, session.session_id, visible, carried, {
-      uplink: false,
-      downlink: true,
-      bitrate: chart('Bitrate', 'Mbps', subscriptionLines(carried, 'sent_mbps')),
-      peer: 'client'
-    })
+  return sessionCharts(topology, relayId, session.session_id, visible, carried, {
+    uplink: false,
+    downlink: true,
+    bitrate: chart('Bitrate', 'Mbps', subscriptionLines(carried, 'sent_mbps'))
+  })
+}
+
+/**
+ * The app's tracks on a link between relays. The relay session they cross carries every app's
+ * traffic, so its transport figures are not the app's to see; only the tracks' own counters are.
+ */
+function interRelayCharts(topology: Topology, via: RelayedVia, carried: Route[], visible: Visibility): ChartGroup[] {
+  const { relayId, sessionId, bySender } = via
+  if (!bySender) {
+    return groups([
+      ['Media', [chart('Bitrate', 'Mbps', trackLines(topology, relayId, sessionId, visible, 'received_mbps'))]]
+    ])
   }
   const sender = topology.relays.find((relay) => relay.id === relayId)?.snapshot
   const carriedTracks = new Set(carried.map((route) => route.trackKey))
-  const relayedSubscriptions = (sender?.subscriptions ?? [])
-    .filter(
-      (subscription) =>
-        subscription.subscriber_session_id === session.session_id &&
-        carriedTracks.has(trackKeyOf(subscription.namespace, subscription.name))
-    )
-    .map((subscription): LineRef => ({
+  const relayed = (sender?.subscriptions ?? []).filter(
+    (subscription) =>
+      subscription.subscriber_session_id === sessionId &&
+      carriedTracks.has(trackKeyOf(subscription.namespace, subscription.name))
+  )
+  const lines = (metric: string) =>
+    relayed.map((subscription): LineRef => ({
       label: trackLabel(subscription.namespace, subscription.name),
       relayId,
       target: {
@@ -252,12 +237,10 @@ export function chartGroups(topology: Topology, selection: Selection, visible: V
         subscriber_session_id: subscription.subscriber_session_id,
         request_id: subscription.request_id
       },
-      metric: 'sent_mbps'
+      metric
     }))
-  return sessionCharts(topology, relayId, session.session_id, visible, [], {
-    uplink: !bySender,
-    downlink: bySender,
-    bitrate: bySender ? chart('Bitrate', 'Mbps', relayedSubscriptions) : 'session',
-    peer: 'peer relay'
-  })
+  return groups([
+    ['Media', [chart('Bitrate', 'Mbps', lines('sent_mbps')), chart('Delivery lag', 'ms', lines('lag_ms'))]],
+    ['Streams', [chart('Streams reset by relay', '/s', lines('resets_per_s'))]]
+  ])
 }

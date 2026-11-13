@@ -4,8 +4,8 @@ export type Selection = { kind: 'relay' | 'client' | 'link' | 'mesh'; id: string
 
 export const MESH: Selection = { kind: 'mesh', id: 'mesh' }
 
+/** Every route and client is of the app the page's token names, so only the namespace narrows them. */
 export interface Filters {
-  appId: string
   namespacePrefix: string
 }
 
@@ -17,10 +17,7 @@ export function namespaceMatches(relative: string, prefix: string): boolean {
 }
 
 function routeMatches(route: Route, filters: Filters): boolean {
-  return (
-    (!filters.appId || route.appId === filters.appId) &&
-    namespaceMatches(relativeNamespace(route.namespace), filters.namespacePrefix)
-  )
+  return namespaceMatches(relativeNamespace(route.namespace), filters.namespacePrefix)
 }
 
 export interface Visibility {
@@ -36,11 +33,10 @@ export function visibility(topology: Topology, filters: Filters): Visibility {
   const involved = new Set(routes.flatMap((route) => [route.publisher, route.subscriber]))
   const clients = new Set<string>()
   for (const client of topology.clients.values()) {
-    if (filters.appId && client.appId !== filters.appId) continue
     const publishesMatching = client.published.some((namespace) => namespaceMatches(namespace, filters.namespacePrefix))
     if (!filters.namespacePrefix || involved.has(client.key) || publishesMatching) clients.add(client.key)
   }
-  const filtered = Boolean(filters.appId || filters.namespacePrefix)
+  const filtered = Boolean(filters.namespacePrefix)
   return {
     routes,
     routeKeys: new Set(routes.map((route) => route.key)),
@@ -78,17 +74,13 @@ function commonPrefix(namespaces: string[]): string {
 }
 
 export function narrowedFilters(routes: Route[], current: Filters): Filters {
-  const apps = [...new Set(routes.map((route) => route.appId))]
   return {
-    appId: apps.length === 1 ? apps[0] : current.appId,
     namespacePrefix: routes.length
       ? commonPrefix(routes.map((route) => relativeNamespace(route.namespace)))
       : current.namespacePrefix
   }
 }
 
-export function widenedFilters(current: Filters, chosenAppId: string): Filters {
-  const prefix = elements(current.namespacePrefix)
-  if (prefix.length) return { ...current, namespacePrefix: prefix.slice(0, -1).join('/') }
-  return { namespacePrefix: '', appId: current.appId === chosenAppId ? '' : chosenAppId }
+export function widenedFilters(current: Filters): Filters {
+  return { namespacePrefix: elements(current.namespacePrefix).slice(0, -1).join('/') }
 }
