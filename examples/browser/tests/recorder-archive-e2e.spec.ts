@@ -43,7 +43,7 @@ test('records a room and plays its VOD replay through the relay to the end', asy
   expect(recording.format).toBe('moq')
   await sleep(37_000)
   await recorderServe.stop(recording)
-  const room = JSON.parse(await readFile(join(recorderServe.storeDir, recording.id, 'manifest.json'), 'utf8'))
+  const room = JSON.parse(await readFile(join(recorderServe.recordingDir(recording), 'manifest.json'), 'utf8'))
   const member = room.members.find((entry: { namespace: string }) => entry.namespace === 'anon/live/e2e')
   expect(room.format).toBe('moq')
   expect(member.camera.length).toBeGreaterThan(0)
@@ -178,7 +178,7 @@ test('records participants, screen share, chat and transcript and replays them i
       .finally(() => replay.close())
 
     // Assert
-    const room = JSON.parse(await readFile(join(recorderServe.storeDir, recording.id, 'manifest.json'), 'utf8'))
+    const room = JSON.parse(await readFile(join(recorderServe.recordingDir(recording), 'manifest.json'), 'utf8'))
     const aliceMember = room.members.find(
       (member: { namespace: string }) => member.namespace === `anon/${roomName}/alice`
     )

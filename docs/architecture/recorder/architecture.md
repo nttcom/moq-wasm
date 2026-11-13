@@ -319,7 +319,7 @@ took after the read stays.
 | `state/<id>.composite.json` | the composite job, or the recording job when it cannot start one | the composite's state |
 | `locks/<prefix>` | the API, only if absent (`PutMode::Create`); deleted by the recording job, or by the API once that recording is no longer active | the id recording the room |
 | `rooms/<prefix>/<id>` | the API | an empty marker, so a room's recordings are listed without reading the others |
-| `<id>/<namespace>/...`, `<id>/manifest.json` | the recording job | the files and the manifest |
+| `<app>/<id>/<namespace>/...`, `<app>/<id>/manifest.json` | the recording job | the files and the manifest, under the app, the first element of the room's prefix, so that an app's recordings are listed without reading the others |
 
 A namespace prefix is one path element (its `/` percent-encoded), so the rooms
 `anon/a` and `anon/a/b` do not nest in a directory store.
@@ -377,7 +377,7 @@ nothing. Otherwise it records the room as `room_recording::record`:
   `--empty-room-seconds` (5 min), counted from the start too. A participant
   counts until their recording ends, which is up to 10 s after the
   PUBLISH_DONE that follows their leaving.
-- At the end it writes `<id>/manifest.json`, which lists the uploaded files
+- At the end it writes `<app>/<id>/manifest.json`, which lists the uploaded files
   by participant, the camera and audio in `files` and the screen share in
   `screen_share_files`, with each file's capture origin (`capture_origin_us`),
   leaving out a file whose upload failed; then the final state, and it
@@ -624,7 +624,7 @@ dropping late frames.
   recording. Each sample is moved by the file's
   capture origin minus the room's earliest, so the participants share one
   timeline; presentation time 0 of `composite.mp4` is that earliest origin.
-- `composite.mp4` is uploaded to `<id>/composite.mp4` and the work directory
+- `composite.mp4` is uploaded to `<app>/<id>/composite.mp4` and the work directory
   removed.
 
 The recording's JSON carries `composite` (`null` when not requested) with

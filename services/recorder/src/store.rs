@@ -26,7 +26,9 @@ use crate::{
 ///   launch.
 /// - `rooms/<namespace prefix>/<id>`: every recording of a room, so that a
 ///   room's recordings are listed without reading the others.
-/// - `<id>/...`: the recording's files and its manifest.
+/// - `<app>/<id>/...`: the recording's files and its manifest, under the app
+///   that owns the room, the first element of its namespace prefix, so that
+///   an app's recordings are listed without reading the others.
 ///
 /// A namespace prefix is one path element (its `/` percent-encoded), so the
 /// room `anon/a` and the room `anon/a/b` never nest in a directory store.
@@ -58,9 +60,10 @@ impl RecordingStore {
         Arc::clone(&self.store)
     }
 
-    /// Where a recording's files go.
-    pub(crate) fn recording_prefix(&self, id: &str) -> Path {
-        self.prefix.clone().join(id)
+    /// Where the files of recording `id` of the room `namespace_prefix` go.
+    pub(crate) fn recording_prefix(&self, namespace_prefix: &str, id: &str) -> Path {
+        let app = namespace_prefix.split('/').next().unwrap_or_default();
+        self.prefix.clone().join(app).join(id)
     }
 
     pub(crate) async fn write_state(&self, record: &RoomRecord) -> Result<()> {
@@ -81,9 +84,17 @@ impl RecordingStore {
             .await
     }
 
-    pub(crate) async fn read_manifest(&self, id: &str) -> Result<Option<Value>> {
-        self.get_json(&self.recording_prefix(id).join(MANIFEST_NAME))
-            .await
+    pub(crate) async fn read_manifest(
+        &self,
+        namespace_prefix: &str,
+        id: &str,
+    ) -> Result<Option<Value>> {
+        self.get_json(
+            &self
+                .recording_prefix(namespace_prefix, id)
+                .join(MANIFEST_NAME),
+        )
+        .await
     }
 
     pub(crate) async fn read_composite(&self, id: &str) -> Result<Option<CompositeState>> {

@@ -57,7 +57,7 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
         },
         output_dir: args.output_dir.join(&args.id),
         store: store.object_store(),
-        prefix: store.recording_prefix(&args.id),
+        prefix: store.recording_prefix(&record_state.namespace_prefix, &args.id),
         options: BroadcastOptions {
             content: Content::Camera,
             video_track: None,

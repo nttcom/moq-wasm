@@ -18,7 +18,7 @@ use crate::{
 pub(crate) const COMPOSITE_FILE_NAME: &str = "composite.mp4";
 
 /// Composites recording `args.id` from the files its manifest lists into
-/// `<id>/composite.mp4` in the store, reporting its progress in
+/// `<app>/<id>/composite.mp4` in the store, reporting its progress in
 /// `state/<id>.composite.json`. The files are downloaded into `--work-dir`,
 /// which is removed afterwards.
 pub(crate) async fn run(args: CompositeArgs) -> Result<()> {
@@ -43,8 +43,13 @@ pub(crate) async fn run(args: CompositeArgs) -> Result<()> {
 }
 
 async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Result<()> {
+    let room = store
+        .read_state(id)
+        .await?
+        .with_context(|| format!("no recording {id}"))?
+        .namespace_prefix;
     let manifest = store
-        .read_manifest(id)
+        .read_manifest(&room, id)
         .await?
         .with_context(|| format!("recording {id} has no manifest"))?;
     tokio::fs::create_dir_all(work_dir)
@@ -64,7 +69,7 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
     let task = UploadTask::run(store.object_store());
     task.queue().upload(Upload {
         path: output,
-        key: store.recording_prefix(id).join(COMPOSITE_FILE_NAME),
+        key: store.recording_prefix(&room, id).join(COMPOSITE_FILE_NAME),
     });
     anyhow::ensure!(
         task.finish().await.is_empty(),
@@ -116,7 +121,11 @@ mod tests {
     use url::Url;
 
     use super::*;
-    use crate::test_support::{scratch_dir, write_fixture_fmp4};
+    use crate::{
+        recording::Layout,
+        room_state::{RecordingFormat, RoomRecord, RoomState},
+        test_support::{scratch_dir, write_fixture_fmp4},
+    };
 
     #[tokio::test]
     async fn composites_the_files_of_the_manifest_into_the_store() {
@@ -126,7 +135,20 @@ mod tests {
         let source = dir.join("a.mp4");
         write_fixture_fmp4(&source);
         let store = RecordingStore::open(&Url::from_directory_path(&store_dir).unwrap()).unwrap();
-        let key = store.recording_prefix("1").join("a.mp4");
+        store
+            .write_state(&RoomRecord {
+                id: "1".to_string(),
+                namespace_prefix: "anon/room".to_string(),
+                layout: Layout::Combined,
+                format: RecordingFormat::Mp4,
+                composite: true,
+                state: RoomState::Finished,
+                members: Vec::new(),
+                updated_at_ms: 0,
+            })
+            .await
+            .unwrap();
+        let key = store.recording_prefix("anon/room", "1").join("a.mp4");
         store
             .object_store()
             .put(&key, PutPayload::from(std::fs::read(&source).unwrap()))
@@ -136,10 +158,10 @@ mod tests {
             "namespace": "anon/room/a",
             "files": [
                 { "key": key.as_ref(), "capture_origin_us": 1_700_000_000_000_000_u64 },
-                { "key": "1/gone.mp4", "capture_origin_us": 1_700_000_001_000_000_u64 },
+                { "key": "anon/1/gone.mp4", "capture_origin_us": 1_700_000_001_000_000_u64 },
             ],
         }] });
-        std::fs::write(store_dir.join("1/manifest.json"), manifest.to_string()).unwrap();
+        std::fs::write(store_dir.join("anon/1/manifest.json"), manifest.to_string()).unwrap();
         let args = CompositeArgs {
             id: "1".to_string(),
             store: Url::from_directory_path(&store_dir).unwrap(),
@@ -150,7 +172,7 @@ mod tests {
         run(args).await.unwrap();
 
         // Assert
-        let composite = store_dir.join("1/composite.mp4").exists();
+        let composite = store_dir.join("anon/1/composite.mp4").exists();
         let state = std::fs::read_to_string(store_dir.join("state/1.composite.json")).unwrap();
         let work_left = dir.join("work/1").exists();
         std::fs::remove_dir_all(&dir).unwrap();

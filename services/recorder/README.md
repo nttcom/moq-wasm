@@ -77,8 +77,9 @@ Every namespace under the prefix (one per meeting participant) is recorded
 from the moment it is published, with the tracks picked from its catalog
 (`--max-video-height`, 720 by default): the main source, the camera and
 the microphone, and apart from it the screen share (see Behaviour). The
-objects go to `<store>/<recording id>/<namespace>/<track>/`, with
-`manifest.json` and `composite.mp4` in `<store>/<recording id>/`; compositing
+objects go to `<store>/<app>/<recording id>/<namespace>/<track>/`, `<app>`
+being the room's first element, with `manifest.json` and `composite.mp4` in
+`<store>/<app>/<recording id>/`; compositing
 needs the GStreamer plugins listed in the
 [transcode README](../../crates/transcode/README.md#compositing).
 
