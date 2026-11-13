@@ -186,6 +186,20 @@ test('a video subscribed after its priority was set is subscribed with it', asyn
   expect(session.updates).toEqual([])
 })
 
+test('a priority set while the first subscription is being made is sent once it is made', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+
+  // Act
+  const subscribed = subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  subscriptions.setVideoPriority(7)
+  await subscribed
+
+  // Assert
+  await expect.poll(() => session.updates).toEqual(['setPriority video 7'])
+})
+
 test('a rendition that takes over takes the priority set while it was being subscribed', async () => {
   // Arrange
   const session = new FakeSession(undefined, [])
