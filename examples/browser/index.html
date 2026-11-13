@@ -396,6 +396,11 @@
         gap: 0.3rem;
       }
 
+      /* The recorder records only rooms with a token, so the public app has no recording to play. */
+      :root[data-access-mode='public'] .requires-token {
+        display: none;
+      }
+
       /* An L-shaped arrow from the card above to the derived card's left edge. */
       .derived-mark {
         position: relative;
@@ -596,7 +601,7 @@
               </p>
               <span class="arrow" aria-hidden="true"></span>
             </a>
-            <div class="derived">
+            <div class="derived requires-token">
               <span class="derived-mark" aria-hidden="true"></span>
               <a class="card" href="examples/recording-player/index.html">
                 <div class="card-head">

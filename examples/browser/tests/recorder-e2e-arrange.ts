@@ -113,7 +113,8 @@ async function startRecorderServe() {
       pathToFileURL(storeDir).href + '/',
       '--output-dir',
       join(dir, 'work'),
-      '--composite'
+      '--composite',
+      '--insecure-skip-auth'
     ],
     {
       cwd: REPO_ROOT,

@@ -38,8 +38,10 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 ///
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
 /// only hide the answer from that page, and a form or a `text/plain` fetch
-/// needs no preflight. Private rooms require a VTS-verified bearer token;
-/// anonymous rooms are public. A failing store answers 500.
+/// needs no preflight. Every request but `/healthz` and a preflight needs a
+/// VTS-verified bearer token whose `publish` claim covers the room to start
+/// or stop a recording, its `subscribe` claim for the rest. A failing store
+/// answers 500.
 pub(crate) struct ApiServer {
     _http: HttpServer,
 }
@@ -89,10 +91,15 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
                 }
                 Err(error) => return with_cors(internal_error(&error), origin),
             },
-            ["recordings"] if method == Method::GET => query
-                .get("namespace_prefix")
-                .cloned()
-                .unwrap_or_else(|| state.recordings.namespace_root().to_string()),
+            ["recordings"] if method == Method::GET => match query.get("namespace_prefix") {
+                Some(namespace) => namespace.clone(),
+                None => {
+                    return with_cors(
+                        error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required"),
+                        origin,
+                    );
+                }
+            },
             _ => String::new(),
         };
         if !namespace.is_empty() {
@@ -125,7 +132,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
         },
         (&Method::GET, ["recordings"]) => match state
             .recordings
-            .list(query.get("namespace_prefix").map(String::as_str))
+            .list(query.get("namespace_prefix").map_or("", String::as_str))
             .await
         {
             Ok(recordings) => json_response(StatusCode::OK, &recordings),
@@ -151,10 +158,6 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
                 Err(PublishRejection::NotMoq) => error_response(
                     StatusCode::CONFLICT,
                     "only recordings in the moq format can be published",
-                ),
-                Err(PublishRejection::OutsideRoot) => error_response(
-                    StatusCode::FORBIDDEN,
-                    "the recording's room cannot be replayed here",
                 ),
                 Err(PublishRejection::Capacity) => error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -202,9 +205,9 @@ async fn start(recordings: &Recordings, body: &Value, bearer: Option<&str>) -> A
         .await
     {
         Ok(recording) => json_response(StatusCode::CREATED, &recording),
-        Err(StartRejection::OutsideRoot) => error_response(
-            StatusCode::FORBIDDEN,
-            "namespace_prefix must name a room under the allowed root",
+        Err(StartRejection::NotARoom) => error_response(
+            StatusCode::BAD_REQUEST,
+            "namespace_prefix must name a room: <app>/<room>",
         ),
         Err(StartRejection::AlreadyRecording) => {
             error_response(StatusCode::CONFLICT, "the room is already being recorded")
@@ -318,21 +321,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_a_request_without_a_room_under_the_root_or_with_an_unknown_option() {
+    async fn rejects_a_request_without_a_room_or_with_an_unknown_option() {
         // Arrange
         let recordings = recordings(1, false);
 
         // Act
         let missing = error_of(start(&recordings, &json!({}), None).await).await;
-        let outside = error_of(
-            start(
-                &recordings,
-                &json!({ "namespace_prefix": "app/room" }),
-                None,
-            )
-            .await,
-        )
-        .await;
+        let app =
+            error_of(start(&recordings, &json!({ "namespace_prefix": "app" }), None).await).await;
         let layout = error_of(
             start(
                 &recordings,
@@ -363,12 +359,12 @@ mod tests {
 
         // Assert: nothing was started
         assert_eq!(missing.0, StatusCode::BAD_REQUEST);
-        assert_eq!(outside.0, StatusCode::FORBIDDEN);
+        assert_eq!(app.0, StatusCode::BAD_REQUEST);
         assert_eq!(layout.0, StatusCode::BAD_REQUEST);
         assert_eq!(composite.0, StatusCode::BAD_REQUEST);
         assert_eq!(composite_disabled.0, StatusCode::BAD_REQUEST);
         assert_eq!(
-            recordings.list(None).await.unwrap(),
+            recordings.list("anon/room").await.unwrap(),
             json!({ "recordings": [] })
         );
     }

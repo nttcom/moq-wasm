@@ -204,6 +204,7 @@ recorder-serve:
 		--store $(RECORDER_STORE_URL) \
 		--output-dir recordings/work \
 		--composite \
+		--insecure-skip-auth \
 		$(RECORDER_TLS_FLAGS)
 
 # Maintenance

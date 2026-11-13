@@ -62,16 +62,16 @@ the files. Locally (`make recorder-serve`):
 
 ```bash
 cargo run -p recorder -- serve \
-  --relay https://127.0.0.1:4433 --insecure-skip-tls-verify \
+  --relay https://127.0.0.1:4433 --insecure-skip-tls-verify --insecure-skip-auth \
   --store file://$PWD/recordings/store/ --output-dir recordings/work --composite
 ```
 
 | Request | Answer |
 | --- | --- |
-| `POST /recordings` `{"namespace_prefix": "anon/research", "layout": "per-track", "composite": true}` | `201` with the recording, `starting` until its job has joined the room; `layout` is `combined` by default. `composite: true` also makes `composite.mp4`, every participant in one grid with mixed audio, once the recording has ended; it needs `--composite` (`400` otherwise). `403` outside `--namespace-root` or from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings`, `500` when the store or the launcher fails |
+| `POST /recordings` `{"namespace_prefix": "APP/research", "layout": "per-track", "composite": true}` | `201` with the recording, `starting` until its job has joined the room; `layout` is `combined` by default. `composite: true` also makes `composite.mp4`, every participant in one grid with mixed audio, once the recording has ended; it needs `--composite` (`400` otherwise). `400` for a prefix that is not `<app>/<room>`, `403` from a page outside `--allowed-origin`, `409` when the prefix is already recorded, `503` past `--max-recordings`, `500` when the store or the launcher fails |
 | `POST /recordings/{id}/stop` | `202`; the state turns `stopping` within 5 s, then `finished` once every file is closed and uploaded |
 | `GET /recordings/{id}` | `state` (`starting`, `recording`, `stopping`, `finished`, `failed`; a job silent for 90 s is reported `failed`), each participant's namespace, start time, `finished` and `error`, and `composite` (`null`, or `state` `waiting`, `composing`, `done`, `skipped`, `failed` with `error`) |
-| `GET /recordings?namespace_prefix=anon/research` | The recordings of that prefix |
+| `GET /recordings?namespace_prefix=APP/research` | The recordings of that prefix (`400` without it) |
 
 Every namespace under the prefix (one per meeting participant) is recorded
 from the moment it is published, with the tracks picked from its catalog
@@ -116,21 +116,23 @@ participant in a `LivePlayer` of one `PlaybackGroup`, with the chat and the
 transcript beside them. The meeting's Activities menu offers **Record meeting
 with chat and transcript**.
 
-Anonymous rooms are public. Private rooms require `Authorization: Bearer <JWT>`
-and `--auth-vts-url <VTS verify endpoint>` (`AUTH_VTS_URL`): `subscribe` grants
+Every request needs `Authorization: Bearer <JWT>`, verified at
+`--auth-vts-url <VTS verify endpoint>` (`AUTH_VTS_URL`): `subscribe` grants
 viewing/replay, `publish` grants starting/stopping, each covering the source
-room. Configure the recorder's relay credentials through `MOQT_AUTH_TOKEN` or
-`MOQT_AUTH_TOKEN_FILE`. Tokens do not enter the archive.
+room. There is no public room: the anonymous app's rooms, which carry no
+token, are not recorded. Tokens do not enter the archive.
 
-With `--token-mint-url` (`TOKEN_MINT_URL`), the rooms of temporary apps
-(`temp-…` roots, see `services/token-mint`) are accepted besides
-`--namespace-root`. Such a room is recorded and replayed with the caller's
-bearer token instead of the recorder's own: the recording job gets it as
-`--temporary-token` and renews it at the token mint five minutes before it
-expires, sending each new one to the relay in-session, so a recording outlives
-the page that started it. A token that cannot be renewed is kept until the
-relay closes the session at its expiry. The token passes through the job's
-arguments, so whoever can read the launched job's configuration can read it.
+A room is recorded and replayed with the caller's bearer token: the recording
+job gets it as `--token`, and the relay ends the session when it expires, which
+ends the recording. With `--token-mint-url` (`TOKEN_MINT_URL`), the token of a
+temporary app (`temp-…` root, see `services/token-mint`) is renewed at the
+token mint five minutes before it expires instead, each new one sent to the
+relay in-session, so such a recording outlives the page that started it. The
+token passes through the job's arguments, so whoever can read the launched
+job's configuration can read it.
+
+`--insecure-skip-auth` accepts every request without a token and records with
+the token a request carries, or none, for a local relay without authorization.
 
 ```bash
 LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests/recorder-archive-e2e.spec.ts
@@ -140,9 +142,9 @@ LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests
 | --- | --- | --- |
 | `--listen` | `127.0.0.1:8096` | Address of the API |
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
-| `--namespace-root` | `anon` | First element every recorded prefix must have |
-| `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint for private rooms |
-| `--token-mint-url` (`TOKEN_MINT_URL`) | — | Token mint renewing temporary apps' tokens; without it their rooms are refused |
+| `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint for the requests' tokens; required unless `--insecure-skip-auth` |
+| `--insecure-skip-auth` | off | Accept every request without a token (local development only) |
+| `--token-mint-url` (`TOKEN_MINT_URL`) | — | Token mint renewing temporary apps' tokens; without it a temporary app's recording ends when its token expires |
 | `--max-recordings` | `4` | Rooms recorded at once |
 | `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state; a `gs://` store needs the metadata server of Google Cloud to release a room |
 | `--output-dir` | `recordings` | Where a recording job writes its files until they are uploaded, and a composite job downloads them |
