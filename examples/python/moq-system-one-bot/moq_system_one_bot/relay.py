@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 
 import moq_wasm
 from loguru import logger
-from moq_bot_rooms.app_token import while_fresh
 from moq_bot_rooms.rooms import BotRoom
 
 DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
@@ -23,14 +22,17 @@ def add_relay_arguments(parser: argparse.ArgumentParser) -> None:
 async def stay_connected(
     args: argparse.Namespace, room: BotRoom, in_session: Callable[[moq_wasm.Session], Awaitable[bool]]
 ) -> None:
-    """Runs `in_session` on a relay session with `room`'s token, reconnecting whenever the session
-    closes or fails, until `in_session` returns True. Keeps the token fresh on the session meanwhile,
-    and raises once it cannot (`moq_bot_rooms.app_token.AppToken.keep_fresh`)."""
+    """Runs `in_session` on a relay session with `room`'s token until it returns True. The session
+    reconnects and keeps the token fresh by itself; this retries the first connection, and raises
+    `moq_wasm.TokenExpired` once the token cannot be kept fresh."""
     log_prefix = f"room {room.key}: "
     while True:
         try:
             session = await moq_wasm.connect(
-                args.relay_url, verify_certificate=not args.insecure, token=room.relay_token
+                args.relay_url,
+                verify_certificate=not args.insecure,
+                token=room.relay_token,
+                refresh_token=room.token.refresh if room.token else None,
             )
         except RuntimeError as error:
             logger.warning(f"{log_prefix}cannot connect to {args.relay_url}: {error}")
@@ -38,7 +40,7 @@ async def stay_connected(
             continue
         logger.info(f"{log_prefix}connected to {args.relay_url}")
         try:
-            if await while_fresh(room.token, session, in_session(session)):
+            if await session.run(in_session(session)):
                 return
             logger.warning(f"{log_prefix}relay session closed")
         except RuntimeError as error:

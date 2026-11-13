@@ -240,16 +240,17 @@ service keeps a token of its own alive with the issuer's `POST
   presents the latest one on every connection it opens by itself (GOAWAY, an
   expired-token close).
 - **Staying past the hour.** Five minutes before its token expires, as the
-  pages do, the bot refreshes it on the issuer and sends the new one to the
-  relay on its open session (`Session.refresh_token`: the relay's
+  pages do, the bot's session (`moq_wasm.connect`'s `refresh_token`, given
+  `AppToken.refresh`) refreshes it on the issuer and sends the new one to the
+  relay on its open connection (the relay's
   in-session refresh, docs/architecture/relay/architecture.md "Token
   refresh"), so the session never reaches the relay's EXPIRED_AUTH_TOKEN and
   the room does not reconnect. A relay that refuses the new token leaves the
   session to expire; the bot then connects again with the new token.
-- **When refreshing fails.** An issuer that does not answer is retried every
-  30 s while the token is still valid. Once the issuer refuses the token, or
-  has not answered by the time it expires, the bot raises and the room ends
-  with `failed`, which every page holding it sees. A bot cannot stay in an
+- **When refreshing fails.** A refresh that fails, whether the issuer does
+  not answer or refuses the token, is retried every 30 s while the token is
+  still valid. Once the token expires, the session raises
+  `moq_wasm.TokenExpired` and the room ends with `failed`, which every page holding it sees. A bot cannot stay in an
   app without a valid token, and a page that is still there can start the
   room again with its own, fresher token.
 - **Configuration.** `--token-mint-url`, else the environment variable
