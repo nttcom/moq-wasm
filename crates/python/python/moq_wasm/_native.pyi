@@ -28,6 +28,8 @@ class Session:
     async def subscribe_current_group(self, namespace: list[str], name: str) -> Subscription:
         """The objects of the group the relay holds come first (a joining FETCH), then the live ones."""
     async def announce(self, namespace: list[str]) -> None: ...
+    async def unannounce(self, namespace: list[str]) -> None:
+        """PUBLISH_NAMESPACE_DONE for a namespace `announce` published."""
     async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for. Register it before
         `announce`, since the relay may forward a SUBSCRIBE at once."""
