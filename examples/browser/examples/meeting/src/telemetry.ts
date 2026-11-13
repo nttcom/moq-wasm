@@ -8,7 +8,7 @@ let room: { session: LocalSession; members: () => RemoteMember[] } | undefined
 startPageTelemetry(
   'meeting',
   () => room?.session.relayUrl ?? '',
-  () => (room ? memberSamples(room.session.getMediaController().players, room.members()) : [])
+  () => (room ? memberSamples(room.session.players, room.members()) : [])
 )
 
 /// Samples `session`'s remote members until the returned function is called.

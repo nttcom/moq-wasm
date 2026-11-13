@@ -98,7 +98,7 @@ function createPublishNamespaceHandler(options: PublishNamespaceHandlerOptions) 
 
     // The relay keeps a rejoined member's old subscriptions alive; `add` disposes
     // the old players first, or every object would arrive twice.
-    session.getMediaController().players.add(announced.userName, trackNamespace)
+    session.players.add(announced.userName, trackNamespace)
     setRoom((currentRoom) => {
       const rejoinedMember = currentRoom.remoteMembers.get(announced.userName)
       if (rejoinedMember) {
@@ -117,7 +117,7 @@ function createPublishNamespaceDoneHandler(options: PublishNamespaceHandlerOptio
       return
     }
 
-    session.getMediaController().players.remove(announced.userName)
+    session.players.remove(announced.userName)
     setRoom((currentRoom) => {
       const member = currentRoom.remoteMembers.get(announced.userName)
       if (!member) {
