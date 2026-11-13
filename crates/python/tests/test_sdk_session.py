@@ -3,32 +3,21 @@ import time
 
 import pytest
 
-from moq_wasm import NamespaceEvent, SessionClosed, TokenExpired, _session
-from moq_wasm._session import Session, _Connecting
+from moq_wasm import NamespaceEvent, SessionClosed, TokenExpired
+from moq_wasm._session import _Connecting
 from moq_wasm._token import TokenKeeper
 
-from tests.fake_native import FakeNativeSession, FakeRelay, unsigned_token
+from tests.fake_native import FakeRelay, open_session, restored_on, unsigned_token
 
 TIMEOUT_SECONDS = 5
 NAMESPACE = ["anon", "room", "bot"]
 
 
-@pytest.fixture(autouse=True)
-def no_reconnect_delay(monkeypatch):
-    monkeypatch.setattr(_session, "FIRST_RECONNECT_DELAY_SECONDS", 0.0)
+pytestmark = pytest.mark.usefixtures("no_reconnect_delay")
 
 
 async def within(awaitable):
     return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
-
-
-async def restored_on(session: Session, native: FakeNativeSession) -> None:
-    while session._native is not native:
-        await asyncio.sleep(0)
-
-
-async def open_session(relay: FakeRelay, keeper: TokenKeeper | None = None, token: str | None = None) -> Session:
-    return await _Connecting(relay.dial, keeper, token)
 
 
 async def test_a_new_connection_registers_the_tracks_before_it_publishes_and_watches():
