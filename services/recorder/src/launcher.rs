@@ -1,13 +1,11 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use clap::ValueEnum;
-use serde_json::{Value, json};
+use metadata_token::MetadataToken;
+use serde_json::json;
 
 use crate::LauncherArgs;
-
-const METADATA_TOKEN_URL: &str =
-    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum LauncherKind {
@@ -46,6 +44,7 @@ pub(crate) enum Launcher {
         record_job: String,
         composite_job: String,
         client: reqwest::Client,
+        metadata_token: Arc<MetadataToken>,
     },
 }
 
@@ -65,6 +64,7 @@ impl Launcher {
                     .clone()
                     .context("--launcher cloud-run needs --composite-job")?,
                 client: reqwest::Client::new(),
+                metadata_token: Arc::new(MetadataToken::new(reqwest::Client::new())),
             },
         })
     }
@@ -92,12 +92,17 @@ impl Launcher {
                 record_job,
                 composite_job,
                 client,
+                metadata_token,
             } => {
                 let name = match job {
                     Job::Record => record_job,
                     Job::Composite => composite_job,
                 };
-                run_cloud_run_job(client, name, command).await?;
+                let token = metadata_token
+                    .bearer_token()
+                    .await
+                    .context("cannot get a token from the metadata server")?;
+                run_cloud_run_job(client, &token, name, command).await?;
             }
         }
         tracing::info!(mode = job.mode(), "job launched");
@@ -105,19 +110,12 @@ impl Launcher {
     }
 }
 
-async fn run_cloud_run_job(client: &reqwest::Client, job: &str, args: Vec<String>) -> Result<()> {
-    let token: Value = client
-        .get(METADATA_TOKEN_URL)
-        .header("Metadata-Flavor", "Google")
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .context("cannot get a token from the metadata server")?
-        .json()
-        .await?;
-    let token = token["access_token"]
-        .as_str()
-        .ok_or_else(|| anyhow!("the metadata server returned no access_token"))?;
+async fn run_cloud_run_job(
+    client: &reqwest::Client,
+    token: &str,
+    job: &str,
+    args: Vec<String>,
+) -> Result<()> {
     let response = client
         .post(format!("https://run.googleapis.com/v2/{job}:run"))
         .bearer_auth(token)
