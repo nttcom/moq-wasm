@@ -442,6 +442,12 @@ its SUBSCRIBE starts after the newest object, so send it what it needs then.
 `subscription.groups()` reads each subgroup stream on its own, and
 `subscription.done` resolves once the publisher ends the subscription.
 
+`publishTrack(namespace, track, { datagram: true })` sends each object in its
+own datagram instead of on a subgroup stream: a lost object is not resent and
+never delays the next one, which suits small, frequent state such as a pointer
+position. Keep an object under about 1 KB; one larger than the path allows is
+dropped. Subscribers read the track with `for await`, as above.
+
 ## Logs
 
 The SDK's logs are discarded unless the page installs a sink before
