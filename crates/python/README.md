@@ -30,6 +30,9 @@ dependencies = ["moq-wasm"]
 moq-wasm = { path = "../../../crates/python" }
 ```
 
+`moq-wasm[pipecat]` adds `moq_wasm.pipecat.MoqWasmTransport` and the PyAV it
+encodes and decodes with; the wheel carries no codec of its own.
+
 uv builds the module with maturin, which needs this repository's Rust
 toolchain. After an uncommitted change to the `moqt` crate, or in a git
 worktree, run `uv sync --reinstall-package moq-wasm`.
