@@ -603,8 +603,8 @@ use these facades instead of the data-plane factories directly:
   start anywhere). `write()` appends a payload object with optional immutable
   extension headers and `write_with_extension_headers()` with arbitrary ones,
   which is how LOC headers are attached. Group ids run from the
-  `first_group_id` given at construction unless chosen, `next_group_id()`
-  exposes where numbering continues, object ids run from 0 within each group;
+  `first_group_id` given at construction unless chosen, object ids run from
+  0 within each group;
   publisher priority is fixed at 128 and the subgroup id is omitted
   (`SubgroupId::None`).
 - `TrackReader` wraps a `DataReceiver` and yields

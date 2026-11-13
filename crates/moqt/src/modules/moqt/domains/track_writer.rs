@@ -196,10 +196,6 @@ impl TrackWriter {
         self.next_group_id - self.first_group_id
     }
 
-    pub fn next_group_id(&self) -> u64 {
-        self.next_group_id
-    }
-
     pub fn current_group_id(&self) -> Option<u64> {
         self.group.as_ref().map(|_| self.next_group_id - 1)
     }
@@ -410,7 +406,7 @@ mod tests {
                 .write(Bytes::from_static(b"c"), vec![])
                 .await
                 .unwrap();
-            let next_group_id = writer.next_group_id();
+            let current_group_id = writer.current_group_id();
             writer.finish().await.unwrap();
             let mut reader = subscribed_track_reader(&server, &accepted).await;
             let first = reader.next_object().await.unwrap().unwrap();
@@ -418,7 +414,7 @@ mod tests {
             let third = reader.next_object().await.unwrap().unwrap();
 
             // Assert
-            assert_eq!(next_group_id, 7);
+            assert_eq!(current_group_id, Some(6));
             assert_eq!((first.group_id, first.object_id), (3, 0));
             assert!(first.extension_headers.prior_group_id_gap().is_empty());
             assert_eq!((second.group_id, second.object_id), (6, 0));
