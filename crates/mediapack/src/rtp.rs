@@ -8,5 +8,5 @@ mod rtcp;
 pub mod sdp;
 
 pub use demuxer::Demuxer;
-pub use muxer::{Destination, Muxer, MuxerOptions, RtcpPacket, RtpPacket};
+pub use muxer::{Destination, Muxer, MuxerOptions, StreamPacket};
 pub use sdp::{Codec, MediaDescription, MediaKind, SessionDescription};
