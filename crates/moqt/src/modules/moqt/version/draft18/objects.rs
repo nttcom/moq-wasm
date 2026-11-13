@@ -721,6 +721,10 @@ pub(crate) struct FetchReader {
 }
 
 impl FetchReader {
+    pub(crate) fn stop(&mut self, error_code: u64) {
+        self.stream.stop(error_code);
+    }
+
     pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
         self.state.group_order = group_order;
     }

@@ -1008,6 +1008,15 @@ pub(crate) fn location(group_id: u64, object_id: u64) -> crate::object::Location
     }
 }
 
+pub(crate) async fn send_until_stopped(sender: &FetchDataSender) -> anyhow::Error {
+    loop {
+        if let Err(error) = sender.send_object(&object_with_extensions()).await {
+            return error;
+        }
+        tokio::task::yield_now().await;
+    }
+}
+
 pub(crate) struct FetchedStream {
     _client: Session,
     _server: Session,

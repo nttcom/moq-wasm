@@ -179,6 +179,11 @@ impl ControlChannel {
         request_id < next.load(Ordering::Relaxed)
     }
 
+    pub(super) fn wrote_request_id(&self, request_id: RequestId) -> bool {
+        let end = self.written_request_id_end.load(Ordering::Relaxed);
+        request_id % 2 == end % 2 && request_id < end
+    }
+
     /// Waits while the next Request ID reaches the peer's Maximum Request
     /// ID, sending one REQUESTS_BLOCKED per limit (§9.6).
     async fn wait_for_request_id(&self) -> RequestIdReservation<'_> {

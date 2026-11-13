@@ -365,6 +365,13 @@ impl FetchReader {
         }
     }
 
+    pub(crate) fn stop(&mut self, error_code: u64) {
+        match self {
+            Self::Draft14(reader) => reader.stop(error_code),
+            Self::Draft18(reader) => reader.stop(error_code),
+        }
+    }
+
     /// draft-18 encodes Group IDs as deltas in the FETCH's group order.
     pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
         match self {
@@ -814,6 +821,16 @@ impl ControlChannel {
         match self {
             Self::Draft14(channel) => channel.peer_reads_trace_context,
             Self::Draft18(channel) => channel.peer_reads_trace_context,
+        }
+    }
+
+    /// Whether `request_id` names a request this side wrote: one of its own
+    /// parity below the end of the Request IDs it wrote, since each endpoint
+    /// uses its Request IDs in order (draft-14 §9.1).
+    pub(crate) fn wrote_request_id(&self, request_id: RequestId) -> bool {
+        match self {
+            Self::Draft14(channel) => channel.wrote_request_id(request_id),
+            Self::Draft18(channel) => channel.wrote_request_id(request_id),
         }
     }
 
