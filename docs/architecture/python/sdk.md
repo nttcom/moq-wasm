@@ -88,22 +88,33 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as sessi
 `connect` returns a `Session` that stays usable across connections:
 
 - **Reconnection.** When the native session closes, other than by
-  `close()`, the session dials again with backoff and restores what the
-  caller set up: it publishes the namespaces again, serves the registered
-  tracks again, and sends the namespace subscriptions again. A track
-  subscription ends; the media layer's `follow` subscribes again. The native
+  `close()`, the session dials again after 1 s, doubling the wait up to 30 s,
+  and restores what the caller set up, in this order: it registers the tracks,
+  publishes the namespaces, and sends the namespace subscriptions. The native
   session already follows GOAWAY and reopens after a token expiry by itself;
-  this covers the rest (a relay restart, a network outage).
+  this covers the rest (a relay restart, a network outage). The first
+  connection's failure raises from `connect`, so a wrong URL does not retry
+  forever.
+- **What a lost connection takes.** A track subscription ends; the media
+  layer's `follow` subscribes again. A namespace watch reports every
+  namespace it had as withdrawn, and the next connection's
+  SUBSCRIBE_NAMESPACE reports the published ones again. A `TrackWriter`
+  drops what is written while the session reconnects, and the new
+  connection's origin starts the track's groups afresh, numbered from the
+  wall-clock time, so a subscriber never sees a group id go back. Its cache
+  does not carry over.
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
   `exp` from the token's claims, calls it five minutes before `exp`, retries
   every 30 s until the token expires, and hands each new token to the relay
   (`_native.Session.refresh_token`). Getting the token stays the caller's
   job, as in architecture.md "Authorization tokens".
-- **Lifetime.** Leaving the `async with` block closes the session. A failure
-  the session cannot recover from (the refresh callable raised, or the token
-  expired) raises from `async with`, after cancelling what runs inside it
-  through `session.run`:
+- **Lifetime.** Leaving the `async with` block closes the session; awaiting
+  `connect` instead leaves `close()` to the caller. The one failure the
+  session cannot recover from is `TokenExpired`: the token expired while
+  `refresh_token` kept failing. It raises from `async with`, after cancelling
+  what runs inside it through `session.run`, which raises `SessionClosed`
+  when `close()` ends the session instead:
 
 ```python
 async with moq_wasm.connect(...) as session:

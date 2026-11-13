@@ -91,9 +91,12 @@ must outlive it (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
 apps"):
 
 ```python
-session = await moq_wasm.connect(url, token=jwt)
+session = await moq_wasm._native.connect(url, token=jwt)
 await session.refresh_token(later_jwt, app_id="temp-3f9a…")
 ```
+
+The SDK's `moq_wasm.connect(url, token=, refresh_token=)` calls these when the
+token is due (sdk.md "Core").
 
 `connect` hands `moqt` an `AuthorizationTokenSource::provider` that reads the
 session's current token, so a connection the session opens by itself (to
