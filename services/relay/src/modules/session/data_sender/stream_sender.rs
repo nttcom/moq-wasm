@@ -1,5 +1,6 @@
-use crate::modules::session::{data_object::DataObject, data_sender::DataSender};
-use moqt::object::{DataStreamResetCode, StreamPriority};
+use moqt::object::{DataStreamResetCode, StreamPriority, SubgroupPart};
+
+use crate::modules::session::data_sender::DataSender;
 
 enum SenderInner {
     Uninitialized(moqt::object::SubgroupHeaderSender),
@@ -27,17 +28,15 @@ impl StreamSender {
 
 #[async_trait::async_trait]
 impl DataSender for StreamSender {
-    async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
+    async fn send_object(&mut self, object: SubgroupPart) -> anyhow::Result<()> {
         match object {
-            DataObject::SubgroupObject(object) => self.header_sent()?.send_object(&object).await,
-            DataObject::SubgroupObjectStart {
+            SubgroupPart::Object(object) => self.header_sent()?.send_object(&object).await,
+            SubgroupPart::ObjectStart {
                 object,
                 payload_len,
             } => self.header_sent()?.begin_object(&object, payload_len).await,
-            DataObject::SubgroupPayload { data, .. } => {
-                self.header_sent()?.send_payload(&data).await
-            }
-            DataObject::SubgroupHeader(start) => match self.inner.take() {
+            SubgroupPart::Payload { data, .. } => self.header_sent()?.send_payload(&data).await,
+            SubgroupPart::Header(start) => match self.inner.take() {
                 Some(SenderInner::Uninitialized(sender)) => {
                     let sent = sender.start(start).await?;
                     self.inner = Some(SenderInner::HeaderSent(sent));

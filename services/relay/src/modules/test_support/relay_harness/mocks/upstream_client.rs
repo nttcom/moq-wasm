@@ -1,15 +1,12 @@
 use std::sync::Mutex;
 
-use moqt::object::Object;
+use moqt::object::{Object, SubgroupPart};
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::modules::{
-    session::{
-        data_object::DataObject,
-        data_receiver::{
-            receiver::{DataReceiver, UpstreamData},
-            stream_receiver::StreamReceiver,
-        },
+    session::data_receiver::{
+        receiver::{DataReceiver, UpstreamData},
+        stream_receiver::StreamReceiver,
     },
     test_support::relay_harness::{
         RECV_TIMEOUT,
@@ -17,7 +14,7 @@ use crate::modules::{
     },
 };
 
-type ReceiveResult = Result<Option<DataObject>, moqt::object::StreamReceiveError>;
+type ReceiveResult = Result<Option<SubgroupPart>, moqt::object::StreamReceiveError>;
 
 struct MockStreamReceiver {
     receiver: mpsc::UnboundedReceiver<ReceiveResult>,
@@ -61,7 +58,7 @@ impl UpstreamSubgroupStream {
             .expect("ingress should be reading this stream");
     }
 
-    pub(crate) fn send(&self, object: DataObject) {
+    pub(crate) fn send(&self, object: SubgroupPart) {
         self.push(Ok(Some(object)));
     }
 

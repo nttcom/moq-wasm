@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use moqt::object::SubgroupPart;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tracing::Span;
 
@@ -26,9 +27,7 @@ use crate::modules::{
         session_id::SessionId,
         track_key::TrackKey,
     },
-    session::{
-        data_object::DataObject, data_receiver::receiver::DataReceiver, session_event::SessionEvent,
-    },
+    session::{data_receiver::receiver::DataReceiver, session_event::SessionEvent},
 };
 
 pub(crate) mod fixtures;
@@ -153,7 +152,7 @@ impl EgressRunnerHandle {
             .expect("egress dropped its publisher")
     }
 
-    pub(crate) async fn expect_sent_object(&mut self) -> DataObject {
+    pub(crate) async fn expect_sent_object(&mut self) -> SubgroupPart {
         match tokio::time::timeout(RECV_TIMEOUT, self.sent.recv()).await {
             Ok(Some(Sent::Object(object))) => object,
             other => panic!("egress should send an object downstream, got {other:?}"),
@@ -614,7 +613,7 @@ pub(crate) async fn wait_largest_location(
 
 pub(crate) async fn receive_objects_until_close(
     egress: &mut EgressRunnerHandle,
-) -> Vec<DataObject> {
+) -> Vec<SubgroupPart> {
     let (objects, end) = receive_objects_until_end(egress).await;
     assert!(
         matches!(end, Sent::Closed),
@@ -625,7 +624,7 @@ pub(crate) async fn receive_objects_until_close(
 
 pub(crate) async fn receive_objects_until_end(
     egress: &mut EgressRunnerHandle,
-) -> (Vec<DataObject>, Sent) {
+) -> (Vec<SubgroupPart>, Sent) {
     let mut objects = Vec::new();
     loop {
         match tokio::time::timeout(RECV_TIMEOUT, egress.sent.recv()).await {
@@ -643,11 +642,11 @@ pub(crate) async fn receive_objects_until_end(
     }
 }
 
-pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
+pub(crate) fn assert_full_ordered_delivery(objects: &[SubgroupPart]) {
     assert!(
         matches!(
             objects.first(),
-            Some(DataObject::SubgroupHeader(header)) if header.group_id == 0
+            Some(SubgroupPart::Header(header)) if header.group_id == 0
         ),
         "downstream stream should start with the group 0 subgroup header"
     );
@@ -662,11 +661,11 @@ pub(crate) fn assert_full_ordered_delivery(objects: &[DataObject]) {
     assert_eq!(payloads, expected, "objects must arrive in publish order");
 }
 
-pub(crate) fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
+pub(crate) fn payloads_of(objects: &[SubgroupPart]) -> Vec<Bytes> {
     objects
         .iter()
         .filter_map(|object| match object {
-            DataObject::SubgroupObject(object) if !object.payload.is_empty() => {
+            SubgroupPart::Object(object) if !object.payload.is_empty() => {
                 Some(object.payload.clone())
             }
             _ => None,
@@ -674,11 +673,11 @@ pub(crate) fn payloads_of(objects: &[DataObject]) -> Vec<Bytes> {
         .collect()
 }
 
-pub(crate) fn downstream_object_ids(objects: &[DataObject]) -> Vec<u64> {
+pub(crate) fn downstream_object_ids(objects: &[SubgroupPart]) -> Vec<u64> {
     objects
         .iter()
         .filter_map(|object| match object {
-            DataObject::SubgroupObject(object) => Some(object.location.object_id),
+            SubgroupPart::Object(object) => Some(object.location.object_id),
             _ => None,
         })
         .collect()

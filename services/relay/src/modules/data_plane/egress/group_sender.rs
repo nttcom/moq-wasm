@@ -1,6 +1,6 @@
 use moqt::{
     TransportSendError,
-    object::{DataStreamResetCode, DatagramDelivery, ForwardingPreference},
+    object::{DataStreamResetCode, DatagramDelivery, ForwardingPreference, SubgroupPart},
 };
 use std::{sync::Arc, time::Duration};
 
@@ -21,11 +21,8 @@ use crate::modules::{
         single_preference::{SinglePreference, converted_datagram_subgroup},
         track_key::TrackKey,
     },
-    session::{
-        data_object::DataObject,
-        data_sender::{
-            DataSender, datagram_sender::DatagramSender, stream_sender_factory::StreamSenderFactory,
-        },
+    session::data_sender::{
+        DataSender, datagram_sender::DatagramSender, stream_sender_factory::StreamSenderFactory,
     },
 };
 
@@ -498,9 +495,7 @@ impl GroupSender {
                 NextObject::Object(object) => match object.load().await {
                     Ok(loaded) => {
                         tracing::debug!(object_id, "egress sending subgroup object");
-                        if let Err(error) =
-                            open.send_object(DataObject::SubgroupObject(loaded)).await
-                        {
+                        if let Err(error) = open.send_object(SubgroupPart::Object(loaded)).await {
                             sent.end_reason =
                                 send_failure_reason(&error, Some(object_id), "send_object_failed");
                             return sent;
@@ -591,7 +586,7 @@ impl GroupSender {
             ends_group: false,
         };
         tracing::debug!("egress sending subgroup header");
-        if let Err(error) = sender.send_object(DataObject::SubgroupHeader(start)).await {
+        if let Err(error) = sender.send_object(SubgroupPart::Header(start)).await {
             return Err(send_failure_reason(&error, None, "send_header_failed"));
         }
         Ok((sender, priority))
@@ -672,12 +667,8 @@ impl GroupSender {
                 "egress sending datagram object on a stream"
             );
             let sent = async {
-                sender
-                    .send_object(DataObject::SubgroupHeader(start))
-                    .await?;
-                sender
-                    .send_object(DataObject::SubgroupObject(loaded))
-                    .await?;
+                sender.send_object(SubgroupPart::Header(start)).await?;
+                sender.send_object(SubgroupPart::Object(loaded)).await?;
                 sender.close().await
             };
             if let Err(error) = sent.await {
@@ -787,7 +778,7 @@ async fn forward_partial(
     partial: &PartialObject,
 ) -> Result<(), PartialForwardFailure> {
     sender
-        .send_object(DataObject::SubgroupObjectStart {
+        .send_object(SubgroupPart::ObjectStart {
             object: partial.object.clone(),
             payload_len: partial.payload_len,
         })
@@ -810,7 +801,7 @@ async fn forward_partial(
             sent_bytes += data.len();
             let last = sent_bytes == partial.payload_len;
             sender
-                .send_object(DataObject::SubgroupPayload { data, last })
+                .send_object(SubgroupPart::Payload { data, last })
                 .await
                 .map_err(PartialForwardFailure::SendFailed)?;
         }
