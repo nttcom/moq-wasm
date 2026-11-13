@@ -1185,10 +1185,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 - **A peer cannot declare an object payload or an extension header block
   above 16 MiB** (`MAX_WIRE_DECLARED_LENGTH`). A larger Object Payload
-  Length or Extension Headers Length on a subgroup or FETCH stream is a
-  decode error that ends the stream (draft-14 §12.1). The draft sets no
-  limit, and a receiver can hold a declared length in memory until all of
-  it arrives.
+  Length or Extension Headers Length (draft-18: Properties Length) on a
+  subgroup or FETCH stream is a decode error that ends the stream (draft-14
+  §12.1, draft-18 §13.5). Neither draft sets a limit, and a receiver can
+  hold a declared length in memory until all of it arrives.
 
 - **A carried subscription cuts over at a group boundary.** The first object
   the new connection delivers fixes the cutover group: the group after the

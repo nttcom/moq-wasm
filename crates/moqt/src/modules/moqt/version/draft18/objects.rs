@@ -9,8 +9,8 @@ use tokio_util::codec::Decoder;
 
 use super::{
     codec::{
-        DecodeError, get_key_value_pairs, get_length_prefixed, get_u8, get_vi64,
-        put_key_value_pairs, put_vi64,
+        DecodeError, get_declared_length, get_key_value_pairs, get_length_prefixed, get_u8,
+        get_vi64, put_key_value_pairs, put_vi64,
     },
     messages::DEFAULT_PUBLISHER_PRIORITY,
 };
@@ -151,7 +151,7 @@ fn get_subgroup_object_head(
     } else {
         ExtensionHeaders::default()
     };
-    let len = get_vi64(buf)? as usize;
+    let len = get_declared_length(buf)?;
     let status = (len == 0).then(|| get_vi64(buf)).transpose()?;
     let head = SubgroupObjectField {
         object_id_delta,
@@ -1048,6 +1048,7 @@ mod tests {
             messages::parameters::{group_order::GroupOrder, location::Location},
         },
         data_plane::object::{
+            MAX_WIRE_DECLARED_LENGTH,
             canonical_object::{ForwardingPreference, Object, SubgroupStart},
             extension_headers::ExtensionHeaders,
             object_status::ObjectStatus,
@@ -1276,6 +1277,30 @@ mod tests {
                 StreamDecoder::default().decode(&mut buf).is_err(),
                 "{stream_type:#x}"
             );
+        }
+    }
+
+    #[test]
+    fn a_declared_length_above_the_limit_ends_the_stream() {
+        let cases: [(&str, &[u8]); 3] = [
+            // FETCH header, Request ID, serialization flags
+            ("FETCH payload", &[0x05, 0, 0]),
+            // subgroup type, Track Alias, Group ID, priority, Object ID Delta
+            ("subgroup properties", &[0x11, 1, 2, 128, 0]),
+            ("subgroup payload", &[0x10, 1, 2, 128, 0]),
+        ];
+        for (name, before_length) in cases {
+            // Arrange: nothing follows the length, so only the limit can end the decode with an error
+            let mut buf = BytesMut::from(before_length);
+            put_vi64(&mut buf, MAX_WIRE_DECLARED_LENGTH + 1);
+            let mut decoder = StreamDecoder::default();
+            decoder.decode(&mut buf).unwrap();
+
+            // Act
+            let result = decoder.decode(&mut buf);
+
+            // Assert
+            assert!(result.is_err(), "{name}: {result:?}");
         }
     }
 

@@ -5,15 +5,18 @@
 use bytes::{Buf, BufMut, Bytes};
 use thiserror::Error;
 
-use crate::modules::moqt::control_plane::{
-    constants::TerminationErrorCode,
-    control_messages::{
-        key_value_pair::{KeyValuePair, VariantType},
-        messages::parameters::{
-            location::Location,
-            track_properties::{ReceivedEncoding, TrackProperties, TrackProperty},
+use crate::modules::moqt::{
+    control_plane::{
+        constants::TerminationErrorCode,
+        control_messages::{
+            key_value_pair::{KeyValuePair, VariantType},
+            messages::parameters::{
+                location::Location,
+                track_properties::{ReceivedEncoding, TrackProperties, TrackProperty},
+            },
         },
     },
+    data_plane::object::{MAX_WIRE_DECLARED_LENGTH, declared_length},
 };
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -26,6 +29,10 @@ pub(crate) enum DecodeError {
         code: TerminationErrorCode,
         reason: &'static str,
     },
+    /// The stream ends: the length is over this endpoint's own resource limit
+    /// (§13.5), not a violation of the draft, which sets none.
+    #[error("declared length {0} exceeds {MAX_WIRE_DECLARED_LENGTH}")]
+    LengthOverLimit(u64),
 }
 
 impl DecodeError {
@@ -50,9 +57,15 @@ pub(crate) fn take(buf: &mut impl Buf, len: usize) -> Result<Bytes, DecodeError>
     Ok(buf.copy_to_bytes(len))
 }
 
+/// Reads a vi64 length a receiver holds in memory until all of it arrives.
+pub(crate) fn get_declared_length(buf: &mut impl Buf) -> Result<usize, DecodeError> {
+    let len = get_vi64(buf)?;
+    declared_length(len).map_err(|_| DecodeError::LengthOverLimit(len))
+}
+
 /// Reads a vi64 length and that many bytes.
 pub(crate) fn get_length_prefixed(buf: &mut impl Buf) -> Result<Bytes, DecodeError> {
-    let len = get_vi64(buf)? as usize;
+    let len = get_declared_length(buf)?;
     take(buf, len)
 }
 
