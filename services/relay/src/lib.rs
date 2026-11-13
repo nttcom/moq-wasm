@@ -1,8 +1,8 @@
 mod config;
 mod logging;
+pub use auth_token::ClaimPolicy;
 pub use config::{AuthConfig, CacheConfig, DiskCacheConfig, RelayConfig};
 pub use logging::init_logging;
-pub use modules::auth::token_claims::ClaimPolicy;
 pub mod modules;
 mod relay_server;
 

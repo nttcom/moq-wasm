@@ -4,8 +4,10 @@ use async_trait::async_trait;
 use reqwest::{StatusCode, header::HeaderMap};
 use serde::{Deserialize, Serialize};
 
+use auth_token::{ClaimPolicy, SignedToken};
+
 use crate::modules::auth::{
-    token_claims::{ClaimPolicy, SignedToken, build_verified_token},
+    token_claims::build_verified_token,
     token_verifier::{TokenVerifier, VerifyError},
     verified_token::VerifiedToken,
 };
@@ -100,9 +102,7 @@ fn outcome(result: &Result<VerifiedToken, VerifyError>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::outcome;
-    use crate::modules::auth::{
-        token_claims::SignedToken, token_verifier::VerifyError, verified_token::VerifiedToken,
-    };
+    use crate::modules::auth::{token_verifier::VerifyError, verified_token::VerifiedToken};
 
     #[test]
     fn outcome_names_each_verification_result() {
@@ -117,22 +117,5 @@ mod tests {
         assert_eq!(outcome(&verified), "verified");
         assert_eq!(outcome(&rejected), "unauthorized");
         assert_eq!(outcome(&unreachable), "unavailable");
-    }
-
-    #[test]
-    fn response_carries_the_raw_claims_and_the_relay_flag() {
-        // Act
-        let response: SignedToken = serde_json::from_str(
-            r#"{"appId":"APP","isRelay":true,"claims":{"appId":"APP","publish":"","iat":1,"exp":2,"custom":"ignored"}}"#,
-        )
-        .unwrap();
-
-        // Assert
-        assert_eq!(response.app_id, "APP");
-        assert!(response.is_relay);
-        assert_eq!(response.claims.publish.as_deref(), Some(""));
-        assert_eq!(response.claims.subscribe, None);
-        assert_eq!(response.claims.iat, Some(1));
-        assert_eq!(response.claims.exp, Some(2));
     }
 }

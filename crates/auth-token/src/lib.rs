@@ -1,5 +1,6 @@
 mod jwt;
 mod lifetime;
+mod signed_token;
 
 use std::time::Duration;
 
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use jwt::{SignatureError, decode_unverified_payload, sign_token, verify_signature};
 pub use lifetime::parse_lifetime;
+pub use signed_token::{Access, ClaimError, ClaimPolicy, SignedToken};
 
 /// The `appId` prefix of a temporary app: an app that exists only as the
 /// tokens issued for it, all signed with one shared secret instead of a

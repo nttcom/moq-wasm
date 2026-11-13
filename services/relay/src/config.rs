@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::{Context, bail};
 use moqt::CertificateVerification;
 
-use crate::modules::auth::token_claims::ClaimPolicy;
+use auth_token::ClaimPolicy;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthConfig {
@@ -285,7 +285,7 @@ mod tests {
         AuthConfig, AuthEnv, CacheConfig, DEFAULT_DISK_CACHE_BYTES, DiskCacheConfig, moqt_versions,
         port_number,
     };
-    use crate::modules::auth::token_claims::ClaimPolicy;
+    use auth_token::ClaimPolicy;
 
     fn vts_env() -> AuthEnv {
         AuthEnv {
