@@ -186,6 +186,7 @@ impl Session {
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
+                let defaults = SubscribeOption::default();
                 let (subscription, reader) = self
                     .session
                     .subscriber()
@@ -193,8 +194,11 @@ impl Session {
                         namespace.join("/"),
                         track,
                         new_group_after.into(),
-                        priority.unwrap_or(SubscribeOption::default().subscriber_priority),
-                        delivery_timeout_ms.map(u64::from),
+                        SubscribeOption {
+                            subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
+                            delivery_timeout: delivery_timeout_ms.map(u64::from),
+                            ..defaults
+                        },
                     )
                     .await
                     .map_err(|error| request_error(RequestKind::Subscribe, &error))?;

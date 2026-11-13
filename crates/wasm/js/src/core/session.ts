@@ -63,6 +63,9 @@ export type MoqSubscribeOptions = {
   deliveryTimeoutMs?: number
 }
 
+/// `subscribeGroupStart` chooses the filter itself and always asks for Forward 1.
+export type MoqSubscribeGroupStartOptions = Omit<MoqSubscribeOptions, 'filter' | 'forward'>
+
 /// `withdrawn` follows PUBLISH_NAMESPACE_DONE.
 export type NamespaceEvent = { readonly kind: 'announced' | 'withdrawn'; readonly namespace: string[] }
 
@@ -174,17 +177,14 @@ export class MoqSession {
   /// unless the track starts a group on request and the largest object ID is
   /// `newGroupAfter` or more: then the publisher is asked for a new
   /// group (NEW_GROUP_REQUEST, §10.2.13) and the objects start with it.
-  /// `priority` is the Subscriber Priority and `deliveryTimeoutMs` the
-  /// DELIVERY TIMEOUT, as in `subscribe`.
   async subscribeGroupStart(
     namespace: string[],
     track: string,
     newGroupAfter: number,
-    priority?: number,
-    deliveryTimeoutMs?: number
+    options: MoqSubscribeGroupStartOptions = {}
   ): Promise<MoqSubscription> {
     const subscription = await request('SUBSCRIBE', () =>
-      this.inner.subscribeGroupStart(namespace, track, newGroupAfter, priority, deliveryTimeoutMs)
+      this.inner.subscribeGroupStart(namespace, track, newGroupAfter, options.priority, options.deliveryTimeoutMs)
     )
     return new MoqSubscription(subscription, this)
   }

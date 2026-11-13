@@ -26,7 +26,12 @@ test('the delivery timeout is sent with a subscription from a group start and wi
 
   // Assert
   expect(session.calls).toEqual([
-    { method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60, priority: 128, deliveryTimeoutMs: 2_000 },
+    {
+      method: 'subscribeGroupStart',
+      track: 'video',
+      newGroupAfter: 60,
+      options: { priority: 128, deliveryTimeoutMs: 2_000 }
+    },
     { method: 'subscribe', track: 'audio', options: { forward: true, priority: 0, deliveryTimeoutMs: 2_000 } }
   ])
 })
@@ -57,7 +62,9 @@ test('a subscription from a group start marks the objects up to the largest one 
   await session.drained
 
   // Assert
-  expect(session.calls).toEqual([{ method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60, priority: 128 }])
+  expect(session.calls).toEqual([
+    { method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60, options: { priority: 128 } }
+  ])
   expect(received).toEqual([
     [3n, 0n, true],
     [3n, 1n, true],
@@ -178,7 +185,7 @@ test('a video subscribed after its priority was set is subscribed with it', asyn
   await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
 
   // Assert
-  expect(session.calls.map((call) => [call.track, call.priority ?? call.options?.priority])).toEqual([
+  expect(session.calls.map((call) => [call.track, call.options?.priority])).toEqual([
     ['video', 7],
     ['video_low', 7],
     ['audio', 0]

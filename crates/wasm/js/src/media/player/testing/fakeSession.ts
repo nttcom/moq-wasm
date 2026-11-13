@@ -3,6 +3,7 @@ import type {
   MoqGroup,
   MoqLocation,
   MoqSession,
+  MoqSubscribeGroupStartOptions,
   MoqSubscribeOptions,
   MoqSubscription,
   PublishDone,
@@ -17,8 +18,6 @@ export type SubscribeCall = {
   track: string
   options?: MoqSubscribeOptions
   newGroupAfter?: number
-  priority?: number
-  deliveryTimeoutMs?: number
 }
 
 /// Every SUBSCRIBE answers with `largest` and delivers `objects`; a FETCH
@@ -72,10 +71,9 @@ export class FakeSession {
     _namespace: string[],
     track: string,
     newGroupAfter: number,
-    priority?: number,
-    deliveryTimeoutMs?: number
+    options: MoqSubscribeGroupStartOptions = {}
   ): Promise<MoqSubscription> {
-    this.calls.push({ method: 'subscribeGroupStart', track, newGroupAfter, priority, deliveryTimeoutMs })
+    this.calls.push({ method: 'subscribeGroupStart', track, newGroupAfter, options })
     return this.subscription(track)
   }
 

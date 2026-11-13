@@ -8,6 +8,7 @@ export {
   type MoqConnectOptions,
   type MoqVersion,
   type MoqLocation,
+  type MoqSubscribeGroupStartOptions,
   type MoqSubscribeOptions,
   type NamespaceEvent,
   type PublishDone,
