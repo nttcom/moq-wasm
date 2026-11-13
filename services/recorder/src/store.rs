@@ -161,19 +161,6 @@ impl RecordingStore {
             .collect())
     }
 
-    pub(crate) async fn recording_ids(&self) -> Result<Vec<String>> {
-        let state = self.prefix.clone().join("state");
-        let listed = self.store.list_with_delimiter(Some(&state)).await?;
-        Ok(listed
-            .objects
-            .iter()
-            .filter_map(|object| object.location.filename())
-            .filter(|name| !name.ends_with(".composite.json"))
-            .filter_map(|name| name.strip_suffix(".json"))
-            .map(str::to_string)
-            .collect())
-    }
-
     pub(crate) async fn stop_requested(&self, id: &str) -> Result<bool> {
         Ok(self.get(&self.state_key(id, "stop")).await?.is_some())
     }

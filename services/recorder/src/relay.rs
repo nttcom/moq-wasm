@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use moqt::{
@@ -8,24 +8,17 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
 };
 
-use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal, read_token_file};
+use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal};
 
-/// The token a recording or a replay presents to the relay.
-#[derive(Debug, Clone)]
-pub(crate) enum ServiceToken {
-    /// The recorder's own: `MOQT_AUTH_TOKEN_FILE`, re-read while connected,
-    /// else `MOQT_AUTH_TOKEN`, else none.
-    Environment,
-    /// The token of the temporary app that owns the room, given by the page
-    /// that asked for the recording or the replay.
-    Temporary(TemporaryToken),
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TemporaryToken {
-    pub(crate) token: String,
-    /// The token mint that renews `token`.
-    pub(crate) issuer_url: String,
+/// The token a recording or a replay presents to the relay: the one the
+/// caller of the API sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServiceToken {
+    /// `None` only on a server started with `--insecure-skip-auth`.
+    pub(crate) token: Option<String>,
+    /// The token mint that renews `token`, a temporary app's. Any other token
+    /// is not renewed, and the relay ends the session when it expires.
+    pub(crate) issuer_url: Option<String>,
 }
 
 /// The session follows the relay's GOAWAY by itself, so a recording outlives
@@ -66,26 +59,12 @@ impl RelayConnection {
         namespace: &str,
         token: &ServiceToken,
     ) -> Result<Self> {
-        let (token, renewal) = match token {
-            ServiceToken::Environment => {
-                match std::env::var_os("MOQT_AUTH_TOKEN_FILE").map(PathBuf::from) {
-                    Some(path) => (
-                        Some(read_token_file(&path).await?),
-                        Some(TokenRenewal::File(path)),
-                    ),
-                    None => (std::env::var("MOQT_AUTH_TOKEN").ok(), None),
-                }
-            }
-            ServiceToken::Temporary(temporary) => (
-                Some(temporary.token.clone()),
-                Some(TokenRenewal::Issuer(temporary.issuer_url.clone())),
-            ),
-        };
+        let ServiceToken { token, issuer_url } = token.clone();
         let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
-        if let (Some(renewal), Some(token)) = (renewal, token) {
+        if let (Some(issuer_url), Some(token)) = (issuer_url, token) {
             connection._token_refresh = Some(TokenRefreshTask::run(
                 connection.session.clone(),
-                renewal,
+                TokenRenewal::Issuer(issuer_url),
                 namespace.split('/').next().unwrap_or_default().to_string(),
                 token,
             ));

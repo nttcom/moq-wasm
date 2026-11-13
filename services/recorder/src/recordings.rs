@@ -17,7 +17,7 @@ use crate::{
     archive_reader::StoredRecording,
     launcher::{Job, Launcher},
     recording::Layout,
-    relay::{ServiceToken, TemporaryToken},
+    relay::ServiceToken,
     replay::{RENEW_AFTER, ReplayLease, ReplayTask},
     room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
     state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
@@ -30,9 +30,8 @@ const STALE_AFTER: Duration = HEARTBEAT_INTERVAL.saturating_mul(3);
 
 #[derive(Debug)]
 pub(crate) enum StartRejection {
-    /// The prefix names no room under `namespace_root`, nor, with a token
-    /// mint and a bearer token, under a temporary app's root.
-    OutsideRoot,
+    /// The prefix is not `<app>/<room>[/...]` with no empty element.
+    NotARoom,
     AlreadyRecording,
     TooManyRecordings,
     CompositeDisabled,
@@ -53,9 +52,6 @@ pub(crate) enum PublishRejection {
     /// An MP4 recording keeps neither the catalog nor the media timeline a
     /// replay serves.
     NotMoq,
-    /// The recording's room is not one this server can replay, as in
-    /// `StartRejection::OutsideRoot`.
-    OutsideRoot,
     Capacity,
     Internal(anyhow::Error),
 }
@@ -98,13 +94,16 @@ impl Recordings {
         namespace: &str,
         write: bool,
     ) -> Result<(), AuthError> {
-        api_auth::authorize(
-            headers,
-            self.config.auth_vts_url.as_deref(),
-            namespace,
-            write,
-        )
-        .await
+        if self.config.insecure_skip_auth {
+            return Ok(());
+        }
+        // clap requires `--auth-vts-url` unless `--insecure-skip-auth`.
+        let vts = self
+            .config
+            .auth_vts_url
+            .as_deref()
+            .expect("--auth-vts-url without --insecure-skip-auth");
+        api_auth::authorize(headers, vts, namespace, write).await
     }
 
     pub(crate) async fn namespace(&self, id: &str) -> Result<Option<String>> {
@@ -113,10 +112,6 @@ impl Recordings {
             .read_state(id)
             .await?
             .map(|record| record.namespace_prefix))
-    }
-
-    pub(crate) fn namespace_root(&self) -> &str {
-        &self.config.namespace_root
     }
 
     pub(crate) async fn publish(
@@ -133,9 +128,7 @@ impl Recordings {
         if record.format != RecordingFormat::Moq {
             return Err(PublishRejection::NotMoq);
         }
-        let token = self
-            .service_token(&record.namespace_prefix, bearer)
-            .ok_or(PublishRejection::OutsideRoot)?;
+        let token = self.service_token(&record.namespace_prefix, bearer);
         loop {
             let cell = {
                 let mut replays = self.replays.lock().await;
@@ -205,9 +198,10 @@ impl Recordings {
         format: RecordingFormat,
         bearer: Option<&str>,
     ) -> Result<Value, StartRejection> {
-        let Some(token) = self.service_token(namespace_prefix, bearer) else {
-            return Err(StartRejection::OutsideRoot);
-        };
+        if !is_room(namespace_prefix) {
+            return Err(StartRejection::NotARoom);
+        }
+        let token = self.service_token(namespace_prefix, bearer);
         if composite && !self.config.composite {
             return Err(StartRejection::CompositeDisabled);
         }
@@ -272,27 +266,10 @@ impl Recordings {
         }
     }
 
-    pub(crate) async fn list(&self, namespace_prefix: Option<&str>) -> Result<Value> {
-        let ids = match namespace_prefix {
-            Some(prefix) => self.store.room_recording_ids(prefix).await?,
-            None => self.store.recording_ids().await?,
-        };
+    pub(crate) async fn list(&self, namespace_prefix: &str) -> Result<Value> {
         let mut recordings = Vec::new();
-        for id in ids {
+        for id in self.store.room_recording_ids(namespace_prefix).await? {
             if let Some(record) = self.store.read_state(&id).await? {
-                // Without a prefix the list is the public root's alone: a
-                // temporary app's rooms are listed only to a caller
-                // authorized for their prefix.
-                let listed = match namespace_prefix {
-                    Some(_) => self.accepts_root(&record.namespace_prefix),
-                    None => {
-                        record.namespace_prefix.split('/').next()
-                            == Some(&self.config.namespace_root)
-                    }
-                };
-                if !listed {
-                    continue;
-                }
                 recordings.push(self.view(record).await?);
             }
         }
@@ -344,29 +321,18 @@ impl Recordings {
         Ok(false)
     }
 
-    /// The token a recording or replay of the room presents: the recorder's
-    /// own under `namespace_root`, the caller's under a temporary app's root
-    /// when a token mint is configured to renew it. `None` when the room is
-    /// outside both, or a temporary app's room comes without a bearer token.
-    fn service_token(&self, namespace_prefix: &str, bearer: Option<&str>) -> Option<ServiceToken> {
-        if within_root(namespace_prefix, &self.config.namespace_root) {
-            return Some(ServiceToken::Environment);
+    /// The token a recording or replay of the room presents: the caller's,
+    /// renewed at the token mint when the room is a temporary app's.
+    fn service_token(&self, namespace_prefix: &str, bearer: Option<&str>) -> ServiceToken {
+        let temporary = namespace_prefix.starts_with(TEMPORARY_APP_ID_PREFIX);
+        ServiceToken {
+            token: bearer.map(str::to_string),
+            issuer_url: self
+                .config
+                .token_mint_url
+                .clone()
+                .filter(|_| temporary && bearer.is_some()),
         }
-        let issuer_url = self.config.token_mint_url.as_ref()?;
-        let root = namespace_prefix.split('/').next()?;
-        if !root.starts_with(TEMPORARY_APP_ID_PREFIX) || !within_root(namespace_prefix, root) {
-            return None;
-        }
-        Some(ServiceToken::Temporary(TemporaryToken {
-            token: bearer?.to_string(),
-            issuer_url: issuer_url.clone(),
-        }))
-    }
-
-    fn accepts_root(&self, namespace_prefix: &str) -> bool {
-        let root = namespace_prefix.split('/').next().unwrap_or_default();
-        root == self.config.namespace_root
-            || (self.config.token_mint_url.is_some() && root.starts_with(TEMPORARY_APP_ID_PREFIX))
     }
 
     fn record_args(&self, id: &str, token: &ServiceToken) -> Vec<String> {
@@ -378,13 +344,11 @@ impl Recordings {
             "--output-dir".to_string(),
             self.config.output_dir.display().to_string(),
         ];
-        if let ServiceToken::Temporary(temporary) = token {
-            args.extend([
-                "--temporary-token".to_string(),
-                temporary.token.clone(),
-                "--token-mint-url".to_string(),
-                temporary.issuer_url.clone(),
-            ]);
+        if let Some(token) = &token.token {
+            args.extend(["--token".to_string(), token.clone()]);
+        }
+        if let Some(issuer_url) = &token.issuer_url {
+            args.extend(["--token-mint-url".to_string(), issuer_url.clone()]);
         }
         args.extend(self.config.room.to_args());
         args.extend(self.config.launcher.to_args());
@@ -439,10 +403,10 @@ fn minted_within_stale_window(id: &str, now_ms: u64) -> bool {
     minted_ms.is_some_and(|ms| now_ms.saturating_sub(ms) < STALE_AFTER.as_millis() as u64)
 }
 
-/// `<root>/<room>[/...]` with no empty element.
-fn within_root(namespace_prefix: &str, root: &str) -> bool {
+/// `<app>/<room>[/...]` with no empty element.
+fn is_room(namespace_prefix: &str) -> bool {
     let parts: Vec<&str> = namespace_prefix.split('/').collect();
-    parts.len() >= 2 && parts[0] == root && parts.iter().all(|part| !part.is_empty())
+    parts.len() >= 2 && parts.iter().all(|part| !part.is_empty())
 }
 
 #[cfg(test)]
@@ -451,14 +415,13 @@ mod tests {
     use crate::test_support::{TOKEN_MINT_URL, recordings};
 
     #[test]
-    fn accepts_only_a_room_under_the_root() {
+    fn accepts_only_a_room_of_an_app() {
         // Act / Assert
-        assert!(within_root("anon/research", "anon"));
-        assert!(within_root("anon/research/ucchy", "anon"));
-        assert!(!within_root("anon", "anon"));
-        assert!(!within_root("anon/", "anon"));
-        assert!(!within_root("app/research", "anon"));
-        assert!(!within_root("anon//research", "anon"));
+        assert!(is_room("app/research"));
+        assert!(is_room("app/research/ucchy"));
+        assert!(!is_room("app"));
+        assert!(!is_room("app/"));
+        assert!(!is_room("app//research"));
     }
 
     #[tokio::test]
@@ -488,7 +451,7 @@ mod tests {
             .await;
         let id = started["id"].as_str().unwrap().to_string();
         recordings.stop(&id).await.unwrap();
-        let listed = recordings.list(Some("anon/research")).await.unwrap();
+        let listed = recordings.list("anon/research").await.unwrap();
 
         // Assert
         assert_eq!(started["state"], "starting");
@@ -686,77 +649,42 @@ mod tests {
     }
 
     #[test]
-    fn a_temporary_app_room_is_recorded_with_the_callers_token() {
+    fn a_room_is_recorded_with_the_callers_token_renewed_only_for_a_temporary_app() {
         // Arrange
         let recordings = recordings(1, false);
 
         // Act
-        let token = recordings.service_token("temp-abc/room", Some("jwt"));
+        let temporary = recordings.service_token("temp-abc/room", Some("jwt"));
+        let registered = recordings.service_token("app/room", Some("jwt"));
 
         // Assert
-        let Some(ServiceToken::Temporary(temporary)) = token else {
-            panic!("expected the caller's token, got {token:?}");
-        };
         assert_eq!(
-            (temporary.token.as_str(), temporary.issuer_url.as_str()),
-            ("jwt", TOKEN_MINT_URL)
+            temporary,
+            ServiceToken {
+                token: Some("jwt".to_string()),
+                issuer_url: Some(TOKEN_MINT_URL.to_string()),
+            }
         );
-    }
-
-    #[test]
-    fn only_the_root_and_temporary_apps_with_a_token_are_recorded() {
-        // Arrange
-        let recordings = recordings(1, false);
-
-        // Act / Assert
-        assert!(matches!(
-            recordings.service_token("anon/room", None),
-            Some(ServiceToken::Environment)
-        ));
-        assert!(recordings.service_token("temp-abc/room", None).is_none());
-        assert!(recordings.service_token("temp-abc", Some("jwt")).is_none());
-        assert!(recordings.service_token("app/room", Some("jwt")).is_none());
+        assert_eq!(
+            registered,
+            ServiceToken {
+                token: Some("jwt".to_string()),
+                issuer_url: None,
+            }
+        );
     }
 
     #[tokio::test]
     async fn the_job_of_a_temporary_app_room_gets_the_token_and_the_issuer() {
         // Arrange
         let recordings = recordings(1, false);
-        let token = recordings
-            .service_token("temp-abc/room", Some("jwt"))
-            .unwrap();
+        let token = recordings.service_token("temp-abc/room", Some("jwt"));
 
         // Act
         let args = recordings.record_args("1", &token);
 
         // Assert
         let joined = args.join(" ");
-        assert!(joined.contains(&format!(
-            "--temporary-token jwt --token-mint-url {TOKEN_MINT_URL}"
-        )));
-    }
-
-    #[tokio::test]
-    async fn a_temporary_app_room_is_listed_only_under_its_prefix() {
-        // Arrange
-        let recordings = recordings(2, false);
-        recordings
-            .start(
-                "temp-abc/room",
-                Layout::Combined,
-                false,
-                RecordingFormat::Mp4,
-                Some("jwt"),
-            )
-            .await
-            .unwrap();
-
-        // Act
-        let everything = recordings.list(None).await.unwrap();
-        let the_room = recordings.list(Some("temp-abc/room")).await.unwrap();
-
-        // Assert
-        assert_eq!(everything["recordings"].as_array().unwrap().len(), 0);
-        assert_eq!(the_room["recordings"].as_array().unwrap().len(), 1);
+        assert!(joined.contains(&format!("--token jwt --token-mint-url {TOKEN_MINT_URL}")));
     }
 }

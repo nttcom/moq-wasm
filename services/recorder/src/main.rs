@@ -138,13 +138,18 @@ pub(crate) struct ServeArgs {
     )]
     pub(crate) allowed_origins: Vec<String>,
 
-    /// First element of every namespace prefix a request may record
-    #[arg(long, default_value = "anon")]
-    pub(crate) namespace_root: String,
-
-    /// VTS verification endpoint for authenticated HTTP callers
-    #[arg(long, env = "AUTH_VTS_URL")]
+    /// VTS verification endpoint for the bearer token every request carries
+    #[arg(
+        long,
+        env = "AUTH_VTS_URL",
+        required_unless_present = "insecure_skip_auth"
+    )]
     pub(crate) auth_vts_url: Option<String>,
+
+    /// Accept every request without verifying its token, and record with the
+    /// token it carries or none (INSECURE, local development only)
+    #[arg(long, conflicts_with = "auth_vts_url")]
+    pub(crate) insecure_skip_auth: bool,
 
     /// Rooms that may be recorded at once
     #[arg(long, default_value_t = 4)]
@@ -164,9 +169,9 @@ pub(crate) struct ServeArgs {
     #[arg(long)]
     pub(crate) composite: bool,
 
-    /// Token mint that renews temporary app tokens. With it, the rooms of
-    /// temporary apps (`temp-…` roots) may be recorded and replayed too, with
-    /// the token of the page that asks
+    /// Token mint that renews temporary app tokens: a recording or replay of
+    /// a temporary app's room (`temp-…` root) renews the caller's token there
+    /// instead of ending when it expires
     #[arg(long, env = "TOKEN_MINT_URL")]
     pub(crate) token_mint_url: Option<String>,
 
@@ -194,13 +199,12 @@ pub(crate) struct RecordArgs {
     #[arg(long, default_value = "recordings")]
     pub(crate) output_dir: PathBuf,
 
-    /// Token of the temporary app that owns the room, presented instead of
-    /// the recorder's own and renewed at `--token-mint-url`
-    #[arg(long, requires = "token_mint_url")]
-    pub(crate) temporary_token: Option<String>,
-
-    /// Token mint that renews `--temporary-token`
+    /// Token of the caller who asked for the recording, presented to the relay
     #[arg(long)]
+    pub(crate) token: Option<String>,
+
+    /// Token mint that renews `--token` when it is a temporary app's
+    #[arg(long, requires = "token")]
     pub(crate) token_mint_url: Option<String>,
 
     #[command(flatten)]

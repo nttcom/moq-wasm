@@ -393,21 +393,29 @@ A lock with no state whose id was made 90 s ago or more belongs to a request
 that ended between steps 1 and 3 (it failed or its instance died); the API
 releases it when it next needs the room's lock.
 
-The API accepts only a prefix of at least two elements under `--namespace-root`
-(`anon` by default) and one recording per prefix. Anonymous rooms are public,
-matching relay authorization. Other roots require a bearer token verified by
+The API accepts a prefix of at least two elements, `<app>/<room>`, and one
+recording per prefix. Every request carries a bearer token verified by
 `--auth-vts-url` (`AUTH_VTS_URL`): reads and replay require the `subscribe`
 claim to cover the room, while start and stop require `publish`. Namespace
 claims use component boundaries, not a string-prefix match. VTS failures deny
-access. Tokens are never stored in the recording. The recorder's relay identity
-comes from `MOQT_AUTH_TOKEN` or `MOQT_AUTH_TOKEN_FILE`; a token file is refreshed
-the same way as in standalone recording. With `--token-mint-url`, a prefix whose root
-is a temporary app (`auth_token::TEMPORARY_APP_ID_PREFIX`) is accepted too, and
-`Recordings::service_token` picks the caller's bearer token as the relay
-identity of its recording and replay (`relay::ServiceToken::Temporary`): the
-API hands it to the recording job as `--temporary-token` with the issuer URL,
-and the job's `TokenRefreshTask` renews it there (`TokenRenewal::Issuer`)
-instead of re-reading a file. A POST whose `Origin` is not an `--allowed-origin` is refused, since
+access. The anonymous app, whose rooms carry no token, is not recorded:
+recording is a feature of an app that authenticates its users. Tokens are never
+stored in the recording.
+
+A recording and a replay present the caller's bearer token to the relay
+(`relay::ServiceToken`), so the recorder holds no identity of its own that
+could read every app: the API hands the token to the recording job as
+`--token`. The relay ends the session when the token expires, which finishes
+an MP4 recording with the files it has and fails a MoQ one (a closed session
+fails an archive). With `--token-mint-url`, a temporary app's token
+(`auth_token::TEMPORARY_APP_ID_PREFIX`) is renewed instead: the job gets the
+issuer URL too, and its `TokenRefreshTask` renews the token there
+(`TokenRenewal::Issuer`). A registered app's token comes from that app's own
+backend, which the recorder cannot ask, so its recording lasts at most until the
+token's `exp`. `--insecure-skip-auth` accepts every request and records with
+whatever token it carries, for a local relay without authorization.
+
+A POST whose `Origin` is not an `--allowed-origin` is refused, since
 CORS alone only hides the answer from that page and a `text/plain` POST needs
 no preflight. The relay URL, the store and the track choice are server
 settings, so a request cannot point the recorder at another relay or bucket.

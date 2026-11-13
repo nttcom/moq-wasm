@@ -16,32 +16,22 @@ pub(crate) struct AuthError {
     pub(crate) message: &'static str,
 }
 
-/// The anonymous app is public, matching the relay. Private apps require VTS
-/// verification and a namespace claim covering the requested operation.
+/// Requires a bearer token the VTS verifies whose `publish` claim (`write`)
+/// or `subscribe` claim covers `namespace`.
 pub(crate) async fn authorize(
     headers: &HeaderMap,
-    vts: Option<&str>,
+    vts: &str,
     namespace: &str,
     write: bool,
 ) -> Result<(), AuthError> {
     if headers.get(AUTHORIZATION).is_none() {
-        return if namespace == "anon" || namespace.starts_with("anon/") {
-            Ok(())
-        } else {
-            Err(rejected(
-                StatusCode::UNAUTHORIZED,
-                "a bearer token is required",
-            ))
-        };
+        return Err(rejected(
+            StatusCode::UNAUTHORIZED,
+            "a bearer token is required",
+        ));
     }
     let token = bearer_token(headers)
         .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "invalid bearer token"))?;
-    let vts = vts.ok_or_else(|| {
-        rejected(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "HTTP token verification is not configured",
-        )
-    })?;
     let response = VTS_CLIENT
         .post(vts)
         .timeout(Duration::from_secs(3))
@@ -118,7 +108,7 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn private_rooms_require_a_successful_vts_response() {
+    async fn every_room_requires_a_successful_vts_response() {
         // Arrange
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/verify", listener.local_addr().unwrap());
@@ -143,14 +133,14 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            authorize(&HeaderMap::new(), Some(&url), "APP/room", false)
+            authorize(&HeaderMap::new(), &url, "anon/room", false)
                 .await
                 .unwrap_err()
                 .status,
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            authorize(&headers, Some(&url), "APP/room", false)
+            authorize(&headers, &url, "APP/room", false)
                 .await
                 .unwrap_err()
                 .status,
@@ -158,7 +148,7 @@ mod tests {
         );
         server.await.unwrap();
         assert_eq!(
-            authorize(&headers, Some(&url), "APP/room", false)
+            authorize(&headers, &url, "APP/room", false)
                 .await
                 .unwrap_err()
                 .status,

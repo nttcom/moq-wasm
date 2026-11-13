@@ -345,14 +345,15 @@ pub(crate) fn transcript_record(m_ms: u64, speaker: &str) -> serde_json::Value {
 pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";
 
 /// A recording API over an in-memory store, whose jobs exit at once, that
-/// records temporary apps' rooms with `TOKEN_MINT_URL`.
+/// accepts every request and renews temporary apps' tokens at
+/// `TOKEN_MINT_URL`.
 pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
     let store_url = url::Url::parse("memory:///").unwrap();
     let config = ServeArgs {
         listen: "127.0.0.1:0".parse().unwrap(),
         allowed_origins: Vec::new(),
-        namespace_root: "anon".to_string(),
         auth_vts_url: None,
+        insecure_skip_auth: true,
         max_recordings,
         composite,
         token_mint_url: Some(TOKEN_MINT_URL.to_string()),
