@@ -4,42 +4,28 @@
 [![codecov](https://codecov.io/gh/nttcom/moq-wasm/branch/master/graph/badge.svg)](https://codecov.io/gh/nttcom/moq-wasm)
 [![License](https://img.shields.io/github/license/nttcom/moq-wasm)](LICENSE)
 
-## What is moq-wasm?
+Media over QUIC Transport (MoQT) in Rust: one publish/subscribe API with
+priority control and caching for browsers, native apps, cameras and AI
+agents. Implements
+[draft-ietf-moq-transport](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/)
+-14 and -18 (drafts in [`docs/spec/`](docs/spec/)).
 
-Real-time communication of any data for web browsers, native apps, IP
-cameras, USB cameras, robots, drones and AI agents. One publish/subscribe API
-with a simple architecture, high-performance QUIC transport, priority control
-and caching, so you no longer have to pick between WebSocket, MQTT, HLS, DASH
-and WebRTC for each use case.
+## Demos
 
-Implements Media over QUIC Transport
-[draft-ietf-moq-transport-14](https://datatracker.ietf.org/doc/draft-ietf-moq-transport/14/)
-in Rust (drafts in [`docs/spec/`](docs/spec/)).
-
-## Use cases and demos
-
-Try the demos hosted at **<https://nttcom.github.io/moq-wasm/>**. They
-connect to the cloud relay by default, so nothing needs to be installed.
+Hosted at **<https://nttcom.github.io/moq-wasm/>**; they connect to the cloud
+relay, so nothing needs to be installed.
 
 | Use case | Demo |
 | --- | --- |
 | Video meetings | [Meeting](https://nttcom.github.io/moq-wasm/examples/meeting/) |
-| Large-scale live streaming | [Live Viewer](https://nttcom.github.io/moq-wasm/examples/live-viewer/): live playback with rewind and rendition switching |
-| Video on demand | [Live Viewer](https://nttcom.github.io/moq-wasm/examples/live-viewer/): publish an MP4 from the browser |
-| Remote monitoring and control of IP cameras | [ONVIF](https://nttcom.github.io/moq-wasm/examples/onvif/): PTZ control and monitoring |
-| Remote monitoring from USB cameras | [Remote Monitoring](https://nttcom.github.io/moq-wasm/examples/remote-monitoring/) |
-| Real-time chat moderation by an AI agent | [MoQ Chat Moderation](https://nttcom.github.io/moq-wasm/examples/moq-chat-moderation/) |
-| Real-time video analysis by an AI agent | [MoQ Camera Detection](https://nttcom.github.io/moq-wasm/examples/moq-camera-detection/): answers questions about a camera feed |
-| Camera control by an AI agent | [MoQ PTZ Tracking](https://nttcom.github.io/moq-wasm/examples/moq-ptz-tracking/): pans and tilts an ONVIF camera to keep a target centered |
-| Remote monitoring, data collection and control of drones | |
-| Remote monitoring, data collection and control of robots | |
-| Remote monitoring, data collection and control of autonomous vehicles | |
+| Live streaming and video on demand | [Live Viewer](https://nttcom.github.io/moq-wasm/examples/live-viewer/) |
+| IP camera monitoring and PTZ control | [ONVIF](https://nttcom.github.io/moq-wasm/examples/onvif/) |
+| USB camera monitoring | [Remote Monitoring](https://nttcom.github.io/moq-wasm/examples/remote-monitoring/) |
+| Chat moderation by an AI agent | [MoQ Chat Moderation](https://nttcom.github.io/moq-wasm/examples/moq-chat-moderation/) |
+| Video analysis by an AI agent | [MoQ Camera Detection](https://nttcom.github.io/moq-wasm/examples/moq-camera-detection/) |
+| Camera control by an AI agent | [MoQ PTZ Tracking](https://nttcom.github.io/moq-wasm/examples/moq-ptz-tracking/) |
 
-Publishers outside the browser: [`services/live-ingest`](services/live-ingest/README.md) (RTMP/SRT),
-[`crates/gst-plugin-moqt`](crates/gst-plugin-moqt/README.md) (`moqtsink`),
-[`examples/rust/moq-cli`](examples/rust/moq-cli/README.md) and the
-[pipecat bots](examples/python). Details of every browser demo are in
-[`examples/browser/README.md`](examples/browser/README.md).
+Every browser demo is described in [`examples/browser/README.md`](examples/browser/README.md).
 
 ## Getting Started
 
@@ -48,41 +34,26 @@ nix develop
 npm ci
 ```
 
-### Single relay
-
-Run a relay, publish a test stream and watch it, in four terminals:
+Run each command in its own terminal:
 
 ```shell
-make relay          # 1. relay and a local VTS on https://127.0.0.1:4433
-make live-ingest    # 2. RTMP/SRT ingest publishing to the relay
-make ffmpeg-srt     # 3. test pattern over SRT into the ingest
-make browser        # 4. wasm build and the example hub on http://localhost:5173
+make relay          # relay and a local VTS on https://127.0.0.1:4433
+make live-ingest    # RTMP/SRT ingest publishing to the relay
+make ffmpeg-srt     # test pattern over SRT into the ingest
+make browser        # wasm build and the example hub on http://localhost:5173
+make chrome         # Chrome trusting the relay's certificate (make chrome:linux on Linux)
 ```
 
-Then `make chrome` (`make chrome:linux` on Linux) opens Chrome trusting the
-relay's self-signed certificate. Open Live Viewer from the hub and watch
-`anon/live/test`. Chrome gets a fake camera and microphone, as the E2E runs
-do; `MOQT_FAKE_MEDIA=0 make chrome` uses the real ones, and
-`MOQT_FAKE_AUDIO_FILE=<wav>` makes the fake microphone play that file.
+Open Live Viewer from the hub and watch `anon/live/test`. Chrome gets a fake
+camera and microphone; `MOQT_FAKE_MEDIA=0 make chrome` uses the real ones.
 
-### Two relays
+`docker compose up -d` starts two relays (`:4433`, `:4434`) sharing a VTS and
+a Redis route registry, the topology the E2E tests use.
 
 ```shell
-docker compose up -d
-```
-
-Starts `relay-a` (`https://127.0.0.1:4433`) and `relay-b` (`:4434`) sharing a
-VTS and a Redis route registry, the topology the cascading, auth and meeting
-E2E use. The `make` targets above publish to `relay-a` and resolve the Docker
-Desktop bridge host for native clients on macOS.
-
-### Tests
-
-```shell
-make test                        # Rust unit tests
-make browser-e2e-media           # browser publish/subscribe
-./tests/auth-e2e/run.sh            # relay scenarios, see tests/README.md
-cargo test -p vts                # VTS
+make test                     # Rust unit tests
+make browser-e2e-media        # browser publish/subscribe
+./tests/auth-e2e/run.sh       # relay scenarios, see tests/README.md
 ```
 
 ## Architecture
@@ -93,7 +64,7 @@ flowchart LR
         B1[Browser<br/>wasm]
         LI[live-ingest<br/>RTMP / SRT]
         GS[moqtsink<br/>GStreamer]
-        ON[onvif bridge]
+        ON[onvif-ingest]
         CLI[moq-cli]
     end
     subgraph Relays
@@ -103,47 +74,37 @@ flowchart LR
         RB -.-> VTS
     end
     subgraph Subscribers
-        B2[Browser<br/>Live Viewer, Meeting, ...]
-        BOT[AI agents<br/>pipecat bots]
+        B2[Browser]
+        BOT[AI agents]
         CLI2[moq-cli]
     end
-    Publishers -- PUBLISH / SUBSCRIBE / FETCH<br/>QUIC, WebTransport or WebSocket --> RA
+    Publishers -- QUIC, WebTransport or WebSocket --> RA
     RB --> Subscribers
 ```
 
-Every client speaks MoQT to a relay over QUIC, WebTransport or WebSocket.
-Relays cache objects for FETCH, forward subscriptions to each other and
-authenticate sessions through the VTS. The `moqt` crate is the protocol
-library every other component builds on. Libraries, bindings and plugins live
-in `crates/<package name>/` and the servers and bridges built on them in
-`services/<package name>/`.
+Every client speaks MoQT to a relay. Relays cache objects for FETCH, forward
+subscriptions to each other and authenticate sessions through the VTS.
 
-| Path | Component |
+| Path | Contents |
 | --- | --- |
-| [`crates/moqt/`](crates/moqt/README.md) | Protocol library: wire format, sessions, publisher and subscriber API |
-| [`services/relay/`](services/relay/README.md) | Relay: QUIC, WebTransport and WebSocket on one port, cache, FETCH, cascading, JWT auth |
-| [`crates/wasm/`](crates/wasm/README.md) | WebAssembly bindings used by the browser examples |
-| [`crates/python/`](crates/python/README.md) | Python (PyO3) bindings used by the pipecat bots |
-| [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | GStreamer plugin with the `moqtsink` element |
-| [`services/live-ingest/`](services/live-ingest/README.md) | RTMP and SRT ingest into MoQT |
-| [`services/onvif-ingest/`](services/onvif-ingest/README.md) | ONVIF/RTSP cameras with PTZ control into MoQT |
-| [`services/live-egress/`](services/live-egress/README.md) | Subscribes to a broadcast and sends it as plain RTP |
-| [`services/recorder/`](services/recorder/README.md) | Records a broadcast from a relay into a fragmented MP4 file |
-| [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media crates shared by the publishers: containers, MSF catalog, the broadcast's track layout, re-encoding |
-| [`services/vts/`](services/vts/README.md), [`auth-token/`](crates/auth-token/README.md), [`app-registry/`](crates/app-registry/README.md) | Verify Token Service: checks client JWTs for the relay; the shared JWT claims type; the registry of apps whose secrets sign the JWTs |
-| [`services/console/`](services/console/README.md) | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
-| [`crates/telemetry/`](crates/telemetry), [`client-telemetry/`](crates/client-telemetry), [`services/observability/`](services/observability) | Shared `tracing` setup and the relay stats snapshot format; the log and span records the browser and `moq-cli` send; the server that fills ClickHouse from the relays' snapshots |
+| [`crates/moqt/`](crates/moqt/README.md) | Protocol library every other component builds on |
+| [`services/relay/`](services/relay/README.md) | Relay: cache, FETCH, cascading, JWT auth |
+| [`crates/wasm/`](crates/wasm/README.md), [`crates/python/`](crates/python/README.md) | Browser (`moq-wasm` SDK) and Python bindings |
+| [`services/live-ingest/`](services/live-ingest/README.md), [`onvif-ingest/`](services/onvif-ingest/README.md), [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | Publishers: RTMP/SRT/RTP, ONVIF cameras, GStreamer `moqtsink` |
+| [`services/live-egress/`](services/live-egress/README.md), [`recorder/`](services/recorder/README.md) | Subscribers: plain RTP output, MP4 recording |
+| [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media: containers, MSF catalog, track layout, re-encoding |
+| [`services/vts/`](services/vts/README.md), [`token-mint/`](services/token-mint/README.md), [`console/`](services/console/README.md), [`crates/auth-token/`](crates/auth-token/README.md) | Authentication: token verification, issuing and the JWT claims |
+| [`crates/telemetry/`](crates/telemetry), [`services/observability/`](services/observability) | Shared `tracing` setup; relay stats collected into ClickHouse |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
-| [`tests/`](tests/README.md) | Relay E2E scenarios: auth, FETCH, cache eviction, cascading, dedup |
-| [`docs/architecture/`](docs/architecture) | Architecture and dependency decisions per crate |
+| [`tests/`](tests/README.md) | Relay and browser E2E scenarios |
 
-Architecture documents: [`docs/architecture/<package name>/`](docs/architecture).
+How the crates depend on each other: [`crates/README.md`](crates/README.md).
+Design of each crate: [`docs/architecture/<package name>/`](docs/architecture).
 Contributor rules: [`AGENTS.md`](AGENTS.md).
 
 ## Authentication
 
-Relays always authenticate. A session without a token is limited to
-`anon/**`, which every demo uses by default. Tokens are HS256 JWTs verified
-by the VTS; sign one with the `auth-token` CLI
-([`crates/auth-token/README.md`](crates/auth-token/README.md)). See
-[`services/vts/README.md`](services/vts/README.md).
+A session without a token is limited to `anon/**`, which every demo can use.
+Other namespaces need an HS256 JWT, verified by the
+[VTS](services/vts/README.md) and signed with the
+[`auth-token` CLI](crates/auth-token/README.md).

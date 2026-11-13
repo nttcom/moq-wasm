@@ -1,8 +1,9 @@
 # relay
 
-MoQT relay. It accepts QUIC and WebTransport on one port, caches objects for
-FETCH, forwards subscriptions between relays, and authenticates every session
-through the [VTS](../vts/README.md).
+MoQT relay. It accepts QUIC, WebTransport and WebSocket on one port number,
+caches objects for FETCH, forwards subscriptions between relays, and
+authenticates every session through the [VTS](../vts/README.md).
+Design: [architecture document](../../docs/architecture/relay/architecture.md).
 
 ## Run
 
@@ -10,10 +11,10 @@ through the [VTS](../vts/README.md).
 make relay
 ```
 
-Starts a local VTS, mints the relay's own token and runs `cargo run -p relay`
-on `https://127.0.0.1:4433`. A self-signed certificate is generated under
-`services/relay/keys/` on the first run. For two relays, use `docker compose up -d`
-(ports 4433 and 4434).
+Starts a local VTS, mints the relay's own token and runs the relay on
+`https://127.0.0.1:4433`, with a self-signed certificate generated under
+`services/relay/keys/`. For two relays, use `docker compose up -d` (ports
+4433 and 4434).
 
 ## Configuration
 
@@ -21,35 +22,32 @@ An empty value counts as unset and selects the default.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RELAY_PORT` | `4433` | QUIC and WebTransport listen port |
+| `RELAY_PORT` | `4433` | Client port: QUIC and WebTransport on UDP, WebSocket on TCP |
 | `RELAY_INNER_PORT` | `RELAY_PORT + 1` | QUIC port other relays connect to |
 | `RELAY_ID` | `relay-local` | Name in logs and in the route registry |
-| `RELAY_ADVERTISE_HOST` | `localhost` | Host other relays use to reach this one; the certificate this relay serves must name it, since other relays verify it before they send `AUTH_RELAY_TOKEN` |
-| `RELAY_INNER_CA_FILE` | unset | PEM file of the certificates this relay trusts when it connects to other relays; unset uses the operating system's root certificates. Verification cannot be turned off |
-| `RELAY_PUBLIC_HOST` | `localhost:RELAY_PORT` | `host[:port]` clients connect to; a draining relay names it in the GOAWAY it sends for another relay |
-| `RELAY_CERT_DIR` | `services/relay/keys` | Directory holding `cert.pem` and `key.pem`; self-signed ones are generated there if missing |
+| `RELAY_ADVERTISE_HOST` | `localhost` | Host other relays use to reach this one; this relay's certificate must name it |
+| `RELAY_INNER_CA_FILE` | the OS root certificates | PEM file of the certificates trusted when connecting to other relays |
+| `RELAY_PUBLIC_HOST` | `localhost:RELAY_PORT` | `host[:port]` clients connect to, named in a GOAWAY sent for this relay |
+| `RELAY_CERT_DIR` | `services/relay/keys` | Directory holding `cert.pem` and `key.pem` |
 | `REDIS_URL` | unset | Route registry shared by cascading relays; unset runs standalone |
-| `RELAY_DRAIN_TIMEOUT_SECS` | `30` | On Ctrl+C or SIGTERM, how long to wait for clients to leave after GOAWAY before closing them with GOAWAY_TIMEOUT; a second signal exits at once |
+| `RELAY_DRAIN_TIMEOUT_SECS` | `30` | On Ctrl+C or SIGTERM, how long clients get to leave after GOAWAY |
 | `AUTH_VTS_URL` | required | VTS verify endpoint, e.g. `http://vts:8081/verify` |
-| `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays; sign it with `--relay-id` set to this relay's `RELAY_ID` (a different `relayId` is warned at startup) |
+| `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays, signed with `--relay-id` set to its `RELAY_ID` |
 | `AUTH_MAX_TOKEN_TTL_SECONDS` | `3600` | Longest client token lifetime accepted |
 | `AUTH_CLOCK_LEEWAY_SECONDS` | `5` | Tolerance when checking `iat` / `exp` |
-| `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory; with the disk cache, how long a payload stays in memory before only its disk copy is kept |
-| `RELAY_DISK_CACHE_DIR` | unset | Directory for the payloads of objects received from client publishers, kept up to 1 hour; unset keeps the cache in memory only. `*.seg` files in it are deleted at startup |
+| `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory |
+| `RELAY_DISK_CACHE_DIR` | unset | Directory keeping the payloads from client publishers up to 1 hour; unset caches in memory only |
 | `RELAY_DISK_CACHE_BYTES` | `10737418240` (10 GiB) | Cap on the disk cache; the oldest segments go first |
-| `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained; at least 1 |
-| `RELAY_MOQT_VERSIONS` | `draft-14` | Drafts the client port accepts, comma-separated and most preferred first (`draft-14`, `draft-18`); the relay relays tracks between peers of either draft. To enable draft-18, set `draft-18,draft-14`: a peer offering both then gets draft-18 and a draft-14 peer still connects, whereas with `draft-14` first every WebTransport session, and every peer offering both, is draft-14. The inner port accepts the same drafts, and the relay offers them when it dials another relay or publishes its stats |
-| `MOQT_FETCH_FILL_TIMEOUT_SECS` | `20` | The most the relay waits for an upstream FETCH, also when a draft-18 FILL_TIMEOUT asks for longer. Then it serves what arrived and reports the rest as unknown; a draft-14 downstream FETCH is reset instead |
-| `RELAY_STDOUT_FILTER` | `relay=info,moqt=info` | `tracing` filter for stdout |
-| `RELAY_OTEL_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry traces |
-| `RELAY_LOG_FILTER` | `relay=info,moqt=info` | `tracing` filter for OpenTelemetry logs |
+| `RELAY_CACHE_EVICT_INTERVAL_SECS` | `5` | How often expired objects are drained |
+| `RELAY_MOQT_VERSIONS` | `draft-18,draft-14` | Drafts accepted, most preferred first; tracks are relayed between peers of either draft |
+| `MOQT_FETCH_FILL_TIMEOUT_SECS` | `20` | The most the relay waits for an upstream FETCH |
+| `RELAY_STDOUT_FILTER`, `RELAY_OTEL_FILTER`, `RELAY_LOG_FILTER` | `relay=info,moqt=info` | `tracing` filters for stdout, OpenTelemetry traces and OpenTelemetry logs |
 | `RELAY_HOSTNAME` | `$HOSTNAME` | Host name reported in OpenTelemetry resources |
 
 ## OpenTelemetry
 
-OTLP trace and log exporters are configured from the standard OpenTelemetry
-variables and run only once `OTEL_EXPORTER_OTLP_ENDPOINT` is set (and
-`OTEL_SDK_DISABLED` is not). Example for an OTLP/HTTP backend:
+OTLP trace and log exporters follow the standard OpenTelemetry variables and
+run only once `OTEL_EXPORTER_OTLP_ENDPOINT` is set:
 
 ```shell
 OTEL_SERVICE_NAME=moqt-relay
@@ -57,9 +55,3 @@ OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
 OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=your-api-key,x-honeycomb-dataset=moqt-relay
 ```
-
-`OTEL_EXPORTER_OTLP_HEADERS` is optional.
-
-## Design
-
-[Architecture document](../docs/architecture/relay/architecture.md).

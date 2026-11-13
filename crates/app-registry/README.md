@@ -1,8 +1,7 @@
 # app-registry
 
-The registry of apps whose secrets sign client JWTs. It is one JSON document,
-an array of rows in the shape the VTS apps file already uses with optional
-fields added, kept in Cloud Storage or in a local file.
+The registry of apps whose secrets sign client JWTs: one JSON document, kept
+in Cloud Storage or in a local file.
 
 ```json
 [
@@ -12,21 +11,16 @@ fields added, kept in Cloud Storage or in a local file.
 ]
 ```
 
-`RegistryStore::new` takes a `Location`, which `Location::from_env` can read from environment variables named by the caller:
+`RegistryStore::load` reads the apps and their generation;
+`RegistryStore::update` changes them, running the change again when another
+writer stored first.
 
-| Location | Generation | Write |
+| `Location` | Generation | Safe for |
 | --- | --- | --- |
-| `CloudStorage { endpoint, bucket, object }` | The object's generation | Upload with `ifGenerationMatch`, safe for writers on any number of machines |
-| `File(path)` | A hash of the contents | Serialize writes in one process, compare the hash, write a temporary file and rename it over the registry; one writing process only |
+| `CloudStorage { endpoint, bucket, object }` | The object's generation (`ifGenerationMatch`) | Writers on any number of machines |
+| `File(path)` | A hash of the contents | One writing process |
 
-`RegistryStore::load` reads the apps and their generation, and
-`RegistryStore::update` changes the apps, reloading and running the change
-again when another writer stored first.
+`Endpoint::from_env` uses the emulator at `STORAGE_EMULATOR_HOST` instead of
+Cloud Storage.
 
-`Endpoint::from_env` uses the emulator at `STORAGE_EMULATOR_HOST` (for example
-`http://localhost:4443`) instead of Cloud Storage; requests to it are sent
-without credentials.
-
-## Design
-
-[Architecture document](../../docs/architecture/app-registry/architecture.md).
+Design: [architecture document](../../docs/architecture/app-registry/architecture.md).

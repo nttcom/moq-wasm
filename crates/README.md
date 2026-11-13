@@ -1,12 +1,8 @@
 # Crates
 
-Libraries, bindings and plugins live in `crates/<package name>/` and the servers and bridges built on them in `services/<package name>/`. This page shows how the crates in both directories depend on each other. What each crate does is listed in `AGENTS.md` §2, and its design in `docs/architecture/<package name>/architecture.md`.
+How the workspace crates in `crates/` and `services/` depend on each other. What each crate does is listed in `AGENTS.md` §2.
 
-An arrow `A --> B` means `A` depends on `B`, as declared in `A`'s `Cargo.toml`. Only dependencies between workspace crates are shown.
-
-## Layers
-
-The crates fall into five layers. A crate depends only on crates in its own layer or the layers below it.
+An arrow `A --> B` means `A` depends on `B`. A crate depends only on crates in its own layer or the layers below it.
 
 | Layer | Crates | Role |
 | --- | --- | --- |
@@ -81,10 +77,9 @@ flowchart TD
     mediapack -. "feature moqt" .-> moqt
 ```
 
-- `broadcast` is the shared original publisher: `live-ingest`, `onvif-ingest`, `gst-plugin-moqt` and `wasm` build their MSF broadcast through it instead of writing the catalog and tracks themselves.
-- `live-egress` and `recorder` are subscribers. They read the catalog with `msf` and the objects with `moqt` directly, without `broadcast`.
-- `mediapack` depends on `moqt` only when its `moqt` feature is on (the dotted arrow). The feature maps LOC properties to MoQT extension headers. `broadcast`, `live-ingest`, `live-egress`, `recorder` and `wasm` turn it on; `transcode`, `onvif-ingest` and `gst-plugin-moqt` use `mediapack` without it.
-- `live-ingest`, `onvif-ingest`, `live-egress` and `recorder` also depend on `telemetry`, `wasm` on `client-telemetry`, and `recorder` on `auth-token`; those arrows are left out here to keep the diagram readable.
+- Publishers build their MSF broadcast through `broadcast`; the subscribers `live-egress` and `recorder` read the catalog with `msf` and the objects with `moqt` directly.
+- `mediapack` depends on `moqt` only with its `moqt` feature (the dotted arrow), which maps LOC properties to MoQT extension headers.
+- Arrows to `telemetry`, `client-telemetry` and `auth-token` are left out of this diagram.
 
 ## Relay and services
 
@@ -123,6 +118,5 @@ flowchart TD
     console --> telemetry
 ```
 
-- `auth-token` holds the JWT claims. `vts` and `console` sign and verify tokens with it; `relay` and the HTTP API of `recorder` read the claims `vts` returns.
-- `app-registry` stores the apps whose secrets sign the tokens. Only `vts` and `console` read it; `relay` and `recorder` reach it through `vts` over HTTP, not as a crate dependency.
-- `observability` takes the relays' stats snapshots over OTLP, not as a crate dependency, so it does not depend on `moqt`.
+- Only `vts` and `console` read `app-registry`; `relay` and `recorder` reach it through `vts` over HTTP.
+- `observability` takes the relays' stats over OTLP, so it does not depend on `moqt`.

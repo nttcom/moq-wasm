@@ -10,28 +10,28 @@ cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --public
 make browser
 ```
 
-To translate for real, name the project and the service account; `gcloud`, logged in as a user with `roles/iam.serviceAccountTokenCreator` on that account, borrows its token for each connection:
-
-```shell
-cargo run -p live-translate -- --relay moqt://127.0.0.1:4433 --insecure --public-root --gcp-project <project id> --gcloud-impersonate <service account email>
-```
-
-A language is translated for at most 60 minutes at a stretch (`--language-time-limit-minutes`) and, with `--open-hours 'Mon-Fri 09:00-17:30 +09:00'`, only inside those hours; the viewer returns to the original audio when the translation ends. `--always-on en,ko` keeps those languages translating for the whole broadcast, so switching to them takes about a second instead of waiting for Gemini's first answer.
-
-The viewer shows captions on the picture: the transcript of the language heard (`text_<lang>`), or of the Japanese (`text_ja`) while some language is being translated. The viewer plays every track 5 s after capture; `?delay=4.5` on its URL tries another delay. Its Stats line shows the delay, the A/V offset, how long the last switch took and the samples dropped late; every 10 s the same numbers go to the page telemetry (`viewer stats` in HyperDX, or in ClickHouse's `otel.otel_logs` with `docker compose up -d observability` locally).
-
 Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chrome` for the real camera and microphone), press 配信開始, and open the viewer link it shows.
+
+To translate for real, replace `--echo` with `--gcp-project <project id> --gcloud-impersonate <service account email>`; `gcloud` must be logged in as a user with `roles/iam.serviceAccountTokenCreator` on that account.
+
+| Translator option                           | Effect                                                                                              |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `--language-time-limit-minutes`             | How long a language is translated at a stretch (60 by default)                                      |
+| `--open-hours 'Mon-Fri 09:00-17:30 +09:00'` | Translate only inside those hours                                                                   |
+| `--always-on en,ko`                         | Keep those languages translating for the whole broadcast, so switching to them takes about a second |
+
+The viewer plays every track 5 s after capture (`?delay=4.5` tries another delay) and shows the transcript of the language heard as captions. Its Stats line shows the delay, the A/V offset and the switch time; the same numbers go to the page telemetry every 10 s.
 
 ## Access
 
-The pages follow the access mode of the example list (`utils/access.ts`).
+The pages follow the access mode of the example list (see [`examples/browser/README.md`](../../README.md)).
 
-- Public (the default on this machine): the broadcast is `anon/live-translate/<id>`, which the translator watches by itself when started with `--public-root`.
-- Temporary app (the default when deployed): the broadcast is `<appId>/live-translate/<id>`. The translator reaches an app only with one of its tokens, so the streamer page hands it a newly signed one (`POST /sessions`) and holds its event stream (`GET /events`) while it broadcasts. The translator keeps that token until it expires, so a broadcast is translated for an hour at most; start it again for another hour. The viewer link carries the token, and opening it joins the app.
+- **Public**: the broadcast is `anon/live-translate/<id>`, which a translator started with `--public-root` watches by itself.
+- **Temporary app**: the broadcast is `<appId>/live-translate/<id>`. The streamer page hands the translator a token of the app (`POST /sessions`), so a broadcast is translated for an hour at most. To try it locally, run `docker compose up -d vts token-mint` and start the translator with `PORT=18090`; `?liveTranslateUrl=` points the streamer at another translator.
 
-To try a temporary app locally, run the token mint and the VTS (`docker compose up -d vts token-mint`), start the translator with `PORT=18090`, and choose the temporary mode on the example list. `?liveTranslateUrl=` points the streamer at another translator.
+## Tips
 
-To judge a translation without hearing your own voice five seconds later, let the fake microphone play prepared speech instead (a 16-bit PCM WAV, looped):
+Let the fake microphone play prepared speech (a 16-bit PCM WAV, looped) instead of hearing your own voice five seconds later:
 
 ```shell
 say -v Kyoko -o /tmp/speech.aiff "こんにちは。今日はリアルタイム翻訳のデモをお見せします。"
