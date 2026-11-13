@@ -1,5 +1,4 @@
 export type VideoCodecOption = {
-  id: string
   label: string
   codec: string
   maxEncodePixels?: number
@@ -35,7 +34,6 @@ export type VideoEncodingSettings = {
 
 export const VIDEO_CODEC_OPTIONS: VideoCodecOption[] = [
   {
-    id: 'h264-high40',
     label: 'H.264 High@4.0 (avc1.640028)',
     codec: 'avc1.640028',
     maxEncodePixels: 1920 * 1080
@@ -44,9 +42,8 @@ export const VIDEO_CODEC_OPTIONS: VideoCodecOption[] = [
   // 実測では WebCodecs + H.264 High@5.0 (avc1.640032) + 長いGOP設定で、
   // VideoEncoder.encodeQueueSize と Capture→EncodeDone が増え、
   // 低遅延用途で遅延が蓄積するケースがあった（Main Profile では改善）。
-  { id: 'h264-high50', label: 'H.264 High@5.0 (avc1.640032)', codec: 'avc1.640032' },
+  { label: 'H.264 High@5.0 (avc1.640032)', codec: 'avc1.640032' },
   {
-    id: 'h264-main40',
     label: 'H.264 Main@4.0 (avc1.4D4028)',
     codec: 'avc1.4D4028',
     maxEncodePixels: 1920 * 1080
@@ -55,16 +52,15 @@ export const VIDEO_CODEC_OPTIONS: VideoCodecOption[] = [
   // avc1.42001F は H.264 Baseline@3.1 のため 1080p はエンコード不可。
   // Catalog の解像度選択肢はこの上限 (720p 相当) に合わせて絞り込む。
   {
-    id: 'h264-baseline31',
     label: 'H.264 Baseline@3.1 (avc1.42001F)',
     codec: 'avc1.42001F',
     maxEncodePixels: 1280 * 720
   },
-  { id: 'h265-main', label: 'H.265 Main (hvc1.1.6.L93.B0)', codec: 'hvc1.1.6.L93.B0' },
-  { id: 'av1-main-8bit-l3', label: 'AV1 Main 8bit (av01.0.08M.08)', codec: 'av01.0.08M.08' },
-  { id: 'av1-high-8bit-l4', label: 'AV1 High 8bit (av01.1.08M.08)', codec: 'av01.1.08M.08' },
-  { id: 'vp8', label: 'VP8 (vp8)', codec: 'vp8' },
-  { id: 'vp9', label: 'VP9 (vp09.00.10.08)', codec: 'vp09.00.10.08' }
+  { label: 'H.265 Main (hvc1.1.6.L93.B0)', codec: 'hvc1.1.6.L93.B0' },
+  { label: 'AV1 Main 8bit (av01.0.08M.08)', codec: 'av01.0.08M.08' },
+  { label: 'AV1 High 8bit (av01.1.08M.08)', codec: 'av01.1.08M.08' },
+  { label: 'VP8 (vp8)', codec: 'vp8' },
+  { label: 'VP9 (vp09.00.10.08)', codec: 'vp09.00.10.08' }
 ]
 
 export const VIDEO_RESOLUTION_OPTIONS: VideoResolutionOption[] = [
