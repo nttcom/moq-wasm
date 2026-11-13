@@ -236,6 +236,8 @@ pub(crate) struct MockUpstreamSession {
     answer_fetch: FetchAnswer,
     transport_stats: moqt::TransportStats,
     answer_publish: Option<PublishAnswer>,
+    /// Each PUBLISH_NAMESPACE, once recorded, takes a permit before it is sent.
+    publish_namespace_gate: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 impl MockUpstreamSession {
@@ -246,6 +248,7 @@ impl MockUpstreamSession {
             answer_fetch: FetchAnswer::Never,
             transport_stats: moqt::TransportStats::default(),
             answer_publish: None,
+            publish_namespace_gate: None,
         }
     }
 }
@@ -318,6 +321,7 @@ pub(crate) fn recorded_session_answering_subscribe(
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
+        publish_namespace_gate: None,
     });
     (session, recorded)
 }
@@ -348,6 +352,7 @@ pub(crate) fn mock_session_never_answering_subscribe() -> Box<dyn Session> {
         answer_fetch: FetchAnswer::Never,
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
+        publish_namespace_gate: None,
     })
 }
 
@@ -369,6 +374,7 @@ pub(crate) fn mock_session_answering_fetch(answer_fetch: FetchAnswer) -> Box<dyn
         answer_fetch,
         transport_stats: moqt::TransportStats::default(),
         answer_publish: None,
+        publish_namespace_gate: None,
     })
 }
 
@@ -380,6 +386,18 @@ pub(crate) fn mock_session_answering_publish(
     let recorded = RecordedControlMessages::default();
     let session = Box::new(MockUpstreamSession {
         answer_publish: Some(Arc::new(answer_publish)),
+        ..MockUpstreamSession::new(recorded.clone())
+    });
+    (session, recorded)
+}
+
+/// Holds each PUBLISH_NAMESPACE, after recording it, until `gate` has a permit.
+pub(crate) fn recorded_session_holding_publish_namespace(
+    gate: Arc<tokio::sync::Semaphore>,
+) -> (Box<dyn Session>, RecordedControlMessages) {
+    let recorded = RecordedControlMessages::default();
+    let session = Box::new(MockUpstreamSession {
+        publish_namespace_gate: Some(gate),
         ..MockUpstreamSession::new(recorded.clone())
     });
     (session, recorded)
@@ -563,6 +581,7 @@ impl Session for MockUpstreamSession {
         Box::new(MockUpstreamPublisher {
             recorded: self.recorded.clone(),
             answer_publish: self.answer_publish.clone(),
+            publish_namespace_gate: self.publish_namespace_gate.clone(),
         })
     }
 
@@ -613,6 +632,7 @@ impl Session for MockUpstreamSession {
 struct MockUpstreamPublisher {
     recorded: RecordedControlMessages,
     answer_publish: Option<PublishAnswer>,
+    publish_namespace_gate: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 #[async_trait::async_trait]
@@ -626,6 +646,9 @@ impl Publisher for MockUpstreamPublisher {
             .lock()
             .unwrap()
             .push(namespaces);
+        if let Some(gate) = &self.publish_namespace_gate {
+            gate.acquire().await?.forget();
+        }
         Ok(Box::pin(std::future::pending()))
     }
 

@@ -25,7 +25,10 @@ use crate::modules::{
         delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
     },
-    session::session_repository::{NewSession, SessionRepository},
+    session::{
+        Session,
+        session_repository::{NewSession, SessionRepository},
+    },
     test_support::{
         mock_session::{
             MockUpstreamSession, RecordedControlMessages, detached_session_repository,
@@ -278,6 +281,16 @@ pub(crate) async fn downstream_publish_context_for(
     answer_publish: impl Fn() -> anyhow::Result<bool> + Send + Sync + 'static,
 ) -> DownstreamPublishContext {
     let (session, subscriber) = mock_session_answering_publish(answer_publish);
+    downstream_publish_context_with_session(peer, table, session, subscriber)
+}
+
+/// `NAMESPACE_SUBSCRIBER_SESSION` is `session`, a session of `peer`.
+pub(crate) fn downstream_publish_context_with_session(
+    peer: SessionPeer,
+    table: Arc<InMemoryLocalPubSubDirectory>,
+    session: Box<dyn Session>,
+    subscriber: RecordedControlMessages,
+) -> DownstreamPublishContext {
     let (mut repository, _session_added_receiver) = session_repository();
     repository.add(NewSession {
         session_id: NAMESPACE_SUBSCRIBER_SESSION,

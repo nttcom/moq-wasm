@@ -349,14 +349,28 @@ impl SubscribeNameSpace {
                 }
                 MatchingPublication::Namespace(track_namespace)
                     if subscription.interest.includes_namespaces()
-                        && (subscription.peer == SessionPeer::Client
-                            || downstream_publish
-                                .table
-                                .has_client_namespace_publisher(&track_namespace)) =>
+                        && is_announced_to(
+                            &downstream_publish.table,
+                            subscription.peer,
+                            &track_namespace,
+                        ) =>
                 {
                     forwarder
                         .publish_namespace(session_id, track_namespace.clone())
                         .await;
+                    // A withdrawal that ran while `publications` was being
+                    // sent found the namespace not yet announced here and
+                    // sent no PUBLISH_NAMESPACE_DONE.
+                    if !is_announced_to(
+                        &downstream_publish.table,
+                        subscription.peer,
+                        &track_namespace,
+                    ) {
+                        forwarder
+                            .publish_namespace_done(session_id, track_namespace)
+                            .await;
+                        continue;
+                    }
                     namespaces.insert(track_namespace);
                 }
                 MatchingPublication::Track(_) | MatchingPublication::Namespace(_) => {}
@@ -413,6 +427,20 @@ impl SubscribeNameSpace {
             subscribe_at_publisher_relays(&track_namespace, forwarder, cascading_relay_context)
                 .await;
         }
+    }
+}
+
+/// A client subscriber is told of a namespace while anyone publishes it, a
+/// relay subscriber while a client does (split horizon): the condition under
+/// which `PublishNamespaceDone::notify_local_subscribers` withdraws it.
+fn is_announced_to(
+    table: &InMemoryLocalPubSubDirectory,
+    subscriber_peer: SessionPeer,
+    track_namespace: &str,
+) -> bool {
+    match subscriber_peer {
+        SessionPeer::Client => table.has_namespace_publishers(track_namespace),
+        SessionPeer::Relay => table.has_client_namespace_publisher(track_namespace),
     }
 }
 
@@ -474,21 +502,25 @@ mod tests {
             inter_relay_connection_manager::InterRelayConnectionManager,
             route_registry::NoopRelayRouteRegistry,
         },
-        control_plane::sequences::{CascadingRelayContext, publish_namespace::PublishNamespace},
+        control_plane::sequences::{
+            CascadingRelayContext, publish_namespace::PublishNamespace,
+            publish_namespace_done::PublishNamespaceDone,
+        },
         directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
         domain::{session_peer::SessionPeer, track_key::TrackKey},
         test_support::{
             directory_fixtures::{
                 DownstreamPublishContext, NAMESPACE_SUBSCRIBER_SESSION, PUBLISHER_SESSION,
                 active_upstream, client_subscription, downstream_publish_context,
-                downstream_publish_context_for, inter_relay_connection_manager,
-                local_publisher_resolver, namespaces_and_tracks, producer_with,
-                table_with_upstream, track_key,
+                downstream_publish_context_for, downstream_publish_context_with_session,
+                inter_relay_connection_manager, local_publisher_resolver, namespaces_and_tracks,
+                producer_with, table_with_upstream, track_key,
             },
             mock_session::{
                 MockPublishHandler, MockPublishNamespaceHandler, MockSubscribeNamespaceHandler,
                 MockSubscribeNamespaceUpdateHandler, PUBLISH_REQUEST_ID, RecordedControlMessages,
                 SentMessages, add_recorded_relay_session, detached_session_repository,
+                recorded_session_holding_publish_namespace, wait_until,
             },
             stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
@@ -682,6 +714,75 @@ mod tests {
                 handler,
             )
             .await;
+    }
+
+    #[tokio::test]
+    async fn a_namespace_withdrawn_while_existing_ones_are_announced_stays_withdrawn() {
+        // Arrange: `ns/alice` and `ns/bob` are published; each PUBLISH_NAMESPACE is held
+        const BOB_SESSION: SessionId = 41;
+        let table = Arc::new(InMemoryLocalPubSubDirectory::new());
+        table.register_publish_namespace(
+            PUBLISHER_SESSION,
+            "ns/alice".to_string(),
+            SessionPeer::Client,
+        );
+        table.register_publish_namespace(BOB_SESSION, "ns/bob".to_string(), SessionPeer::Client);
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (session, subscriber) = recorded_session_holding_publish_namespace(gate.clone());
+        let ctx = Arc::new(downstream_publish_context_with_session(
+            SessionPeer::Client,
+            table,
+            session,
+            subscriber,
+        ));
+        let subscribe_namespace = tokio::spawn({
+            let ctx = ctx.clone();
+            async move {
+                handle_subscribe_namespace(
+                    &ctx,
+                    &NoopRelayRouteRegistry,
+                    &MockSubscribeNamespaceHandler::new("ns"),
+                )
+                .await;
+            }
+        });
+        wait_until(|| ctx.subscriber.publish_namespaces().len() == 1)
+            .await
+            .unwrap();
+        let (withdrawn_session, withdrawn) = if ctx.subscriber.publish_namespaces()[0] == "ns/alice"
+        {
+            (BOB_SESSION, "ns/bob")
+        } else {
+            (PUBLISHER_SESSION, "ns/alice")
+        };
+
+        // Act: the other namespace is withdrawn while the first PUBLISH_NAMESPACE is held
+        ctx.table
+            .unregister_publish_namespace(withdrawn_session, withdrawn);
+        PublishNamespaceDone::notify_local_subscribers(
+            withdrawn_session,
+            withdrawn,
+            &ctx.table,
+            &ctx.forwarder,
+        )
+        .await;
+        gate.add_permits(2);
+        subscribe_namespace.await.unwrap();
+
+        // Assert: every PUBLISH_NAMESPACE of the withdrawn namespace is matched by a PUBLISH_NAMESPACE_DONE
+        let announced = ctx
+            .subscriber
+            .publish_namespaces()
+            .iter()
+            .filter(|ns| *ns == withdrawn)
+            .count();
+        let withdrawals = ctx
+            .subscriber
+            .publish_namespace_dones()
+            .iter()
+            .filter(|ns| *ns == withdrawn)
+            .count();
+        assert_eq!(announced, withdrawals);
     }
 
     const PUBLISHER_RELAY_SESSION: SessionId = 40;
