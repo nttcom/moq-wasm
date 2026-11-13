@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use bytes::BytesMut;
+use bytes::{Buf, BytesMut};
 use tokio_util::codec::Decoder;
 
 use crate::modules::moqt::{
@@ -195,6 +195,9 @@ impl ControlMessageDecoder {
         wrap: fn(T) -> ReceivedMessage,
     ) -> ReceivedMessage {
         match decode(cursor) {
+            Ok(_) if cursor.has_remaining() => {
+                ReceivedMessage::FatalError("control message length does not match".to_string())
+            }
             Ok(message) => wrap(message),
             Err(error) => ReceivedMessage::FatalError(format!("{error:#}")),
         }
@@ -345,6 +348,28 @@ mod tests {
             .expect("frame should be complete");
         assert!(matches!(message, ReceivedMessage::FatalError(_)));
     }
+
+    #[test]
+    fn decode_payload_longer_than_its_fields_yields_fatal_error() {
+        // Arrange
+        let mut decoder = ControlMessageDecoder;
+        let mut payload = Unsubscribe { request_id: 7 }.encode();
+        payload.put_u32(0);
+        let mut buf = frame(ControlMessageType::UnSubscribe, payload);
+
+        // Act
+        let message = decoder
+            .decode(&mut buf)
+            .expect("framing should succeed")
+            .expect("frame should be complete");
+
+        // Assert: draft-14 §9 PROTOCOL_VIOLATION on a Message Length mismatch
+        assert!(
+            matches!(message, ReceivedMessage::FatalError(_)),
+            "{message:?}"
+        );
+    }
+
     #[test]
     fn decode_control_messages_added_in_draft14() {
         let mut decoder = ControlMessageDecoder;
