@@ -713,7 +713,9 @@ forward from their own cache through the raw stream senders.
   track go on. A second lock, `publishing`, makes `publish` calls run one at a
   time across all tracks and is always taken before the state lock. The peer
   can UNSUBSCRIBE right after its PUBLISH_OK, before `publish` registers the
-  request, so `release` of an unknown request first waits on `publishing`;
+  request, so `release` of an unknown request first waits on `publishing`,
+  and so does `end_track`, so a subscription whose PUBLISH awaits PUBLISH_OK
+  when its track ends still gets PUBLISH_DONE;
   `accept_subscribe`
   answers a SUBSCRIBE the application decided to accept (Content Exists is the
   largest cached location, the last one FETCH can serve) and writes from its filter's Start Location
