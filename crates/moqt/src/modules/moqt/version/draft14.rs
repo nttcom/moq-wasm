@@ -774,7 +774,7 @@ mod tests {
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, notify_datagram,
                 register_and_take_data_receiver, spawn_connected_native_sessions,
-                use_up_bidi_streams,
+                use_up_bidi_streams, within,
             },
         },
         namespace::NamespaceInterest,
@@ -895,7 +895,16 @@ mod tests {
     async fn late_publish_ok_is_withdrawn_with_publish_done() {
         // Arrange
         let (client, server) = spawn_connected_native_sessions("late-publish-ok").await;
-        let context = server.publisher().session;
+        let publisher = server.publisher();
+        let context = publisher.session.clone();
+        let _unanswered = tokio::spawn(async move {
+            publisher
+                .publish("ns".into(), "track".into(), PublishOption::default())
+                .await
+        });
+        let SessionEvent::Publish(_) = within(client.receive_event()).await.unwrap() else {
+            panic!("expected PUBLISH");
+        };
 
         // Act
         handle_late_response(

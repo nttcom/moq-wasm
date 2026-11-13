@@ -1,4 +1,4 @@
-use std::{sync::Weak, time::Duration};
+use std::{collections::HashSet, sync::Weak, time::Duration};
 
 use futures::{StreamExt, stream::FuturesUnordered};
 use tokio::sync::mpsc;
@@ -21,7 +21,8 @@ pub(crate) const PUBLISH_DONE_GRACE_PERIOD: Duration = Duration::from_secs(10);
 /// Cancels a subscription once the streams its PUBLISH_DONE counts have
 /// arrived, or `PUBLISH_DONE_GRACE_PERIOD` after it, like an unsubscribe but
 /// without sending UNSUBSCRIBE. Its `TrackReader` then returns `Ok(None)` once
-/// the streams it already accepted are drained.
+/// the streams it already accepted are drained. A PUBLISH_DONE for a
+/// subscription already waiting is ignored.
 pub(crate) struct PublishDoneExpiryTask;
 
 impl PublishDoneExpiryTask {
@@ -35,10 +36,14 @@ impl PublishDoneExpiryTask {
             "Publish Done Expiry",
             async move {
                 let mut expiries = FuturesUnordered::new();
+                let mut waiting = HashSet::new();
                 loop {
                     tokio::select! {
                         Some(publish_done) = publish_done_receiver.recv() => {
                             let request_id = publish_done.request_id();
+                            if !waiting.insert(request_id) {
+                                continue;
+                            }
                             let arrived_streams = match connection.upgrade() {
                                 // A datagram track sends 0, and its datagrams can still
                                 // follow PUBLISH_DONE, so 0 waits the grace period.
@@ -64,6 +69,7 @@ impl PublishDoneExpiryTask {
                             });
                         }
                         Some(request_id) = expiries.next() => {
+                            waiting.remove(&request_id);
                             let (Some(session), Some(connection)) =
                                 (session_context.upgrade(), connection.upgrade())
                             else {

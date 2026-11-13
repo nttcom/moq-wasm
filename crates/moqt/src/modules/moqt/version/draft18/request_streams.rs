@@ -100,6 +100,17 @@ fn close_on_violation(scope: &Scope, reason: &str) {
     );
 }
 
+/// How the peer ended a request this endpoint opened.
+#[derive(PartialEq)]
+enum PeerEnd {
+    /// It closed or reset its half.
+    Closed,
+    /// It sent GOAWAY on the request stream (§10.4).
+    GoAway,
+    /// It sent PUBLISH_DONE, which the application has already heard.
+    PublishDone,
+}
+
 /// §10.1: every request, REQUEST_UPDATE included, takes a new Request ID of
 /// the peer's parity; `false` after closing the session when it does not.
 fn accept_request_id(scope: &Scope, request_id: RequestId) -> bool {
@@ -1012,7 +1023,6 @@ impl OutgoingRequestTask {
             return;
         }
         drop(context);
-        let mut publish_done = false;
         // Namespaces a SUBSCRIBE_NAMESPACE stream announced and not withdrawn.
         let mut namespaces: HashSet<Vec<String>> = HashSet::new();
         let mut update_answers = UpdateAnswers::default();
@@ -1032,8 +1042,8 @@ impl OutgoingRequestTask {
                 return;
             };
             match received {
+                // §10.11: PUBLISH_DONE is the publisher's final message.
                 Ok(Some(Message::PublishDone(done))) if kind == RequestStreamKind::Subscribe => {
-                    publish_done = true;
                     emit(
                         &context,
                         SessionEvent::PublishDone(PublishDoneHandler::new(
@@ -1043,6 +1053,8 @@ impl OutgoingRequestTask {
                             done.reason,
                         )),
                     );
+                    Self::peer_ended(&context, request_id, kind, PeerEnd::PublishDone).await;
+                    return;
                 }
                 Ok(Some(Message::RequestUpdate(update))) if kind == RequestStreamKind::Publish => {
                     if !accept_request_id(&context, update.request_id) {
@@ -1110,7 +1122,7 @@ impl OutgoingRequestTask {
                         "GOAWAY on a request stream; ending the request"
                     );
                     Self::withdraw_namespaces(&context, namespaces);
-                    Self::peer_ended(&context, request_id, kind, publish_done, true).await;
+                    Self::peer_ended(&context, request_id, kind, PeerEnd::GoAway).await;
                     return;
                 }
                 Ok(Some(_)) => {
@@ -1130,7 +1142,7 @@ impl OutgoingRequestTask {
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
                 Ok(None) | Err(StreamReceiveError::Closed(_)) => {
                     Self::withdraw_namespaces(&context, namespaces);
-                    Self::peer_ended(&context, request_id, kind, publish_done, false).await;
+                    Self::peer_ended(&context, request_id, kind, PeerEnd::Closed).await;
                     return;
                 }
             }
@@ -1234,19 +1246,19 @@ impl OutgoingRequestTask {
 
     /// The peer ended a request this endpoint still had open: raises the
     /// withdrawal draft-14 would have sent as a message, then ends this side's
-    /// half with FIN. With `going_away` (a GOAWAY on the request stream,
-    /// §10.4) the request ends with GOING_AWAY and its stream is reset, as
-    /// draft-14 events have no per-request migration.
+    /// half with FIN. After a GOAWAY on the request stream (§10.4) the request
+    /// ends with GOING_AWAY and its stream is reset, as draft-14 events have
+    /// no per-request migration.
     async fn peer_ended(
         scope: &Scope,
         request_id: RequestId,
         kind: RequestStreamKind,
-        publish_done: bool,
-        going_away: bool,
+        end: PeerEnd,
     ) {
         let Some(stream) = scope.channel().take_outgoing(request_id) else {
             return;
         };
+        let going_away = end == PeerEnd::GoAway;
         let (publish_done_code, request_error_code, reason) = if going_away {
             (
                 PublishDoneCode::GoingAway,
@@ -1261,9 +1273,14 @@ impl OutgoingRequestTask {
             )
         };
         let event = match kind {
-            RequestStreamKind::Subscribe if !publish_done => Some(SessionEvent::PublishDone(
-                PublishDoneHandler::new(request_id, publish_done_code, 0, reason.to_string()),
-            )),
+            RequestStreamKind::Subscribe if end != PeerEnd::PublishDone => {
+                Some(SessionEvent::PublishDone(PublishDoneHandler::new(
+                    request_id,
+                    publish_done_code,
+                    0,
+                    reason.to_string(),
+                )))
+            }
             RequestStreamKind::Publish => Some(SessionEvent::Unsubscribe(UnsubscribeHandler::new(
                 scope.session.clone(),
                 &scope.connection,

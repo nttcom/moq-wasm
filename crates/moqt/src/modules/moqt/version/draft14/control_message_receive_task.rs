@@ -177,19 +177,15 @@ impl ControlMessageReceiveTask {
         received_message: ReceivedMessage,
     ) -> DepacketizeResult {
         tracing::debug!(message = ?received_message, "Event: message_type");
-        let channel = ControlChannel::of(connection);
-        if let ReceivedMessage::SubscribeUpdate(subscribe_update) = &received_message
-            && !channel.request_id_has_existed(subscribe_update.subscription_request_id)
+        if let Some((request_id, code, reason)) =
+            reference_to_unused_request_id(connection, &received_message)
         {
             tracing::error!(
-                subscription_request_id = subscribe_update.subscription_request_id,
-                "Protocol violation: SUBSCRIBE_UPDATE for a Request ID that never existed"
+                request_id,
+                reason,
+                "Message for a Request ID that never existed; closing session"
             );
-            session.close_connection(
-                connection,
-                TerminationErrorCode::ProtocolViolation,
-                "SUBSCRIBE_UPDATE for a Request ID that never existed",
-            );
+            session.close_connection(connection, code, reason);
             return DepacketizeResult::SessionClosed;
         }
         match received_message {
@@ -412,6 +408,28 @@ fn new_request_id(message: &ReceivedMessage) -> Option<RequestId> {
     }
 }
 
+/// A Request ID neither endpoint has used, referenced by SUBSCRIBE_UPDATE
+/// (§9.10) or PUBLISH_DONE (§9.1).
+fn reference_to_unused_request_id(
+    connection: &Connection,
+    message: &ReceivedMessage,
+) -> Option<(RequestId, TerminationErrorCode, &'static str)> {
+    let reference = match message {
+        ReceivedMessage::SubscribeUpdate(m) => (
+            m.subscription_request_id,
+            TerminationErrorCode::ProtocolViolation,
+            "SUBSCRIBE_UPDATE for a Request ID that never existed",
+        ),
+        ReceivedMessage::PublishDone(m) => (
+            m.request_id,
+            TerminationErrorCode::InvalidRequestId,
+            "PUBLISH_DONE for a Request ID that never existed",
+        ),
+        _ => return None,
+    };
+    (!ControlChannel::of(connection).request_id_has_existed(reference.0)).then_some(reference)
+}
+
 fn error_response(
     error: RequestError,
     kind: RequestKind,
@@ -426,9 +444,12 @@ fn error_response(
 mod tests {
     use crate::{
         SessionEvent, Version,
-        modules::test_support::{
-            DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
-            spawn_connected_native_sessions, subscribed_track, subscription, within,
+        modules::{
+            moqt::control_plane::error_codes::PublishDoneCode,
+            test_support::{
+                DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
+                spawn_connected_native_sessions, subscribed_track, subscription, within,
+            },
         },
     };
 
@@ -455,6 +476,34 @@ mod tests {
         assert_eq!(
             close.reason,
             "SUBSCRIBE_UPDATE for a Request ID that never existed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_draft14_publish_done_of_a_request_id_that_never_existed_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("publish-done-never-existed").await;
+
+        // Act
+        client
+            .publisher()
+            .publish_done(
+                &subscription(NEVER_USED_REQUEST_ID, 0),
+                PublishDoneCode::TrackEnded,
+                0,
+                String::new(),
+            )
+            .await
+            .unwrap();
+
+        // Assert: draft-14 §9.1 INVALID_REQUEST_ID
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(0x4));
+        assert_eq!(
+            close.reason,
+            "PUBLISH_DONE for a Request ID that never existed"
         );
     }
 
