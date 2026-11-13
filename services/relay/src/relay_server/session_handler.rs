@@ -148,59 +148,58 @@ impl SessionHandler {
         #[cfg(test)]
         let local_port = endpoint.local_port()?;
         let (stop_sender, mut stop_receiver) = oneshot::channel();
-        let join_handle = tokio::task::Builder::new()
-            .spawn(async move {
-                let relay_hostname = relay_hostname();
-                let session_peer = intake.accepted_peer.kind();
-                loop {
-                    let connecting = tokio::select! {
-                        biased;
-                        _ = &mut stop_receiver => {
-                            tracing::info!(session_peer, relay_hostname, "stopped accepting sessions; refusing new connections");
-                            endpoint.refuse_new_connections();
-                            break;
-                        }
-                        connecting = endpoint.accept() => connecting,
-                    };
-                    let connecting = match connecting {
-                        Ok(connecting) => connecting,
-                        Err(error @ AcceptError::EndpointClosing) => {
-                            tracing::info!(%error, session_peer, relay_hostname, "transport endpoint closed");
-                            break;
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, session_peer, relay_hostname, "failed to accept transport connection");
-                            continue;
-                        }
-                    };
+        let join_handle = tokio::spawn(async move {
+            let relay_hostname = relay_hostname();
+            let session_peer = intake.accepted_peer.kind();
+            loop {
+                let connecting = tokio::select! {
+                    biased;
+                    _ = &mut stop_receiver => {
+                        tracing::info!(session_peer, relay_hostname, "stopped accepting sessions; refusing new connections");
+                        endpoint.refuse_new_connections();
+                        break;
+                    }
+                    connecting = endpoint.accept() => connecting,
+                };
+                let connecting = match connecting {
+                    Ok(connecting) => connecting,
+                    Err(error @ AcceptError::EndpointClosing) => {
+                        tracing::info!(%error, session_peer, relay_hostname, "transport endpoint closed");
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, session_peer, relay_hostname, "failed to accept transport connection");
+                        continue;
+                    }
+                };
 
-                    let session_id = generate_session_id();
-                    let session_span = tracing::info_span!(
-                        parent: None,
-                        "relay.session",
-                        session_id = session_id,
-                        session_peer = session_peer,
-                        relay_hostname = %relay_hostname,
-                        app_id = tracing::field::Empty,
-                        peer_relay_id = tracing::field::Empty,
-                    );
-                    let intake = intake.clone();
-                    tokio::spawn(async move {
-                        intake
-                            .establish(session_id, connecting, session_span.clone())
-                            .instrument(session_span)
-                            .await;
-                    });
-                }
-                // Arrivals are refused at the transport until the sessions
-                // already accepted have all closed.
-                tokio::select! {
-                    _ = async {
-                        while endpoint.accept().await.is_ok() {}
-                    } => {}
-                    _ = endpoint.wait_idle() => {}
-                }
-            })?;
+                let session_id = generate_session_id();
+                let session_span = tracing::info_span!(
+                    parent: None,
+                    "relay.session",
+                    session_id = session_id,
+                    session_peer = session_peer,
+                    relay_hostname = %relay_hostname,
+                    app_id = tracing::field::Empty,
+                    peer_relay_id = tracing::field::Empty,
+                );
+                let intake = intake.clone();
+                tokio::spawn(async move {
+                    intake
+                        .establish(session_id, connecting, session_span.clone())
+                        .instrument(session_span)
+                        .await;
+                });
+            }
+            // Arrivals are refused at the transport until the sessions
+            // already accepted have all closed.
+            tokio::select! {
+                _ = async {
+                    while endpoint.accept().await.is_ok() {}
+                } => {}
+                _ = endpoint.wait_idle() => {}
+            }
+        });
         Ok(Self {
             join_handle,
             stop_sender: Some(stop_sender),
