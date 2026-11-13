@@ -536,6 +536,8 @@
               id="settings-btn"
               class="secondary icon-btn"
               type="button"
+              commandfor="settings-modal"
+              command="show-modal"
               title="Advanced settings"
               aria-label="Advanced settings"
             >
@@ -638,7 +640,7 @@ make chrome</code></pre>
       </div>
     </div>
 
-    <dialog id="settings-modal" class="modal">
+    <dialog id="settings-modal" class="modal" closedby="any">
       <div class="modal-content">
         <div class="modal-header">
           <div>
