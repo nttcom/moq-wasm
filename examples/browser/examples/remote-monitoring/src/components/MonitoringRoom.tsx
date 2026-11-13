@@ -50,6 +50,8 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   }
   const players = playersRef.current
 
+  useEffect(() => players.setStage(stageId), [players, stageId])
+
   const isConnected = connStatus === 'connected'
   const stagePlayer = stageId ? players.get(stageId) : undefined
   const stageState = stagePlayer?.state
