@@ -13,15 +13,30 @@ export class PictureStage {
   private readonly msePool = Array.from({ length: MSE_POOL_SIZE }, () => createPictureVideo({ muted: false }))
   private visible: HTMLElement = this.liveVideo
 
-  constructor(container: HTMLElement) {
+  constructor(
+    container: HTMLElement,
+    private readonly wantsPlaying: () => boolean
+  ) {
     this.liveVideo.hidden = false
+    this.liveVideo.addEventListener('pause', this.resumeLiveVideo)
     container.prepend(this.liveVideo, this.liveCanvas, this.reviewCanvas, ...this.msePool)
   }
 
   /// Takes the pictures out of the container.
   remove(): void {
+    this.liveVideo.removeEventListener('pause', this.resumeLiveVideo)
     for (const element of [this.liveVideo, this.liveCanvas, this.reviewCanvas, ...this.msePool]) {
       element.remove()
+    }
+  }
+
+  /// The browser pauses a media element the page detaches and reattaches in a
+  /// later task, and nothing restarts it: autoplay applies only on load, and a
+  /// rendition splice keeps the element and its stream. The video is muted, so
+  /// autoplay policy allows the play.
+  private readonly resumeLiveVideo = () => {
+    if (this.visible === this.liveVideo && this.wantsPlaying()) {
+      void this.liveVideo.play().catch(() => undefined)
     }
   }
 

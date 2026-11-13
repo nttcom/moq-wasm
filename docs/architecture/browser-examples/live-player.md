@@ -235,7 +235,7 @@ latency, arrival spread, bitrate, A/V offset, audio breaks, video drops, shed.
 | `addedTrack` | The subscription both share: a SUBSCRIBE with a joining FETCH, the publisher's PUBLISH_DONE, and an unsubscribe that is safe to repeat |
 | `pictureElements` | The hidden, autoplaying `<video>` / `<canvas>` a live picture is shown in, shared by `PictureStage` and the pages that create their own |
 | `cmafLive` | Live CMAF: the live `MseSink`, waiting for a group start after every (re)open |
-| `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool |
+| `pictureStage` | One picture on screen, handover to a picture once it has presented a frame, the MSE element pool, playing the live `<video>` again after a pause the player did not ask for (the browser pauses it when the page moves the container) |
 | `seekTimeline` | `GroupTimeline` + `MediaTimeline` + `AudioGroups`, the groups the media timeline lists as seek targets, the seek axis |
 | `audioGroups` | Where the audio groups start, whether they share the video group ids, which of them cover a window |
 | `reviewSession` | One instance per seek: FETCH windows, waiting for closed groups, following the live edge with TRACK_STATUS, eviction recovery, the end of a VOD broadcast; `isCurrent` replaces generation counters |
