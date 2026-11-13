@@ -36,7 +36,7 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
 
   return (
     <div className="flex flex-col gap-2.5 w-[200px]">
-      <p className="font-mono text-xs text-center text-zinc-500">カメラ（クリックでステージへ）</p>
+      <p className="font-mono text-xs text-center text-zinc-500">カメラ（クリックでメインへ）</p>
       {visible.map((id) => (
         <PreviewCamera key={id} cameraId={id} host={hostOf(id)} onStage={id === stageId} onClick={() => onSelect(id)} />
       ))}

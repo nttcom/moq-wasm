@@ -16,6 +16,15 @@ const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 
 export type CameraEvent = { kind: 'added' | 'removed'; camId: CameraId }
 
+/// The relay sends a lower Subscriber Priority first: on a downlink that cannot carry every
+/// camera, the stage's video goes before the others'. 128 is the SDK's default; audio stays at 0.
+const STAGE_VIDEO_PRIORITY = 64
+const PREVIEW_VIDEO_PRIORITY = 128
+
+/// Without a DELIVERY TIMEOUT the relay keeps every late group of the other cameras in the send
+/// buffer the session's streams share, and the stage's video waits behind them whatever its priority.
+const DELIVERY_TIMEOUT_MS = 2_000
+
 /// The cameras of a location are the broadcasts published under `[root, location]`, and a camera
 /// is the first source of its broadcast. Its view sits in a host element the page places on the
 /// stage or in the strip; the host moves with the camera, so the player never notices the layout.
@@ -24,6 +33,7 @@ export class CameraPlayers {
   private watch: BroadcastWatch | undefined
   private readonly views = new Map<CameraId, { view: SourceView; trackNamespace: string }>()
   private readonly hosts = new Map<CameraId, HTMLDivElement>()
+  private stageId: CameraId | undefined
 
   constructor(private readonly onStateChange: (camId: CameraId) => void) {}
 
@@ -55,6 +65,7 @@ export class CameraPlayers {
     }
     this.watch = await watchBroadcasts(this.session, prefix, {
       keepLiveWhileReviewing: true,
+      deliveryTimeoutMs: DELIVERY_TIMEOUT_MS,
       filter: (namespace) => namespace.length === prefix.length + 1,
       onLog: (level, message) => log(level, message),
       onAdd: (broadcast: RemoteBroadcast) => {
@@ -62,6 +73,7 @@ export class CameraPlayers {
         const show = (view: SourceView) => {
           this.views.set(camId, { view, trackNamespace: broadcast.namespace.join('/') })
           this.host(camId).replaceChildren(view.element)
+          this.prioritize(camId)
           view.listen({ onPlayerChange: () => this.onStateChange(camId) })
           log('watching', { camId })
           onEvent({ kind: 'added', camId })
@@ -101,6 +113,17 @@ export class CameraPlayers {
 
   get(camId: CameraId): LivePlayer | undefined {
     return this.views.get(camId)?.view.player
+  }
+
+  setStage(camId: CameraId | undefined): void {
+    this.stageId = camId
+    for (const id of this.views.keys()) {
+      this.prioritize(id)
+    }
+  }
+
+  private prioritize(camId: CameraId): void {
+    this.get(camId)?.setVideoPriority(camId === this.stageId ? STAGE_VIDEO_PRIORITY : PREVIEW_VIDEO_PRIORITY)
   }
 
   private samples(): TelemetryStatsSample[] {

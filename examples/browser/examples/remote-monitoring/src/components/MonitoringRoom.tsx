@@ -50,6 +50,8 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   }
   const players = playersRef.current
 
+  useEffect(() => players.setStage(stageId), [players, stageId])
+
   const isConnected = connStatus === 'connected'
   const stagePlayer = stageId ? players.get(stageId) : undefined
   const stageState = stagePlayer?.state
@@ -209,8 +211,8 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
       {/* hint */}
       {cameras.length > 0 && (
         <p className="text-xs text-zinc-500">
-          ← → でステージのカメラを切替。ステージをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
-          に戻る）。右のカメラをクリックでもステージに出せる。
+          ← → でメインのカメラを切替。メインをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
+          に戻る）。右のカメラをクリックでもメインに出せる。
         </p>
       )}
 
