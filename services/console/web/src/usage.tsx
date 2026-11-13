@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { api, describeError, type ConsoleApp, type Usage } from './api'
+import { api, describeError, formatBytes, type ConsoleApp, type Usage } from './api'
 import { PageHeading } from './pages'
 import { displayName } from './Sidebar'
 import { Badge, Card, ErrorText } from './ui'
@@ -16,18 +16,6 @@ const UP = 'var(--color-series-up)'
 const DOWN = 'var(--color-series-down)'
 /** Upper bounds of the session distribution's buckets, in bytes; the last bucket is open. */
 const SESSION_BUCKETS = [1e6, 1e7, 1e8, 1e9]
-
-function formatBytes(bytes: number): string {
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unit = 0
-  while (value >= 1000 && unit < units.length - 1) {
-    value /= 1000
-    unit += 1
-  }
-  const digits = value >= 100 || unit === 0 ? 0 : 1
-  return `${Number(value.toFixed(digits))} ${units[unit]}`
-}
 
 function formatTime(ms: number, spanMs: number): string {
   return new Date(ms).toLocaleString([], {

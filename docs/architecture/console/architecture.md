@@ -24,9 +24,10 @@ account.
 | `input.rs` | The request bodies and their rules: an app name is 1 to 64 characters after trimming, without control characters; a publish or subscribe path is `""` or `/`-separated non-empty elements, up to 255 characters; a token lives 1 second to 24 hours and names publish, subscribe or both. Unknown fields are refused. |
 | `apps.rs` | The operations on the caller's apps over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`; at most 20 apps per owner, because the VTS reads the whole registry on every verification), issue a token signed with the app's secret, rotate the secret (recording `rotatedAt`), delete. An operation on an `appId` the caller does not own answers `None`. |
 | `usage.rs` | `ObservabilityClient`: reads an app's traffic from the observability server's `GET /api/usage` (see `docs/architecture/observability/architecture.md`). It passes on `from`, `to` and `points` from the query and nothing else. |
+| `recordings.rs` | `RecorderClient`: reads an app's MP4 recordings from the recorder's `GET /apps/{appId}/recordings` and the signed URL of one file from `GET /recordings/{id}/file` (see `docs/architecture/recorder/architecture.md`). |
 | (`static-files` crate) | `StaticFiles`: the built pages under `CONSOLE_STATIC_DIR`; see `docs/architecture/static-files/architecture.md`. |
 | `main.rs` | Reads the configuration, loads the registry once to fail fast, binds `0.0.0.0:$PORT` and serves. |
-| `web/` | The pages: React and Tailwind built by Vite. `App.tsx` holds the apps, the chosen app, the page and the open dialog; `Sidebar.tsx` switches apps and pages; `pages.tsx` renders the pages of an app, the list of apps and the pages still to come; `usage.tsx` the app's traffic (Observability): totals, the up- and downlink rate over time, totals per relay, the distribution of sessions by bytes and the busiest Track Namespaces; `modals.tsx` shows a secret or a token once, a secret only until the employee confirms saving it. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
+| `web/` | The pages: React and Tailwind built by Vite. `App.tsx` holds the apps, the chosen app, the page and the open dialog; `Sidebar.tsx` switches apps and pages; `pages.tsx` renders the pages of an app, the list of apps and the pages still to come; `usage.tsx` the app's traffic (Observability): totals, the up- and downlink rate over time, totals per relay, the distribution of sessions by bytes and the busiest Track Namespaces; `recordings.tsx` the app's recordings with their files, each played in a `<video>` or opened from its signed URL; `modals.tsx` shows a secret or a token once, a secret only until the employee confirms saving it. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
 
 ## Request flow
 
@@ -60,6 +61,8 @@ sequenceDiagram
 | `POST /api/apps/{appId}/tokens` `{publish?, subscribe?, ttlSeconds}` | `200 {token, expiresAt}`; `404 no_app` |
 | `POST /api/apps/{appId}/secret` | `200 {app, secret}`; `404 no_app` |
 | `DELETE /api/apps/{appId}` | `204`; `404 no_app` |
+| `GET /api/apps/{appId}/recordings` | `200` the recorder's list of the app's MP4 recordings; `404 no_app`; `503 recorder_unavailable` without `CONSOLE_RECORDER_URL` or when the recorder fails |
+| `GET /api/apps/{appId}/recordings/{id}/file?name=` | `302` to the signed Cloud Storage URL of the file, valid for 15 minutes; `400 no_name`; `404 no_app`, or `no_file` when the app has no such recording or file; `503 recorder_unavailable` |
 | `GET /api/apps/{appId}/usage?from=&to=[&points=]` | `200` the observability server's `/api/usage` for the app; `400 invalid_range` when the server refuses the range, `from` or `to` missing included; `404 no_app`; `503 observability_unavailable` without `CONSOLE_OBSERVABILITY_URL` or when the server fails |
 
 Every route answers `401 unauthenticated` without a verified `sub`, `400` with
@@ -77,6 +80,7 @@ that origin's host matches `Host`.
 | `CONSOLE_REGISTRY_FILE` | Registry in a local file |
 | `CONSOLE_REGISTRY_BUCKET` / `CONSOLE_REGISTRY_OBJECT` | Registry in Cloud Storage (object defaults to `registry.json`) |
 | `CONSOLE_STATIC_DIR` | Directory of the built pages (`web/dist`); without it only the API is served |
+| `CONSOLE_RECORDER_URL` | Base URL of the recorder an app's recordings are read from; without it the recordings routes answer 503 |
 | `CONSOLE_OBSERVABILITY_URL` | Base URL of the observability server an app's usage is read from; without it the usage route answers 503 |
 | `CONSOLE_RELAY_URL` | Relay URL the pages show for connecting; `relayUrl` is `null` without it |
 | `PORT` | Listen port, default `8080` (Cloud Run sets it) |
@@ -96,9 +100,18 @@ after the VTS verifies it. The console therefore needs no credential of its
 own there, and an employee can read only the apps they own. Operators read
 every app, and the relays' own figures, in HyperDX instead.
 
+## Recordings
+
+An app's recordings are read the same way, with a token signed for the whole
+app sent to the recorder. A file does not pass through the console: its route
+asks the recorder for a URL that Cloud Storage signed for that one object and
+redirects the browser there, so a `<video>` plays it with range requests
+straight from the bucket. The page asks for the URL only when a file is played
+or opened, because the recorder signs each one with a call to IAM.
+
 ## Invariants
 
-- Only the answers to creating an app and rotating its secret carry the `secret`, so its owner can sign tokens on their own server; no other response, and no log line, carries a secret or a token. The token signed to read an app's usage goes only to the observability server.
+- Only the answers to creating an app and rotating its secret carry the `secret`, so its owner can sign tokens on their own server; no other response, and no log line, carries a secret or a token. The token signed to read an app's usage or recordings goes only to the observability server or the recorder.
 - A request names an `appId`, but an app is read or changed only when its
   `sub` is the verified caller's, so another employee's app answers
   `404 no_app`; the relay's app, which has no `sub`, is never touched.
@@ -111,7 +124,8 @@ every app, and the relays' own figures, in HyperDX instead.
 - Of the IAP claims the console stores only `sub`. `email` is returned to the
   caller by `/api/me` and never stored; the rest are discarded.
 - Every response carries a Content-Security-Policy that allows only
-  same-origin resources and no framing, and `X-Content-Type-Options: nosniff`.
+  same-origin resources, besides media from `storage.googleapis.com` for a
+  recording's signed URL, and no framing, and `X-Content-Type-Options: nosniff`.
   API answers are `no-store`; `index.html` is `no-cache`; files under
   `assets/`, whose names carry a content hash, are cached for a year.
 - A static path can name nothing outside `CONSOLE_STATIC_DIR` and nothing that

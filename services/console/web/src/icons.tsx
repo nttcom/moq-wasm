@@ -49,6 +49,12 @@ const paths = {
       <path d="M17 16.5h4" />
     </>
   ),
+  video: (
+    <>
+      <path d="m16 13 5.2 3.5a.5.5 0 0 0 .8-.4V7.9a.5.5 0 0 0-.8-.4L16 11" />
+      <rect width="14" height="12" x="2" y="6" rx="2" />
+    </>
+  ),
   grid: (
     <>
       <rect width="7" height="7" x="3" y="3" rx="1" />
