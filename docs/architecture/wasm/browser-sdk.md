@@ -957,7 +957,7 @@ export interface Session extends EventTarget {
   readonly closed: Promise<CloseInfo>
   subscribe(namespace: string[], track: string, options?: SubscribeOptions): Promise<Subscription>
   subscribeCurrentGroup(namespace: string[], track: string): Promise<Subscription>  // SUBSCRIBE + joining FETCH
-  subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number): Promise<Subscription>  // joining FETCH または NEW_GROUP_REQUEST
+  subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, options?: SubscribeGroupStartOptions): Promise<Subscription>  // joining FETCH または NEW_GROUP_REQUEST
   fetch(namespace: string[], track: string, range: FetchRange): Promise<AsyncIterable<MoqObject>>
   trackStatus(namespace: string[], track: string): Promise<TrackStatus>
   announce(namespace: string[]): Promise<Announcement>          // PUBLISH_NAMESPACE

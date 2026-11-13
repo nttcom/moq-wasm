@@ -918,20 +918,20 @@ impl Subscriber {
     /// none arrives within `NEW_GROUP_WAIT`, the current group is fetched
     /// after all. For any other track a Joining FETCH of the current group
     /// is sent, and the reader yields its objects before the live ones.
-    /// `delivery_timeout` is `SubscribeOption::delivery_timeout`.
+    /// `option`'s `filter_type`, `forward` and `new_group_request` are replaced
+    /// by Largest Object, Forward 1 and none.
     pub async fn subscribe_group_start(
         &mut self,
         track_namespace: String,
         track_name: String,
         new_group_after: u64,
-        subscriber_priority: u8,
-        delivery_timeout: Option<u64>,
+        option: SubscribeOption,
     ) -> Result<(Subscription, TrackReader), RequestFailure> {
         let option = SubscribeOption {
-            subscriber_priority,
             filter_type: FilterType::LargestObject,
-            delivery_timeout,
-            ..SubscribeOption::default()
+            forward: true,
+            new_group_request: None,
+            ..option
         };
         let (subscription, _) = self
             .subscribe_joining(track_namespace, track_name, option, false)
@@ -2665,8 +2665,10 @@ mod tests {
                     "ns".to_string(),
                     TRACK.to_string(),
                     NEW_GROUP_AFTER,
-                    SUBSCRIBER_PRIORITY,
-                    None,
+                    SubscribeOption {
+                        subscriber_priority: SUBSCRIBER_PRIORITY,
+                        ..SubscribeOption::default()
+                    },
                 )
                 .await
         });
@@ -2732,8 +2734,10 @@ mod tests {
                     "ns".to_string(),
                     TRACK.to_string(),
                     NEW_GROUP_AFTER,
-                    SUBSCRIBER_PRIORITY,
-                    Some(2_000),
+                    SubscribeOption {
+                        delivery_timeout: Some(2_000),
+                        ..SubscribeOption::default()
+                    },
                 )
                 .await
         });
@@ -2890,8 +2894,10 @@ mod tests {
                     "ns".to_string(),
                     TRACK.to_string(),
                     NEW_GROUP_AFTER,
-                    SUBSCRIBER_PRIORITY,
-                    None,
+                    SubscribeOption {
+                        subscriber_priority: SUBSCRIBER_PRIORITY,
+                        ..SubscribeOption::default()
+                    },
                 )
                 .await
         });

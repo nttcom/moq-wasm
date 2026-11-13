@@ -133,7 +133,7 @@ export class MoqSession {
     // (undocumented)
     subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription>;
     // (undocumented)
-    subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, priority?: number, deliveryTimeoutMs?: number): Promise<MoqSubscription>;
+    subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, options?: MoqSubscribeGroupStartOptions): Promise<MoqSubscription>;
     // (undocumented)
     trackStatus(namespace: string[], track: string): Promise<MoqLocation | undefined>;
     // (undocumented)
@@ -141,6 +141,9 @@ export class MoqSession {
     // (undocumented)
     watchNamespaces(prefix: string[]): Promise<MoqNamespaceWatch>;
 }
+
+// @public (undocumented)
+export type MoqSubscribeGroupStartOptions = Omit<MoqSubscribeOptions, 'filter' | 'forward'>;
 
 // @public (undocumented)
 export type MoqSubscribeOptions = {

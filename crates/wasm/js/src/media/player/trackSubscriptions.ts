@@ -103,7 +103,10 @@ export class TrackSubscriptions {
     const joining = groupStart && !this.forwardPaused
     const priority = this.priorityOf(kind)
     const handle = joining
-      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, priority, this.deliveryTimeoutMs)
+      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, {
+          priority,
+          deliveryTimeoutMs: this.deliveryTimeoutMs
+        })
       : await session.subscribe(namespace, wireName, {
           forward: !this.forwardPaused,
           priority,
