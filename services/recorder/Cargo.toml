@@ -13,6 +13,7 @@ http-body-util = "0.1.4"
 http-server = { path = "../../crates/http-server" }
 hyper = { version = "1.10.1", features = ["http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
+metadata-token = { path = "../../crates/metadata-token" }
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
 msf = { path = "../../crates/msf" }

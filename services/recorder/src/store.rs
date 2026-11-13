@@ -6,14 +6,14 @@ use serde_json::Value;
 use url::Url;
 
 use crate::{
+    cloud_storage::CloudStorageBucket,
     manifest::MANIFEST_NAME,
     room_state::{CompositeState, RoomRecord},
 };
 
 /// The store a recording service keeps its recordings in, and the objects
-/// through which the API and the jobs share their state. Every object is
-/// written by one side at a time, so a plain overwrite never races and no
-/// store needs compare-and-swap:
+/// through which the API and the jobs share their state. Every object but a
+/// lock is written by one side at a time, so a plain overwrite never races:
 ///
 /// - `state/<id>.json`: the `RoomRecord`, written by the API once and then by
 ///   the recording job.
@@ -34,6 +34,7 @@ use crate::{
 pub(crate) struct RecordingStore {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
+    cloud_storage: Option<Arc<CloudStorageBucket>>,
 }
 
 impl RecordingStore {
@@ -42,9 +43,14 @@ impl RecordingStore {
     pub(crate) fn open(url: &Url) -> Result<Self> {
         let (store, prefix) = object_store::parse_url_opts(url, std::env::vars())
             .with_context(|| format!("cannot use {url} as the recording store"))?;
+        let cloud_storage = match (url.scheme(), url.host_str()) {
+            ("gs", Some(bucket)) => Some(Arc::new(CloudStorageBucket::new(bucket)?)),
+            _ => None,
+        };
         Ok(Self {
             store: Arc::from(store),
             prefix,
+            cloud_storage,
         })
     }
 
@@ -172,13 +178,26 @@ impl RecordingStore {
         Ok(self.get(&self.state_key(id, "stop")).await?.is_some())
     }
 
-    /// Deletes the room's lock if `id` holds it.
+    /// Deletes the room's lock if `id` holds it. In Cloud Storage a lock
+    /// another request took after it was read stays.
     pub(crate) async fn unlock_room(&self, namespace_prefix: &str, id: &str) -> Result<()> {
         let key = self.lock_key(namespace_prefix);
-        if self.get(&key).await?.as_deref() == Some(id.as_bytes()) {
-            delete_if_present(&self.store, &key).await?;
+        let lock = match self.store.get(&key).await {
+            Ok(lock) => lock,
+            Err(object_store::Error::NotFound { .. }) => return Ok(()),
+            Err(error) => return Err(error).with_context(|| format!("cannot read {key}")),
+        };
+        let generation = lock.meta.version.clone();
+        if lock.bytes().await? != id.as_bytes() {
+            return Ok(());
         }
-        Ok(())
+        let (Some(bucket), Some(generation)) = (&self.cloud_storage, generation) else {
+            return delete_if_present(&self.store, &key).await;
+        };
+        bucket
+            .delete_if_generation_matches(key.as_ref(), &generation)
+            .await
+            .with_context(|| format!("cannot delete {key}"))
     }
 
     async fn put_json(&self, key: &Path, value: &Value) -> Result<()> {
@@ -285,6 +304,7 @@ mod tests {
         let store = RecordingStore {
             store: Arc::new(LocalFileSystem::new_with_prefix(&dir).unwrap()),
             prefix: Path::default(),
+            cloud_storage: None,
         };
         let key = store.lock_key("anon/research");
         store.store.put(&key, "newer".into()).await.unwrap();

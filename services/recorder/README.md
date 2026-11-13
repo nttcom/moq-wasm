@@ -144,7 +144,7 @@ LIVE_VIEWER_E2E_TRANSCODE=0 node tests/browser-e2e/run-live-viewer-e2e.mjs tests
 | `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint for private rooms |
 | `--token-mint-url` (`TOKEN_MINT_URL`) | — | Token mint renewing temporary apps' tokens; without it their rooms are refused |
 | `--max-recordings` | `4` | Rooms recorded at once |
-| `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state |
+| `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state; a `gs://` store needs the metadata server of Google Cloud to release a room |
 | `--output-dir` | `recordings` | Where a recording job writes its files until they are uploaded, and a composite job downloads them |
 | `--composite` | off | Accept `composite: true` |
 | `--launcher` | `local` | `local` runs the jobs as child processes; `cloud-run` starts executions of `--record-job` and `--composite-job` (`RECORDER_RECORD_JOB`, `RECORDER_COMPOSITE_JOB`, as `projects/<p>/locations/<r>/jobs/<j>`) with the service account of the instance |

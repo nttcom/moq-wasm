@@ -5,6 +5,7 @@ mod archive_chunks;
 mod archive_reader;
 mod archive_receiver;
 mod catalog_reader;
+mod cloud_storage;
 mod composite;
 mod composite_job;
 mod file_writer;
