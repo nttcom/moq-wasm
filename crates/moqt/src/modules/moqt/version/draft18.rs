@@ -186,6 +186,8 @@ pub(crate) struct ControlChannel {
     control: StreamSender,
     /// The Request ID of this side's next request (§10.1).
     next_request_id: tokio::sync::Mutex<RequestId>,
+    /// The Request ID after the last one this side wrote.
+    written_request_id_end: AtomicU64,
     synthetic_request_id: AtomicU64,
     /// The parity of the peer's Request IDs (§10.1).
     peer_parity: u64,
@@ -235,6 +237,7 @@ impl ControlChannel {
             control,
             peer_reads_trace_context,
             next_request_id: tokio::sync::Mutex::new(first_request_id),
+            written_request_id_end: AtomicU64::new(first_request_id),
             synthetic_request_id: AtomicU64::new(FIRST_SYNTHETIC_REQUEST_ID),
             peer_parity: 1 - first_request_id,
             requests: std::sync::Mutex::new(Requests::default()),
@@ -283,6 +286,19 @@ impl ControlChannel {
             self.next_request_id.lock().await,
             |next| next,
         ))
+    }
+
+    /// Call once the request of `reservation` is written.
+    fn consume(&self, reservation: RequestIdReservation<'_>) {
+        let RequestIdReservation(mut next_request_id) = reservation;
+        *next_request_id += 2;
+        self.written_request_id_end
+            .store(*next_request_id, Ordering::Relaxed);
+    }
+
+    pub(super) fn wrote_request_id(&self, request_id: RequestId) -> bool {
+        let end = self.written_request_id_end.load(Ordering::Relaxed);
+        request_id % 2 == end % 2 && request_id < end
     }
 
     /// The Request ID after the largest one the peer has used, for GOAWAY.
@@ -753,8 +769,7 @@ impl ControlChannel {
         let sender = Arc::new(StreamSender::new(send_stream));
         debug_assert_eq!(request_id, reservation.request_id());
         sender.send(&message).await?;
-        let RequestIdReservation(mut next_request_id) = reservation;
-        *next_request_id += 2;
+        self.consume(reservation);
         let stream = RequestStream::new(kind, sender);
         self.requests().outgoing.insert(request_id, stream.clone());
         let (response_sender, receiver) = tokio::sync::oneshot::channel();
@@ -820,8 +835,7 @@ impl ControlChannel {
             return Err(TransportSendError::ClosedStream);
         };
         stream.sender.send(&message).await?;
-        let RequestIdReservation(mut next_request_id) = reservation;
-        *next_request_id += 2;
+        self.consume(reservation);
         Ok(())
     }
 

@@ -365,6 +365,10 @@ pub(crate) struct FetchReader {
 }
 
 impl FetchReader {
+    pub(crate) fn stop(&mut self, error_code: u64) {
+        self.stream.stop(error_code);
+    }
+
     pub(crate) async fn next_object(&mut self) -> Result<Option<Object>, StreamReceiveError> {
         match self.stream.receive().await? {
             Some(UniStreamData::Fetch(FetchFrame::Object(field))) => Ok(Some(field.into_object())),

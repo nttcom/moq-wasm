@@ -4,6 +4,7 @@ use crate::{
     Subscriber,
     fetch::FetchOption,
     modules::moqt::{
+        control_plane::error_codes::DataStreamResetCode,
         data_plane::{
             immutable_properties,
             object::canonical_object::Object,
@@ -143,6 +144,14 @@ impl FetchDataReceiver {
 
     pub(crate) fn set_group_order(&mut self, group_order: GroupOrder) {
         self.reader.set_group_order(group_order);
+    }
+
+    /// Stops the stream with STOP_SENDING (CANCELLED) instead of leaving it
+    /// to `Drop`, which does not stop a browser transport's stream.
+    pub(crate) fn stop(&mut self) {
+        let version = self.reader.version();
+        self.reader
+            .stop(version.data_stream_reset_code(DataStreamResetCode::Cancelled));
     }
 
     /// Whether the objects carry their forwarding preference: draft-18 marks

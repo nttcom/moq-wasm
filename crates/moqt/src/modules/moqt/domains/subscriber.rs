@@ -1303,10 +1303,10 @@ mod tests {
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, capture_telemetry,
                 connected_sessions, data_receiver, first_subgroup_stream, location, next_subgroup,
                 notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                receive_disconnected, send_subgroup_object, send_without_waiting,
-                spawn_connected_draft18_sessions, spawn_connected_native_sessions,
-                spawn_connected_native_sessions_following_go_away, subscribe_namespace_accepted,
-                subscribed_track, wait_for_control_delivery, within,
+                receive_disconnected, send_subgroup_object, send_until_stopped,
+                send_without_waiting, spawn_connected_draft18_sessions,
+                spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
+                subscribe_namespace_accepted, subscribed_track, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -1470,15 +1470,6 @@ mod tests {
             panic!("expected FETCH_CANCEL from the client");
         };
         cancel
-    }
-
-    async fn send_until_stopped(sender: &FetchDataSender) -> anyhow::Error {
-        loop {
-            if let Err(error) = sender.send_object(&fetch_object(START, b"unwanted")).await {
-                return error;
-            }
-            tokio::task::yield_now().await;
-        }
     }
 
     fn holds_ledger(client: &Session) -> bool {

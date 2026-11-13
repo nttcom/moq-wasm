@@ -813,7 +813,10 @@ transport connection:
   every stream it hands out; see buffering invariant below.
 - `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
   sender when the FETCH stream arrives, since a FETCH is answered on a single
-  stream (draft-14 §9.16.3).
+  stream (draft-14 §9.16.3). A stream that finds no sender is stopped with
+  STOP_SENDING (CANCELLED). This is expected when this side cancelled the
+  FETCH before the stream arrived; only a stream for a request id this side
+  never wrote is an error.
 
 `SessionContext` holds the rest of the cross-task state, the current
 `Connection` and, during a migration, the previous one; `connection()` is the
