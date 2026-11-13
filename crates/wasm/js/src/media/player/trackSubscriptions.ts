@@ -49,8 +49,15 @@ export class TrackSubscriptions {
     private readonly context: TrackContext,
     /// `leading` when no video is subscribed after the PUBLISH_DONE: the
     /// video's, or the audio's of a broadcast played without video.
-    private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void
-  ) {}
+    private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void,
+    private readonly deliveryTimeoutMs?: number
+  ) {
+    // The wasm binding takes a u32 and would wrap or truncate any other number.
+    const timeout = deliveryTimeoutMs
+    if (timeout !== undefined && (!Number.isInteger(timeout) || timeout < 1 || timeout > 0xffff_ffff)) {
+      throw new RangeError(`delivery timeout ${timeout} is not an integer from 1 to 4294967295`)
+    }
+  }
 
   get(kind: MediaKind): TrackSubscription | undefined {
     return this.subscriptions.get(kind)
@@ -94,8 +101,12 @@ export class TrackSubscriptions {
     const joining = groupStart && !this.forwardPaused
     const priority = this.priorityOf(kind)
     const handle = joining
-      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, priority)
-      : await session.subscribe(namespace, wireName, { forward: !this.forwardPaused, priority })
+      ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, priority, this.deliveryTimeoutMs)
+      : await session.subscribe(namespace, wireName, {
+          forward: !this.forwardPaused,
+          priority,
+          deliveryTimeoutMs: this.deliveryTimeoutMs
+        })
     const subscription: TrackSubscription = {
       id: streamId(),
       handle,

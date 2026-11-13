@@ -69,6 +69,8 @@ export type RemoteBroadcastOptions = {
   audioContext?: AudioContext
   /// As `LivePlayerOptions.keepLiveWhileReviewing`, for every view's player.
   keepLiveWhileReviewing?: boolean
+  /// As `LivePlayerOptions.deliveryTimeoutMs`, for every view's player.
+  deliveryTimeoutMs?: number
 }
 
 /// A broadcast someone else publishes, played source by source: it
@@ -205,6 +207,7 @@ class View implements SourceView {
       source: liveSource(source),
       audioContext: options.audioContext,
       keepLiveWhileReviewing: options.keepLiveWhileReviewing,
+      deliveryTimeoutMs: options.deliveryTimeoutMs,
       callbacks: {
         onStateChange: () => {
           for (const listener of this.listeners) {

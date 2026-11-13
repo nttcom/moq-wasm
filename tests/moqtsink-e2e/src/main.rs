@@ -92,6 +92,7 @@ async fn subscribe(subscriber: &mut Subscriber, track: &str) -> Result<Subscript
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await

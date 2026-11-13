@@ -133,7 +133,7 @@ export class MoqSession {
     // (undocumented)
     subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription>;
     // (undocumented)
-    subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, priority?: number): Promise<MoqSubscription>;
+    subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, priority?: number, deliveryTimeoutMs?: number): Promise<MoqSubscription>;
     // (undocumented)
     trackStatus(namespace: string[], track: string): Promise<MoqLocation | undefined>;
     // (undocumented)
@@ -147,6 +147,7 @@ export type MoqSubscribeOptions = {
     filter?: 'largestObject' | 'nextGroupStart';
     forward?: boolean;
     priority?: number;
+    deliveryTimeoutMs?: number;
 };
 
 // @public (undocumented)

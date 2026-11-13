@@ -66,6 +66,11 @@ pub struct SubscribeOption {
     /// plus 1, or 0 when it knows none. A track without dynamic groups
     /// ignores it. Draft-14 has no such parameter and sends none.
     pub new_group_request: Option<u64>,
+    /// DELIVERY TIMEOUT in milliseconds (draft-14 §9.2.1.2, draft-18 §10.2.4
+    /// OBJECT_DELIVERY_TIMEOUT): how long after receiving an object the
+    /// publisher keeps trying to deliver it. `None` sends no parameter, and
+    /// every object is delivered.
+    pub delivery_timeout: Option<u64>,
 }
 
 impl Default for SubscribeOption {
@@ -76,6 +81,7 @@ impl Default for SubscribeOption {
             forward: true,
             filter_type: FilterType::LargestObject,
             new_group_request: None,
+            delivery_timeout: None,
         }
     }
 }

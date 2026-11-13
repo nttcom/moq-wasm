@@ -78,6 +78,14 @@ export type LivePlayerOptions = {
   /// waiting for the next group; it costs the live bandwidth and decoding
   /// while reviewing.
   keepLiveWhileReviewing?: boolean
+  /// The DELIVERY TIMEOUT of the SUBSCRIBEs of the selected video and audio
+  /// track (`MoqSubscribeOptions.deliveryTimeoutMs`), an integer from 1 to
+  /// 4294967295: on a link that cannot carry the tracks, the relay stops
+  /// sending a group once one of its objects is this many milliseconds old,
+  /// instead of sending it late. Tracks added with `addAudioTrack` are not
+  /// covered. Without it every object is delivered. The constructor throws a
+  /// `RangeError` for any other value.
+  deliveryTimeoutMs?: number
   /// Plays only this source of the catalog; without it, every video and audio
   /// track is a choice.
   source?: LiveSource
@@ -217,8 +225,10 @@ export class LivePlayer {
       }
     }
     this.textTracks = new TextTracks(this.context)
-    this.subscriptions = new TrackSubscriptions(this.context, (kind, done, leading) =>
-      this.publisherEnded(kind, done, leading)
+    this.subscriptions = new TrackSubscriptions(
+      this.context,
+      (kind, done, leading) => this.publisherEnded(kind, done, leading),
+      options.deliveryTimeoutMs
     )
     this.videoSwitcher = new VideoSwitcher({
       subscriptions: this.subscriptions,

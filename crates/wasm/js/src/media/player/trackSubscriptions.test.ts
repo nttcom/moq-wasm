@@ -14,6 +14,33 @@ function recordingHandler(): { handler: ObjectHandler; received: [bigint, bigint
   }
 }
 
+test('the delivery timeout is sent with a subscription from a group start and with a plain one', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {}, 2_000)
+  const { handler } = recordingHandler()
+
+  // Act
+  await subscriptions.subscribe('video', 'video', VIDEO, handler, true)
+  await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, handler, false)
+
+  // Assert
+  expect(session.calls).toEqual([
+    { method: 'subscribeGroupStart', track: 'video', newGroupAfter: 60, priority: 128, deliveryTimeoutMs: 2_000 },
+    { method: 'subscribe', track: 'audio', options: { forward: true, priority: 0, deliveryTimeoutMs: 2_000 } }
+  ])
+})
+
+test('a delivery timeout that is not a whole number of milliseconds from 1 up is refused', () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+
+  // Act / Assert
+  for (const timeout of [0, -1, 1500.5, Number.NaN, 2 ** 32]) {
+    expect(() => new TrackSubscriptions(session.context(), () => {}, timeout)).toThrow(RangeError)
+  }
+})
+
 test('a subscription from a group start marks the objects up to the largest one as cached', async () => {
   // Arrange
   const session = new FakeSession({ groupId: 3n, objectId: 1n }, [

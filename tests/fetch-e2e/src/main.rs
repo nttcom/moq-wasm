@@ -301,6 +301,7 @@ async fn carol(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -382,6 +383,7 @@ async fn bob(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -623,6 +625,7 @@ async fn run_cross_relay_standalone_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -709,6 +712,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -731,6 +735,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -788,6 +793,7 @@ async fn run_cross_relay_leading_gap_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -807,6 +813,7 @@ async fn run_cross_relay_leading_gap_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -950,6 +957,7 @@ async fn run_upstream_fetch_forwarding_data_not_found(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -998,6 +1006,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -1020,6 +1029,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -1052,6 +1062,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -1149,6 +1160,7 @@ async fn run_cross_relay_live_joining_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;
@@ -1169,6 +1181,7 @@ async fn run_cross_relay_live_joining_fetch(
                 forward: true,
                 filter_type: FilterType::LargestObject,
                 new_group_request: None,
+                delivery_timeout: None,
             },
         )
         .await?;

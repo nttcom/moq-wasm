@@ -175,6 +175,7 @@ impl ControlMessageForwarder {
             forward: true,
             filter_type: FilterType::LargestObject,
             new_group_request,
+            delivery_timeout: None,
         };
         tracing::debug!("forwarding SUBSCRIBE");
         subscriber

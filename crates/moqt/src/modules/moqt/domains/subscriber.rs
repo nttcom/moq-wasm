@@ -918,16 +918,19 @@ impl Subscriber {
     /// none arrives within `NEW_GROUP_WAIT`, the current group is fetched
     /// after all. For any other track a Joining FETCH of the current group
     /// is sent, and the reader yields its objects before the live ones.
+    /// `delivery_timeout` is `SubscribeOption::delivery_timeout`.
     pub async fn subscribe_group_start(
         &mut self,
         track_namespace: String,
         track_name: String,
         new_group_after: u64,
         subscriber_priority: u8,
+        delivery_timeout: Option<u64>,
     ) -> Result<(Subscription, TrackReader), RequestFailure> {
         let option = SubscribeOption {
             subscriber_priority,
             filter_type: FilterType::LargestObject,
+            delivery_timeout,
             ..SubscribeOption::default()
         };
         let (subscription, _) = self
@@ -1229,7 +1232,7 @@ async fn send_subscribe_request(
         forward: option.forward,
         filter_type: option.filter_type,
         authorization_tokens: vec![],
-        delivery_timeout: None,
+        delivery_timeout: option.delivery_timeout,
         new_group_request: option.new_group_request,
         trace_context: current_trace_context(&connection.control),
     };
@@ -2663,6 +2666,7 @@ mod tests {
                     TRACK.to_string(),
                     NEW_GROUP_AFTER,
                     SUBSCRIBER_PRIORITY,
+                    None,
                 )
                 .await
         });
@@ -2686,6 +2690,60 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(100), server.receive_event())
             .await
             .is_err()
+    }
+
+    #[tokio::test]
+    async fn subscribe_sends_its_delivery_timeout() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-delivery-timeout", "moqt").await;
+        let mut subscriber = client.subscriber();
+        let option = SubscribeOption {
+            delivery_timeout: Some(2_000),
+            ..SubscribeOption::default()
+        };
+
+        // Act
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe("ns".to_string(), TRACK.to_string(), option)
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Assert
+        assert_eq!(handler.delivery_timeout, Some(2_000));
+        request.abort();
+    }
+
+    #[tokio::test]
+    async fn subscribe_group_start_sends_its_delivery_timeout() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-group-start-timeout", "moqt").await;
+        let mut subscriber = client.subscriber();
+
+        // Act
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_group_start(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    NEW_GROUP_AFTER,
+                    SUBSCRIBER_PRIORITY,
+                    Some(2_000),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Assert
+        assert_eq!(handler.delivery_timeout, Some(2_000));
+        request.abort();
     }
 
     #[tokio::test]
@@ -2833,6 +2891,7 @@ mod tests {
                     TRACK.to_string(),
                     NEW_GROUP_AFTER,
                     SUBSCRIBER_PRIORITY,
+                    None,
                 )
                 .await
         });
