@@ -191,6 +191,9 @@ class Broadcast implements LocalBroadcast {
     // The catalog lists a track only at its first frame; a subscriber that
     // knows the track's name may subscribe before that.
     await this.broadcast.declareTracks([name, audioName])
+    if (this.closed) {
+      throw new Error('the broadcast is closed')
+    }
     const encoding = publishSource(
       (onKeyframeRequest, onDemandChange) =>
         this.broadcast.addSource(
