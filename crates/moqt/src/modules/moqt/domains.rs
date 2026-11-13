@@ -21,6 +21,7 @@ pub(crate) mod send_targets;
 pub(crate) mod session;
 pub(crate) mod session_context;
 pub(crate) mod session_creator;
+pub(crate) mod session_events;
 pub(crate) mod subscriber;
 pub(crate) mod subscription;
 pub(crate) mod track_reader;

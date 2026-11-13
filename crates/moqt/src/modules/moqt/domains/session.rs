@@ -11,6 +11,7 @@ use crate::modules::moqt::control_plane::control_messages::messages::go_away::Go
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
 use crate::modules::moqt::domains::session_creator::WaitIdle;
+use crate::modules::moqt::domains::session_events::SessionEventReceiver;
 use crate::modules::moqt::runtime::tasks::connection_tasks::ConnectionTasks;
 use crate::modules::moqt::version::{ControlReceiver, Notification};
 use crate::modules::transport::{
@@ -28,7 +29,7 @@ use migration_task::MigrationTask;
 pub struct Session {
     inner: Arc<SessionContext>,
     session_span: Span,
-    event_receiver: tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<SessionEvent>>,
+    event_receiver: tokio::sync::Mutex<SessionEventReceiver>,
     _driver: Driver,
     /// Set by the migration task once no connection replaced a closed one;
     /// `None` for a session that does not follow GOAWAY.
@@ -52,7 +53,7 @@ impl Session {
     pub(crate) fn new(
         control_receiver: ControlReceiver,
         inner: SessionContext,
-        event_receiver: tokio::sync::mpsc::UnboundedReceiver<SessionEvent>,
+        event_receiver: SessionEventReceiver,
         follow: Option<Follow>,
         endpoint: Option<Arc<dyn WaitIdle>>,
         parent_span: Span,

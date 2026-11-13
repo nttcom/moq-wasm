@@ -109,6 +109,7 @@ impl ControlMessageReceiveTask {
                             }
                             match Self::resolve_message(&session, &connection, received_message) {
                                 DepacketizeResult::SessionEvent(event) => {
+                                    session.room_for_event(&connection).await;
                                     if let SessionEvent::PublishDone(handler) = &event {
                                         let _ = publish_done_sender.send(handler.clone());
                                     }

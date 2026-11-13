@@ -1191,14 +1191,17 @@ mod tests {
                     },
                     enums::ResponseMessage,
                 },
-                domains::connection::IncomingObjectNotification,
+                domains::{
+                    connection::IncomingObjectNotification, session_events::MAX_UNREAD_EVENTS,
+                },
             },
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
                 datagram_object, mandatory_track_properties, next_datagram, next_subgroup,
                 notify_datagram, published_track_between, read_fetch_objects,
-                spawn_connected_draft18_sessions, subscribed_track_reader, use_up_bidi_streams,
+                spawn_connected_draft18_sessions, subscribed_track_reader,
+                unread_events_at_the_limit, use_up_bidi_streams, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -4287,5 +4290,96 @@ mod tests {
             .await
             .expect("PUBLISH_NAMESPACE_OK should resolve the request")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_streams_wait_for_the_application_to_read_its_events() {
+        // Arrange: nothing reads the server's events. The first requests are
+        // cancelled unanswered, which gives the client back their streams, so
+        // the stream limit does not hold back the next ones.
+        const REQUESTS_PER_ROUND: usize = MAX_UNREAD_EVENTS * 2 / 3;
+        let (client, server) =
+            spawn_connected_draft18_sessions("unread-events-draft18", "moqt").await;
+        let events = &server.publisher().session.event_sender;
+        let request_track_status = || -> Vec<_> {
+            (0..REQUESTS_PER_ROUND)
+                .map(|_| {
+                    let subscriber = client.subscriber();
+                    tokio::spawn(async move {
+                        subscriber
+                            .track_status("ns".into(), "track".into(), vec![])
+                            .await
+                    })
+                })
+                .collect()
+        };
+        let cancelled = request_track_status();
+        within(async {
+            while events.unread() < REQUESTS_PER_ROUND {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        for request in cancelled {
+            request.abort();
+            let _ = request.await;
+        }
+
+        // Act
+        let _pending = request_track_status();
+        let unread = unread_events_at_the_limit(&server).await;
+        let mut read = 0;
+        within(async {
+            while read < 2 * REQUESTS_PER_ROUND {
+                if let SessionEvent::TrackStatus(_) = server.receive_event().await.unwrap() {
+                    read += 1;
+                }
+            }
+        })
+        .await;
+
+        // Assert: the rest arrives once the application reads
+        assert_eq!((unread, read), (MAX_UNREAD_EVENTS, 2 * REQUESTS_PER_ROUND));
+    }
+
+    #[tokio::test]
+    async fn messages_on_one_request_stream_wait_for_the_application_to_read_its_events() {
+        // Arrange: nothing reads the client's events
+        const NAMESPACES: usize = 2 * MAX_UNREAD_EVENTS;
+        let (client, server) =
+            spawn_connected_draft18_sessions("unread-events-one-stream", "moqt").await;
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_namespace("live".into(), NamespaceInterest::Namespaces)
+                .await
+        });
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
+            panic!("expected SUBSCRIBE_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        request.await.unwrap().unwrap();
+        let publisher = server.publisher();
+
+        // Act: every NAMESPACE arrives on the SUBSCRIBE_NAMESPACE stream
+        for index in 0..NAMESPACES {
+            publisher
+                .publish_namespace(format!("live/{index}"))
+                .await
+                .unwrap();
+        }
+        let unread = unread_events_at_the_limit(&client).await;
+        let mut read = 0;
+        within(async {
+            while read < NAMESPACES {
+                if let SessionEvent::PublishNamespace(_) = client.receive_event().await.unwrap() {
+                    read += 1;
+                }
+            }
+        })
+        .await;
+
+        // Assert: the rest arrives once the application reads
+        assert_eq!((unread, read), (MAX_UNREAD_EVENTS, NAMESPACES));
     }
 }

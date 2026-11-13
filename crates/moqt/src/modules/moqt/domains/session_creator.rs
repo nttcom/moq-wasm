@@ -3,11 +3,13 @@ use std::{pin::pin, sync::Arc};
 use anyhow::Context;
 use tracing::{Instrument, Span};
 
+use crate::TerminationErrorCode;
 use crate::modules::executor::{self, BoxFuture, MaybeSend, MaybeSync};
 use crate::modules::moqt::domains::connection::Connection;
 use crate::modules::moqt::domains::endpoint::AuthorizationTokenSource;
 use crate::modules::moqt::domains::session::{Follow, Session};
 use crate::modules::moqt::domains::session_context::SessionContext;
+use crate::modules::moqt::domains::session_events::{self, SessionEventSender};
 use crate::modules::moqt::protocol::TransportProtocol;
 use crate::modules::moqt::version::{self, ControlReceiver, Version};
 use crate::modules::transport::accept_error::AcceptError;
@@ -15,7 +17,6 @@ use crate::modules::transport::connect_target::ConnectTarget;
 use crate::modules::transport::transport_connection::BoxedConnection;
 use crate::modules::transport::transport_connection::TransportClose;
 use crate::modules::transport::transport_connection_creator::TransportConnectionCreator;
-use crate::{SessionEvent, TerminationErrorCode};
 use std::time::Duration;
 
 use crate::{Connecting, server::Accepting, server::Handshake};
@@ -68,7 +69,7 @@ pub(crate) trait Reconnect: MaybeSend + MaybeSync {
         &self,
         url: String,
         generation: u64,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>>;
 }
 
@@ -96,7 +97,7 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
         &self,
         url: String,
         generation: u64,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>> {
         let creator = self.clone();
         Box::pin(async move {
@@ -143,10 +144,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
         let creator = self.clone();
         let url = url.to_string();
         let handshake = async move {
-            let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
+            let (event_sender, event_receiver) = session_events::channel();
             let (connection_event_sender, follow) = if creator.follow_go_away {
-                let (connection_event_sender, connection_events) =
-                    tokio::sync::mpsc::unbounded_channel();
+                let (connection_event_sender, connection_events) = session_events::channel();
                 let follow = Follow {
                     reconnect: Arc::new(creator.clone()),
                     url,
@@ -215,7 +215,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         transport_conn: BoxedConnection,
         target: &ConnectTarget,
         generation: u64,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
     ) -> anyhow::Result<(Connection, ControlReceiver)> {
         let set_up = self
             .set_up(transport_conn, target, generation, event_sender)
@@ -322,7 +322,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
         transport_conn: BoxedConnection,
         target: &ConnectTarget,
         generation: u64,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
     ) -> anyhow::Result<(Connection, ControlReceiver)> {
         let token = match &self.authorization_token {
             Some(source) => Some(

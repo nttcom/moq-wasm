@@ -5,7 +5,7 @@ use tracing::{Instrument, Span};
 use crate::{
     SessionEvent,
     modules::executor::{self, JoinHandle},
-    modules::moqt::domains::connection::Connection,
+    modules::moqt::domains::{connection::Connection, session_events::SessionEventSender},
 };
 
 pub(crate) struct DisconnectWatchTask;
@@ -13,7 +13,7 @@ pub(crate) struct DisconnectWatchTask;
 impl DisconnectWatchTask {
     pub(crate) fn run(
         connection: Arc<Connection>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
         session_span: Span,
     ) -> JoinHandle {
         executor::spawn(

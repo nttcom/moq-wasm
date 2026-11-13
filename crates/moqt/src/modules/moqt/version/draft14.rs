@@ -807,11 +807,15 @@ mod tests {
                     },
                     enums::ResponseMessage,
                 },
-                domains::connection::{Connection, IncomingObjectNotification},
+                domains::{
+                    connection::{Connection, IncomingObjectNotification},
+                    session_events::MAX_UNREAD_EVENTS,
+                },
             },
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, notify_datagram,
                 register_and_take_data_receiver, spawn_connected_native_sessions,
+                spawn_connected_native_sessions_following_go_away, unread_events_at_the_limit,
                 use_up_bidi_streams, within,
             },
         },
@@ -1442,5 +1446,64 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(reservation.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn control_messages_wait_for_the_application_to_read_its_events() {
+        // Arrange: nothing reads the server's events
+        const MESSAGES: usize = 2 * MAX_UNREAD_EVENTS;
+        let (client, server) = spawn_connected_native_sessions("unread-events-draft14").await;
+        let publisher = client.publisher();
+
+        // Act: PUBLISH_NAMESPACE_DONE takes no Request ID, so the Maximum
+        // Request ID does not limit it
+        for _ in 0..MESSAGES {
+            publisher.publish_namespace_done("ns".into()).await.unwrap();
+        }
+        let unread = unread_events_at_the_limit(&server).await;
+        let mut read = 0;
+        within(async {
+            while read < MESSAGES {
+                if let SessionEvent::PublishNamespaceDone(_) = server.receive_event().await.unwrap()
+                {
+                    read += 1;
+                }
+            }
+        })
+        .await;
+
+        // Assert: the rest arrives once the application reads
+        assert_eq!((unread, read), (MAX_UNREAD_EVENTS, MESSAGES));
+    }
+
+    #[tokio::test]
+    async fn control_messages_wait_for_an_application_that_follows_go_away() {
+        // Arrange: nothing reads the client's events, which reach it through
+        // the queue of its connection
+        const MESSAGES: usize = 4 * MAX_UNREAD_EVENTS;
+        let (client, server) =
+            spawn_connected_native_sessions_following_go_away("unread-events-following").await;
+        let publisher = server.publisher();
+
+        // Act
+        for _ in 0..MESSAGES {
+            publisher.publish_namespace_done("ns".into()).await.unwrap();
+        }
+        let unread = unread_events_at_the_limit(&client).await;
+        let mut read = 0;
+        within(async {
+            while read < MESSAGES {
+                if let SessionEvent::PublishNamespaceDone(_) = client.receive_event().await.unwrap()
+                {
+                    read += 1;
+                }
+            }
+        })
+        .await;
+
+        // Assert: the client's queue also takes what its connection's queue
+        // held, so twice the limit at most
+        assert!(unread <= 2 * MAX_UNREAD_EVENTS, "{unread} events unread");
+        assert_eq!(read, MESSAGES);
     }
 }

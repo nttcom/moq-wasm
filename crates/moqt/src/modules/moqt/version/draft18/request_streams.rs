@@ -164,14 +164,27 @@ fn accept_request_go_away(scope: &Scope, received_before: bool, new_session_uri:
     }
 }
 
-/// The next message on a request stream, or `None` once this side cancelled
-/// the request; the peer's half is then stopped with STOP_SENDING (§3.3.2).
+/// A request stream awaits this only where it reads, so it still sends this
+/// side's answers and cancels while it waits.
+async fn room_for_event(connection: &Weak<Connection>) {
+    if let Some(scope) = Scope::of(connection) {
+        scope.session.room_for_event(&scope.connection).await;
+    }
+}
+
+/// The next message on a request stream, read once `room` resolves, or
+/// `None` once this side cancelled the request; the peer's half is then
+/// stopped with STOP_SENDING (§3.3.2).
 async fn receive_unless_cancelled(
     receiver: &mut MessageReceiver,
     reader_stop: &tokio::sync::Notify,
+    room: impl Future<Output = ()>,
 ) -> Option<Result<Option<Message>, StreamReceiveError>> {
     tokio::select! {
-        received = receiver.receive() => Some(received),
+        received = async {
+            room.await;
+            receiver.receive().await
+        } => Some(received),
         () = reader_stop.notified() => {
             receiver.stop(super::cancelled());
             None
@@ -294,6 +307,7 @@ impl IncomingRequestTask {
         let Some(context) = Scope::of(&connection) else {
             return;
         };
+        context.session.room_for_event(&context.connection).await;
         let message = match first {
             Ok(Some(message)) => message,
             Err(
@@ -326,7 +340,10 @@ impl IncomingRequestTask {
         let mut update_answers = UpdateAnswers::<DueUpdate>::default();
         loop {
             let next = tokio::select! {
-                received = receiver.receive(), if reading => Next::Received(received),
+                received = async {
+                    room_for_event(&connection).await;
+                    receiver.receive().await
+                }, if reading => Next::Received(received),
                 stopped = sender.stopped(), if watching_stop => Next::Stopped(stopped),
                 () = stream.reader_stop.notified() => Next::Cancelled,
                 answer = update_answers.next() => Next::UpdateAnswer(answer),
@@ -979,7 +996,10 @@ impl OutgoingRequestTask {
             reader_stop,
             ..
         } = stream;
-        let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop).await else {
+        // The first message answers this side's request and raises no event.
+        let no_wait = std::future::ready(());
+        let Some(first) = receive_unless_cancelled(&mut receiver, &reader_stop, no_wait).await
+        else {
             return;
         };
         let Some(context) = Scope::of(&connection) else {
@@ -1028,7 +1048,11 @@ impl OutgoingRequestTask {
         let mut update_answers = UpdateAnswers::default();
         loop {
             let received = tokio::select! {
-                received = receive_unless_cancelled(&mut receiver, &reader_stop) => received,
+                received = receive_unless_cancelled(
+                    &mut receiver,
+                    &reader_stop,
+                    room_for_event(&connection),
+                ) => received,
                 answer = update_answers.next() => {
                     send_update_answer(&sender, answer).await;
                     continue;

@@ -7,7 +7,6 @@ use std::{
 use tokio::sync::watch;
 
 use crate::{
-    SessionEvent,
     modules::{
         executor,
         moqt::{
@@ -22,6 +21,7 @@ use crate::{
             domains::{
                 connection::{Connection, SinkReceiver, generation_of, logical_id, wire_part},
                 request_failure::RequestFailure,
+                session_events::SessionEventSender,
             },
             runtime::dispatch::incoming_object::{IncomingObjectReceiver, incoming_object_channel},
             version::Version,
@@ -38,7 +38,7 @@ use crate::{
 /// that follows GOAWAY, the requests a migration sends again.
 pub(crate) struct SessionContext {
     connections: std::sync::Mutex<Connections>,
-    pub(crate) event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) event_sender: SessionEventSender,
     pub(crate) receiver_map: tokio::sync::Mutex<HashMap<u64, DataChannel>>,
     pub(crate) fetch_receiver_map: std::sync::Mutex<HashMap<u64, FetchChannel>>,
     /// The ledger of each track a subscription or FETCH is reading, keyed by
@@ -197,7 +197,7 @@ impl SessionContext {
     #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) fn new(
         connection: Connection,
-        event_sender: tokio::sync::mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
         follows_go_away: bool,
     ) -> Self {
         Self {
@@ -586,6 +586,17 @@ impl SessionContext {
     /// `Connection::close_with_error` on the session's current connection.
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
         self.close_connection(&self.connection(), code, reason);
+    }
+
+    /// Resolves once the application has read enough events for one more
+    /// from `connection`. A task awaits it before it queues an event that a
+    /// message of the peer raises, so a peer that sends faster than the
+    /// application reads is blocked by the transport's flow control (draft-14
+    /// §12.1, draft-18 §13.5).
+    pub(crate) async fn room_for_event(&self, connection: &Connection) {
+        // A session that follows GOAWAY reads `connection`'s events into its own.
+        connection.event_sender.has_room().await;
+        self.event_sender.has_room().await;
     }
 
     /// Like `close_with_error`, for the connection a message arrived on.

@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, future::Future, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use futures::future::join_all;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{oneshot, watch};
 use tracing::Span;
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
                 session_creator::{Reconnect, SetupRejected},
+                session_events::{self, SessionEventReceiver},
                 subscriber::{send_subscribe, send_subscribe_namespace},
             },
             runtime::tasks::connection_tasks::ConnectionTasks,
@@ -61,7 +62,7 @@ pub(crate) struct Follow {
     pub(crate) reconnect: Arc<dyn Reconnect>,
     pub(crate) url: String,
     /// The events of the first connection.
-    pub(crate) connection_events: mpsc::UnboundedReceiver<SessionEvent>,
+    pub(crate) connection_events: SessionEventReceiver,
 }
 
 /// Reads the events of the session's connections, forwards them to
@@ -109,7 +110,7 @@ impl Drop for MigrationTask {
 /// A connection the session reads.
 struct Live {
     connection: Arc<Connection>,
-    events: mpsc::UnboundedReceiver<SessionEvent>,
+    events: SessionEventReceiver,
     _tasks: ConnectionTasks,
 }
 
@@ -156,7 +157,7 @@ impl Router {
                                 uri => uri.to_string(),
                             };
                             tracing::info!(%url, "GOAWAY received; migrating the session");
-                            let (event_sender, events) = mpsc::unbounded_channel();
+                            let (event_sender, events) = session_events::channel();
                             let connecting = self.reconnect.connect(
                                 url.clone(),
                                 current.connection.generation + 1,
@@ -376,7 +377,7 @@ async fn reconnect(
     let mut delay = RECONNECT_FIRST_DELAY;
     let mut token_retried = false;
     loop {
-        let (event_sender, events) = mpsc::unbounded_channel();
+        let (event_sender, events) = session_events::channel();
         let connecting = reconnect.connect(url.clone(), generation, event_sender);
         let attempt = migrate(
             session.clone(),
@@ -427,7 +428,7 @@ fn rejects_token(session: &SessionContext, error: &anyhow::Error) -> bool {
 async fn migrate(
     session: Arc<SessionContext>,
     connecting: BoxFuture<anyhow::Result<(Connection, ControlReceiver)>>,
-    events: mpsc::UnboundedReceiver<SessionEvent>,
+    events: SessionEventReceiver,
     url: String,
     session_span: Span,
 ) -> anyhow::Result<Migrated> {
@@ -796,6 +797,8 @@ mod tests {
     use bytes::Bytes;
 
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    use tokio::sync::mpsc;
 
     use crate::{
         AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig,
