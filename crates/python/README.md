@@ -15,9 +15,8 @@ async for event in await session.subscribe_namespace(["anon", "room"]):
         print((await anext(catalog)).payload)
 ```
 
-`connect` offers draft-18, then draft-14: it gets draft-18 from a relay that
-accepts it and draft-14 from one that does not. `versions` names the drafts to
-offer instead, most preferred first; `versions=["draft-14"]` stays on draft-14.
+`connect` offers draft-18, then draft-14; `versions=["draft-14"]` names the
+drafts to offer instead.
 
 ## Use from another Python project
 
@@ -29,11 +28,9 @@ dependencies = ["moqt"]
 moqt = { path = "../../../crates/python" }
 ```
 
-uv builds the module with maturin, so building the project needs the Rust
-toolchain of this repository. uv rebuilds it when the bindings' sources change
-or the checkout moves to another commit. After an uncommitted change to the
-`moqt` crate, or in a git worktree, whose commit uv 0.7 cannot read, run
-`uv sync --reinstall-package moqt`.
+uv builds the module with maturin, which needs this repository's Rust
+toolchain. After an uncommitted change to the `moqt` crate, or in a git
+worktree, run `uv sync --reinstall-package moqt`.
 
 ## Test
 
@@ -41,6 +38,5 @@ or the checkout moves to another commit. After an uncommitted change to the
 uv run pytest
 ```
 
-The tests build and start a relay and a VTS from this workspace on free ports;
-the VTS accepts the `temp-` apps the tests sign tokens for.
-The GOAWAY test also needs Docker: it runs a Redis that two relays share.
+The tests start a relay and a VTS from this workspace on free ports. The
+GOAWAY test also needs Docker for Redis.

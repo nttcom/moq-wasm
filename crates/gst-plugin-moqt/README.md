@@ -1,18 +1,11 @@
 # gst-plugin-moqt
 
 GStreamer plugin with a `moqtsink` element that publishes H.264 video and AAC
-audio into a MoQT relay. It produces the tracks described in
-[`crates/broadcast`](../broadcast/README.md), so the
-[Live Viewer](../../examples/browser/examples/live-viewer/README.md) plays and
-rewinds them like a `live-ingest` stream.
+audio into a MoQT relay, as the tracks described in
+[`crates/broadcast`](../broadcast/README.md).
 
-## Prerequisites
-
-GStreamer 1.20+ with `gst-plugins-base`, `gst-plugins-good` and
-`gst-plugins-bad` (`srtsrc`, `tsdemux`, `h264parse`, `aacparse`). On macOS
-`brew install gstreamer` installs all of them.
-
-## Build
+Needs GStreamer 1.20+ with `gst-plugins-base`, `-good` and `-bad`
+(`brew install gstreamer` on macOS).
 
 ```shell
 make gst-plugin
@@ -21,32 +14,21 @@ gst-inspect-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib moqtsink
 
 ## Element
 
-Request sink pads:
-
-| Pad | Caps |
-| --- | --- |
-| `video` | `video/x-h264, stream-format=byte-stream, alignment=au` |
-| `audio` | `audio/mpeg, mpegversion=4, stream-format=raw` |
-
-Put `h264parse config-interval=-1` in front of the video pad so every keyframe
-carries its SPS/PPS, and `aacparse` in front of the audio pad so the caps carry
-`codec_data`.
-
-Properties:
+| Request sink pad | Caps | Put in front |
+| --- | --- | --- |
+| `video` | `video/x-h264, stream-format=byte-stream, alignment=au` | `h264parse config-interval=-1`, so every keyframe carries its SPS/PPS |
+| `audio` | `audio/mpeg, mpegversion=4, stream-format=raw` | `aacparse`, so the caps carry `codec_data` |
 
 | Property | Meaning |
 | --- | --- |
 | `relay-url` | `moqt://host:port` for QUIC or `https://host:port` for WebTransport (required) |
 | `namespace` | Slash-separated track namespace, e.g. `anon/live/test` (required) |
 | `auth-token` | JWT presented to the relay in CLIENT_SETUP |
-| `insecure-skip-tls-verify` | Skip TLS certificate verification of the relay (insecure, for a local relay with a self-signed certificate only) |
+| `insecure-skip-tls-verify` | Skip TLS certificate verification, for a local relay with a self-signed certificate only |
 
-Behaviour:
-
-- Connects and publishes when the pipeline goes to PAUSED, so a wrong relay URL fails the pipeline start.
-- Buffers about three seconds of media in a queue drained by a background task; the streaming thread never waits for the relay.
-- When the relay does not keep up, drops media until the next keyframe fits and logs the dropped counts at WARN. The pipeline fails only when the relay connection is lost.
-- Logs through `tracing` at `info`; set `RUST_LOG` to change it (e.g. `RUST_LOG=publisher=debug`).
+- Connects when the pipeline goes to PAUSED, so a wrong relay URL fails the pipeline start.
+- Buffers about three seconds of media; when the relay does not keep up, it drops media until the next keyframe fits and logs the counts at WARN.
+- Logs through `tracing` at `info`; `RUST_LOG` changes it.
 
 ## SRT to MoQT
 
@@ -67,14 +49,10 @@ gst-launch-1.0 --gst-plugin-load=target/debug/libgstmoqt.dylib -e \
 ```
 
 `GST_MOQT_URL`, `GST_SRT_ADDR` and `GST_NAMESPACE` override the relay, the SRT
-listen address and the namespace. `insecure-skip-tls-verify=true` is set only
-for a local relay; any other relay's certificate is verified.
+listen address and the namespace.
 
 ## E2E
 
 ```shell
 ./tests/moqtsink-e2e/run.sh
 ```
-
-Publishes a test pattern and tone through `moqtsink` into a Docker Compose
-relay and checks the tracks from a subscriber.

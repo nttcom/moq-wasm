@@ -7,22 +7,19 @@ Design: [architecture document](../../docs/architecture/moqt/architecture.md).
 
 ## Install
 
-Depend on it through git and pin a commit; the crate is not on crates.io:
+The crate is not on crates.io; depend on it through git and pin a commit:
 
 ```toml
 [dependencies]
 moqt = { git = "https://github.com/nttcom/moq-wasm", rev = "<commit>" }
 ```
 
-On `wasm32`, build with `RUSTFLAGS="--cfg web_sys_unstable_apis"`: web-sys
-exposes its WebTransport bindings only behind that flag. The browser bindings
-built on this crate are in [`crates/wasm`](../wasm/README.md).
+On `wasm32`, build with `RUSTFLAGS="--cfg web_sys_unstable_apis"`. The browser
+bindings built on this crate are in [`crates/wasm`](../wasm/README.md).
 
 ## Publish a track
 
-`moqt://` connects over raw QUIC and `https://` over WebTransport. `publish`
-returns once the relay answers PUBLISH_OK; `TrackWriter` then sends each
-payload as a group of one object.
+`moqt://` connects over raw QUIC and `https://` over WebTransport.
 
 ```rust,no_run
 use bytes::Bytes;
@@ -48,13 +45,10 @@ session.close().await;
 # }
 ```
 
-Seed the first group ID from the clock: a relay keeps the groups it has
-cached, so a publisher that reconnects and starts again from group 0 repeats
-locations the relay already holds.
-
-Await `Session::close` before the process exits. The close is sent by a
-background task; exiting first leaves the peer to notice through its idle
-timeout.
+- Seed the first group ID from the clock: a relay keeps the groups it has
+  cached, so a publisher that restarts from group 0 repeats their locations.
+- Await `Session::close` before the process exits; otherwise the peer notices
+  only through its idle timeout.
 
 ## Subscribe to a track
 
@@ -85,10 +79,8 @@ while let Some(object) = reader.next_object().await? {
 ```
 
 `FilterType::NextGroupStart` starts at the next group, so a video track begins
-at a key frame when the publisher starts each group with one.
-`FilterType::LargestObject` (the default) starts at the object after the
-latest one (draft-14 §9.7), so a track that only changes occasionally shows
-nothing until its next object.
+at a key frame. `FilterType::LargestObject` (the default) starts at the object
+after the latest one (draft-14 §9.7).
 
 ## Modules
 
