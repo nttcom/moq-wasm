@@ -2,12 +2,12 @@ use std::{sync::Arc, time::Duration};
 
 use tokio::sync::Notify;
 
-use crate::modules::executor::{self, JoinHandle};
+use crate::modules::executor::{self, AbortOnDrop};
 
 /// Notifies `requested` once: after `delay`, or when `end_delay` is called
 /// before that.
 pub(super) struct NewGroupDelayTask {
-    handle: JoinHandle,
+    _handle: AbortOnDrop,
     delay_ended: Arc<Notify>,
 }
 
@@ -23,9 +23,10 @@ impl NewGroupDelayTask {
                 }
                 requested.notify_one();
             }
-        });
+        })
+        .abort_on_drop();
         Self {
-            handle,
+            _handle: handle,
             delay_ended,
         }
     }
@@ -33,12 +34,6 @@ impl NewGroupDelayTask {
     /// A no-op once the task notified.
     pub(super) fn end_delay(&self) {
         self.delay_ended.notify_one();
-    }
-}
-
-impl Drop for NewGroupDelayTask {
-    fn drop(&mut self) {
-        self.handle.abort();
     }
 }
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tracing::Span;
 
 use crate::modules::{
-    executor::JoinHandle,
+    executor::AbortOnDrop,
     moqt::{
         domains::{connection::Connection, session_context::SessionContext},
         runtime::tasks::{
@@ -16,11 +16,11 @@ use crate::modules::{
 };
 
 pub(crate) struct ConnectionTasks {
-    control_message_receive_task: JoinHandle,
-    datagram_receive_task: JoinHandle,
-    uni_stream_receive_task: JoinHandle,
-    disconnect_watch_task: JoinHandle,
-    publish_done_expiry_task: JoinHandle,
+    _control_message_receive_task: AbortOnDrop,
+    _datagram_receive_task: AbortOnDrop,
+    _uni_stream_receive_task: AbortOnDrop,
+    _disconnect_watch_task: AbortOnDrop,
+    _publish_done_expiry_task: AbortOnDrop,
 }
 
 impl ConnectionTasks {
@@ -32,41 +32,37 @@ impl ConnectionTasks {
     ) -> Self {
         let (publish_done_sender, publish_done_receiver) = tokio::sync::mpsc::unbounded_channel();
         Self {
-            control_message_receive_task: control_receiver.spawn(
-                Arc::downgrade(session),
-                Arc::downgrade(connection),
-                publish_done_sender,
-                session_span.clone(),
-            ),
-            datagram_receive_task: DatagramReceiveTask::run(
+            _control_message_receive_task: control_receiver
+                .spawn(
+                    Arc::downgrade(session),
+                    Arc::downgrade(connection),
+                    publish_done_sender,
+                    session_span.clone(),
+                )
+                .abort_on_drop(),
+            _datagram_receive_task: DatagramReceiveTask::run(
                 connection.clone(),
                 session_span.clone(),
-            ),
-            uni_stream_receive_task: UniStreamReceiveTask::run(
+            )
+            .abort_on_drop(),
+            _uni_stream_receive_task: UniStreamReceiveTask::run(
                 connection.clone(),
                 session_span.clone(),
-            ),
-            disconnect_watch_task: DisconnectWatchTask::run(
+            )
+            .abort_on_drop(),
+            _disconnect_watch_task: DisconnectWatchTask::run(
                 connection.clone(),
                 connection.event_sender.clone(),
                 session_span.clone(),
-            ),
-            publish_done_expiry_task: PublishDoneExpiryTask::run(
+            )
+            .abort_on_drop(),
+            _publish_done_expiry_task: PublishDoneExpiryTask::run(
                 publish_done_receiver,
                 Arc::downgrade(session),
                 Arc::downgrade(connection),
                 session_span.clone(),
-            ),
+            )
+            .abort_on_drop(),
         }
-    }
-}
-
-impl Drop for ConnectionTasks {
-    fn drop(&mut self) {
-        self.control_message_receive_task.abort();
-        self.datagram_receive_task.abort();
-        self.uni_stream_receive_task.abort();
-        self.disconnect_watch_task.abort();
-        self.publish_done_expiry_task.abort();
     }
 }

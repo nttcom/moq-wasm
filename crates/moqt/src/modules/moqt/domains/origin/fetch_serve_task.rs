@@ -10,12 +10,12 @@ use super::{
 use crate::{
     Publisher,
     fetch::FetchHandler,
-    modules::executor::{self, JoinHandle},
+    modules::executor::{self, AbortOnDrop},
     object::{ForwardingPreference, GroupOrder, Location, Object, ObjectStatus},
 };
 
 pub(super) struct FetchServeTask {
-    handle: JoinHandle,
+    _handle: AbortOnDrop,
 }
 
 impl FetchServeTask {
@@ -38,14 +38,9 @@ impl FetchServeTask {
                 // Removing the entry aborts this very task, harmlessly: nothing is awaited after it.
                 state.lock().await.fetches.remove(&request_key);
             }
-        });
-        Self { handle }
-    }
-}
-
-impl Drop for FetchServeTask {
-    fn drop(&mut self) {
-        self.handle.abort();
+        })
+        .abort_on_drop();
+        Self { _handle: handle }
     }
 }
 

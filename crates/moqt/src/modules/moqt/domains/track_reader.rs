@@ -8,7 +8,7 @@ use crate::{
     RequestFailure, Subscriber, Subscription,
     fetch::{Fetch, FetchHandle, FetchOption},
     modules::{
-        executor::{self, JoinHandle, MaybeSend},
+        executor::{self, AbortOnDrop, MaybeSend},
         moqt::domains::subscriber::{SentFetch, joining_remainder},
     },
     object::{
@@ -192,10 +192,13 @@ impl TrackReader {
                     return;
                 }
             }
-        });
+        })
+        .abort_on_drop();
         Self {
             object_receiver,
-            _track_read_task: TrackReadTask { join_handle },
+            _track_read_task: TrackReadTask {
+                _join_handle: join_handle,
+            },
         }
     }
 
@@ -239,7 +242,7 @@ async fn send_fetched_group(
 }
 
 struct TrackReadTask {
-    join_handle: JoinHandle,
+    _join_handle: AbortOnDrop,
 }
 
 impl TrackReadTask {
@@ -287,14 +290,11 @@ impl TrackReadTask {
             }
             drop(object_sender);
             while subgroup_readers.next().await.is_some() {}
-        });
-        Self { join_handle }
-    }
-}
-
-impl Drop for TrackReadTask {
-    fn drop(&mut self) {
-        self.join_handle.abort();
+        })
+        .abort_on_drop();
+        Self {
+            _join_handle: join_handle,
+        }
     }
 }
 

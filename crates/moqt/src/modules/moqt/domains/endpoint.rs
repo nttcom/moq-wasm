@@ -167,12 +167,8 @@ impl<T: TransportProtocol> Endpoint<T> {
             server_config.keep_alive_interval_sec,
             server_application_protocols(&server_config.versions)?,
         )?;
-        let session_creator = SessionCreator::new(
-            server,
-            None,
-            false,
-            server_config.versions.clone(),
-        );
+        let session_creator =
+            SessionCreator::new(server, None, false, server_config.versions.clone());
         Ok(Self {
             session_creator: Arc::new(session_creator),
         })
