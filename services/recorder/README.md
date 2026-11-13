@@ -72,6 +72,8 @@ cargo run -p recorder -- serve \
 | `POST /recordings/{id}/stop` | `202`; the state turns `stopping` within 5 s, then `finished` once every file is closed and uploaded |
 | `GET /recordings/{id}` | `state` (`starting`, `recording`, `stopping`, `finished`, `failed`; a job silent for 90 s is reported `failed`), each participant's namespace, start time, `finished` and `error`, and `composite` (`null`, or `state` `waiting`, `composing`, `done`, `skipped`, `failed` with `error`) |
 | `GET /recordings?namespace_prefix=APP/research` | The recordings of that prefix (`400` without it) |
+| `GET /apps/APP/recordings` | The app's MP4 recordings that have a file in the store, newest first (at most 100), each with `requested_at_ms` and `files` (`name` below the recording, `size_bytes`); the token's `subscribe` claim must cover the whole app (`""`) |
+| `GET /recordings/{id}/file?name=<name>` | `{"url"}`: a signed URL that reads the MP4 file from the store for 15 minutes, so the file never passes through the recorder; `404` for a file the recording lacks, `500` for a `file://` store, which cannot sign |
 
 Every namespace under the prefix (one per meeting participant) is recorded
 from the moment it is published, with the tracks picked from its catalog

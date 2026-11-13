@@ -27,6 +27,10 @@ use crate::{
 /// A recording job that has not written its state for this long is treated
 /// as dead.
 const STALE_AFTER: Duration = HEARTBEAT_INTERVAL.saturating_mul(3);
+/// How long a URL from `file_url` stays valid.
+const FILE_URL_LIFETIME: Duration = Duration::from_secs(15 * 60);
+/// Cap on `app_recordings`; the newest are kept.
+const MAX_APP_RECORDINGS: usize = 100;
 
 #[derive(Debug)]
 pub(crate) enum StartRejection {
@@ -276,6 +280,50 @@ impl Recordings {
         Ok(json!({ "recordings": recordings }))
     }
 
+    /// The MP4 recordings of `app_id` that have a file in the store, newest
+    /// first, each with its files.
+    pub(crate) async fn app_recordings(&self, app_id: &str) -> Result<Value> {
+        let mut recordings = Vec::new();
+        for id in self.store.app_recording_ids(app_id).await? {
+            if recordings.len() >= MAX_APP_RECORDINGS {
+                break;
+            }
+            let Some(record) = self.store.read_state(&id).await? else {
+                continue;
+            };
+            if record.format != RecordingFormat::Mp4
+                || record.namespace_prefix.split('/').next() != Some(app_id)
+            {
+                continue;
+            }
+            let files: Vec<Value> = self
+                .store
+                .recording_files(&record.namespace_prefix, &id)
+                .await?
+                .into_iter()
+                .map(|file| json!({ "name": file.name, "size_bytes": file.size_bytes }))
+                .collect();
+            let mut view = self.view(record).await?;
+            view["files"] = Value::Array(files);
+            recordings.push(view);
+        }
+        Ok(json!({ "recordings": recordings }))
+    }
+
+    /// A signed URL that reads the MP4 file `name` of recording `id` from the
+    /// store for `FILE_URL_LIFETIME`; `None` for an unknown recording or
+    /// file.
+    pub(crate) async fn file_url(&self, id: &str, name: &str) -> Result<Option<Value>> {
+        let Some(record) = self.store.read_state(id).await? else {
+            return Ok(None);
+        };
+        let url = self
+            .store
+            .file_url(&record.namespace_prefix, id, name, FILE_URL_LIFETIME)
+            .await?;
+        Ok(url.map(|url| json!({ "url": url.as_str() })))
+    }
+
     /// Takes the room, first releasing a lock whose recording is no longer
     /// active.
     async fn lock_room(&self, namespace_prefix: &str, id: &str) -> Result<bool> {
@@ -371,6 +419,7 @@ impl Recordings {
         let (state_name, error) = state.parts();
         Ok(json!({
             "id": record.id,
+            "requested_at_ms": minted_ms(&record.id),
             "namespace_prefix": record.namespace_prefix,
             "layout": record.layout.name(),
             "format": record.format.name(),
@@ -398,9 +447,13 @@ fn recording_id() -> String {
     format!("{}-{random:06x}", now_ms())
 }
 
+/// When the API made `id`, from its `<Unix ms>` part.
+fn minted_ms(id: &str) -> Option<u64> {
+    id.split('-').next().and_then(|ms| ms.parse().ok())
+}
+
 fn minted_within_stale_window(id: &str, now_ms: u64) -> bool {
-    let minted_ms = id.split('-').next().and_then(|ms| ms.parse::<u64>().ok());
-    minted_ms.is_some_and(|ms| now_ms.saturating_sub(ms) < STALE_AFTER.as_millis() as u64)
+    minted_ms(id).is_some_and(|ms| now_ms.saturating_sub(ms) < STALE_AFTER.as_millis() as u64)
 }
 
 /// `<app>/<room>[/...]` with no empty element.
@@ -411,6 +464,8 @@ fn is_room(namespace_prefix: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use object_store::{ObjectStoreExt, PutPayload};
+
     use super::*;
     use crate::test_support::{TOKEN_MINT_URL, recordings};
 
@@ -686,5 +741,54 @@ mod tests {
         // Assert
         let joined = args.join(" ");
         assert!(joined.contains(&format!("--token jwt --token-mint-url {TOKEN_MINT_URL}")));
+    }
+
+    #[tokio::test]
+    async fn lists_only_the_apps_mp4_recordings_with_their_files() {
+        // Arrange
+        let recordings = recordings(1, false);
+        let record = |id: &str, namespace_prefix: &str, format| RoomRecord {
+            id: id.to_string(),
+            namespace_prefix: namespace_prefix.to_string(),
+            layout: Layout::Combined,
+            format,
+            composite: false,
+            state: RoomState::Finished,
+            members: Vec::new(),
+            updated_at_ms: now_ms(),
+        };
+        for (id, prefix, format) in [
+            ("1700000000000-000001", "app/room", RecordingFormat::Mp4),
+            ("1700000001000-000002", "app/room", RecordingFormat::Moq),
+            ("1700000002000-000003", "other/room", RecordingFormat::Mp4),
+        ] {
+            recordings
+                .store
+                .write_state(&record(id, prefix, format))
+                .await
+                .unwrap();
+            recordings
+                .store
+                .object_store()
+                .put(
+                    &recordings.store.recording_prefix(prefix, id).join("a.mp4"),
+                    PutPayload::from_static(b"123"),
+                )
+                .await
+                .unwrap();
+        }
+
+        // Act
+        let listed = recordings.app_recordings("app").await.unwrap();
+
+        // Assert
+        let listed = listed["recordings"].as_array().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0]["id"], "1700000000000-000001");
+        assert_eq!(listed[0]["requested_at_ms"], 1_700_000_000_000_u64);
+        assert_eq!(
+            listed[0]["files"],
+            json!([{ "name": "a.mp4", "size_bytes": 3 }])
+        );
     }
 }
