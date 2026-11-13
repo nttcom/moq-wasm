@@ -100,6 +100,14 @@ impl DownstreamSubscription {
         self.inner.subscriber_priority()
     }
 
+    /// The DELIVERY TIMEOUT of the PUBLISH_OK in milliseconds.
+    pub(crate) fn publish_ok_delivery_timeout(&self) -> Option<u64> {
+        match &self.inner {
+            moqt::Subscription::PublisherInitiated(subscription) => subscription.delivery_timeout,
+            moqt::Subscription::SubscriberInitiated(_) => None,
+        }
+    }
+
     pub(crate) fn publish_ok_forward(&self) -> Option<bool> {
         match &self.inner {
             moqt::Subscription::PublisherInitiated(subscription) => Some(subscription.forward),

@@ -111,6 +111,17 @@ impl<S> StreamDataSender<S> {
         any_sent(results)
     }
 
+    /// Call after `close`. Resolves once each stream's FIN is acknowledged,
+    /// the peer stops it, or the connection is lost. Until then the closed
+    /// stream's data stays in the connection's send buffer, which all streams
+    /// share; `reset` releases it. Over QMux it resolves as soon as `close`
+    /// returns.
+    pub async fn acknowledged(&self) {
+        for stream in &self.streams {
+            stream.stream_sender.stopped().await;
+        }
+    }
+
     pub async fn reset(&mut self, code: DataStreamResetCode) -> anyhow::Result<()> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &self.streams {

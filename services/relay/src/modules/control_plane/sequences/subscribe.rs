@@ -437,7 +437,8 @@ impl Subscribe {
                 handler.forward(),
                 &filter_type,
                 largest_location,
-            ),
+            )
+            .with_delivery_timeout(handler.delivery_timeout()),
         ) else {
             tracing::debug!(
                 request_id = handler.subscribe_id(),

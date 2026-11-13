@@ -1047,6 +1047,10 @@ impl SubscribeHandler for MockSubscribeHandler {
         None
     }
 
+    fn delivery_timeout(&self) -> Option<u64> {
+        None
+    }
+
     fn allocate_track_alias(&self) -> u64 {
         if let Some(hook) = &self.on_allocate_track_alias {
             hook();

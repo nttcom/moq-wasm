@@ -23,11 +23,16 @@ pub(crate) enum Sent {
 
 struct MockDataSender {
     sent: mpsc::UnboundedSender<Sent>,
+    stall_writes: bool,
+    withhold_acknowledgements: bool,
 }
 
 #[async_trait::async_trait]
 impl DataSender for MockDataSender {
     async fn send_object(&mut self, object: SubgroupPart) -> anyhow::Result<()> {
+        if self.stall_writes && !matches!(object, SubgroupPart::Header(_)) {
+            std::future::pending::<()>().await
+        }
         self.sent
             .send(Sent::Object(object))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
@@ -49,6 +54,12 @@ impl DataSender for MockDataSender {
         self.sent
             .send(Sent::Reset(error_code))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))
+    }
+
+    async fn acknowledged(&mut self) {
+        if self.withhold_acknowledgements {
+            std::future::pending::<()>().await
+        }
     }
 }
 
@@ -75,6 +86,8 @@ struct MockStreamSenderFactory {
     sent: mpsc::UnboundedSender<Sent>,
     priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
     stall_opens: bool,
+    stall_writes: bool,
+    withhold_acknowledgements: bool,
 }
 
 #[async_trait::async_trait]
@@ -91,6 +104,8 @@ impl StreamSenderFactory for MockStreamSenderFactory {
         }
         Ok(Box::new(MockDataSender {
             sent: self.sent.clone(),
+            stall_writes: self.stall_writes,
+            withhold_acknowledgements: self.withhold_acknowledgements,
         }))
     }
 }
@@ -108,6 +123,8 @@ pub(crate) struct MockPublisher {
     priorities: mpsc::UnboundedSender<moqt::object::StreamPriority>,
     publish_done: mpsc::UnboundedSender<SentPublishDone>,
     stall_opens: bool,
+    stall_writes: bool,
+    withhold_acknowledgements: bool,
     mixes_forwarding_preferences: bool,
     datagram_payload_limit: usize,
 }
@@ -135,6 +152,8 @@ impl MockPublisher {
                 priorities: priorities_sender,
                 publish_done: publish_done_sender,
                 stall_opens: false,
+                stall_writes: false,
+                withhold_acknowledgements: false,
                 mixes_forwarding_preferences,
                 datagram_payload_limit: usize::MAX,
             },
@@ -151,6 +170,23 @@ impl MockPublisher {
     pub(crate) fn stalling_stream_opens(self) -> Self {
         Self {
             stall_opens: true,
+            ..self
+        }
+    }
+
+    /// A subscriber whose streams take a header and then no more: each
+    /// object write waits forever, as it does on a full send buffer.
+    pub(crate) fn stalling_writes(self) -> Self {
+        Self {
+            stall_writes: true,
+            ..self
+        }
+    }
+
+    /// A subscriber that never acknowledges a closed stream's data.
+    pub(crate) fn withholding_acknowledgements(self) -> Self {
+        Self {
+            withhold_acknowledgements: true,
             ..self
         }
     }
@@ -221,6 +257,8 @@ impl Publisher for MockPublisher {
             sent: self.sent.clone(),
             priorities: self.priorities.clone(),
             stall_opens: self.stall_opens,
+            stall_writes: self.stall_writes,
+            withhold_acknowledgements: self.withhold_acknowledgements,
         })
     }
 

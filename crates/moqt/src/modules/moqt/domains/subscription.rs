@@ -218,7 +218,7 @@ impl PublisherInitiatedSubscription {
             subscriber_priority: publish_ok.subscriber_priority,
             forward: publish_ok.forward,
             filter_type: publish_ok.filter_type,
-            delivery_timeout: None,
+            delivery_timeout: publish_ok.delivery_timeout,
             track_properties,
             last_update: LastSubscribeUpdate::default(),
         }
