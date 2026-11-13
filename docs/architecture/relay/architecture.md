@@ -822,12 +822,13 @@ per-request authorization gate under "Event pipeline".
 - `token_verifier.rs` — `TokenVerifier` trait with
   `VerifyError::{Unauthorized, Unavailable}`; the split lets callers map a
   rejected token and an unreachable VTS to different termination codes.
-- `token_claims.rs` — `build_verified_token(SignedToken, ClaimPolicy, now)` (`SignedToken.claims` is `auth_token::Claims`):
-  the relay, not the VTS, decides what a signed token means. It requires
-  `iat` and `exp`, applies the clock leeway, rejects client tokens whose
-  `exp - iat` exceeds the maximum ttl (relay tokens are exempt), and checks
-  the `publish` / `subscribe` path shape. Time semantics live here so the
-  relay's expiry task and its acceptance decision share one clock.
+- `token_claims.rs` — `build_verified_token(SignedToken, ClaimPolicy, now)`
+  (`auth_token::SignedToken`): the relay, not the VTS, decides what a signed
+  token means. `SignedToken::check` requires `iat` and `exp`, applies the
+  clock leeway, rejects client tokens whose `exp - iat` exceeds the maximum
+  ttl (relay tokens are exempt), and checks the `publish` / `subscribe` path
+  shape; the relay then splits the paths and keeps `exp` so its expiry task
+  and its acceptance decision share one clock.
 - `vts_token_verifier.rs` — `reqwest` implementation: `POST {AUTH_VTS_URL}`
   with `{"token"}`. The VTS only vouches for the signature and the appId; 200
   carries `{ appId, isRelay, claims }` with the raw JWT payload, which is

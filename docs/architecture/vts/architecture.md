@@ -63,7 +63,7 @@ sequenceDiagram
 ## Invariants
 
 - `claims` in the 200 response is the signed payload as-is. The VTS never
-  adds, removes or interprets claims; the relay's `SignedToken` reads them.
+  adds, removes or interprets claims; `auth_token::SignedToken` reads them.
 - Rejections are reported in the order they are detected: `malformed_token`
   (not three segments, payload not a JSON object, or no non-empty string
   `appId`), then `unknown_app`, then `invalid_signature`. A header whose
