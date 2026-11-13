@@ -110,3 +110,15 @@ test('the incoming rendition is not playing while it waits for the start group',
   expect(splice.start).toBe(11n)
   expect(splice.incomingPlaying).toBe(false)
 })
+
+test('the incoming rendition drops the rest of a group before the start', () => {
+  // Arrange
+  const splice = new RenditionSplice(10n)
+  splice.acceptIncoming(10n, 0n)
+
+  // Act
+  const verdict = splice.acceptIncoming(10n, 2n)
+
+  // Assert
+  expect(verdict).toEqual({ play: false, retireOutgoing: false })
+})

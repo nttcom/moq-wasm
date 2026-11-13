@@ -1154,7 +1154,9 @@ export class LivePlayer {
       return
     }
     if (this.videoSwitch !== pending) {
-      if (this.subscriptions.get('video') === next) {
+      // A switch settled after the handover, by a seek or another track
+      // change, can still receive the rest of the group before the start.
+      if (this.subscriptions.get('video') === next && pending.splice.acceptIncoming(groupId, object.objectId).play) {
         this.handleLocObject('video', trackName, groupId, object)
       }
       return
