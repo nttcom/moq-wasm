@@ -1,4 +1,5 @@
-import json
+import moqt
+from loguru import logger
 
 
 def audio_track_name(catalog: bytes) -> str | None:
@@ -7,7 +8,11 @@ def audio_track_name(catalog: bytes) -> str | None:
     The publisher encodes a profile only while someone subscribes to it, so picking the same one
     starts no extra encoder in the participant's browser.
     """
-    tracks = json.loads(catalog).get("tracks", [])
+    try:
+        tracks = moqt.parse_catalog(catalog).get("tracks", [])
+    except ValueError as error:
+        logger.warning(f"catalog ignored: {error}")
+        return None
     audio = [
         track
         for track in tracks

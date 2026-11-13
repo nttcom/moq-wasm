@@ -10,3 +10,8 @@ def test_picks_the_audio_track_with_the_lowest_bitrate():
 def test_a_catalog_without_audio_has_no_track():
     # Act / Assert
     assert audio_track_name(meeting_catalog()) is None
+
+
+def test_a_catalog_of_another_version_has_no_track():
+    # Act / Assert
+    assert audio_track_name(meeting_catalog(32_000, version="draft-03")) is None
