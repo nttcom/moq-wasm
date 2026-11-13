@@ -1,12 +1,12 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
-import moqt
+import moq_wasm
 from moq_bot_rooms.rooms import GRACE_SECONDS
 
 
 async def while_published(
-    session: moqt.Session,
+    session: moq_wasm.Session,
     namespace: list[str],
     run: Callable[[], Awaitable[None]],
     *,
@@ -18,7 +18,7 @@ async def while_published(
     loop = asyncio.get_running_loop()
     running: asyncio.Task | None = None
     unpublished_until = None if unpublished_seconds is None else loop.time() + unpublished_seconds
-    events = aiter(await session.subscribe_namespace(namespace[:-1]))
+    events = aiter(await session.watch_namespaces(namespace[:-1]))
     try:
         while True:
             try:
@@ -39,7 +39,7 @@ async def while_published(
 
 
 async def until_room_empty(
-    session: moqt.Session,
+    session: moq_wasm.Session,
     namespace: list[str],
     run: Callable[[], Awaitable[None]],
     *,

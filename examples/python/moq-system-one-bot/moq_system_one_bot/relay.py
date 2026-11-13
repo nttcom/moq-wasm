@@ -2,7 +2,7 @@ import argparse
 import asyncio
 from collections.abc import Awaitable, Callable
 
-import moqt
+import moq_wasm
 from loguru import logger
 from moq_bot_rooms.app_token import while_fresh
 from moq_bot_rooms.rooms import BotRoom
@@ -21,7 +21,7 @@ def add_relay_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 async def stay_connected(
-    args: argparse.Namespace, room: BotRoom, in_session: Callable[[moqt.Session], Awaitable[bool]]
+    args: argparse.Namespace, room: BotRoom, in_session: Callable[[moq_wasm.Session], Awaitable[bool]]
 ) -> None:
     """Runs `in_session` on a relay session with `room`'s token, reconnecting whenever the session
     closes or fails, until `in_session` returns True. Keeps the token fresh on the session meanwhile,
@@ -29,7 +29,7 @@ async def stay_connected(
     log_prefix = f"room {room.key}: "
     while True:
         try:
-            session = await moqt.connect(
+            session = await moq_wasm.connect(
                 args.relay_url, verify_certificate=not args.insecure, token=room.relay_token
             )
         except RuntimeError as error:

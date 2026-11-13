@@ -10,7 +10,7 @@ import os
 from fractions import Fraction
 
 import av
-import moqt
+import moq_wasm
 from aiohttp import web
 
 CAMERA_NAMESPACE = ["anon", "onvif", "client"]
@@ -60,8 +60,8 @@ async def stream_camera(moq_cli: str, relay_url: str) -> None:
         await publisher.wait()
 
 
-async def record_commands(session: moqt.Session, commands: list[dict]) -> None:
-    async for event in await session.subscribe_namespace(COMMAND_NAMESPACE[:-1]):
+async def record_commands(session: moq_wasm.Session, commands: list[dict]) -> None:
+    async for event in await session.watch_namespaces(COMMAND_NAMESPACE[:-1]):
         if event.namespace != COMMAND_NAMESPACE or not event.active:
             continue
         try:
@@ -79,7 +79,7 @@ async def main() -> None:
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", args.port).start()
-    session = await moqt.connect(args.relay_url, verify_certificate=False)
+    session = await moq_wasm.connect(args.relay_url, verify_certificate=False)
     print(f"serving commands on http://127.0.0.1:{args.port}", flush=True)
     try:
         async with asyncio.TaskGroup() as tasks:

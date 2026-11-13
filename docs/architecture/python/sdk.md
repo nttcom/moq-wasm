@@ -17,7 +17,8 @@ in later changes.
 
 ## Context
 The bindings expose MoQT requests one to one (`connect`, `subscribe`,
-`track`, `subscribe_namespace`, `parse_catalog`). Every bot under
+`publish_track`, `watch_namespaces`, `parse_catalog`), named after the
+browser SDK's `MoqSession`. Every bot under
 `examples/python/` builds the same things on top of them:
 
 | Pattern | Where |
@@ -27,7 +28,7 @@ The bindings expose MoQT requests one to one (`connect`, `subscribe`,
 | Subscribe to the catalog with a joining FETCH and pick a track from `parse_catalog`'s dict | the transcriber's and camera detection's `catalog.py` |
 | Subscribe again one second after a track ends, because the page that published it left | five places across chat moderation, camera detection, PTZ tracking and the transcriber |
 | Write a draft-ietf-moq-msf-01 §8 event timeline | `EventTimeline` and `TranscriptTimeline` |
-| Register tracks before `publish_namespace`, so a forwarded SUBSCRIBE is not refused | every bot, each with the same comment |
+| Register tracks before `announce`, so a forwarded SUBSCRIBE is not refused | every bot, each with the same comment |
 | Race the work against `session.closed()` | every bot |
 
 pipecat ships `MOQTransport`, built on moq-rs. Its catalog and its JSON
@@ -110,8 +111,8 @@ async with moq_wasm.connect(...) as session:
 ```
 
 The request methods keep the bindings' shape (`subscribe`,
-`subscribe_namespace`, `track`, `publish_namespace`), with the reconnection
-above.
+`subscribe_current_group`, `watch_namespaces`, `publish_track`, `announce`),
+with the reconnection above.
 
 ### Media: `moq_wasm.media`
 
@@ -120,7 +121,7 @@ from moq_wasm.media import EventTimeline, create_broadcast, watch_broadcasts
 
 async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot:
     transcript = bot.event_timeline("transcript", retention_seconds=3600)
-    status = bot.track("status", retention_seconds=3600)
+    status = bot.publish_track("status", retention_seconds=3600)
 
     async def on_broadcast(remote: RemoteBroadcast) -> None:
         async for catalog in remote.catalogs():
@@ -246,7 +247,7 @@ await media.announce()
 ```
 
 `create_broadcast` in the media layer owns one, so the tracks a bot writes
-itself (`track`, `event_timeline`) and the media tracks share one namespace
+itself (`publish_track`, `event_timeline`) and the media tracks share one namespace
 and one catalog. Encoding stays in Python with PyAV, which the `pipecat`
 extra already depends on for decoding.
 

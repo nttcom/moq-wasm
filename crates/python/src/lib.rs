@@ -1,22 +1,22 @@
 mod catalog;
-mod namespaces;
-mod publication;
+mod namespace_watch;
 mod session;
-mod track;
+mod subscription;
+mod track_writer;
 
 use pyo3::prelude::*;
 
-/// Python bindings for this repository's MoQT implementation, covering what a bot
-/// that follows a room and publishes into it needs (see docs/architecture/python).
+/// The native module of the `moq-wasm` Python SDK: bindings to this repository's
+/// MoQT implementation (see docs/architecture/python).
 #[pymodule]
-fn moqt(module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(session::connect, module)?)?;
     module.add_function(wrap_pyfunction!(catalog::parse_catalog, module)?)?;
     module.add_class::<session::Session>()?;
-    module.add_class::<namespaces::NamespaceEvent>()?;
-    module.add_class::<namespaces::NamespaceEvents>()?;
-    module.add_class::<track::Track>()?;
-    module.add_class::<track::Object>()?;
-    module.add_class::<publication::TrackPublication>()?;
+    module.add_class::<namespace_watch::NamespaceEvent>()?;
+    module.add_class::<namespace_watch::NamespaceWatch>()?;
+    module.add_class::<subscription::Subscription>()?;
+    module.add_class::<subscription::Object>()?;
+    module.add_class::<track_writer::TrackWriter>()?;
     Ok(())
 }
