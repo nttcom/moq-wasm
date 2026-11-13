@@ -7,6 +7,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{Mutex, mpsc, watch},
     task::JoinSet,
+    time::Instant,
 };
 use tracing::{Instrument, Span};
 
@@ -97,6 +98,13 @@ fn interruption(
 }
 
 impl SubgroupSource {
+    /// The instant after which an object received at `received_at` is not sent
+    /// (draft-14 §9.2.1.2); `None` without a DELIVERY TIMEOUT.
+    fn delivery_deadline(&self, received_at: Instant) -> Option<Instant> {
+        let timeout = self.delivery_control_receiver.borrow().delivery_timeout?;
+        Some(received_at + timeout)
+    }
+
     /// `stream_priority` is the Subscriber Priority of the stream the task
     /// has open for the subgroup.
     async fn next(&mut self, object_id: u64, stream_priority: Option<u8>) -> SubgroupNext {
@@ -385,19 +393,22 @@ impl GroupSender {
         };
         let mut sender: Option<Box<dyn DataSender>> = None;
         let mut stream_priority: Option<moqt::object::StreamPriority> = None;
+        let mut last_deadline: Option<Instant> = None;
         loop {
             let subscriber_priority = stream_priority.map(|priority| priority.subscriber_priority);
             let next = task.source.next(sent.unsent, subscriber_priority).await;
-            let (next, (object_id, publisher_priority)) = match next {
+            let (next, (object_id, publisher_priority), deadline) = match next {
                 SubgroupNext::Cache(NextObject::Object(object)) => {
                     let first = &object.object;
                     let first = (first.location.object_id, first.publisher_priority);
-                    (NextObject::Object(object), first)
+                    let deadline = task.source.delivery_deadline(object.received_at);
+                    (NextObject::Object(object), first, deadline)
                 }
                 SubgroupNext::Cache(NextObject::Partial(partial)) => {
                     let first = &partial.object;
                     let first = (first.location.object_id, first.publisher_priority);
-                    (NextObject::Partial(partial), first)
+                    let deadline = task.source.delivery_deadline(partial.received_at);
+                    (NextObject::Partial(partial), first, deadline)
                 }
                 SubgroupNext::Cache(NextObject::Finished) => {
                     if let Some(mut sender) = sender {
@@ -405,6 +416,15 @@ impl GroupSender {
                             tracing::warn!(?error, "failed to close egress stream sender");
                         }
                         sent.end_reason = "cache_closed";
+                        // A closed stream's data stays in the connection's shared send buffer until
+                        // it is acknowledged, so the delivery timeout still covers it.
+                        if let Some(deadline) = last_deadline
+                            && tokio::time::timeout_at(deadline, sender.acknowledged())
+                                .await
+                                .is_err()
+                        {
+                            sent.end_reason = Self::timed_out(Some(sender), &task).await;
+                        }
                     }
                     return sent;
                 }
@@ -476,7 +496,9 @@ impl GroupSender {
                 // cache expiry. Every object of a subgroup has this priority
                 // (draft-14 §10.4.2).
                 drop(next);
-                match Self::open_stream(&task, group_id, subgroup_id, publisher_priority).await {
+                match Self::open_stream(&task, group_id, subgroup_id, publisher_priority, deadline)
+                    .await
+                {
                     Ok((opened, priority)) => {
                         sender = Some(opened);
                         stream_priority = Some(priority);
@@ -495,10 +517,22 @@ impl GroupSender {
                 NextObject::Object(object) => match object.load().await {
                     Ok(loaded) => {
                         tracing::debug!(object_id, "egress sending subgroup object");
-                        if let Err(error) = open.send_object(SubgroupPart::Object(loaded)).await {
-                            sent.end_reason =
-                                send_failure_reason(&error, Some(object_id), "send_object_failed");
-                            return sent;
+                        let written =
+                            within(deadline, open.send_object(SubgroupPart::Object(loaded))).await;
+                        match written {
+                            Some(Ok(())) => {}
+                            Some(Err(error)) => {
+                                sent.end_reason = send_failure_reason(
+                                    &error,
+                                    Some(object_id),
+                                    "send_object_failed",
+                                );
+                                return sent;
+                            }
+                            None => {
+                                sent.end_reason = Self::timed_out(sender, &task).await;
+                                return sent;
+                            }
                         }
                         task.delivery_stats
                             .record_object_sent(object.payload_len(), object.received_at);
@@ -511,7 +545,13 @@ impl GroupSender {
                 },
                 NextObject::Partial(partial) => {
                     tracing::debug!(object_id, "egress forwarding an arriving subgroup object");
-                    match forward_partial(open.as_mut(), &partial).await {
+                    let Some(forwarded) =
+                        within(deadline, forward_partial(open.as_mut(), &partial)).await
+                    else {
+                        sent.end_reason = Self::timed_out(sender, &task).await;
+                        return sent;
+                    };
+                    match forwarded {
                         Ok(()) => {
                             task.delivery_stats
                                 .record_object_sent(partial.payload_len, partial.received_at);
@@ -542,8 +582,23 @@ impl GroupSender {
                     unreachable!("only objects reach this point")
                 }
             }
+            last_deadline = deadline;
             sent.unsent = object_id.saturating_add(1);
         }
+    }
+
+    /// Resets the stream of a subgroup whose object passed its delivery
+    /// deadline (draft-14 §9.2.1.2) and returns the subgroup's end reason.
+    async fn timed_out(sender: Option<Box<dyn DataSender>>, task: &StreamSendTask) -> &'static str {
+        if let Some(sender) = sender {
+            Self::reset(
+                sender,
+                &task.delivery_stats,
+                DataStreamResetCode::DeliveryTimeout,
+            )
+            .await;
+        }
+        "delivery_timeout"
     }
 
     /// Opens the downstream stream and sends the SUBGROUP_HEADER of its first
@@ -554,6 +609,7 @@ impl GroupSender {
         group_id: u64,
         subgroup_id: u64,
         publisher_priority: u8,
+        deadline: Option<Instant>,
     ) -> Result<(Box<dyn DataSender>, moqt::object::StreamPriority), &'static str> {
         let priority = task.stream_priority(publisher_priority, subgroup_id);
         tracing::debug!(
@@ -561,18 +617,24 @@ impl GroupSender {
             transport_priority = priority.transport_priority(),
             "opening egress uni stream"
         );
-        let opened = tokio::time::timeout(STREAM_CREDIT_TIMEOUT, async {
+        let credit_deadline = Instant::now() + STREAM_CREDIT_TIMEOUT;
+        let delivery_deadline = deadline.filter(|&deadline| deadline < credit_deadline);
+        let opened = within(Some(delivery_deadline.unwrap_or(credit_deadline)), async {
             let mut factory = task.factory.lock().await;
             factory.next(priority).await
         })
         .await;
         let mut sender = match opened {
-            Ok(Ok(sender)) => sender,
-            Ok(Err(e)) => {
+            Some(Ok(sender)) => sender,
+            Some(Err(e)) => {
                 tracing::error!(error = ?e, "failed to open stream sender");
                 return Err("open_failed");
             }
-            Err(_elapsed) => {
+            None if delivery_deadline.is_some() => {
+                tracing::debug!("the first object passed its delivery timeout unopened");
+                return Err("delivery_timeout");
+            }
+            None => {
                 tracing::debug!("no stream credit from the subscriber; giving up on the group");
                 return Err("no_stream_credit");
             }
@@ -772,6 +834,17 @@ enum PartialForwardFailure {
     SendFailed(anyhow::Error),
 }
 
+/// The output of `work`, or `None` when `deadline` passes first. A deadline already
+/// passed gives `None` without polling `work`, so an expired object is never
+/// handed to the transport (draft-18 §8 OBJECT_DELIVERY_TIMEOUT).
+async fn within<T>(deadline: Option<Instant>, work: impl Future<Output = T>) -> Option<T> {
+    match deadline {
+        None => Some(work.await),
+        Some(deadline) if deadline <= Instant::now() => None,
+        Some(deadline) => tokio::time::timeout_at(deadline, work).await.ok(),
+    }
+}
+
 /// Sends `partial` up to its payload, then each payload piece as it arrives.
 async fn forward_partial(
     sender: &mut dyn DataSender,
@@ -827,12 +900,12 @@ mod tests {
     };
     use crate::modules::{
         data_plane::cache::track_cache::TrackCache,
-        domain::track_key::TrackKey,
+        domain::{delivery_control::DeliveryControl, track_key::TrackKey},
         test_support::{
             directory_fixtures::delivery_control,
             mock_session::wait_until,
             relay_harness::{
-                MockPublisher, MockPublisherObservers,
+                MockPublisher, MockPublisherObservers, Sent,
                 fixtures::{
                     cached_object::{open_group, stream_key},
                     subscription::make_subscription,
@@ -845,6 +918,14 @@ mod tests {
         cache: &Arc<TrackCache>,
         publisher: MockPublisher,
     ) -> mpsc::Sender<GroupSendTask> {
+        run_group_sender_under(cache, publisher, delivery_control(true))
+    }
+
+    fn run_group_sender_under(
+        cache: &Arc<TrackCache>,
+        publisher: MockPublisher,
+        control: DeliveryControl,
+    ) -> mpsc::Sender<GroupSendTask> {
         let (task_sender, task_receiver) = mpsc::channel(1);
         let group_sender = GroupSender::new(
             TrackKey::new("ns", "track"),
@@ -856,7 +937,7 @@ mod tests {
             },
             task_receiver,
             Arc::default(),
-            watch::channel(delivery_control(true)).1,
+            watch::channel(control).1,
         );
         tokio::spawn(group_sender.run());
         task_sender
@@ -919,6 +1000,130 @@ mod tests {
             .await
             .expect("group 1 should start opening its stream")
             .expect("the publisher should stay alive");
+    }
+
+    const DELIVERY_TIMEOUT: Duration = Duration::from_secs(2);
+
+    fn delivery_control_with_timeout() -> DeliveryControl {
+        delivery_control(true).with_delivery_timeout(Some(DELIVERY_TIMEOUT.as_millis() as u64))
+    }
+
+    /// The next close or reset of the subscriber's streams, skipping the header
+    /// and objects sent before it.
+    async fn next_end(sent: &mut mpsc::UnboundedReceiver<Sent>) -> Sent {
+        loop {
+            let next = tokio::time::timeout(Duration::from_secs(60), sent.recv())
+                .await
+                .expect("the stream should be closed or reset")
+                .expect("the publisher should stay alive");
+            match next {
+                Sent::Object(_) => {}
+                end => return end,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_group_that_passes_its_delivery_timeout_waiting_for_stream_credit_is_not_sent() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let _first = open_group(&cache, 0, &[0]);
+        let _second = open_group(&cache, 1, &[0]);
+        let (publisher, MockPublisherObservers { mut priorities, .. }) = MockPublisher::channel();
+        let task_sender = run_group_sender_under(
+            &cache,
+            publisher.stalling_stream_opens(),
+            delivery_control_with_timeout(),
+        );
+        task_sender.send(send_task(0)).await.unwrap();
+        priorities
+            .recv()
+            .await
+            .expect("group 0 should start opening its stream");
+
+        // Act: group 1's task starts after its object's delivery timeout, before the stream credit timeout
+        tokio::time::pause();
+        tokio::time::advance(DELIVERY_TIMEOUT).await;
+        task_sender.send(send_task(1)).await.unwrap();
+
+        // Assert: group 1's task ends at once, expired, so only group 0 ever asked for a stream
+        assert!(DELIVERY_TIMEOUT < STREAM_CREDIT_TIMEOUT);
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(priorities.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_write_still_pending_at_the_delivery_timeout_resets_the_stream() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let _open = open_group(&cache, 0, &[0]);
+        let (publisher, mut observers) = MockPublisher::channel();
+        let task_sender = run_group_sender_under(
+            &cache,
+            publisher.stalling_writes(),
+            delivery_control_with_timeout(),
+        );
+
+        task_sender.send(send_task(0)).await.unwrap();
+        let header = observers.sent.recv().await;
+
+        // Act: the delivery timeout passes while the object's write is pending
+        tokio::time::pause();
+        tokio::time::advance(DELIVERY_TIMEOUT).await;
+
+        // Assert
+        assert!(matches!(header, Some(Sent::Object(_))));
+        assert!(matches!(
+            next_end(&mut observers.sent).await,
+            Sent::Reset(moqt::object::DataStreamResetCode::DeliveryTimeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_closed_stream_unacknowledged_at_the_delivery_timeout_is_reset() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        open_group(&cache, 0, &[0]).finish();
+        let (publisher, mut observers) = MockPublisher::channel();
+        let task_sender = run_group_sender_under(
+            &cache,
+            publisher.withholding_acknowledgements(),
+            delivery_control_with_timeout(),
+        );
+
+        // Act
+        task_sender.send(send_task(0)).await.unwrap();
+        let closed = next_end(&mut observers.sent).await;
+        tokio::time::pause();
+        tokio::time::advance(DELIVERY_TIMEOUT).await;
+
+        // Assert
+        assert!(matches!(closed, Sent::Closed));
+        assert!(matches!(
+            next_end(&mut observers.sent).await,
+            Sent::Reset(moqt::object::DataStreamResetCode::DeliveryTimeout)
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_acknowledged_stream_is_not_reset_at_the_delivery_timeout() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        open_group(&cache, 0, &[0]).finish();
+        let (publisher, mut observers) = MockPublisher::channel();
+        let task_sender =
+            run_group_sender_under(&cache, publisher, delivery_control_with_timeout());
+
+        // Act
+        task_sender.send(send_task(0)).await.unwrap();
+        let closed = next_end(&mut observers.sent).await;
+        tokio::time::pause();
+        tokio::time::advance(DELIVERY_TIMEOUT * 2).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Assert
+        assert!(matches!(closed, Sent::Closed));
+        assert!(observers.sent.try_recv().is_err());
     }
 
     #[tokio::test]

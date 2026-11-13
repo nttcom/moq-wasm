@@ -18,4 +18,9 @@ pub(crate) trait DataSender: 'static + Send + Sync {
     async fn reset(&mut self, _error_code: DataStreamResetCode) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Resolves once a closed sender holds nothing the transport may still
+    /// send (see `moqt::object::StreamDataSender::acknowledged`); at once for a
+    /// sender without a stream.
+    async fn acknowledged(&mut self) {}
 }

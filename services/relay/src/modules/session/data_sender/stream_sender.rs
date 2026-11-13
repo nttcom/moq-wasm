@@ -72,4 +72,12 @@ impl DataSender for StreamSender {
             None => Ok(()),
         }
     }
+
+    async fn acknowledged(&mut self) {
+        match self.inner.as_ref() {
+            Some(SenderInner::Uninitialized(sender)) => sender.acknowledged().await,
+            Some(SenderInner::HeaderSent(sender)) => sender.acknowledged().await,
+            None => {}
+        }
+    }
 }

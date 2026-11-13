@@ -37,6 +37,9 @@ pub struct SubscribeHandler {
     /// The SUBSCRIBE's NEW_GROUP_REQUEST (draft-18 §10.2.13): the largest
     /// Group ID the subscriber knows plus 1, 0 when it knows none.
     pub new_group_request: Option<u64>,
+    /// The SUBSCRIBE's DELIVERY TIMEOUT in milliseconds (draft-14 §9.2.1.2,
+    /// draft-18 §10.2.4 OBJECT_DELIVERY_TIMEOUT).
+    pub delivery_timeout: Option<u64>,
     /// Sent in the SUBSCRIBE_OK.
     pub track_properties: TrackProperties,
     trace_context: Option<TraceContext>,
@@ -78,6 +81,7 @@ impl SubscribeHandler {
             forward: subscribe_message.forward,
             filter_type: subscribe_message.filter_type,
             new_group_request: subscribe_message.new_group_request,
+            delivery_timeout: subscribe_message.delivery_timeout,
             track_properties: TrackProperties::default(),
             trace_context: subscribe_message.trace_context,
         }

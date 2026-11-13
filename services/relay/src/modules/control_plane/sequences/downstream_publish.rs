@@ -114,7 +114,8 @@ impl DownstreamPublish {
                 forward,
                 &filter_type,
                 largest_location,
-            ),
+            )
+            .with_delivery_timeout(downstream_subscription.publish_ok_delivery_timeout()),
         ) else {
             let track_ended = PublishDoneReason {
                 status_code: PublishDoneCode::TrackEnded,

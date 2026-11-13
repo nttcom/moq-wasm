@@ -614,7 +614,7 @@ nothing is offered.
 ### SUBSCRIBE_UPDATE sequence
 Subscriber Priority, Forward State, Start Location and End Group are applied.
 Every downstream registration owns a `watch::Sender<DeliveryControl>`
-(`domain/delivery_control.rs`: the Subscriber Priority, the Forward State, the Start Location resolved
+(`domain/delivery_control.rs`: the Subscriber Priority, the Forward State, the DELIVERY TIMEOUT, the Start Location resolved
 from the filter and the Largest Location, the End Group, the track's Largest
 Object at the latest update, and counts of the updates that moved the start
 back and of those that turned Forward on) next to its runner stop sender. The End Group is kept as the first group
@@ -1289,7 +1289,17 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   the cache again afterwards: a subscriber that withholds credit cannot keep an
   object alive past its cache expiry. A task that has not opened its stream
   10 s (`STREAM_CREDIT_TIMEOUT`) after it starts waiting for the shared factory
-  gives up on its group, and the subscription goes on. The sequence, not the group id, feeds the rank because group
+  gives up on its group, and the subscription goes on. A subscription with a DELIVERY TIMEOUT
+  (draft-14 §9.2.1.2: the SUBSCRIBE's, or the PUBLISH_OK's for a forwarded
+  PUBLISH; 0 means none) gives every object a deadline of the time the cache
+  received it (`CachedObject::received_at`) plus the timeout, kept in
+  `DeliveryControl::delivery_timeout`. The stream task gives up on its
+  subgroup at the deadline in three places: before the stream is open (no
+  stream is opened), while a write is pending, and after the FIN until the
+  transport has every byte acknowledged (`DataSender::acknowledged`), since
+  unacknowledged data still fills the send buffer the session's streams
+  share. In the last two the stream is reset with DELIVERY_TIMEOUT. Without
+  the parameter nothing is dropped. The sequence, not the group id, feeds the rank because group
   ids may be wall-clock timestamps; assigning it at open time means a still
   buffered tail of group N keeps outranking group N+1's keyframe without
   re-prioritizing streams already queued in the transport.

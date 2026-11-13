@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use moqt::{object::Location, subscribe::FilterType};
 
 /// The part of a downstream subscription a SUBSCRIBE_UPDATE / REQUEST_UPDATE
@@ -24,6 +26,10 @@ pub(crate) struct DeliveryControl {
     /// before the latest one is not continued: Forward 0 sends no object
     /// (draft-14 §5.1, draft-18 §5.1), even when egress never saw it.
     pub(crate) resumes: u64,
+    /// The subscriber's DELIVERY TIMEOUT (draft-14 §9.2.1.2): how long after
+    /// the relay received an object it is still worth sending. `None` sends
+    /// every object.
+    pub(crate) delivery_timeout: Option<Duration>,
 }
 
 impl DeliveryControl {
@@ -47,6 +53,17 @@ impl DeliveryControl {
             largest_at_update: largest,
             restarts: 0,
             resumes: 0,
+            delivery_timeout: None,
+        }
+    }
+
+    /// `millis` is the DELIVERY TIMEOUT value; 0 sets no timeout (draft-18 §8).
+    pub(crate) fn with_delivery_timeout(self, millis: Option<u64>) -> Self {
+        Self {
+            delivery_timeout: millis
+                .filter(|&millis| millis > 0)
+                .map(Duration::from_millis),
+            ..self
         }
     }
 
@@ -62,6 +79,7 @@ impl DeliveryControl {
             largest_at_update: None,
             restarts: 0,
             resumes: 0,
+            delivery_timeout: None,
         }
     }
 
@@ -85,6 +103,7 @@ impl DeliveryControl {
             largest_at_update: largest,
             restarts: self.restarts,
             resumes: self.resumes,
+            delivery_timeout: self.delivery_timeout,
             ..range
         }
     }
