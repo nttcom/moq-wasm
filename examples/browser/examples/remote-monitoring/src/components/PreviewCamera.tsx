@@ -22,7 +22,7 @@ export function PreviewCamera({ cameraId, host, onStage, onClick }: Props) {
       <div className="absolute inset-0 bg-zinc-800">
         {onStage ? (
           <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-blue-300">
-            ステージに表示中
+            メインに表示中
           </div>
         ) : (
           <PlayerHost host={host} />
