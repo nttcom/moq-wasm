@@ -97,6 +97,7 @@ class RelayAuth:
 @dataclass
 class Relay:
     url: str
+    port: int
     process: subprocess.Popen
 
 
@@ -133,9 +134,10 @@ def relay_auth(tmp_path_factory):
 
 
 @contextmanager
-def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = None):
-    port = free_relay_port()
-    log = auth.logs / f"{relay_id}.log"
+def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = None, port: int | None = None):
+    """`port` restarts a relay on the port a stopped one had."""
+    port = port or free_relay_port()
+    log = auth.logs / f"{relay_id}-{port}-{time.monotonic_ns()}.log"
     process = subprocess.Popen(
         [TARGET / "relay"],
         cwd=REPO_ROOT,
@@ -161,7 +163,7 @@ def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = N
             return logged(log, "Relay server started")
 
         wait_until(started, relay_id)
-        yield Relay(f"moqt://127.0.0.1:{port}", process)
+        yield Relay(f"moqt://127.0.0.1:{port}", port, process)
     finally:
         stop(process)
 
