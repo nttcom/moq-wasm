@@ -255,22 +255,41 @@ The browser SDK encodes with WebCodecs and hands the encoded samples to
 MSF catalog, the LOC tracks with their Timestamp property
 (draft-ietf-moq-loc-04), the media timeline, the cache for FETCH and the
 NEW_GROUP_REQUEST callback. The bindings gain the same wrapper over the same
-crate, so Python writes no catalog or LOC header of its own:
+crate, so Python writes no catalog or LOC header of its own. The media layer
+uses it through `LocalBroadcast.add_media_source`:
 
 ```python
-media = await session.media_broadcast([*room, "bot"])
-source = media.add_source("main", on_keyframe_request=encoder.request_keyframe)
-source.configure_video("avc1.42e01f")
-source.push_video(annexb, timestamp_micros)  # one access unit; a keyframe opens a group
-source.configure_audio("opus", sample_rate=48000, channels=1)
-source.push_audio(packet, timestamp_micros)
-await media.announce()
+async with create_broadcast(session, [*room, "bot"]) as bot:
+    status = bot.publish_track("status")
+    media = bot.add_media_source(video="video", audio="audio", label="bot")
+    media.configure_video("avc1.42e01f")
+    media.configure_audio("opus", sample_rate=48000, channels=1)
+    media.push_video(annexb, timestamp_micros)  # one access unit; a keyframe opens a group
+    media.push_audio(packet, timestamp_micros)
+    await media.keyframe_request()  # a subscriber asked for a new group
 ```
 
-`create_broadcast` in the media layer owns one, so the tracks a bot writes
-itself (`publish_track`, `event_timeline`) and the media tracks share one namespace
-and one catalog. Encoding stays in Python with PyAV, which the `pipecat`
-extra already depends on for decoding.
+- `_native.Session.media_broadcast(namespace)` builds a `broadcast::Broadcast`
+  on a `RelayConnection::with_session` that shares the session's origin, and
+  the session's event loop passes each event to these connections before the
+  origin (architecture.md "One event loop per session"). The tracks a bot
+  writes itself (`publish_track`, `event_timeline`) stay in that origin and
+  are answered as before; they are not listed in the catalog.
+- A broadcast with a media source is published by the media broadcast's
+  `announce` instead of `Session.announce`, so the namespace is published
+  once. On a new connection the session builds the media broadcast again:
+  each source replays its `configure_video` and `configure_audio`, and
+  `keyframe_request` resolves so that the next frame opens a group. Frames
+  pushed while the session reconnects are dropped. Leaving the block
+  withdraws the namespace and closes the media broadcast, so its tracks are
+  no longer answered and later frames are dropped.
+- `keyframe_request()` is awaited rather than registered as a callback, the
+  asyncio form of the browser SDK's `on_keyframe_request`. Renditions, on
+  demand publishing (the browser's `on_demand_change`) and AAC are left out
+  until a bot needs them.
+
+Encoding stays in Python with PyAV, which the `pipecat` extra already
+depends on for decoding.
 
 ### No codec in the wheel
 The `moq-wasm` wheel holds this repository's code (MIT) and Rust crates

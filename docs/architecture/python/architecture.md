@@ -110,6 +110,9 @@ nothing of the token mint.
 ### One event loop per session
 A session has one event receiver, so the module runs one loop per session:
 
+- Each event goes first to the `broadcast::RelayConnection` of every media
+  broadcast the session built (sdk.md "Publishing media"), which answers
+  what concerns the broadcast's tracks.
 - SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS go to the
   session's `Origin` through `Origin::handle`. A SUBSCRIBE for a track the
   origin does not have is rejected with TRACK_DOES_NOT_EXIST.

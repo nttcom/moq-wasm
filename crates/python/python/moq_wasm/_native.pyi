@@ -28,6 +28,9 @@ class Session:
     async def subscribe_current_group(self, namespace: list[str], name: str) -> Subscription:
         """The objects of the group the relay holds come first (a joining FETCH), then the live ones."""
     async def announce(self, namespace: list[str]) -> None: ...
+    def media_broadcast(self, namespace: list[str]) -> MediaBroadcast:
+        """A broadcast of encoded media in `namespace`; its `announce` publishes the namespace
+        instead of `announce`."""
     async def unannounce(self, namespace: list[str]) -> None:
         """PUBLISH_NAMESPACE_DONE for a namespace `announce` published."""
     async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> TrackWriter:
@@ -66,3 +69,33 @@ class Subscription(AsyncIterator[Object]):
 class TrackWriter:
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
         """The object is cached for FETCH whether or not a subscriber takes it."""
+
+class MediaBroadcast:
+    async def announce(self) -> None: ...
+    def close(self) -> None:
+        """Stops answering for the broadcast's tracks; withdraw the namespace with `unannounce`
+        first."""
+    def add_source(
+        self,
+        video: str,
+        audio: str,
+        *,
+        label: str,
+        video_bitrate: int | None = None,
+        video_framerate: int | None = None,
+    ) -> MediaSource:
+        """A source on the tracks `video` and `audio`, with the media timeline `<video>_timeline`."""
+
+class MediaSource:
+    def configure_video(self, codec: str) -> None:
+        """`codec` is a WebCodecs codec string (`avc1.*`, `hvc1.*`, `vp8`, `vp09.*`, `av01.*`);
+        H.264 and H.265 frames are Annex B. Raises ValueError for another codec."""
+    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+        """One encoded frame; a keyframe opens a group. Raises RuntimeError before
+        `configure_video`."""
+    def configure_audio(self, codec: str, sample_rate: int, channels: int) -> None:
+        """Only `"opus"`; raises ValueError for another codec."""
+    def push_audio(self, data: bytes, timestamp_micros: int) -> None: ...
+    async def keyframe_request(self) -> None:
+        """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
+        broadcast needs one, as after dropping frames."""
