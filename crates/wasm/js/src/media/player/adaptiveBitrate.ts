@@ -136,6 +136,7 @@ export class AdaptiveBitrate {
   private lastUpAtMs: number | undefined
   private lastCongestedAtMs: number | undefined
   private ceilingBitrate: number | undefined
+  private raiseFromCurrent = false
   private excessLagMs = LATENCY_TOLERANCE_MS.low
 
   /// Throws a RangeError for a number that is negative or NaN, or an unknown name.
@@ -149,6 +150,14 @@ export class AdaptiveBitrate {
     this.settledAtMs = nowMs + SETTLE_MS
     this.baselineLagMs = undefined
     this.calmSinceMs = this.settledAtMs
+  }
+
+  /// Playback started on a rendition chosen without this instance. While no
+  /// cap is known, `decideUnderHeight` takes a cap above the playing
+  /// rendition as raised.
+  forgetCeiling(): void {
+    this.ceilingBitrate = undefined
+    this.raiseFromCurrent = true
   }
 
   observe(sample: DeliverySample): void {
@@ -195,8 +204,10 @@ export class AdaptiveBitrate {
   ): RenditionChoice | undefined {
     const capped = capLadderToHeight(ladder, height)
     const ceilingBitrate = capped.at(-1)?.bitrate
+    const previousCeilingBitrate =
+      this.ceilingBitrate ?? (this.raiseFromCurrent ? ladder.find((rung) => rung.name === current)?.bitrate : undefined)
     const raised =
-      this.ceilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > this.ceilingBitrate
+      previousCeilingBitrate !== undefined && ceilingBitrate !== undefined && ceilingBitrate > previousCeilingBitrate
     this.ceilingBitrate = ceilingBitrate
     const choose = (name: string, reason: SwitchReason): RenditionChoice => ({
       name,

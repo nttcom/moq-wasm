@@ -1014,6 +1014,7 @@ export class LivePlayer {
       return undefined
     }
     this.selected.video = this.startingTrack('video', this.tracks.video)
+    this.adaptiveBitrate.forgetCeiling()
     return this.selectedTrack('video')
   }
 
