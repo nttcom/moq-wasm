@@ -107,7 +107,9 @@ impl PendingProducerTask {
                 let malformed = failure
                     .as_ref()
                     .is_some_and(|failure| failure.code == RequestErrorCode::MalformedTrack);
-                deps.table.pending_producer_ended(&track_key, failure);
+                if deps.table.pending_producer_ended(&track_key, failure) {
+                    deps.cache_store.publisher_left(&track_key);
+                }
                 if malformed {
                     MalformedTrackCleanup
                         .handle(&track_key, &deps.table, &deps.forwarder)
