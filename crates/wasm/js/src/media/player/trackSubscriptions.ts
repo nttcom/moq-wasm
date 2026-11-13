@@ -84,6 +84,8 @@ export class TrackSubscriptions {
     groupStart = false
   ): Promise<void> {
     this.subscriptions.set(kind, await this.open(kind, wireName, track, handler, groupStart))
+    // The priority may have changed since `open` sent the SUBSCRIBE.
+    this.updatePriority(kind)
   }
 
   /// Subscribes without making the subscription the one of its kind, so a
