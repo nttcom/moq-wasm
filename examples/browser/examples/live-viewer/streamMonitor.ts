@@ -238,19 +238,17 @@ function slotKey(record: StreamRecord): bigint {
 
 type Slot = { track: string; record?: StreamRecord }
 
-/// Every track owns a fixed block of rows and a group always sits in the row
-/// `groupId mod slots`, so the group that replaces an evicted one lands in the
-/// same row and nothing below it moves.
+/// A track's rows stay put from its first group on: neither a new group nor
+/// the one that replaces an evicted group changes the height or moves a row.
 export function layoutSlots(records: StreamRecord[], slotsPerTrack: number): Slot[] {
   const ordered = [...records].sort(compareRecords)
   const tracks = [...new Set(ordered.map((record) => record.track))]
   const slots: Slot[] = []
   for (const track of tracks) {
     const ofTrack = ordered.filter((record) => record.track === track)
-    const count = Math.min(slotsPerTrack, ofTrack.length)
-    for (let slot = 0; slot < count; slot++) {
+    for (let slot = 0; slot < slotsPerTrack; slot++) {
       const record = ofTrack
-        .filter((candidate) => Number(slotKey(candidate) % BigInt(count)) === slot)
+        .filter((candidate) => Number(slotKey(candidate) % BigInt(slotsPerTrack)) === slot)
         .sort((a, b) => b.openedAt - a.openedAt)[0]
       slots.push({ track, record })
     }
@@ -343,9 +341,6 @@ export function renderStreamMonitor(
       `<line x1="${plotLeft}" x2="${plotRight}" y1="${y + ROW_HEIGHT - 2}" y2="${y + ROW_HEIGHT - 2}" class="stream-baseline" />`
     )
     if (!record) {
-      parts.push(
-        `<text x="${LABEL_WIDTH - 8}" y="${y + ROW_HEIGHT / 2 + 4}" text-anchor="end" class="stream-label">${escapeXml(track)}</text>`
-      )
       return
     }
     const color = PALETTE[tracks.indexOf(track) % PALETTE.length]
