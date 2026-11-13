@@ -9,15 +9,16 @@ maturin, binds the `moqt` crate; the package around it is in `python/`. See
 ```python
 import moq_wasm
 
-session = await moq_wasm.connect("moqt://127.0.0.1:4433", verify_certificate=False)
-async for event in await session.watch_namespaces(["anon", "room"]):
-    if event.active:
-        catalog = await session.subscribe_current_group(event.namespace, "catalog")
-        print((await anext(catalog)).payload)
+async with moq_wasm.connect("moqt://127.0.0.1:4433", verify_certificate=False) as session:
+    async for event in await session.watch_namespaces(["anon", "room"]):
+        if event.active:
+            catalog = await session.subscribe_current_group(event.namespace, "catalog")
+            print((await anext(catalog)).payload)
 ```
 
-`connect` offers draft-18, then draft-14; `versions=["draft-14"]` names the
-drafts to offer instead.
+The session dials the relay again when the connection ends, and restores its
+tracks, namespaces and watches. `connect` offers draft-18, then draft-14;
+`versions=["draft-14"]` names the drafts to offer instead.
 
 ## Use from another Python project
 
