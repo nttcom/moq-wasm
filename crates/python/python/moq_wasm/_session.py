@@ -14,6 +14,7 @@ MAX_RECONNECT_DELAY_SECONDS = 30.0
 
 T = TypeVar("T")
 Dial = Callable[[str | None], Awaitable[_native.Session]]
+MediaRestorer = Callable[[_native.Session], Awaitable[None]]
 
 
 class SessionClosed(Exception):
@@ -130,6 +131,7 @@ class Session:
         self._native: _native.Session | None = None
         self._writers: list[TrackWriter] = []
         self._announced: list[list[str]] = []
+        self._media: dict[tuple[str, ...], MediaRestorer] = {}
         self._watches: list[NamespaceWatch] = []
         self._state = asyncio.Lock()
         self._done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -192,16 +194,27 @@ class Session:
                 )
             self._writers.append(writer)
 
+    async def _add_media_broadcast(self, namespace: list[str], restorer: MediaRestorer) -> Announcement:
+        """Publishes `namespace` through `restorer`, which builds the media broadcast on a
+        connection and announces it, now and on each new connection."""
+        async with self._state:
+            self._check_open()
+            if self._native is not None:
+                await restorer(self._native)
+            self._media[tuple(namespace)] = restorer
+        return Announcement(self, namespace)
+
     async def _unannounce(self, namespace: list[str]) -> None:
         async with self._state:
-            if namespace not in self._announced:
+            if namespace in self._announced:
+                self._announced.remove(namespace)
+            elif self._media.pop(tuple(namespace), None) is None:
                 return
-            self._announced.remove(namespace)
             if self._native is not None:
                 await self._native.unannounce(namespace)
 
     def _publishes(self, namespace: list[str]) -> bool:
-        return namespace in self._announced
+        return namespace in self._announced or tuple(namespace) in self._media
 
     async def run(self, work: Awaitable[T]) -> T:
         """Awaits `work`, cancelling it when the session ends. Raises what ended the session, such as
@@ -265,6 +278,11 @@ class Session:
             await writer._bind(
                 await native.publish_track(writer.namespace, writer.name, retention_seconds=writer.retention_seconds)
             )
+        for namespace, restorer in self._media.items():
+            try:
+                await restorer(native)
+            except RuntimeError as error:
+                logger.warning("media broadcast %s refused after reconnecting: %s", list(namespace), error)
         for namespace in self._announced:
             try:
                 await native.announce(namespace)
