@@ -1250,7 +1250,8 @@ export class LivePlayer {
         this.callbacks.onAudioLevel?.(audioLevel)
       }
     }
-    this.locLive.push(kind, groupId, object, cached)
+    const codec = this.tracks[kind].find((track) => track.name === trackName)?.codec
+    this.locLive.push(kind, groupId, object, codec, cached)
   }
 
   private handleCmafObject(kind: MediaKind, trackName: string, groupId: bigint, object: ReceivedObject): void {

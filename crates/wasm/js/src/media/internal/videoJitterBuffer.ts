@@ -6,6 +6,7 @@ export type VideoJitterBufferEntry = {
   captureTimestampMicros?: number
   receivedAtMs: number
   videoConfig?: Uint8Array
+  codec?: string
   chunk: EncodedVideoChunk
 }
 
