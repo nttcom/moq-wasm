@@ -176,7 +176,7 @@ transport = MoqWasmTransport(
         video_in_enabled=True,
         video_in_max_fps=10,
         video_out_enabled=True,
-        video_out_codec="h264",
+        video_out_codec="H264",
         video_out_width=1280,
         video_out_height=720,
     ),
@@ -213,12 +213,16 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `Catalog` to a track name) picks another track, as PTZ tracking picks the
   profile its viewer chose.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
-  `OutputImageRawFrame` with PyAV to `video_out_codec` (`"h264"` by default,
-  the codec the browser SDK publishes; `"vp8"` is royalty-free), at
-  `video_out_width`, `video_out_height` and `video_out_framerate` of
-  pipecat's `TransportParams`. Both are pushed into the transport's
+  `OutputImageRawFrame` with PyAV to `video_out_codec` (`"H264"` by default,
+  the codec the browser SDK publishes; `"VP8"` is royalty-free), at
+  `video_out_width`, `video_out_height` and `video_out_framerate`, all
+  fields of pipecat's `TransportParams`. Both are pushed into the transport's
   broadcast, so the browser plays it with `RemoteBroadcast`. A
   NEW_GROUP_REQUEST from a subscriber makes the encoder emit a keyframe.
+- **Codecs are the transport's job.** pipecat's frames carry raw audio and
+  pictures, and each transport encodes and decodes with its own stack (the
+  Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
+  PyAV). `MoqWasmTransport` does it with PyAV.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
