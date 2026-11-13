@@ -26,6 +26,31 @@ export type IssuedToken = {
   expiresAt: number
 }
 
+/** A metric's value per bucket of `t`; `null` where it has none. */
+export type Series = {
+  t: number[]
+  series: Record<string, (number | null)[]>
+}
+
+/**
+ * The app's traffic in a range, counted on its client sessions. "Sent" is relay → client (the
+ * subscribers' downlink), "received" client → relay (the publishers' uplink).
+ */
+export type Usage = {
+  traffic: Series
+  relays: { relay_id: string; sent_bytes: number; received_bytes: number; sessions: number }[]
+  namespaces: { namespace: string; sent_bytes: number; received_bytes: number }[]
+  sessions: {
+    relay_id: string
+    session_id: string
+    sent_bytes: number
+    received_bytes: number
+    rtt_ms: number
+    first_seen_ms: number
+    last_seen_ms: number
+  }[]
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -45,7 +70,9 @@ const messages: Record<string, string> = {
   invalid_path: 'パスは「/」で区切った空でない名前で、255 文字までです。',
   no_scope: '配信か視聴の少なくとも一方を許可してください。',
   invalid_ttl: '期限は 24 時間までで指定してください。',
-  invalid_request: 'リクエストの形が正しくありません。'
+  invalid_request: 'リクエストの形が正しくありません。',
+  invalid_range: '期間は 7 日以内で指定してください。',
+  observability_unavailable: '通信量を読めませんでした。しばらくしてから試してください。'
 }
 
 export function describeError(error: unknown): string {
@@ -80,7 +107,9 @@ export const api = {
   createApp: (name: string) => request<AppWithSecret>('POST', '/api/apps', { name }),
   issueToken: (appId: string, scope: TokenScope) => request<IssuedToken>('POST', `${appPath(appId)}/tokens`, scope),
   rotateSecret: (appId: string) => request<AppWithSecret>('POST', `${appPath(appId)}/secret`),
-  deleteApp: (appId: string) => request<void>('DELETE', appPath(appId))
+  deleteApp: (appId: string) => request<void>('DELETE', appPath(appId)),
+  usage: (appId: string, fromMs: number, toMs: number, points: number) =>
+    request<Usage>('GET', `${appPath(appId)}/usage?from=${fromMs}&to=${toMs}&points=${points}`)
 }
 
 export function formatUnixTime(seconds: number | null): string {

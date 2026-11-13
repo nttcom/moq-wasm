@@ -23,9 +23,10 @@ account.
 | `server.rs` | `ConsoleServer`: serves HTTP/1 through `http_server::HttpServer`, refuses a write that fails the CSRF check, identifies the caller and routes the API. |
 | `input.rs` | The request bodies and their rules: an app name is 1 to 64 characters after trimming, without control characters; a publish or subscribe path is `""` or `/`-separated non-empty elements, up to 255 characters; a token lives 1 second to 24 hours and names publish, subscribe or both. Unknown fields are refused. |
 | `apps.rs` | The operations on the caller's apps over `RegistryStore::update`: create (a random version 4 UUID as `appId`, 32 random bytes in base64 as `secret`; at most 20 apps per owner, because the VTS reads the whole registry on every verification), issue a token signed with the app's secret, rotate the secret (recording `rotatedAt`), delete. An operation on an `appId` the caller does not own answers `None`. |
+| `usage.rs` | `ObservabilityClient`: reads an app's traffic from the observability server's `GET /api/usage` (see `docs/architecture/observability/architecture.md`). It passes on `from`, `to` and `points` from the query and nothing else. |
 | (`static-files` crate) | `StaticFiles`: the built pages under `CONSOLE_STATIC_DIR`; see `docs/architecture/static-files/architecture.md`. |
 | `main.rs` | Reads the configuration, loads the registry once to fail fast, binds `0.0.0.0:$PORT` and serves. |
-| `web/` | The pages: React and Tailwind built by Vite. `App.tsx` holds the apps, the chosen app, the page and the open dialog; `Sidebar.tsx` switches apps and pages; `pages.tsx` renders the pages of an app, the list of apps and the pages still to come; `modals.tsx` shows a secret or a token once, a secret only until the employee confirms saving it. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
+| `web/` | The pages: React and Tailwind built by Vite. `App.tsx` holds the apps, the chosen app, the page and the open dialog; `Sidebar.tsx` switches apps and pages; `pages.tsx` renders the pages of an app, the list of apps and the pages still to come; `usage.tsx` the app's traffic (Observability): totals, the up- and downlink rate over time, totals per relay, the distribution of sessions by bytes and the busiest Track Namespaces; `modals.tsx` shows a secret or a token once, a secret only until the employee confirms saving it. Each request carries `X-Console-Request`; names are rendered as text by React, never as HTML. |
 
 ## Request flow
 
@@ -59,6 +60,7 @@ sequenceDiagram
 | `POST /api/apps/{appId}/tokens` `{publish?, subscribe?, ttlSeconds}` | `200 {token, expiresAt}`; `404 no_app` |
 | `POST /api/apps/{appId}/secret` | `200 {app, secret}`; `404 no_app` |
 | `DELETE /api/apps/{appId}` | `204`; `404 no_app` |
+| `GET /api/apps/{appId}/usage?from=&to=[&points=]` | `200` the observability server's `/api/usage` for the app; `400 invalid_range` when the server refuses the range, `from` or `to` missing included; `404 no_app`; `503 observability_unavailable` without `CONSOLE_OBSERVABILITY_URL` or when the server fails |
 
 Every route answers `401 unauthenticated` without a verified `sub`, `400` with
 the rule a body breaks, and `503 registry_unavailable` when the registry
@@ -75,6 +77,7 @@ that origin's host matches `Host`.
 | `CONSOLE_REGISTRY_FILE` | Registry in a local file |
 | `CONSOLE_REGISTRY_BUCKET` / `CONSOLE_REGISTRY_OBJECT` | Registry in Cloud Storage (object defaults to `registry.json`) |
 | `CONSOLE_STATIC_DIR` | Directory of the built pages (`web/dist`); without it only the API is served |
+| `CONSOLE_OBSERVABILITY_URL` | Base URL of the observability server an app's usage is read from; without it the usage route answers 503 |
 | `CONSOLE_RELAY_URL` | Relay URL the pages show for connecting; `relayUrl` is `null` without it |
 | `PORT` | Listen port, default `8080` (Cloud Run sets it) |
 
@@ -84,9 +87,18 @@ that origin's host matches `Host`.
 `cargo-chef` as the VTS does, and puts both on `distroless/cc` with
 `CONSOLE_STATIC_DIR=/srv/console`. It runs as `nonroot` and listens on `PORT`.
 
+## Usage
+
+The console reads an app's usage as its owner would: it signs a token for the
+app with the app's secret, `subscribe: ""` and a 60 second lifetime, and sends
+it to the observability server, which answers only the app that token names
+after the VTS verifies it. The console therefore needs no credential of its
+own there, and an employee can read only the apps they own. Operators read
+every app, and the relays' own figures, in HyperDX instead.
+
 ## Invariants
 
-- Only the answers to creating an app and rotating its secret carry the `secret`, so its owner can sign tokens on their own server; no other response, and no log line, carries a secret or a token.
+- Only the answers to creating an app and rotating its secret carry the `secret`, so its owner can sign tokens on their own server; no other response, and no log line, carries a secret or a token. The token signed to read an app's usage goes only to the observability server.
 - A request names an `appId`, but an app is read or changed only when its
   `sub` is the verified caller's, so another employee's app answers
   `404 no_app`; the relay's app, which has no `sub`, is never touched.

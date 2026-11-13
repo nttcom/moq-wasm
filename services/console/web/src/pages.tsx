@@ -387,11 +387,6 @@ const soonContent: Record<SoonPage, { title: string; description: string; items:
     description: 'この app の配信・視聴の実績を、期間を区切って振り返ります。',
     items: ['配信本数・視聴セッション数の推移', 'パス（名前空間）別の利用量', '期間を指定したレポートの出力']
   },
-  observability: {
-    title: 'Observability',
-    description: 'この app の relay と接続が、いま正常に動いているかを監視します。',
-    items: ['relay の稼働状況とレイテンシ', '接続中のセッション一覧', 'エラー・切断の履歴とアラート']
-  },
   media: {
     title: 'メディア処理',
     description: 'この app の配信に対する録画・トランスコードなどの後処理を設定します。',
