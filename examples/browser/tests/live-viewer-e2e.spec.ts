@@ -204,9 +204,9 @@ test('live viewer plays and reviews CMAF tracks through MSE', async ({ browser }
     await viewer.qualityButton.click()
     await viewer.packagingSelect.selectOption('cmaf')
 
-    // Assert: the LOC picture stays until the MediaSource has presented a frame, then a blob-backed element is the one on screen
+    // Assert: a video is on screen after the switch (LOC, or MSE once it has presented a frame), then the visible one is blob-backed and plays
     await expect(viewer.logPanel).toContainText(/subscribed \S*\/video\S*_cmaf/)
-    await expect(viewer.video).toBeVisible()
+    await expect(viewer.visibleVideo).toBeVisible()
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'src'), { timeout: 20_000 }).toMatch(/^blob:/)
     await expectVideoDecoded(viewer.visibleVideo)
     await expect.poll(async () => mediaProp(viewer.visibleVideo, 'currentTime'), { timeout: 15_000 }).toBeGreaterThan(1)
