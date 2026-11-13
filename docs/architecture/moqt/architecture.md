@@ -696,6 +696,15 @@ forward from their own cache through the raw stream senders.
   writer, and writers that start after the object or wait for the next group
   after a stopped stream.
   `write_group` sends one object as a finished group (the MSF catalog layout).
+- `send_in_datagrams(namespace, name)` gives a track the Object Forwarding
+  Preference Datagram (draft-14 §10.3) before its first object; a track has
+  one preference (§10), so it fails once the track has an object. `write`
+  and `write_group` then send each object as one OBJECT_DATAGRAM to every
+  outlet in Forward State 1 whose Start Location is not after it, through
+  `Publisher::create_datagram`, instead of taking the outlets' writers. The
+  writers stay idle, so PUBLISH_DONE counts no stream, as §9.12 requires, and
+  numbering, the cache and FETCH work as for a subgroup track. An object every
+  session dropped as larger than its maximum datagram size is `NotSent`.
 - `publish(session, …)` sends PUBLISH on that session and writes from the
   group after the largest one written when PUBLISH_OK arrives; it is a no-op
   while the session takes the track and after it released a PUBLISH, but

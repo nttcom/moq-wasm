@@ -41,6 +41,12 @@ export type PublishTrackOptions = {
   /// Sends PUBLISH so the relay takes the track before anyone subscribes;
   /// announce the namespace first.
   publish?: boolean
+  /// Sends each object in its own datagram (draft-14 §10.3) instead of on
+  /// subgroup streams: a lost object is not resent and never holds back the
+  /// next one. An object larger than the path's datagram size (about 1 KB is
+  /// safe) is dropped. A subscriber reads the track with the async iterator,
+  /// not `groups()`.
+  datagram?: boolean
 }
 
 export type MoqSubscribeOptions = {
@@ -196,7 +202,7 @@ export class MoqSession {
   /// Numbers, caches and sends what the writer writes, and answers the track's
   /// SUBSCRIBE and FETCH.
   publishTrack(namespace: string[], track: string, options: PublishTrackOptions = {}): Promise<Moqt.TrackWriter> {
-    return this.inner.publishTrack(namespace, track, options.retentionMs, options.publish)
+    return this.inner.publishTrack(namespace, track, options.retentionMs, options.publish, options.datagram)
   }
 
   /// To publish a MediaStream, use `publish` from `moq-wasm/media`, which feeds

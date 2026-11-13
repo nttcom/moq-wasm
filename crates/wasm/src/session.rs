@@ -304,7 +304,9 @@ impl Session {
     /// Registers a track to publish. The cache keeps objects for `retention_ms`
     /// (60 s by default), or only the newest one when it is 0. With `publish`,
     /// the track is also sent with PUBLISH (draft-14 §9.13); announce the
-    /// namespace first.
+    /// namespace first. With `datagram`, each object is sent in its own
+    /// datagram (draft-14 §10.3) instead of on subgroup streams; rejects for a
+    /// track already written to on streams.
     #[wasm_bindgen(js_name = publishTrack)]
     pub async fn publish_track(
         &self,
@@ -312,6 +314,7 @@ impl Session {
         track: String,
         retention_ms: Option<f64>,
         publish: Option<bool>,
+        datagram: Option<bool>,
     ) -> Result<TrackWriter, JsValue> {
         self.scope
             .scoped(async {
@@ -330,6 +333,12 @@ impl Session {
                         retention,
                     )
                     .await;
+                if datagram.unwrap_or(false) {
+                    origin
+                        .send_in_datagrams(&namespace, &track)
+                        .await
+                        .map_err(anyhow_error)?;
+                }
                 if publish.unwrap_or(false) {
                     origin
                         .publish(&self.session, &namespace, &track)

@@ -15,7 +15,10 @@ use crate::{
         resolve_joining_fetch,
     },
     modules::{executor, moqt::domains::session_context::SessionContext},
-    object::{ContentExists, ExtensionHeaders, Location},
+    object::{
+        ContentExists, DatagramDelivery, DatagramSender, ExtensionHeaders, ForwardingPreference,
+        Location, Object, ObjectStatus,
+    },
     publish::PublishOption,
     subscribe::{
         FilterType, SubscribeHandler, SubscribeUpdateHandler, TrackStatusHandler,
@@ -44,6 +47,7 @@ use object_numbering::ObjectNumbering;
 const SUBSCRIBE_NEVER_EXPIRES: u64 = 0;
 const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
+const DATAGRAM_PUBLISHER_PRIORITY: u8 = 128;
 
 type TrackKey = (String, String);
 /// The address of a session's `SessionContext`. An outlet or a FETCH task
@@ -78,7 +82,9 @@ pub enum WriteOutcome {
     Stopped(Placement),
     /// Dropped because no group is open for a `Within` object, or numbered and
     /// cached only: no session has a writer for the track, or every writer starts
-    /// after the object or waits for the next group after a stopped stream.
+    /// after the object or waits for the next group after a stopped stream. For
+    /// a track sent in datagrams, also when every session dropped the object as
+    /// larger than its maximum datagram size (draft-14 §10.3).
     NotSent,
 }
 
@@ -148,6 +154,8 @@ struct OriginTrack {
     new_group_requests: Option<NewGroupRequests>,
     /// Set for a track published on demand.
     demand: Option<Demand>,
+    /// The track's Object Forwarding Preference is Datagram (draft-14 §10).
+    datagrams: bool,
 }
 
 /// Whether a subscription to a track published on demand is in Forward State
@@ -186,6 +194,7 @@ impl OriginTrack {
             outlets: Vec::new(),
             new_group_requests: None,
             demand: None,
+            datagrams: false,
         }
     }
 
@@ -298,6 +307,23 @@ impl Origin {
         let key = track_key(namespace, track_name);
         self.state.lock().await.track_mut(&key)?.new_group_requests =
             Some(NewGroupRequests::new(requested));
+        Ok(())
+    }
+
+    /// Sends every object of the track in its own datagram (Object Forwarding
+    /// Preference Datagram, draft-14 §10.3) instead of on subgroup streams; a
+    /// track has one forwarding preference (§10), so call this before the
+    /// first write. Fails for a track that is not registered or already has
+    /// an object. A FETCH is still answered on a stream (§9.16).
+    pub async fn send_in_datagrams(&self, namespace: &str, track_name: &str) -> Result<()> {
+        let key = track_key(namespace, track_name);
+        let mut state = self.state.lock().await;
+        let track = state.track_mut(&key)?;
+        anyhow::ensure!(
+            track.numbering.largest().is_none(),
+            "track {namespace}/{track_name} already sent objects on subgroup streams"
+        );
+        track.datagrams = true;
         Ok(())
     }
 
@@ -427,6 +453,11 @@ impl Origin {
                 object.extension_headers.clone(),
                 object.payload.clone(),
             );
+            if track.datagrams {
+                let senders = datagram_senders(track, placement);
+                drop(state);
+                return send_datagrams(senders, placement, object).await;
+            }
             (placement, take_writers(track))
         };
         let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
@@ -455,6 +486,12 @@ impl Origin {
                 .place(GroupBoundary::Next)?
                 .context("a new group always places its first object")?;
             track.store(placement, ExtensionHeaders::default(), payload.clone());
+            if track.datagrams {
+                let senders = datagram_senders(track, placement);
+                drop(state);
+                let object = OutgoingObject::plain(GroupBoundary::Next, payload);
+                return send_datagrams(senders, placement, object).await;
+            }
             (placement, take_writers(track))
         };
         let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
@@ -914,6 +951,47 @@ fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWrit
             Some((outlet.request, outlet.start, writer))
         })
         .collect()
+}
+
+fn datagram_senders(track: &OriginTrack, placement: Placement) -> Vec<DatagramSender> {
+    track
+        .outlets
+        .iter()
+        .filter(|outlet| outlet.serving() && outlet.forward && placement.location >= outlet.start)
+        .map(|outlet| outlet.publisher.create_datagram(&outlet.subscription))
+        .collect()
+}
+
+async fn send_datagrams(
+    senders: Vec<DatagramSender>,
+    placement: Placement,
+    object: OutgoingObject,
+) -> Result<WriteOutcome> {
+    let object = Object {
+        location: placement.location,
+        forwarding: ForwardingPreference::Datagram,
+        publisher_priority: DATAGRAM_PUBLISHER_PRIORITY,
+        status: ObjectStatus::Normal,
+        extension_headers: object.extension_headers,
+        payload: object.payload,
+        ends_group: false,
+    };
+    let (mut sent, mut too_large, mut failure) = (false, false, None);
+    for mut sender in senders {
+        match sender.send_object(&object).await {
+            Ok(DatagramDelivery::Sent) => sent = true,
+            Ok(DatagramDelivery::TooLarge) => too_large = true,
+            Err(error) => {
+                tracing::debug!(%error, "datagram send failed on one session");
+                failure.get_or_insert(error);
+            }
+        }
+    }
+    match failure {
+        _ if sent => Ok(WriteOutcome::Sent(placement)),
+        Some(error) if !too_large => Err(error),
+        _ => Ok(WriteOutcome::NotSent),
+    }
 }
 
 /// Returns the first failure after trying every outlet.
@@ -1616,6 +1694,70 @@ mod tests {
             "{end_of_group:?}"
         );
         assert!(matches!(fin, Ok(None)), "{fin:?}");
+    }
+
+    #[tokio::test]
+    async fn a_datagram_track_sends_each_object_in_a_datagram_and_counts_no_stream() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-datagrams", RETENTION, version).await;
+            peers
+                .origin
+                .send_in_datagrams(NAMESPACE, TRACK)
+                .await
+                .unwrap();
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let mut reader = subscribed_track_reader(&peers.server, &subscription).await;
+
+            // Act
+            let first = peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            let second = peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+                .await
+                .unwrap();
+            let received = [
+                within(reader.next_object()).await.unwrap().unwrap(),
+                within(reader.next_object()).await.unwrap().unwrap(),
+            ];
+            let done = end_track(&peers).await;
+
+            // Assert: draft-14 §9.12 sets Stream Count to 0 for a datagram track
+            assert_eq!(first, sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(second, sent(FIRST_GROUP_ID, 1, false));
+            assert_eq!(
+                received
+                    .iter()
+                    .map(|object| (object.object_id, object.forwarding, object.payload.clone()))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (0, ForwardingPreference::Datagram, Bytes::from_static(b"a")),
+                    (1, ForwardingPreference::Datagram, Bytes::from_static(b"b")),
+                ]
+            );
+            assert_eq!(done.stream_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_track_that_sent_an_object_cannot_switch_to_datagrams() {
+        // Arrange
+        let peers = origin_with_track("origin-datagram-switch", RETENTION, Version::Draft14).await;
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Act
+        let switched = peers.origin.send_in_datagrams(NAMESPACE, TRACK).await;
+
+        // Assert: draft-14 §10 gives a track one forwarding preference
+        assert!(switched.is_err());
     }
 
     #[tokio::test]
