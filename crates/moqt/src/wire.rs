@@ -55,13 +55,18 @@ pub use crate::modules::moqt::data_plane::object::subgroup::{
 pub type TrackStatus = Subscribe;
 pub type TrackStatusOk = SubscribeOk;
 
-pub fn encode_control_message(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
+/// Fails when the payload exceeds the 16-bit Message Length (draft-14 §9).
+pub fn encode_control_message(
+    message_type: ControlMessageType,
+    payload: BytesMut,
+) -> anyhow::Result<BytesMut> {
+    let length = u16::try_from(payload.len())
+        .map_err(|_| anyhow!("control message longer than 2^16-1 bytes"))?;
     let mut buf = BytesMut::new();
     buf.put_varint(u8::from(message_type) as u64);
-    // draft-14: Message Length is 16-bit fixed
-    buf.put_u16(payload.len() as u16);
+    buf.put_u16(length);
     buf.unsplit(payload);
-    buf
+    Ok(buf)
 }
 
 pub fn take_control_message(
@@ -115,7 +120,8 @@ mod tests {
             },
         )
         .encode();
-        let mut framed = encode_control_message(ControlMessageType::ClientSetup, payload.clone());
+        let mut framed =
+            encode_control_message(ControlMessageType::ClientSetup, payload.clone()).unwrap();
 
         let (message_type, decoded_payload) = take_control_message(&mut framed)
             .expect("frame decode should succeed")
@@ -129,11 +135,23 @@ mod tests {
     #[test]
     fn control_message_frame_waits_for_more_data() {
         let payload = BytesMut::from(&[1_u8, 2, 3][..]);
-        let mut framed = encode_control_message(ControlMessageType::ClientSetup, payload);
+        let mut framed = encode_control_message(ControlMessageType::ClientSetup, payload).unwrap();
         let mut partial = framed.split_to(framed.len() - 1);
 
         let result = take_control_message(&mut partial).expect("partial decode should not fail");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn control_message_payload_above_the_16_bit_length_is_not_framed() {
+        // Arrange
+        let payload = BytesMut::zeroed(usize::from(u16::MAX) + 1);
+
+        // Act
+        let result = encode_control_message(ControlMessageType::Subscribe, payload);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]
