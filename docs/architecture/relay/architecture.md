@@ -550,6 +550,10 @@ PUBLISH_NAMESPACE only for one not yet announced there, and
 PUBLISH_NAMESPACE_DONE to a client only for one that was. A relay session gets
 PUBLISH_NAMESPACE_DONE either way: on draft-14 a relay that learned the
 namespace from a route alone applies a DONE without a registration.
+A namespace withdrawn while this sequence announces the existing ones may
+have its PUBLISH_NAMESPACE_DONE dropped that way, so the sequence checks the
+namespace is still published once its PUBLISH_NAMESPACE is written and sends
+PUBLISH_NAMESPACE_DONE itself when it is not.
 UNSUBSCRIBE_NAMESPACE forgets the
 namespaces under its prefix, so a later SUBSCRIBE_NAMESPACE announces them
 again.
