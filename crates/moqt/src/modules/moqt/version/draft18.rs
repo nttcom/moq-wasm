@@ -1464,6 +1464,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscription_stream_is_not_read_past_its_publish_done() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-done-final", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = ControlChannel::of(&server.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&subscription.request_id())
+            .cloned()
+            .unwrap();
+        let publish_done =
+            messages::encode_publish_done(PublishDoneCode::TrackEnded, 0, "done").unwrap();
+
+        // Act
+        stream.sender.send(&publish_done).await.unwrap();
+        stream.sender.send(&publish_done).await.unwrap();
+        let event = next_event(&client).await;
+        let later = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            client.receive_event(),
+        )
+        .await;
+
+        // Assert: §10.11 PUBLISH_DONE is the final message, so the second one is never read
+        assert!(matches!(event, SessionEvent::PublishDone(_)), "{event:?}");
+        assert!(later.is_err(), "no second PUBLISH_DONE: {later:?}");
+        assert!(
+            ControlChannel::of(&client.publisher().session.connection())
+                .requests()
+                .outgoing
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn unsubscribing_resets_the_stream_and_reaches_the_publisher_as_unsubscribe() {
         // Arrange
         let (client, server) =

@@ -332,7 +332,9 @@ call through the adapter; a draft never gets a task of its own (see
     draft-14 event once its Request ID passes the parity and reuse checks
     (§10.1). The peer ending an open request raises the event its draft-14
     cancellation would (`Unsubscribe`, `FetchCancel`, `PublishNamespaceDone`,
-    `UnsubscribeNamespace`, `PublishDone`).
+    `UnsubscribeNamespace`, `PublishDone`). PUBLISH_DONE is the publisher's
+    final message on a subscription's stream (§10.11), so this side stops
+    reading the stream there and ends its half with FIN.
   - `messages` / `parameters` encode the draft-14 structs: Message Parameters
     and Track Properties carry the former fields, absent ones take their
     draft-18 defaults, and responses take their Request ID from the stream.
