@@ -5,99 +5,85 @@ use crate::modules::moqt::control_plane::{
     error_codes::{DataStreamResetCode, PublishDoneCode, RequestErrorCode},
 };
 
-fn to_wire<C: PartialEq>(table: &[(C, u64)], code: C) -> u64 {
-    table
-        .iter()
-        .find(|(defined, _)| *defined == code)
-        .map(|(_, value)| *value)
-        .expect("the draft-18 tables list every code")
-}
+/// Generates `$to_wire` and `$from_wire` from one list, which must name
+/// every variant of `$code`. `A | B = value` sends `B` as `value`, which
+/// reads as `A`.
+macro_rules! wire_codes {
+    ($code:ident: $to_wire:ident, $from_wire:ident {
+        $($first:ident $(| $alias:ident)* = $value:literal),+ $(,)?
+    }) => {
+        pub(crate) fn $to_wire(code: $code) -> u64 {
+            match code {
+                $($code::$first $(| $code::$alias)* => $value),+
+            }
+        }
 
-/// §14: an unknown value reads as INTERNAL_ERROR, which every table lists
-/// first.
-fn from_wire<C: Copy>(table: &[(C, u64)], value: u64) -> C {
-    table
-        .iter()
-        .find(|(_, defined)| *defined == value)
-        .unwrap_or(&table[0])
-        .0
-}
-
-/// §15.10.2. draft-18 numbers request errors once for every request kind.
-const REQUEST_ERROR: [(RequestErrorCode, u64); 18] = [
-    (RequestErrorCode::InternalError, 0x0),
-    (RequestErrorCode::Unauthorized, 0x1),
-    (RequestErrorCode::Timeout, 0x2),
-    (RequestErrorCode::NotSupported, 0x3),
-    (RequestErrorCode::MalformedAuthToken, 0x4),
-    (RequestErrorCode::ExpiredAuthToken, 0x5),
-    (RequestErrorCode::GoingAway, 0x6),
-    (RequestErrorCode::ExcessiveLoad, 0x9),
-    (RequestErrorCode::TrackDoesNotExist, 0x10),
-    (RequestErrorCode::InvalidRange, 0x11),
-    (RequestErrorCode::MalformedTrack, 0x12),
-    (RequestErrorCode::DuplicateSubscription, 0x19),
-    (RequestErrorCode::Uninterested, 0x20),
-    (RequestErrorCode::NamespacePrefixOverlap, 0x30),
-    (RequestErrorCode::NamespaceTooLarge, 0x31),
-    (RequestErrorCode::InvalidJoiningRequestId, 0x32),
-    (RequestErrorCode::UnsupportedExtension, 0x33),
-    (RequestErrorCode::Redirect, 0x34),
-];
-
-pub(crate) fn request_error_code_to_wire(code: RequestErrorCode) -> u64 {
-    let code = match code {
-        // draft-18 has no value for these draft-14 codes; send the closest broader one.
-        RequestErrorCode::NamespacePrefixUnknown => RequestErrorCode::TrackDoesNotExist,
-        RequestErrorCode::NoObjects => RequestErrorCode::InvalidRange,
-        RequestErrorCode::UnknownStatusInRange => RequestErrorCode::InternalError,
-        code => code,
+        /// §14: an unknown value reads as INTERNAL_ERROR.
+        pub(crate) fn $from_wire(value: u64) -> $code {
+            match value {
+                $($value => $code::$first,)+
+                _ => $code::InternalError,
+            }
+        }
     };
-    to_wire(&REQUEST_ERROR, code)
 }
 
-pub(crate) fn request_error_code_from_wire(value: u64) -> RequestErrorCode {
-    from_wire(&REQUEST_ERROR, value)
+// §15.10.2. draft-18 numbers request errors once for every request kind. It
+// has no value for the draft-14 codes after a `|`, which are sent as the
+// closest broader code.
+wire_codes! {
+    RequestErrorCode: request_error_code_to_wire, request_error_code_from_wire {
+        InternalError | UnknownStatusInRange = 0x0,
+        Unauthorized = 0x1,
+        Timeout = 0x2,
+        NotSupported = 0x3,
+        MalformedAuthToken = 0x4,
+        ExpiredAuthToken = 0x5,
+        GoingAway = 0x6,
+        ExcessiveLoad = 0x9,
+        TrackDoesNotExist | NamespacePrefixUnknown = 0x10,
+        InvalidRange | NoObjects = 0x11,
+        MalformedTrack = 0x12,
+        DuplicateSubscription = 0x19,
+        Uninterested = 0x20,
+        NamespacePrefixOverlap = 0x30,
+        NamespaceTooLarge = 0x31,
+        InvalidJoiningRequestId = 0x32,
+        UnsupportedExtension = 0x33,
+        Redirect = 0x34,
+    }
 }
 
-/// §15.10.3.
-const PUBLISH_DONE: [(PublishDoneCode, u64); 10] = [
-    (PublishDoneCode::InternalError, 0x0),
-    (PublishDoneCode::Unauthorized, 0x1),
-    (PublishDoneCode::TrackEnded, 0x2),
-    (PublishDoneCode::SubscriptionEnded, 0x3),
-    (PublishDoneCode::GoingAway, 0x4),
-    (PublishDoneCode::TooFarBehind, 0x5),
-    (PublishDoneCode::Expired, 0x6),
-    (PublishDoneCode::UpdateFailed, 0x8),
-    (PublishDoneCode::ExcessiveLoad, 0x9),
-    (PublishDoneCode::MalformedTrack, 0x12),
-];
-
-pub(crate) fn publish_done_code_to_wire(code: PublishDoneCode) -> u64 {
-    to_wire(&PUBLISH_DONE, code)
-}
-
-pub(crate) fn publish_done_code_from_wire(value: u64) -> PublishDoneCode {
-    from_wire(&PUBLISH_DONE, value)
+// §15.10.3.
+wire_codes! {
+    PublishDoneCode: publish_done_code_to_wire, publish_done_code_from_wire {
+        InternalError = 0x0,
+        Unauthorized = 0x1,
+        TrackEnded = 0x2,
+        SubscriptionEnded = 0x3,
+        GoingAway = 0x4,
+        TooFarBehind = 0x5,
+        Expired = 0x6,
+        UpdateFailed = 0x8,
+        ExcessiveLoad = 0x9,
+        MalformedTrack = 0x12,
+    }
 }
 
 /// §15.10.4.
-const STREAM_RESET: [(DataStreamResetCode, u64); 10] = [
-    (DataStreamResetCode::InternalError, 0x0),
-    (DataStreamResetCode::Cancelled, 0x1),
-    (DataStreamResetCode::DeliveryTimeout, 0x2),
-    (DataStreamResetCode::SessionClosed, 0x3),
-    (DataStreamResetCode::GoingAway, 0x4),
-    (DataStreamResetCode::TooFarBehind, 0x5),
-    (DataStreamResetCode::UnknownObjectStatus, 0x6),
-    (DataStreamResetCode::ExpiredAuthToken, 0x7),
-    (DataStreamResetCode::ExcessiveLoad, 0x9),
-    (DataStreamResetCode::MalformedTrack, 0x12),
-];
-
 pub(crate) fn stream_reset_code_to_wire(code: DataStreamResetCode) -> u64 {
-    to_wire(&STREAM_RESET, code)
+    match code {
+        DataStreamResetCode::InternalError => 0x0,
+        DataStreamResetCode::Cancelled => 0x1,
+        DataStreamResetCode::DeliveryTimeout => 0x2,
+        DataStreamResetCode::SessionClosed => 0x3,
+        DataStreamResetCode::GoingAway => 0x4,
+        DataStreamResetCode::TooFarBehind => 0x5,
+        DataStreamResetCode::UnknownObjectStatus => 0x6,
+        DataStreamResetCode::ExpiredAuthToken => 0x7,
+        DataStreamResetCode::ExcessiveLoad => 0x9,
+        DataStreamResetCode::MalformedTrack => 0x12,
+    }
 }
 
 /// §15.10.1.
@@ -130,44 +116,43 @@ pub(crate) fn termination_code_to_wire(code: TerminationErrorCode) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        PUBLISH_DONE, REQUEST_ERROR, STREAM_RESET, publish_done_code_from_wire,
-        publish_done_code_to_wire, request_error_code_from_wire, request_error_code_to_wire,
-        stream_reset_code_to_wire,
+        publish_done_code_from_wire, publish_done_code_to_wire, request_error_code_from_wire,
+        request_error_code_to_wire,
     };
     use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
     #[test]
-    fn every_listed_code_round_trips() {
-        for (code, value) in REQUEST_ERROR {
-            // Act / Assert
-            assert_eq!(request_error_code_to_wire(code), value, "{code:?}");
-            assert_eq!(request_error_code_from_wire(value), code, "{value:#x}");
-        }
-        for (code, value) in PUBLISH_DONE {
-            // Act / Assert
-            assert_eq!(publish_done_code_to_wire(code), value, "{code:?}");
-            assert_eq!(publish_done_code_from_wire(value), code, "{value:#x}");
-        }
-        for (code, value) in STREAM_RESET {
-            // Act / Assert
-            assert_eq!(stream_reset_code_to_wire(code), value, "{code:?}");
-        }
+    fn a_value_reads_as_the_code_it_is_sent_for() {
+        // Act / Assert
+        assert_eq!(
+            request_error_code_from_wire(request_error_code_to_wire(RequestErrorCode::Redirect)),
+            RequestErrorCode::Redirect
+        );
+        assert_eq!(
+            publish_done_code_from_wire(publish_done_code_to_wire(PublishDoneCode::UpdateFailed)),
+            PublishDoneCode::UpdateFailed
+        );
     }
 
     #[test]
     fn draft14_request_codes_fold_into_draft18_ones() {
-        // Act / Assert
+        // Act
+        let sent = [
+            RequestErrorCode::NamespacePrefixUnknown,
+            RequestErrorCode::NoObjects,
+            RequestErrorCode::UnknownStatusInRange,
+        ]
+        .map(request_error_code_to_wire);
+
+        // Assert
+        assert_eq!(sent, [0x10, 0x11, 0x0]);
         assert_eq!(
-            request_error_code_to_wire(RequestErrorCode::NamespacePrefixUnknown),
-            0x10
-        );
-        assert_eq!(
-            request_error_code_to_wire(RequestErrorCode::NoObjects),
-            0x11
-        );
-        assert_eq!(
-            request_error_code_to_wire(RequestErrorCode::UnknownStatusInRange),
-            0x0
+            sent.map(request_error_code_from_wire),
+            [
+                RequestErrorCode::TrackDoesNotExist,
+                RequestErrorCode::InvalidRange,
+                RequestErrorCode::InternalError,
+            ]
         );
     }
 
