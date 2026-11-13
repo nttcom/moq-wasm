@@ -20,7 +20,6 @@ import { type LiveStats, LocLive, formatSyncOffset } from './locLive'
 import { LocReview } from './locReview'
 import { PictureStage } from './pictureStage'
 import { type GroupLink, type GroupMember, registerGroupMember } from './groupMember'
-import { RenditionSplice, type SpliceStart } from './renditionSplice'
 import { ReviewClock } from './reviewClock'
 import { ReviewGroupStore } from './reviewGroupStore'
 import {
@@ -36,7 +35,8 @@ import { type SeekAxis, SeekTimeline } from './seekTimeline'
 import { StallWatch } from './stallWatch'
 import { TextTracks } from './textTrack'
 import type { LogLevel, MediaKind, Packaging, PlayedTrack, TrackContext } from './trackContext'
-import { type TrackSubscription, TrackSubscriptions } from './trackSubscriptions'
+import { TrackSubscriptions } from './trackSubscriptions'
+import { VideoSwitcher } from './videoSwitcher'
 import { type StatusState, getErrorMessage } from '../internal/status'
 import {
   CATALOG_TRACK_NAME,
@@ -142,15 +142,6 @@ export type LivePlayerState = {
 /// Live objects received since the player started or its publisher last left; `audioObjects` counts LOC audio only.
 export type LivePlayerStats = LiveStats & { videoObjects: number; audioObjects: number }
 
-/// A live LOC video rendition change in progress: `next` is subscribed next
-/// to `outgoing` until the splice has handed playback over to it.
-type VideoSwitch = {
-  splice: RenditionSplice
-  outgoing: TrackSubscription
-  next?: TrackSubscription
-  previousName: string
-}
-
 export class LivePlayer {
   private readonly context: TrackContext
   private readonly callbacks: LivePlayerCallbacks
@@ -199,7 +190,7 @@ export class LivePlayer {
   private audioObjectCount = 0
   private progressNotifiedAt = Number.NEGATIVE_INFINITY
   private newestVideoGroup: bigint | undefined
-  private videoSwitch: VideoSwitch | undefined
+  private readonly videoSwitcher: VideoSwitcher
   private readonly adaptiveBitrate = new AdaptiveBitrate()
   private adaptiveVideo = true
   private videoEnabled = true
@@ -229,6 +220,20 @@ export class LivePlayer {
     this.subscriptions = new TrackSubscriptions(this.context, (kind, done, leading) =>
       this.publisherEnded(kind, done, leading)
     )
+    this.videoSwitcher = new VideoSwitcher({
+      subscriptions: this.subscriptions,
+      play: (trackName, groupId, object) => this.handleLocObject('video', trackName, groupId, object),
+      // An aligned splice keeps the seek timeline, since both renditions
+      // number their groups alike; one that is not aligned starts it over.
+      handedOver: (next, start) => {
+        this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
+        this.locLive.configureTrack('video', next.track)
+        if (!start.aligned) {
+          this.timeline.groups.reset()
+        }
+      },
+      log: (level, message) => this.context.log(level, message)
+    })
     this.stallWatch = new StallWatch(() => this.changed())
     if (options.latencyTolerance !== undefined) {
       this.adaptiveBitrate.setLatencyTolerance(options.latencyTolerance)
@@ -1101,9 +1106,8 @@ export class LivePlayer {
   }
 
   /// Switches live LOC video to another rendition of its switching set
-  /// without a gap: the rendition subscribed so far plays on until the new one
-  /// takes over at a group boundary (see `RenditionSplice`). Returns false when
-  /// the change needs the regular resubscription.
+  /// without a gap (see `VideoSwitcher`). Returns false when the change needs
+  /// the regular resubscription.
   private async spliceVideo(name: string): Promise<boolean> {
     const outgoing = this.subscriptions.get('video')
     const track = this.tracks.video.find((candidate) => candidate.name === name)
@@ -1118,108 +1122,23 @@ export class LivePlayer {
     ) {
       return false
     }
-    const pending: VideoSwitch = {
-      splice: new RenditionSplice(this.newestVideoGroup),
-      outgoing,
-      previousName: this.selected.video
-    }
-    this.videoSwitch = pending
+    const previousName = this.selected.video
     this.selected.video = name
     this.changed()
-    let next: TrackSubscription
     try {
-      next = await this.subscriptions.open('video', name, track, (groupId, object) =>
-        this.handleIncomingVideo(pending, name, groupId, object)
-      )
+      await this.videoSwitcher.begin(outgoing, name, track, this.newestVideoGroup, previousName)
     } catch (error) {
       this.abandonVideoSwitch()
       this.changed()
       throw error
     }
-    if (this.videoSwitch !== pending) {
-      await this.subscriptions.close(next)
-      return true
-    }
-    pending.next = next
-    // The splice waits for a group start: renditions keyframe on the same
-    // frames, so the new group begins on the outgoing rendition too.
-    void this.subscriptions.requestNewGroup(next, next.handle.largest?.groupId)
     return true
   }
 
-  /// Objects that arrive before the subscription is known to the switch are
-  /// dropped, so the splice is decided by a group start seen afterwards.
-  private handleIncomingVideo(pending: VideoSwitch, trackName: string, groupId: bigint, object: ReceivedObject): void {
-    const next = pending.next
-    if (!next) {
-      return
-    }
-    if (this.videoSwitch !== pending) {
-      // A switch settled after the handover, by a seek or another track
-      // change, can still receive the rest of the group before the start.
-      if (this.subscriptions.get('video') === next && pending.splice.acceptIncoming(groupId, object.objectId).play) {
-        this.handleLocObject('video', trackName, groupId, object)
-      }
-      return
-    }
-    const verdict = pending.splice.acceptIncoming(groupId, object.objectId)
-    if (verdict.start) {
-      this.startIncomingVideo(pending, next, verdict.start)
-      if (!verdict.play) {
-        // The outgoing rendition delivered this group first, so the switch
-        // starts at the next one, which a long group interval would delay.
-        void this.subscriptions.requestNewGroup(next, groupId)
-      }
-    }
-    if (verdict.retireOutgoing) {
-      this.retireOutgoingVideo(pending)
-    }
-    if (verdict.play) {
-      this.handleLocObject('video', trackName, groupId, object)
-    }
-  }
-
-  /// An aligned splice keeps the seek timeline, since both renditions number
-  /// their groups alike, and asks the publisher to end the outgoing rendition
-  /// before the start group; one that is not aligned starts the timeline over.
-  private startIncomingVideo(pending: VideoSwitch, next: TrackSubscription, start: SpliceStart): void {
-    this.subscriptions.handOver('video', next)
-    this.adaptiveBitrate.restart(monotonicUnixMicros() / 1_000)
-    this.locLive.configureTrack('video', next.track)
-    if (!start.aligned) {
-      this.timeline.groups.reset()
-      return
-    }
-    this.subscriptions.endBeforeGroup(pending.outgoing, start.groupId).catch((error) => {
-      this.context.log('warn', `end ${pending.outgoing.name} before group ${start.groupId}: ${getErrorMessage(error)}`)
-      this.retireOutgoingVideo(pending)
-    })
-  }
-
-  private retireOutgoingVideo(pending: VideoSwitch): void {
-    if (this.videoSwitch !== pending) {
-      return
-    }
-    this.videoSwitch = undefined
-    void this.subscriptions.retire(pending.outgoing)
-  }
-
-  /// Settles a switch in progress: one that has handed over keeps the new
-  /// rendition and drops the outgoing one, one that has not keeps playing the
-  /// outgoing rendition.
   private abandonVideoSwitch(): void {
-    const pending = this.videoSwitch
-    if (!pending) {
-      return
-    }
-    if (pending.splice.start !== undefined) {
-      this.retireOutgoingVideo(pending)
-      return
-    }
-    this.videoSwitch = undefined
-    this.selected.video = pending.previousName
-    if (pending.next) {
-      void this.subscriptions.close(pending.next)
+    const previousName = this.videoSwitcher.abandon()
+    if (previousName !== undefined) {
+      this.selected.video = previousName
     }
   }
 
@@ -1231,8 +1150,7 @@ export class LivePlayer {
     cached = false
   ): void {
     if (kind === 'video') {
-      const pending = this.videoSwitch
-      if (pending?.outgoing.name === trackName && pending.splice.acceptOutgoing(groupId) === 'drop') {
+      if (!this.videoSwitcher.acceptOutgoing(trackName, groupId)) {
         return
       }
       if (this.newestVideoGroup === undefined || groupId > this.newestVideoGroup) {
@@ -1294,7 +1212,7 @@ export class LivePlayer {
       !this.adaptiveVideo ||
       this.packaging !== 'loc' ||
       this.review ||
-      (this.videoSwitch && !this.videoSwitch.splice.incomingPlaying) ||
+      this.videoSwitcher.waiting ||
       !current ||
       nowMs < this.nextAdaptAtMs
     ) {
