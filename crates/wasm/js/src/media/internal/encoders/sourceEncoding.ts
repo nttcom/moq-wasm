@@ -91,7 +91,7 @@ export type SourceEncoding = {
   /// PUBLISH_DONE; unmuting publishes it again from a new group.
   setMuted(kind: MediaKind, muted: boolean): Promise<void>
   /// A muted kind stays muted. Does nothing once the source is closed.
-  replaceTrack(kind: MediaKind, track: MediaStreamTrack): void
+  replaceTrack(kind: MediaKind, track: MediaStreamTrack): Promise<void>
   /// Restarts the video's and the renditions' encoders with `options`, which
   /// replace the source's `encoding` and `main`. A muted video takes them when
   /// unmuted. The catalog keeps the bitrate and frame rate the source was
@@ -204,9 +204,9 @@ export function publishSource(
       kinds.set(kind, { track, muted: false, encoder: encode(kind, track) })
     }
   }
-  // An unmute that publishes the track before the mute's removal finishes
-  // would leave it removed, so mutes, unmutes, removals and the close run one
-  // at a time.
+  // Every change of the encoders runs one at a time: one made while a removal
+  // awaits `source.removeTrack` would be undone by it or would start an encoder
+  // for the track it removes.
 
   // A source without audio removes the `audio` placeholder the catalog lists
   // with the default `video`, queued before its first configuration.
@@ -240,29 +240,32 @@ export function publishSource(
           encoding.encoder = encode(kind, encoding.track)
         }
       }),
-    replaceTrack: (kind, track) => {
-      if (closed) {
-        return
-      }
-      const encoding = kinds.get(kind) ?? { muted: false }
-      encoding.track = track
-      kinds.set(kind, encoding)
-      if (!encoding.muted) {
-        encoding.encoder?.stop()
-        encoding.paused = false
-        encoding.encoder = encode(kind, track)
-      }
-    },
+    replaceTrack: (kind, track) =>
+      serialized(async () => {
+        if (closed) {
+          return
+        }
+        const encoding = kinds.get(kind) ?? { muted: false }
+        encoding.track = track
+        kinds.set(kind, encoding)
+        if (!encoding.muted) {
+          encoding.encoder?.stop()
+          encoding.paused = false
+          encoding.encoder = encode(kind, track)
+        }
+      }),
     setVideoEncoding: ({ encoding, main }) => {
-      if (closed) {
-        return
-      }
-      options = { ...options, encoding, main }
-      const video = kinds.get('video')
-      if (video?.track && !video.muted) {
-        video.encoder?.stop()
-        video.encoder = encode('video', video.track)
-      }
+      serialized(async () => {
+        if (closed) {
+          return
+        }
+        options = { ...options, encoding, main }
+        const video = kinds.get('video')
+        if (video?.track && !video.muted) {
+          video.encoder?.stop()
+          video.encoder = encode('video', video.track)
+        }
+      }).catch(report)
     },
     removeTrack: (kind, track) =>
       serialized(async () => {

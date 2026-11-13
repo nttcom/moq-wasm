@@ -7,14 +7,17 @@ type Kind = 'video' | 'audio'
 export class FakeTrack {
   stopped = false
 
-  constructor(readonly kind: Kind) {}
+  constructor(
+    readonly kind: Kind,
+    readonly clonedFrom?: FakeTrack
+  ) {}
 
   stop(): void {
     this.stopped = true
   }
 
   clone(): FakeTrack {
-    return new FakeTrack(this.kind)
+    return new FakeTrack(this.kind, this)
   }
 
   addEventListener(): void {}
@@ -44,7 +47,39 @@ class FakeMediaStream {
   }
 }
 
-export class FakeMediaBroadcast {
+class FakeWorker {
+  readonly messages: { type?: string; track?: FakeTrack }[] = []
+  private terminated = false
+
+  postMessage(message: { type?: string; track?: FakeTrack }): void {
+    this.messages.push(message)
+  }
+
+  terminate(): void {
+    this.terminated = true
+  }
+
+  encodes(track: FakeTrack): boolean {
+    return (
+      !this.terminated &&
+      !this.messages.some(({ type }) => type === 'stop') &&
+      this.messages.some((message) => message.track?.clonedFrom === track)
+    )
+  }
+}
+
+class FakeMediaSource {
+  removal: Promise<void> = Promise.resolve()
+
+  removeTrack(): Promise<void> {
+    return this.removal
+  }
+}
+
+/// `declaring` is what `declareTracks` resolves with; `declareCalled`
+/// resolves once it was called.
+class FakeMediaBroadcast {
+  readonly sources: FakeMediaSource[] = []
   declaring: Promise<void> = Promise.resolve()
   private readonly declared = Promise.withResolvers<void>()
   readonly declareCalled = this.declared.promise
@@ -56,13 +91,17 @@ export class FakeMediaBroadcast {
     return this.declaring
   }
 
-  addSource(): { removeTrack: () => Promise<void> } {
-    return { removeTrack: async () => {} }
+  addSource(): FakeMediaSource {
+    const source = new FakeMediaSource()
+    this.sources.push(source)
+    return source
   }
 }
 
+/// `capturedTracks` lists the tracks `getUserMedia` captured; `workers` every
+/// encoder worker started.
 export class FakeCaptureEnvironment {
-  readonly workers: unknown[] = []
+  readonly workers: FakeWorker[] = []
   readonly capturedTracks: FakeTrack[] = []
   readonly broadcast = new FakeMediaBroadcast()
   readonly session = { broadcast: () => this.broadcast } as unknown as MoqSession
@@ -88,17 +127,20 @@ export class FakeCaptureEnvironment {
     }
   }
 
+  encoders(track: FakeTrack): FakeWorker[] {
+    return this.workers.filter((worker) => worker.encodes(track))
+  }
+
   private fakeGlobals(): Record<(typeof FAKED_GLOBALS)[number], unknown> {
     const environment = this
     return {
       MediaStream: FakeMediaStream,
       MediaStreamTrack: FakeTrack,
-      Worker: class {
+      Worker: class extends FakeWorker {
         constructor() {
+          super()
           environment.workers.push(this)
         }
-
-        postMessage(): void {}
       },
       navigator: {
         mediaDevices: {

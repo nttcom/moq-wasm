@@ -384,12 +384,12 @@ class Source implements LocalSource {
       return
     }
     const [next] = await captureInputs({ [kind]: input })
+    // The encoder moves to the new track before the old one is stopped.
+    await this.encoding.replaceTrack(kind, next.track)
     if (this.closed) {
       release([next])
       return
     }
-    // The encoder moves to the new track before the old one is stopped.
-    this.encoding.replaceTrack(kind, next.track)
     this.detach(kind)
     this.attach(next)
   }
