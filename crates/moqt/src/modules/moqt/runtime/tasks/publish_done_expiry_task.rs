@@ -52,7 +52,11 @@ impl PublishDoneExpiryTask {
                                 }
                                 _ => None,
                             };
+                            let ended = (session_context.upgrade(), connection.upgrade());
                             expiries.push(async move {
+                                if let (Some(session), Some(connection)) = ended {
+                                    session.forget_ended_subscription(&connection, request_id).await;
+                                }
                                 let _ = executor::timeout(PUBLISH_DONE_GRACE_PERIOD, async {
                                     match arrived_streams {
                                         Some(mut arrived_streams) => {

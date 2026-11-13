@@ -104,10 +104,12 @@ with an End Group turns the carried filter into an AbsoluteRange of its Start
 Location and End Group, so a range narrowed after the SUBSCRIBE is kept. An
 AbsoluteRange whose End Group the previous connection has started is not
 re-sent: it ends there, and the previous connection is kept until its
-streams end (10 s limit). A subscription only delivers objects after the
-Largest Object of its SUBSCRIBE_OK (draft-14 §9.7), so a range that starts
-at or below it joins that group mid-way; `GroupCutover` leaves such a group
-to the previous connection. Its incoming streams
+streams end (10 s limit). A subscription that PUBLISH_DONE ended is not
+sent again; a PUBLISH_DONE from the previous connection for a subscription
+the current one carries only reports that server draining. A subscription
+only delivers objects after the Largest Object of its SUBSCRIBE_OK
+(draft-14 §9.7), so a range that starts at or below it joins that group
+mid-way; `GroupCutover` leaves such a group to the previous connection. Its incoming streams
 of both connections feed the same `DataReceiver`. A subgroup
 stream carries one group, so the group cutover of `GroupCutover` becomes a
 per-stream decision: the receiver hands out the streams of groups before the
