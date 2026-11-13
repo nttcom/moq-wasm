@@ -5,7 +5,6 @@ use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestE
 
 use crate::{
     RequestFailure,
-    modules::executor::now,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -22,7 +21,7 @@ use crate::{
             connection::{Connection, logical_id},
             elapsed_ms, namespace_tuple,
             pending_publish_namespace::PendingPublishNamespace,
-            request_failure::{record_outcome, record_request_id},
+            request_failure::record_outcome,
             send_targets::SendTargets,
             session_context::{
                 CarriedPublishedNamespace, Publication, PublicationTarget, SessionContext,
@@ -212,7 +211,6 @@ impl Publisher {
             let carried = self.session.read_carried().await;
             let connection = self.session.connection();
             let sent = send_publish(&connection, &track_namespace, &track_name, &option).await;
-            record_request_id(&sent, |(publish_ok, _)| publish_ok.request_id);
             match sent {
                 Ok((publish_ok, track_alias)) => {
                     break (carried, connection, publish_ok, track_alias);
@@ -326,7 +324,6 @@ pub(crate) async fn send_publish_namespace(
     Ok(PendingPublishNamespace {
         request_id,
         track_namespace: namespace,
-        sent_at: now(),
         pending,
         carried: None,
     })
@@ -364,7 +361,8 @@ pub(crate) async fn send_publish(
     let pending = connection
         .send_request(reservation, OutgoingRequest::Publish(publish))
         .await?;
-    let sent_at = now();
+    tracing::Span::current().record("request_id", request_id);
+    let sent_at = pending.sent_at();
     let response = pending.response().await?.accept();
     match response {
         ResponseMessage::PublishOk(message) if message.request_id == request_id => {

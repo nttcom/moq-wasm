@@ -24,7 +24,7 @@ use crate::modules::moqt::control_plane::control_messages::messages::fetch::Fetc
 use crate::{
     RequestFailure, TrackProperties,
     modules::{
-        executor::JoinHandle,
+        executor::{JoinHandle, now},
         moqt::{
             control_plane::control_messages::messages::parameters::{
                 group_order::GroupOrder, location::Location,
@@ -61,7 +61,7 @@ use crate::{
                     stream_sender::StreamSender,
                 },
             },
-            domains::{connection::Connection, session_context::SessionContext},
+            domains::{connection::Connection, elapsed_ms, session_context::SessionContext},
             runtime::dispatch::incoming_object::IncomingDatagram,
             version::draft14::control_message_receive_task::ControlMessageReceiveTask,
         },
@@ -610,6 +610,54 @@ impl RequestSummary {
         }
     }
 
+    fn log_timed_out(&self, duration_ms: u64) {
+        let request_id = self.request_id;
+        let track_namespace = self.track_namespace.as_deref();
+        let track_name = self.track_name.as_deref();
+        match self.kind {
+            RequestKind::Subscribe => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                duration_ms,
+                "SUBSCRIBE timed out"
+            ),
+            RequestKind::TrackStatus => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                duration_ms,
+                "TRACK_STATUS timed out"
+            ),
+            RequestKind::Fetch => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                duration_ms,
+                "FETCH timed out"
+            ),
+            RequestKind::Publish => tracing::info!(
+                request_id,
+                track_namespace,
+                track_name,
+                duration_ms,
+                "PUBLISH timed out"
+            ),
+            RequestKind::PublishNamespace => tracing::info!(
+                request_id,
+                track_namespace,
+                duration_ms,
+                "PUBLISH_NAMESPACE timed out"
+            ),
+            RequestKind::SubscribeNamespace => tracing::info!(
+                request_id,
+                track_namespace_prefix = track_namespace,
+                duration_ms,
+                "SUBSCRIBE_NAMESPACE timed out"
+            ),
+        }
+    }
+
     pub(crate) fn log_ok_sent(&self) {
         let request_id = self.request_id;
         let track_namespace = self.track_namespace.as_deref();
@@ -881,20 +929,24 @@ impl ControlChannel {
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
         let sent = RequestSummary::of(&request);
-        let pending = match self {
-            Self::Draft14(channel) => PendingResponse::Draft14(
+        let draft = match self {
+            Self::Draft14(channel) => DraftPendingResponse::Draft14(
                 channel
                     .send_request(connection, reservation, request)
                     .await?,
             ),
-            Self::Draft18(channel) => PendingResponse::Draft18(
+            Self::Draft18(channel) => DraftPendingResponse::Draft18(
                 channel
                     .send_request(connection, reservation, request)
                     .await?,
             ),
         };
         sent.log_sent();
-        Ok(pending)
+        Ok(PendingResponse {
+            draft,
+            sent,
+            sent_at: now(),
+        })
     }
 
     pub(crate) async fn send_subscribe_update(
@@ -1117,20 +1169,39 @@ impl ServerHandshake {
 }
 
 #[must_use = "dropping this abandons the request"]
-pub(crate) enum PendingResponse {
+pub(crate) struct PendingResponse {
+    draft: DraftPendingResponse,
+    sent: RequestSummary,
+    /// An `executor::now` reading.
+    sent_at: Duration,
+}
+
+enum DraftPendingResponse {
     Draft14(draft14::PendingResponse),
     Draft18(draft18::PendingResponse),
 }
 
 impl PendingResponse {
+    pub(crate) fn sent_at(&self) -> Duration {
+        self.sent_at
+    }
+
     /// Fails with `RequestFailure::Timeout` after 10 s (the session stays
     /// open), or with `RequestFailure::SessionClosed` when the control stream
     /// closes first.
     pub(crate) async fn response(self) -> Result<ReceivedResponse, RequestFailure> {
-        match self {
-            Self::Draft14(pending) => Ok(ReceivedResponse::Draft14(pending.response().await?)),
-            Self::Draft18(pending) => Ok(ReceivedResponse::Draft18(pending.response().await?)),
+        let result = match self.draft {
+            DraftPendingResponse::Draft14(pending) => {
+                pending.response().await.map(ReceivedResponse::Draft14)
+            }
+            DraftPendingResponse::Draft18(pending) => {
+                pending.response().await.map(ReceivedResponse::Draft18)
+            }
+        };
+        if let Err(RequestFailure::Timeout) = result {
+            self.sent.log_timed_out(elapsed_ms(self.sent_at));
         }
+        result
     }
 }
 

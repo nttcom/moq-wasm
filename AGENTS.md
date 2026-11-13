@@ -127,7 +127,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `supported_versions` / `selected_version` | The MoQT versions a CLIENT_SETUP offers, and the one its SERVER_SETUP picks |
 | `error` | The failure, as `%error` or `?error` |
 | `is_relay` | Whether a token's app is a relay |
-| `outcome` | How a call between services ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`; `vts.request`: `verified`, `malformed_token`, `unknown_app` or `invalid_signature`) |
+| `outcome` | How a MoQT request ended (`ok`, `rejected`, `timeout` or `failed`), or how a call between services ended (`relay.vts.verify`: `verified`, `unauthorized` or `unavailable`; `vts.request`: `verified`, `malformed_token`, `unknown_app` or `invalid_signature`) |
 | `relay_hostname` | The relay's host, on every span that roots a trace, so each stdout line carries it |
 | `url` | The URL a client connects to |
 | `fallback_url` | The `wss://` URL a client falls back to when `url` cannot be opened |

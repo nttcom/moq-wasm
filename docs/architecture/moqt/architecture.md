@@ -862,13 +862,16 @@ attempt; it adds no field for the retry.
 | `moqt.publisher.publish` | `track_namespace`, `track_name`, `request_id`, `outcome` |
 | `moqt.publisher.publish_namespace` | `track_namespace`, `request_id`, `outcome` |
 | `moqt.session.connect` | `url`, `outcome` |
+| `moqt.subscriber.track_status` (DEBUG) | `track_namespace`, `track_name`, `request_id`, `outcome` |
 
-- `request_id` is the wire Request ID of the last attempt, the one the
-  `*_OK received` / `*_ERROR received` logs print; those logs carry
+- `request_id` is the wire Request ID of the last attempt, recorded when it is
+  written; the `*_OK received` / `*_ERROR received` logs print it and carry
   `duration_ms`, the time from writing the request to its response.
 - `outcome` is `ok` when the `*_OK` arrived, `rejected` when the peer answered
-  `*_ERROR`, and `failed` for any other error (transport, protocol violation,
-  session closed).
+  `*_ERROR`, `timeout` when no response came within 10 s, and `failed` for any
+  other error (transport, protocol violation, session closed). A timeout also
+  logs one `* timed out` line (`SUBSCRIBE timed out`, ...) with the fields of
+  its `* sent` log and `duration_ms`.
 - `begin_publish_namespace` returns before the response and has no span; the
   other `Subscriber` / `Publisher` spans and `moqt.session` stay at DEBUG.
 - `moqt.session.connect` is one connection attempt of a client endpoint
