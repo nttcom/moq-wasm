@@ -27,16 +27,10 @@ pub const VIDEO_CLOCK_RATE: u32 = 90_000;
 /// Leaves room for the IP, UDP and RTP headers inside a 1280-byte IPv6 MTU.
 const MAX_PAYLOAD: usize = 1_200;
 
+/// An RTP packet from [`Muxer::push`], sent to [`Destination::rtp`], or an
+/// RTCP compound packet from [`Muxer::sender_reports`], sent to [`Destination::rtcp`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RtpPacket {
-    pub kind: MediaKind,
-    pub data: Bytes,
-}
-
-/// An RTCP compound packet for the stream `kind`; it goes to that stream's
-/// RTCP port, see [`Destination::rtcp`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RtcpPacket {
+pub struct StreamPacket {
     pub kind: MediaKind,
     pub data: Bytes,
 }
@@ -163,7 +157,7 @@ impl Muxer {
     /// Fails on an MP3 `AudioConfig`, which this muxer has no RTP payload
     /// format for, on A-law with no channels, and on an audio sample pushed
     /// before its `AudioConfig`. Configuration events produce no packets.
-    pub fn push(&mut self, event: &MediaEvent) -> Result<Vec<RtpPacket>> {
+    pub fn push(&mut self, event: &MediaEvent) -> Result<Vec<StreamPacket>> {
         match event {
             MediaEvent::Streams(streams) => {
                 self.streams = Some(*streams);
@@ -289,7 +283,7 @@ impl Muxer {
     /// to `now`. Both are microseconds since the Unix epoch, and
     /// `capture_origin` must be the time presentation time zero stands for on
     /// every stream, which is what keeps the streams aligned.
-    pub fn sender_reports(&self, capture_origin: Timestamp, now: Timestamp) -> Vec<RtcpPacket> {
+    pub fn sender_reports(&self, capture_origin: Timestamp, now: Timestamp) -> Vec<StreamPacket> {
         [&self.video, &self.audio]
             .into_iter()
             .filter_map(|stream| {
@@ -307,7 +301,7 @@ impl Muxer {
                     octet_count: stream.octet_count,
                     cname: &self.cname,
                 };
-                Some(RtcpPacket {
+                Some(StreamPacket {
                     kind: stream.kind,
                     data: report.encode(),
                 })
@@ -351,7 +345,7 @@ impl StreamSender {
 
     /// Wraps the payloads of one H.264 or AAC access unit in RTP headers; the
     /// last one carries the marker bit (RFC 6184 §5.1, RFC 3640 §3.1).
-    fn send_access_unit(&mut self, payloads: Vec<Bytes>, ticks: u64) -> Vec<RtpPacket> {
+    fn send_access_unit(&mut self, payloads: Vec<Bytes>, ticks: u64) -> Vec<StreamPacket> {
         let last = payloads.len().saturating_sub(1);
         payloads
             .into_iter()
@@ -363,12 +357,12 @@ impl StreamSender {
     /// Wraps one A-law or Opus payload in an RTP header. The marker bit flags
     /// the first packet of a talkspurt (RFC 3551 §4.1); without silence
     /// suppression only the stream's first packet is one.
-    fn send_frame(&mut self, payload: Bytes, ticks: u64) -> RtpPacket {
+    fn send_frame(&mut self, payload: Bytes, ticks: u64) -> StreamPacket {
         let marker = self.packet_count == 0;
         self.packet(&payload, ticks, marker)
     }
 
-    fn packet(&mut self, payload: &[u8], ticks: u64, marker: bool) -> RtpPacket {
+    fn packet(&mut self, payload: &[u8], ticks: u64, marker: bool) -> StreamPacket {
         let header = Header {
             marker,
             payload_type: self.payload_type,
@@ -381,7 +375,7 @@ impl StreamSender {
         // padding; both 32-bit counts wrap.
         self.packet_count = self.packet_count.wrapping_add(1);
         self.octet_count = self.octet_count.wrapping_add(payload.len() as u32);
-        RtpPacket {
+        StreamPacket {
             kind: self.kind,
             data: header.encode(payload),
         }
@@ -416,7 +410,7 @@ mod tests {
         rtcp_mux: false,
     };
 
-    fn headers(packets: &[RtpPacket]) -> Vec<Header> {
+    fn headers(packets: &[StreamPacket]) -> Vec<Header> {
         packets
             .iter()
             .map(|packet| Header::parse(&packet.data).unwrap().0)
@@ -550,10 +544,10 @@ mod tests {
         );
 
         // Assert: both report 10 002 s after the Unix epoch, the RTP times 0.5 s and 1.0 s past their latest samples; the packet count covers every video packet
-        let field = |report: &RtcpPacket, at: usize| {
+        let field = |report: &StreamPacket, at: usize| {
             u32::from_be_bytes(report.data[at..at + 4].try_into().unwrap())
         };
-        let ntp_seconds = |report: &RtcpPacket| field(report, 8) as u64 - 2_208_988_800;
+        let ntp_seconds = |report: &StreamPacket| field(report, 8) as u64 - 2_208_988_800;
         assert_eq!(reports.len(), 2);
         assert_eq!(
             (reports[0].kind, field(&reports[0], 4)),

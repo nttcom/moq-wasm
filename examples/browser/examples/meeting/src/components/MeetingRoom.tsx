@@ -62,8 +62,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoResolutionOptions,
-    videoHardwareAccelerationOptions,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,
@@ -136,7 +134,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   useEffect(() => {
     const timer = window.setInterval(() => {
       const sampledAt = Date.now()
-      const { players } = session.getMediaController()
+      const { players } = session
       setRemoteStatsHistory(
         (prev) =>
           new Map(
@@ -162,7 +160,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     setTranscriberPresent
   })
 
-  const { players } = session.getMediaController()
+  const { players } = session
   const remoteMemberIds = useMemo(() => Array.from(room.remoteMembers.keys()), [room.remoteMembers])
   const remoteViews = useMemo(
     () =>
@@ -289,8 +287,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             selectedAudioDeviceId={selectedAudioDeviceId}
             onSelectVideoDevice={selectVideoDevice}
             onSelectAudioDevice={selectAudioDevice}
-            videoResolutionOptions={videoResolutionOptions}
-            videoHardwareAccelerationOptions={videoHardwareAccelerationOptions}
             selectedVideoEncoding={selectedVideoEncoding}
             onSelectVideoEncoding={selectVideoEncoding}
             selectedScreenShareEncoding={selectedScreenShareEncoding}

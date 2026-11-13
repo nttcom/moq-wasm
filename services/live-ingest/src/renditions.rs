@@ -43,7 +43,6 @@ impl RenditionFanout {
                 )
             })
             .collect();
-        let publisher = RenditionPublisher { tracks };
         let task = tokio::spawn(async move {
             // Building the pipeline loads the GStreamer plugins. It runs off the
             // input's task because a stall there delays the first sample's push,
@@ -67,7 +66,7 @@ impl RenditionFanout {
                 "transcoding renditions started"
             );
             let feeder = feed(transcoder.input(), sample_receiver);
-            publisher.run(transcoder, renditions, &namespace_path).await;
+            publish(transcoder, tracks, renditions, &namespace_path).await;
             let _ = feeder.await;
         });
         Some(Self {
@@ -98,30 +97,24 @@ fn feed(input: TranscodeInput, mut sample_receiver: mpsc::Receiver<VideoSample>)
     })
 }
 
-struct RenditionPublisher {
-    tracks: Vec<RenditionTrack>,
-}
-
-impl RenditionPublisher {
-    async fn run(
-        mut self,
-        mut transcoder: Transcoder,
-        renditions: Vec<Rendition>,
-        namespace_path: &str,
-    ) {
-        while let Some(output) = transcoder.next().await {
-            let output = match output {
-                Ok(output) => output,
-                Err(err) => {
-                    tracing::error!(namespace = %namespace_path, ?err, "transcoder failed");
-                    break;
-                }
-            };
-            let rendition = &renditions[output.rendition];
-            let track = &mut self.tracks[output.rendition];
-            if let Err(err) = track.push(output.event).await {
-                tracing::warn!(namespace = %namespace_path, rendition = %rendition.name, ?err, "failed to publish rendition");
+async fn publish(
+    mut transcoder: Transcoder,
+    mut tracks: Vec<RenditionTrack>,
+    renditions: Vec<Rendition>,
+    namespace_path: &str,
+) {
+    while let Some(output) = transcoder.next().await {
+        let output = match output {
+            Ok(output) => output,
+            Err(err) => {
+                tracing::error!(namespace = %namespace_path, ?err, "transcoder failed");
+                break;
             }
+        };
+        let rendition = &renditions[output.rendition];
+        let track = &mut tracks[output.rendition];
+        if let Err(err) = track.push(output.event).await {
+            tracing::warn!(namespace = %namespace_path, rendition = %rendition.name, ?err, "failed to publish rendition");
         }
     }
 }

@@ -1,6 +1,6 @@
 import type { MsfTrack } from 'moq-wasm/media/catalog'
 import { buildMsfCatalogJson } from 'moq-wasm/media/catalog'
-import { getMediaVideoEncodingOverrides } from './common'
+import { getMediaVideoCodecOverride } from './common'
 import { formatAudioChannelConfig } from 'moq-wasm/media/internal/audioChannelConfig'
 
 export type MediaVideoProfile = {
@@ -23,7 +23,7 @@ export type MediaAudioProfile = {
 }
 
 export function getResolvedMediaVideoCodec(): string {
-  return getMediaVideoEncodingOverrides().codec ?? MEDIA_DEFAULT_VIDEO_CODEC
+  return getMediaVideoCodecOverride() ?? MEDIA_DEFAULT_VIDEO_CODEC
 }
 
 export function buildMediaCatalogJson(

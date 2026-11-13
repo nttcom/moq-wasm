@@ -15,8 +15,8 @@ async fn main() -> anyhow::Result<()> {
         service_name: "observability",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["observability=info"],
-        resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stdout,
+        ..Default::default()
     })?;
     let config = ObservabilityConfig::from_env()?;
     let clickhouse = ClickHouse::new(config.clickhouse.clone());

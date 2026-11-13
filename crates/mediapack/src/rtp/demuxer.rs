@@ -384,7 +384,7 @@ mod tests {
     use super::*;
     use crate::{
         rtp::{
-            muxer::{Destination, Muxer, MuxerOptions, RtpPacket},
+            muxer::{Destination, Muxer, MuxerOptions, StreamPacket},
             sdp::MediaKind,
         },
         test_support::{
@@ -426,7 +426,7 @@ mod tests {
         events
     }
 
-    fn mux(events: &[MediaEvent]) -> (Vec<RtpPacket>, SessionDescription) {
+    fn mux(events: &[MediaEvent]) -> (Vec<StreamPacket>, SessionDescription) {
         let mut muxer = Muxer::default();
         let packets = events
             .iter()
@@ -436,7 +436,7 @@ mod tests {
         (packets, description)
     }
 
-    fn demux(packets: &[RtpPacket], description: &SessionDescription) -> (Vec<MediaEvent>, u64) {
+    fn demux(packets: &[StreamPacket], description: &SessionDescription) -> (Vec<MediaEvent>, u64) {
         let mut demuxer = Demuxer::new(description).unwrap();
         let mut events: Vec<MediaEvent> = packets
             .iter()
@@ -512,16 +512,16 @@ mod tests {
     fn after_an_unterminated_access_unit(
         payload: &[u8],
         count: usize,
-    ) -> (Vec<RtpPacket>, SessionDescription) {
+    ) -> (Vec<StreamPacket>, SessionDescription) {
         let (packets, description) = mux(&source_events());
         let first_video = packets
             .iter()
             .find(|packet| packet.kind == MediaKind::Video)
             .unwrap();
         let (template, _) = Header::parse(&first_video.data).unwrap();
-        let mut crafted: Vec<RtpPacket> = (1..=count)
+        let mut crafted: Vec<StreamPacket> = (1..=count)
             .rev()
-            .map(|before| RtpPacket {
+            .map(|before| StreamPacket {
                 kind: MediaKind::Video,
                 data: Header {
                     marker: false,
@@ -573,7 +573,7 @@ mod tests {
     fn seeds_parameter_sets_from_the_session_description() {
         // Arrange: a sender that announces SPS/PPS only in the SDP
         let (packets, description) = mux(&source_events());
-        let bare_keyframe: Vec<&RtpPacket> = packets
+        let bare_keyframe: Vec<&StreamPacket> = packets
             .iter()
             .filter(|packet| packet.data[12..] != FIXTURE_SPS && packet.data[12..] != FIXTURE_PPS)
             .collect();
@@ -605,7 +605,7 @@ mod tests {
             video_ssrc: Some(7),
             ..MuxerOptions::default()
         });
-        let second_run: Vec<RtpPacket> = source_events()
+        let second_run: Vec<StreamPacket> = source_events()
             .iter()
             .flat_map(|event| restarted.push(event).unwrap())
             .collect();

@@ -14,8 +14,8 @@ async fn main() -> anyhow::Result<()> {
         service_name: "vts",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["vts=info"],
-        resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stdout,
+        ..Default::default()
     })?;
 
     let port: u16 = std::env::var("VTS_PORT")

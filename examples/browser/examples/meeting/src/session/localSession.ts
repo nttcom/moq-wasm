@@ -8,7 +8,8 @@ import {
 } from 'moq-wasm'
 import { LocalMember } from '../types/member'
 import { ChatMessage } from '../types/chat'
-import { MeetingMediaController } from '../media/meetingMediaController'
+import { MediaPublisher } from '../media/mediaPublisher'
+import { RemotePlayers } from '../media/remotePlayers'
 import {
   TranscriptTimeline,
   parseTranscriberStatus,
@@ -48,12 +49,13 @@ export class LocalSession {
   readonly roomName: string
   readonly relayUrl: string
   readonly localMember: LocalMember
+  readonly publisher: MediaPublisher
+  readonly players = new RemotePlayers()
   /// Publishes the member's media and chat and subscribes to the others' chat;
-  /// the media controller's players play their media on it.
+  /// `players` play the others' media on it.
   private session: MoqSession | null = null
   private namespaceWatch: Promise<MoqNamespaceWatch> | null = null
   private readonly chatTrack = new TrackPublication<TrackWriter>()
-  private readonly mediaController: MeetingMediaController
   private state: LocalSessionState = LocalSessionState.Idle
   private chatMessageHandler: ((message: ChatMessage) => void) | null = null
   private publishNamespaceHandler: NamespaceHandler | null = null
@@ -66,7 +68,7 @@ export class LocalSession {
     this.roomName = roomName
     this.relayUrl = relayUrl
     this.localMember = { id: userName, name: userName }
-    this.mediaController = new MeetingMediaController(this.trackNamespace)
+    this.publisher = new MediaPublisher(this.trackNamespace)
   }
 
   get status(): LocalSessionState {
@@ -117,8 +119,8 @@ export class LocalSession {
       this.chatTrack
         .writer(() => session.publishTrack(this.trackNamespace, CHAT_TRACK_NAME))
         .catch((error: unknown) => console.warn('[meeting] chat track publish failed', error))
-      await this.mediaController.publisher.start(session)
-      this.mediaController.players.connect(session)
+      await this.publisher.start(session)
+      this.players.connect(session)
       this.transitionToState(LocalSessionState.Ready)
     } catch (error) {
       this.session?.close()
@@ -139,7 +141,8 @@ export class LocalSession {
       await this.namespaceWatch
         ?.then((watch) => watch.close())
         .catch((error) => console.warn('[meeting] failed to unsubscribe the namespace', error))
-      await this.mediaController.dispose().catch((error) => console.warn('[meeting] failed to stop the media', error))
+      await this.publisher.dispose().catch((error) => console.warn('[meeting] failed to stop the media', error))
+      this.players.dispose()
     } finally {
       this.namespaceWatch = null
       this.chatMessageHandler = null
@@ -314,10 +317,6 @@ export class LocalSession {
     const session = this.connected('send chat message')
     const writer = await this.chatTrack.writer(() => session.publishTrack(this.trackNamespace, CHAT_TRACK_NAME))
     await writer.writeGroup(new TextEncoder().encode(encodeChatPayload(message)))
-  }
-
-  getMediaController(): MeetingMediaController {
-    return this.mediaController
   }
 }
 

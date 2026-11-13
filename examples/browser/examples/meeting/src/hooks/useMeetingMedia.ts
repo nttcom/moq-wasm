@@ -4,8 +4,6 @@ import type { PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
   DEFAULT_VIDEO_ENCODING_SETTINGS,
-  VIDEO_HARDWARE_ACCELERATION_OPTIONS,
-  VIDEO_RESOLUTION_OPTIONS,
   type VideoEncodingSettings
 } from '../types/videoEncoding'
 import type { CaptureSettingsState } from '../types/captureConstraints'
@@ -38,8 +36,6 @@ interface UseMeetingMediaResult {
   toggleMicrophone: () => Promise<boolean>
   playoutSettings: Map<string, PlayoutSettings>
   setPlayoutSettings: (userId: string, settings: PlayoutSettings) => void
-  videoResolutionOptions: typeof VIDEO_RESOLUTION_OPTIONS
-  videoHardwareAccelerationOptions: typeof VIDEO_HARDWARE_ACCELERATION_OPTIONS
   selectedVideoEncoding: VideoEncodingSettings
   selectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   selectedScreenShareEncoding: VideoEncodingSettings
@@ -121,7 +117,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       return
     }
 
-    const { publisher, players } = session.getMediaController()
+    const { publisher, players } = session
     publisher.setHandlers({
       onLocalCameraStream: (stream) => {
         setLocalVideoStream(stream)
@@ -190,21 +186,21 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     if (!session) {
       return
     }
-    session.getMediaController().publisher.setVideoEncodingSettings(selectedVideoEncoding)
+    session.publisher.setVideoEncodingSettings(selectedVideoEncoding)
   }, [selectedVideoEncoding, session])
 
   useEffect(() => {
     if (!session) {
       return
     }
-    session.getMediaController().publisher.setScreenShareEncodingSettings(selectedScreenShareEncoding)
+    session.publisher.setScreenShareEncodingSettings(selectedScreenShareEncoding)
   }, [selectedScreenShareEncoding, session])
 
   useEffect(() => {
     if (!session) {
       return
     }
-    const { publisher } = session.getMediaController()
+    const { publisher } = session
     publisher.setVideoCaptureConstraints({
       frameRate: captureSettings.frameRate,
       width: captureSettings.width,
@@ -229,7 +225,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     if (!session || cameraBusy) {
       return cameraEnabled
     }
-    const { publisher } = session.getMediaController()
+    const { publisher } = session
     return withBusy(setCameraBusy, 'Failed to toggle camera:', cameraEnabled, async () => {
       if (cameraEnabled) {
         await publisher.stopCamera()
@@ -245,7 +241,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     if (!session || cameraBusy) {
       return screenShareEnabled
     }
-    const { publisher } = session.getMediaController()
+    const { publisher } = session
     return withBusy(setCameraBusy, 'Failed to toggle screen share:', screenShareEnabled, async () => {
       if (screenShareEnabled) {
         await publisher.stopScreenShare()
@@ -261,7 +257,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     if (!session || microphoneBusy) {
       return microphoneEnabled
     }
-    const { publisher } = session.getMediaController()
+    const { publisher } = session
     return withBusy(setMicrophoneBusy, 'Failed to toggle microphone:', microphoneEnabled, async () => {
       if (microphoneEnabled) {
         await publisher.stopAudio()
@@ -278,7 +274,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       if (!session) {
         return
       }
-      session.getMediaController().players.setPlayoutSettings(userId, settings)
+      session.players.setPlayoutSettings(userId, settings)
       setPlayoutSettingsState((prev) => {
         const updated = new Map(prev)
         updated.set(userId, settings)
@@ -294,7 +290,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       if (!session || !cameraEnabled) {
         return
       }
-      const { publisher } = session.getMediaController()
+      const { publisher } = session
       await withBusy(setCameraBusy, 'Failed to switch camera device', undefined, async () => {
         await publisher.stopCamera()
         await publisher.startCamera(deviceId)
@@ -309,7 +305,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
       if (!session || !microphoneEnabled) {
         return
       }
-      const { publisher } = session.getMediaController()
+      const { publisher } = session
       await withBusy(setMicrophoneBusy, 'Failed to switch audio device', undefined, async () => {
         await publisher.stopAudio()
         await publisher.startAudio(deviceId)
@@ -342,7 +338,7 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     if (!session) {
       return
     }
-    const { publisher } = session.getMediaController()
+    const { publisher } = session
     const setCaptureBusy = (busy: boolean) => {
       setCameraBusy(busy)
       setMicrophoneBusy(busy)
@@ -392,8 +388,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoResolutionOptions: VIDEO_RESOLUTION_OPTIONS,
-    videoHardwareAccelerationOptions: VIDEO_HARDWARE_ACCELERATION_OPTIONS,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,

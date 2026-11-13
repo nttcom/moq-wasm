@@ -88,8 +88,8 @@ async fn main() -> Result<()> {
             "msf=info",
             "mediapack=info",
         ],
-        resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stdout,
+        ..Default::default()
     })?;
 
     let namespace = normalize_namespace(&args.namespace)?;

@@ -34,11 +34,14 @@ enum OtlpProtocol {
 }
 
 /// Where the human-readable log goes; OTLP logs are unaffected.
+#[derive(Default)]
 pub enum LogOutput {
+    #[default]
     Stdout,
     Stderr,
 }
 
+#[derive(Default)]
 pub struct TelemetryConfig<'a> {
     /// `service.name`, unless `OTEL_SERVICE_NAME` overrides it. Also prefixes
     /// the filter variables, each falling back to `RUST_LOG`. For `relay`:

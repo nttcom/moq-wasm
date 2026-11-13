@@ -121,7 +121,7 @@ fn run_worker(target: Target, rx: Receiver<Command>) {
                 send_ptz_command(&runtime, &onvif, cmd)
             }
             Command::Stop => {
-                let cmd = onvif_requests::stop(onvif.profile_token(), true, true);
+                let cmd = onvif_requests::stop(onvif.profile_token());
                 send_ptz_command(&runtime, &onvif, cmd)
             }
             Command::Center { speed } => {

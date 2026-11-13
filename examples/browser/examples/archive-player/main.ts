@@ -42,10 +42,6 @@ const review = new LocReview(
   clock
 )
 
-function decode(value: string): Uint8Array {
-  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0))
-}
-
 async function indexArchive(selected: File): Promise<{ entries: Map<string, Entry[]>; tracks: MediaCatalogTrack[] }> {
   const entries = new Map<string, Entry[]>()
   const tracks: MediaCatalogTrack[] = []
@@ -70,7 +66,7 @@ async function indexArchive(selected: File): Promise<{ entries: Map<string, Entr
       first = false
       complete = object.complete === true
       if (object.track === 'catalog' && object.payload) {
-        tracks.push(...extractCatalogTracks(JSON.parse(decoder.decode(decode(object.payload)))))
+        tracks.push(...extractCatalogTracks(JSON.parse(decoder.decode(Uint8Array.fromBase64(object.payload)))))
       } else if (
         object.track &&
         object.group !== undefined &&
@@ -105,7 +101,7 @@ async function readFrames(selected: File, entries: Entry[]): Promise<ReviewFrame
     entries.map(async (entry) => {
       const object: ArchiveObject = JSON.parse(await selected.slice(entry.offset, entry.offset + entry.length).text())
       if (!object.payload) throw new Error('Archive object has no payload')
-      return { ...entry, data: decode(object.payload) }
+      return { ...entry, data: Uint8Array.fromBase64(object.payload) }
     })
   )
 }
@@ -165,7 +161,7 @@ async function start(): Promise<void> {
           codec: audioTrack.codec,
           sampleRate: audioTrack.samplerate,
           numberOfChannels: audioTrack.channelConfig === 'mono' ? 1 : 2,
-          description: audioTrack.initData ? decode(audioTrack.initData) : undefined
+          description: audioTrack.initData ? Uint8Array.fromBase64(audioTrack.initData) : undefined
         }
       : undefined
   clock.anchor(target, false)

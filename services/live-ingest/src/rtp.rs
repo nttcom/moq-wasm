@@ -11,12 +11,12 @@ use broadcast::{Broadcast, RelayConnection};
 use bytes::Bytes;
 use mediapack::rtp::{self, Codec, SessionDescription};
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::{net::UdpSocket, sync::mpsc, time::timeout};
+use tokio::{net::UdpSocket, sync::mpsc, task::JoinSet, time::timeout};
 
 use crate::{
     ingest_publisher::{IngestOptions, IngestPublisher},
     namespace::split_namespace,
-    rtp::receive_task::ReceiveTask,
+    rtp::receive_task::receive_datagrams,
 };
 
 /// A keyframe arrives as a burst of several hundred kilobytes within a few
@@ -43,7 +43,7 @@ pub async fn run_rtp_listener(
         .with_context(|| format!("parse SDP {}", sdp_path.display()))?;
     rtp::Demuxer::new(&description)?;
     let (packet_sender, mut packet_receiver) = mpsc::channel(CHANNEL_CAPACITY);
-    let mut receive_tasks = Vec::new();
+    let mut receive_tasks = JoinSet::new();
     for media in &description.media {
         if let Codec::Unsupported(encoding) = &media.codec {
             tracing::warn!(%encoding, port = media.port, "RTP stream is not bridged");
@@ -51,7 +51,7 @@ pub async fn run_rtp_listener(
         }
         let socket = bind(media.port, description.destination_of(media)).await?;
         tracing::info!(port = media.port, kind = ?media.kind, "RTP listener started");
-        receive_tasks.push(ReceiveTask::run(socket, packet_sender.clone()));
+        receive_tasks.spawn(receive_datagrams(socket, packet_sender.clone()));
     }
     drop(packet_sender);
     let label = namespace.join("/");

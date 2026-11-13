@@ -7,10 +7,10 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
 use moqt::{Session, subscribe::FilterType};
 use msf::{Catalog, KnownTrackRole, Track};
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::{
-    broadcast_reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask},
+    broadcast_reader::track_receive_task::{StartPoint, TrackKind, receive_track},
     relay_session::{read_catalog, subscribe, track_reader},
 };
 
@@ -24,7 +24,7 @@ const OPUS_CODEC: &str = "opus";
 pub struct BroadcastReader {
     media_receiver: mpsc::Receiver<MediaEvent>,
     start: Arc<StartPoint>,
-    _tasks: Vec<TrackReceiveTask>,
+    _tasks: JoinSet<()>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -77,10 +77,10 @@ impl BroadcastReader {
             let subscription = subscribe(session, namespace, &name, filter_type).await?;
             subscriptions.push((name, kind, subscription));
         }
-        let mut tasks = Vec::new();
+        let mut tasks = JoinSet::new();
         for (name, kind, subscription) in subscriptions {
             let reader = track_reader(session, &subscription).await?;
-            tasks.push(TrackReceiveTask::run(
+            tasks.spawn(receive_track(
                 name,
                 reader,
                 kind,

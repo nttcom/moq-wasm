@@ -17,8 +17,8 @@ async fn main() -> anyhow::Result<()> {
         service_name: "token-mint",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["token_mint=info"],
-        resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stdout,
+        ..Default::default()
     })?;
 
     let port: u16 = non_empty_env("PORT")
