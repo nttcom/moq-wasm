@@ -1,7 +1,8 @@
-use std::future;
+use std::{future, sync::Arc};
 
 use observability::{
     api_server::{ApiServer, ApiState},
+    app_verifier::AppVerifier,
     clickhouse::ClickHouse,
     client_telemetry::{ClientTelemetry, ClientTelemetryConfig},
     config::ObservabilityConfig,
@@ -22,17 +23,24 @@ async fn main() -> anyhow::Result<()> {
     let clickhouse = ClickHouse::new(config.clickhouse.clone());
     schema::apply(&clickhouse).await?;
 
+    let verifier = config
+        .vts_url
+        .clone()
+        .map(AppVerifier::new)
+        .transpose()?
+        .map(Arc::new);
     let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
-        vts_url: config.vts_url.clone(),
+        verifier: verifier.clone(),
         otlp_logs_endpoint: config.otlp_logs_endpoint.clone(),
         otlp_metrics_endpoint: config.otlp_metrics_endpoint.clone(),
         otlp_traces_endpoint: config.otlp_traces_endpoint.clone(),
-    })?;
+    });
     let listener = TcpListener::bind(("0.0.0.0", config.http_port)).await?;
     let _api = ApiServer::run(
         listener,
         ApiState {
             clickhouse,
+            verifier,
             client_telemetry,
         },
     );
@@ -41,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
         otlp_metrics = config.otlp_metrics_endpoint.is_some(),
         otlp_logs = config.otlp_logs_endpoint.is_some(),
         otlp_traces = config.otlp_traces_endpoint.is_some(),
-        client_token_verification = config.vts_url.is_some(),
+        token_verification = config.vts_url.is_some(),
         "observability started"
     );
 

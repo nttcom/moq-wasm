@@ -5,9 +5,11 @@ Living document (PoC). Update this file in the same change whenever the design
 intent, module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
-An admin view of the relay mesh: per-session network statistics, per-track /
-per-subscription delivery counters, relay memory, and the pub/sub topology
-that links them, live and as history.
+A view of an app's traffic through the relay mesh: per-session network
+statistics, per-track / per-subscription delivery counters, and the pub/sub
+topology that links them, live and as history. A reader sees only the app its
+token names (`anon` without one); operators read every app, and the relays'
+own figures, in HyperDX.
 
 - Every relay sends one snapshot per second as an OTLP log record, and the
   relay-wide values of it as OTLP gauges for HyperDX (see Relay gauges).
@@ -184,13 +186,15 @@ affects.
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | none | OTLP/HTTP metrics URL (`…/v1/metrics`) for player stats |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | none | OTLP/HTTP logs URL (`…/v1/logs`) for browser logs |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | none | OTLP/HTTP traces URL (`…/v1/traces`) for client request spans |
-| `AUTH_VTS_URL` | none | VTS `…/verify` URL that reads a browser report's app from its token; without it every report is `anon` |
+| `AUTH_VTS_URL` | none | VTS `…/verify` URL that reads the app of a stats request's or a browser report's token; without it every report is `anon` and a stats request with a token answers 503 |
 
 The server stores nothing of the relays itself; at startup `schema::apply`
 creates the tables and the views that fill them (see Storage) and the API
 starts.
 
-- `ApiServer` (`http_server::HttpServer`, as in `vts`, with `Access-Control-Allow-Origin: *`):
+- `ApiServer` (`http_server::HttpServer`, as in `vts`, with `Access-Control-Allow-Origin: *`;
+  `OPTIONS` answers a preflight allowing the `Authorization` header). The
+  three stats routes below answer only the reader's app (see Access):
   - `POST /api/client-telemetry` — a client's logs, player stats and spans (see
     Client telemetry); 404 unless an OTLP endpoint is set.
   - `GET /api/snapshots` — the newest snapshot of every relay that logged one
@@ -203,33 +207,58 @@ starts.
     `previous`, if it published one in the 10 s before that time. The page
     sends `previous` 2 s before `at` to derive rates. One scan reads both, so
     `previous` must lie within 10 s before `at` (400 otherwise).
-  - `GET /api/namespaces?from=…&to=…[&app_id=…]` — every namespace with a
+  - `GET /api/namespaces?from=…&to=…` — every namespace of the app with a
     track in the range (from `track_stats`, at most 1000), with its tracks, relays, first / last time seen and the
     number of distinct client subscriptions, plus the range's totals of
     client subscriptions and client sessions.
-  - `GET /api/series?relay_id=…&target=process|relay|session|track|subscription&…&from=…&to=…&points=…`
+  - `GET /api/series?relay_id=…&target=relay|session|track|subscription&…&from=…&to=…&points=…`
     — the target's rows bucketed into `points` buckets (at least 1 s), with
     counters turned into per-second rates between the last samples of
     consecutive buckets (so a partly filled newest bucket is not
     underestimated) and a
     counter that went backwards (a restart) giving no value. `relay` sums
     every session of the relay; ratios such as loss are weighted by their
-    denominators. Query values reach ClickHouse as typed query parameters.
+    denominators. `relay` sums only the app's client sessions on the relay, a
+    `session` must be one of them and a `track` or `subscription` must lie
+    under the app's namespace root, else the series is empty. Query values
+    reach ClickHouse as typed query parameters.
     A range longer than the 7-day retention (series and namespaces) or more
     than 300 points is rejected with 400, so an anonymous caller cannot make ClickHouse scan
     more than one retention window per request.
 
-The API has no authentication: the PoC page is published on GitHub Pages and
-reads it from any origin. What it returns is therefore treated as public. A
-client session's address is masked before it leaves the server
+### Access
+
+A stats request names its reader's app (`viewer::viewer_app`):
+
+- Without `Authorization` it reads `anon`, the app the relay gives an
+  anonymous session, which is public as it is on the relay and the recorder.
+- With `Authorization: Bearer <token>` the VTS verifies the token and
+  `auth_token::SignedToken::check` judges its times as the relay does
+  (`app_verifier::AppVerifier`). It reads the token's app only when its
+  `subscribe` claim is `""`: a session belongs to an app, not to a namespace
+  below it, so a token for one room would otherwise show the whole app.
+  Another claim answers 403, a rejected or malformed token 401, and a VTS that
+  is missing or fails 503.
+- A verified token is answered from memory until it no longer passes
+  `check`, at most 1024 of them, so a page polling every second asks the VTS
+  once per token.
+
+A snapshot then keeps the app's client sessions and the tracks and
+subscriptions under its namespace root, element by element. A relay session
+stays only while one of those names it, and only with its id, peer and
+addresses, so the page can follow a track to the relay it came from: its
+counters, like the relay's `process` figures, carry every app's traffic and
+are left out. The relay's id stays. The PoC page on GitHub Pages reads the API from any
+origin with the token of the app it shows. A client session's address is
+masked before it leaves the server
 (`203.0.113.x:50123`, IPv6 keeps its first three groups); the port stays so
 cards remain distinguishable. Relay addresses stay unmasked because the page
 needs them to identify inter-relay sessions. ClickHouse keeps the unmasked
 addresses.
 
 The browser polls the server instead of reading ClickHouse or subscribing
-over MoQT itself: one data path for live and history, and no credentials in
-the browser.
+over MoQT itself: one data path for live and history, and no ClickHouse
+credentials in the browser.
 
 ## Storage (ClickHouse, self-hosted)
 
@@ -337,7 +366,8 @@ report to OTLP/JSON and forwards it (`client_telemetry`).
   which the Google Cloud load balancer appends after the client's own value,
   or the TCP peer without the header.
 - **App.** A report with a `token` takes the `appId` the VTS returns for it,
-  after the server checks `exp` (the VTS checks only the signature); a
+  after the server judges its times with `SignedToken::check` as for a stats
+  request (the VTS checks only the signature); a
   rejected token answers 401 and forwards nothing. A report without one is
   `anon`, the app the relay gives an anonymous session. The server sets
   `app_id` and `client_id` on every record, so a client cannot claim another
