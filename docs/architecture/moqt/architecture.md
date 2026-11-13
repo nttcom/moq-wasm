@@ -121,9 +121,8 @@ Client-side helpers shared by the creators:
   to open is used and the other is dropped. A failure within the head start
   dials `wss://` at once, so a browser without the WebTransport API does not
   wait. Only creators with a `WEB_SOCKET_HEAD_START` do this, `NATIVE` (200 ms)
-  and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP;
-  `ClientConfig::web_socket_fallback` turns it off or sets another head
-  start. Which transport won is not remembered: each connect races again,
+  and `BROWSER` (500 ms), so `QUIC` links between relays never move to TCP.
+  Which transport won is not remembered: each connect races again,
   and a session that landed on WebSocket stays there until it ends. The
   host is resolved once before the head start, so a slow DNS server does
   not use it up, and both dials go to the same address. Only opening the
@@ -604,8 +603,8 @@ use these facades instead of the data-plane factories directly:
   start anywhere). `write()` appends a payload object with optional immutable
   extension headers and `write_with_extension_headers()` with arbitrary ones,
   which is how LOC headers are attached. Group ids run from the
-  `first_group_id` given at construction unless chosen, `next_group_id()`
-  exposes where numbering continues, object ids run from 0 within each group;
+  `first_group_id` given at construction unless chosen, object ids run from
+  0 within each group;
   publisher priority is fixed at 128 and the subgroup id is omitted
   (`SubgroupId::None`).
 - `TrackReader` wraps a `DataReceiver` and yields

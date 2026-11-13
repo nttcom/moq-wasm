@@ -1,10 +1,9 @@
 use moqt::fetch::UnknownRange;
-use moqt::object::{DataStreamResetCode, DatagramDelivery};
+use moqt::object::{DataStreamResetCode, DatagramDelivery, SubgroupPart};
 use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
 
 use crate::modules::session::{
-    data_object::DataObject,
     data_sender::{
         DataSender, datagram_sender::DatagramSender, fetch_sender::FetchSender,
         stream_sender_factory::StreamSenderFactory,
@@ -15,7 +14,7 @@ use crate::modules::session::{
 
 #[derive(Debug)]
 pub(crate) enum Sent {
-    Object(DataObject),
+    Object(SubgroupPart),
     Datagram(moqt::object::Object),
     Reprioritized(moqt::object::StreamPriority),
     Closed,
@@ -28,7 +27,7 @@ struct MockDataSender {
 
 #[async_trait::async_trait]
 impl DataSender for MockDataSender {
-    async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()> {
+    async fn send_object(&mut self, object: SubgroupPart) -> anyhow::Result<()> {
         self.sent
             .send(Sent::Object(object))
             .map_err(|_| anyhow::anyhow!("subscriber side dropped"))

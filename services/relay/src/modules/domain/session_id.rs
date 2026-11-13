@@ -11,14 +11,10 @@ pub(crate) fn generate_session_id() -> SessionId {
         .map(|d| d.as_nanos() as u64)
         .unwrap_or_else(|_| LAST_SESSION_ID.load(Ordering::Relaxed).saturating_add(1));
 
-    loop {
-        let previous = LAST_SESSION_ID.load(Ordering::Relaxed);
-        let candidate = epoch_nanos.max(previous.saturating_add(1));
-        if LAST_SESSION_ID
-            .compare_exchange(previous, candidate, Ordering::SeqCst, Ordering::SeqCst)
-            .is_ok()
-        {
-            return candidate;
-        }
-    }
+    let previous = LAST_SESSION_ID
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |previous| {
+            Some(epoch_nanos.max(previous.saturating_add(1)))
+        })
+        .expect("the closure always returns Some");
+    epoch_nanos.max(previous.saturating_add(1))
 }

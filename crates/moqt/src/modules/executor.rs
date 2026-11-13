@@ -32,6 +32,21 @@ pub trait MaybeSync {}
 #[cfg(target_arch = "wasm32")]
 impl<T: ?Sized> MaybeSync for T {}
 
+/// A bare `JoinHandle` detaches its task when dropped.
+pub(crate) struct AbortOnDrop(JoinHandle);
+
+impl JoinHandle {
+    pub(crate) fn abort_on_drop(self) -> AbortOnDrop {
+        AbortOnDrop(self)
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 #[cfg(target_arch = "wasm32")]

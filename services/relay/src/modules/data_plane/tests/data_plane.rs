@@ -1,7 +1,6 @@
-use moqt::object::DataStreamResetCode;
 use std::time::Duration;
 
-use crate::modules::session::data_object::DataObject;
+use moqt::object::{DataStreamResetCode, SubgroupPart};
 
 use crate::modules::data_plane::cache::track_cache::NextObject;
 use crate::modules::test_support::relay_harness::{
@@ -84,7 +83,7 @@ async fn next_group_start_delivers_a_first_group_with_nonzero_id_cached_before_e
     assert!(
         matches!(
             objects.first(),
-            Some(DataObject::SubgroupHeader(header)) if header.group_id == FIRST_GROUP_ID
+            Some(SubgroupPart::Header(header)) if header.group_id == FIRST_GROUP_ID
         ),
         "downstream stream should start with the first group's subgroup header"
     );
@@ -200,7 +199,7 @@ async fn downstream_header_is_regenerated_from_the_cached_objects() {
 
     // Assert
     let objects = receive_objects_until_close(&mut egress).await;
-    let Some(DataObject::SubgroupHeader(header)) = objects.first() else {
+    let Some(SubgroupPart::Header(header)) = objects.first() else {
         panic!("downstream stream should start with a subgroup header");
     };
     assert_eq!(header.group_id, 0);
@@ -385,7 +384,7 @@ async fn after_a_resume_an_object_in_a_subgroup_opened_while_paused_is_delivered
     let objects = receive_objects_until_close(&mut egress).await;
     assert!(matches!(
         objects.first(),
-        Some(DataObject::SubgroupHeader(header)) if header.group_id == 0
+        Some(SubgroupPart::Header(header)) if header.group_id == 0
     ));
     assert_eq!(downstream_object_ids(&objects), vec![1]);
     egress
@@ -483,7 +482,7 @@ async fn upstream_reopen_after_a_reset_is_relayed_on_a_new_downstream_stream() {
     );
     assert!(matches!(
         reopened_objects.first(),
-        Some(DataObject::SubgroupHeader(_))
+        Some(SubgroupPart::Header(_))
     ));
     assert_eq!(downstream_object_ids(&reopened_objects), vec![4, 5]);
 }
@@ -515,7 +514,7 @@ async fn upstream_reopen_racing_the_reset_relays_each_object_once_on_two_streams
         objects.extend(second_objects);
         let header_count = objects
             .iter()
-            .filter(|object| matches!(object, DataObject::SubgroupHeader(_)))
+            .filter(|object| matches!(object, SubgroupPart::Header(_)))
             .count();
         let mut payloads = payloads_of(&objects);
         payloads.sort();
@@ -594,9 +593,9 @@ async fn a_publisher_reset_is_not_relayed_while_another_publisher_finishes_the_s
     assert!(matches!(end, Sent::Closed), "expected a FIN, got {end:?}");
 }
 
-fn payload_piece(object: &DataObject) -> (&[u8], bool) {
+fn payload_piece(object: &SubgroupPart) -> (&[u8], bool) {
     match object {
-        DataObject::SubgroupPayload { data, last } => (&data[..], *last),
+        SubgroupPart::Payload { data, last } => (&data[..], *last),
         other => panic!("expected a payload piece, got {other:?}"),
     }
 }
@@ -620,14 +619,11 @@ async fn an_arriving_object_is_forwarded_before_its_last_byte() {
     let (rest, end) = receive_objects_until_end(&mut egress).await;
 
     // Assert
-    assert!(
-        matches!(header, DataObject::SubgroupHeader(_)),
-        "{header:?}"
-    );
+    assert!(matches!(header, SubgroupPart::Header(_)), "{header:?}");
     assert!(
         matches!(
             &start,
-            DataObject::SubgroupObjectStart { object, payload_len: 8 }
+            SubgroupPart::ObjectStart { object, payload_len: 8 }
                 if object.location == location(0, 0)
         ),
         "{start:?}"
@@ -705,15 +701,9 @@ async fn a_subscriber_joining_inside_a_payload_receives_the_object_from_its_firs
     let rest = receive_objects_until_close(&mut egress).await;
 
     // Assert
+    assert!(matches!(header, SubgroupPart::Header(_)), "{header:?}");
     assert!(
-        matches!(header, DataObject::SubgroupHeader(_)),
-        "{header:?}"
-    );
-    assert!(
-        matches!(
-            start,
-            DataObject::SubgroupObjectStart { payload_len: 8, .. }
-        ),
+        matches!(start, SubgroupPart::ObjectStart { payload_len: 8, .. }),
         "{start:?}"
     );
     assert_eq!(payload_piece(&first_piece), (&b"keyf"[..], false));

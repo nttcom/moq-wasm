@@ -138,12 +138,11 @@ impl RelayServer {
         &self,
         port: u16,
         accepted_peer: SessionPeer,
-        versions: Vec<moqt::Version>,
     ) -> anyhow::Result<SessionHandler> {
         tracing::debug!(
             port,
             session_peer = accepted_peer.kind(),
-            supported_versions = ?versions,
+            supported_versions = ?self.versions,
             "spawning transport handler"
         );
         let server_config = ServerConfig {
@@ -151,7 +150,7 @@ impl RelayServer {
             cert_path: self.cert_path.clone(),
             key_path: self.key_path.clone(),
             keep_alive_interval_sec: 15,
-            versions,
+            versions: self.versions.clone(),
         };
 
         SessionHandler::run::<T>(
@@ -169,7 +168,7 @@ impl RelayServer {
         &self,
         port: u16,
     ) -> anyhow::Result<SessionHandler> {
-        self.spawn_transport::<T>(port, SessionPeer::Client, self.versions.clone())
+        self.spawn_transport::<T>(port, SessionPeer::Client)
     }
 
     /// Fails when the endpoint cannot bind `port` or load the certificate.
@@ -177,7 +176,7 @@ impl RelayServer {
         &self,
         port: u16,
     ) -> anyhow::Result<SessionHandler> {
-        self.spawn_transport::<T>(port, SessionPeer::Relay, self.versions.clone())
+        self.spawn_transport::<T>(port, SessionPeer::Relay)
     }
 
     /// Sends GOAWAY to every client session and resolves once they have all

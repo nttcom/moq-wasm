@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use moqt::object::{ObjectStatus, SubgroupStart};
+use moqt::object::{ObjectStatus, SubgroupPart, SubgroupStart};
 use tokio::sync::mpsc;
 use tracing::Span;
 
@@ -14,10 +14,7 @@ use crate::modules::{
         ingress::ingest_task::TrackIngest,
     },
     domain::track_key::TrackKey,
-    session::{
-        data_object::DataObject, data_receiver::stream_receiver::StreamReceiver,
-        session_event::SessionEvent,
-    },
+    session::{data_receiver::stream_receiver::StreamReceiver, session_event::SessionEvent},
 };
 
 /// A payload that makes no progress for this long means a dead path or a peer
@@ -64,7 +61,7 @@ pub(crate) async fn read_stream(
         };
 
         match receive_result {
-            Ok(Some(DataObject::SubgroupHeader(start))) => {
+            Ok(Some(SubgroupPart::Header(start))) => {
                 span.record("group_id", start.group_id);
                 ingest = Some(open_subgroup(&cache, &span, &start));
                 header = Some(ReceivedHeader {
@@ -72,7 +69,7 @@ pub(crate) async fn read_stream(
                     prev_object_id: None,
                 });
             }
-            Ok(Some(DataObject::SubgroupObject(object))) => {
+            Ok(Some(SubgroupPart::Object(object))) => {
                 let (Some(header), Some(current)) = (header.as_mut(), ingest.as_mut()) else {
                     span.record("end_reason", "object_before_header");
                     tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "subgroup object received before its header");
@@ -97,7 +94,7 @@ pub(crate) async fn read_stream(
                     return;
                 }
             }
-            Ok(Some(DataObject::SubgroupObjectStart {
+            Ok(Some(SubgroupPart::ObjectStart {
                 object,
                 payload_len,
             })) => {
@@ -109,7 +106,7 @@ pub(crate) async fn read_stream(
                 header.prev_object_id = Some(object.location.object_id);
                 partial = Some(current.begin_object(object, payload_len));
             }
-            Ok(Some(DataObject::SubgroupPayload { data, last })) => {
+            Ok(Some(SubgroupPart::Payload { data, last })) => {
                 let (Some(writer), Some(current)) = (partial.as_ref(), ingest.as_ref()) else {
                     span.record("end_reason", "payload_outside_object");
                     tracing::error!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "payload received outside an object");
@@ -230,11 +227,11 @@ mod tests {
         },
     };
 
-    fn payload(object_id: u64) -> DataObject {
+    fn payload(object_id: u64) -> SubgroupPart {
         make_payload_object(0, object_id, Bytes::from_static(b"payload"))
     }
 
-    fn send_all(upstream_stream: &UpstreamSubgroupStream, objects: Vec<DataObject>) {
+    fn send_all(upstream_stream: &UpstreamSubgroupStream, objects: Vec<SubgroupPart>) {
         for object in objects {
             upstream_stream.send(object);
         }

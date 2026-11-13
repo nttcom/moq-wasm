@@ -18,7 +18,7 @@ use crate::modules::transport::transport_connection_creator::TransportConnection
 use crate::{SessionEvent, TerminationErrorCode};
 use std::time::Duration;
 
-use crate::{Connecting, WebSocketFallback, server::Accepting, server::Handshake};
+use crate::{Connecting, server::Accepting, server::Handshake};
 
 const CLOSE_REASON_TIMEOUT: Duration = Duration::from_secs(1);
 /// QUIC's idle timeout does not end the handshake of a peer that answers
@@ -53,7 +53,8 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) transport_creator: T::ConnectionCreator,
     pub(crate) authorization_token: Option<AuthorizationTokenSource>,
     pub(crate) follow_go_away: bool,
-    web_socket_fallback: WebSocketFallback,
+    /// `T::ConnectionCreator::WEB_SOCKET_HEAD_START`, which tests shorten.
+    pub(super) web_socket_head_start: Option<Duration>,
     /// The drafts the endpoint offers (a client) or accepts (a server).
     pub(crate) versions: Vec<Version>,
 }
@@ -121,14 +122,13 @@ impl<T: TransportProtocol> SessionCreator<T> {
         transport_creator: T::ConnectionCreator,
         authorization_token: Option<AuthorizationTokenSource>,
         follow_go_away: bool,
-        web_socket_fallback: WebSocketFallback,
         versions: Vec<Version>,
     ) -> Self {
         Self {
             transport_creator,
             authorization_token,
             follow_go_away,
-            web_socket_fallback,
+            web_socket_head_start: T::ConnectionCreator::WEB_SOCKET_HEAD_START,
             versions,
         }
     }
@@ -231,13 +231,8 @@ impl<T: TransportProtocol> SessionCreator<T> {
     }
 
     async fn open_transport(&self, target: &ConnectTarget) -> anyhow::Result<BoxedConnection> {
-        let head_start = match (
-            self.web_socket_fallback,
-            T::ConnectionCreator::WEB_SOCKET_HEAD_START,
-        ) {
-            (WebSocketFallback::Enabled, Some(head_start))
-            | (WebSocketFallback::HeadStart(head_start), Some(_)) => head_start,
-            _ => return self.transport_creator.create_new_transport(target).await,
+        let Some(head_start) = self.web_socket_head_start else {
+            return self.transport_creator.create_new_transport(target).await;
         };
         if target.web_socket_fallback().is_none() {
             return self.transport_creator.create_new_transport(target).await;
@@ -415,7 +410,7 @@ mod tests {
 
     use crate::{
         AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, NATIVE, Session,
-        TerminationErrorCode, WebSocketFallback,
+        TerminationErrorCode,
         modules::{
             moqt::{
                 control_plane::{
@@ -449,11 +444,10 @@ mod tests {
             .unwrap()
     }
 
-    fn falling_back_client(fallback: WebSocketFallback) -> Endpoint<NATIVE> {
+    fn falling_back_client() -> Endpoint<NATIVE> {
         native_client_with_config(ClientConfig {
             certificate_verification: CertificateVerification::Disabled,
             follow_go_away: false,
-            web_socket_fallback: fallback,
             ..ClientConfig::default()
         })
     }
@@ -493,7 +487,7 @@ mod tests {
         // Arrange
         let blocked = udp_blocked_server("fallback-moqt");
         let mut accepted = accept_sessions(blocked.server);
-        let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(100)));
+        let client = falling_back_client().with_web_socket_head_start(Duration::from_millis(100));
 
         // Act
         let session = within(async {
@@ -516,7 +510,7 @@ mod tests {
         // Arrange
         let blocked = udp_blocked_server("fallback-https");
         let mut accepted = accept_sessions(blocked.server);
-        let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(100)));
+        let client = falling_back_client().with_web_socket_head_start(Duration::from_millis(100));
 
         // Act
         let session = within(async {
@@ -538,7 +532,7 @@ mod tests {
         // Arrange
         let (server_port, accept) = spawn_native_server("race-quic-wins");
         let path = slow_udp_path(server_port, Duration::from_millis(300)).await;
-        let client = falling_back_client(WebSocketFallback::HeadStart(Duration::from_millis(50)));
+        let client = falling_back_client().with_web_socket_head_start(Duration::from_millis(50));
 
         // Act
         let session = within(async {
@@ -556,27 +550,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_disabled_fallback_returns_the_quic_failure_alone() {
-        // Arrange
-        let port = refusing_server("fallback-disabled");
-        let client = falling_back_client(WebSocketFallback::Disabled);
-
-        // Act
-        let error = within(client.connect(&format!("moqt://127.0.0.1:{port}")))
-            .await
-            .err()
-            .expect("the server refuses");
-
-        // Assert
-        let message = format!("{error:#}");
-        assert!(!message.contains("wss://"), "{message}");
-    }
-
-    #[tokio::test]
     async fn both_failures_are_reported_when_web_socket_fails_too() {
         // Arrange
         let port = refusing_server("fallback-both-fail");
-        let client = falling_back_client(WebSocketFallback::Enabled);
+        let client = falling_back_client();
 
         // Act
         let error = within(client.connect(&format!("moqt://127.0.0.1:{port}")))

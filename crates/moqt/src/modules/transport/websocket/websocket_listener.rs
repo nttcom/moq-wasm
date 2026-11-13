@@ -24,7 +24,7 @@ use tokio_tungstenite::{
 
 use super::{HANDSHAKE_TIMEOUT, HTTP11_ALPN, tungstenite_transport::split, web_socket_config};
 use crate::modules::{
-    executor::{self, JoinHandle},
+    executor::{self, AbortOnDrop},
     transport::{
         accept_error::AcceptError,
         application_protocol::ApplicationProtocols,
@@ -42,7 +42,9 @@ const ACCEPT_BACKLOG: usize = 64;
 /// concurrently so a slow one does not delay the others.
 pub(crate) struct WebSocketListener {
     accepted: tokio::sync::Mutex<mpsc::Receiver<QmuxConnection>>,
-    accept_task: JoinHandle,
+    /// The accept loop never returns; without the abort the TCP port stays
+    /// bound after the endpoint.
+    _accept_task: AbortOnDrop,
 }
 
 impl WebSocketListener {
@@ -73,10 +75,11 @@ impl WebSocketListener {
         let accept_task = executor::spawn(
             "WebSocket Acceptor",
             accept_loop(listener, acceptor, protocols, refusing, accepted_sender),
-        );
+        )
+        .abort_on_drop();
         Ok(Self {
             accepted: tokio::sync::Mutex::new(accepted_receiver),
-            accept_task,
+            _accept_task: accept_task,
         })
     }
 
@@ -87,14 +90,6 @@ impl WebSocketListener {
             .recv()
             .await
             .ok_or(AcceptError::EndpointClosing)
-    }
-}
-
-/// The accept loop never returns, and a dropped handle detaches the task, so
-/// it is stopped here; otherwise the TCP port stays bound after the endpoint.
-impl Drop for WebSocketListener {
-    fn drop(&mut self) {
-        self.accept_task.abort();
     }
 }
 

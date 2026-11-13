@@ -22,7 +22,6 @@ pub use crate::modules::moqt::domains::connecting::Connecting;
 pub use crate::modules::moqt::domains::endpoint::AuthorizationTokenSource;
 pub use crate::modules::moqt::domains::endpoint::CertificateVerification;
 pub use crate::modules::moqt::domains::endpoint::ClientConfig;
-pub use crate::modules::moqt::domains::endpoint::WebSocketFallback;
 pub use crate::modules::moqt::domains::endpoint::Endpoint;
 pub use crate::modules::moqt::domains::publisher::Publisher;
 pub use crate::modules::moqt::domains::request_failure::RequestFailure;

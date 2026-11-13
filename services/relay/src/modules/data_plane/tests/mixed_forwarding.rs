@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use moqt::object::{ForwardingPreference, SubgroupStart};
+use moqt::object::{ForwardingPreference, SubgroupPart, SubgroupStart};
 
 use crate::modules::{
     domain::single_preference::CONVERTED_DATAGRAM_SUBGROUPS,
-    session::data_object::DataObject,
     test_support::relay_harness::{
         EgressRunnerHandle, FetchSent, RelayHarness, Sent, UnknownRangeDraft, UpstreamTrack,
         fixtures::{
@@ -26,21 +25,21 @@ async fn sent_objects(egress: &mut EgressRunnerHandle, count: usize) -> Vec<(boo
             Sent::Datagram(object) => {
                 sent.push((true, object.location.group_id, object.location.object_id));
             }
-            Sent::Object(DataObject::SubgroupObject(object)) => {
+            Sent::Object(SubgroupPart::Object(object)) => {
                 assert!(matches!(
                     object.forwarding,
                     ForwardingPreference::Subgroup { .. }
                 ));
                 sent.push((false, object.location.group_id, object.location.object_id));
             }
-            Sent::Object(DataObject::SubgroupHeader(_)) | Sent::Closed => {}
+            Sent::Object(SubgroupPart::Header(_)) | Sent::Closed => {}
             Sent::Reset(code) => panic!("a downstream stream was reset with {code:?}"),
             Sent::Reprioritized(priority) => {
                 panic!("a downstream stream was reprioritized to {priority:?}")
             }
-            Sent::Object(
-                DataObject::SubgroupObjectStart { .. } | DataObject::SubgroupPayload { .. },
-            ) => unreachable!("the upstream sends whole objects"),
+            Sent::Object(SubgroupPart::ObjectStart { .. } | SubgroupPart::Payload { .. }) => {
+                unreachable!("the upstream sends whole objects")
+            }
         }
     }
     sent.sort();
@@ -121,14 +120,14 @@ async fn a_single_preference_subscription_that_began_on_a_stream_gets_datagrams_
     assert!(matches!(
         first,
         [
-            Sent::Object(DataObject::SubgroupHeader(_)),
-            Sent::Object(DataObject::SubgroupObject(_)),
+            Sent::Object(SubgroupPart::Header(_)),
+            Sent::Object(SubgroupPart::Object(_)),
             Sent::Closed
         ]
     ));
     let [
-        Sent::Object(DataObject::SubgroupHeader(header)),
-        Sent::Object(DataObject::SubgroupObject(object)),
+        Sent::Object(SubgroupPart::Header(header)),
+        Sent::Object(SubgroupPart::Object(object)),
         Sent::Closed,
     ] = &sent
     else {
@@ -194,8 +193,8 @@ async fn subgroup_ids_of_streams(egress: &mut EgressRunnerHandle, streams: usize
             egress.expect_sent().await,
         ];
         let [
-            Sent::Object(DataObject::SubgroupHeader(header)),
-            Sent::Object(DataObject::SubgroupObject(object)),
+            Sent::Object(SubgroupPart::Header(header)),
+            Sent::Object(SubgroupPart::Object(object)),
             Sent::Closed,
         ] = &sent
         else {
@@ -245,14 +244,14 @@ async fn sent_forwarding(
     let mut sent = Vec::new();
     while sent.len() < count {
         match egress.expect_sent().await {
-            Sent::Datagram(object) | Sent::Object(DataObject::SubgroupObject(object)) => {
+            Sent::Datagram(object) | Sent::Object(SubgroupPart::Object(object)) => {
                 sent.push((
                     object.location.group_id,
                     object.location.object_id,
                     object.forwarding,
                 ));
             }
-            Sent::Object(DataObject::SubgroupHeader(_)) | Sent::Closed => {}
+            Sent::Object(SubgroupPart::Header(_)) | Sent::Closed => {}
             other => panic!("unexpected downstream step {other:?}"),
         }
     }

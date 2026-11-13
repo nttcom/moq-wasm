@@ -3,12 +3,11 @@ pub(crate) mod fetch_sender;
 pub(crate) mod stream_sender;
 pub(crate) mod stream_sender_factory;
 
-use crate::modules::session::data_object::DataObject;
-use moqt::object::{DataStreamResetCode, StreamPriority};
+use moqt::object::{DataStreamResetCode, StreamPriority, SubgroupPart};
 
 #[async_trait::async_trait]
 pub(crate) trait DataSender: 'static + Send + Sync {
-    async fn send_object(&mut self, object: DataObject) -> anyhow::Result<()>;
+    async fn send_object(&mut self, object: SubgroupPart) -> anyhow::Result<()>;
 
     async fn set_priority(&mut self, priority: StreamPriority) -> anyhow::Result<()>;
 

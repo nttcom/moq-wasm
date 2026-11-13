@@ -1,10 +1,13 @@
 use std::time::Duration;
 
-use moqt::{object::DataStreamResetCode, publish::PublishDoneCode, subscribe::FilterType};
+use moqt::{
+    object::{DataStreamResetCode, SubgroupPart},
+    publish::PublishDoneCode,
+    subscribe::FilterType,
+};
 
 use crate::modules::{
     domain::delivery_control::DeliveryControl,
-    session::data_object::DataObject,
     test_support::relay_harness::{
         RelayHarness, Sent, downstream_object_ids, fixtures::location, receive_objects_until_close,
         receive_objects_until_end,
@@ -42,7 +45,7 @@ async fn absolute_range_delivers_its_end_group_and_nothing_after_it() {
     // Assert
     assert!(matches!(
         objects.first(),
-        Some(DataObject::SubgroupHeader(header)) if header.group_id == 1
+        Some(SubgroupPart::Header(header)) if header.group_id == 1
     ));
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(publish_done.status_code, PublishDoneCode::SubscriptionEnded);
@@ -151,7 +154,7 @@ async fn an_update_moving_the_end_out_keeps_delivering_past_the_old_end() {
     let objects = receive_objects_until_close(&mut egress).await;
     assert!(matches!(
         objects.first(),
-        Some(DataObject::SubgroupHeader(header)) if header.group_id == 2
+        Some(SubgroupPart::Header(header)) if header.group_id == 2
     ));
     egress.assert_no_publish_done();
 }
@@ -187,7 +190,7 @@ async fn an_update_moving_the_start_back_delivers_from_the_new_start() {
     let objects = receive_objects_until_close(&mut egress).await;
     assert!(matches!(
         objects.first(),
-        Some(DataObject::SubgroupHeader(header)) if header.group_id == 4
+        Some(SubgroupPart::Header(header)) if header.group_id == 4
     ));
     assert_eq!(downstream_object_ids(&objects), vec![1]);
 }
