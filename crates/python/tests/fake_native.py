@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from moq_wasm._session import Session, _Connecting
 from moq_wasm._token import TokenKeeper
 
+STAY_OPEN = object()
+
 
 def unsigned_token(app_id: str, expires_at: float | None) -> str:
     """A JWT carrying `app_id` and `exp`; the SDK reads its claims without verifying it."""
@@ -28,9 +30,12 @@ class FakeWriter:
 
 
 class FakeSubscription:
-    """Yields `payloads` as objects of group 0, then ends as a track its publisher ended."""
+    """Yields `payloads` as objects of group 0, then ends as a track its publisher ended; with
+    `STAY_OPEN` last, waits for more instead, as a live track does."""
 
-    def __init__(self, payloads: list[bytes]):
+    def __init__(self, payloads: list):
+        self._stay_open = bool(payloads) and payloads[-1] is STAY_OPEN
+        payloads = payloads[:-1] if self._stay_open else payloads
         self._objects = iter(
             SimpleNamespace(group_id=0, object_id=index, payload=payload) for index, payload in enumerate(payloads)
         )
@@ -43,6 +48,8 @@ class FakeSubscription:
         try:
             return next(self._objects)
         except StopIteration:
+            if self._stay_open:
+                await asyncio.Event().wait()
             raise StopAsyncIteration from None
 
     async def close(self) -> None:
