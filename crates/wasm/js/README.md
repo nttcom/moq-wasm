@@ -117,7 +117,7 @@ const camera = await local.addSource('camera', {
   audio: true,
   // Shared by the video and its renditions. Defaults: H.264, a keyframe every
   // 30 seconds on the same frames in every track.
-  // `codec` is 'h264', 'vp8', 'vp9' or 'av1', or a WebCodecs codec string.
+  // `codec` is 'h264', 'h265', 'vp8', 'vp9' or 'av1', or a WebCodecs codec string.
   // `latencyMode: 'quality'` trades latency for a sharper picture.
   encoding: { codec: 'av1', keyframeIntervalSeconds: 10 },
   // The track `camera`. Defaults: 1 Mbps, every frame at its own size;
@@ -125,11 +125,13 @@ const camera = await local.addSource('camera', {
   main: { width: 1920, height: 1080, bitrate: 2_500_000, framerate: 30 },
   // Each rendition is the track `camera_<name>`, encoded from the same frames
   // with the same keyframes. Its size is bounded by `width` and `height`, or
-  // the captured frame's divided by `scaleResolutionDownBy`. `framerate`
-  // defaults to the main video's.
+  // the captured frame's divided by `scaleResolutionDownBy`. `framerate` and
+  // `codec` default to the main video's. A viewer picks among the renditions it
+  // can decode, so an H.264 rendition serves viewers without AV1.
   renditions: [
     { name: '360p', label: '360p', width: 640, height: 360, bitrate: 600_000 },
-    { name: 'low', label: 'Low', scaleResolutionDownBy: 4, bitrate: 150_000, framerate: 15 }
+    { name: 'low', label: 'Low', scaleResolutionDownBy: 4, bitrate: 150_000, framerate: 15 },
+    { name: '360p_avc', label: '360p', width: 640, height: 360, bitrate: 800_000, codec: 'h264' }
   ]
 })
 preview.srcObject = camera.stream // the tracks the source publishes

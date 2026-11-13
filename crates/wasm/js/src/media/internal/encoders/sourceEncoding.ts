@@ -5,13 +5,12 @@ import { EncoderTimeline } from './encoderTimeline'
 import {
   DEFAULT_KEYFRAME_INTERVAL_SECONDS,
   framerateCap,
-  type RenditionEncoderConfig,
   type VideoCodecName,
   videoEncoderConfig
 } from './videoEncoderConfig'
 import { AudioEncodeStats, type SourcePublicationStats, VideoEncodeStats } from './publishStats'
 import { type LogSession, receiveWorkerLog } from '../../../core/log'
-import type { Rendition } from './rendition'
+import { type Rendition, renditionEncoderConfigs } from './rendition'
 
 export { type Rendition, type RenditionSize, checkRenditions } from './rendition'
 
@@ -365,19 +364,7 @@ function encodeVideo(
   const setWanted = (rendition: number, wanted: boolean) => worker.postMessage({ type: 'wanted', rendition, wanted })
   worker.postMessage({ type: 'encoderConfig', config })
   if (options.renditions?.length) {
-    worker.postMessage({
-      type: 'renditionConfigs',
-      configs: options.renditions.map(
-        ({ width, height, scaleResolutionDownBy, bitrate, framerate }): RenditionEncoderConfig => ({
-          ...config,
-          width,
-          height,
-          scaleResolutionDownBy,
-          bitrate,
-          framerate: framerate ?? config.framerate
-        })
-      )
-    })
+    worker.postMessage({ type: 'renditionConfigs', configs: renditionEncoderConfigs(options.renditions, config) })
   }
   if (typeof MediaStreamTrackProcessor === 'function') {
     const videoStream = new MediaStreamTrackProcessor({ track }).readable

@@ -509,7 +509,7 @@ renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同�
 | --- | --- | --- |
 | `encoding` | 映像 `<source>` と全 rendition | `codec`、`keyframeIntervalSeconds`、`hardwareAcceleration`、`latencyMode`（既定は `'realtime'`） |
 | `main` | 映像 `<source>` | `width`、`height`（大きさの上限）、`bitrate`、`framerate`（fps の上限。rendition も引き継ぐ） |
-| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width` と `height` か `scaleResolutionDownBy`、`bitrate`、`framerate` |
+| `renditions` | それぞれ `<source>_<name>` | `name`、`label`、`width` と `height` か `scaleResolutionDownBy`、`bitrate`、`framerate`、`codec`（既定は `encoding.codec`） |
 
 `label` は source の label で、映像の label と音声の label（後ろに ` audio`）になるので、
 `main` ではなく `input` の直下に置く。`scalabilityMode: 'L1T1'` は SDK が固定し、利用者には見せない。
@@ -1179,7 +1179,9 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
     理由を報告させる。codec の違う rendition への切り替えは、その rendition の最初の
     keyframe で decoder を `configure` し直す（level だけの違いでは設定し直さない）。
     これより前の SDK の player は codec を見ずに ladder を作るので、decode できない
-    rendition を選んで止まりうる。
+    rendition を選んで止まりうる。配信側は rendition ごとに `codec` を指定する。ブラウザが
+    encode できない codec の rendition は、`onError` に報告して catalog に載せず、映像と
+    ほかの rendition はそのまま送る。
 
 ## 配布
 
