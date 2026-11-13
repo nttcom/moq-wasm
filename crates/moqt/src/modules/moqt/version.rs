@@ -1253,10 +1253,30 @@ impl ReceivedResponse {
 
 #[cfg(test)]
 mod tests {
+    use bytes::BytesMut;
+
     use super::{Version, application_protocols};
-    use crate::modules::transport::application_protocol::NegotiatedProtocol;
+    use crate::modules::{
+        test_support::{DRAFTS, wire_noise},
+        transport::application_protocol::NegotiatedProtocol,
+    };
 
     const BOTH: &[Version] = &[Version::Draft14, Version::Draft18];
+
+    #[test]
+    fn a_datagram_of_any_bytes_does_not_panic_the_decoder() {
+        for version in DRAFTS {
+            for datagram_type in 0..=u8::MAX {
+                for mut bytes in wire_noise() {
+                    // Arrange
+                    bytes.insert(0, datagram_type);
+
+                    // Act / Assert
+                    let _ = version.decode_datagram(&mut BytesMut::from(&bytes[..]));
+                }
+            }
+        }
+    }
 
     #[test]
     fn both_drafts_are_offered_in_the_order_given() {

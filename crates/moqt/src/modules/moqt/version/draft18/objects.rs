@@ -1064,6 +1064,21 @@ mod tests {
             draft18::codec::{DecodeError, put_vi64},
         },
     };
+    use crate::modules::test_support::{decode_stream, wire_noise};
+
+    #[test]
+    fn a_stream_of_any_bytes_yields_no_more_frames_than_bytes() {
+        for stream_type in 0..=u8::MAX {
+            for mut bytes in wire_noise() {
+                // Arrange
+                bytes.insert(0, stream_type);
+
+                // Act / Assert: `decode_stream` panics when the frames
+                // outnumber the bytes
+                decode_stream(StreamDecoder::default(), &bytes);
+            }
+        }
+    }
 
     fn object(
         group_id: u64,

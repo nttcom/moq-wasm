@@ -219,6 +219,7 @@ mod tests {
     };
     use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
     use crate::modules::moqt::data_plane::stream::received_message::ReceivedMessage;
+    use crate::modules::test_support::wire_noise;
     use crate::wire::{ControlMessageType, encode_control_message};
 
     use super::ControlMessageDecoder;
@@ -257,6 +258,28 @@ mod tests {
             authorization_tokens: vec![],
             delivery_timeout: None,
             new_group_request: None,
+        }
+    }
+
+    #[test]
+    fn a_framed_message_of_every_type_decodes_to_a_message_or_a_fatal_error() {
+        let message_types =
+            (0..=u8::MAX).filter_map(|value| ControlMessageType::try_from(value).ok());
+        for message_type in message_types {
+            for payload in wire_noise() {
+                // Arrange
+                let mut frame = frame(message_type, BytesMut::from(&payload[..]));
+
+                // Act
+                let decoded = ControlMessageDecoder.decode(&mut frame);
+
+                // Assert: a malformed payload does not wait for more bytes
+                assert!(
+                    matches!(decoded, Ok(Some(_))) && frame.is_empty(),
+                    "{message_type:?} {payload:02x?}: {decoded:?}, {} bytes left",
+                    frame.len()
+                );
+            }
         }
     }
 
