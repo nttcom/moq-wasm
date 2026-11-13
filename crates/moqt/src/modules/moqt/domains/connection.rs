@@ -593,6 +593,19 @@ impl Connection {
         self.track_alias.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// A close for a protocol violation is reported at once as
+    /// `SessionEvent::ProtocolViolation`; any other close is reported as
+    /// `SessionEvent::Disconnected` once the transport has closed, like a
+    /// close by the peer.
+    pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
+        if code == TerminationErrorCode::ProtocolViolation
+            && let Err(error) = self.event_sender.send(SessionEvent::ProtocolViolation())
+        {
+            tracing::error!(?error, "failed to send protocol violation event");
+        }
+        self.close(code, reason);
+    }
+
     pub(crate) fn close(&self, code: TerminationErrorCode, reason: &str) {
         self.closed_locally.store(true, Ordering::SeqCst);
         self.transport
