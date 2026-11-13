@@ -317,6 +317,7 @@ listener になる。publisher がいないときの再購読と、catalog の P
 | 最初の映像を group の先頭から取る | 映像の最初の購読は `subscribeGroupStart` にする（下の「keyframe の間隔と NEW_GROUP_REQUEST」）。rendition の切り替えは新しい group を要求し、その先頭で切り替える | 静止した画面共有も、参加した直後に映る |
 | 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
 | 映像どうしの優先度を変える | `LivePlayer.setVideoPriority(priority)`。映像の subscriber priority（0〜255、既定は128、小さいほど先）を変える。購読中の映像には SUBSCRIBE_UPDATE で送り、その後に購読する映像（rendition の切り替え、`setVideoEnabled(true)`）にも使う。音声は 0 のまま。view からは `view.player` で呼ぶ | 下りが詰まったとき、ピン留めした映像や画面共有をほかの映像より先に受ける |
+| 古い映像と音声を送らせない | `LivePlayerOptions.deliveryTimeoutMs`（`RemoteBroadcastOptions` にも同名）。選択中の映像と音声の SUBSCRIBE に DELIVERY TIMEOUT（draft-14 §9.2.1.2）を付ける。`addAudioTrack` で足した音声には付けない。1〜4294967295 の整数以外は `RangeError`。relay は object を受け取ってからその時間を過ぎた Group の stream を reset する。指定しなければ全 object が届く | 下りが詰まったとき、遅れた映像を捨てて新しい映像を受ける。優先度だけでは、後回しの映像が送信バッファを埋めて優先した映像まで遅れる |
 
 #### keyframe の間隔と NEW_GROUP_REQUEST
 
