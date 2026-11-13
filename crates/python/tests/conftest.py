@@ -21,16 +21,25 @@ TEMPORARY_APP_SECRET = "python-binding-temporary-app-secret"
 READY_TIMEOUT_SECONDS = 120
 
 
-def free_port(kind: int, count: int = 1) -> int:
-    """A free port followed by `count - 1` more free ports; the relay binds its port and the next one."""
+# The relay binds on every address: QUIC and WebTransport on UDP `RELAY_PORT`, WebSocket on TCP
+# `RELAY_PORT`, and relay-to-relay QUIC on UDP `RELAY_PORT + 1`.
+RELAY_SOCKETS = ((socket.SOCK_DGRAM, 0), (socket.SOCK_STREAM, 0), (socket.SOCK_DGRAM, 1))
+
+
+def free_port(kind: int) -> int:
+    with socket.socket(socket.AF_INET, kind) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def free_relay_port() -> int:
     while True:
-        with socket.socket(socket.AF_INET, kind) as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
+        port = free_port(socket.SOCK_DGRAM)
         try:
-            for offset in range(1, count):
-                with socket.socket(socket.AF_INET, kind) as next_port:
-                    next_port.bind(("127.0.0.1", port + offset))
+            for kind, offset in RELAY_SOCKETS:
+                with socket.socket(socket.AF_INET6, kind) as probe:
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                    probe.bind(("::", port + offset))
             return port
         except OSError:
             continue
@@ -125,7 +134,7 @@ def relay_auth(tmp_path_factory):
 
 @contextmanager
 def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = None):
-    port = free_port(socket.SOCK_DGRAM, count=2)
+    port = free_relay_port()
     log = auth.logs / f"{relay_id}.log"
     process = subprocess.Popen(
         [TARGET / "relay"],
@@ -146,7 +155,12 @@ def started_relay(auth: RelayAuth, relay_id: str, env: dict[str, str] | None = N
         stderr=subprocess.STDOUT,
     )
     try:
-        wait_until(lambda: logged(log, "Relay server started"), relay_id)
+        def started() -> bool:
+            if process.poll() is not None:
+                raise RuntimeError(f"{relay_id} exited with code {process.returncode}; see {log}")
+            return logged(log, "Relay server started")
+
+        wait_until(started, relay_id)
         yield Relay(f"moqt://127.0.0.1:{port}", process)
     finally:
         stop(process)
