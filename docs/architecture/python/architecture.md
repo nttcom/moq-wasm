@@ -61,6 +61,9 @@ track = await session.subscribe(["anon", "room", "alice"], "catalog", current_gr
 async for obj in track:  # ends with the subscription (PUBLISH_DONE, UNSUBSCRIBE)
     obj.group_id, obj.object_id
     obj.payload  # bytes
+    # Checked by msf's Catalog::parse: ValueError on a version other than
+    # draft-01 or a delta update.
+    catalog = moqt.parse_catalog(obj.payload)
 
 # Tracks published through moqt's Origin; the session answers their
 # SUBSCRIBEs and FETCHes from its cache. A track is registered before the
