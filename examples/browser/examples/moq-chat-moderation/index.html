@@ -30,11 +30,15 @@
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small
+                    >MoQT</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Cloud Run</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small
+                    >Cloud Run</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
@@ -59,11 +63,15 @@
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small
+                    >MoQT</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small
+                    >Python</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
@@ -114,9 +122,8 @@ uv run python -m moq_chat_moderation.bot --insecure \
         <div class="chat-side">
           <section class="card stack">
             <h2>Relay</h2>
-            <label for="url">Relay URL:</label>
-            <input type="url" id="url" data-testid="chat-moderation-url-input" />
-            <div id="urlPresets" class="preset-bar">Preset:</div>
+            <div id="urlPresets"></div>
+            <input type="url" id="url" aria-label="Relay URL" data-testid="chat-moderation-url-input" />
             <div class="button-row">
               <button type="button" id="joinBtn" data-testid="chat-moderation-join-button">Join</button>
               <button type="button" id="leaveBtn" data-testid="chat-moderation-leave-button" disabled>Leave</button>
@@ -133,7 +140,9 @@ uv run python -m moq_chat_moderation.bot --insecure \
           </section>
           <section class="card stack">
             <h2>Labels</h2>
-            <p class="hint">送信時のラベルで判定し、70% 以上のラベルを付けます。「暴言」が付いたメッセージは削除します</p>
+            <p class="hint">
+              送信時のラベルで判定し、70% 以上のラベルを付けます。「暴言」が付いたメッセージは削除します
+            </p>
             <div id="labels" class="label-list"></div>
             <div class="button-row">
               <button type="button" id="addLabelBtn" data-testid="chat-moderation-add-label-button">＋ ラベル</button>

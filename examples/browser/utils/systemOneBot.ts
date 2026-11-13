@@ -3,7 +3,7 @@ import { connectOptions, temporaryAppToken } from './access'
 import { BOT_ROOM_END_TEXT, BotRoomRequest } from './botRoom'
 import { SystemOneStatusView } from './systemOneStatus'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
-import { setUpRelayUrlControls } from './relayPresets'
+import { setUpRelayUrlControls } from './relayPicker'
 import { type ServiceUrls, resolveServiceUrl } from './serviceUrl'
 
 const EVENT_TIMELINE_TRACK = 'eventtimeline'

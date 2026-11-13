@@ -21,6 +21,7 @@
   --glow-2: rgba(224, 122, 95, 0.18);
   --radius: 18px;
   --button-height: 36px;
+  --relay-picker-accent: var(--accent);
 }
 
 /* utils/access.ts sets data-access-mode. */
@@ -277,31 +278,6 @@ button:hover {
 
 button:active {
   transform: translateY(0);
-}
-
-.preset-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  font-size: 0.85rem;
-  color: var(--muted);
-}
-
-.preset-bar button {
-  min-height: var(--button-height);
-  padding: 0 12px;
-  border-radius: 999px;
-  background: var(--surface-solid);
-  color: var(--accent);
-  border: 1px dashed var(--border);
-  box-shadow: none;
-  font-weight: 500;
-}
-
-.preset-bar button:hover {
-  background: rgba(15, 118, 110, 0.1);
-  color: var(--accent-strong);
 }
 
 .button-row {

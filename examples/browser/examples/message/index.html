@@ -17,6 +17,7 @@
         --muted: #516467;
         --accent: #0d766e;
         --accent-strong: #0a4f4a;
+        --relay-picker-accent: var(--accent);
         --warn: #a16207;
         --border: #cfe2dc;
         --surface-solid: #fff;
@@ -219,28 +220,6 @@
         justify-content: flex-start;
       }
 
-      .preset-bar {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-        color: var(--muted);
-        font-size: 0.88rem;
-      }
-
-      .preset-bar button {
-        min-height: var(--button-height);
-        padding: 0 10px;
-        border: 1px dashed var(--border);
-        background: var(--surface-solid);
-        color: var(--accent);
-      }
-
-      .preset-bar button:hover {
-        background: rgba(13, 118, 110, 0.1);
-        color: var(--accent-strong);
-      }
-
       .message-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -358,9 +337,8 @@
 
           <section class="card span-2">
             <h2>Connection</h2>
-            <label for="url">URL:</label>
-            <input type="url" name="url" id="url" value="https://relay-1.moqt.research.skyway.io:443" />
-            <div id="urlPresets" class="preset-bar">Preset:</div>
+            <div id="urlPresets"></div>
+            <input type="url" name="url" id="url" aria-label="Relay URL" />
             <div class="button-row action-row">
               <button type="button" id="connectBtn">Connect</button>
               <button type="button" id="closeBtn">Close</button>

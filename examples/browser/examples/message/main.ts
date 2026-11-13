@@ -7,7 +7,7 @@ import {
   type TrackWriter
 } from 'moq-wasm'
 import { connectOptions } from '../../utils/access'
-import { setUpRelayUrlControls } from '../../utils/relayPresets'
+import { setUpRelayUrlControls } from '../../utils/relayPicker'
 import { element, getErrorMessage, parseTrackNamespace, buildDefaultTrackNamespace } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 

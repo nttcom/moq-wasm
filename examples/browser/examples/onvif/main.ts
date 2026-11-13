@@ -3,13 +3,8 @@ import { connectOptions } from '../../utils/access'
 import type { TrackWriter } from 'moq-wasm'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
-import {
-  CLOUD_RELAY_PRESETS,
-  LOAD_BALANCED_RELAY_PRESET,
-  buildLocalRelayPresets,
-  relayUrlFromQuery,
-  type RelayPreset
-} from '../../utils/relayPresets'
+import { LOAD_BALANCED_RELAY_PRESET, relayUrlFromQuery } from '../../utils/relayPresets'
+import { createRelayPicker } from '../../utils/relayPicker'
 import { element, getErrorMessage, parseTrackNamespace } from '../../utils/page'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
@@ -31,10 +26,6 @@ const MOVES: Record<string, { pan: number; tilt: number }> = {
 }
 
 const CONTROLLER_SPEED = 0.5
-
-type RelayTab = 'cloud' | 'local'
-
-const LOCAL_RELAY_PRESETS = buildLocalRelayPresets()
 
 const COMMANDS: Array<{ type: CommandKind; label: string; disabled?: FieldKey[] }> = [
   { type: 'absolute', label: 'AbsoluteMove' },
@@ -60,7 +51,6 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
 
 let session: MoqSession | undefined
 let relayUrl = relayUrlFromQuery() ?? LOAD_BALANCED_RELAY_PRESET.value
-let relayTab: RelayTab = LOCAL_RELAY_PRESETS.some((preset) => preset.value === relayUrl) ? 'local' : 'cloud'
 const stage = element<HTMLDivElement>('stage')
 startPageTelemetry(
   'onvif',
@@ -257,60 +247,6 @@ function setUpTabs<T extends string>(tablist: HTMLElement, onSelect: (tab: T) =>
   return select
 }
 
-function renderRelayOptions(): void {
-  const container = element('relay-options')
-  container.innerHTML = ''
-
-  if (relayTab === 'local') {
-    container.append(...LOCAL_RELAY_PRESETS.map((preset) => relayOption(preset)))
-    return
-  }
-  const balancer = relayOption(LOAD_BALANCED_RELAY_PRESET)
-  const badge = document.createElement('span')
-  badge.className = 'relay-default-badge'
-  badge.textContent = 'Default'
-  balancer.querySelector('.relay-option-label')?.append(badge)
-  const relays = document.createElement('div')
-  relays.className = 'relay-children'
-  relays.append(...CLOUD_RELAY_PRESETS.map((preset) => relayOption(preset, 'relay-option compact')))
-  container.append(balancer, relays)
-}
-
-function relayOption(preset: RelayPreset, className = 'relay-option'): HTMLLabelElement {
-  const option = document.createElement('label')
-  option.className = className
-
-  const radio = document.createElement('input')
-  radio.type = 'radio'
-  radio.name = 'relay'
-  radio.value = preset.value
-  radio.checked = preset.value === relayUrl
-  radio.addEventListener('change', () => {
-    relayUrl = preset.value
-  })
-
-  const text = document.createElement('div')
-  const label = document.createElement('div')
-  label.className = 'relay-option-label'
-  label.textContent = preset.label
-  const helper = document.createElement('div')
-  helper.className = 'relay-option-helper'
-  helper.textContent = preset.helper
-  text.append(label, helper)
-
-  option.append(radio, text)
-  return option
-}
-
-function setUpRelayPicker(): void {
-  const selectTab = setUpTabs<RelayTab>(element('relay-tabs'), (tab) => {
-    if (tab !== relayTab) relayUrl = tab === 'cloud' ? LOAD_BALANCED_RELAY_PRESET.value : LOCAL_RELAY_PRESETS[0].value
-    relayTab = tab
-    renderRelayOptions()
-  })
-  selectTab(relayTab)
-}
-
 function setUpPtzTabs(): void {
   setUpTabs<'controller' | 'commands'>(element('ptz-tabs'), (tab) => {
     releaseMove()
@@ -405,6 +341,8 @@ settingsModal.addEventListener('click', (event) => {
 })
 
 buildCommandUI()
-setUpRelayPicker()
+createRelayPicker(element('relay-picker'), relayUrl, (url) => {
+  relayUrl = url
+})
 setUpPtzTabs()
 setUpController()
