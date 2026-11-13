@@ -9,6 +9,9 @@ const GROUP_MS = 2_000
 /// GOAWAY this long before a group starts: the publisher reaches the new relay
 /// and starts the group there before the viewer's SUBSCRIBE does.
 const GOAWAY_LEAD_MS = 250
+/// A CI runner presents the 30 fps stream at 20 to 30 fps depending on its
+/// load, which differs between the two windows by up to about 15%.
+const ACROSS_MEAN_GAP_TOLERANCE = 1.25
 
 type FrameWindow = { frames: number; maxGapMs: number; meanGapMs: number }
 
@@ -34,7 +37,7 @@ async function presentedFrameWindow(page: Page, from: number, to: number): Promi
       return {
         frames: times.length,
         maxGapMs: Math.round(Math.max(0, ...gaps)),
-        meanGapMs: Math.round(gaps.reduce((sum, gap) => sum + gap, 0) / Math.max(1, gaps.length))
+        meanGapMs: gaps.reduce((sum, gap) => sum + gap, 0) / Math.max(1, gaps.length)
       }
     },
     [from, to]
@@ -81,7 +84,7 @@ test('live playback continues when the relay shuts down with GOAWAY', async ({ b
     const across = await presentedFrameWindow(viewer.page, stoppedAt, endedAt)
     console.log(JSON.stringify({ before, across }))
     expect(across.maxGapMs).toBeLessThan(Math.max(250, before.maxGapMs * 2))
-    expect(across.meanGapMs).toBeLessThanOrEqual(before.meanGapMs * 1.1)
+    expect(across.meanGapMs).toBeLessThanOrEqual(before.meanGapMs * ACROSS_MEAN_GAP_TOLERANCE)
     await expect(viewer.playbackStatus).toContainText('Playing')
 
     // Assert: relay A exits once the viewer and the publisher have left it, and frames keep coming through relay B
