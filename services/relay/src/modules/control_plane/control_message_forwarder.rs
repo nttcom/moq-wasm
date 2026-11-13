@@ -68,11 +68,13 @@ impl ControlMessageForwarder {
         &self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        kept_prefix: Option<&str>,
     ) {
-        self.repository
-            .lock()
-            .await
-            .forget_announced_namespaces(session_id, track_namespace_prefix);
+        self.repository.lock().await.forget_announced_namespaces(
+            session_id,
+            track_namespace_prefix,
+            kept_prefix,
+        );
     }
 
     #[tracing::instrument(

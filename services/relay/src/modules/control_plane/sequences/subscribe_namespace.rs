@@ -257,6 +257,15 @@ impl SubscribeNameSpace {
             tracing::info!("namespace prefix update failed; not applied");
             return;
         }
+        if interest.includes_namespaces() {
+            forwarder
+                .forget_announced_namespaces(
+                    session_id,
+                    track_namespace_prefix,
+                    Some(new_track_namespace_prefix),
+                )
+                .await;
+        }
         let offer = Offer {
             prefix: new_track_namespace_prefix,
             already_offered: Some(track_namespace_prefix),
@@ -1237,6 +1246,67 @@ mod tests {
         // Assert: draft-18 §10.9.2, the subscriber already heard of the namespace
         assert_eq!(handler.answers(), [None]);
         assert_eq!(ctx.subscriber.publish_namespaces(), ["room/alice"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_namespace_is_announced_again_after_the_prefix_moved_away_and_back() {
+        // Arrange
+        let ctx = context_subscribed_to_room(NamespaceInterest::Namespaces).await;
+        update_namespace_subscription(
+            &ctx,
+            &MockSubscribeNamespaceUpdateHandler::new(
+                "room",
+                "lobby",
+                NamespaceInterest::Namespaces,
+            ),
+        )
+        .await;
+
+        // Act
+        update_namespace_subscription(
+            &ctx,
+            &MockSubscribeNamespaceUpdateHandler::new(
+                "lobby",
+                "room",
+                NamespaceInterest::Namespaces,
+            ),
+        )
+        .await;
+
+        // Assert: draft-18 §10.9.2, the namespaces the old prefix covered and the new one leaves out are forgotten
+        assert_eq!(
+            ctx.subscriber.publish_namespaces(),
+            ["room/alice", "room/alice"]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_namespace_the_narrowed_prefix_still_covers_is_withdrawn_when_its_publisher_leaves() {
+        // Arrange
+        let ctx = context_subscribed_to_room(NamespaceInterest::Namespaces).await;
+        update_namespace_subscription(
+            &ctx,
+            &MockSubscribeNamespaceUpdateHandler::new(
+                "room",
+                "room/alice",
+                NamespaceInterest::Namespaces,
+            ),
+        )
+        .await;
+        ctx.table
+            .unregister_publish_namespace(PUBLISHER_SESSION, "room/alice");
+
+        // Act
+        PublishNamespaceDone::notify_local_subscribers(
+            PUBLISHER_SESSION,
+            "room/alice",
+            &ctx.table,
+            &ctx.forwarder,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(ctx.subscriber.publish_namespace_dones(), ["room/alice"]);
     }
 
     #[tokio::test(start_paused = true)]
