@@ -117,7 +117,7 @@ async function main() {
       { cwd: botDir },
     );
     childProcesses.push(bot);
-    // The first run builds the moqt bindings and downloads the model.
+    // The first run builds the moq-wasm SDK and downloads the model.
     await waitForOutput(bot, /serving rooms on/, "bot", 900_000);
 
     await runCommand(

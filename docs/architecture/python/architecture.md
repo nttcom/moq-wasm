@@ -1,5 +1,8 @@
 # Design: Python bindings for `moqt`
 
+The bindings are the native module `moq_wasm._native` of the Python SDK
+`moq-wasm`; the SDK built on them is designed in [sdk.md](sdk.md).
+
 ## Status
 Accepted
 
@@ -38,38 +41,39 @@ exists, and exposed no FETCH.
 ## Decision
 
 ### The crate
-`crates/python` (package `python`, like `crates/wasm`) builds a `cdylib`
-named `moqt` with PyO3 and maturin. Every async method returns an asyncio
+`crates/python` (package `python`, like `crates/wasm`) builds a `cdylib`,
+the module `moq_wasm._native` of the distribution `moq-wasm`, with PyO3 and
+maturin. Its method names follow the browser SDK's `MoqSession`. Every async method returns an asyncio
 awaitable through `pyo3-async-runtimes` on its tokio runtime; the module
 enters that runtime before it creates the quinn endpoint, which binds through
 the ambient runtime. The ABI is `abi3-py311`, the Python version the bots
 require. It covers what the Meeting transcriber needs and nothing more:
 
 ```python
-import moqt
+import moq_wasm
 
-session = await moqt.connect("https://relay.example:4433", verify_certificate=True)
+session = await moq_wasm.connect("https://relay.example:4433", verify_certificate=True)
 
 # Namespaces under a prefix, as they are published and withdrawn.
-async for event in await session.subscribe_namespace(["anon", "room"]):
+async for event in await session.watch_namespaces(["anon", "room"]):
     event.namespace  # ["anon", "room", "alice"]
     event.active     # False after PUBLISH_NAMESPACE_DONE
 
-# current_group=True sends a joining FETCH for the group the relay holds,
+# subscribe_current_group sends a joining FETCH for the group the relay holds,
 # whose objects come before the live ones.
-track = await session.subscribe(["anon", "room", "alice"], "catalog", current_group=True)
-async for obj in track:  # ends with the subscription (PUBLISH_DONE, UNSUBSCRIBE)
+track = await session.subscribe_current_group(["anon", "room", "alice"], "catalog")
+async for obj in track:  # ends with the subscription (PUBLISH_DONE, close())
     obj.group_id, obj.object_id
     obj.payload  # bytes
     # Checked by msf's Catalog::parse: ValueError on a version other than
     # draft-01 or a delta update.
-    catalog = moqt.parse_catalog(obj.payload)
+    catalog = moq_wasm.parse_catalog(obj.payload)
 
 # Tracks published through moqt's Origin; the session answers their
 # SUBSCRIBEs and FETCHes from its cache. A track is registered before the
 # namespace is published, since the relay may forward a SUBSCRIBE at once.
-transcript = await session.track(["anon", "room", "bots", "transcriber"], "transcript", retention_seconds=3600)
-await session.publish_namespace(["anon", "room", "bots", "transcriber"])
+transcript = await session.publish_track(["anon", "room", "bots", "transcriber"], "transcript", retention_seconds=3600)
+await session.announce(["anon", "room", "bots", "transcriber"])
 await transcript.write(payload, new_group=True)
 await transcript.write(payload)
 
@@ -87,7 +91,7 @@ must outlive it (docs/architecture/ai-bots/on-demand-rooms.md "Temporary
 apps"):
 
 ```python
-session = await moqt.connect(url, token=jwt)
+session = await moq_wasm.connect(url, token=jwt)
 await session.refresh_token(later_jwt, app_id="temp-3f9a…")
 ```
 
@@ -128,31 +132,31 @@ holds no copy of the publisher-side routing.
   when the crate, `moqt`, the relay or the VTS change.
 
 ### Using it from the bots
-A bot depends on the module by path (`moqt = { path = "../../../crates/python" }`
+A bot depends on the module by path (`moq-wasm = { path = "../../../crates/python" }`
 in `[tool.uv.sources]`), and uv builds it with maturin, so building a bot
 needs a Rust toolchain. `examples/python/Dockerfile` gains a builder stage
 that compiles the wheel.
 
 The Meeting transcriber is the first user:
-- participants come from `subscribe_namespace`, which also reports when they
+- participants come from `watch_namespaces`, which also reports when they
   leave;
-- catalogs are subscribed with `current_group=True`;
-- the transcript is published through `session.track`, so a late joiner's
+- catalogs are subscribed with `subscribe_current_group`;
+- the transcript is published through `session.publish_track`, so a late joiner's
   FETCH is answered from the cache.
 
 The chat moderation bot is the second:
-- the page's chat is subscribed whenever `subscribe_namespace` reports the
+- the page's chat is subscribed whenever `watch_namespaces` reports the
   chat namespace, and again when the relay ends the track while the namespace
   stays published;
 - the chat is plain UTF-8 text, one message per group, instead of moq-rs's
   compressed JSON stream; a verdict names a message by its object's Location;
-- the verdicts and the System One status are published through `session.track`
+- the verdicts and the System One status are published through `session.publish_track`
   instead of the broadcast inside pipecat's `MOQTransport`.
 
 Camera detection and PTZ tracking follow: each subscribes to its page's
 prompt and the camera's video while their namespaces are published, and
 publishes its event timeline, System One status and, for PTZ, the ONVIF
-commands through `session.track`. A video subscription that joins a group in
+commands through `session.publish_track`. A video subscription that joins a group in
 the middle decodes nothing until the next group, which starts at a keyframe.
 
 ## Consequences

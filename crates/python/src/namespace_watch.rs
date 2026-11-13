@@ -6,19 +6,19 @@ use tokio::sync::mpsc;
 
 /// A namespace a peer published (`active`) or withdrew under a prefix this
 /// session subscribed to.
-#[pyclass(frozen, get_all, module = "moqt")]
+#[pyclass(frozen, get_all, module = "moq_wasm")]
 #[derive(Clone)]
 pub struct NamespaceEvent {
     pub namespace: Vec<String>,
     pub active: bool,
 }
 
-#[pyclass(module = "moqt")]
-pub struct NamespaceEvents {
+#[pyclass(module = "moq_wasm")]
+pub struct NamespaceWatch {
     receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<namespace::NamespaceEvent>>>,
 }
 
-impl From<mpsc::UnboundedReceiver<namespace::NamespaceEvent>> for NamespaceEvents {
+impl From<mpsc::UnboundedReceiver<namespace::NamespaceEvent>> for NamespaceWatch {
     fn from(receiver: mpsc::UnboundedReceiver<namespace::NamespaceEvent>) -> Self {
         Self {
             receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
@@ -27,7 +27,7 @@ impl From<mpsc::UnboundedReceiver<namespace::NamespaceEvent>> for NamespaceEvent
 }
 
 #[pymethods]
-impl NamespaceEvents {
+impl NamespaceWatch {
     fn __aiter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }

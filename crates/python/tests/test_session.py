@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-import moqt
+import moq_wasm
 
 TIMEOUT_SECONDS = 10
 # moqt ends a subscription this long after its PUBLISH_DONE (PUBLISH_DONE_GRACE_PERIOD).
@@ -22,16 +22,16 @@ async def within(awaitable):
     return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
 
 
-async def connect(relay_url: str) -> moqt.Session:
+async def connect(relay_url: str) -> moq_wasm.Session:
     # The relay serves this workspace's self-signed certificate.
-    return await moqt.connect(relay_url, verify_certificate=False)
+    return await moq_wasm.connect(relay_url, verify_certificate=False)
 
 
 async def publisher_with_track(relay_url: str, namespace: list[str]):
     session = await connect(relay_url)
     # Registered before the namespace, since the relay may forward a SUBSCRIBE at once.
-    track = await session.track(namespace, TRACK, retention_seconds=60)
-    await session.publish_namespace(namespace)
+    track = await session.publish_track(namespace, TRACK, retention_seconds=60)
+    await session.announce(namespace)
     return session, track
 
 
@@ -39,11 +39,11 @@ async def test_a_published_namespace_and_its_withdrawal_reach_the_prefix_subscri
     # Arrange
     prefix = room()
     watcher = await connect(relay_url)
-    events = await within(watcher.subscribe_namespace(prefix))
+    events = await within(watcher.watch_namespaces(prefix))
     publisher = await connect(relay_url)
 
     # Act
-    await publisher.publish_namespace([*prefix, "alice"])
+    await publisher.announce([*prefix, "alice"])
     published = await within(events.__anext__())
     await publisher.close()
     withdrawn = await within(events.__anext__())
@@ -65,7 +65,7 @@ async def test_current_group_brings_the_object_the_relay_already_holds(relay_url
     late = await connect(relay_url)
 
     # Act
-    late_track = await within(late.subscribe(namespace, TRACK, current_group=True))
+    late_track = await within(late.subscribe_current_group(namespace, TRACK))
     await track.write(b"v2", new_group=True)
 
     # Assert
@@ -99,8 +99,8 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
     await within(session.closed())
     for request in (
         session.subscribe(namespace, TRACK),
-        session.subscribe_namespace(namespace),
-        session.publish_namespace(namespace),
+        session.watch_namespaces(namespace),
+        session.announce(namespace),
     ):
         with pytest.raises(RuntimeError, match="connection lost|the session closed"):
             await within(request)
@@ -109,17 +109,17 @@ async def test_close_resolves_closed_and_fails_later_calls(relay_url):
 async def test_a_session_offering_draft18_works_with_a_draft18_relay(draft18_relay_url):
     # Arrange
     namespace = [*room(), "alice"]
-    session = await moqt.connect(draft18_relay_url, verify_certificate=False, versions=["draft-18"])
+    session = await moq_wasm.connect(draft18_relay_url, verify_certificate=False, versions=["draft-18"])
 
     # Act / Assert: the relay accepts the request, so the session speaks its draft
-    await within(session.publish_namespace(namespace))
+    await within(session.announce(namespace))
     await session.close()
 
 
 async def test_an_unknown_version_name_is_a_value_error():
     # Act / Assert
     with pytest.raises(ValueError, match="draft-99"):
-        await moqt.connect("moqt://127.0.0.1:4433", versions=["draft-99"])
+        await moq_wasm.connect("moqt://127.0.0.1:4433", versions=["draft-99"])
 
 
 def temporary_app_id() -> str:
@@ -129,20 +129,20 @@ def temporary_app_id() -> str:
 async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await moqt.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
 
     # Act
     await within(session.refresh_token(temporary_app_token(app_id), app_id=app_id))
 
     # Assert: a request after the refresh is still authorized under the app's root
-    await within(session.publish_namespace([app_id, "room", "alice"]))
+    await within(session.announce([app_id, "room", "alice"]))
     await session.close()
 
 
 async def test_a_token_of_another_app_is_refused_as_a_refresh(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await moqt.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
 
     # Act / Assert
     with pytest.raises(RuntimeError):
@@ -187,7 +187,7 @@ async def test_a_subscriber_after_an_unsubscribe_inside_an_open_group_gets_its_l
     first_objects = await within(first.subscribe(namespace, TRACK))
     await track.write(b"v1", new_group=True)
     assert (await within(first_objects.__anext__())).payload == b"v1"
-    await first_objects.unsubscribe()
+    await first_objects.close()
     with pytest.raises(StopAsyncIteration):
         await within(first_objects.__anext__())
     second = await connect(relay_url)
@@ -211,7 +211,7 @@ async def test_current_group_brings_the_rest_of_the_group_being_appended(relay_u
     late = await connect(relay_url)
 
     # Act
-    late_objects = await within(late.subscribe(namespace, TRACK, current_group=True))
+    late_objects = await within(late.subscribe_current_group(namespace, TRACK))
     await track.write(b"v3")
 
     # Assert

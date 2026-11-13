@@ -430,7 +430,7 @@ dependencies = [
     { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "av", version = "19.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "moq-bot-rooms" },
-    { name = "moqt" },
+    { name = "moq-wasm" },
 ]
 
 [package.dev-dependencies]
@@ -444,7 +444,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "av", specifier = ">=14" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
-    { name = "moqt", directory = "../../../crates/python" },
+    { name = "moq-wasm", directory = "../../../crates/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -454,7 +454,7 @@ dev = [
 ]
 
 [[package]]
-name = "moqt"
+name = "moq-wasm"
 version = "0.1.0"
 source = { directory = "../../../crates/python" }
 

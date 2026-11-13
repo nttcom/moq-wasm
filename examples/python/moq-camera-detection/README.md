@@ -43,7 +43,7 @@ make browser
 make chrome
 ```
 
-- bot は `moqt` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
+- bot は `moq-wasm` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
 - bot は `http://127.0.0.1:8098` で待ち受けます。同時に動かせるのは既定で 1 ルームです。オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
 - `make chrome` の Chrome でハブから MoQ Camera Detection を開き、Local relay-a を選んで Join します。`?botUrl=` で bot の URL を指定できます。
 

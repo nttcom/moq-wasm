@@ -13,15 +13,16 @@ namespace を監視する。基準は JS の `MoqSession`（`crates/wasm/js/src/
 
 範囲は core API（session、購読、FETCH、配信、namespace）だけにする。JS の
 `moq-wasm/media`（`publish()`、`LivePlayer`）はブラウザの capture と描画に結びついて
-いるので、Python と Rust には同じものを作らない。Rust でメディアを配信するときは、
-今と同じく `crates/broadcast` を使う。
+いるので、Rust には同じものを作らない。Rust でメディアを配信するときは、今と同じく
+`crates/broadcast` を使う。Python の SDK（core の上の再接続、media、pipecat の
+transport）は `docs/architecture/python/sdk.md` で設計する。
 
 ## 現状
 
 | 言語 | 入口 | 状態 |
 | --- | --- | --- |
 | JS | `moq-wasm` の `MoqSession` | SDK として完成した。0.1.0 を tag `sdk-v0.1.0` の GitHub Release で配っている |
-| Python | `crates/python`（PyO3 + maturin、モジュール `moqt`、abi3-py311） | Meeting の transcriber と AI bot が要るものだけがある。`fetch`、`track_status`、トークン、購読のオプションが無い。bot は path 依存で、利用者は Rust でビルドする |
+| Python | `crates/python`（PyO3 + maturin、配布名 `moq-wasm`、モジュール `moq_wasm._native`、abi3-py311） | Meeting の transcriber と AI bot が要るものだけがある。`fetch`、`track_status`、トークン、購読のオプションが無い。bot は path 依存で、利用者は Rust でビルドする |
 | Rust | `crates/moqt` | 制御メッセージ単位の API（`Session`、`Subscriber`、`Publisher`、`publish::Origin`、`namespace::NamespaceWatchers`）。`README.md` は commit を指す git 依存を案内している |
 
 `MoqSession` 相当の処理は、Rust の中で2か所に重複している。
@@ -243,7 +244,7 @@ class RequestError(Exception):
 | 言語 | tag | Release に付けるもの |
 | --- | --- | --- |
 | JS | `sdk-v<version>`（今のまま） | `npm pack` の tarball |
-| Python | `python-v<version>` | wheel |
+| Python | `python-sdk-v<version>` | wheel |
 | Rust | `rust-v<version>` | なし（tag そのものが依存先） |
 
 ### Rust
@@ -269,49 +270,9 @@ moqt = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-v0.1.0" }
 解決をしてテストする。`cargo update` は runner の中だけで行い、commit しない。
 
 ### Python
-tag で CI が wheel をビルドし、GitHub Release に添付する。abi3-py311 なので、
-Python 3.11 以降に1つの wheel が使え、ビルドするのは OS と CPU の組み合わせの数だけで
-ある。
-
-| プラットフォーム | runner | wheel |
-| --- | --- | --- |
-| Linux x86_64 | `ubuntu-latest`（manylinux_2_28 のコンテナ） | `moqt-<version>-cp311-abi3-manylinux_2_28_x86_64.whl` |
-| macOS arm64 | `macos-latest`（Apple Silicon） | `moqt-<version>-cp311-abi3-macosx_11_0_arm64.whl` |
-
-利用者は、`pyproject.toml` に wheel の URL を platform の marker 付きで書く。pip と
-uv のどちらでも入り、Rust は要らない。
-
-```toml
-[project]
-dependencies = [
-  "moqt @ https://github.com/nttcom/moq-wasm/releases/download/python-v0.1.0/moqt-0.1.0-cp311-abi3-manylinux_2_28_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
-  "moqt @ https://github.com/nttcom/moq-wasm/releases/download/python-v0.1.0/moqt-0.1.0-cp311-abi3-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'",
-]
-```
-
-wheel の無いプラットフォーム（Linux aarch64、Windows など）では、uv の git source で
-同じ tag からソースでビルドできる。Rust の toolchain が要り、動作は確かめていない。
-
-```toml
-[tool.uv.sources]
-moqt = { git = "https://github.com/nttcom/moq-wasm", tag = "python-v0.1.0", subdirectory = "crates/python" }
-```
-
-リリースの手順:
-
-1. `crates/python/pyproject.toml` の version を上げ、`crates/python/CHANGELOG.md` に
-   その version の節を足す。
-2. `python-v<version>` の tag を push する。
-3. CI（`.github/workflows/python-release.yml`）が tag と version の一致と changelog の
-   節を確かめ、matrix で wheel をビルドする。各 runner で、ビルドした wheel を入れた
-   環境で pytest を回す。Docker の要る GOAWAY のテストは Linux だけで回す。そのあと、
-   すべての wheel を1つの GitHub Release に添付する。
-
-wheel のビルドには maturin を使う（今の build backend と同じ）。CI の action は、
-ほかの workflow と同じく commit SHA で固定する。
-
-`examples/python` の bot は、リポジトリの中では今と同じく path 依存でビルドする。
-Release の wheel を使うのは、リポジトリの外の利用者である。
+`docs/architecture/python/sdk.md` の「Package」に書く。wheel は Linux x86_64、
+Linux aarch64、macOS arm64 の abi3 wheel で、`python-sdk-v<version>` の tag の
+GitHub Release に添付する。workflow はその変更で設計する。
 
 ### レジストリ（crates.io、PyPI、npm）に公開しない理由
 
@@ -331,10 +292,10 @@ Release の wheel を使うのは、リポジトリの外の利用者である�
 
 ## 名前と版
 
-- **名前は3言語とも `moqt`。** Rust の crate、Python のモジュールと配布名は今の
-  まま `moqt` にする。npm のパッケージは `moq-wasm` から `moqt` に改名し、import は
-  `moqt` と `moqt/media` になる。wasm は、ブラウザで動かす実装の手段であり、
-  パッケージの中身の名前ではない。
+- **SDK の名前はリポジトリ名の `moq-wasm`。** npm のパッケージは今のまま
+  `moq-wasm`、Python の配布名も `moq-wasm`（import は `moq_wasm`）にする。Python は
+  WebAssembly を使わないが、名前は技術ではなくリポジトリに揃える。Rust の crate は
+  今のまま `moqt` にする。
 - **名前はレジストリに公開するまで変えられる。** 今の利用者は、tarball の URL と
   import を書き換えれば移れる。リポジトリ名（`moq-wasm`）を変えるかどうかも、公開を
   決めるときに一緒に決める。GitHub は、改名後も旧 URL を転送する。
@@ -345,10 +306,10 @@ Release の wheel を使うのは、リポジトリの外の利用者である�
 
 ## 決定事項
 
-1. **Python の wheel: Linux x86_64 と macOS arm64。** ほかのプラットフォームは、
-   git source からのソースビルドで使える（動作の保証はしない）。
+1. **Python の wheel: Linux x86_64、Linux aarch64、macOS arm64。** ほかの
+   プラットフォームは、git source からのソースビルドで使える（動作の保証はしない）。
 2. **Rust の入口: `moqt` の中の `client` module。** 新しい crate は作らない。
-3. **名前: 3言語とも `moqt`。** npm の `moq-wasm` は `moqt` に改名する。
+3. **名前: JS と Python の SDK は `moq-wasm`、Rust の crate は `moqt`。**
 
 ## 移行計画
 1手順を1 PR にする。リファクタの PR は、それに依存する機能の PR より先に出し、依存
@@ -365,8 +326,9 @@ Release の wheel を使うのは、リポジトリの外の利用者である�
    （`run-media-e2e.mjs`、`run-meeting-e2e.mjs`）で守る。
 4. **refactor(python): Python の `Session` を `moqt::client` の binding にする。**
    `route_events` を消す。Python の API は変えない。pytest で守る。
-5. **refactor(python): 名前を JS に合わせる。** 「Python SDK に足す API」の名前の
-   変更と、`examples/python` の bot の書き換え。
+5. **refactor(python): 名前を JS に合わせる。** 配布名を `moq-wasm` にし、
+   「Python SDK に足す API」の名前の変更と、`examples/python` の bot の書き換え。
+   手順 1〜4 より先に済ませた。
 6. **feat(python): 購読と取得の API。** 購読のオプション、`fetch`、`track_status`、
    `Subscription` の `done`・`groups`・`largest`・`set_forward`・`end_before_group`、
    `Object` の `subgroup_id` と `status`。
@@ -377,15 +339,11 @@ Release の wheel を使うのは、リポジトリの外の利用者である�
    `moqt::client` にし、依存の書き方を tag にする。`crates/moqt/CHANGELOG.md` を
    始める。
 10. **ci: `rust-release.yml`（`rust-v*`）。**
-11. **ci: `python-release.yml`（`python-v*`）。** wheel の matrix と、wheel での
+11. **ci: `python-release.yml`（`python-sdk-v*`）。** wheel の matrix と、wheel での
     pytest。`crates/python/CHANGELOG.md` を始め、README に wheel の入れ方を書く。
-12. **refactor(wasm): npm のパッケージ名を `moqt` にする。** `package.json`、
-    examples の import、`check:pack`、`sdk-release.yml` の tarball の名前、
-    `browser-sdk.md` の「配布」を一緒に変える。
 
 1〜4 は重複を1か所にする部分で、5〜8 は Python の機能を JS に追いつかせる部分で
-ある。9〜11 の配布は、それぞれの機能がそろってから出す。12 はほかの手順に依存しない
-ので、いつ出してもよい。
+ある。9〜11 の配布は、それぞれの機能がそろってから出す。
 
 各 PR では、変える component の architecture document（`moqt/architecture.md`、
 `python/architecture.md`、`wasm/browser-sdk.md`）も同時に更新する。
@@ -394,7 +352,7 @@ Release の wheel を使うのは、リポジトリの外の利用者である�
 
 - **レジストリへの公開。** 「配布」に理由を書いた。core API が 1.0 になったときに、
   名前（crates.io の `moqt` が使えないこと、リポジトリ名）と一緒に決める。
-- **Python と Rust のメディア API。** JS の `moq-wasm/media` に当たるもの。Rust は
-  `broadcast` を使う。Python は、メディアを配信する bot が出たときに決める。
-- **Linux aarch64 と Windows の wheel。** 必要になったら matrix に足す。Windows は
+- **Rust のメディア API。** JS の `moq-wasm/media` に当たるもの。Rust は
+  `broadcast` を使う。Python のものは `python/sdk.md` で設計する。
+- **Windows の wheel。** 必要になったら matrix に足す。Windows は
   `moqt` を動かしたことが無いので、足す前に CI で pytest を回せるようにする。
