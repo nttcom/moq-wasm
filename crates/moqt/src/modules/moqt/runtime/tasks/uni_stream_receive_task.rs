@@ -6,6 +6,7 @@ use tracing::{Instrument, Span};
 use crate::{
     modules::executor::{self, JoinHandle},
     modules::moqt::{
+        control_plane::constants::TerminationErrorCode,
         data_plane::stream::stream_receiver::StreamReceiveError,
         domains::connection::Connection,
         runtime::dispatch::{
@@ -68,6 +69,12 @@ impl UniStreamReceiveTask {
                 error @ (StreamReceiveError::Decode(_) | StreamReceiveError::ProtocolViolation(_)),
             ) => {
                 tracing::error!(%error, "Failed to decode the stream header");
+                // An unknown stream type is a protocol violation (draft-14 §10,
+                // draft-18 §3.4), as is any other header that does not decode.
+                connection.close_with_error(
+                    TerminationErrorCode::ProtocolViolation,
+                    "malformed stream header",
+                );
                 return false;
             }
             Err(StreamReceiveError::MalformedTrack(_)) => {
@@ -98,12 +105,14 @@ impl UniStreamReceiveTask {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
+    use bytes::{Bytes, BytesMut};
 
     use crate::{
+        SessionEvent,
         modules::test_support::{
-            HANDSHAKE_TIMEOUT, PublishedTrack, location, published_track, published_track_between,
-            send_subgroup_object, spawn_connected_draft18_sessions, subscribed_track_reader,
+            DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, PublishedTrack, connected_sessions,
+            location, published_track, published_track_between, send_subgroup_object,
+            spawn_connected_draft18_sessions, subscribed_track_reader,
         },
         object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus},
     };
@@ -154,5 +163,34 @@ mod tests {
             published_track_between(client, server).await,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_stream_of_an_unknown_type_closes_the_session() {
+        for version in DRAFTS {
+            // Arrange: neither draft defines stream type 0x02
+            let (client, server) = connected_sessions("uni-unknown-type", version).await;
+            let mut stream = client
+                .subscriber()
+                .session
+                .connection()
+                .transport
+                .open_uni()
+                .await
+                .unwrap();
+
+            // Act
+            stream.send(&BytesMut::from(&[0x02, 0][..])).await.unwrap();
+
+            // Assert
+            let event = tokio::time::timeout(DISCONNECT_TIMEOUT, server.receive_event())
+                .await
+                .expect("no session event")
+                .unwrap();
+            assert!(
+                matches!(event, SessionEvent::ProtocolViolation()),
+                "{event:?}"
+            );
+        }
     }
 }
