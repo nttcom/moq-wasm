@@ -5,18 +5,21 @@
 use bytes::{Buf, BufMut, Bytes};
 use thiserror::Error;
 
-use crate::modules::moqt::{
-    control_plane::{
-        constants::TerminationErrorCode,
-        control_messages::{
-            key_value_pair::{KeyValuePair, VariantType},
-            messages::parameters::{
-                location::Location,
-                track_properties::{ReceivedEncoding, TrackProperties, TrackProperty},
+use crate::modules::{
+    extensions::name_reader::{self, MAX_REASON_PHRASE_LENGTH, NameError},
+    moqt::{
+        control_plane::{
+            constants::TerminationErrorCode,
+            control_messages::{
+                key_value_pair::{KeyValuePair, VariantType},
+                messages::parameters::{
+                    location::Location,
+                    track_properties::{ReceivedEncoding, TrackProperties, TrackProperty},
+                },
             },
         },
+        data_plane::object::{MAX_WIRE_DECLARED_LENGTH, declared_length},
     },
-    data_plane::object::{MAX_WIRE_DECLARED_LENGTH, declared_length},
 };
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -242,16 +245,21 @@ fn put_value(buf: &mut impl BufMut, pair: &KeyValuePair) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MAX_REASON_PHRASE_LENGTH: u64 = 1024;
+impl From<NameError> for DecodeError {
+    fn from(error: NameError) -> Self {
+        match error {
+            NameError::NeedMoreData => Self::NeedMoreData,
+            NameError::ProtocolViolation(reason) => Self::protocol_violation(reason),
+        }
+    }
+}
+
+fn get_name_length(buf: &mut impl Buf) -> Option<u64> {
+    get_vi64(buf).ok()
+}
 
 pub(crate) fn get_reason_phrase(buf: &mut impl Buf) -> Result<String, DecodeError> {
-    let len = get_vi64(buf)?;
-    if len > MAX_REASON_PHRASE_LENGTH {
-        return Err(DecodeError::protocol_violation(
-            "reason phrase longer than 1024 bytes",
-        ));
-    }
-    Ok(String::from_utf8_lossy(&take(buf, len as usize)?).into_owned())
+    Ok(name_reader::get_reason_phrase(buf, get_name_length)?)
 }
 
 /// Truncates at a character boundary to the 1024 bytes §1.4.4 allows.
@@ -264,41 +272,14 @@ pub(crate) fn put_reason_phrase(buf: &mut impl BufMut, reason: &str) {
     buf.put_slice(&reason.as_bytes()[..len]);
 }
 
-const MAX_NAMESPACE_FIELDS: u64 = 32;
-const MAX_FULL_TRACK_NAME_LENGTH: usize = 4096;
-
-/// The model keeps names as UTF-8 strings, so a field that is not UTF-8
-/// is rejected even though draft-18 allows any bytes.
-fn utf8(bytes: Bytes) -> Result<String, DecodeError> {
-    String::from_utf8(bytes.to_vec())
-        .map_err(|_| DecodeError::protocol_violation("track name field is not UTF-8"))
-}
-
 pub(crate) fn get_track_namespace(buf: &mut impl Buf) -> Result<Vec<String>, DecodeError> {
-    let count = get_vi64(buf)?;
-    if count > MAX_NAMESPACE_FIELDS {
+    let namespace = name_reader::get_track_namespace(buf, get_name_length, 0..=32)?;
+    if namespace.iter().any(String::is_empty) {
         return Err(DecodeError::protocol_violation(
-            "track namespace has more than 32 fields",
+            "empty track namespace field",
         ));
     }
-    let mut fields = Vec::with_capacity(count as usize);
-    let mut total = 0usize;
-    for _ in 0..count {
-        let len = get_vi64(buf)? as usize;
-        if len == 0 {
-            return Err(DecodeError::protocol_violation(
-                "empty track namespace field",
-            ));
-        }
-        total = total.saturating_add(len);
-        if total > MAX_FULL_TRACK_NAME_LENGTH {
-            return Err(DecodeError::protocol_violation(
-                "track namespace longer than 4096 bytes",
-            ));
-        }
-        fields.push(utf8(take(buf, len)?)?);
-    }
-    Ok(fields)
+    Ok(namespace)
 }
 
 pub(crate) fn put_track_namespace(buf: &mut impl BufMut, namespace: &[String]) {
@@ -313,14 +294,7 @@ pub(crate) fn get_full_track_name(
     buf: &mut impl Buf,
 ) -> Result<(Vec<String>, String), DecodeError> {
     let namespace = get_track_namespace(buf)?;
-    let len = get_vi64(buf)? as usize;
-    let namespace_len: usize = namespace.iter().map(String::len).sum();
-    if namespace_len.saturating_add(len) > MAX_FULL_TRACK_NAME_LENGTH {
-        return Err(DecodeError::protocol_violation(
-            "full track name longer than 4096 bytes",
-        ));
-    }
-    let name = utf8(take(buf, len)?)?;
+    let name = name_reader::get_track_name(buf, get_name_length, &namespace)?;
     Ok((namespace, name))
 }
 
