@@ -12,4 +12,6 @@ export type SubgroupWorkerMessage = {
   type: 'object'
   groupId: bigint
   subgroupStreamObject: SubgroupObjectWithLoc
+  /// The catalog codec of the track the object came from.
+  codec?: string
 }

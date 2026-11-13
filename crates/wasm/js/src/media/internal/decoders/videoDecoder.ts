@@ -242,6 +242,7 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
         captureTimestampMicros: loc.timestampMicros,
         receivedAtMs: performance.now(),
         videoConfig: loc.videoConfig,
+        codec: data.codec,
         chunk: new EncodedVideoChunk({
           type: object.objectId === 0n ? 'key' : 'delta',
           timestamp: loc.timestampMicros ?? 0,
@@ -266,12 +267,16 @@ function enqueueDirectDecode(entry: VideoJitterBufferEntry): void {
     })
 }
 
-async function decode({ groupId, objectId, videoConfig, chunk }: VideoJitterBufferEntry) {
+async function decode({ groupId, objectId, videoConfig, codec, chunk }: VideoJitterBufferEntry) {
   if (isSupersededGroup(groupId)) {
     return
   }
 
-  const resolvedConfig = resolveVideoConfig(videoConfig)
+  const trackCodec = codec ?? catalogCodec
+  if (chunk.type === 'key') {
+    reconfigureForCodec(trackCodec, videoConfig)
+  }
+  const resolvedConfig = resolveVideoConfig(trackCodec, videoConfig)
   if (!resolvedConfig) {
     return
   }
@@ -345,24 +350,38 @@ function applyCatalogInfo(codec?: string, descriptionBase64?: string): void {
   if (descriptionBase64) {
     catalogDescription = Uint8Array.fromBase64(descriptionBase64)
   }
-  if (!codec || catalogCodec === codec) {
-    return
-  }
-  catalogCodec = codec
-  if (cachedVideoConfig && cachedVideoConfig.codec !== codec) {
-    const level = differsOnlyInLevel(cachedVideoConfig.codec, codec) ? 'debug' : 'warn'
-    workerLog(level, TARGET, 'catalog codec changed after the decoder started, ignored', {
-      initialized_codec: cachedVideoConfig.codec,
-      catalog_codec: codec
-    })
+  if (codec) {
+    catalogCodec = codec
   }
 }
 
-function resolveVideoConfig(videoConfig: Uint8Array | undefined): VideoDecoderConfig | null {
+/// Called at each keyframe, where a switch to a rendition in another codec
+/// starts. `configure` is queued behind the pending decodes, so the previous
+/// rendition's frames still decode with the previous configuration.
+function reconfigureForCodec(codec: string | undefined, videoConfig: Uint8Array | undefined): void {
+  if (
+    !codec ||
+    !cachedVideoConfig ||
+    videoDecoder?.state !== 'configured' ||
+    cachedVideoConfig.codec === codec ||
+    differsOnlyInLevel(cachedVideoConfig.codec, codec)
+  ) {
+    return
+  }
+  const config = videoDecoderConfig(codec, videoConfig ?? catalogDescription)
+  workerLog('info', TARGET, 'decoder reconfigured for another codec', {
+    initialized_codec: cachedVideoConfig.codec,
+    codec
+  })
+  videoDecoder.configure(config)
+  cachedVideoConfig = config
+}
+
+function resolveVideoConfig(codec: string | undefined, videoConfig: Uint8Array | undefined): VideoDecoderConfig | null {
   if (cachedVideoConfig) {
     return cachedVideoConfig
   }
-  if (!catalogCodec) {
+  if (!codec) {
     if (!missingCatalogCodecWarned) {
       missingCatalogCodecWarned = true
       workerLog('warn', TARGET, 'decode skipped until the catalog gives a codec')
@@ -370,11 +389,15 @@ function resolveVideoConfig(videoConfig: Uint8Array | undefined): VideoDecoderCo
     return null
   }
   missingCatalogCodecWarned = false
+  return videoDecoderConfig(codec, videoConfig ?? catalogDescription)
+}
+
+function videoDecoderConfig(codec: string, description: Uint8Array | undefined): VideoDecoderConfig {
   return {
-    codec: catalogCodec,
-    description: videoConfig ?? catalogDescription,
+    codec,
+    description,
     // Chrome decodes H.265 only in hardware.
-    hardwareAcceleration: isHevcCodec(catalogCodec) ? 'no-preference' : 'prefer-software',
+    hardwareAcceleration: isHevcCodec(codec) ? 'no-preference' : 'prefer-software',
     optimizeForLatency: true
   }
 }

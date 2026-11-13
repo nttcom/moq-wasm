@@ -160,10 +160,11 @@ export class LocLive {
     this.audioWorker.postMessage(audioCatalogMessage(track))
   }
 
-  /// `cached` marks a video object that predates the subscription, such as one
-  /// from a joining FETCH: it is shown as soon as it decodes, and its arrival
-  /// does not count toward the delivery stats.
-  push(kind: MediaKind, groupId: bigint, object: LocObject, cached = false): void {
+  /// `codec` is the catalog codec of the object's track. `cached` marks a
+  /// video object that predates the subscription, such as one from a joining
+  /// FETCH: it is shown as soon as it decodes, and its arrival does not count
+  /// toward the delivery stats.
+  push(kind: MediaKind, groupId: bigint, object: LocObject, codec: string | undefined, cached = false): void {
     if (cached) {
       this.cachedFrameKeys.add(frameKey(groupId, object.objectId))
     } else {
@@ -173,7 +174,7 @@ export class LocLive {
         arrivals.shift()
       }
     }
-    const [message, transfer] = objectMessage(groupId, object)
+    const [message, transfer] = objectMessage(groupId, object, codec)
     const worker = kind === 'video' ? this.videoWorker : this.audioWorker
     worker.postMessage(message, transfer)
   }
@@ -260,11 +261,16 @@ export function audioCatalogMessage(track: MediaCatalogTrack): AudioCatalogMessa
   }
 }
 
-export function objectMessage(groupId: bigint, object: LocObject): [SubgroupWorkerMessage, Transferable[]] {
+export function objectMessage(
+  groupId: bigint,
+  object: LocObject,
+  codec?: string
+): [SubgroupWorkerMessage, Transferable[]] {
   const objectPayload = new Uint8Array(object.objectPayload)
   const message: SubgroupWorkerMessage = {
     type: 'object',
     groupId,
+    codec,
     subgroupStreamObject: {
       subgroupId: object.subgroupId,
       objectId: object.objectId,
