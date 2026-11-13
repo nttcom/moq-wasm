@@ -1409,6 +1409,49 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn go_away_does_not_subscribe_again_to_a_track_publish_done_ended() {
+        for version in DRAFTS {
+            // Arrange: a Stream Count of 0 keeps the sink for the grace period
+            let Migration {
+                client,
+                server_a,
+                server_b,
+            } = Migration::connect("migration-publish-done-ended", Hop::within(version)).await;
+            let (subscription, _, served_a) = subscribe(&client, &server_a).await;
+            server_a
+                .publisher()
+                .publish_done(&served_a, PublishDoneCode::TrackEnded, 0, String::new())
+                .await
+                .unwrap();
+            let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event()).await;
+            assert!(
+                matches!(event, Ok(Ok(SessionEvent::PublishDone(_)))),
+                "{event:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // Act
+            let server_b = server_b.named_by(&server_a).await;
+            let subscribe_seen =
+                tokio::time::timeout(NO_EVENT_TIMEOUT, server_b.receive_event()).await;
+            let still_carried = client
+                .context()
+                .read_carried()
+                .await
+                .unwrap()
+                .update(|carried| {
+                    carried
+                        .subscriptions
+                        .contains_key(&subscription.request_id())
+                });
+
+            // Assert
+            assert!(subscribe_seen.is_err(), "{subscribe_seen:?}");
+            assert!(!still_carried);
+        }
+    }
+
     async fn assert_subscribes_the_namespaces_again(name: &str, hop: Hop) {
         // Arrange
         let Migration {

@@ -518,6 +518,24 @@ impl SessionContext {
         Ok(logical_alias)
     }
 
+    /// Keeps the record when `connection` is the previous connection and the
+    /// current one carries the subscription: that PUBLISH_DONE only reports
+    /// the server a migration left.
+    pub(crate) async fn forget_ended_subscription(
+        &self,
+        connection: &Arc<Connection>,
+        request_id: RequestId,
+    ) {
+        let Some(carried) = self.read_carried().await else {
+            return;
+        };
+        let logical_id = connection.logical_request_id(request_id);
+        let current = self.connection();
+        if Arc::ptr_eq(&current, connection) || current.wire_request_id(logical_id).is_none() {
+            carried.update(|carried| carried.subscriptions.remove(&logical_id));
+        }
+    }
+
     pub(crate) async fn cancel_subscription(&self, connection: &Connection, request_id: RequestId) {
         let mut sinks = connection.object_sinks.lock().await;
         if let Some(logical_alias) = sinks.cancel_subscription(request_id, executor::now()) {
