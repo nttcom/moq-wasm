@@ -36,7 +36,7 @@ pub struct SelectedTracks {
 impl BroadcastReader {
     pub async fn run(session: &Session, namespace: &str) -> Result<Self> {
         let catalog = read_catalog(session, namespace).await?;
-        let catalog: Catalog = serde_json::from_slice(&catalog).context("parse catalog json")?;
+        let catalog = Catalog::parse(&catalog).context("parse catalog json")?;
         let tracks = select_tracks(&catalog)?;
         tracing::info!(
             namespace,

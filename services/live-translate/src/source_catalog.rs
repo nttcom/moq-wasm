@@ -79,10 +79,36 @@ async fn subscribe_with_retry(
 }
 
 fn deliver(catalog_sender: &mpsc::UnboundedSender<Catalog>, payload: &Bytes) {
-    match serde_json::from_slice::<Catalog>(payload) {
+    match Catalog::parse(payload) {
         Ok(catalog) => {
             let _ = catalog_sender.send(catalog);
         }
         Err(error) => tracing::warn!(?error, "source catalog object is not an MSF catalog"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivers_only_a_catalog_it_can_read() {
+        // Arrange
+        let (catalog_sender, mut catalog_receiver) = mpsc::unbounded_channel();
+        let draft_01 = serde_json::to_vec(&Catalog::new(Vec::new(), 0)).unwrap();
+
+        // Act
+        deliver(
+            &catalog_sender,
+            &Bytes::from_static(br#"{"version":"draft-03","tracks":[]}"#),
+        );
+        deliver(&catalog_sender, &Bytes::from(draft_01));
+
+        // Assert
+        assert_eq!(
+            catalog_receiver.try_recv().unwrap().version.as_deref(),
+            Some("draft-01")
+        );
+        assert!(catalog_receiver.try_recv().is_err());
     }
 }

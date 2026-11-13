@@ -173,12 +173,7 @@ async fn record_part(
             close = session.closed() => anyhow::bail!("relay session closed: {close}"),
             item = catalog.next(), if catalog_open => match item? {
                 Some(event) => {
-                    let document = match &event {
-                        Event::Object(object) if object.status == moqt::object::ObjectStatus::Normal && !object.payload.is_empty() => {
-                            Some(serde_json::from_slice::<msf::Catalog>(&object.payload).context("catalog is not MSF JSON")?)
-                        }
-                        _ => None,
-                    };
+                    let document = catalog_document(namespace, &event)?;
                     let selection = document
                         .as_ref()
                         .map(|document| track_selection::select_tracks(document, choice(options)))
@@ -293,6 +288,27 @@ fn replaces(recorded: &Selection, selection: &Selection) -> bool {
         matches!((recorded, next), (Some(recorded), Some(next)) if recorded != next)
     }
     swapped(&recorded.video, &selection.video) || swapped(&recorded.audio, &selection.audio)
+}
+
+/// A catalog of another version, or a delta update, is `None`: archived but
+/// not followed.
+fn catalog_document(namespace: &str, event: &Event) -> Result<Option<msf::Catalog>> {
+    let Event::Object(object) = event else {
+        return Ok(None);
+    };
+    if object.status != ObjectStatus::Normal || object.payload.is_empty() {
+        return Ok(None);
+    }
+    match msf::Catalog::parse(&object.payload) {
+        Ok(catalog) => Ok(Some(catalog)),
+        Err(error @ msf::CatalogParseError::Malformed(_)) => {
+            Err(error).context("catalog is not MSF JSON")
+        }
+        Err(error) => {
+            tracing::warn!(track_namespace = namespace, %error, "catalog ignored");
+            Ok(None)
+        }
+    }
 }
 
 pub(crate) async fn record_event_track(
@@ -503,8 +519,25 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::test_support::scratch_dir;
+    use crate::test_support::{scratch_dir, stored_object};
     use mediapack::loc::VideoCodec;
+
+    #[test]
+    fn follows_only_a_catalog_it_can_read() {
+        // Arrange
+        let catalog = |payload: &str| Event::Object(stored_object(0, 0, payload.to_string()));
+        let draft_01 = serde_json::to_string(&Catalog::new(Vec::new(), 0)).unwrap();
+
+        // Act
+        let draft_01 = catalog_document("anon/test", &catalog(&draft_01));
+        let draft_03 = catalog_document("anon/test", &catalog(r#"{"version":"draft-03"}"#));
+        let malformed = catalog_document("anon/test", &catalog("not json"));
+
+        // Assert
+        assert!(draft_01.unwrap().is_some());
+        assert!(draft_03.unwrap().is_none());
+        assert!(malformed.is_err());
+    }
 
     #[tokio::test]
     async fn stores_object_identity_headers_and_payload_without_overwriting() {
