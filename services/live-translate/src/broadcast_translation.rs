@@ -114,6 +114,11 @@ impl Drop for BroadcastTranslation {
     }
 }
 
+/// The Stream Count of a PUBLISH_DONE whose publisher cannot count its streams
+/// (draft-14 §9.12): the writers live in the language's task, which drops a
+/// replaced one, so their stream counts are not known here.
+const UNKNOWN_STREAM_COUNT: u64 = (1 << 62) - 1;
+
 struct LanguageSlot {
     translation: LanguageTranslation,
     idle_since: Option<Instant>,
@@ -541,7 +546,7 @@ impl Serving {
                 .publish_done(
                     &subscription,
                     PublishDoneCode::TrackEnded,
-                    0,
+                    UNKNOWN_STREAM_COUNT,
                     reason.to_string(),
                 )
                 .await
