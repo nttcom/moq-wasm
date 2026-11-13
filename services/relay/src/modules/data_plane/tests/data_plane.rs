@@ -222,13 +222,7 @@ async fn later_group_stream_opens_with_a_lower_transport_priority() {
     second_group.object(0);
     let second_priority = egress.expect_stream_priority().await;
     // Assert
-    assert_eq!(
-        (
-            first_priority.group_sequence,
-            second_priority.group_sequence
-        ),
-        (0, 1)
-    );
+    assert!(first_priority.group_sequence < second_priority.group_sequence);
     assert_eq!(first_priority.publisher_priority, FIXTURE_PRIORITY);
     assert!(
         first_priority.transport_priority() > second_priority.transport_priority(),

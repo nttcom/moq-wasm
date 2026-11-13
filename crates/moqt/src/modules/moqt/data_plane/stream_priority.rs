@@ -14,7 +14,8 @@ pub struct StreamPriority {
     pub subscriber_priority: u8,
     pub publisher_priority: u8,
     pub group_order: GroupOrder,
-    /// Number of groups the subscription opened before this stream's group.
+    /// Larger for a newer group of the subscription; its low 12 bits are
+    /// compared, also against other subscriptions of the same priorities.
     pub group_sequence: u64,
     pub subgroup_id: u64,
 }
@@ -140,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn group_rank_wraps_every_4096_groups() {
+    fn group_rank_keeps_the_low_12_bits() {
         // Arrange
         let first = priority(128, 128, GroupOrder::Ascending, 0, 0);
         let wrapped = priority(128, 128, GroupOrder::Ascending, 4096, 0);
