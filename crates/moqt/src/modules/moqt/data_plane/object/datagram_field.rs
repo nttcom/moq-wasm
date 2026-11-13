@@ -60,7 +60,13 @@ impl DatagramField {
         };
         let publisher_priority = data.try_get_u8().context("publisher priority")?;
         let extension_headers = if has(EXTENSIONS_PRESENT) {
-            Some(ExtensionHeaders::decode(data).context("extension headers")?)
+            let extension_headers = ExtensionHeaders::decode(data).context("extension headers")?;
+            // draft-14 §10.3.1: an Extensions Present type with an empty block is a
+            // PROTOCOL_VIOLATION.
+            if extension_headers.key_value_pairs.is_empty() {
+                anyhow::bail!("extensions present datagram with an empty extension block");
+            }
+            Some(extension_headers)
         } else {
             None
         };
@@ -80,7 +86,11 @@ impl DatagramField {
     }
 
     pub(crate) fn encode(&self) -> anyhow::Result<(u64, BytesMut)> {
-        let message_type = (u64::from(self.extension_headers.is_some()) * EXTENSIONS_PRESENT)
+        let extension_headers = self
+            .extension_headers
+            .as_ref()
+            .filter(|headers| !headers.key_value_pairs.is_empty());
+        let message_type = (u64::from(extension_headers.is_some()) * EXTENSIONS_PRESENT)
             | (u64::from(self.end_of_group) * END_OF_GROUP)
             | (u64::from(self.object_id.is_none()) * OBJECT_ID_ABSENT)
             | (u64::from(matches!(self.payload, ObjectDatagramPayload::Status(_))) * STATUS);
@@ -97,7 +107,7 @@ impl DatagramField {
             buf.put_varint(object_id);
         }
         buf.put_u8(self.publisher_priority);
-        if let Some(extension_headers) = &self.extension_headers {
+        if let Some(extension_headers) = extension_headers {
             buf.unsplit(extension_headers.encode());
         }
         match &self.payload {
@@ -228,6 +238,28 @@ mod tests {
                 "type {message_type:#x}"
             );
         }
+    }
+
+    #[test]
+    fn extensions_present_with_an_empty_block_is_rejected_on_decode() {
+        // Arrange: Object ID 5, priority 0x80, extension length 0, payload
+        let mut received = BytesMut::from(&[0x05, 0x80, 0x00, 0xAA][..]);
+        // Act / Assert
+        assert!(DatagramField::decode(0x01, &mut received).is_err());
+    }
+
+    #[test]
+    fn empty_extension_headers_are_sent_without_the_extensions_present_flag() {
+        // Arrange
+        let field = DatagramField {
+            extension_headers: Some(ExtensionHeaders::default()),
+            ..payload(Some(5))
+        };
+        // Act
+        let (message_type, encoded) = field.encode().unwrap();
+        // Assert
+        assert_eq!(message_type, 0x00);
+        assert_eq!(encoded.to_vec(), [&[0x05, 0x80][..], PAYLOAD].concat());
     }
 
     #[test]

@@ -45,7 +45,7 @@ struct PesStream {
     corrupt: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamKind {
     H264,
     AacAdts,
@@ -153,8 +153,10 @@ impl Demuxer {
         Ok(())
     }
 
+    /// A repeated PMT keeps the state of each PID it lists again with the same kind.
     fn register_streams(&mut self, streams: &[ElementaryStream], events: &mut Vec<MediaEvent>) {
         let mut stream_set = StreamSet::default();
+        let mut previous = std::mem::take(&mut self.streams);
         for stream in streams {
             let kind = match stream.stream_type {
                 STREAM_TYPE_H264 => {
@@ -167,13 +169,23 @@ impl Demuxer {
                 }
                 _ => continue,
             };
-            self.streams.entry(stream.pid).or_insert_with(|| PesStream {
-                continuity: None,
-                corrupt: false,
-                kind,
-                pending: BytesMut::new(),
-                adts: AdtsReader::new(),
-            });
+            let pes_stream = match previous.remove(&stream.pid) {
+                Some(kept) if kept.kind == kind => kept,
+                remapped => {
+                    self.pending_bytes -= remapped.map_or(0, |stream| stream.pending.len());
+                    PesStream {
+                        continuity: None,
+                        corrupt: false,
+                        kind,
+                        pending: BytesMut::new(),
+                        adts: AdtsReader::new(),
+                    }
+                }
+            };
+            self.streams.insert(stream.pid, pes_stream);
+        }
+        for dropped in previous.values() {
+            self.pending_bytes -= dropped.pending.len();
         }
         if !self.streams.is_empty() && !events.iter().any(|e| matches!(e, MediaEvent::Streams(_))) {
             events.push(MediaEvent::Streams(stream_set));
@@ -425,6 +437,44 @@ mod tests {
 
         // Assert
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn drops_the_stream_of_a_pid_a_newer_program_map_no_longer_lists() {
+        // Arrange
+        let mut stream = hand_built_stream();
+        stream.push(0x1000, &pmt_section(&[(VIDEO_PID, STREAM_TYPE_H264)]));
+        stream.push(
+            AUDIO_PID,
+            &pes_packet(0xC0, 96_000, None, &adts_frame(&[7, 8, 9])),
+        );
+
+        // Act
+        let (demuxer, events) = demux_all(&stream.build());
+
+        // Assert: the audio PES pending at the new PMT is dropped with its stream
+        assert!(audio_samples(&events).is_empty());
+        assert_eq!(demuxer.streams.keys().collect::<Vec<_>>(), [&VIDEO_PID]);
+        assert_eq!(demuxer.pending_bytes, 0);
+    }
+
+    #[test]
+    fn reads_a_pid_a_newer_program_map_remaps_as_its_new_stream_type() {
+        // Arrange
+        let mut stream = hand_built_stream();
+        stream.push(0x1000, &pmt_section(&[(VIDEO_PID, STREAM_TYPE_AAC_ADTS)]));
+        stream.push(
+            VIDEO_PID,
+            &pes_packet(0xC0, 96_000, None, &adts_frame(&[7, 8, 9])),
+        );
+
+        // Act
+        let (_, events) = demux_all(&stream.build());
+
+        // Assert
+        let audio = audio_samples(&events);
+        assert_eq!(audio.len(), 1);
+        assert_eq!(audio[0].data.as_ref(), [7, 8, 9]);
     }
 
     fn program_with_two_keyframes() -> TsStreamBuilder {

@@ -27,8 +27,9 @@ impl KeyValuePair {
         } else {
             let length = bytes.try_get_varint().context("KeyValuePair length")?;
             // copy_to_bytes panics when the buffer is shorter than the
-            // peer-controlled length, so reject truncated input first.
-            if bytes.remaining() < length as usize {
+            // peer-controlled length, so reject truncated input first. Compare
+            // as u64: `length as usize` truncates on 32-bit targets (wasm32).
+            if (bytes.remaining() as u64) < length {
                 anyhow::bail!(
                     "KeyValuePair value truncated: length {} > remaining {}",
                     length,
@@ -220,6 +221,17 @@ mod tests {
             let bytes = [0x0b_u8, 0x03];
             let mut buf = std::io::Cursor::new(&bytes[..]);
 
+            assert!(KeyValuePair::decode(&mut buf).is_err());
+        }
+
+        #[test]
+        fn depacketize_odd_key_length_beyond_32_bits() {
+            // Arrange: key (0x0b, odd) + 8-byte varint length 2^32 + 1 and 1 byte of value
+            let bytes = [
+                0x0b_u8, 0xC0, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0xAA,
+            ];
+            let mut buf = std::io::Cursor::new(&bytes[..]);
+            // Act / Assert
             assert!(KeyValuePair::decode(&mut buf).is_err());
         }
 
