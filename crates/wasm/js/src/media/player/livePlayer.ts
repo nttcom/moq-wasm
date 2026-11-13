@@ -6,6 +6,7 @@ import { monotonicUnixMicros } from '../internal/clock'
 import { type AudioLevel, readLocHeader } from '../internal/loc'
 import { AddedAudioTrack, type AddedAudioTrackListener } from './addedAudioTrack'
 import { AddedTextTrack, type AddedTextTrackListener } from './addedTextTrack'
+import { playableVideoTracks } from './playableVideoTracks'
 import { AdaptiveBitrate, type LatencyTolerance, bitrateLadder, renditionAboveHeight } from './adaptiveBitrate'
 import type { MseTrackSource } from '../internal/mseSink'
 import type { BufferPolicy } from './jitterBuffer'
@@ -919,7 +920,7 @@ export class LivePlayer {
         extractCatalogTracks(catalog, role).filter((track) => !sourceNames || sourceNames.has(track.name))
       this.cmafTracks = ofSource().filter((track) => track.packaging === 'cmaf')
       const changed = this.replaceAllTracks(
-        ofSource('video').filter(isLocTrack),
+        await playableVideoTracks(ofSource('video').filter(isLocTrack)),
         ofSource('audio').filter(isLocTrack),
         'Catalog loaded'
       )
@@ -937,7 +938,8 @@ export class LivePlayer {
       return
     }
     this.cmafTracks = []
-    await this.subscribeReplacedTracks(this.replaceAllTracks(tracks.video ?? [], tracks.audio ?? [], 'Tracks given'))
+    const video = await playableVideoTracks(tracks.video ?? [])
+    await this.subscribeReplacedTracks(this.replaceAllTracks(video, tracks.audio ?? [], 'Tracks given'))
   }
 
   private replaceAllTracks(video: MediaCatalogTrack[], audio: MediaCatalogTrack[], source: string): boolean {
