@@ -7,7 +7,9 @@ use bytes::{Buf, Bytes};
 use thiserror::Error;
 
 pub(crate) const MAX_REASON_PHRASE_LENGTH: u64 = 1024;
-const MAX_FULL_TRACK_NAME_LENGTH: usize = 4096;
+/// Lengths are compared as `u64` before the cast, since `as usize` keeps
+/// only the low 32 bits on wasm32.
+const MAX_FULL_TRACK_NAME_LENGTH: u64 = 4096;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub(crate) enum NameError {
@@ -62,16 +64,16 @@ pub(crate) fn get_track_namespace<B: Buf>(
         ));
     }
     let mut namespace = Vec::with_capacity(count as usize);
-    let mut total = 0usize;
+    let mut total = 0u64;
     for _ in 0..count {
-        let len = get_int(buf, get)? as usize;
+        let len = get_int(buf, get)?;
         total = total.saturating_add(len);
         if total > MAX_FULL_TRACK_NAME_LENGTH {
             return Err(NameError::ProtocolViolation(
                 "track namespace longer than 4096 bytes",
             ));
         }
-        namespace.push(utf8(take(buf, len)?)?);
+        namespace.push(utf8(take(buf, len as usize)?)?);
     }
     Ok(namespace)
 }
@@ -82,12 +84,63 @@ pub(crate) fn get_track_name<B: Buf>(
     get: GetInt<B>,
     namespace: &[String],
 ) -> Result<String, NameError> {
-    let len = get_int(buf, get)? as usize;
+    let len = get_int(buf, get)?;
     let namespace_len: usize = namespace.iter().map(String::len).sum();
-    if namespace_len.saturating_add(len) > MAX_FULL_TRACK_NAME_LENGTH {
+    if (namespace_len as u64).saturating_add(len) > MAX_FULL_TRACK_NAME_LENGTH {
         return Err(NameError::ProtocolViolation(
             "full track name longer than 4096 bytes",
         ));
     }
-    utf8(take(buf, len)?)
+    utf8(take(buf, len as usize)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::{Buf, BufMut, BytesMut};
+
+    use super::{NameError, get_track_name, get_track_namespace};
+    use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+
+    fn get_varint(buf: &mut impl Buf) -> Option<u64> {
+        buf.try_get_varint().ok()
+    }
+
+    /// Its low 32 bits are 1, so a 32-bit target that truncates it reads a
+    /// 1-byte field.
+    const LENGTH_OVER_U32: u64 = (1 << 32) + 1;
+
+    #[test]
+    fn a_namespace_field_length_over_u32_is_a_protocol_violation() {
+        // Arrange
+        let mut buf = BytesMut::new();
+        buf.put_varint(1);
+        buf.put_varint(LENGTH_OVER_U32);
+        buf.put_u8(b'n');
+
+        // Act
+        let result = get_track_namespace(&mut buf.freeze(), get_varint, 1..=32);
+
+        // Assert
+        assert!(
+            matches!(result, Err(NameError::ProtocolViolation(_))),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn a_track_name_length_over_u32_is_a_protocol_violation() {
+        // Arrange
+        let mut buf = BytesMut::new();
+        buf.put_varint(LENGTH_OVER_U32);
+        buf.put_u8(b't');
+
+        // Act
+        let result = get_track_name(&mut buf.freeze(), get_varint, &["n".to_string()]);
+
+        // Assert
+        assert!(
+            matches!(result, Err(NameError::ProtocolViolation(_))),
+            "{result:?}"
+        );
+    }
 }
