@@ -86,6 +86,10 @@ export type LivePlayerOptions = {
   /// covered. Without it every object is delivered. The constructor throws a
   /// `RangeError` for any other value.
   deliveryTimeoutMs?: number
+  /// The Group Order of the same SUBSCRIBEs (`MoqSubscribeOptions.groupOrder`),
+  /// `'ascending'` by default. `'descending'` lets a congested link carry the
+  /// newest group first: the picture jumps ahead instead of falling behind.
+  groupOrder?: 'ascending' | 'descending'
   /// Plays only this source of the catalog; without it, every video and audio
   /// track is a choice.
   source?: LiveSource
@@ -228,7 +232,7 @@ export class LivePlayer {
     this.subscriptions = new TrackSubscriptions(
       this.context,
       (kind, done, leading) => this.publisherEnded(kind, done, leading),
-      options.deliveryTimeoutMs
+      { deliveryTimeoutMs: options.deliveryTimeoutMs, groupOrder: options.groupOrder }
     )
     this.videoSwitcher = new VideoSwitcher({
       subscriptions: this.subscriptions,

@@ -1,4 +1,4 @@
-import type { MoqSubscription, PublishDone } from '../../core/session'
+import type { MoqSubscribeOptions, MoqSubscription, PublishDone } from '../../core/session'
 import {
   type MediaKind,
   type ObjectHandler,
@@ -50,10 +50,11 @@ export class TrackSubscriptions {
     /// `leading` when no video is subscribed after the PUBLISH_DONE: the
     /// video's, or the audio's of a broadcast played without video.
     private readonly onPublishDone: (kind: MediaKind, done: PublishDone, leading: boolean) => void,
-    private readonly deliveryTimeoutMs?: number
+    /// Sent with every media SUBSCRIBE.
+    private readonly delivery: Pick<MoqSubscribeOptions, 'deliveryTimeoutMs' | 'groupOrder'> = {}
   ) {
     // The wasm binding takes a u32 and would wrap or truncate any other number.
-    const timeout = deliveryTimeoutMs
+    const timeout = delivery.deliveryTimeoutMs
     if (timeout !== undefined && (!Number.isInteger(timeout) || timeout < 1 || timeout > 0xffff_ffff)) {
       throw new RangeError(`delivery timeout ${timeout} is not an integer from 1 to 4294967295`)
     }
@@ -105,12 +106,12 @@ export class TrackSubscriptions {
     const handle = joining
       ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, {
           priority,
-          deliveryTimeoutMs: this.deliveryTimeoutMs
+          ...this.delivery
         })
       : await session.subscribe(namespace, wireName, {
           forward: !this.forwardPaused,
           priority,
-          deliveryTimeoutMs: this.deliveryTimeoutMs
+          ...this.delivery
         })
     const subscription: TrackSubscription = {
       id: streamId(),

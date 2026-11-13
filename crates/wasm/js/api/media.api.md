@@ -226,6 +226,7 @@ export type LivePlayerOptions = {
     livePicture?: LivePictureKind;
     keepLiveWhileReviewing?: boolean;
     deliveryTimeoutMs?: number;
+    groupOrder?: 'ascending' | 'descending';
     source?: LiveSource;
     audioContext?: AudioContext;
     latencyTolerance?: LatencyTolerance;
@@ -604,6 +605,7 @@ export type RemoteBroadcastOptions = {
     audioContext?: AudioContext;
     keepLiveWhileReviewing?: boolean;
     deliveryTimeoutMs?: number;
+    groupOrder?: 'ascending' | 'descending';
 };
 
 // @public (undocumented)
@@ -728,9 +730,9 @@ export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
 //
 // types/media/player/addedAudioTrack.d.ts:7:5 - (ae-forgotten-export) The symbol "PublishDone" needs to be exported by the entry point index.d.ts
 // types/media/player/broadcastCatalog.d.ts:6:5 - (ae-forgotten-export) The symbol "LogLevel" needs to be exported by the entry point index.d.ts
-// types/media/player/livePlayer.d.ts:37:5 - (ae-forgotten-export) The symbol "StatusState" needs to be exported by the entry point index.d.ts
-// types/media/player/livePlayer.d.ts:63:5 - (ae-forgotten-export) The symbol "SeekAxis" needs to be exported by the entry point index.d.ts
-// types/media/player/livePlayer.d.ts:72:9 - (ae-forgotten-export) The symbol "ReviewFetchWindow" needs to be exported by the entry point index.d.ts
+// types/media/player/livePlayer.d.ts:38:5 - (ae-forgotten-export) The symbol "StatusState" needs to be exported by the entry point index.d.ts
+// types/media/player/livePlayer.d.ts:64:5 - (ae-forgotten-export) The symbol "SeekAxis" needs to be exported by the entry point index.d.ts
+// types/media/player/livePlayer.d.ts:73:9 - (ae-forgotten-export) The symbol "ReviewFetchWindow" needs to be exported by the entry point index.d.ts
 // types/media/player/locLive.d.ts:49:5 - (ae-forgotten-export) The symbol "MediaKind_2" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
