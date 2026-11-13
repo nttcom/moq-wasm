@@ -246,16 +246,20 @@ impl SessionRepository {
             .is_some_and(|entry| entry.announced_namespaces.remove(track_namespace))
     }
 
-    /// Call after UNSUBSCRIBE_NAMESPACE; otherwise a later SUBSCRIBE_NAMESPACE
-    /// for the prefix gets no PUBLISH_NAMESPACE for these namespaces.
+    /// Call after UNSUBSCRIBE_NAMESPACE, or after a prefix update with the
+    /// prefix it moved away from and `kept_prefix` the one it moved to;
+    /// otherwise a later SUBSCRIBE_NAMESPACE for the prefix gets no
+    /// PUBLISH_NAMESPACE for these namespaces.
     pub(crate) fn forget_announced_namespaces(
         &mut self,
         session_id: SessionId,
         track_namespace_prefix: &str,
+        kept_prefix: Option<&str>,
     ) {
         if let Some(entry) = self.sessions.get_mut(&session_id) {
             entry.announced_namespaces.retain(|track_namespace| {
                 !namespace_has_prefix(track_namespace, track_namespace_prefix)
+                    || kept_prefix.is_some_and(|kept| namespace_has_prefix(track_namespace, kept))
             });
         }
     }
@@ -468,7 +472,7 @@ mod tests {
         repository.record_namespace_announced(7, "rooms/carol");
 
         // Act
-        repository.forget_announced_namespaces(7, "room");
+        repository.forget_announced_namespaces(7, "room", None);
 
         // Assert: `rooms` is another field, not under `room`
         assert!(repository.record_namespace_announced(7, "room/alice"));

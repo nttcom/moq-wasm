@@ -35,7 +35,7 @@ impl UnsubscribeNamespace {
             table.unregister_subscribe_namespace(session_id, track_namespace_prefix, interest);
         if interest.includes_namespaces() {
             forwarder
-                .forget_announced_namespaces(session_id, track_namespace_prefix)
+                .forget_announced_namespaces(session_id, track_namespace_prefix, None)
                 .await;
         }
         if !super::is_origin_client(session_id, forwarder).await {

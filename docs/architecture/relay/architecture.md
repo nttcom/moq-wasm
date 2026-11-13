@@ -591,7 +591,9 @@ authorized for the new prefix and goes through the same sequence
 overlaps another subscription of the session with the same interest, the
 moving one not counted (§10.2.14). Otherwise the new prefix is registered as
 a new subscription would be, the update answered, and the old prefix released
-as an UNSUBSCRIBE_NAMESPACE would release it; then what the new prefix
+as an UNSUBSCRIBE_NAMESPACE would release it, forgetting the announced
+namespaces under it that the new prefix leaves out (moqt forgets them too, so
+moving back announces them again); then what the new prefix
 matches and the old prefix did not is offered as above: what the old prefix
 covered was offered when the subscription got it, so no track is PUBLISHed
 and no namespace announced twice (an update has no effect on existing
