@@ -81,7 +81,14 @@ impl SessionIntake {
         let session = match accepted {
             Ok(session) => session,
             Err(error) => {
-                tracing::warn!(%error, "failed to establish session");
+                tracing::warn!(
+                    %error,
+                    session_id,
+                    session_peer = self.accepted_peer.kind(),
+                    app_id = verified_token.app_id.as_str(),
+                    relay_hostname = relay_hostname(),
+                    "failed to establish session"
+                );
                 return;
             }
         };
