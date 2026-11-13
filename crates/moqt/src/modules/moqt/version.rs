@@ -278,8 +278,11 @@ impl Version {
         data: &mut BytesMut,
     ) -> anyhow::Result<Option<(u64, IncomingDatagram)>> {
         match self {
-            Self::Draft14 => draft14::objects::decode_datagram(data)
-                .map(|(track_alias, object)| Some((track_alias, IncomingDatagram::new(object)))),
+            Self::Draft14 => {
+                draft14::objects::decode_datagram(data).map(|(track_alias, object)| {
+                    Some((track_alias, IncomingDatagram::new(object, Self::Draft14)))
+                })
+            }
             Self::Draft18 => Ok(draft18::objects::decode_datagram(data)?),
         }
     }

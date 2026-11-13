@@ -5,8 +5,11 @@ use std::sync::{
 
 use tokio::sync::mpsc;
 
-use crate::modules::moqt::data_plane::{
-    object::canonical_object::Object, stream::stream_data_receiver::StreamDataReceiver,
+use crate::modules::moqt::{
+    data_plane::{
+        object::canonical_object::Object, stream::stream_data_receiver::StreamDataReceiver,
+    },
+    version::Version,
 };
 
 /// The datagrams queued for a subscription and not read yet: unlike
@@ -25,18 +28,31 @@ pub(crate) struct IncomingDatagram {
     /// The datagram omits its priority (draft-18 §11.3.1), so the object
     /// takes the default of the subscription it reaches (§12.4).
     pub(crate) inherits_priority: bool,
+    /// The draft of the connection the datagram arrived on.
+    pub(crate) version: Version,
 }
 
 impl IncomingDatagram {
-    pub(crate) fn new(object: Object) -> Self {
+    pub(crate) fn new(object: Object, version: Version) -> Self {
         Self {
             object,
             inherits_priority: false,
+            version,
         }
     }
 }
 
 impl IncomingObject {
+    /// The draft of the connection the stream or datagram arrived on: after
+    /// a GOAWAY, one subscription's objects can arrive on connections of
+    /// different drafts.
+    pub(crate) fn version(&self) -> Version {
+        match self {
+            Self::Subgroup(receiver) => receiver.version(),
+            Self::Datagram(datagram) => datagram.version,
+        }
+    }
+
     pub(crate) fn inherit_priority(&mut self, default_publisher_priority: u8) {
         match self {
             Self::Subgroup(receiver) => receiver.inherit_priority(default_publisher_priority),
@@ -123,11 +139,12 @@ mod tests {
         IncomingDatagram, IncomingObject, IncomingObjectSendError, IncomingObjectSender,
         MAX_QUEUED_DATAGRAMS, incoming_object_channel,
     };
-    use crate::modules::test_support::datagram_object;
+    use crate::modules::{moqt::version::Version, test_support::datagram_object};
 
     fn send_datagram(sender: &IncomingObjectSender) -> Result<(), IncomingObjectSendError> {
         sender.send(IncomingObject::Datagram(IncomingDatagram::new(
             datagram_object(),
+            Version::Draft18,
         )))
     }
 

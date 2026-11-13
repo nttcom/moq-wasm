@@ -32,7 +32,7 @@ use crate::modules::moqt::{
         },
     },
     runtime::dispatch::incoming_object::IncomingDatagram,
-    version::{self, IncomingStream},
+    version::{self, IncomingStream, Version},
 };
 use crate::modules::transport::transport_connection::BoxedReceiveStream;
 
@@ -922,6 +922,7 @@ pub(crate) fn decode_datagram(
                 ends_group: datagram_type & DATAGRAM_END_OF_GROUP != 0,
             },
             inherits_priority,
+            version: Version::Draft18,
         },
     )))
 }
@@ -1058,7 +1059,10 @@ mod tests {
             object_status::ObjectStatus,
         },
         runtime::dispatch::incoming_object::IncomingDatagram,
-        version::draft18::codec::{DecodeError, put_vi64},
+        version::{
+            Version,
+            draft18::codec::{DecodeError, put_vi64},
+        },
     };
 
     fn object(
@@ -1343,7 +1347,10 @@ mod tests {
             let decoded = decode_datagram(&mut encoded).unwrap();
 
             // Assert: an encoded datagram always states its priority
-            assert_eq!(decoded, Some((11, IncomingDatagram::new(sent))));
+            assert_eq!(
+                decoded,
+                Some((11, IncomingDatagram::new(sent, Version::Draft18)))
+            );
         }
         assert_eq!(decode_datagram(&mut padding.freeze()), Ok(None));
     }

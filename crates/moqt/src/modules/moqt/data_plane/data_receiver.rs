@@ -27,6 +27,8 @@ pub struct DataReceiver {
     receiver: IncomingObjectReceiver,
     /// The draft of the connection the subscription was accepted on.
     version: Version,
+    /// Whether the first object from a draft-14 connection was a datagram:
+    /// only draft-14 forbids a track to mix the two.
     first_is_datagram: Option<bool>,
     ledger: Arc<ObjectLedger>,
 }
@@ -63,8 +65,9 @@ impl DataReceiver {
         let Some(incoming) = self.receiver.recv().await else {
             anyhow::bail!("the subscription ended");
         };
+        let version = incoming.version();
         let is_datagram = matches!(incoming, IncomingObject::Datagram(_));
-        if !self.version.mixes_forwarding_preferences()
+        if !version.mixes_forwarding_preferences()
             && *self.first_is_datagram.get_or_insert(is_datagram) != is_datagram
         {
             return Err(MalformedTrackError::MixedForwardingPreference.into());
@@ -75,9 +78,9 @@ impl DataReceiver {
                 TrackData::Subgroup(receiver)
             }
             IncomingObject::Datagram(datagram) => {
-                immutable_properties::check(self.version, &datagram.object)?;
+                immutable_properties::check(version, &datagram.object)?;
                 self.ledger
-                    .check(&datagram.object, CopySource::Subscription(self.version))?;
+                    .check(&datagram.object, CopySource::Subscription(version))?;
                 TrackData::Datagram(datagram.object)
             }
         })

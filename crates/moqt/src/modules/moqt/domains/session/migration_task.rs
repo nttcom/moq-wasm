@@ -806,16 +806,16 @@ mod tests {
             moqt::version::Version,
             test_support::{
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
-                client_with_config, native_client_with_config, open_subgroup,
-                self_signed_server_config, send_payload, spawn_native_server,
-                spawn_native_server_handshake, spawn_server, subscribe_namespace_accepted,
-                subscribed_track_reader,
+                client_with_config, data_receiver, datagram_object, native_client_with_config,
+                next_datagram, next_subgroup, open_subgroup, self_signed_server_config,
+                send_payload, spawn_native_server, spawn_native_server_handshake, spawn_server,
+                subscribe_namespace_accepted, subscribed_track_reader,
             },
         },
         namespace::NamespaceInterest,
         object::{
             ContentExists, ExtensionHeaders, ForwardingPreference, Location, MalformedTrackError,
-            Object, ObjectStatus, StreamDataSenderFactory,
+            Object, ObjectStatus, StreamDataSenderFactory, TrackData,
         },
         publish::{PublishDoneCode, PublishOption},
         subscribe::{FilterType, SubscribeHandler, SubscribeOption},
@@ -1135,6 +1135,78 @@ mod tests {
             DRAFT14_TO_DRAFT18,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_subscription_moved_to_a_draft18_server_takes_a_datagram_after_a_subgroup() {
+        // Arrange
+        let Migration {
+            client,
+            server_a,
+            server_b,
+        } = Migration::connect("migration-mixed-14-18", DRAFT14_TO_DRAFT18).await;
+        let (subscription, sender_a, _) = subscribe(&client, &server_a).await;
+        let mut group_1_a = open_subgroup(&sender_a, 1).await;
+        send_payload(&mut group_1_a, b"a1-0").await;
+        let mut receiver = data_receiver(&client, &subscription).await;
+        next_subgroup(&mut receiver).await;
+        let server_b = server_b.named_by(&server_a).await;
+        let (_, _, served_b) = serve_subscribe(&server_b).await;
+        let mut object = datagram_object();
+        object.location.group_id = 2;
+
+        // Act
+        server_b
+            .publisher()
+            .create_datagram(&served_b)
+            .send_object(&object)
+            .await
+            .unwrap();
+        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
+            .await
+            .expect("the datagram arrives");
+
+        // Assert: draft-18 §11 lets a track mix subgroup streams and datagrams, which draft-14 §10 forbids
+        assert!(
+            matches!(&received, Ok(TrackData::Datagram(datagram)) if datagram.location.group_id == 2),
+            "got {received:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscription_moved_to_a_draft14_server_takes_a_subgroup_after_a_datagram() {
+        // Arrange
+        let Migration {
+            client,
+            server_a,
+            server_b,
+        } = Migration::connect("migration-mixed-18-14", DRAFT18_TO_DRAFT14).await;
+        let (subscription, _, served_a) = subscribe(&client, &server_a).await;
+        let mut object = datagram_object();
+        object.location.group_id = 1;
+        server_a
+            .publisher()
+            .create_datagram(&served_a)
+            .send_object(&object)
+            .await
+            .unwrap();
+        let mut receiver = data_receiver(&client, &subscription).await;
+        next_datagram(&mut receiver).await;
+        let server_b = server_b.named_by(&server_a).await;
+        let (sender_b, _, _) = serve_subscribe(&server_b).await;
+
+        // Act
+        let mut group_2_b = open_subgroup(&sender_b, 2).await;
+        send_payload(&mut group_2_b, b"b2-0").await;
+        let received = tokio::time::timeout(HANDSHAKE_TIMEOUT, receiver.next())
+            .await
+            .expect("the subgroup stream arrives");
+
+        // Assert: draft-14 §10 forbids the mix only within a draft-14 connection
+        assert!(
+            matches!(&received, Ok(TrackData::Subgroup(stream)) if stream.group_id() == 2),
+            "got {received:?}"
+        );
     }
 
     #[tokio::test]
