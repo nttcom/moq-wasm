@@ -27,7 +27,11 @@ use crate::modules::{
     },
 };
 
-use super::{group_sequence::GroupSequence, runner::Downstream, scheduler::GroupSendTask};
+use super::{
+    group_sequence::{GroupSequence, current_tick},
+    runner::Downstream,
+    scheduler::GroupSendTask,
+};
 
 /// Per subscription. Only a subscriber that stopped reading reaches it,
 /// since a live track keeps a few subgroups open; the scheduler then blocks
@@ -297,7 +301,7 @@ impl GroupSender {
                     match (task.key, as_datagram) {
                         (SubgroupKey::Stream { group_id, subgroup_id }, false) => {
                             let factory = self.stream_factory(&mut stream_factory);
-                            let group_sequence = self.group_sequence.sequence_of(group_id);
+                            let group_sequence = self.group_sequence.sequence_of(group_id, current_tick());
                             let span = tracing::debug_span!(
                                 "relay.dataplane.egress.stream",
                                 track_namespace = %self.track_key.track_namespace, track_name = %self.track_key.track_name,
@@ -328,7 +332,7 @@ impl GroupSender {
                         }
                         (SubgroupKey::Datagram { group_id }, false) => {
                             let factory = self.stream_factory(&mut stream_factory);
-                            let group_sequence = self.group_sequence.sequence_of(group_id);
+                            let group_sequence = self.group_sequence.sequence_of(group_id, current_tick());
                             joinset.spawn(Self::send_datagrams_on_streams(StreamSendTask {
                                 source: self.source(&task),
                                 object_id: task.object_id,

@@ -1277,8 +1277,16 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscriber priority `DeliveryControl` holds then, the first object's publisher
   priority, the subscription's group order with a per-subscription
-  `GroupSequence` (incremented for every newer group id the sender sees,
-  shared by the subgroups of one group), and the subgroup id.
+  `GroupSequence` (the relay-wide 250 ms tick the sender first sees the group
+  at, at least one more than the previous group's, shared by the subgroups of
+  one group), and the subgroup id. The tick is one clock for every
+  subscription, so among subscriptions of equal subscriber and publisher
+  priority and ascending group order the transport sends the group the sender
+  saw first, and groups of one tick take turns (§7.2 leaves this order to the
+  implementation); a count per subscription made whichever subscription
+  started later win every time. A track with more than four groups a second
+  runs ahead of the tick, and the 12 bits wrap about every 17 minutes; in
+  both cases the order between subscriptions is arbitrary.
   `StreamSenderFactory::next(priority)` applies it before the header
   is written. An update that changes the subscriber priority also reaches a
   stream that is open (§7.1: a best effort SHOULD be made for the objects not
