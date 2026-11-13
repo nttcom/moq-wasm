@@ -51,6 +51,21 @@ export type Usage = {
   }[]
 }
 
+export type RecordingState = 'starting' | 'recording' | 'stopping' | 'finished' | 'failed'
+
+/** An MP4 room recording of the app, as the recorder lists it. */
+export type Recording = {
+  id: string
+  requested_at_ms: number | null
+  /** `<appId>/<room>`. */
+  namespace_prefix: string
+  state: RecordingState
+  error: string | null
+  members: { namespace: string; started_at_ms: number; finished: boolean; error: string | null }[]
+  /** `name` is the file's key below the recording: `<namespace>/[<track>/]<start ms>-<n>.mp4` or `composite.mp4`. */
+  files: { name: string; size_bytes: number }[]
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -72,7 +87,8 @@ const messages: Record<string, string> = {
   invalid_ttl: '期限は 24 時間までで指定してください。',
   invalid_request: 'リクエストの形が正しくありません。',
   invalid_range: '期間は 7 日以内で指定してください。',
-  observability_unavailable: '通信量を読めませんでした。しばらくしてから試してください。'
+  observability_unavailable: '通信量を読めませんでした。しばらくしてから試してください。',
+  recorder_unavailable: '録画を読めませんでした。しばらくしてから試してください。'
 }
 
 export function describeError(error: unknown): string {
@@ -109,7 +125,25 @@ export const api = {
   rotateSecret: (appId: string) => request<AppWithSecret>('POST', `${appPath(appId)}/secret`),
   deleteApp: (appId: string) => request<void>('DELETE', appPath(appId)),
   usage: (appId: string, fromMs: number, toMs: number, points: number) =>
-    request<Usage>('GET', `${appPath(appId)}/usage?from=${fromMs}&to=${toMs}&points=${points}`)
+    request<Usage>('GET', `${appPath(appId)}/usage?from=${fromMs}&to=${toMs}&points=${points}`),
+  recordings: (appId: string) => request<{ recordings: Recording[] }>('GET', `${appPath(appId)}/recordings`)
+}
+
+/** The console path that redirects to the file's signed Cloud Storage URL. */
+export function recordingFileUrl(appId: string, id: string, name: string): string {
+  return `${appPath(appId)}/recordings/${encodeURIComponent(id)}/file?name=${encodeURIComponent(name)}`
+}
+
+export function formatBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000
+    unit += 1
+  }
+  const digits = value >= 100 || unit === 0 ? 0 : 1
+  return `${Number(value.toFixed(digits))} ${units[unit]}`
 }
 
 export function formatUnixTime(seconds: number | null): string {

@@ -11,7 +11,7 @@ use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
     header::{
-        CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue, ORIGIN,
+        CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue, LOCATION, ORIGIN,
         X_CONTENT_TYPE_OPTIONS,
     },
 };
@@ -25,14 +25,17 @@ use crate::{
     apps::{self, Creation, TokenScope},
     identity::{Caller, Identity},
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
+    recordings::RecorderClient,
     usage::{ObservabilityClient, UsageAnswer},
 };
 
 pub const CSRF_HEADER: &str = "x-console-request";
 const MAX_BODY_BYTES: usize = 16 * 1024;
-/// The console signs a token per usage request, so it only has to outlive that request.
-const USAGE_TOKEN_TTL_SECONDS: u64 = 60;
-const CONTENT_SECURITY: &str = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+/// The console signs a token per read of an app's usage or recordings, so it
+/// only has to outlive that request.
+const READ_TOKEN_TTL_SECONDS: u64 = 60;
+/// A recording plays from the signed Cloud Storage URL the recorder answers.
+const CONTENT_SECURITY: &str = "default-src 'self'; img-src 'self' data:; media-src 'self' https://storage.googleapis.com; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 pub struct ConsoleState {
     identity: Identity,
@@ -41,6 +44,8 @@ pub struct ConsoleState {
     relay_url: Option<String>,
     /// Without it, an app's usage answers 503.
     observability: Option<ObservabilityClient>,
+    /// Without it, an app's recordings answer 503.
+    recorder: Option<RecorderClient>,
 }
 
 impl ConsoleState {
@@ -56,12 +61,19 @@ impl ConsoleState {
             static_files: static_dir.map(StaticFiles::new),
             relay_url,
             observability: None,
+            recorder: None,
         }
     }
 
     /// Fails when `base_url` is not a URL.
     pub fn with_observability(mut self, base_url: &str) -> anyhow::Result<Self> {
         self.observability = Some(ObservabilityClient::new(base_url)?);
+        Ok(self)
+    }
+
+    /// Fails when `base_url` is not an http(s) URL.
+    pub fn with_recorder(mut self, base_url: &str) -> anyhow::Result<Self> {
+        self.recorder = Some(RecorderClient::new(base_url)?);
         Ok(self)
     }
 }
@@ -124,11 +136,16 @@ async fn route(
     state: &ConsoleState,
 ) -> JsonResponse {
     let handled = if let Some((app_id, action)) = app_route(path) {
-        match (method, action) {
-            (Method::POST, Some("tokens")) => issue_token(headers, body, app_id, state).await,
-            (Method::POST, Some("secret")) => rotate_secret(headers, app_id, state).await,
-            (Method::GET, Some("usage")) => app_usage(headers, query, app_id, state).await,
-            (Method::DELETE, None) => delete_app(headers, app_id, state).await,
+        let action: Vec<&str> = action.map_or_else(Vec::new, |action| action.split('/').collect());
+        match (method, action.as_slice()) {
+            (Method::POST, ["tokens"]) => issue_token(headers, body, app_id, state).await,
+            (Method::POST, ["secret"]) => rotate_secret(headers, app_id, state).await,
+            (Method::GET, ["usage"]) => app_usage(headers, query, app_id, state).await,
+            (Method::GET, ["recordings"]) => app_recordings(headers, app_id, state).await,
+            (Method::GET, ["recordings", id, "file"]) => {
+                recording_file(headers, query, app_id, id, state).await
+            }
+            (Method::DELETE, []) => delete_app(headers, app_id, state).await,
             _ => Err(Refusal(StatusCode::NOT_FOUND, "not_found")),
         }
     } else {
@@ -274,23 +291,9 @@ async fn app_usage(
         StatusCode::SERVICE_UNAVAILABLE,
         "observability_unavailable",
     ))?;
-    let scope = TokenScope {
-        publish: None,
-        subscribe: Some(String::new()),
-        ttl_seconds: USAGE_TOKEN_TTL_SECONDS,
-    };
-    let issued = apps::issue_token(&state.store, &caller.sub, app_id, scope, unix_now())
-        .await
-        .map_err(registry_unavailable)?
-        .ok_or(Refusal(StatusCode::NOT_FOUND, "no_app"))?;
-    match observability.usage(&issued.token, query).await {
-        Ok(UsageAnswer::Usage(body)) => {
-            let mut response = Response::new(Full::new(body));
-            response
-                .headers_mut()
-                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            Ok(no_store(response))
-        }
+    let token = app_read_token(&caller, app_id, state).await?;
+    match observability.usage(&token, query).await {
+        Ok(UsageAnswer::Usage(body)) => Ok(passed_on_json(body)),
         Ok(UsageAnswer::InvalidRange) => Err(Refusal(StatusCode::BAD_REQUEST, "invalid_range")),
         Err(error) => {
             tracing::warn!(app_id, error = format!("{error:#}"), "usage not read");
@@ -300,6 +303,93 @@ async fn app_usage(
             ))
         }
     }
+}
+
+async fn app_recordings(
+    headers: &HeaderMap,
+    app_id: &str,
+    state: &ConsoleState,
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    let recorder = state.recorder.as_ref().ok_or(RECORDER_UNAVAILABLE)?;
+    let token = app_read_token(&caller, app_id, state).await?;
+    match recorder.recordings(&token, app_id).await {
+        Ok(body) => Ok(passed_on_json(body)),
+        Err(error) => {
+            tracing::warn!(app_id, error = format!("{error:#}"), "recordings not read");
+            Err(RECORDER_UNAVAILABLE)
+        }
+    }
+}
+
+/// Redirects to the signed URL the recorder answers, which a `<video>` or a
+/// download reads straight from Cloud Storage.
+async fn recording_file(
+    headers: &HeaderMap,
+    query: Option<&str>,
+    app_id: &str,
+    id: &str,
+    state: &ConsoleState,
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    let recorder = state.recorder.as_ref().ok_or(RECORDER_UNAVAILABLE)?;
+    let name = Url::parse(&format!("http://query/?{}", query.unwrap_or_default()))
+        .ok()
+        .and_then(|url| {
+            url.query_pairs()
+                .find(|(key, _)| key == "name")
+                .map(|(_, name)| name.into_owned())
+        })
+        .ok_or(Refusal(StatusCode::BAD_REQUEST, "no_name"))?;
+    let token = app_read_token(&caller, app_id, state).await?;
+    match recorder.file_url(&token, id, &name).await {
+        Ok(Some(url)) => {
+            let mut response = empty_response(StatusCode::FOUND);
+            let location = HeaderValue::from_str(url.as_str()).map_err(|_| RECORDER_UNAVAILABLE)?;
+            response.headers_mut().insert(LOCATION, location);
+            Ok(no_store(response))
+        }
+        Ok(None) => Err(Refusal(StatusCode::NOT_FOUND, "no_file")),
+        Err(error) => {
+            tracing::warn!(
+                app_id,
+                id,
+                error = format!("{error:#}"),
+                "file URL not read"
+            );
+            Err(RECORDER_UNAVAILABLE)
+        }
+    }
+}
+
+const RECORDER_UNAVAILABLE: Refusal =
+    Refusal(StatusCode::SERVICE_UNAVAILABLE, "recorder_unavailable");
+
+/// A token for the whole app, signed with its secret, with which a backend
+/// answers the app's data alone; `no_app` when the caller does not own it.
+async fn app_read_token(
+    caller: &Caller,
+    app_id: &str,
+    state: &ConsoleState,
+) -> Result<String, Refusal> {
+    let scope = TokenScope {
+        publish: None,
+        subscribe: Some(String::new()),
+        ttl_seconds: READ_TOKEN_TTL_SECONDS,
+    };
+    let issued = apps::issue_token(&state.store, &caller.sub, app_id, scope, unix_now())
+        .await
+        .map_err(registry_unavailable)?
+        .ok_or(Refusal(StatusCode::NOT_FOUND, "no_app"))?;
+    Ok(issued.token)
+}
+
+fn passed_on_json(body: Bytes) -> JsonResponse {
+    let mut response = Response::new(Full::new(body));
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    no_store(response)
 }
 
 async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Caller, Refusal> {
@@ -435,13 +525,14 @@ mod tests {
         identity: Identity,
         static_dir: Option<PathBuf>,
     ) -> TestConsole {
-        start_console_with(identity, static_dir, None).await
+        start_console_with(identity, static_dir, None, None).await
     }
 
     async fn start_console_with(
         identity: Identity,
         static_dir: Option<PathBuf>,
         observability_url: Option<&str>,
+        recorder_url: Option<&str>,
     ) -> TestConsole {
         let registry_file = TemporaryRegistryFile::new();
         registry_file.put(&json!([
@@ -461,6 +552,9 @@ mod tests {
         );
         if let Some(url) = observability_url {
             state = state.with_observability(url).unwrap();
+        }
+        if let Some(url) = recorder_url {
+            state = state.with_recorder(url).unwrap();
         }
         let state = Arc::new(state);
         TestConsole {
@@ -488,7 +582,11 @@ mod tests {
         path: &str,
         body: Option<Value>,
     ) -> reqwest::Response {
-        let mut request = reqwest::Client::new()
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let mut request = client
             .request(method, format!("{}{path}", console.base_url))
             .header(CSRF_HEADER, "1");
         if let Some(body) = body {
@@ -1029,6 +1127,7 @@ mod tests {
             development("accounts.google.com:1"),
             None,
             Some(observability.url()),
+            None,
         )
         .await;
 
@@ -1060,7 +1159,7 @@ mod tests {
         assert!(claims.get("publish").is_none());
         assert_eq!(
             claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap(),
-            USAGE_TOKEN_TTL_SECONDS
+            READ_TOKEN_TTL_SECONDS
         );
     }
 
@@ -1072,6 +1171,7 @@ mod tests {
             development("accounts.google.com:1"),
             None,
             Some(observability.url()),
+            None,
         )
         .await;
 
@@ -1098,6 +1198,7 @@ mod tests {
             development("accounts.google.com:1"),
             None,
             Some(observability.url()),
+            None,
         )
         .await;
 
@@ -1128,6 +1229,139 @@ mod tests {
             &console,
             reqwest::Method::GET,
             "/api/apps/app-1/usage?from=1&to=2",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    async fn start_console_with_recorder(recorder: &FakeHttpServer) -> TestConsole {
+        start_console_with(
+            development("accounts.google.com:1"),
+            None,
+            None,
+            Some(recorder.url()),
+        )
+        .await
+    }
+
+    fn bearer_claims(authorization: &Option<String>) -> serde_json::Map<String, Value> {
+        let token = authorization
+            .as_deref()
+            .unwrap()
+            .strip_prefix("Bearer ")
+            .unwrap();
+        auth_token::verify_signature(token, "s").unwrap();
+        auth_token::decode_unverified_payload(token).unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_apps_recordings_are_read_with_a_token_for_the_whole_app() {
+        // Arrange
+        let recorder = FakeHttpServer::run(StatusCode::OK, r#"{"recordings":[]}"#).await;
+        let console = start_console_with_recorder(&recorder).await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/recordings",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), r#"{"recordings":[]}"#);
+        let requests = recorder.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "/apps/app-1/recordings");
+        let claims = bearer_claims(&requests[0].1);
+        assert_eq!(claims["appId"], "app-1");
+        assert_eq!(claims["subscribe"], "");
+        assert!(claims.get("publish").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_recording_file_redirects_to_the_url_the_recorder_signed() {
+        // Arrange
+        let signed = "https://storage.googleapis.com/bucket/app-1/1/a.mp4?X-Goog-Signature=00";
+        let recorder =
+            FakeHttpServer::run(StatusCode::OK, &json!({ "url": signed }).to_string()).await;
+        let console = start_console_with_recorder(&recorder).await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/recordings/1700000000000-000001/file?name=app-1%2Froom%2Fa.mp4",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::FOUND);
+        assert_eq!(response.headers()[LOCATION], signed);
+        let requests = recorder.requests();
+        assert_eq!(
+            requests[0].0,
+            "/recordings/1700000000000-000001/file?name=app-1%2Froom%2Fa.mp4"
+        );
+        assert_eq!(bearer_claims(&requests[0].1)["appId"], "app-1");
+    }
+
+    #[tokio::test]
+    async fn a_file_the_recorder_refuses_for_the_app_is_not_found() {
+        // Arrange: the recording belongs to another app, outside the token's claim
+        let recorder = FakeHttpServer::run(StatusCode::FORBIDDEN, "{}").await;
+        let console = start_console_with_recorder(&recorder).await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/recordings/1700000000000-000001/file?name=a.mp4",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.json::<Value>().await.unwrap()["error"], "no_file");
+    }
+
+    #[tokio::test]
+    async fn another_employees_app_has_no_recordings_to_read() {
+        // Arrange
+        let recorder = FakeHttpServer::run(StatusCode::OK, "{}").await;
+        let console = start_console_with_recorder(&recorder).await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-2/recordings",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(recorder.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn recordings_without_a_recorder_are_unavailable() {
+        // Arrange
+        let console = start_console(development("accounts.google.com:1")).await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/recordings",
             None,
         )
         .await;

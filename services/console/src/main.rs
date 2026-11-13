@@ -45,6 +45,9 @@ async fn main() -> anyhow::Result<()> {
     if let Some(observability_url) = non_empty_env("CONSOLE_OBSERVABILITY_URL") {
         state = state.with_observability(&observability_url)?;
     }
+    if let Some(recorder_url) = non_empty_env("CONSOLE_RECORDER_URL") {
+        state = state.with_recorder(&recorder_url)?;
+    }
     let _server = ConsoleServer::run(listener, Arc::new(state));
     tracing::info!(port, "console listening");
 

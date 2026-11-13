@@ -4,6 +4,7 @@ import { api, describeError, type AppWithSecret, type ConsoleApp, type IssuedTok
 import { CreateAppModal, DeleteAppModal, RotateSecretModal, SecretModal, TokenModal } from './modals'
 import { isAppPage, pageTitles, type Page, type SoonPage } from './navigation'
 import { AppsPage, AuthPage, EmptyState, OverviewPage, SoonPageView, TokensPage, type TokenSummary } from './pages'
+import { RecordingsPage } from './recordings'
 import { UsagePage } from './usage'
 import { displayName, Sidebar } from './Sidebar'
 
@@ -170,6 +171,8 @@ function PageBody({ page, apps, current, relayUrl, onNavigate, onOpenApp, onCrea
       return <AuthPage app={current} onRotate={() => onDialog({ kind: 'rotate', app: current })} />
     case 'observability':
       return <UsagePage app={current} />
+    case 'recordings':
+      return <RecordingsPage app={current} />
     case 'tokens':
       return <TokensPage app={current} onIssued={(issued, summary) => onDialog({ kind: 'token', issued, summary })} />
     default:

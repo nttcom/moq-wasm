@@ -2,6 +2,7 @@ mod apps;
 mod iap;
 mod identity;
 mod input;
+mod recordings;
 mod server;
 #[cfg(test)]
 mod test_support;
