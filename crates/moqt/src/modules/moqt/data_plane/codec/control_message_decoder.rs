@@ -224,6 +224,10 @@ mod tests {
 
     use super::ControlMessageDecoder;
 
+    fn frame(message_type: ControlMessageType, payload: BytesMut) -> BytesMut {
+        encode_control_message(message_type, payload).unwrap()
+    }
+
     fn make_subscribe() -> Subscribe {
         Subscribe {
             request_id: 7,
@@ -270,7 +274,7 @@ mod tests {
     fn decode_waits_for_full_frame_then_completes() {
         let mut decoder = ControlMessageDecoder;
         let subscribe = make_subscribe();
-        let framed = encode_control_message(ControlMessageType::Subscribe, subscribe.encode());
+        let framed = frame(ControlMessageType::Subscribe, subscribe.encode());
 
         let mut buf = BytesMut::from(&framed[..framed.len() - 1]);
         let result = decoder.decode(&mut buf).expect("decode should not fail");
@@ -297,14 +301,8 @@ mod tests {
         let unsubscribe = Unsubscribe { request_id: 7 };
 
         let mut buf = BytesMut::new();
-        buf.unsplit(encode_control_message(
-            ControlMessageType::Subscribe,
-            subscribe.encode(),
-        ));
-        buf.unsplit(encode_control_message(
-            ControlMessageType::UnSubscribe,
-            unsubscribe.encode(),
-        ));
+        buf.unsplit(frame(ControlMessageType::Subscribe, subscribe.encode()));
+        buf.unsplit(frame(ControlMessageType::UnSubscribe, unsubscribe.encode()));
 
         let first = decoder
             .decode(&mut buf)
@@ -343,7 +341,7 @@ mod tests {
         let mut decoder = ControlMessageDecoder;
         // Subscribe frame whose payload is truncated garbage
         let payload = BytesMut::from(&[0x07_u8][..]);
-        let mut buf = encode_control_message(ControlMessageType::Subscribe, payload);
+        let mut buf = frame(ControlMessageType::Subscribe, payload);
 
         let message = decoder
             .decode(&mut buf)
@@ -356,40 +354,40 @@ mod tests {
         let mut decoder = ControlMessageDecoder;
 
         let mut buf = BytesMut::new();
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::GoAway,
             GoAway::new("https://relay.example/next".to_string()).encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::MaxRequestId,
             MaxRequestId::new(100).encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::RequestsBlocked,
             RequestsBlocked::new(100).encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::SubscribeUpdate,
             make_subscribe_update().encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::PublishDone,
             PublishDone::new(7, 2, 1, "track ended".to_string()).encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::FetchCancel,
             FetchCancel::new(3).encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::PublishNamespaceCancel,
             PublishNamespaceCancel::new(vec!["room".to_string()], 1, "expired".to_string())
                 .encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::TrackStatus,
             make_subscribe().encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::TrackStatusOk,
             SubscribeOk {
                 request_id: 7,
@@ -401,7 +399,7 @@ mod tests {
             }
             .encode(),
         ));
-        buf.unsplit(encode_control_message(
+        buf.unsplit(frame(
             ControlMessageType::TrackStatusError,
             RequestError {
                 request_id: 7,
