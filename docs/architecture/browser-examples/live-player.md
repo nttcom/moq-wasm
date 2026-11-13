@@ -566,7 +566,9 @@ one. A rendition above that cap steps down to it at once, and a container
 grown taller raises playback to the new cap at once unless the path was
 congested in the last 10 s. Under `Auto` the player subscribes no video until
 the container has a height, since `RemoteBroadcast` starts a player before its
-page places the container; it then starts on the top of the capped ladder.
+page places the container; it then starts on the top of the capped ladder
+and, until it knows a cap, measures a raise from that rendition, so a
+catalog that adds a rendition above it raises too.
 
 ### Review audio
 

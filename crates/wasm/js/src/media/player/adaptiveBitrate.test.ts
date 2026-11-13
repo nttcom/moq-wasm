@@ -271,6 +271,38 @@ test('a picture grown taller raises to the top of the new cap at once', () => {
   expect(choice).toMatchObject({ name: 'video', reason: 'raise' })
 })
 
+test('a cap above the playing rendition raises on the first decision', () => {
+  // Arrange: playback started on the low rendition, the only one the first catalog listed
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  abr.forgetCeiling()
+  abr.decideUnderHeight(SETTLE_MS, [], 'video_360p', 1_000)
+
+  // Act: the catalog adds the source
+  const choice = abr.decideUnderHeight(SETTLE_MS + 500, TALL_LADDER, 'video_360p', 1_000)
+
+  // Assert
+  expect(choice).toMatchObject({ name: 'video', reason: 'raise' })
+})
+
+test('a forgotten cap is measured from the rendition playback starts on', () => {
+  // Arrange: a 1000 pixel picture capped the ladder before a new subscription
+  // started on the cap of a 400 pixel picture
+  const abr = new AdaptiveBitrate()
+  abr.restart(0)
+  abr.decideUnderHeight(SETTLE_MS, TALL_LADDER, 'video', 1_000)
+  abr.restart(5_000)
+  abr.forgetCeiling()
+
+  // Act
+  const unchanged = abr.decideUnderHeight(5_000 + SETTLE_MS, TALL_LADDER, 'video_480p', 400)
+  const grown = abr.decideUnderHeight(5_500 + SETTLE_MS, TALL_LADDER, 'video_480p', 1_000)
+
+  // Assert
+  expect(unchanged).toBeUndefined()
+  expect(grown).toMatchObject({ name: 'video', reason: 'raise' })
+})
+
 test('a step down for congestion carries the lag and throughput it was decided on', () => {
   // Arrange: 0.96 Mbps arrives, its least lag rising from 100 ms to 1.1 s
   const abr = new AdaptiveBitrate()
