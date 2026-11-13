@@ -5,8 +5,8 @@ use telemetry::relay_stats;
 
 use crate::{
     clickhouse::ClickHouse,
-    schema::{SESSION_STATS, SUBSCRIPTION_STATS, TRACK_STATS},
-    series::{APP_CLIENT_SESSION, APP_NAMESPACE},
+    schema::{SUBSCRIPTION_STATS, TRACK_STATS},
+    series::{APP_NAMESPACE, RANGE, app_client_sessions_sql},
 };
 
 const MAX_NAMESPACES: u64 = 1_000;
@@ -60,25 +60,20 @@ pub async fn published_namespaces(
             "excluded_prefix",
             format!("{}/", relay_stats::NAMESPACE_ROOT),
         ),
-        ("excluded_app", relay_stats::NAMESPACE_ROOT.to_string()),
         ("limit", MAX_NAMESPACES.to_string()),
     ];
-    let range = "timestamp_ms >= {from:UInt64} AND timestamp_ms <= {to:UInt64}";
-    let client_sessions = format!(
-        "SELECT relay_id, session_id FROM {database}.{SESSION_STATS} \
-         WHERE {range} AND {APP_CLIENT_SESSION} AND app_id != {{excluded_app:String}}"
-    );
+    let client_sessions = app_client_sessions_sql(database);
     let namespaces_sql = format!(
         "SELECT namespace, groupUniqArray(name) AS tracks, groupUniqArray(relay_id) AS relays, \
          min(timestamp_ms) AS first_seen_ms, max(timestamp_ms) AS last_seen_ms \
          FROM {database}.{TRACK_STATS} \
-         WHERE {range} AND {APP_NAMESPACE} AND NOT startsWith(namespace, {{excluded_prefix:String}}) \
+         WHERE {RANGE} AND {APP_NAMESPACE} AND NOT startsWith(namespace, {{excluded_prefix:String}}) \
          GROUP BY namespace ORDER BY last_seen_ms DESC LIMIT {{limit:UInt64}}"
     );
     let subscriptions_sql = format!(
         "SELECT namespace, uniqExact(relay_id, subscriber_session_id, request_id) AS subscriptions \
          FROM {database}.{SUBSCRIPTION_STATS} \
-         WHERE {range} AND {APP_NAMESPACE} AND (relay_id, subscriber_session_id) IN ({client_sessions}) \
+         WHERE {RANGE} AND {APP_NAMESPACE} AND (relay_id, subscriber_session_id) IN ({client_sessions}) \
          GROUP BY namespace"
     );
     let clients_sql =

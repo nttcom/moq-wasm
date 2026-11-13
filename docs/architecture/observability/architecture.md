@@ -194,7 +194,7 @@ starts.
 
 - `ApiServer` (`http_server::HttpServer`, as in `vts`, with `Access-Control-Allow-Origin: *`;
   `OPTIONS` answers a preflight allowing the `Authorization` header). The
-  three stats routes below answer only the reader's app (see Access):
+  stats routes below answer only the reader's app (see Access):
   - `POST /api/client-telemetry` — a client's logs, player stats and spans (see
     Client telemetry); 404 unless an OTLP endpoint is set.
   - `GET /api/snapshots` — the newest snapshot of every relay that logged one
@@ -222,6 +222,18 @@ starts.
     `session` must be one of them and a `track` or `subscription` must lie
     under the app's namespace root, else the series is empty. Query values
     reach ClickHouse as typed query parameters.
+  - `GET /api/usage?from=…&to=…[&points=…]` — the app's traffic in the range
+    (`usage::usage`) for the console's usage page, counted on its client
+    sessions only: a relay session carries every app's traffic and would
+    count the same bytes once per relay they cross. `traffic` is the
+    `relay` series summed over every relay (`SeriesTarget::App`, one entity per
+    relay and session); `relays` the bytes sent to and received from the app's
+    clients and their sessions per relay; `namespaces` the 20 busiest, with the
+    bytes delivered to the app's subscribing clients and received from its
+    publishing ones; `sessions` the 1000 busiest with their bytes, mean RTT and
+    first / last time seen. A total is what a counter grew by in the range, so
+    a session that opens in it loses what it moved before its first snapshot,
+    at most a second. The range and points follow `/api/series`.
     A range longer than the 7-day retention (series and namespaces) or more
     than 300 points is rejected with 400, so an anonymous caller cannot make ClickHouse scan
     more than one retention window per request.
