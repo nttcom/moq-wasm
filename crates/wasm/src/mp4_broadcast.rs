@@ -1,20 +1,22 @@
 use std::time::Duration;
 
-use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
+use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use bytes::Bytes;
 use mediapack::{AudioSample, MediaEvent, Timestamp, VideoConfig, VideoSample};
 use moqt::executor;
 use wasm_bindgen::prelude::*;
 
-use crate::{anyhow_error, js_error, mp4::Mp4Index};
+use crate::{anyhow_error, js_error, log_sink::SessionScope, mp4::Mp4Index};
 
 /// Publishes the samples of an MP4 file with `crates/broadcast`: the same
 /// catalog, LOC and CMAF tracks, media timeline and FETCH cache as
 /// live-ingest. The page paces the samples; the broadcast adds no pacing of
-/// its own.
+/// its own. Created with `Session.mp4Broadcast`; it publishes until that
+/// session closes.
 #[wasm_bindgen]
 pub struct Mp4Broadcast {
     writer: BroadcastWriter,
+    scope: SessionScope,
 }
 
 /// One group stream sent to the relay; times are Unix epoch milliseconds.
@@ -33,23 +35,20 @@ pub struct PublishedStream {
     pub object_sent_at_ms: Vec<f64>,
 }
 
-#[wasm_bindgen]
 impl Mp4Broadcast {
-    /// Queues the codec configurations of `index`; a background task connects
-    /// to the relay, and `announce` waits for that connection.
-    #[wasm_bindgen(constructor)]
-    pub fn new(url: String, namespace: Vec<String>, index: &Mp4Index) -> Result<Self, JsValue> {
+    /// Queues the codec configurations of `index`.
+    pub(crate) fn new(
+        connection: RelayConnection,
+        namespace: Vec<String>,
+        index: &Mp4Index,
+        scope: SessionScope,
+    ) -> Result<Self, JsValue> {
         let sample_index = index.sample_index();
         let video = sample_index
             .video
             .clone()
             .ok_or_else(|| js_error("the file has no H.264 video track"))?;
         let height = video.sequence_parameter_set().map_err(anyhow_error)?.height;
-        let connection = RelayConnection::new(Some(MoqtTarget {
-            url,
-            auth_token: None,
-            verify_certificate: true,
-        }));
         let tracks = SourceTracks {
             video_label: format!("{height}p"),
             ..SourceTracks::default()
@@ -62,14 +61,16 @@ impl Mp4Broadcast {
             &mut writer,
             MediaEvent::VideoConfig(VideoConfig::Avc(video)),
         )?;
-        Ok(Self { writer })
+        Ok(Self { writer, scope })
     }
+}
 
-    /// Resolves once the relay session exists and the namespace is announced.
+#[wasm_bindgen]
+impl Mp4Broadcast {
+    /// Resolves once the namespace is announced (PUBLISH_NAMESPACE).
     pub async fn announce(&self) -> Result<(), JsValue> {
-        self.writer
-            .broadcast()
-            .announce()
+        self.scope
+            .scoped(self.writer.broadcast().announce())
             .await
             .map_err(anyhow_error)
     }
@@ -127,11 +128,6 @@ impl Mp4Broadcast {
                 object_sent_at_ms: stream.object_sent_at.into_iter().map(epoch_ms).collect(),
             })
             .collect()
-    }
-
-    /// Resolves once the CONNECTION_CLOSE has been sent.
-    pub async fn close(&self) {
-        self.writer.broadcast().connection().close().await;
     }
 }
 

@@ -447,6 +447,8 @@ catalog, LOC and CMAF tracks, media timeline and FETCH cache are the ones
 `live-ingest` produces, so the viewer, the CMAF packaging and the rewind work
 unchanged. The page reads and paces the samples; everything sent to the relay
 is decided in Rust, as described in the `broadcast` architecture document.
+It publishes on a session of its own, opened with the page's token, so
+stopping it leaves the viewer's session open.
 
 - Demuxing uses the progressive MP4 index of `crates/mediapack`
   (`mp4::Mp4Index`) through `crates/wasm`: only `moov` is handed to wasm and

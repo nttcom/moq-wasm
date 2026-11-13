@@ -28,6 +28,8 @@ use crate::{
     loc::{encode_loc_header, parse_loc_header},
     log_sink::SessionScope,
     media_broadcast::MediaBroadcast,
+    mp4::Mp4Index,
+    mp4_broadcast::Mp4Broadcast,
     request_rejection::request_failure_code,
     session_routes::{NamespaceEvents, SessionRoutes},
 };
@@ -363,6 +365,21 @@ impl Session {
                 RelayConnection::with_session(self.session.clone(), self.routes.origin.clone());
             self.routes.add_broadcast(connection.clone());
             MediaBroadcast::new(connection, namespace, self.scope)
+        })
+    }
+
+    /// Fails when `index` has no H.264 video.
+    #[wasm_bindgen(js_name = mp4Broadcast)]
+    pub fn mp4_broadcast(
+        &self,
+        namespace: Vec<String>,
+        index: &Mp4Index,
+    ) -> Result<Mp4Broadcast, JsValue> {
+        self.scope.in_scope(|| {
+            let connection =
+                RelayConnection::with_session(self.session.clone(), self.routes.origin.clone());
+            self.routes.add_broadcast(connection.clone());
+            Mp4Broadcast::new(connection, namespace, index, self.scope)
         })
     }
 

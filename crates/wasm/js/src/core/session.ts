@@ -74,6 +74,7 @@ type WasmSession = Pick<
   | 'announce'
   | 'publishTrack'
   | 'broadcast'
+  | 'mp4Broadcast'
   | 'close'
 >
 type WasmSubscription = Pick<
@@ -209,6 +210,11 @@ export class MoqSession {
   /// this broadcast.
   broadcast(namespace: string[]): Moqt.MediaBroadcast {
     return this.inner.broadcast(namespace)
+  }
+
+  /// Throws when `index` has no H.264 video.
+  mp4Broadcast(namespace: string[], index: Moqt.Mp4Index): Moqt.Mp4Broadcast {
+    return this.inner.mp4Broadcast(namespace, index)
   }
 
   close(): void {

@@ -878,8 +878,7 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
     moqt の browser 用 `executor::spawn` は `set_spawn_wrapper` で、spawn した側の scope を
     タスクに引き継ぐので、session のタスクと broadcast のタスクも同じ scope になる。
     span は親の scope を継ぐ。
-  - session を持たない `Mp4Broadcast`（トークンなしで自分で接続する）や、
-    scope の外で生まれたレコードは、トークンなしで渡る。
+  - scope の外で生まれたレコードは、トークンなしで渡る。
 - `init({ telemetry: { url, page } })` を渡すと、SDK が自分で wasm のログ（`logLevel` 以上）と
   span を observability サーバの `/api/client-telemetry` に送る（`core/telemetry.ts` の
   `ClientTelemetry`）。10秒ごとと `pagehide` のとき（`sendBeacon`）に、session のトークンごとに
