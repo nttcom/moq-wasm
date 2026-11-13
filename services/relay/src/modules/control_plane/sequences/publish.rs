@@ -114,6 +114,7 @@ impl Publish {
             cascading_relay_context,
             &track_key,
             is_origin_client,
+            handler._forward(),
         )
         .await;
 
@@ -201,6 +202,7 @@ impl Publish {
         cascading_relay_context: CascadingRelayContext<'_>,
         track_key: &TrackKey,
         is_origin_client: bool,
+        published_forward: bool,
     ) {
         self.notify_local_namespace_subscribers(downstream_publish, track_key);
 
@@ -208,6 +210,7 @@ impl Publish {
             self.notify_remote_subscribers(
                 downstream_publish,
                 track_key,
+                published_forward,
                 cascading_relay_context.route_registry,
                 cascading_relay_context.inter_relay_connection_manager,
             )
@@ -313,6 +316,7 @@ impl Publish {
         &self,
         downstream_publish: &DownstreamPublish,
         track_key: &TrackKey,
+        published_forward: bool,
         route_registry: &dyn RelayRouteRegistry,
         inter_relay_connection_manager: &InterRelayConnectionManager,
     ) {
@@ -339,12 +343,13 @@ impl Publish {
                 session_id = session_id,
                 "forwarding PUBLISH to remote relay"
             );
-            // The remote relay applies its own subscribers' Forward State.
+            // A track published on demand stays on demand on the remote
+            // relay, which asks for it only while a client there takes it.
             let _publish_task = DownstreamPublishTask::run(
                 downstream_publish.clone(),
                 session_id,
                 track_key.clone(),
-                true,
+                published_forward,
             );
         }
     }
