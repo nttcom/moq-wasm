@@ -29,7 +29,8 @@ use crate::{
             namespace_interest::NamespaceInterest,
         },
         data_plane::stream::{
-            received_message::ReceivedMessage, stream_receiver::BiStreamReceiver,
+            received_message::ReceivedMessage,
+            stream_receiver::{BiStreamReceiver, StreamReceiveError},
         },
         domains::{connection::Connection, session_context::SessionContext},
         version::{
@@ -71,6 +72,15 @@ impl ControlMessageReceiveTask {
                                 Ok(Some(received_message)) => received_message,
                                 Ok(None) => {
                                     tracing::debug!("control stream ended");
+                                    break;
+                                }
+                                Err(StreamReceiveError::Decode(error)) => {
+                                    tracing::error!(%error, "Protocol violation: unknown control message type");
+                                    session.close_connection(
+                                        &connection,
+                                        TerminationErrorCode::ProtocolViolation,
+                                        "unknown control message type",
+                                    );
                                     break;
                                 }
                                 Err(error) => {
@@ -442,10 +452,12 @@ fn error_response(
 
 #[cfg(test)]
 mod tests {
+    use bytes::BytesMut;
+
     use crate::{
         SessionEvent, Version,
         modules::{
-            moqt::control_plane::error_codes::PublishDoneCode,
+            moqt::{control_plane::error_codes::PublishDoneCode, version::draft14::ControlChannel},
             test_support::{
                 DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
                 spawn_connected_native_sessions, subscribed_track, subscription, within,
@@ -455,6 +467,27 @@ mod tests {
 
     /// A Request ID of the client's parity far above any it has used.
     const NEVER_USED_REQUEST_ID: u64 = 1000;
+
+    #[tokio::test]
+    async fn a_draft14_unknown_message_type_closes_the_session() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("unknown-message-type").await;
+        let connection = client.subscriber().session.connection();
+        let mut control_stream = ControlChannel::of(&connection).send_stream.hold().await;
+
+        // Act: draft-14 defines no Message Type 0x3f
+        control_stream
+            .send(&BytesMut::from(&[0x3f, 0x00, 0x00][..]))
+            .await
+            .unwrap();
+
+        // Assert: draft-14 §9 MUST close the session
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, client.closed())
+            .await
+            .unwrap();
+        assert_eq!(close.code, Some(0x3));
+        assert_eq!(close.reason, "unknown control message type");
+    }
 
     #[tokio::test]
     async fn a_draft14_update_of_a_request_id_that_never_existed_closes_the_session() {
