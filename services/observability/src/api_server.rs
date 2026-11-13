@@ -23,6 +23,7 @@ use crate::{
     schema::RETENTION_DAYS,
     series::{self, SeriesQuery, SeriesTarget},
     snapshot_history::{RELAY_SILENCE, latest_snapshots, snapshots_at},
+    usage::{UsageQuery, usage},
     viewer::viewer_app,
 };
 
@@ -84,7 +85,7 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
         (&Method::GET, "/healthz") => {
             return json_response(StatusCode::OK, &json!({ "status": "ok" }));
         }
-        (&Method::GET, "/api/snapshots" | "/api/series" | "/api/namespaces") => {}
+        (&Method::GET, "/api/snapshots" | "/api/series" | "/api/namespaces" | "/api/usage") => {}
         _ => return error_response(StatusCode::NOT_FOUND, "not_found"),
     }
     let app_id = match viewer_app(request.headers(), state.verifier.as_deref()).await {
@@ -98,6 +99,7 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
     let response = match request.uri().path() {
         "/api/snapshots" => snapshots(state, &params, &app_id).await,
         "/api/series" => series(state, &params, app_id).await,
+        "/api/usage" => app_usage(state, &params, app_id).await,
         _ => namespaces(state, &params, app_id).await,
     };
     response.unwrap_or_else(|error| {
@@ -233,19 +235,10 @@ pub fn series_query(
         other => anyhow::bail!("unknown series target {other:?}"),
     };
     let (from_ms, to_ms) = time_range(params)?;
-    let points = params
-        .get("points")
-        .map(|points| points.parse())
-        .transpose()
-        .context("query parameter points is not a number")?
-        .unwrap_or(DEFAULT_POINTS);
-    anyhow::ensure!(
-        (1..=MAX_POINTS).contains(&points),
-        "points must be between 1 and {MAX_POINTS}"
-    );
+    let points = points(params)?;
     Ok(SeriesQuery {
         app_id,
-        relay_id: required(params, "relay_id")?.to_string(),
+        relay_id: Some(required(params, "relay_id")?.to_string()),
         target,
         from_ms,
         to_ms,
@@ -261,6 +254,40 @@ async fn series(
     let query = series_query(params, app_id)?;
     let series = series::query(&state.clickhouse, &query).await?;
     Ok(json_response(StatusCode::OK, &series))
+}
+
+fn points(params: &HashMap<String, String>) -> anyhow::Result<u64> {
+    let points = params
+        .get("points")
+        .map(|points| points.parse())
+        .transpose()
+        .context("query parameter points is not a number")?
+        .unwrap_or(DEFAULT_POINTS);
+    anyhow::ensure!(
+        (1..=MAX_POINTS).contains(&points),
+        "points must be between 1 and {MAX_POINTS}"
+    );
+    Ok(points)
+}
+
+fn usage_query(params: &HashMap<String, String>, app_id: String) -> anyhow::Result<UsageQuery> {
+    let (from_ms, to_ms) = time_range(params)?;
+    Ok(UsageQuery {
+        app_id,
+        from_ms,
+        to_ms,
+        points: points(params)?,
+    })
+}
+
+async fn app_usage(
+    state: &ApiState,
+    params: &HashMap<String, String>,
+    app_id: String,
+) -> anyhow::Result<JsonResponse> {
+    let query = usage_query(params, app_id)?;
+    let usage = usage(&state.clickhouse, &query).await?;
+    Ok(json_response(StatusCode::OK, &usage))
 }
 
 #[cfg(test)]
@@ -298,7 +325,12 @@ mod tests {
         .await;
 
         // Act / Assert
-        for path in ["/api/snapshots", "/api/series", "/api/namespaces"] {
+        for path in [
+            "/api/snapshots",
+            "/api/series",
+            "/api/namespaces",
+            "/api/usage",
+        ] {
             assert_eq!(
                 get(&format!("{url}{path}"), Some("jwt")).await,
                 StatusCode::FORBIDDEN

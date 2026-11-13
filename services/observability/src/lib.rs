@@ -11,6 +11,7 @@ pub mod series;
 pub mod snapshot_history;
 #[cfg(test)]
 mod test_support;
+pub mod usage;
 mod viewer;
 
 /// The app of a request or report without a token, as the relay names an

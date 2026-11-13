@@ -14,6 +14,8 @@ const MEGA: f64 = 1_000_000.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeriesTarget {
+    /// The app's client sessions on every relay, summed.
+    App,
     /// The app's client sessions on the relay, summed.
     Relay,
     Session {
@@ -34,7 +36,8 @@ pub enum SeriesTarget {
 pub struct SeriesQuery {
     /// Only this app's sessions and namespaces are read.
     pub app_id: String,
-    pub relay_id: String,
+    /// `None` only for `SeriesTarget::App`.
+    pub relay_id: Option<String>,
     pub target: SeriesTarget,
     pub from_ms: u64,
     pub to_ms: u64,
@@ -158,13 +161,30 @@ struct Plan {
     metrics: &'static [(&'static str, Metric)],
 }
 
+pub(crate) const RANGE: &str = "timestamp_ms >= {from:UInt64} AND timestamp_ms <= {to:UInt64}";
 /// Relay sessions are left out: they carry every app's traffic.
 pub(crate) const APP_CLIENT_SESSION: &str = "peer = 'client' AND app_id = {app:String}";
 pub(crate) const APP_NAMESPACE: &str =
     "(namespace = {app:String} OR startsWith(namespace, concat({app:String}, '/')))";
 
+/// Each `(relay_id, session_id)` of the app's client sessions in the range.
+pub(crate) fn app_client_sessions_sql(database: &str) -> String {
+    format!(
+        "SELECT relay_id, session_id FROM {database}.{SESSION_STATS} \
+         WHERE {RANGE} AND {APP_CLIENT_SESSION}"
+    )
+}
+
 fn plan(target: &SeriesTarget) -> Plan {
     match target {
+        SeriesTarget::App => Plan {
+            table: SESSION_STATS,
+            filters: vec![],
+            condition: APP_CLIENT_SESSION,
+            // A session id is unique on its relay only.
+            entity: Some("cityHash64(relay_id, session_id)"),
+            metrics: RELAY_METRICS,
+        },
         SeriesTarget::Relay => Plan {
             table: SESSION_STATS,
             filters: vec![],
@@ -254,8 +274,7 @@ fn select_sql(database: &str, plan: &Plan) -> String {
     format!(
         "SELECT intDiv(timestamp_ms, {{bucket:UInt64}}) * {{bucket:UInt64}} AS t{entity}, {columns} \
          FROM {database}.{table} \
-         WHERE relay_id = {{relay_id:String}} \
-         AND timestamp_ms >= {{from:UInt64}} AND timestamp_ms <= {{to:UInt64}}{filters} AND {condition} \
+         WHERE {RANGE}{filters} AND {condition} \
          GROUP BY t{group_entity} ORDER BY t",
         columns = columns.into_iter().collect::<Vec<_>>().join(", "),
         table = plan.table,
@@ -365,11 +384,13 @@ fn compute(rows: &[Map<String, Value>], metrics: &[(&'static str, Metric)]) -> S
 }
 
 pub async fn query(clickhouse: &ClickHouse, query: &SeriesQuery) -> anyhow::Result<Series> {
-    let plan = plan(&query.target);
+    let mut plan = plan(&query.target);
+    if let Some(relay_id) = &query.relay_id {
+        plan.filters.push(("relay_id", "String", relay_id.clone()));
+    }
     let mut params = vec![
         ("bucket", bucket_ms(query).to_string()),
         ("app", query.app_id.clone()),
-        ("relay_id", query.relay_id.clone()),
         ("from", query.from_ms.to_string()),
         ("to", query.to_ms.to_string()),
     ];
@@ -517,7 +538,7 @@ mod tests {
         // Arrange
         let query = |span: u64| SeriesQuery {
             app_id: "app".to_string(),
-            relay_id: "relay-a".to_string(),
+            relay_id: Some("relay-a".to_string()),
             target: SeriesTarget::Relay,
             from_ms: 0,
             to_ms: span,
@@ -527,5 +548,22 @@ mod tests {
         // Act / Assert
         assert_eq!(bucket_ms(&query(3_600_000)), 40_000);
         assert_eq!(bucket_ms(&query(30_000)), 1_000);
+    }
+
+    #[test]
+    fn the_app_series_sums_its_client_sessions_across_relays() {
+        // Act
+        let sql = select_sql("obs", &plan(&SeriesTarget::App));
+
+        // Assert
+        assert!(!sql.contains("relay_id ="), "{sql}");
+        assert!(
+            sql.contains("cityHash64(relay_id, session_id) AS entity"),
+            "{sql}"
+        );
+        assert!(
+            sql.contains("peer = 'client' AND app_id = {app:String}"),
+            "{sql}"
+        );
     }
 }
