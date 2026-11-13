@@ -12,7 +12,7 @@ import 'moq-wasm/media/player.css'
 import { bearerToken } from '../../utils/access'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { offeredVersions } from '../../utils/moqtVersion'
-import { setUpRelayUrlControls } from '../../utils/relayPresets'
+import { setUpRelayUrlControls } from '../../utils/relayPicker'
 import { urlFromQuery } from '../../utils/serviceUrl'
 import { EVENT_KINDS, type TimelineEvent, captionAt, eventRecords, mergeEvents } from './timeline'
 

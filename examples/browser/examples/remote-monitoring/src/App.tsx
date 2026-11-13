@@ -1,11 +1,12 @@
 import './App.css'
 import { MonitoringRoom } from './components/MonitoringRoom'
 import { PublisherApp } from './publisher/PublisherApp'
-import { NAME_PATTERN, RELAY_PRESETS } from './types/monitoring'
+import { NAME_PATTERN } from './types/monitoring'
+import { buildLocalRelayPresets } from '../../../utils/relayPresets'
 import { urlFromQuery } from '../../../utils/serviceUrl'
 import { randomName } from '../../../utils/randomName'
 
-const DEFAULT_RELAY = RELAY_PRESETS[0].value
+const DEFAULT_RELAY = buildLocalRelayPresets()[0].value
 
 function nameParam(params: URLSearchParams, key: string): string | undefined {
   const value = params.get(key)?.trim()

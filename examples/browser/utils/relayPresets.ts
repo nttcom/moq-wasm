@@ -1,6 +1,5 @@
 import { urlFromQuery } from './serviceUrl'
 
-const DEFAULT_CLOUD_RELAY_URL = 'https://relay-1.moqt.research.skyway.io:443'
 const DEFAULT_LOCAL_RELAY_A_URL = 'https://127.0.0.1:4433'
 const DEFAULT_LOCAL_RELAY_B_URL = 'https://127.0.0.1:4434'
 
@@ -75,32 +74,4 @@ export function buildLocalRelayPresets(): RelayPreset[] {
       testId: 'join-relay-b-radio'
     }
   ]
-}
-
-export function buildRelayPresets(): RelayPreset[] {
-  return [...buildLocalRelayPresets(), LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS]
-}
-
-export function setUpRelayUrlControls(input: HTMLInputElement, presets: HTMLElement): void {
-  input.value = relayUrlFromQuery() ?? (input.value.trim() || DEFAULT_CLOUD_RELAY_URL)
-  const { relayAUrl, relayBUrl } = getLocalRelayUrls()
-  const buttons = [
-    ...[LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS].map((preset) => ({
-      text: `Cloud ${preset.label}`,
-      url: preset.value,
-      title: preset.helper
-    })),
-    { text: `Local relay-a: ${relayAUrl}`, url: relayAUrl, title: '' },
-    { text: `Local relay-b: ${relayBUrl}`, url: relayBUrl, title: '' }
-  ]
-  for (const { text, url, title } of buttons) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.textContent = text
-    button.title = title
-    button.addEventListener('click', () => {
-      input.value = url
-    })
-    presets.appendChild(button)
-  }
 }

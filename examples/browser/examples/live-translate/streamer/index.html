@@ -26,9 +26,8 @@
       <div id="app" class="control-grid">
         <section class="card stack">
           <h2>配信</h2>
-          <label for="url">Relay URL:</label>
-          <input type="url" id="url" data-testid="streamer-url-input" />
-          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <div id="urlPresets"></div>
+          <input type="url" id="url" aria-label="Relay URL" data-testid="streamer-url-input" />
           <p>
             配信 ID: <strong id="broadcast-id" data-testid="streamer-broadcast-id"></strong>
             <button type="button" id="copyBroadcastIdBtn" data-testid="streamer-copy-broadcast-id">コピー</button>

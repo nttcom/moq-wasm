@@ -1,6 +1,7 @@
 import type { PlayerStatus } from 'moq-wasm/media'
 import { access } from './access'
-import { firstSearchParam, setUpRelayUrlControls } from './relayPresets'
+import { setUpRelayUrlControls } from './relayPicker'
+import { firstSearchParam } from './relayPresets'
 
 export type StatusState = PlayerStatus['state']
 

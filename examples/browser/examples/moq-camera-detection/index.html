@@ -26,15 +26,21 @@
             <summary>
               <h3 class="setup-flow">
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small>Camera</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small
+                    >Camera</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small
+                    >MoQT</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Cloud Run</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small
+                    >Cloud Run</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
@@ -53,15 +59,21 @@
             <summary>
               <h3 class="setup-flow">
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small>Camera</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small
+                    >Camera</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small
+                    >MoQT</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-local"
-                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small>Python</small></span
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small
+                    >Python</small
+                  ></span
                 >
                 <span class="setup-arrow" aria-hidden="true">↔</span>
                 <span class="setup-node setup-node-cloud"
@@ -110,9 +122,8 @@ uv run python -m moq_camera_detection.bot --insecure \
       <div class="camera-layout">
         <section class="card stack">
           <h2>Relay</h2>
-          <label for="url">Relay URL:</label>
-          <input type="url" id="url" data-testid="camera-detection-url-input" />
-          <div id="urlPresets" class="preset-bar">Preset:</div>
+          <div id="urlPresets"></div>
+          <input type="url" id="url" aria-label="Relay URL" data-testid="camera-detection-url-input" />
           <div class="button-row">
             <button type="button" id="joinBtn" data-testid="camera-detection-join-button">Join</button>
             <button type="button" id="leaveBtn" data-testid="camera-detection-leave-button" disabled>Leave</button>
@@ -133,7 +144,9 @@ uv run python -m moq_camera_detection.bot --insecure \
             <span>質問</span>
             <div id="questions" class="question-list"></div>
             <div class="button-row">
-              <button type="button" id="addQuestionBtn" data-testid="camera-detection-add-question-button">＋ 質問</button>
+              <button type="button" id="addQuestionBtn" data-testid="camera-detection-add-question-button">
+                ＋ 質問
+              </button>
               <button type="submit" data-testid="camera-detection-apply-button">適用</button>
             </div>
           </form>

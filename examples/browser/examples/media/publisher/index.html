@@ -24,15 +24,8 @@
           </section>
           <section class="card stack">
             <h2>Connection</h2>
-            <label for="url">URL:</label>
-            <input
-              type="url"
-              name="url"
-              id="url"
-              value="https://relay-1.moqt.research.skyway.io:443"
-              data-testid="publisher-url-input"
-            />
-            <div id="urlPresets" class="preset-bar">Preset:</div>
+            <div id="urlPresets"></div>
+            <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="publisher-url-input" />
             <div class="button-row">
               <button type="button" id="connectBtn" data-testid="publisher-connect-button">Connect</button>
               <button type="button" id="closeBtn" data-testid="publisher-close-button">Close</button>
@@ -62,9 +55,7 @@
               </div>
               <div class="status-item">
                 <span class="status-label">Encoding</span>
-                <span id="publisher-encode-status" class="status-value" data-testid="publisher-encode-status">
-                  -
-                </span>
+                <span id="publisher-encode-status" class="status-value" data-testid="publisher-encode-status"> - </span>
               </div>
             </div>
           </section>

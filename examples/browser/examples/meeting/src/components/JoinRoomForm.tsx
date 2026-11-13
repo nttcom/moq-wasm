@@ -1,13 +1,9 @@
-import { useMemo, useState, FormEvent, ChangeEvent } from 'react'
-import {
-  CLOUD_RELAY_PRESETS,
-  LOAD_BALANCED_RELAY_PRESET,
-  buildLocalRelayPresets,
-  type RelayPreset
-} from '../../../../utils/relayPresets'
+import { useState, FormEvent, ChangeEvent } from 'react'
+import { LOAD_BALANCED_RELAY_PRESET } from '../../../../utils/relayPresets'
 import { Button } from '../../../../lib/ui/button'
 import { Input } from '../../../../lib/ui/input'
 import { Label } from '../../../../lib/ui/label'
+import { RelayPicker } from '../../../../lib/ui/relay-picker'
 
 interface JoinRoomFormProps {
   onJoin: (roomName: string, userName: string, relayUrl: string) => void
@@ -15,24 +11,13 @@ interface JoinRoomFormProps {
   connecting: boolean
 }
 
-type RelayTab = 'cloud' | 'local'
-
-const RELAY_TAB_LABELS: Record<RelayTab, string> = { cloud: 'Cloud', local: 'Local' }
-
 const INPUT_CLASS_NAME =
   'h-12 border-white/10 bg-slate-800 text-base text-white placeholder:text-slate-500 ring-offset-slate-900 focus-visible:ring-blue-500'
 
 export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProps) {
-  const localRelayOptions = useMemo(buildLocalRelayPresets, [])
   const [roomName, setRoomName] = useState('')
   const [userName, setUserName] = useState('')
-  const [relayTab, setRelayTab] = useState<RelayTab>('cloud')
   const [relayUrl, setRelayUrl] = useState<string>(LOAD_BALANCED_RELAY_PRESET.value)
-
-  const selectRelayTab = (tab: RelayTab) => {
-    setRelayTab(tab)
-    setRelayUrl(tab === 'cloud' ? LOAD_BALANCED_RELAY_PRESET.value : localRelayOptions[0].value)
-  }
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -79,54 +64,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
               className={INPUT_CLASS_NAME}
             />
           </div>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-slate-300">Relay</span>
-              <div role="tablist" className="flex rounded-full bg-slate-800 p-1">
-                {(Object.keys(RELAY_TAB_LABELS) as RelayTab[]).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    role="tab"
-                    aria-selected={relayTab === tab}
-                    data-testid={`join-relay-tab-${tab}`}
-                    onClick={() => selectRelayTab(tab)}
-                    className={`rounded-full px-4 py-1 text-sm font-medium transition ${
-                      relayTab === tab ? 'bg-slate-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {RELAY_TAB_LABELS[tab]}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div role="tabpanel" className="space-y-2">
-              {relayTab === 'cloud' ? (
-                <div>
-                  <RelayOption
-                    option={LOAD_BALANCED_RELAY_PRESET}
-                    selectedUrl={relayUrl}
-                    onSelect={setRelayUrl}
-                    isDefault
-                  />
-                  <ul className="ml-6 pl-4">
-                    {CLOUD_RELAY_PRESETS.map((option) => (
-                      <li
-                        key={option.value}
-                        className="relative pt-2 before:absolute before:-left-4 before:top-[calc(50%+4px)] before:h-px before:w-3 before:bg-white/15 after:absolute after:-left-4 after:top-0 after:h-full after:w-px after:bg-white/15 last:after:h-[calc(50%+4px)]"
-                      >
-                        <RelayOption option={option} selectedUrl={relayUrl} onSelect={setRelayUrl} compact />
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : (
-                localRelayOptions.map((option) => (
-                  <RelayOption key={option.value} option={option} selectedUrl={relayUrl} onSelect={setRelayUrl} />
-                ))
-              )}
-            </div>
-          </div>
+          <RelayPicker value={relayUrl} onChange={setRelayUrl} className="text-slate-300" />
           {joinError && (
             <p className="text-sm text-red-400" data-testid="join-error">
               {joinError.message}
@@ -144,43 +82,5 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
         </form>
       </div>
     </div>
-  )
-}
-
-interface RelayOptionProps {
-  option: RelayPreset
-  selectedUrl: string
-  onSelect: (url: string) => void
-  isDefault?: boolean
-  compact?: boolean
-}
-
-function RelayOption({ option, selectedUrl, onSelect, isDefault = false, compact = false }: RelayOptionProps) {
-  const selected = selectedUrl === option.value
-  return (
-    <label
-      className={`flex cursor-pointer items-center gap-3 rounded-xl border transition ${
-        compact ? 'px-3 py-2' : 'px-4 py-3'
-      } ${selected ? 'border-blue-500 bg-blue-500/10' : 'border-white/10 bg-slate-800/60 hover:bg-slate-800'}`}
-    >
-      <input
-        type="radio"
-        name="relayUrl"
-        value={option.value}
-        checked={selected}
-        onChange={() => onSelect(option.value)}
-        className="h-4 w-4 shrink-0 accent-blue-500"
-        data-testid={option.testId}
-      />
-      <div className={`min-w-0 ${compact ? 'flex flex-wrap items-baseline gap-x-3' : ''}`}>
-        <div className={`flex items-center gap-2 ${compact ? 'text-sm font-medium text-slate-200' : 'font-medium'}`}>
-          {option.label}
-          {isDefault && (
-            <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-xs font-medium text-blue-300">Default</span>
-          )}
-        </div>
-        <div className={`break-all text-slate-400 ${compact ? 'text-xs' : 'text-sm'}`}>{option.helper}</div>
-      </div>
-    </label>
   )
 }

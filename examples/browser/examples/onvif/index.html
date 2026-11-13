@@ -378,17 +378,8 @@
         margin-bottom: 0;
       }
 
-      .field-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .field-label {
-        font-size: 13px;
-        font-weight: 600;
-        color: var(--muted);
+      .relay-picker {
+        --relay-picker-accent: var(--accent-2);
       }
 
       .segmented {
@@ -424,75 +415,6 @@
       .segmented button[aria-selected='true'] {
         background: rgba(255, 255, 255, 0.16);
         color: var(--text);
-      }
-
-      .relay-options {
-        display: grid;
-        gap: 8px;
-      }
-
-      .relay-option {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 10px 14px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: rgba(8, 12, 18, 0.5);
-        color: var(--text);
-        cursor: pointer;
-        transition:
-          border-color 0.15s ease,
-          background 0.15s ease;
-      }
-
-      .relay-option:has(input:checked) {
-        border-color: var(--accent-2);
-        background: rgba(46, 196, 182, 0.12);
-      }
-
-      .relay-option input {
-        accent-color: var(--accent-2);
-        margin: 0;
-      }
-
-      .relay-option-label {
-        font-size: 14px;
-        font-weight: 600;
-      }
-
-      .relay-option.compact {
-        padding: 6px 12px;
-      }
-
-      .relay-option.compact > div {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 0 12px;
-      }
-
-      .relay-children {
-        display: grid;
-        gap: 8px;
-        margin-left: 24px;
-        padding-left: 16px;
-        border-left: 1px solid rgba(255, 255, 255, 0.15);
-      }
-
-      .relay-default-badge {
-        margin-left: 8px;
-        padding: 2px 8px;
-        border-radius: 999px;
-        background: rgba(46, 196, 182, 0.2);
-        color: var(--accent-2);
-        font-size: 11px;
-      }
-
-      .relay-option-helper {
-        font-size: 12px;
-        color: var(--muted);
-        overflow-wrap: anywhere;
       }
 
       .icon-btn {
@@ -620,14 +542,7 @@
               &#9881;
             </button>
           </div>
-          <div class="field-head">
-            <span class="field-label">Relay</span>
-            <div id="relay-tabs" class="segmented" role="tablist">
-              <button type="button" role="tab" data-tab="cloud" aria-selected="true">Cloud</button>
-              <button type="button" role="tab" data-tab="local" aria-selected="false">Local</button>
-            </div>
-          </div>
-          <div id="relay-options" class="relay-options" role="tabpanel"></div>
+          <div id="relay-picker"></div>
           <div id="connect-error" class="connect-error" role="alert" hidden></div>
           <button id="connect-btn" type="button">Connect</button>
         </div>

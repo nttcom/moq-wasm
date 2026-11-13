@@ -1,0 +1,188 @@
+/* A page sets --relay-picker-accent to recolor the selection. Other colors derive from
+   the page's text color, so the picker fits light and dark pages. */
+.relay-picker {
+  --relay-picker-accent-color: var(--relay-picker-accent, #3b82f6);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.relay-picker > *,
+.relay-picker-options > *,
+.relay-picker-children > * {
+  min-width: 0;
+}
+
+.relay-picker-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+
+.relay-picker-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.relay-picker-tabs {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.relay-picker .relay-picker-tabs button {
+  width: auto;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  padding: 4px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  opacity: 0.6;
+  cursor: pointer;
+  transform: none;
+}
+
+.relay-picker .relay-picker-tabs button:hover {
+  background: transparent;
+  opacity: 1;
+  transform: none;
+}
+
+.relay-picker .relay-picker-tabs button[aria-selected='true'] {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  opacity: 1;
+}
+
+.relay-picker-options {
+  display: grid;
+  gap: 8px;
+}
+
+.relay-picker .relay-picker-option {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+  color: inherit;
+  font-weight: 400;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.relay-picker .relay-picker-option:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.relay-picker .relay-picker-option:has(input:checked) {
+  border-color: var(--relay-picker-accent-color);
+  background: color-mix(in srgb, var(--relay-picker-accent-color) 12%, transparent);
+}
+
+.relay-picker .relay-picker-option.compact {
+  padding: 6px 12px;
+}
+
+.relay-picker .relay-picker-option input {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--relay-picker-accent-color);
+}
+
+.relay-picker-option-text {
+  display: grid;
+  min-width: 0;
+}
+
+.relay-picker-option.compact .relay-picker-option-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 12px;
+}
+
+.relay-picker-option-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.relay-picker-option.compact .relay-picker-option-label {
+  font-size: 0.875rem;
+}
+
+.relay-picker-option-helper {
+  font-size: 0.8125rem;
+  opacity: 0.65;
+  overflow-wrap: anywhere;
+}
+
+.relay-picker-option.compact .relay-picker-option-helper {
+  font-size: 0.75rem;
+}
+
+.relay-picker-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--relay-picker-accent-color) 20%, transparent);
+  color: var(--relay-picker-accent-color);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.relay-picker-children {
+  display: grid;
+  gap: 8px;
+  margin-left: 24px;
+}
+
+.relay-picker-children > .relay-picker-option {
+  position: relative;
+}
+
+/* The ::before and ::after lines connect each relay to the load balancer above it. */
+.relay-picker-children > .relay-picker-option::before,
+.relay-picker-children > .relay-picker-option::after {
+  content: '';
+  position: absolute;
+  left: -16px;
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+
+.relay-picker-children > .relay-picker-option::before {
+  top: 50%;
+  width: 12px;
+  height: 1px;
+}
+
+.relay-picker-children > .relay-picker-option::after {
+  top: -9px;
+  width: 1px;
+  height: calc(100% + 9px);
+}
+
+.relay-picker-children > .relay-picker-option:last-child::after {
+  height: calc(50% + 9px);
+}

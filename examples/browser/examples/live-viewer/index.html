@@ -41,7 +41,9 @@
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small
+                      >MoQT</small
+                    ></span
                   >
                 </h3>
               </summary>
@@ -75,7 +77,9 @@
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small
+                      >MoQT</small
+                    ></span
                   >
                 </h3>
               </summary>
@@ -109,7 +113,9 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small
+                      >SRT</small
+                    ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-local"
@@ -119,7 +125,9 @@
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-cloud"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Cloud Relay<small
+                      >MoQT</small
+                    ></span
                   >
                 </h3>
               </summary>
@@ -153,7 +161,9 @@
               <summary>
                 <h3 class="setup-flow">
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small>SRT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg<small
+                      >SRT</small
+                    ></span
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-local"
@@ -163,7 +173,9 @@
                   >
                   <span class="setup-arrow" aria-hidden="true">→</span>
                   <span class="setup-node setup-node-local"
-                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small>MoQT</small></span
+                    ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Local Relay<small
+                      >MoQT</small
+                    ></span
                   >
                 </h3>
               </summary>
@@ -206,9 +218,8 @@ make chrome</code></pre>
         <div class="control-grid subscriber-grid">
           <section class="card stack full">
             <h2>Stream</h2>
-            <label for="url">Relay URL:</label>
-            <input type="url" id="url" data-testid="live-viewer-url-input" />
-            <div id="urlPresets" class="preset-bar">Preset:</div>
+            <div id="urlPresets"></div>
+            <input type="url" id="url" aria-label="Relay URL" data-testid="live-viewer-url-input" />
             <label for="namespace"
               >Track Namespace:
               <input type="text" id="namespace" value="anon/live/test" data-testid="live-viewer-namespace-input" />

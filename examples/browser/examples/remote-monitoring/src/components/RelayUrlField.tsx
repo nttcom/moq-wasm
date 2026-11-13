@@ -1,6 +1,5 @@
-import { RELAY_PRESETS } from '../types/monitoring'
 import { Input } from '../../../../lib/ui/input'
-import { Label } from '../../../../lib/ui/label'
+import { RelayPicker } from '../../../../lib/ui/relay-picker'
 
 interface Props {
   value: string
@@ -9,27 +8,12 @@ interface Props {
 
 export function RelayUrlField({ value, onChange }: Props) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs text-zinc-400 font-mono">Relay URL</Label>
-      <div className="flex gap-1.5 mb-1.5">
-        {RELAY_PRESETS.map((p) => (
-          <button
-            key={p.value}
-            type="button"
-            onClick={() => onChange(p.value)}
-            className={`px-2.5 py-1 rounded text-xs font-mono border transition-colors ${
-              value === p.value
-                ? 'bg-blue-600 border-blue-500 text-white'
-                : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
-      </div>
+    <div className="space-y-2">
+      <RelayPicker value={value} onChange={onChange} className="text-zinc-300" />
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        aria-label="Relay URL"
         className="bg-zinc-800 border-zinc-700 font-mono text-sm"
       />
     </div>
