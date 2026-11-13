@@ -83,39 +83,22 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
     let foreign_page = request.headers().contains_key(ORIGIN) && origin.is_none();
     let headers = request.headers().clone();
-    if method != Method::OPTIONS && path != "/healthz" {
-        let namespace = match segments.as_slice() {
-            ["recordings", id, ..] => match state.recordings.namespace(id).await {
-                Ok(Some(namespace)) => namespace,
-                Ok(None) => {
-                    return with_cors(
-                        error_response(StatusCode::NOT_FOUND, "no such recording"),
-                        origin,
-                    );
-                }
-                Err(error) => return with_cors(internal_error(&error), origin),
-            },
-            ["apps", app_id, "recordings"] => app_id.to_string(),
-            ["recordings"] if method == Method::GET => match query.get("namespace_prefix") {
-                Some(namespace) => namespace.clone(),
-                None => {
-                    return with_cors(
-                        error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required"),
-                        origin,
-                    );
-                }
-            },
-            _ => String::new(),
+    if method != Method::OPTIONS {
+        let namespace = match authorized_namespace(&method, &segments, &query, &state).await {
+            Ok(namespace) => namespace,
+            Err(Refusal::Status(status, message)) => {
+                return with_cors(error_response(status, message), origin);
+            }
+            Err(Refusal::Internal(error)) => return with_cors(internal_error(&error), origin),
         };
-        if !namespace.is_empty() {
-            let write = method == Method::POST && segments.last() != Some(&"publish");
-            if let Err(error) = state
+        let write = method == Method::POST && segments.last() != Some(&"publish");
+        if let Some(namespace) = namespace
+            && let Err(error) = state
                 .recordings
                 .authorize(&headers, &namespace, write)
                 .await
-            {
-                return with_cors(error_response(error.status, error.message), origin);
-            }
+        {
+            return with_cors(error_response(error.status, error.message), origin);
         }
     }
     let response = match (&method, segments.as_slice()) {
@@ -188,6 +171,44 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
         _ => error_response(StatusCode::NOT_FOUND, "not_found"),
     };
     with_cors(response, origin)
+}
+
+/// The namespace the request's token must cover. `None` skips the check, so
+/// only a route naming no namespace answers it, and `POST /recordings`, which
+/// authorizes its body itself. An empty app or prefix is refused instead.
+async fn authorized_namespace(
+    method: &Method,
+    segments: &[&str],
+    query: &HashMap<String, String>,
+    state: &ApiState,
+) -> Result<Option<String>, Refusal> {
+    match segments {
+        ["recordings", id, ..] => match state.recordings.namespace(id).await {
+            Ok(Some(namespace)) => Ok(Some(namespace)),
+            Ok(None) => Err(Refusal::Status(StatusCode::NOT_FOUND, "no such recording")),
+            Err(error) => Err(Refusal::Internal(error)),
+        },
+        ["apps", app_id, "recordings"] => non_empty(app_id, "app_id is required"),
+        ["recordings"] if method == Method::GET => non_empty(
+            query.get("namespace_prefix").map_or("", String::as_str),
+            "namespace_prefix is required",
+        ),
+        _ => Ok(None),
+    }
+}
+
+/// Small instead of an `ApiResponse`, which clippy finds too large for an `Err`.
+enum Refusal {
+    Status(StatusCode, &'static str),
+    Internal(anyhow::Error),
+}
+
+fn non_empty(namespace: &str, message: &'static str) -> Result<Option<String>, Refusal> {
+    if namespace.is_empty() {
+        Err(Refusal::Status(StatusCode::BAD_REQUEST, message))
+    } else {
+        Ok(Some(namespace.to_string()))
+    }
 }
 
 async fn start(recordings: &Recordings, body: &Value, bearer: Option<&str>) -> ApiResponse {
@@ -421,6 +442,46 @@ mod tests {
         assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
         assert_eq!(accepted.0, StatusCode::CREATED);
         assert_eq!(accepted.1["format"], "moq");
+    }
+
+    #[tokio::test]
+    async fn a_route_naming_an_empty_app_or_room_is_refused_before_authorization() {
+        // Arrange
+        let state = ApiState {
+            recordings: Arc::new(recordings(1, false)),
+            allowed_origins: Vec::new(),
+        };
+        let no_query = HashMap::new();
+        let empty_prefix = HashMap::from([("namespace_prefix".to_string(), String::new())]);
+        let scope = |segments: &'static [&'static str], query| {
+            let state = &state;
+            async move {
+                match authorized_namespace(&Method::GET, segments, query, state).await {
+                    Ok(namespace) => Ok(namespace),
+                    Err(Refusal::Status(status, _)) => Err(status),
+                    Err(Refusal::Internal(error)) => panic!("{error:#}"),
+                }
+            }
+        };
+
+        // Act / Assert
+        assert_eq!(
+            scope(&["apps", "", "recordings"], &no_query).await,
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            scope(&["recordings"], &empty_prefix).await,
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            scope(&["recordings"], &no_query).await,
+            Err(StatusCode::BAD_REQUEST)
+        );
+        assert_eq!(
+            scope(&["apps", "app", "recordings"], &no_query).await,
+            Ok(Some("app".to_string()))
+        );
+        assert_eq!(scope(&["healthz"], &no_query).await, Ok(None));
     }
 
     #[test]
