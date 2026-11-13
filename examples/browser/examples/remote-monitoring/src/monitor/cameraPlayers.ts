@@ -25,6 +25,11 @@ const PREVIEW_VIDEO_PRIORITY = 128
 /// buffer the session's streams share, and the stage's video waits behind them whatever its priority.
 const DELIVERY_TIMEOUT_MS = 2_000
 
+/// With the SDK's ascending order the relay spends a congested link on the oldest groups, and
+/// every camera falls seconds behind; descending sends the newest group first, so the late ones
+/// are what the delivery timeout drops.
+const GROUP_ORDER = 'descending'
+
 /// The cameras of a location are the broadcasts published under `[root, location]`, and a camera
 /// is the first source of its broadcast. Its view sits in a host element the page places on the
 /// stage or in the strip; the host moves with the camera, so the player never notices the layout.
@@ -66,6 +71,7 @@ export class CameraPlayers {
     this.watch = await watchBroadcasts(this.session, prefix, {
       keepLiveWhileReviewing: true,
       deliveryTimeoutMs: DELIVERY_TIMEOUT_MS,
+      groupOrder: GROUP_ORDER,
       filter: (namespace) => namespace.length === prefix.length + 1,
       onLog: (level, message) => log(level, message),
       onAdd: (broadcast: RemoteBroadcast) => {
