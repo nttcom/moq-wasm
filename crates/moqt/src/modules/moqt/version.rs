@@ -882,9 +882,11 @@ impl ControlChannel {
     ) -> Result<PendingResponse, RequestFailure> {
         let sent = RequestSummary::of(&request);
         let pending = match self {
-            Self::Draft14(channel) => {
-                PendingResponse::Draft14(channel.send_request(reservation, request).await?)
-            }
+            Self::Draft14(channel) => PendingResponse::Draft14(
+                channel
+                    .send_request(connection, reservation, request)
+                    .await?,
+            ),
             Self::Draft18(channel) => PendingResponse::Draft18(
                 channel
                     .send_request(connection, reservation, request)
