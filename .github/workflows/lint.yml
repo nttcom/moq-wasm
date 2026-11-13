@@ -194,7 +194,7 @@ jobs:
         run: npm ci
         working-directory: examples/browser
       - name: Check code formatting
-        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore
+        run: npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path crates/wasm/js/.prettierignore
   browser-unit-test:
     runs-on: ubuntu-latest
     container:
@@ -238,6 +238,14 @@ jobs:
         run: npm ci
       - name: Build the moq-wasm package
         run: npm run wasm -w moq-wasm && npm run build -w moq-wasm
+      # The build skips the tests and fakes, and the browser examples only run vite build.
+      - name: Type check the SDK and the browser examples
+        run: npm run lint -w moq-wasm && npm run lint -w browser-examples
+      - name: Check the SDK for unawaited promises
+        run: npm run lint:promises -w moq-wasm
+      # On a failure, run `npm run build -w moq-wasm && npm run api:update -w moq-wasm` and commit crates/wasm/js/api.
+      - name: Check the SDK API report
+        run: npm run api:check -w moq-wasm
       - name: Build a Vite project from the packed tarball
         run: npm run check:pack -w moq-wasm
   console-web:

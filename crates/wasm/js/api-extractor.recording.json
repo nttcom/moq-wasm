@@ -1,0 +1,5 @@
+{
+  "extends": "./api-extractor.base.json",
+  "mainEntryPointFilePath": "<projectFolder>/types/recording/index.d.ts",
+  "apiReport": { "reportFileName": "recording" }
+}
