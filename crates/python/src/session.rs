@@ -15,8 +15,13 @@ use pyo3::{
     prelude::*,
 };
 
+use broadcast::{Broadcast, RelayConnection};
+
 use crate::{
-    namespace_watch::NamespaceWatch, subscription::Subscription, track_writer::TrackWriter,
+    media_broadcast::{MediaBroadcast, MediaBroadcasts},
+    namespace_watch::NamespaceWatch,
+    subscription::Subscription,
+    track_writer::TrackWriter,
 };
 
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
@@ -57,23 +62,36 @@ pub fn connect(
         let session = Arc::new(endpoint.connect(&url).await?.await?);
         let origin = Origin::default();
         let watchers = NamespaceWatchers::default();
+        let broadcasts = MediaBroadcasts::default();
         let event_loop = executor::spawn(
             "python-session-events",
-            route_events(session.clone(), origin.clone(), watchers.clone()),
+            route_events(
+                session.clone(),
+                origin.clone(),
+                watchers.clone(),
+                broadcasts.clone(),
+            ),
         );
         Ok(Session {
             session,
             origin,
             watchers,
+            broadcasts,
             event_loop,
             token,
         })
     })
 }
 
-/// A session has one event receiver: the origin answers what concerns the
-/// tracks this session publishes, and namespace events go to the iterators.
-async fn route_events(session: Arc<moqt::Session>, origin: Origin, watchers: NamespaceWatchers) {
+/// A session has one event receiver: the media broadcasts and the origin
+/// answer what concerns the tracks this session publishes, and namespace
+/// events go to the iterators.
+async fn route_events(
+    session: Arc<moqt::Session>,
+    origin: Origin,
+    watchers: NamespaceWatchers,
+    broadcasts: MediaBroadcasts,
+) {
     loop {
         let event = match session.receive_event().await {
             Ok(event) => event,
@@ -81,6 +99,17 @@ async fn route_events(session: Arc<moqt::Session>, origin: Origin, watchers: Nam
                 tracing::info!(?err, "session event loop ended");
                 break;
             }
+        };
+        let connections = broadcasts.connections();
+        let mut unhandled = Some(event);
+        for connection in connections {
+            let Some(event) = unhandled.take() else {
+                break;
+            };
+            unhandled = connection.handle(event).await;
+        }
+        let Some(event) = unhandled else {
+            continue;
         };
         let Some(event) = origin.handle(event).await else {
             continue;
@@ -121,6 +150,7 @@ pub struct Session {
     session: Arc<moqt::Session>,
     origin: Origin,
     watchers: NamespaceWatchers,
+    broadcasts: MediaBroadcasts,
     event_loop: JoinHandle,
     /// The token the session presents when it follows a GOAWAY.
     token: Option<Arc<Mutex<String>>>,
@@ -205,6 +235,20 @@ impl Session {
                 .map_err(anyhow::Error::from)?;
             Ok(())
         })
+    }
+
+    /// A broadcast of encoded media in `namespace`; its `announce` publishes
+    /// the namespace instead of `announce`.
+    fn media_broadcast(&self, namespace: Vec<String>) -> MediaBroadcast {
+        // The connection spawns its tasks, which need the runtime the module's futures run on.
+        let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
+        let connection = RelayConnection::with_session(self.session.clone(), self.origin.clone());
+        let id = self.broadcasts.add(connection.clone());
+        MediaBroadcast {
+            broadcast: Broadcast::new(connection, namespace),
+            broadcasts: self.broadcasts.clone(),
+            id,
+        }
     }
 
     /// PUBLISH_NAMESPACE_DONE for a namespace `announce` published.

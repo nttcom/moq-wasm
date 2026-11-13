@@ -2587,7 +2587,9 @@ name = "python"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "broadcast",
  "bytes",
+ "mediapack",
  "moqt",
  "msf",
  "pyo3",
