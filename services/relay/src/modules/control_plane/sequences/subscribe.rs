@@ -451,6 +451,7 @@ impl Subscribe {
         let (ready_sender, ready_receiver) = tokio::sync::oneshot::channel();
         let (subscribe_ok_sender, subscribe_ok_receiver) = tokio::sync::oneshot::channel();
         if !super::start_egress(
+            table,
             forwarder,
             cache_store,
             super::EgressRequest {
@@ -602,7 +603,8 @@ mod tests {
         detached_session_repository, mock_session_answering_subscribe,
         mock_session_never_answering_subscribe, mock_session_refusing_subscribe,
         recorded_session_answering_subscribe, recorded_session_answering_subscribe_after,
-        session_repository_with_session, session_repository_with_sessions, wait_until,
+        session_repository_with_session, session_repository_with_sessions,
+        session_repository_with_upstream_session_and_mailbox, wait_until,
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::test_support::relay_harness::fixtures::subscription::unknown_track_properties;
@@ -1139,6 +1141,8 @@ mod tests {
         handler: &MockSubscribeHandler,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Acceptance {
+        let (repository, _subscriber, _mailbox_receiver) =
+            session_repository_with_upstream_session_and_mailbox(2);
         Subscribe
             .accept_downstream_subscription(
                 2,
@@ -1147,9 +1151,7 @@ mod tests {
                 upstream_track(ProducerOrigin::Subscribe),
                 None,
                 table,
-                &ControlMessageForwarder {
-                    repository: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
-                },
+                &ControlMessageForwarder { repository },
                 cache_store,
                 handler,
             )
@@ -1305,6 +1307,37 @@ mod tests {
                 .get_downstream_subscription(2, handler.subscribe_id())
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_whose_session_left_before_its_egress_started_keeps_no_subscription() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+
+        // Act
+        Subscribe
+            .accept_downstream_subscription(
+                2,
+                SessionPeer::Client,
+                track_key(),
+                upstream_track(ProducerOrigin::Subscribe),
+                None,
+                &table,
+                &ControlMessageForwarder {
+                    repository: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
+                },
+                &Arc::new(TrackCacheStore::new()),
+                &MockSubscribeHandler::default(),
+            )
+            .await;
+
+        // Assert
+        assert!(table.downstream_subscription_states().is_empty());
     }
 
     #[tokio::test]

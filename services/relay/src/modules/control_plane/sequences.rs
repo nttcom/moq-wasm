@@ -235,8 +235,11 @@ pub(crate) struct EgressRequest {
 }
 
 /// Starts the egress runner of a registered downstream subscription. `false`
-/// when the subscriber session already left the repository.
+/// when the subscriber session already left the repository; its cleanup may
+/// have run before the registration, so the registration is removed and its
+/// upstream subscriptions released here.
 pub(crate) async fn start_egress(
+    table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
     cache_store: &TrackCacheStore,
     request: EgressRequest,
@@ -255,6 +258,19 @@ pub(crate) async fn start_egress(
             request_id = request.request_id,
             "subscriber session not found; egress not started"
         );
+        let removed =
+            table.remove_downstream_subscription(request.subscriber_session_id, request.request_id);
+        for released in removed
+            .into_iter()
+            .flat_map(|removed| removed.released_upstream_subscriptions)
+        {
+            release_upstream(
+                forwarder,
+                released.publisher_session_id,
+                &released.subscription,
+            )
+            .await;
+        }
         return false;
     };
     let _egress = EgressTask::run(EgressStart {
