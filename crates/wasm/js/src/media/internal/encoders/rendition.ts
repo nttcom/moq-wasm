@@ -1,3 +1,5 @@
+import type { RenditionEncoderConfig, VideoCodecName } from './videoEncoderConfig'
+
 export type Rendition = {
   name: string
   label: string
@@ -5,6 +7,11 @@ export type Rendition = {
   bitrate: number
   /// Like `MainVideo.framerate`; the main video's by default.
   framerate?: number
+  /// Like `VideoEncoding.codec`; the video's by default. Use it to add, for
+  /// example, an H.264 rendition for viewers that cannot decode an H.265 video.
+  /// A rendition the browser cannot encode is reported through `onError` and
+  /// left out of the catalog; the video and the other renditions keep publishing.
+  codec?: VideoCodecName | (string & {})
 } & RenditionSize
 
 export type RenditionSize =
@@ -32,4 +39,19 @@ export function checkRenditions(renditions: Rendition[] = []): void {
       throw new RangeError(`rendition ${name}: scaleResolutionDownBy must be at least 1, not ${scaleResolutionDownBy}`)
     }
   }
+}
+
+export function renditionEncoderConfigs(
+  renditions: Rendition[],
+  video: Partial<VideoEncoderConfig>
+): RenditionEncoderConfig[] {
+  return renditions.map(({ width, height, scaleResolutionDownBy, bitrate, framerate, codec }) => ({
+    ...video,
+    codec: codec ?? video.codec,
+    width,
+    height,
+    scaleResolutionDownBy,
+    bitrate,
+    framerate: framerate ?? video.framerate
+  }))
 }
