@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::{
     RequestFailure,
     modules::moqt::{
@@ -13,7 +11,6 @@ use crate::{
 pub struct PendingPublishNamespace {
     pub(super) request_id: RequestId,
     pub(super) track_namespace: String,
-    pub(super) sent_at: Duration,
     pub(super) pending: PendingResponse,
     /// `None` unless `announce` sent the request in a session that follows
     /// GOAWAY. A migration's own PUBLISH_NAMESPACE must stay `None`: the
@@ -43,12 +40,13 @@ impl PendingPublishNamespace {
 
     async fn answer(self) -> Result<(), RequestFailure> {
         let track_namespace = self.track_namespace;
+        let sent_at = self.pending.sent_at();
         match self.pending.response().await?.accept() {
             ResponseMessage::PublishNamespaceOk(request_id) if request_id == self.request_id => {
                 tracing::info!(
                     request_id,
                     track_namespace,
-                    duration_ms = elapsed_ms(self.sent_at),
+                    duration_ms = elapsed_ms(sent_at),
                     "PUBLISH_NAMESPACE_OK received"
                 );
                 Ok(())
@@ -59,7 +57,7 @@ impl PendingPublishNamespace {
                     track_namespace,
                     ?error_code,
                     %reason_phrase,
-                    duration_ms = elapsed_ms(self.sent_at),
+                    duration_ms = elapsed_ms(sent_at),
                     "PUBLISH_NAMESPACE_ERROR received"
                 );
                 Err(RequestFailure::Rejected {

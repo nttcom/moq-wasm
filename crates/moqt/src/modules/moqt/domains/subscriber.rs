@@ -1,11 +1,10 @@
 use crate::modules::telemetry::current_trace_context;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use crate::{
     RequestErrorCode, RequestFailure, SubscriberInitiatedSubscription, Subscription,
     TrackProperties, TrackReader,
     fetch::FetchOption,
-    modules::executor::now,
     modules::moqt::{
         control_plane::{
             control_messages::messages::{
@@ -308,9 +307,27 @@ impl Subscriber {
         level = "debug",
         name = "moqt.subscriber.track_status",
         skip_all,
-        fields(track_namespace = %track_namespace, track_name = %track_name)
+        fields(
+            track_namespace = %track_namespace,
+            track_name = %track_name,
+            request_id = tracing::field::Empty,
+            outcome = tracing::field::Empty,
+        )
     )]
     pub async fn track_status(
+        &self,
+        track_namespace: String,
+        track_name: String,
+        authorization_tokens: Vec<AuthorizationToken>,
+    ) -> Result<TrackStatusOk, RequestFailure> {
+        let result = self
+            .track_status_answered(track_namespace, track_name, authorization_tokens)
+            .await;
+        record_outcome(&result);
+        result
+    }
+
+    async fn track_status_answered(
         &self,
         track_namespace: String,
         track_name: String,
@@ -333,12 +350,11 @@ impl Subscriber {
             new_group_request: None,
             trace_context: None,
         };
-        let response = connection
+        let pending = connection
             .send_request(reservation, OutgoingRequest::TrackStatus(track_status))
-            .await?
-            .response()
-            .await?
-            .accept();
+            .await?;
+        tracing::Span::current().record("request_id", request_id);
+        let response = pending.response().await?.accept();
         match response {
             ResponseMessage::TrackStatusOk(message) => {
                 if request_id != message.request_id {
@@ -539,7 +555,6 @@ impl Subscriber {
         Ok(SentFetch {
             connection,
             request_id,
-            sent_at: now(),
             pending_fetch,
             response,
         })
@@ -559,11 +574,11 @@ impl Subscriber {
             .map(|remainder| remainder.track_name.as_str());
         let SentFetch {
             connection,
-            sent_at,
             pending_fetch,
             response,
             ..
         } = sent;
+        let sent_at = response.sent_at();
         let response = response.response().await?.accept();
         match response {
             ResponseMessage::FetchOk(fetch_ok) => {
@@ -1154,7 +1169,6 @@ async fn subscribe_namespace_ok(
 pub(crate) struct SentFetch {
     connection: Arc<Connection>,
     request_id: RequestId,
-    sent_at: Duration,
     pending_fetch: PendingFetch,
     response: PendingResponse,
 }
@@ -1195,7 +1209,6 @@ pub(crate) async fn send_subscribe(
 /// A SUBSCRIBE written to the peer; `subscribe_ok` reads its answer.
 struct SentSubscribe {
     request_id: RequestId,
-    sent_at: Duration,
     pending: PendingResponse,
 }
 
@@ -1225,7 +1238,6 @@ async fn send_subscribe_request(
         .await?;
     Ok(SentSubscribe {
         request_id,
-        sent_at: now(),
         pending,
     })
 }
@@ -1233,12 +1245,12 @@ async fn send_subscribe_request(
 async fn subscribe_ok(
     SentSubscribe {
         request_id,
-        sent_at,
         pending,
     }: SentSubscribe,
     track_namespace: &str,
     track_name: &str,
 ) -> Result<(SubscribeOk, ReceivedResponse), RequestFailure> {
+    let sent_at = pending.sent_at();
     let response = pending.response().await?;
     if let ResponseMessage::SubscribeOk(message) = response.message()
         && message.request_id == request_id
@@ -3280,6 +3292,47 @@ mod tests {
         let spans = telemetry.closed_spans("moqt.subscriber.subscribe");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].field("outcome"), Some("rejected"));
+    }
+
+    #[tokio::test]
+    async fn unanswered_subscribe_logs_timed_out_and_marks_the_span_timeout_on_draft14() {
+        unanswered_subscribe_logs_timed_out_and_marks_the_span_timeout(Version::Draft14).await;
+    }
+
+    #[tokio::test]
+    async fn unanswered_subscribe_logs_timed_out_and_marks_the_span_timeout_on_draft18() {
+        unanswered_subscribe_logs_timed_out_and_marks_the_span_timeout(Version::Draft18).await;
+    }
+
+    /// One test per draft: the captured telemetry is per thread, and the
+    /// sessions of an earlier draft would outlive its capture.
+    async fn unanswered_subscribe_logs_timed_out_and_marks_the_span_timeout(version: Version) {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let (client, server) = connected_sessions("subscriber-timeout", version).await;
+        let (request, _handler) = start_subscribe(&client, &server, "unanswered").await;
+
+        // Act
+        tokio::time::pause();
+        let result = request.await.unwrap();
+        tokio::time::resume();
+
+        // Assert
+        assert!(matches!(result, Err(RequestFailure::Timeout)), "{result:?}");
+        let sent = telemetry.events("SUBSCRIBE sent");
+        let logged = telemetry.events("SUBSCRIBE timed out");
+        let spans = telemetry.closed_spans("moqt.subscriber.subscribe");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].field("request_id"), sent[0].field("request_id"));
+        assert_eq!(logged[0].field("track_namespace"), Some("ns"));
+        assert_eq!(logged[0].field("track_name"), Some("unanswered"));
+        let duration_ms = logged[0]
+            .field("duration_ms")
+            .expect("duration_ms is logged");
+        assert!(duration_ms.parse::<u64>().is_ok(), "{duration_ms}");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].field("request_id"), sent[0].field("request_id"));
+        assert_eq!(spans[0].field("outcome"), Some("timeout"));
     }
 
     #[tokio::test]

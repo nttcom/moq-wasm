@@ -36,26 +36,11 @@ pub enum RequestFailure {
     PublishBlocked,
 }
 
-/// Records the answered request's id on the current span; records nothing
-/// when the request was never answered.
-pub(crate) fn record_request_id<T>(
-    result: &Result<T, RequestFailure>,
-    request_id: impl FnOnce(&T) -> u64,
-) {
-    let request_id = match result {
-        Ok(answered) => request_id(answered),
-        Err(RequestFailure::Rejected { request_id, .. }) => *request_id,
-        Err(_) => return,
-    };
-    tracing::Span::current().record("request_id", request_id);
-}
-
-/// Records on the current span how a request ended: `ok` when its `*_OK`
-/// arrived, `rejected` when the peer answered `*_ERROR`, `failed` otherwise.
 pub(crate) fn record_outcome<T>(result: &Result<T, RequestFailure>) {
     let outcome = match result {
         Ok(_) => "ok",
         Err(RequestFailure::Rejected { .. }) => "rejected",
+        Err(RequestFailure::Timeout) => "timeout",
         Err(_) => "failed",
     };
     tracing::Span::current().record("outcome", outcome);
