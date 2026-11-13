@@ -1,24 +1,12 @@
-export type SessionPeer = 'client' | 'relay' | 'stats_publisher' | 'stats_subscriber'
-
-export interface ProcessStats {
-  rss_bytes: number | null
-  cache_tracks: number
-  cache_objects: number
-  cache_payload_bytes: number
-  /** Missing from relays built before the disk cache. */
-  disk_cache_bytes?: number
-  /** The client sessions a drain waits for. */
-  client_sessions: number
-  /** Unix milliseconds of the start of the drain; null while the relay serves. */
-  draining_since_ms: number | null
-}
+import { bearerToken } from '../../../utils/access'
 
 /** 64-bit ids arrive as strings: JavaScript numbers hold 53 bits. */
 export type Id = string
 
+/** A client session of the app the page's token names. */
 export interface SessionStats {
   session_id: Id
-  peer: SessionPeer
+  peer: 'client'
   app_id: string
   remote_address: string | null
   local_ip: string | null
@@ -37,6 +25,18 @@ export interface SessionStats {
   received_stream_data_blocked: number
   received_data_blocked: number
   received_reset_stream: number
+}
+
+/**
+ * A session with another relay that one of the app's tracks or subscriptions names. The server
+ * leaves out its counters, which every app's traffic adds to.
+ */
+export interface RelaySession {
+  session_id: Id
+  peer: 'relay'
+  remote_address: string | null
+  local_ip: string | null
+  dialed_relay_id: string | null
 }
 
 export interface TrackStats {
@@ -58,17 +58,17 @@ export interface SubscriptionStats {
   lag_behind_newest_received_us: number
 }
 
+/** A relay's snapshot as the app the page's token names may see it. */
 export interface RelaySnapshot {
   relay_id: string
   timestamp_ms: number
-  process: ProcessStats
-  sessions: SessionStats[]
+  sessions: (SessionStats | RelaySession)[]
   tracks: TrackStats[]
   subscriptions: SubscriptionStats[]
 }
 
 export type SeriesTarget =
-  | { target: 'process' }
+  /** The app's client sessions on the relay, summed. */
   | { target: 'relay' }
   | { target: 'session'; session_id: Id }
   | { target: 'track'; publisher_session_id: Id; namespace: string; name: string }
@@ -86,7 +86,10 @@ const API_BASE = LOCAL_HOSTS.includes(window.location.hostname)
 
 async function getJson<T>(path: string, params: Record<string, string | number>): Promise<T> {
   const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]))
-  const response = await fetch(`${API_BASE}${path}?${query}`)
+  const token = bearerToken()
+  const response = await fetch(`${API_BASE}${path}?${query}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
   if (!response.ok) {
     throw new Error(`${path} answered ${response.status}: ${await response.text()}`)
   }
@@ -132,6 +135,6 @@ export interface PublishedNamespaces {
   clients: number
 }
 
-export function fetchNamespaces(fromMs: number, toMs: number, appId: string): Promise<PublishedNamespaces> {
-  return getJson('/api/namespaces', { from: fromMs, to: toMs, app_id: appId })
+export function fetchNamespaces(fromMs: number, toMs: number): Promise<PublishedNamespaces> {
+  return getJson('/api/namespaces', { from: fromMs, to: toMs })
 }

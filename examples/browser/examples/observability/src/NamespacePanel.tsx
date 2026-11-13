@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type NamespaceSummary, type PublishedNamespaces, fetchNamespaces } from './api'
-import { appIdOf, relativeNamespace } from './topology'
+import { relativeNamespace } from './topology'
 
 export const NAMESPACE_PANEL_WIDTH = 420
 const LIVE_REFRESH_MS = 10_000
@@ -10,12 +10,9 @@ interface Props {
   spanMs: number
   toMs: number
   live: boolean
-  appId: string
   onPick: (summary: NamespaceSummary, stillPublished: boolean) => void
   onClose: () => void
 }
-
-const shortAppId = (appId: string) => (appId.length > 12 ? `${appId.slice(0, 8)}…` : appId)
 
 function timeOf(ms: number, withDate: boolean): string {
   return new Date(ms).toLocaleString([], {
@@ -25,7 +22,7 @@ function timeOf(ms: number, withDate: boolean): string {
   })
 }
 
-export function NamespacePanel({ spanMs, toMs, live, appId, onPick, onClose }: Props) {
+export function NamespacePanel({ spanMs, toMs, live, onPick, onClose }: Props) {
   const [result, setResult] = useState<PublishedNamespaces | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
@@ -34,7 +31,7 @@ export function NamespacePanel({ spanMs, toMs, live, appId, onPick, onClose }: P
 
   useEffect(() => {
     let cancelled = false
-    fetchNamespaces(queryFromMs, queryToMs, appId)
+    fetchNamespaces(queryFromMs, queryToMs)
       .then((next) => {
         if (cancelled) return
         setResult(next)
@@ -46,7 +43,7 @@ export function NamespacePanel({ spanMs, toMs, live, appId, onPick, onClose }: P
     return () => {
       cancelled = true
     }
-  }, [queryFromMs, queryToMs, appId])
+  }, [queryFromMs, queryToMs])
 
   const spansDays = spanMs > 86_400_000
   const needle = search.trim().toLowerCase()
@@ -83,7 +80,6 @@ export function NamespacePanel({ spanMs, toMs, live, appId, onPick, onClose }: P
           return (
             <button key={summary.namespace} className="namespace-row" onClick={() => onPick(summary, published)}>
               <span className="namespace-name">{relativeNamespace(summary.namespace) || '(app root)'}</span>
-              <span className="namespace-app">{shortAppId(appIdOf(summary.namespace))}</span>
               <span className="namespace-tracks">{summary.tracks.join(', ')}</span>
               <span className="namespace-meta">
                 {summary.relays.join(', ')} · {summary.subscriptions} subscriptions

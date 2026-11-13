@@ -422,20 +422,24 @@ A collector that does not accept the export answers 502.
 
 ## Browser page (`examples/browser/examples/observability`)
 
-A dark, full-width topology view of live connections and subscriptions with a
-chart drawer for the selection. Served from `localhost` it reads the local
-stack's API on port 8095; anywhere else, the deployed
+A dark, full-width topology view of one app's live connections and
+subscriptions with a chart drawer for the selection. Served from `localhost`
+it reads the local stack's API on port 8095; anywhere else, the deployed
 `https://observability.moqt.research.skyway.io`.
 
+The page reads the app the other examples use (`utils/access.ts`): it sends
+`bearerToken()` in `Authorization`, so it shows the temporary app the examples
+share in this browser, the app of a `?jwt=` token such as one the console
+signed, or, as the public app, `anon` without a token. The header names that
+app.
+
 ### Header
-- `app_id` selector and Track Namespace prefix filter. The prefix covers the
+- The app shown and a Track Namespace prefix filter. The prefix covers the
   elements after `app_id` and matches element-wise, as SUBSCRIBE_NAMESPACE
   does: `room1` matches `room1/alice`, `room` does not. Subscriptions outside
-  the filters, links carrying only them and clients left with none of them
-  are hidden; relays stay. The relay's `authorize` rule makes the first
-  namespace element equal the session's `app_id`, so no subscription crosses
-  `app_id`s and the `app_id` filter is exact. The page filters the snapshot
-  it already holds; the API takes no filter parameter.
+  the filter, links carrying only them and clients left with none of them
+  are hidden; relays stay. The page filters the snapshot it already holds;
+  the API takes no filter parameter.
 - Time controls: a range selector (15 min / 1 h / 6 h / 1 d / 7 d, 1 h by
   default) shared with the chart drawer, and a slider spanning that range
   up to now in 1 s steps — a 7-day slider would move about an hour per
@@ -447,17 +451,13 @@ stack's API on port 8095; anywhere else, the deployed
   in the header's range (`GET /api/namespaces`), newest first, searchable,
   with its tracks, relays, first / last time seen (Live while still
   published) and client subscriptions; its heading counts namespaces,
-  subscriptions and clients in the range, scoped to the `app_id` filter.
-  Clicking a row sets the `app_id` and namespace filters to it and moves the
-  page to its last published moment (or stays live).
+  subscriptions and clients in the range. Clicking a row sets the namespace
+  filter to it and moves the page to its last published moment (or stays
+  live).
 
 ### Topology
 - One circle for the hosting environment (e.g. GCP) holding the relays,
-  drawn as server icons with memory (RSS), cache size and the bytes in the
-  disk cache (storage). A draining relay has a
-  dashed amber frame and an amber LED, under a `DRAINING <s>s · <n> clients`
-  label giving the time since the drain began and the client sessions still
-  connected, as of the snapshot shown. Every client — publisher or
+  drawn as server icons with the number of the app's clients on each. Every client — publisher or
   viewer — is a card outside the circle on a ring, at the angle of its relay,
   since clients reach the relays from the Internet. A card shows the client,
   the Track Namespace it publishes (or, for a pure subscriber, the one it
@@ -466,9 +466,10 @@ stack's API on port 8095; anywhere else, the deployed
 - One directed, animated dashed link per hop a subscription takes:
   publisher → its relay, relay → relay, relay → subscriber. Subscriptions
   sharing a hop share one link; its bitrate is the sum over publishers. Dash
-  speed follows the bitrate. Downlink and inter-relay links are coloured by
-  that session's loss rate; uplink links are grey because uplink loss is not
-  measured. An unframed legend sits in the bottom-left corner.
+  speed follows the bitrate. Downlink links are coloured by that session's
+  loss rate; uplink links are grey because uplink loss is not measured, and
+  inter-relay links too because their session's counters, which every app's
+  traffic adds to, are not served. An unframed legend sits in the bottom-left corner.
 - Every selection animates the view so that all highlighted nodes fit in
   the part of the topology the chart drawer leaves visible (zooming in no
   further than about 1.7× the overview scale); clearing the selection fits
@@ -480,10 +481,9 @@ stack's API on port 8095; anywhere else, the deployed
 ### Selection
 - Clicking the "Relays" label of the environment selects the whole mesh:
   nothing is dimmed, the environment circle and every relay are drawn in the
-  selection blue, and the drawer shows each relay's clients, state (serving,
-  or draining with the time and the clients left), ingress, egress and
-  memory with per-relay charts plus an all-relays total line where a sum
-  means something.
+  selection blue, and the drawer shows the app's ingress, egress and client
+  sessions on each relay with per-relay charts plus an all-relays total line
+  where a sum means something.
 - Clicking a client highlights the hops of its subscriptions; clicking a
   relay, those through the relay; clicking a link draws it thick and
   highlights the full route of every subscription it carries, from the
@@ -491,31 +491,28 @@ stack's API on port 8095; anywhere else, the deployed
   `ingest-01 → relay-a` uplink). Everything else is dimmed.
 - The links whose statistics the charts show are drawn in the selection blue:
   a client's uplink and downlink, every link of a relay, or the clicked link.
-- A click also sets the header filters from the subscriptions it involves —
-  the `app_id` when they share one, and their longest common namespace
-  prefix (`room1` for a meeting participant, none for a relay serving
-  several applications). Inside an active filter a click only narrows it.
+- A click also sets the namespace filter to the longest common namespace
+  prefix of the subscriptions it involves (`room1` for a meeting
+  participant). Inside an active filter a click only narrows it.
 - Clicking empty space clears the selection, closes the drawer and widens
   the filter by one tuple element: `room1/bob` → `room1` → no namespace
-  filter → the `app_id` the user last picked (if a click had set another) →
-  all applications. `app_id` counts as the tuple's first element.
+  filter.
 
 ### Chart drawer
 Opening on every selection, it overlays the bottom of the topology (45% of
 the viewport by default, resizable by dragging its top edge) and holds:
 - a tab column, one tab per chart group, switching the charts shown:
-  Resources (memory, storage, cache objects), Network and Sessions for a
-  relay or the mesh; Media (bitrate, arrival gap, delivery lag), Transport
-  (RTT, loss, cwnd, congestion) and Streams (flow control, resets) for a
-  client or a link. The picked tab stays across selections that have it, and
+  Network and Sessions for a relay or the mesh; Media (bitrate, arrival gap,
+  delivery lag), Transport (RTT, loss, cwnd, congestion) and Streams (flow
+  control, resets) for a client, an uplink or a downlink; Media and Streams of
+  the app's tracks alone for an inter-relay link. The picked tab stays across selections that have it, and
   only its charts are fetched;
 - one chart per metric in the style of the GCP monitoring charts, with
   axes, gridlines and one line per series (uplink and downlink bitrate in
   one card, delivery lag per subscription in another), fed by
   `GET /series`. Every metric of the direction table above appears in one of
-  the tabs; a relay's charts are its process figures (including the client
-  sessions a drain waits for, drawn with all sessions in one card) and its
-  ingress / egress totals (bitrate-weighted egress loss, summed counts). The charts cover the header's
+  the tabs; a relay's charts are the ingress / egress totals of the app's
+  client sessions on it (bitrate-weighted egress loss, summed counts). The charts cover the header's
   range up to now and mark the selected past time with a vertical line;
   hovering any card moves a shared crosshair that shows every card's value
   at that instant, and clicking a card moves the whole page to that time. The grid keeps its scrollbar gutter, so resizing the drawer never
@@ -529,8 +526,9 @@ connection only, so they stay whole-session.
 
 A route is built backwards from each subscription of a client: the track's
 publisher session on that relay is either a client (the original publisher)
-or an inter-relay session, whose far relay is found as described under
-"Snapshot payload" and searched for the same track, up to four relays deep.
+or an inter-relay session, served without its counters, whose far relay is
+found as described under "Snapshot payload" and searched for the same track,
+up to four relays deep.
 Bitrates come from consecutive snapshots of the same relay, so the page keeps
 the previous snapshot per relay and only advances it when the relay's
 timestamp moved.

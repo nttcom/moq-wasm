@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CENTER, CLIENT_HALF, ENVIRONMENT_RADIUS, type HalfSize, type Layout, type Point, RELAY_HALF } from './layout'
 import { MESH, type Selection, type Visibility, routesOf } from './selection'
-import { type Link, type Topology, drainingSeconds, linkMbps } from './topology'
+import { type Link, type Topology, linkMbps } from './topology'
 
 interface ViewBox {
   x: number
@@ -60,8 +60,6 @@ function linkColorClass(link: Link): string {
   if (link.lossPercent < WARN_LOSS_PERCENT) return 'ok'
   return link.lossPercent <= BAD_LOSS_PERCENT ? 'warn' : 'bad'
 }
-
-const formatMegabytes = (bytes: number | null) => (bytes === null ? '—' : `${Math.round(bytes / 1024 / 1024)} MB`)
 
 const MAX_LABEL_CHARS = 16
 const MAX_LABEL_CHARS_BESIDE_BADGE = 12
@@ -398,21 +396,16 @@ export function TopologyView({
             if (!point) return null
             const { w, h } = RELAY_HALF
             const selected = selection?.kind === 'mesh' || (selection?.kind === 'relay' && selection.id === relay.id)
-            const draining = drainingSeconds(relay.snapshot)
+            const clients = [...topology.clients.values()].filter((client) => client.relayId === relay.id).length
             return (
               <g
                 key={relay.id}
-                className={`node relay${selected ? ' sel' : ''}${draining === null ? '' : ' draining'}${dimmed(activeNodes.has(relay.id))}`}
+                className={`node relay${selected ? ' sel' : ''}${dimmed(activeNodes.has(relay.id))}`}
                 onClick={(event) => {
                   event.stopPropagation()
                   select({ kind: 'relay', id: relay.id })
                 }}
               >
-                {draining !== null && (
-                  <text x={point.x} y={point.y - h - 8} textAnchor="middle" className="draining-label">
-                    DRAINING {draining}s · {relay.snapshot.process.client_sessions} clients
-                  </text>
-                )}
                 <rect className="box" x={point.x - w} y={point.y - h} width={w * 2} height={h * 2} rx={6} />
                 {[0, 1].map((unit) => {
                   const y = point.y - h + 8 + unit * 17
@@ -438,13 +431,7 @@ export function TopologyView({
                   {relay.id}
                 </text>
                 <text x={point.x} y={point.y + 24} textAnchor="middle" className="muted">
-                  memory {formatMegabytes(relay.snapshot.process.rss_bytes)}
-                </text>
-                <text x={point.x} y={point.y + 38} textAnchor="middle" className="muted">
-                  cache {formatMegabytes(relay.snapshot.process.cache_payload_bytes)}
-                </text>
-                <text x={point.x} y={point.y + 52} textAnchor="middle" className="muted">
-                  storage {formatMegabytes(relay.snapshot.process.disk_cache_bytes ?? null)}
+                  {clients} {clients === 1 ? 'client' : 'clients'}
                 </text>
               </g>
             )
