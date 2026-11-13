@@ -1075,7 +1075,12 @@ owned by the track's `Producer`:
   not removed yet. A group's aborted / finished marks and reopened runs are
   dropped once the group has neither objects nor open subgroups; a pass
   checks only the groups it removed objects from and the groups whose last
-  subgroup closed since the last pass.
+  subgroup closed since the last pass. Eviction keeps the group holding a
+  live track's newest object past the TTL, and with it the group's marks, so
+  a group tracks at most `MAX_SUBGROUPS_PER_GROUP` (1024) subgroups: a
+  subgroup stream for a new Subgroup ID past them is stopped (STOP_SENDING)
+  without caching anything, while one for a subgroup the group already
+  tracks still opens.
 - MAX_CACHE_DURATION (draft-14 §9.2.1.3): ingress stamps every object with
   `expires_at` = this relay's receipt time + the value its upstream
   SUBSCRIBE_OK, PUBLISH or FETCH_OK carried. From that instant

@@ -63,7 +63,13 @@ pub(crate) async fn read_stream(
         match receive_result {
             Ok(Some(SubgroupPart::Header(start))) => {
                 span.record("group_id", start.group_id);
-                ingest = Some(open_subgroup(&cache, &span, &start));
+                let Some(opened) = open_subgroup(&cache, &span, &start) else {
+                    // Dropping `receiver` sends STOP_SENDING.
+                    span.record("end_reason", "subgroup_limit");
+                    tracing::warn!(track_namespace = %track_key.track_namespace, track_name = %track_key.track_name, "the group tracks too many subgroups; stopping the stream");
+                    return;
+                };
+                ingest = Some(opened);
                 header = Some(ReceivedHeader {
                     start,
                     prev_object_id: None,
@@ -195,9 +201,9 @@ fn open_subgroup<'a>(
     cache: &'a TrackCache,
     span: &Span,
     start: &SubgroupStart,
-) -> OpenSubgroupGuard<'a> {
+) -> Option<OpenSubgroupGuard<'a>> {
     span.record("subgroup_id", start.subgroup_id);
-    cache.open_subgroup(SubgroupKey::Stream {
+    cache.open_stream_subgroup(SubgroupKey::Stream {
         group_id: start.group_id,
         subgroup_id: start.subgroup_id,
     })
@@ -212,12 +218,14 @@ mod tests {
 
     use super::*;
     use crate::modules::{
-        data_plane::cache::track_cache::{FetchRangeResolution, NextObject},
+        data_plane::cache::track_cache::{
+            FetchRangeResolution, MAX_SUBGROUPS_PER_GROUP, NextObject,
+        },
         session::session_event::SessionEvent,
         test_support::relay_harness::{
             RelayHarness, UpstreamSubgroupStream,
             fixtures::{
-                cached_object::stream_key,
+                cached_object::{fill_group_with_subgroups, stream_key, subgroup_key},
                 data_object::{
                     make_header, make_header_with, make_object_in_subgroup, make_object_start,
                     make_payload_object, make_payload_piece, make_status_object,
@@ -316,6 +324,33 @@ mod tests {
             matches!(end, NextObject::Finished),
             finished,
             "unexpected end: {end:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stream_for_a_new_subgroup_of_a_full_group_is_stopped_uncached() {
+        // Arrange
+        let harness = RelayHarness::new();
+        fill_group_with_subgroups(harness.cache(), 0);
+        let subgroup_id = MAX_SUBGROUPS_PER_GROUP as u64;
+        let mut upstream_stream = harness.open_upstream_stream();
+
+        // Act
+        send_all(
+            &upstream_stream,
+            vec![
+                make_header_with(0, subgroup_id, false),
+                make_object_in_subgroup(0, subgroup_id, 0),
+            ],
+        );
+        upstream_stream.wait_reader_end().await;
+
+        // Assert
+        assert!(
+            harness
+                .cached_object_ids(subgroup_key(0, subgroup_id))
+                .await
+                .is_empty()
         );
     }
 

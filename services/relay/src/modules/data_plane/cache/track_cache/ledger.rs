@@ -51,6 +51,13 @@ fn subgroup_keys_of(group_id: u64) -> [RangeInclusive<SubgroupKey>; 2] {
     ]
 }
 
+/// The subgroups one group may track, open, finished or aborted; only a new
+/// stream subgroup is refused past it. Eviction keeps the group holding a live
+/// track's newest object, and with it these marks, so without a bound a
+/// publisher opening new Subgroup IDs in it grows them without end. draft-14
+/// sets no limit on Subgroup IDs.
+pub(crate) const MAX_SUBGROUPS_PER_GROUP: usize = 1024;
+
 #[derive(Default)]
 pub(super) struct Ledger {
     pub(super) objects: BTreeMap<moqt::object::Location, Arc<CachedObject>>,
@@ -76,6 +83,28 @@ impl Ledger {
         subgroup_keys_of(group_id)
             .into_iter()
             .any(|keys| self.aborted_subgroups.range(keys).next().is_some())
+    }
+
+    pub(super) fn refuses_new_subgroup(&self, key: SubgroupKey) -> bool {
+        if self.is_open(key)
+            || self.finished_subgroups.contains(&key)
+            || self.aborted_subgroups.contains(&key)
+        {
+            return false;
+        }
+        let group_id = key.group_id();
+        let open = self
+            .live_groups
+            .get(&group_id)
+            .map_or(0, |live| live.open_subgroups.len());
+        let closed: usize = subgroup_keys_of(group_id)
+            .into_iter()
+            .map(|keys| {
+                self.finished_subgroups.range(keys.clone()).count()
+                    + self.aborted_subgroups.range(keys).count()
+            })
+            .sum();
+        open + closed >= MAX_SUBGROUPS_PER_GROUP
     }
 
     /// Checks only the groups of `removed` and the ones closed since the last

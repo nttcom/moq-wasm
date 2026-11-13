@@ -51,6 +51,8 @@ pub(crate) use fetch_cursor::FetchCursor;
 pub(crate) use fetch_plan::PlannedFetch;
 pub(crate) use ingress_stats::{IngressCounters, IngressStats};
 use ledger::Ledger;
+#[cfg(test)]
+pub(crate) use ledger::MAX_SUBGROUPS_PER_GROUP;
 pub(crate) use open_subgroup::{NextObject, OpenSubgroupGuard, PartialObjectWriter, SubgroupRun};
 pub(crate) use partial_object::{PartialEnd, PartialObject};
 
