@@ -6,6 +6,7 @@ use telemetry::relay_stats;
 use crate::{
     clickhouse::ClickHouse,
     schema::{SESSION_STATS, SUBSCRIPTION_STATS, TRACK_STATS},
+    series::{APP_CLIENT_SESSION, APP_NAMESPACE},
 };
 
 const MAX_NAMESPACES: u64 = 1_000;
@@ -42,7 +43,8 @@ struct ClientCount {
 pub struct NamespaceQuery {
     pub from_ms: u64,
     pub to_ms: u64,
-    pub app_id: Option<String>,
+    /// Only this app's namespaces and client sessions are read.
+    pub app_id: String,
 }
 
 pub async fn published_namespaces(
@@ -53,7 +55,7 @@ pub async fn published_namespaces(
     let params = [
         ("from", query.from_ms.to_string()),
         ("to", query.to_ms.to_string()),
-        ("app", query.app_id.clone().unwrap_or_default()),
+        ("app", query.app_id.clone()),
         (
             "excluded_prefix",
             format!("{}/", relay_stats::NAMESPACE_ROOT),
@@ -62,24 +64,21 @@ pub async fn published_namespaces(
         ("limit", MAX_NAMESPACES.to_string()),
     ];
     let range = "timestamp_ms >= {from:UInt64} AND timestamp_ms <= {to:UInt64}";
-    let in_app = "({app:String} = '' OR namespace = {app:String} \
-                  OR startsWith(namespace, concat({app:String}, '/')))";
     let client_sessions = format!(
         "SELECT relay_id, session_id FROM {database}.{SESSION_STATS} \
-         WHERE {range} AND peer = 'client' AND app_id != {{excluded_app:String}} \
-         AND ({{app:String}} = '' OR app_id = {{app:String}})"
+         WHERE {range} AND {APP_CLIENT_SESSION} AND app_id != {{excluded_app:String}}"
     );
     let namespaces_sql = format!(
         "SELECT namespace, groupUniqArray(name) AS tracks, groupUniqArray(relay_id) AS relays, \
          min(timestamp_ms) AS first_seen_ms, max(timestamp_ms) AS last_seen_ms \
          FROM {database}.{TRACK_STATS} \
-         WHERE {range} AND {in_app} AND NOT startsWith(namespace, {{excluded_prefix:String}}) \
+         WHERE {range} AND {APP_NAMESPACE} AND NOT startsWith(namespace, {{excluded_prefix:String}}) \
          GROUP BY namespace ORDER BY last_seen_ms DESC LIMIT {{limit:UInt64}}"
     );
     let subscriptions_sql = format!(
         "SELECT namespace, uniqExact(relay_id, subscriber_session_id, request_id) AS subscriptions \
          FROM {database}.{SUBSCRIPTION_STATS} \
-         WHERE {range} AND {in_app} AND (relay_id, subscriber_session_id) IN ({client_sessions}) \
+         WHERE {range} AND {APP_NAMESPACE} AND (relay_id, subscriber_session_id) IN ({client_sessions}) \
          GROUP BY namespace"
     );
     let clients_sql =

@@ -6,6 +6,7 @@ description = "Fills ClickHouse tables from the relays' OTLP stats snapshots and
 
 [dependencies]
 anyhow = "1.0.102"
+auth-token = { path = "../../crates/auth-token" }
 http-body-util = "0.1.4"
 http-server = { path = "../../crates/http-server" }
 hyper = { version = "1.10.1", features = ["http1", "server"] }

@@ -5,17 +5,16 @@ use serde_json::{Map, Value};
 
 use crate::{
     clickhouse::ClickHouse,
-    schema::{PROCESS_STATS, SESSION_STATS, SUBSCRIPTION_STATS, TRACK_STATS},
+    schema::{SESSION_STATS, SUBSCRIPTION_STATS, TRACK_STATS},
 };
 
 const MIN_BUCKET_MS: u64 = 1_000;
 const BITS_PER_BYTE: f64 = 8.0;
 const MEGA: f64 = 1_000_000.0;
-const MEBIBYTE: f64 = 1024.0 * 1024.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeriesTarget {
-    Process,
+    /// The app's client sessions on the relay, summed.
     Relay,
     Session {
         session_id: u64,
@@ -33,6 +32,8 @@ pub enum SeriesTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeriesQuery {
+    /// Only this app's sessions and namespaces are read.
+    pub app_id: String,
     pub relay_id: String,
     pub target: SeriesTarget,
     pub from_ms: u64,
@@ -149,24 +150,6 @@ const SUBSCRIPTION_METRICS: &[(&str, Metric)] = &[
     ("lag_ms", Metric::Max("lag_behind_newest_received_us", 1e-3)),
 ];
 
-const PROCESS_METRICS: &[(&str, Metric)] = &[
-    ("rss_mb", Metric::Max("rss_bytes", 1.0 / MEBIBYTE)),
-    (
-        "cache_mb",
-        Metric::Max("cache_payload_bytes", 1.0 / MEBIBYTE),
-    ),
-    ("cache_objects", Metric::Max("cache_objects", 1.0)),
-    (
-        "disk_cache_mb",
-        Metric::Max("disk_cache_bytes", 1.0 / MEBIBYTE),
-    ),
-    (
-        "disk_cache_max_mb",
-        Metric::Max("disk_cache_max_bytes", 1.0 / MEBIBYTE),
-    ),
-    ("client_sessions", Metric::Max("client_sessions", 1.0)),
-];
-
 struct Plan {
     table: &'static str,
     filters: Vec<(&'static str, &'static str, String)>,
@@ -175,29 +158,24 @@ struct Plan {
     metrics: &'static [(&'static str, Metric)],
 }
 
-// The relay's own stats sessions carry the snapshots, not client or relay traffic.
-const TRAFFIC_PEERS: &str = " AND peer IN ('client', 'relay')";
+/// Relay sessions are left out: they carry every app's traffic.
+pub(crate) const APP_CLIENT_SESSION: &str = "peer = 'client' AND app_id = {app:String}";
+pub(crate) const APP_NAMESPACE: &str =
+    "(namespace = {app:String} OR startsWith(namespace, concat({app:String}, '/')))";
 
 fn plan(target: &SeriesTarget) -> Plan {
     match target {
-        SeriesTarget::Process => Plan {
-            table: PROCESS_STATS,
-            filters: vec![],
-            condition: "",
-            entity: None,
-            metrics: PROCESS_METRICS,
-        },
         SeriesTarget::Relay => Plan {
             table: SESSION_STATS,
             filters: vec![],
-            condition: TRAFFIC_PEERS,
+            condition: APP_CLIENT_SESSION,
             entity: Some("session_id"),
             metrics: RELAY_METRICS,
         },
         SeriesTarget::Session { session_id } => Plan {
             table: SESSION_STATS,
             filters: vec![("session_id", "UInt64", session_id.to_string())],
-            condition: "",
+            condition: APP_CLIENT_SESSION,
             entity: None,
             metrics: SESSION_METRICS,
         },
@@ -216,7 +194,7 @@ fn plan(target: &SeriesTarget) -> Plan {
                 ("namespace", "String", namespace.clone()),
                 ("name", "String", name.clone()),
             ],
-            condition: "",
+            condition: APP_NAMESPACE,
             entity: None,
             metrics: TRACK_METRICS,
         },
@@ -233,7 +211,7 @@ fn plan(target: &SeriesTarget) -> Plan {
                 ),
                 ("request_id", "UInt64", request_id.to_string()),
             ],
-            condition: "",
+            condition: APP_NAMESPACE,
             entity: None,
             metrics: SUBSCRIPTION_METRICS,
         },
@@ -277,7 +255,7 @@ fn select_sql(database: &str, plan: &Plan) -> String {
         "SELECT intDiv(timestamp_ms, {{bucket:UInt64}}) * {{bucket:UInt64}} AS t{entity}, {columns} \
          FROM {database}.{table} \
          WHERE relay_id = {{relay_id:String}} \
-         AND timestamp_ms >= {{from:UInt64}} AND timestamp_ms <= {{to:UInt64}}{filters}{condition} \
+         AND timestamp_ms >= {{from:UInt64}} AND timestamp_ms <= {{to:UInt64}}{filters} AND {condition} \
          GROUP BY t{group_entity} ORDER BY t",
         columns = columns.into_iter().collect::<Vec<_>>().join(", "),
         table = plan.table,
@@ -390,6 +368,7 @@ pub async fn query(clickhouse: &ClickHouse, query: &SeriesQuery) -> anyhow::Resu
     let plan = plan(&query.target);
     let mut params = vec![
         ("bucket", bucket_ms(query).to_string()),
+        ("app", query.app_id.clone()),
         ("relay_id", query.relay_id.clone()),
         ("from", query.from_ms.to_string()),
         ("to", query.to_ms.to_string()),
@@ -409,19 +388,48 @@ pub async fn query(clickhouse: &ClickHouse, query: &SeriesQuery) -> anyhow::Resu
 mod tests {
     use serde_json::{Map, Value, json};
 
-    use super::{Metric, SeriesQuery, SeriesTarget, bucket_ms, compute, plan, select_sql};
+    use super::{
+        APP_CLIENT_SESSION, APP_NAMESPACE, Metric, SeriesQuery, SeriesTarget, bucket_ms, compute,
+        plan, select_sql,
+    };
 
     fn row(value: Value) -> Map<String, Value> {
         value.as_object().unwrap().clone()
     }
 
     #[test]
-    fn relay_totals_leave_out_the_relays_own_stats_sessions() {
+    fn every_target_reads_only_the_apps_client_sessions_or_namespaces() {
+        // Arrange
+        let targets = [
+            SeriesTarget::Relay,
+            SeriesTarget::Session { session_id: 1 },
+            SeriesTarget::Track {
+                publisher_session_id: 1,
+                namespace: "app/room".to_string(),
+                name: "video".to_string(),
+            },
+            SeriesTarget::Subscription {
+                subscriber_session_id: 1,
+                request_id: 2,
+            },
+        ];
+
         // Act
-        let sql = select_sql("obs", &plan(&SeriesTarget::Relay));
+        let sqls: Vec<String> = targets
+            .iter()
+            .map(|target| select_sql("obs", &plan(target)))
+            .collect();
 
         // Assert
-        assert!(sql.contains("AND peer IN ('client', 'relay')"), "{sql}");
+        let wanted = [
+            APP_CLIENT_SESSION,
+            APP_CLIENT_SESSION,
+            APP_NAMESPACE,
+            APP_NAMESPACE,
+        ];
+        for (sql, wanted) in sqls.iter().zip(wanted) {
+            assert!(sql.contains(wanted), "{sql}");
+        }
     }
 
     #[test]
@@ -508,8 +516,9 @@ mod tests {
     fn buckets_split_the_range_into_the_requested_points_but_never_below_a_second() {
         // Arrange
         let query = |span: u64| SeriesQuery {
+            app_id: "app".to_string(),
             relay_id: "relay-a".to_string(),
-            target: SeriesTarget::Process,
+            target: SeriesTarget::Relay,
             from_ms: 0,
             to_ms: span,
             points: 90,

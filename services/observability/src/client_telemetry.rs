@@ -1,26 +1,26 @@
-mod app_verifier;
 mod otlp_export;
 mod rate_limiter;
 mod report;
 
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
 
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::{HeaderMap, StatusCode, body::Incoming};
 
-use app_verifier::{AppVerifier, VerifyError};
 use rate_limiter::{RateLimiter, client_address};
 use report::ClientReport;
 
-use crate::otlp;
+use crate::{
+    ANONYMOUS_APP_ID,
+    app_verifier::{AppVerifier, VerifyError},
+    otlp,
+};
 
 const MAX_BODY_BYTES: usize = 64 * 1024;
-/// The app of a report without a token, as the relay names an anonymous session's app.
-const ANONYMOUS_APP_ID: &str = "anon";
 
 pub struct ClientTelemetryConfig {
-    /// The VTS `…/verify` URL; without it, every report is anonymous.
-    pub vts_url: Option<String>,
+    /// Without it, every report is anonymous.
+    pub verifier: Option<Arc<AppVerifier>>,
     pub otlp_logs_endpoint: Option<String>,
     pub otlp_metrics_endpoint: Option<String>,
     pub otlp_traces_endpoint: Option<String>,
@@ -30,7 +30,7 @@ pub struct ClientTelemetryConfig {
 /// collector as OTLP.
 pub struct ClientTelemetry {
     http: reqwest::Client,
-    verifier: Option<AppVerifier>,
+    verifier: Option<Arc<AppVerifier>>,
     otlp_logs_endpoint: Option<String>,
     otlp_metrics_endpoint: Option<String>,
     otlp_traces_endpoint: Option<String>,
@@ -72,21 +72,21 @@ impl Rejection {
 
 impl ClientTelemetry {
     /// `None` when no OTLP endpoint is set, so there is nowhere to forward to.
-    pub fn new(config: ClientTelemetryConfig) -> anyhow::Result<Option<Self>> {
+    pub fn new(config: ClientTelemetryConfig) -> Option<Self> {
         if config.otlp_logs_endpoint.is_none()
             && config.otlp_metrics_endpoint.is_none()
             && config.otlp_traces_endpoint.is_none()
         {
-            return Ok(None);
+            return None;
         }
-        Ok(Some(Self {
+        Some(Self {
             http: reqwest::Client::new(),
-            verifier: config.vts_url.map(AppVerifier::new).transpose()?,
+            verifier: config.verifier,
             otlp_logs_endpoint: config.otlp_logs_endpoint,
             otlp_metrics_endpoint: config.otlp_metrics_endpoint,
             otlp_traces_endpoint: config.otlp_traces_endpoint,
             rate_limiter: RateLimiter::new(),
-        }))
+        })
     }
 
     pub(crate) async fn receive(
@@ -114,7 +114,7 @@ impl ClientTelemetry {
         let (Some(verifier), Some(token)) = (&self.verifier, token) else {
             return Ok(ANONYMOUS_APP_ID.to_string());
         };
-        verifier.app_id(token).await.map_err(|error| match error {
+        let verified = verifier.verify(token).await.map_err(|error| match error {
             VerifyError::Unauthorized(_) => {
                 tracing::debug!(%error, "client telemetry rejected");
                 Rejection::Unauthorized
@@ -123,7 +123,8 @@ impl ClientTelemetry {
                 tracing::warn!(%error, "client telemetry was not verified");
                 Rejection::VtsUnavailable
             }
-        })
+        })?;
+        Ok(verified.app_id)
     }
 
     async fn export(&self, report: &ClientReport, app_id: &str) -> Result<(), Rejection> {
@@ -162,19 +163,18 @@ impl ClientTelemetry {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use hyper::StatusCode;
     use serde_json::{Value, json};
-    use tokio::{net::TcpListener, sync::mpsc};
+    use tokio::sync::mpsc;
 
     use super::{ClientTelemetry, ClientTelemetryConfig, MAX_BODY_BYTES};
     use crate::{
         api_server::{ApiServer, ApiState},
-        clickhouse::ClickHouse,
-        config::ClickHouseConfig,
-        test_support::{fake_http_server, fake_http_server_answering},
+        app_verifier::AppVerifier,
+        test_support::{api_server, fake_http_server, fake_http_server_answering, vts_answer},
     };
-
-    const VERIFIED: &str = r#"{"appId":"app-1","isRelay":false,"claims":{"exp":4102444800}}"#;
 
     struct Observability {
         url: String,
@@ -195,32 +195,23 @@ mod tests {
     }
 
     async fn observability(collector: &Collector, vts_url: Option<String>) -> Observability {
+        let verifier = vts_url.map(|url| Arc::new(AppVerifier::new(url).unwrap()));
         let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
-            vts_url,
+            verifier: verifier.clone(),
             otlp_logs_endpoint: Some(format!("{}/v1/logs", collector.url)),
             otlp_metrics_endpoint: Some(format!("{}/v1/metrics", collector.url)),
             otlp_traces_endpoint: Some(format!("{}/v1/traces", collector.url)),
-        })
-        .unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!(
-            "http://{}/api/client-telemetry",
-            listener.local_addr().unwrap()
-        );
-        let clickhouse = ClickHouse::new(ClickHouseConfig {
-            url: "http://127.0.0.1:1".to_string(),
-            database: "observability".to_string(),
-            user: None,
-            password: None,
         });
-        let api = ApiServer::run(
-            listener,
-            ApiState {
-                clickhouse,
-                client_telemetry,
-            },
-        );
-        Observability { url, _api: api }
+        let (url, api) = api_server(|clickhouse| ApiState {
+            clickhouse,
+            verifier,
+            client_telemetry,
+        })
+        .await;
+        Observability {
+            url: format!("{url}/api/client-telemetry"),
+            _api: api,
+        }
     }
 
     fn report(token: Option<&str>) -> Value {
@@ -278,7 +269,8 @@ mod tests {
     async fn a_verified_token_names_the_app_of_the_report() {
         // Arrange
         let mut collector = collector().await;
-        let (vts_url, _vts_requests) = fake_http_server_answering(StatusCode::OK, VERIFIED).await;
+        let (vts_url, _vts_requests) =
+            fake_http_server_answering(StatusCode::OK, &vts_answer("app-1", None)).await;
         let observability = observability(&collector, Some(format!("{vts_url}/verify"))).await;
 
         // Act
@@ -345,12 +337,11 @@ mod tests {
     fn without_an_otlp_endpoint_there_is_no_receiver() {
         // Act
         let client_telemetry = ClientTelemetry::new(ClientTelemetryConfig {
-            vts_url: None,
+            verifier: None,
             otlp_logs_endpoint: None,
             otlp_metrics_endpoint: None,
             otlp_traces_endpoint: None,
-        })
-        .unwrap();
+        });
 
         // Assert
         assert!(client_telemetry.is_none());
