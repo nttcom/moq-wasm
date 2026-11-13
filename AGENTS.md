@@ -75,7 +75,7 @@ Application and integration components (draft reference is normally not required
 - Build: `cargo build`
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
-- Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore`
+- Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path crates/wasm/js/.prettierignore`
 - Test (browser unit): `npm test --workspaces`
 - Wasm: `npm --prefix crates/wasm/js run wasm`
 - Console web: `npm --prefix services/console/web run lint && npm --prefix services/console/web run build`

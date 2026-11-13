@@ -29,6 +29,8 @@
     "build": "vite build && tsc -p tsconfig.build.json",
     "lint": "tsc --noEmit",
     "lint:promises": "oxlint --type-aware src",
+    "api:check": "api-extractor run --config api-extractor.core.json && api-extractor run --config api-extractor.media.json && api-extractor run --config api-extractor.recording.json",
+    "api:update": "api-extractor run --local --config api-extractor.core.json && api-extractor run --local --config api-extractor.media.json && api-extractor run --local --config api-extractor.recording.json",
     "test": "playwright test --config playwright.unit.config.ts",
     "check:pack": "node scripts/check-pack.mjs"
   },
@@ -40,6 +42,7 @@
     "src/media/controls/playerControls.css"
   ],
   "devDependencies": {
+    "@microsoft/api-extractor": "^7.60.1",
     "oxlint": "^1.93.0",
     "oxlint-tsgolint": "^7.0.2007"
   }

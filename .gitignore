@@ -17,6 +17,7 @@ crates/wasm/js/pkg/*
 crates/wasm/js/test-results/
 crates/wasm/js/dist/
 crates/wasm/js/types/
+crates/wasm/js/temp/
 examples/browser/examples/*/dist/*
 
 *.log

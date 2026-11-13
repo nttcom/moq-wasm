@@ -1,0 +1,33 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/api-extractor/v7/api-extractor.schema.json",
+  "compiler": {
+    "tsconfigFilePath": "<projectFolder>/tsconfig.build.json"
+  },
+  "apiReport": {
+    "enabled": true,
+    "reportFolder": "<projectFolder>/api/"
+  },
+  "docModel": {
+    "enabled": false
+  },
+  "dtsRollup": {
+    "enabled": false
+  },
+  "tsdocMetadata": {
+    "enabled": false
+  },
+  "messages": {
+    "extractorMessageReporting": {
+      "ae-missing-release-tag": {
+        "logLevel": "none",
+        "addToApiReportFile": false
+      }
+    },
+    "tsdocMessageReporting": {
+      "default": {
+        "logLevel": "none",
+        "addToApiReportFile": false
+      }
+    }
+  }
+}

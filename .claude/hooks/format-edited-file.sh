@@ -24,7 +24,7 @@ case "$rel" in
     prettier="$root/examples/browser/node_modules/.bin/prettier"
     [ -x "$prettier" ] || exit 0
     (cd "$root" && "$prettier" --write --log-level warn \
-      --ignore-path .gitignore --ignore-path examples/browser/.prettierignore "$rel") >&2 || true
+      --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path crates/wasm/js/.prettierignore "$rel") >&2 || true
     ;;
 esac
 
