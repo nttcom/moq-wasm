@@ -62,8 +62,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoResolutionOptions,
-    videoHardwareAccelerationOptions,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,
@@ -289,8 +287,6 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
             selectedAudioDeviceId={selectedAudioDeviceId}
             onSelectVideoDevice={selectVideoDevice}
             onSelectAudioDevice={selectAudioDevice}
-            videoResolutionOptions={videoResolutionOptions}
-            videoHardwareAccelerationOptions={videoHardwareAccelerationOptions}
             selectedVideoEncoding={selectedVideoEncoding}
             onSelectVideoEncoding={selectVideoEncoding}
             selectedScreenShareEncoding={selectedScreenShareEncoding}

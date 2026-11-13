@@ -4,8 +4,6 @@ import type { PlayoutSettings } from '../types/playout'
 import {
   DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS,
   DEFAULT_VIDEO_ENCODING_SETTINGS,
-  VIDEO_HARDWARE_ACCELERATION_OPTIONS,
-  VIDEO_RESOLUTION_OPTIONS,
   type VideoEncodingSettings
 } from '../types/videoEncoding'
 import type { CaptureSettingsState } from '../types/captureConstraints'
@@ -38,8 +36,6 @@ interface UseMeetingMediaResult {
   toggleMicrophone: () => Promise<boolean>
   playoutSettings: Map<string, PlayoutSettings>
   setPlayoutSettings: (userId: string, settings: PlayoutSettings) => void
-  videoResolutionOptions: typeof VIDEO_RESOLUTION_OPTIONS
-  videoHardwareAccelerationOptions: typeof VIDEO_HARDWARE_ACCELERATION_OPTIONS
   selectedVideoEncoding: VideoEncodingSettings
   selectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   selectedScreenShareEncoding: VideoEncodingSettings
@@ -392,8 +388,6 @@ export function useMeetingMedia(session: LocalSession | null): UseMeetingMediaRe
     toggleMicrophone,
     playoutSettings,
     setPlayoutSettings,
-    videoResolutionOptions: VIDEO_RESOLUTION_OPTIONS,
-    videoHardwareAccelerationOptions: VIDEO_HARDWARE_ACCELERATION_OPTIONS,
     selectedVideoEncoding,
     selectVideoEncoding,
     selectedScreenShareEncoding,

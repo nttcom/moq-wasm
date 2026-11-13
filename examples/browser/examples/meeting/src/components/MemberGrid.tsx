@@ -15,10 +15,10 @@ import type { RemoteStatsSample } from '../types/stats'
 import { MeetingStats, RemoteMemberStatsCharts } from './StatsCharts'
 import type { RemoteMemberView, RemoteSourceView, RemoteVideoSource } from '../media/remotePlayers'
 import { type MediaCatalogTrack, formatLiveStats } from 'moq-wasm/media'
-import type {
-  VideoHardwareAccelerationOption,
-  VideoResolutionOption,
-  VideoEncodingSettings
+import {
+  VIDEO_HARDWARE_ACCELERATION_OPTIONS,
+  VIDEO_RESOLUTION_OPTIONS,
+  type VideoEncodingSettings
 } from '../types/videoEncoding'
 
 const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-blue-50'
@@ -47,8 +47,6 @@ interface MemberGridProps {
   selectedAudioDeviceId: string | null
   onSelectVideoDevice: (deviceId: string) => void
   onSelectAudioDevice: (deviceId: string) => void
-  videoResolutionOptions: VideoResolutionOption[]
-  videoHardwareAccelerationOptions: VideoHardwareAccelerationOption[]
   selectedVideoEncoding: VideoEncodingSettings
   onSelectVideoEncoding: (settings: Partial<VideoEncodingSettings>) => Promise<void>
   selectedScreenShareEncoding: VideoEncodingSettings
@@ -94,8 +92,6 @@ export function MemberGrid({
   selectedAudioDeviceId,
   onSelectVideoDevice,
   onSelectAudioDevice,
-  videoResolutionOptions,
-  videoHardwareAccelerationOptions,
   selectedVideoEncoding,
   onSelectVideoEncoding,
   selectedScreenShareEncoding,
@@ -255,21 +251,21 @@ export function MemberGrid({
               onApply={onApplyCaptureSettings}
               cameraBusy={cameraBusy}
               microphoneBusy={microphoneBusy}
-              resolutionOptions={videoResolutionOptions}
+              resolutionOptions={VIDEO_RESOLUTION_OPTIONS}
             />
             <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
               <div className="text-sm font-semibold text-white">Video encoder hardware acceleration</div>
               <OptionSelect
                 label="Camera"
                 className={DEVICE_MODAL_FIELD_CLASS}
-                options={videoHardwareAccelerationOptions}
+                options={VIDEO_HARDWARE_ACCELERATION_OPTIONS}
                 value={selectedVideoEncoding.hardwareAcceleration}
                 onChange={(option) => void onSelectVideoEncoding({ hardwareAcceleration: option.value })}
               />
               <OptionSelect
                 label="Screen share"
                 className={DEVICE_MODAL_FIELD_CLASS}
-                options={videoHardwareAccelerationOptions}
+                options={VIDEO_HARDWARE_ACCELERATION_OPTIONS}
                 value={selectedScreenShareEncoding.hardwareAcceleration}
                 onChange={(option) => void onSelectScreenShareEncoding({ hardwareAcceleration: option.value })}
               />
