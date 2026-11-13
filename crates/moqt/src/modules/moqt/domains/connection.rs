@@ -641,6 +641,7 @@ mod tests {
             runtime::dispatch::incoming_object::{
                 IncomingDatagram, IncomingObject, incoming_object_channel,
             },
+            version::Version,
         },
         test_support::datagram_object,
     };
@@ -656,7 +657,7 @@ mod tests {
     ) -> IncomingObjectNotification {
         sinks.notify(
             track_alias,
-            IncomingObject::Datagram(IncomingDatagram::new(datagram_object())),
+            IncomingObject::Datagram(IncomingDatagram::new(datagram_object(), Version::Draft18)),
             now,
         )
     }

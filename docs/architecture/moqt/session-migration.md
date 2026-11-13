@@ -113,8 +113,11 @@ stream carries one group, so the group cutover of `GroupCutover` becomes a
 per-stream decision: the receiver hands out the streams of groups before the
 cutover from the previous connection and the rest from the new one, and drops
 the others before the application sees them. Datagrams take the same
-decision per object. `TrackReader`, `MigratingTrack`'s users and the wasm
-`track_io` all read the receiver, so they need no change. The track's
+decision per object. Each stream and datagram is checked by the draft of
+the connection it arrived on, so a track moved from a draft-14 server to a
+draft-18 one may mix subgroup streams and datagrams there. `TrackReader`,
+`MigratingTrack`'s users and the wasm `track_io` all read the receiver, so
+they need no change. The track's
 `ObjectLedger` belongs to the session, so an object received before the move
 is still compared with its copies after it, a FETCH on the new connection
 included.

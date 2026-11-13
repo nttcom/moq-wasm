@@ -12,7 +12,7 @@ use crate::modules::moqt::{
             stream_receiver::StreamReceiveError,
         },
     },
-    version::SubgroupReader,
+    version::{SubgroupReader, Version},
 };
 
 #[derive(Debug)]
@@ -71,6 +71,10 @@ impl StreamDataReceiver {
             ledger: None,
             arriving: None,
         }
+    }
+
+    pub(crate) fn version(&self) -> Version {
+        self.reader.version()
     }
 
     /// Checks every object read from here on against the track's `ledger`.

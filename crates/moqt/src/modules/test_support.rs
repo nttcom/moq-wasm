@@ -952,7 +952,10 @@ pub(crate) async fn notify_datagram(
         .connection()
         .notify_incoming_object(
             track_alias,
-            IncomingObject::Datagram(IncomingDatagram::new(datagram_object())),
+            IncomingObject::Datagram(IncomingDatagram::new(
+                datagram_object(),
+                context.connection().control.version(),
+            )),
         )
         .await
 }
