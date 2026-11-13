@@ -1,9 +1,6 @@
 use std::{
     convert::Infallible,
-    sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use aws_lc_rs::{
@@ -12,7 +9,10 @@ use aws_lc_rs::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::Full;
-use hyper::{Request, Response, body::Bytes, server::conn::http1, service::service_fn};
+use hyper::{
+    Request, Response, StatusCode, body::Bytes, header::AUTHORIZATION, server::conn::http1,
+    service::service_fn,
+};
 use hyper_util::rt::TokioIo;
 use reqwest::Url;
 use serde_json::{Value, json};
@@ -84,9 +84,7 @@ pub(crate) fn iap_claims(sub: &str) -> Value {
 }
 
 pub(crate) struct FakeIapKeys {
-    url: Url,
-    fetches: Arc<AtomicUsize>,
-    _accept_handle: JoinHandle<()>,
+    server: FakeHttpServer,
 }
 
 impl FakeIapKeys {
@@ -101,41 +99,18 @@ impl FakeIapKeys {
     }
 
     async fn serve(jwks: Vec<Value>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = Url::parse(&format!("http://{}/keys", listener.local_addr().unwrap())).unwrap();
-        let body = Bytes::from(json!({ "keys": jwks }).to_string());
-        let fetches = Arc::new(AtomicUsize::new(0));
+        let body = json!({ "keys": jwks }).to_string();
         Self {
-            url,
-            fetches: fetches.clone(),
-            _accept_handle: tokio::spawn(serve_keys(listener, body, fetches)),
+            server: FakeHttpServer::run(StatusCode::OK, &body).await,
         }
     }
 
     pub(crate) fn url(&self) -> Url {
-        self.url.clone()
+        Url::parse(&format!("{}/keys", self.server.url())).unwrap()
     }
 
     pub(crate) fn fetches(&self) -> usize {
-        self.fetches.load(Ordering::SeqCst)
-    }
-}
-
-async fn serve_keys(listener: TcpListener, body: Bytes, fetches: Arc<AtomicUsize>) {
-    loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let body = body.clone();
-        let fetches = fetches.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |_: Request<hyper::body::Incoming>| {
-                fetches.fetch_add(1, Ordering::SeqCst);
-                let body = body.clone();
-                async move { Ok::<_, Infallible>(Response::new(Full::new(body))) }
-            });
-            let _ = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await;
-        });
+        self.server.requests().len()
     }
 }
 
@@ -163,5 +138,74 @@ async fn hold_connections(listener: TcpListener) {
     let mut connections = Vec::new();
     loop {
         connections.push(listener.accept().await.unwrap().0);
+    }
+}
+
+/// A request a fake server received: its path and query, and its
+/// `Authorization` header.
+pub(crate) type ReceivedRequest = (String, Option<String>);
+
+/// Answers every request with `status` and `body` and records it.
+pub(crate) struct FakeHttpServer {
+    url: String,
+    requests: Arc<Mutex<Vec<ReceivedRequest>>>,
+    _accept_handle: JoinHandle<()>,
+}
+
+impl FakeHttpServer {
+    pub(crate) async fn run(status: StatusCode, body: &str) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        Self {
+            url,
+            requests: requests.clone(),
+            _accept_handle: tokio::spawn(serve_answer(
+                listener,
+                status,
+                Bytes::from(body.to_string()),
+                requests,
+            )),
+        }
+    }
+
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub(crate) fn requests(&self) -> Vec<ReceivedRequest> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+async fn serve_answer(
+    listener: TcpListener,
+    status: StatusCode,
+    body: Bytes,
+    requests: Arc<Mutex<Vec<ReceivedRequest>>>,
+) {
+    loop {
+        let (stream, _) = listener.accept().await.unwrap();
+        let body = body.clone();
+        let requests = requests.clone();
+        tokio::spawn(async move {
+            let service = service_fn(move |request: Request<hyper::body::Incoming>| {
+                let authorization = request
+                    .headers()
+                    .get(AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                requests
+                    .lock()
+                    .unwrap()
+                    .push((request.uri().to_string(), authorization));
+                let mut response = Response::new(Full::new(body.clone()));
+                *response.status_mut() = status;
+                async move { Ok::<_, Infallible>(response) }
+            });
+            let _ = http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+        });
     }
 }

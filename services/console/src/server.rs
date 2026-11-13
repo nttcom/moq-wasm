@@ -22,13 +22,16 @@ use static_files::StaticFiles;
 use tokio::net::TcpListener;
 
 use crate::{
-    apps::{self, Creation},
+    apps::{self, Creation, TokenScope},
     identity::{Caller, Identity},
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
+    usage::{ObservabilityClient, UsageAnswer},
 };
 
 pub const CSRF_HEADER: &str = "x-console-request";
 const MAX_BODY_BYTES: usize = 16 * 1024;
+/// The console signs a token per usage request, so it only has to outlive that request.
+const USAGE_TOKEN_TTL_SECONDS: u64 = 60;
 const CONTENT_SECURITY: &str = "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 pub struct ConsoleState {
@@ -36,6 +39,8 @@ pub struct ConsoleState {
     store: RegistryStore,
     static_files: Option<StaticFiles>,
     relay_url: Option<String>,
+    /// Without it, an app's usage answers 503.
+    observability: Option<ObservabilityClient>,
 }
 
 impl ConsoleState {
@@ -50,7 +55,14 @@ impl ConsoleState {
             store,
             static_files: static_dir.map(StaticFiles::new),
             relay_url,
+            observability: None,
         }
+    }
+
+    /// Fails when `base_url` is not a URL.
+    pub fn with_observability(mut self, base_url: &str) -> anyhow::Result<Self> {
+        self.observability = Some(ObservabilityClient::new(base_url)?);
+        Ok(self)
     }
 }
 
@@ -87,6 +99,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ConsoleState>) -> JsonRes
         route(
             head.method.clone(),
             head.uri.path(),
+            head.uri.query(),
             &head.headers,
             body,
             &state,
@@ -105,6 +118,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ConsoleState>) -> JsonRes
 async fn route(
     method: Method,
     path: &str,
+    query: Option<&str>,
     headers: &HeaderMap,
     body: Incoming,
     state: &ConsoleState,
@@ -113,6 +127,7 @@ async fn route(
         match (method, action) {
             (Method::POST, Some("tokens")) => issue_token(headers, body, app_id, state).await,
             (Method::POST, Some("secret")) => rotate_secret(headers, app_id, state).await,
+            (Method::GET, Some("usage")) => app_usage(headers, query, app_id, state).await,
             (Method::DELETE, None) => delete_app(headers, app_id, state).await,
             _ => Err(Refusal(StatusCode::NOT_FOUND, "not_found")),
         }
@@ -248,6 +263,45 @@ async fn delete_app(
     )
 }
 
+async fn app_usage(
+    headers: &HeaderMap,
+    query: Option<&str>,
+    app_id: &str,
+    state: &ConsoleState,
+) -> Result<JsonResponse, Refusal> {
+    let caller = authenticate(headers, state).await?;
+    let observability = state.observability.as_ref().ok_or(Refusal(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "observability_unavailable",
+    ))?;
+    let scope = TokenScope {
+        publish: None,
+        subscribe: Some(String::new()),
+        ttl_seconds: USAGE_TOKEN_TTL_SECONDS,
+    };
+    let issued = apps::issue_token(&state.store, &caller.sub, app_id, scope, unix_now())
+        .await
+        .map_err(registry_unavailable)?
+        .ok_or(Refusal(StatusCode::NOT_FOUND, "no_app"))?;
+    match observability.usage(&issued.token, query).await {
+        Ok(UsageAnswer::Usage(body)) => {
+            let mut response = Response::new(Full::new(body));
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            Ok(no_store(response))
+        }
+        Ok(UsageAnswer::InvalidRange) => Err(Refusal(StatusCode::BAD_REQUEST, "invalid_range")),
+        Err(error) => {
+            tracing::warn!(app_id, error = format!("{error:#}"), "usage not read");
+            Err(Refusal(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "observability_unavailable",
+            ))
+        }
+    }
+}
+
 async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Caller, Refusal> {
     state
         .identity
@@ -362,7 +416,7 @@ mod tests {
     use super::*;
     use crate::{
         identity::{IAP_ASSERTION_HEADER, IdentitySettings},
-        test_support::{AUDIENCE, FakeIapKeys, TestIapKey, iap_claims},
+        test_support::{AUDIENCE, FakeHttpServer, FakeIapKeys, TestIapKey, iap_claims},
     };
 
     const RELAY_URL: &str = "https://relay.example.com";
@@ -381,6 +435,14 @@ mod tests {
         identity: Identity,
         static_dir: Option<PathBuf>,
     ) -> TestConsole {
+        start_console_with(identity, static_dir, None).await
+    }
+
+    async fn start_console_with(
+        identity: Identity,
+        static_dir: Option<PathBuf>,
+        observability_url: Option<&str>,
+    ) -> TestConsole {
         let registry_file = TemporaryRegistryFile::new();
         registry_file.put(&json!([
             { "appId": "app-1", "name": "camera", "secret": "s", "isRelay": false,
@@ -391,12 +453,16 @@ mod tests {
         ]));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let state = Arc::new(ConsoleState::new(
+        let mut state = ConsoleState::new(
             identity,
             registry_file.store(),
             static_dir,
             Some(RELAY_URL.into()),
-        ));
+        );
+        if let Some(url) = observability_url {
+            state = state.with_observability(url).unwrap();
+        }
+        let state = Arc::new(state);
         TestConsole {
             base_url,
             registry_file,
@@ -950,6 +1016,121 @@ mod tests {
 
         // Act
         let response = get(&console, "/api/apps").await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn an_apps_usage_is_read_with_a_token_for_the_whole_app() {
+        // Arrange
+        let observability = FakeHttpServer::run(StatusCode::OK, r#"{"relays":[]}"#).await;
+        let console = start_console_with(
+            development("accounts.google.com:1"),
+            None,
+            Some(observability.url()),
+        )
+        .await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/usage?from=1&to=2&points=30&app_id=app-2",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), r#"{"relays":[]}"#);
+        let requests = observability.requests();
+        assert_eq!(requests.len(), 1);
+        let (uri, authorization) = &requests[0];
+        assert_eq!(uri, "/api/usage?from=1&to=2&points=30");
+        let token = authorization
+            .as_deref()
+            .unwrap()
+            .strip_prefix("Bearer ")
+            .unwrap();
+        auth_token::verify_signature(token, "s").unwrap();
+        let claims = auth_token::decode_unverified_payload(token).unwrap();
+        assert_eq!(claims["appId"], "app-1");
+        assert_eq!(claims["subscribe"], "");
+        assert!(claims.get("publish").is_none());
+        assert_eq!(
+            claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap(),
+            USAGE_TOKEN_TTL_SECONDS
+        );
+    }
+
+    #[tokio::test]
+    async fn another_employees_app_has_no_usage_to_read() {
+        // Arrange
+        let observability = FakeHttpServer::run(StatusCode::OK, "{}").await;
+        let console = start_console_with(
+            development("accounts.google.com:1"),
+            None,
+            Some(observability.url()),
+        )
+        .await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-2/usage?from=1&to=2",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert!(observability.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_usage_range_the_observability_server_refuses_is_invalid() {
+        // Arrange
+        let observability =
+            FakeHttpServer::run(StatusCode::BAD_REQUEST, r#"{"error":"too long"}"#).await;
+        let console = start_console_with(
+            development("accounts.google.com:1"),
+            None,
+            Some(observability.url()),
+        )
+        .await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/usage?from=1&to=999999999999",
+            None,
+        )
+        .await;
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.json::<Value>().await.unwrap()["error"],
+            "invalid_range"
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_without_an_observability_server_is_unavailable() {
+        // Arrange
+        let console = start_console(development("accounts.google.com:1")).await;
+
+        // Act
+        let response = send(
+            &console,
+            reqwest::Method::GET,
+            "/api/apps/app-1/usage?from=1&to=2",
+            None,
+        )
+        .await;
 
         // Assert
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

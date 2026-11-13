@@ -2,7 +2,7 @@ import type { IconName } from './icons'
 
 export type Page = 'overview' | 'auth' | 'tokens' | 'analytics' | 'observability' | 'media' | 'apps' | 'billing'
 
-export type SoonPage = Extract<Page, 'analytics' | 'observability' | 'media' | 'billing'>
+export type SoonPage = Extract<Page, 'analytics' | 'media' | 'billing'>
 
 type NavItem = { page: Page; label: string; icon: IconName; soon?: boolean }
 
@@ -11,7 +11,7 @@ export const appNav: NavItem[] = [
   { page: 'auth', label: '認証（secret）', icon: 'key' },
   { page: 'tokens', label: 'トークン発行', icon: 'ticket' },
   { page: 'analytics', label: 'Analytics', icon: 'chart', soon: true },
-  { page: 'observability', label: 'Observability', icon: 'activity', soon: true },
+  { page: 'observability', label: 'Observability', icon: 'activity' },
   { page: 'media', label: 'メディア処理', icon: 'film', soon: true }
 ]
 
