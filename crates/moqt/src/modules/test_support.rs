@@ -25,6 +25,7 @@ use tracing_subscriber::{
 };
 
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
+use crate::modules::moqt::domains::session_events::MAX_UNREAD_EVENTS;
 use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
@@ -429,6 +430,24 @@ pub(crate) async fn connect_sessions_from<T: TransportProtocol>(
     .await??;
     let server = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept).await??;
     Ok((client, server))
+}
+
+/// Long enough for control messages already sent to reach a session that
+/// still reads them.
+const NO_EVENT_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// The events `session` has queued for its application once it stops queuing
+/// more at `MAX_UNREAD_EVENTS`.
+pub(crate) async fn unread_events_at_the_limit(session: &Session) -> usize {
+    let events = &session.publisher().session.event_sender;
+    within(async {
+        while events.unread() < MAX_UNREAD_EVENTS {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    tokio::time::sleep(NO_EVENT_TIMEOUT).await;
+    events.unread()
 }
 
 pub(crate) async fn within<F: Future>(future: F) -> F::Output {

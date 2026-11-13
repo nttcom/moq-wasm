@@ -1224,6 +1224,21 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   `incoming_object.rs`) and drops a later one, since datagrams take no flow
   control. Subgroup streams are not counted: an unread stream holds its QUIC
   stream credit, so the peer's stream limit bounds them.
+- **Unread session events are bounded**: a task that reads the peer's
+  messages queues a `SessionEvent` only while fewer than 1024 are unread
+  (`MAX_UNREAD_EVENTS` in `domains/session_events.rs`,
+  `SessionContext::room_for_event`), so a peer that sends faster than the
+  application reads is blocked by the transport's flow control and stream
+  limit (draft-14 §12.1, draft-18 §13.5). Past the limit the queue takes at
+  most one more event from the draft-14 control stream and one per draft-18
+  request stream. The queue of a connection whose session follows GOAWAY
+  takes the same limit, so the session's queue holds two limits at most.
+  While a task waits, so does what the peer sent behind the message, until
+  the application reads or the request it answers times out: every response
+  on the draft-14 control stream, and on a draft-18 request stream the
+  answers to this side's updates, never the first response. A draft-18
+  request stream waits only where it reads, so it still sends this side's
+  answers and cancels.
 - **Cancelled subscriptions discard late objects** (draft-14 §10.1):
   `Subscriber::unsubscribe`, the UNSUBSCRIBE sent for a late SUBSCRIBE_OK and
   `PublishHandler::error` (a PUBLISH with Forward=1 sends objects before its

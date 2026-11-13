@@ -8,7 +8,7 @@ use crate::modules::moqt::control_plane::control_messages::messages::client_setu
 use crate::{
     AuthorizationToken, Session, TerminationErrorCode, TraceContext,
     modules::moqt::{
-        domains::{connection::Connection, session_context::SessionContext},
+        domains::{connection::Connection, session_context::SessionContext, session_events},
         version::ServerHandshake,
     },
 };
@@ -44,7 +44,7 @@ impl Handshake {
     /// is sent.
     pub async fn accept(self, session_span: &Span) -> anyhow::Result<Session> {
         let (control, control_receiver) = self.setup.accept(&self.transport_connection).await?;
-        let (event_sender, event_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (event_sender, event_receiver) = session_events::channel();
         let context = SessionContext::new(
             Connection::new(
                 self.transport_connection,

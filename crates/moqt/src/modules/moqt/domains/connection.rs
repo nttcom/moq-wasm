@@ -22,7 +22,7 @@ use crate::{
             data_plane::stream::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
             },
-            domains::group_cutover::GroupCutover,
+            domains::{group_cutover::GroupCutover, session_events::SessionEventSender},
             runtime::dispatch::incoming_object::{
                 IncomingObject, IncomingObjectSendError, IncomingObjectSender,
             },
@@ -69,7 +69,7 @@ pub(crate) struct Connection {
     pub(crate) control: ControlChannel,
     /// 0 for the session's first connection, then one more per migration.
     pub(crate) generation: u64,
-    pub(crate) event_sender: mpsc::UnboundedSender<SessionEvent>,
+    pub(crate) event_sender: SessionEventSender,
     is_server: bool,
     go_away_received: AtomicBool,
     closed_locally: AtomicBool,
@@ -401,7 +401,7 @@ impl Connection {
         control: ControlChannel,
         is_server: bool,
         generation: u64,
-        event_sender: mpsc::UnboundedSender<SessionEvent>,
+        event_sender: SessionEventSender,
     ) -> Self {
         Self {
             transport,
