@@ -52,6 +52,11 @@ use crate::{
 /// allows 500 requests.
 pub(super) const REQUEST_ID_WINDOW: RequestId = 1000;
 
+/// The requests a caller may abandon, by timeout or drop, while the peer
+/// leaves them unanswered, before the session closes with
+/// CONTROL_MESSAGE_TIMEOUT (§12.2).
+const MAX_ABANDONED_REQUESTS: usize = 100;
+
 /// How to withdraw a request whose success response the caller abandons: by
 /// timing out, by cancelling, or by dropping the `ReceivedResponse` before
 /// `accept`. Error responses need no withdrawal and are discarded.
@@ -257,6 +262,7 @@ impl ControlChannel {
     /// receives this side's Request IDs in increasing order.
     pub(super) async fn send_request(
         &self,
+        connection: &Arc<Connection>,
         reservation: RequestIdReservation<'_>,
         request: OutgoingRequest,
     ) -> Result<PendingResponse, RequestFailure> {
@@ -305,7 +311,7 @@ impl ControlChannel {
         };
         debug_assert_eq!(request_id, reservation.request_id());
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let registered = self.register(request_id, sender, on_late_response);
+        let registered = self.register(connection, request_id, sender, on_late_response);
         self.send_with_request_id(reservation, message_type, payload)
             .await?;
         Ok(PendingResponse {
@@ -431,6 +437,7 @@ impl ControlChannel {
     /// sender is dropped and the wait fails at once.
     fn register(
         &self,
+        connection: &Arc<Connection>,
         request_id: RequestId,
         sender: tokio::sync::oneshot::Sender<ReceivedResponse>,
         on_late_response: LateResponseAction,
@@ -450,6 +457,7 @@ impl ControlChannel {
         }
         RegisteredSender {
             inflight_requests: self.inflight_requests.clone(),
+            connection: Arc::downgrade(connection),
             request_id,
         }
     }
@@ -490,22 +498,47 @@ fn error_message_type(kind: RequestKind) -> ControlMessageType {
 /// Holds the `inflight_requests` registration for an in-flight request. On
 /// drop, a still-waiting entry is downgraded to `Abandoned` (not removed):
 /// the caller gave up, but a late response must still find the entry so it
-/// triggers the registered action instead of a session close.
+/// triggers the registered action instead of a session close. The drop that
+/// takes the `Abandoned` entries past `MAX_ABANDONED_REQUESTS` closes the
+/// session with CONTROL_MESSAGE_TIMEOUT.
 struct RegisteredSender {
     inflight_requests: Arc<std::sync::Mutex<InflightRequests>>,
+    connection: Weak<Connection>,
     request_id: RequestId,
 }
 
 impl Drop for RegisteredSender {
     fn drop(&mut self) {
-        if let Ok(mut inflight) = self.inflight_requests.lock()
-            && let Some(entry) = inflight.requests.get_mut(&self.request_id)
-            && let InflightRequest::Waiting {
-                on_late_response, ..
-            } = entry
-        {
-            let action = std::mem::replace(on_late_response, LateResponseAction::Discard);
-            *entry = InflightRequest::Abandoned(action);
+        let Ok(mut inflight) = self.inflight_requests.lock() else {
+            return;
+        };
+        let Some(entry) = inflight.requests.get_mut(&self.request_id) else {
+            return;
+        };
+        let InflightRequest::Waiting {
+            on_late_response, ..
+        } = entry
+        else {
+            return;
+        };
+        let action = std::mem::replace(on_late_response, LateResponseAction::Discard);
+        *entry = InflightRequest::Abandoned(action);
+        let abandoned = inflight
+            .requests
+            .values()
+            .filter(|request| matches!(request, InflightRequest::Abandoned(_)))
+            .count();
+        let too_many = abandoned > MAX_ABANDONED_REQUESTS;
+        drop(inflight);
+        if too_many && let Some(connection) = self.connection.upgrade() {
+            tracing::error!(
+                request_id = self.request_id,
+                "the peer left too many requests unanswered; closing session"
+            );
+            connection.close(
+                TerminationErrorCode::ControlMessageTimeout,
+                "too many requests unanswered",
+            );
         }
     }
 }
@@ -750,8 +783,8 @@ mod tests {
     use futures::FutureExt;
 
     use super::{
-        ControlChannel, LateResponseAction, Notification, OutgoingRequest, REQUEST_ID_WINDOW,
-        RequestIdReservation, handle_late_response,
+        ControlChannel, LateResponseAction, MAX_ABANDONED_REQUESTS, Notification, OutgoingRequest,
+        REQUEST_ID_WINDOW, RequestIdReservation, handle_late_response,
     };
     use crate::{
         RequestFailure, Session, SessionEvent,
@@ -1144,6 +1177,70 @@ mod tests {
         handler
     }
 
+    async fn abandon_requests(session: &Session, count: usize) {
+        let connection = connection_of(session);
+        let channel = ControlChannel::of(&connection);
+        for _ in 0..count {
+            let reservation = channel.reserve_request_id().await.unwrap();
+            let request = OutgoingRequest::TrackStatus(track_status(reservation.request_id()));
+            drop(
+                channel
+                    .send_request(&connection, reservation, request)
+                    .await
+                    .unwrap(),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn abandoned_requests_up_to_the_limit_keep_the_session_open() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("abandoned-within-limit").await;
+
+        // Act
+        abandon_requests(&client, MAX_ABANDONED_REQUESTS).await;
+        let closed = tokio::time::timeout(Duration::from_millis(200), client.closed()).await;
+
+        // Assert
+        assert!(closed.is_err(), "the session closed: {closed:?}");
+    }
+
+    #[tokio::test]
+    async fn a_late_response_frees_its_place_under_the_limit() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("abandoned-answered").await;
+        abandon_requests(&client, MAX_ABANDONED_REQUESTS).await;
+        let connection = connection_of(&client);
+        let inflight_requests = ControlChannel::of(&connection).inflight_requests.clone();
+
+        // Act: dropping the handler answers the first request late
+        drop(receive_track_status(&server).await);
+        within(async {
+            while inflight_requests.lock().unwrap().requests.len() == MAX_ABANDONED_REQUESTS {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        abandon_requests(&client, 1).await;
+        let closed = tokio::time::timeout(Duration::from_millis(200), client.closed()).await;
+
+        // Assert
+        assert!(closed.is_err(), "the session closed: {closed:?}");
+    }
+
+    #[tokio::test]
+    async fn a_request_abandoned_past_the_limit_closes_the_session() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("abandoned-past-limit").await;
+        abandon_requests(&client, MAX_ABANDONED_REQUESTS).await;
+
+        // Act
+        abandon_requests(&client, 1).await;
+
+        // Assert: 0x11 is CONTROL_MESSAGE_TIMEOUT (§13.1.1)
+        assert_closed_with(&server, 0x11, "too many requests unanswered").await;
+    }
+
     #[tokio::test]
     async fn request_dropped_before_it_is_written_leaves_its_request_id_unused() {
         // Arrange
@@ -1155,7 +1252,9 @@ mod tests {
         let request = OutgoingRequest::TrackStatus(track_status(reservation.request_id()));
 
         // Act
-        let send = channel.send_request(reservation, request).now_or_never();
+        let send = channel
+            .send_request(&connection, reservation, request)
+            .now_or_never();
 
         // Assert
         assert!(send.is_none(), "wrote past the held control stream");

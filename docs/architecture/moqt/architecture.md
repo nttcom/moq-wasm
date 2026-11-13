@@ -1261,6 +1261,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 - **Control response timeout**: `PendingResponse::response` bounds every
   request/response wait to 10 s; a timeout fails only that request with
   `RequestFailure::Timeout` and keeps the session open (draft-14 §12.2).
+  On draft-14 the request's `inflight_requests` entry stays as `Abandoned`
+  until a late response or the control stream's end, and abandoning more
+  than 100 of them closes the session with CONTROL_MESSAGE_TIMEOUT.
   Every request that waits for a response returns `RequestFailure`, so
   callers tell a peer rejection, a timeout and a closed session apart by
   matching instead of downcasting.
