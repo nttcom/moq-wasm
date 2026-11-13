@@ -1,3 +1,4 @@
+mod catalog;
 mod namespaces;
 mod publication;
 mod session;
@@ -10,6 +11,7 @@ use pyo3::prelude::*;
 #[pymodule]
 fn moqt(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(session::connect, module)?)?;
+    module.add_function(wrap_pyfunction!(catalog::parse_catalog, module)?)?;
     module.add_class::<session::Session>()?;
     module.add_class::<namespaces::NamespaceEvent>()?;
     module.add_class::<namespaces::NamespaceEvents>()?;

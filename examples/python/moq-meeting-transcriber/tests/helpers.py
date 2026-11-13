@@ -27,13 +27,15 @@ def _tone(index: int, frequency: float):
     return (np.sin(2 * np.pi * frequency * t) * 8000).astype(np.int16).reshape(1, -1)
 
 
-def meeting_catalog(*audio_bitrates: int) -> bytes:
+def meeting_catalog(*audio_bitrates: int, version: str = "draft-01") -> bytes:
     tracks = [
-        {"name": f"audio_{bitrate // 1000}kbps", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": bitrate}
+        {"name": f"audio_{bitrate // 1000}kbps", "role": "audio", "packaging": "loc", "isLive": True, "codec": "opus", "bitrate": bitrate}
         for bitrate in audio_bitrates
     ]
-    tracks.append({"name": "camera_720p", "role": "video", "packaging": "loc", "codec": "avc1.64001f", "bitrate": 2_500_000})
-    return json.dumps({"version": "draft-01", "tracks": tracks}).encode()
+    tracks.append(
+        {"name": "camera_720p", "role": "video", "packaging": "loc", "isLive": True, "codec": "avc1.64001f", "bitrate": 2_500_000}
+    )
+    return json.dumps({"version": version, "tracks": tracks}).encode()
 
 
 class RecordingPublication:

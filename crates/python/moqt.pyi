@@ -15,6 +15,11 @@ async def connect(
     without it only draft-14 is offered. An unknown name raises `ValueError`, and an empty list fails
     the connect."""
 
+def parse_catalog(payload: bytes) -> dict:
+    """Raises `ValueError` when `payload` is not an independent MSF catalog: malformed, of a
+    `version` other than `"draft-01"` (draft-ietf-moq-msf-01 §5.1.1), or a delta update, which the
+    bindings do not apply."""
+
 class Session:
     async def subscribe_namespace(self, prefix: list[str]) -> NamespaceEvents:
         """Namespaces published and withdrawn under `prefix`, including those already published."""

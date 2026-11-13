@@ -1,9 +1,14 @@
-import json
+import moqt
+from loguru import logger
 
 
 def camera_video_track(catalog: bytes) -> str | None:
     """The LOC video track the camera page publishes: the shortest-named one, as a rendition is named after its video."""
-    tracks = json.loads(catalog).get("tracks", [])
+    try:
+        tracks = moqt.parse_catalog(catalog).get("tracks", [])
+    except ValueError as error:
+        logger.warning(f"catalog ignored: {error}")
+        return None
     video = [track["name"] for track in tracks if track.get("role") == "video" and track.get("packaging") == "loc"]
     if not video:
         return None
