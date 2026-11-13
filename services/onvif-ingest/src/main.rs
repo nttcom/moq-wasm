@@ -71,10 +71,6 @@ struct MoqtArgs {
     #[arg(long, default_value = "command")]
     command_track: String,
 
-    /// Subscriber priority for command track
-    #[arg(long, default_value_t = 0)]
-    subscriber_priority: u8,
-
     /// Publish this RTSP stream as profile 1 instead of the camera's ONVIF
     /// profiles, e.g. a local test server
     #[arg(long, value_name = "URL")]
@@ -142,7 +138,6 @@ async fn main() -> Result<()> {
         CommandTrack {
             namespace: subscribe_namespace.join("/"),
             track: args.command_track.clone(),
-            subscriber_priority: args.subscriber_priority,
         },
         command_sender,
     )

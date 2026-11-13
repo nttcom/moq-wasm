@@ -16,7 +16,6 @@ use crate::ptz_worker::Command;
 pub(crate) struct CommandTrack {
     pub(crate) namespace: String,
     pub(crate) track: String,
-    pub(crate) subscriber_priority: u8,
 }
 
 /// Follows the viewer's command track on a session of its own, separate from
@@ -174,7 +173,7 @@ async fn subscribe_command_track(
             command_track.namespace.clone(),
             command_track.track.clone(),
             SubscribeOption {
-                subscriber_priority: command_track.subscriber_priority,
+                subscriber_priority: 0,
                 group_order: GroupOrder::Ascending,
                 forward: true,
                 filter_type: FilterType::NextGroupStart,
@@ -255,11 +254,7 @@ async fn accept_command_publish(
         return Ok(None);
     }
     let subscription = handler
-        .ok(
-            command_track.subscriber_priority,
-            FilterType::NextGroupStart,
-            handler.forward,
-        )
+        .ok(0, FilterType::NextGroupStart, handler.forward)
         .await
         .context("accept command publish")?;
     tracing::info!(
@@ -408,7 +403,6 @@ mod tests {
             CommandTrack {
                 namespace: NAMESPACE.to_string(),
                 track: TRACK.to_string(),
-                subscriber_priority: 0,
             },
             command_sender,
         )
