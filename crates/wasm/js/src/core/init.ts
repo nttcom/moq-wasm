@@ -1,7 +1,9 @@
 import { setSdkLogSink } from './log'
 import { ClientTelemetry, type TelemetryOptions } from './telemetry'
+import type * as Moqt from '../../pkg/moqt'
 
-type MoqtModule = typeof import('../../pkg/moqt')
+// Not `typeof import(...)`: API Extractor cannot report that form.
+type MoqtModule = typeof Moqt
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
