@@ -1,6 +1,6 @@
 import type { VideoEncodingOptions } from 'moq-wasm/media'
 import { getResolvedMediaVideoCodec } from './catalog'
-import { getMediaVideoEncodingOverrides } from './common'
+import { getMediaVideoHardwareAcceleration } from './common'
 
 const DEFAULT_WIDTH = 1280
 const DEFAULT_HEIGHT = 720
@@ -9,11 +9,10 @@ const BITRATE = 1_000_000
 
 export function buildVideoEncoding(stream: MediaStream): VideoEncodingOptions {
   const settings = stream.getVideoTracks()[0]?.getSettings() ?? {}
-  const { hardwareAcceleration } = getMediaVideoEncodingOverrides()
   return {
     encoding: {
       codec: getResolvedMediaVideoCodec(),
-      hardwareAcceleration
+      hardwareAcceleration: getMediaVideoHardwareAcceleration()
     },
     main: {
       width: typeof settings.width === 'number' ? settings.width : DEFAULT_WIDTH,
