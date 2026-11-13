@@ -6,10 +6,11 @@ import {
   type Mp4AudioTrack,
   monotonicUnixMicros
 } from 'moq-wasm/media'
-import { loadMoqt } from 'moq-wasm'
+import { loadMoqt, MoqSession } from 'moq-wasm'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor, type StreamRecord } from './streamMonitor'
 import { type StatusState, getErrorMessage } from '../../utils/page'
+import { connectOptions } from '../../utils/access'
 
 const MILLIS_PER_MICRO = 1 / 1_000
 const ATOM_HEADER_LENGTH = 8
@@ -57,7 +58,8 @@ type Mp4Media = {
 }
 
 /// Reads the samples of an MP4 file and paces them like a live encoder into
-/// `Mp4Broadcast`, which publishes them as live-ingest does.
+/// `Mp4Broadcast`, which publishes them as live-ingest does. It publishes on a
+/// session of its own, so stopping it leaves the viewer's session open.
 export class Mp4Publisher {
   readonly sentStreams = new StreamMonitor()
   private broadcast: Mp4Broadcast | undefined
@@ -73,25 +75,24 @@ export class Mp4Publisher {
   async start(options: Mp4PublishOptions): Promise<void> {
     await this.stop()
     const media = await openMp4(options.file)
-    let broadcast: Mp4Broadcast
+    let session: MoqSession | undefined
+    let broadcast: Mp4Broadcast | undefined
     try {
       this.sentStreams.reset()
       this.trackAliases.clear()
-      broadcast = new Mp4Broadcast(options.url, options.namespace, media.index)
-      try {
-        await broadcast.announce()
-      } catch (error) {
-        broadcast.free()
-        throw error
-      }
+      session = await MoqSession.connect(options.url, connectOptions())
+      broadcast = session.mp4Broadcast(options.namespace, media.index)
+      await broadcast.announce()
     } catch (error) {
+      broadcast?.free()
+      session?.close()
       media.index.free()
       throw error
     }
     this.broadcast = broadcast
     this.stopRequested = false
     this.preview.start(media.video.codec, media.reorderDelayMicros)
-    this.running = this.publish(broadcast, media, options)
+    this.running = this.publish(session, broadcast, media, options)
     this.callbacks.onStatus(
       `Publishing ${options.file.name} (${describeMedia(media)}) to ${options.namespace.join('/')}`,
       'ok'
@@ -119,7 +120,12 @@ export class Mp4Publisher {
 
   /// The final status is reported once the session is closed, so a reader of
   /// `Publish stopped` knows the relay has seen the publisher leave.
-  private async publish(broadcast: Mp4Broadcast, media: Mp4Media, options: Mp4PublishOptions): Promise<void> {
+  private async publish(
+    session: MoqSession,
+    broadcast: Mp4Broadcast,
+    media: Mp4Media,
+    options: Mp4PublishOptions
+  ): Promise<void> {
     let status: Parameters<Mp4PublisherCallbacks['onStatus']>
     try {
       const completed = await this.pace(broadcast, media, options)
@@ -131,7 +137,8 @@ export class Mp4Publisher {
     this.broadcast = undefined
     this.preview.stop()
     media.index.free()
-    await broadcast.close()
+    session.close()
+    await session.closed
     broadcast.free()
     this.callbacks.onStatus(...status)
   }
