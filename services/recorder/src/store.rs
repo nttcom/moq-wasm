@@ -1,7 +1,12 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use object_store::{ObjectStore, ObjectStoreExt, PutMode, PutPayload, path::Path};
+use object_store::{
+    ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutPayload,
+    gcp::GoogleCloudStorageBuilder,
+    path::Path,
+    signer::{Method, Signer},
+};
 use serde_json::Value;
 use url::Url;
 
@@ -37,6 +42,15 @@ pub(crate) struct RecordingStore {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
     cloud_storage: Option<Arc<CloudStorageBucket>>,
+    /// Signs the URLs a browser reads a file with; only a `gs://` store has one.
+    signer: Option<Arc<dyn Signer>>,
+}
+
+/// `name` is the file's key below the recording's prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoredFile {
+    pub(crate) name: String,
+    pub(crate) size_bytes: u64,
 }
 
 impl RecordingStore {
@@ -45,14 +59,25 @@ impl RecordingStore {
     pub(crate) fn open(url: &Url) -> Result<Self> {
         let (store, prefix) = object_store::parse_url_opts(url, std::env::vars())
             .with_context(|| format!("cannot use {url} as the recording store"))?;
-        let cloud_storage = match (url.scheme(), url.host_str()) {
-            ("gs", Some(bucket)) => Some(Arc::new(CloudStorageBucket::new(bucket)?)),
-            _ => None,
+        let (cloud_storage, signer) = match (url.scheme(), url.host_str()) {
+            ("gs", Some(bucket)) => {
+                let signer: Arc<dyn Signer> = Arc::new(
+                    GoogleCloudStorageBuilder::from_env()
+                        .with_bucket_name(bucket)
+                        .build()?,
+                );
+                (
+                    Some(Arc::new(CloudStorageBucket::new(bucket)?)),
+                    Some(signer),
+                )
+            }
+            _ => (None, None),
         };
         Ok(Self {
             store: Arc::from(store),
             prefix,
             cloud_storage,
+            signer,
         })
     }
 
@@ -170,6 +195,90 @@ impl RecordingStore {
             .iter()
             .filter_map(|object| object.location.filename().map(str::to_string))
             .collect())
+    }
+
+    /// The ids of the recordings of `app` that have a file in the store,
+    /// newest first.
+    pub(crate) async fn app_recording_ids(&self, app: &str) -> Result<Vec<String>> {
+        let listed = self
+            .store
+            .list_with_delimiter(Some(&self.prefix.clone().join(app)))
+            .await?;
+        let mut ids: Vec<String> = listed
+            .common_prefixes
+            .iter()
+            .filter_map(|prefix| prefix.filename().map(str::to_string))
+            .collect();
+        ids.sort_unstable_by(|a, b| b.cmp(a));
+        Ok(ids)
+    }
+
+    /// The MP4 files of a recording, sorted by name.
+    pub(crate) async fn recording_files(
+        &self,
+        namespace_prefix: &str,
+        id: &str,
+    ) -> Result<Vec<StoredFile>> {
+        let prefix = self.recording_prefix(namespace_prefix, id);
+        let mut files: Vec<StoredFile> = self
+            .list_recursively(&prefix)
+            .await?
+            .into_iter()
+            .filter(|object| object.location.extension() == Some("mp4"))
+            .filter_map(|object| {
+                let name = object
+                    .location
+                    .prefix_match(&prefix)?
+                    .map(|part| part.as_ref().to_string())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                Some(StoredFile {
+                    name,
+                    size_bytes: object.size,
+                })
+            })
+            .collect();
+        files.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        Ok(files)
+    }
+
+    /// A URL that reads the MP4 file `name` of a recording for `expires_in`;
+    /// `None` when the recording has no such file. Fails on a store that
+    /// cannot sign (any but `gs://`).
+    pub(crate) async fn file_url(
+        &self,
+        namespace_prefix: &str,
+        id: &str,
+        name: &str,
+        expires_in: Duration,
+    ) -> Result<Option<url::Url>> {
+        let prefix = self.recording_prefix(namespace_prefix, id);
+        let Ok(key) = Path::parse(format!("{prefix}/{name}")) else {
+            return Ok(None);
+        };
+        if !key.prefix_matches(&prefix) || key.extension() != Some("mp4") {
+            return Ok(None);
+        }
+        match self.store.head(&key).await {
+            Ok(_) => {}
+            Err(object_store::Error::NotFound { .. }) => return Ok(None),
+            Err(error) => return Err(error).with_context(|| format!("cannot read {key}")),
+        }
+        let signer = self.signer.as_ref().context("the store cannot sign URLs")?;
+        Ok(Some(
+            signer.signed_url(Method::GET, &key, expires_in).await?,
+        ))
+    }
+
+    async fn list_recursively(&self, prefix: &Path) -> Result<Vec<ObjectMeta>> {
+        let mut pending = vec![prefix.clone()];
+        let mut objects = Vec::new();
+        while let Some(directory) = pending.pop() {
+            let listed = self.store.list_with_delimiter(Some(&directory)).await?;
+            objects.extend(listed.objects);
+            pending.extend(listed.common_prefixes);
+        }
+        Ok(objects)
     }
 
     pub(crate) async fn stop_requested(&self, id: &str) -> Result<bool> {
@@ -303,6 +412,7 @@ mod tests {
             store: Arc::new(LocalFileSystem::new_with_prefix(&dir).unwrap()),
             prefix: Path::default(),
             cloud_storage: None,
+            signer: None,
         };
         let key = store.lock_key("anon/research");
         store.store.put(&key, "newer".into()).await.unwrap();
@@ -317,5 +427,89 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(kept);
         assert!(deleted);
+    }
+
+    #[tokio::test]
+    async fn lists_an_apps_recordings_newest_first_with_their_mp4_files() {
+        // Arrange
+        let store = RecordingStore::open(&Url::parse("memory:///").unwrap()).unwrap();
+        let put = |key: Path, bytes: &'static [u8]| {
+            let store = store.object_store();
+            async move { store.put(&key, PutPayload::from(bytes)).await.unwrap() }
+        };
+        let older = store.recording_prefix("app/room", "1700000000000-000001");
+        let newer = store.recording_prefix("app/room", "1700000001000-000002");
+        put(
+            older
+                .clone()
+                .join("app")
+                .join("room")
+                .join("alice")
+                .join("10-1.mp4"),
+            b"12345",
+        )
+        .await;
+        put(older.clone().join("manifest.json"), b"{}").await;
+        put(newer.clone().join("composite.mp4"), b"1").await;
+        put(
+            store
+                .recording_prefix("other/room", "1700000002000-000003")
+                .join("a.mp4"),
+            b"1",
+        )
+        .await;
+
+        // Act
+        let ids = store.app_recording_ids("app").await.unwrap();
+        let files = store
+            .recording_files("app/room", "1700000000000-000001")
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(ids, ["1700000001000-000002", "1700000000000-000001"]);
+        assert_eq!(
+            files,
+            [StoredFile {
+                name: "app/room/alice/10-1.mp4".to_string(),
+                size_bytes: 5,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn signs_only_an_mp4_file_of_the_recording() {
+        // Arrange: a memory store, which cannot sign
+        let store = RecordingStore::open(&Url::parse("memory:///").unwrap()).unwrap();
+        let prefix = store.recording_prefix("app/room", "1");
+        for name in ["a.mp4", "manifest.json"] {
+            store
+                .object_store()
+                .put(&prefix.clone().join(name), PutPayload::from_static(b"1"))
+                .await
+                .unwrap();
+        }
+        store
+            .object_store()
+            .put(
+                &store.recording_prefix("app/room", "2").join("b.mp4"),
+                PutPayload::from_static(b"1"),
+            )
+            .await
+            .unwrap();
+        let url = |name: &'static str| {
+            let store = store.clone();
+            async move {
+                store
+                    .file_url("app/room", "1", name, Duration::from_secs(60))
+                    .await
+            }
+        };
+
+        // Act / Assert
+        assert!(url("missing.mp4").await.unwrap().is_none());
+        assert!(url("manifest.json").await.unwrap().is_none());
+        assert!(url("../2/b.mp4").await.unwrap().is_none());
+        assert!(url("a.mp4").await.is_err());
     }
 }

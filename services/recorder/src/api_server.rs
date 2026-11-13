@@ -35,12 +35,16 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 /// - `POST /recordings/{id}/publish` exposes a finished recording through relay FETCH
 ///   while its answer stays open (see [`ReplayStream`])
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it
+/// - `GET /apps/{app_id}/recordings` lists the app's MP4 recordings with their
+///   files, and `GET /recordings/{id}/file?name=` answers a signed URL that
+///   reads one of them from the store
 ///
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
 /// only hide the answer from that page, and a form or a `text/plain` fetch
 /// needs no preflight. Every request but `/healthz` and a preflight needs a
 /// VTS-verified bearer token whose `publish` claim covers the room to start
-/// or stop a recording, its `subscribe` claim for the rest. A failing store
+/// or stop a recording, its `subscribe` claim for the rest; an app's list
+/// needs a `subscribe` claim covering the whole app. A failing store
 /// answers 500.
 pub(crate) struct ApiServer {
     _http: HttpServer,
@@ -91,6 +95,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
                 }
                 Err(error) => return with_cors(internal_error(&error), origin),
             },
+            ["apps", app_id, "recordings"] => app_id.to_string(),
             ["recordings"] if method == Method::GET => match query.get("namespace_prefix") {
                 Some(namespace) => namespace.clone(),
                 None => {
@@ -137,6 +142,20 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
         {
             Ok(recordings) => json_response(StatusCode::OK, &recordings),
             Err(error) => internal_error(&error),
+        },
+        (&Method::GET, ["apps", app_id, "recordings"]) => {
+            match state.recordings.app_recordings(app_id).await {
+                Ok(recordings) => json_response(StatusCode::OK, &recordings),
+                Err(error) => internal_error(&error),
+            }
+        }
+        (&Method::GET, ["recordings", id, "file"]) => match query.get("name") {
+            None => error_response(StatusCode::BAD_REQUEST, "name is required"),
+            Some(name) => match state.recordings.file_url(id, name).await {
+                Ok(Some(url)) => json_response(StatusCode::OK, &url),
+                Ok(None) => error_response(StatusCode::NOT_FOUND, "no such file"),
+                Err(error) => internal_error(&error),
+            },
         },
         (&Method::GET, ["recordings", id]) => match state.recordings.get(id).await {
             Ok(recording) => found(recording),

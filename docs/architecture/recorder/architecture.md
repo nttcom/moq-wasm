@@ -415,6 +415,17 @@ backend, which the recorder cannot ask, so its recording lasts at most until the
 token's `exp`. `--insecure-skip-auth` accepts every request and records with
 whatever token it carries, for a local relay without authorization.
 
+`GET /apps/{app}/recordings` lists an app's MP4 recordings for the console,
+which signs a token covering the whole app with the app's secret: the ids are
+the directories under `<app>/` in the store, so it reads no other app's
+objects, and only recordings that uploaded a file are listed. A file is not
+served by the recorder: `GET /recordings/{id}/file?name=` answers a V4 signed
+URL that reads it straight from Cloud Storage for 15 minutes, which a `<video>`
+plays with range requests. A URL is signed only when a file is opened rather
+than for every file of a list, since each signature is a call to the IAM
+`signBlob` API: the recorder's service account signs as itself and needs
+`iam.serviceAccounts.signBlob` on itself.
+
 A POST whose `Origin` is not an `--allowed-origin` is refused, since
 CORS alone only hides the answer from that page and a `text/plain` POST needs
 no preflight. The relay URL, the store and the track choice are server
