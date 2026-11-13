@@ -340,6 +340,9 @@ await screen.start(session, namespace, catalog)
 ```
 
 `stop()` leaves a shared catalog open; `catalog.close()` unsubscribes it.
+`parseCatalog` throws on a catalog whose `version` is not `draft-01` and on a
+delta update, which draft-ietf-moq-msf-01 §5.1.1 forbids reading and the SDK
+does not apply.
 
 Tell a stopped track from a departed publisher by the catalog: a track that
 a publisher mutes or whose source it closes leaves the catalog, and the

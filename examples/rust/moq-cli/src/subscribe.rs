@@ -77,8 +77,7 @@ async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<Tra
         .next_object()
         .await?
         .context("catalog track ended before any object")?;
-    let catalog: msf::Catalog =
-        serde_json::from_slice(&catalog.payload).context("catalog is not MSF JSON")?;
+    let catalog = msf::Catalog::parse(&catalog.payload).context("catalog is not MSF JSON")?;
     describe_track(&catalog, &track.name);
     Ok(subscriber.track_reader(&media_subscription))
 }
