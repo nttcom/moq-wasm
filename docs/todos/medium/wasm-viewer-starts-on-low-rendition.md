@@ -9,5 +9,5 @@ Forcing it locally (main rendition held back 1.5 s, bob's mic muted 4 s later), 
 
 ## Plan
 
-Lead for `:490`: a `<video>` the page detaches across tasks stays paused, and a splice keeps the element, so its width freezes even when the switch completes (`wasm-live-video-paused-after-container-move.md`). Check whether bob's element was paused when it failed.
+Ruled out for `:490`: a `<video>` the page detaches across tasks used to stay paused and freeze its width; `PictureStage` now plays it again (`pictureStage.ts`). A failure at `:490` with bob's element paused means that resume did not run.
 Open for `:491`: whether carol's audio objects stopped, or her view lost the `onAudioLevel` listener when her catalog first named the source after `camera_low` (`sourceNames.ts:58`).

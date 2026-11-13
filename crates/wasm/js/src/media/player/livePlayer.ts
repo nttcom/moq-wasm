@@ -233,7 +233,7 @@ export class LivePlayer {
     if (options.latencyTolerance !== undefined) {
       this.adaptiveBitrate.setLatencyTolerance(options.latencyTolerance)
     }
-    this.stage = new PictureStage(options.container)
+    this.stage = new PictureStage(options.container, () => !this.disposed && !this.paused && !this.review)
     this.container = options.container
     this.resizeObserver = new ResizeObserver(() => this.pictureResized())
     this.resizeObserver.observe(options.container)
