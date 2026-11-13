@@ -335,8 +335,8 @@ async fn main() -> Result<()> {
             "mediapack=info",
             "transcode=info",
         ],
-        resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stderr,
+        ..Default::default()
     })?;
     // One parser per mode instead of clap subcommands: with subcommands, a
     // recording flag filled from an environment variable (`MOQT_URL`) counts

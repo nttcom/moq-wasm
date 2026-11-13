@@ -84,12 +84,12 @@ async fn main() -> Result<()> {
             "mediapack=info",
             "transcode=info",
         ],
-        resource_attributes: Vec::new(),
         log_output: if args.stats {
             telemetry::LogOutput::Stderr
         } else {
             telemetry::LogOutput::Stdout
         },
+        ..Default::default()
     })?;
     let stats = args.stats.then(|| {
         let registry = ConnectionRegistry::default();

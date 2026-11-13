@@ -102,8 +102,8 @@ async fn main() -> Result<()> {
             "broadcast=info",
             "mediapack=info",
         ],
-        resource_attributes: Vec::new(),
         log_output: telemetry::LogOutput::Stdout,
+        ..Default::default()
     })?;
     let args = MoqtArgs::parse();
     let target = app_config::Target::from_args(&args.onvif)?;
