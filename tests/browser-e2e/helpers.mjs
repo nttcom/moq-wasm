@@ -15,6 +15,7 @@ import {
 export const jsDir = resolve(repoRoot, "examples", "browser");
 export const mediaIndexPath = "/moq-wasm/examples/media/index.html";
 export const messageIndexPath = "/moq-wasm/examples/message/index.html";
+export const datagramIndexPath = "/moq-wasm/examples/datagram/index.html";
 export const liveViewerPath = "/moq-wasm/examples/live-viewer/index.html";
 const setupHelpText = "Run node tests/browser-e2e/setup-media-e2e.mjs first.";
 

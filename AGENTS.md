@@ -82,6 +82,7 @@ Application and integration components (draft reference is normally not required
 - Relay: `cargo run --bin relay`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
+- E2E Test (datagram): `node tests/browser-e2e/run-datagram-e2e.mjs`
 - E2E Test (auth): `./tests/auth-e2e/run.sh`
 - E2E Test (console): `node tests/browser-e2e/run-console-e2e.mjs`
 - E2E Test (live-translate): `node tests/browser-e2e/run-live-translate-e2e.mjs`
