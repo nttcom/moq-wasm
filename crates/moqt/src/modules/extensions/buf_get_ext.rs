@@ -31,14 +31,17 @@ impl<T: Buf> BufGetExt for T {
             .map_err(|e| anyhow!("Failed to get string length: {:?}", e))?;
         // copy_to_bytes panics when the buffer is shorter than the
         // peer-controlled length, so reject truncated input first.
-        if self.remaining() < length as usize {
+        let Some(length) = usize::try_from(length)
+            .ok()
+            .filter(|&length| length <= self.remaining())
+        else {
             bail!(
                 "String truncated: length {} > remaining {}",
                 length,
                 self.remaining()
             );
-        }
-        let bytes_str = self.copy_to_bytes(length as usize);
+        };
+        let bytes_str = self.copy_to_bytes(length);
         let s = str::from_utf8(&bytes_str)?;
         Ok(s.to_string())
     }
@@ -100,7 +103,7 @@ mod tests {
     mod failure {
         use bytes::BytesMut;
 
-        use crate::modules::extensions::buf_get_ext::BufGetExt;
+        use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
 
         #[test]
         fn try_get_varint_failed() {
@@ -149,6 +152,21 @@ mod tests {
             let mut bytes = std::io::Cursor::new(&bytes[..]);
             let result = bytes.try_get_string();
             assert!(result.is_err());
+        }
+
+        #[test]
+        fn try_get_string_length_over_u32_failed() {
+            // Arrange: the low 32 bits of the length are 1, and 1 byte follows
+            let mut bytes = BytesMut::new();
+            bytes.put_varint((1 << 32) + 1);
+            bytes.extend_from_slice(b"a");
+            let mut bytes = std::io::Cursor::new(&bytes[..]);
+
+            // Act
+            let result = bytes.try_get_string();
+
+            // Assert
+            assert!(result.is_err(), "{result:?}");
         }
     }
 }
