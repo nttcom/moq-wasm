@@ -887,10 +887,10 @@ named `live-player-*`.
   screen share serve the meeting as they serve the viewer. A member who leaves
   or rejoins has its players disposed. The buffer policy and catch-up are set
   per member, and the per-member stats line and charts show `LiveStats`.
-- `examples/media/subscriber`: one `LocLive` on the page's own `<video>` and a
-  hidden `<canvas>`, configured from the MSF catalog tracks the page selects
-  and fed from its SUBSCRIBEs; the playout stats line replaces the jitter
-  buffer bypass checkbox.
+- `examples/media/subscriber`: one `LivePlayer` started with the MSF catalog
+  tracks the page selects (`LiveTracks`), so it subscribes exactly those; the
+  receive line counts the player's objects and the playout stats line shows
+  its `LiveStats`.
 - `examples/remote-monitoring`: `watchBroadcasts` over the location's
   namespace, one `RemoteBroadcast` and so one player per camera. Each view's
   element sits in a host element the page moves between the stage and the
