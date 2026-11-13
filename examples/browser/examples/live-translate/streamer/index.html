@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Live Translate Streamer</title>
     <link rel="stylesheet" href="../../media/media.css" />
+    <style>
+      #app {
+        grid-template-columns: repeat(auto-fit, minmax(max(280px, calc((100% - 18px) / 2)), 1fr));
+      }
+      #viewer-link {
+        overflow-wrap: anywhere;
+      }
+    </style>
   </head>
   <body>
     <div class="page">
