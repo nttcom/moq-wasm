@@ -384,6 +384,9 @@ recording job stopped"), and releases its room when it next needs the lock or
 counts the active recordings. The `starting` state lasts as long as the job
 takes to start, about 12 s on Cloud Run; the Meeting shows `Starting` instead
 of `REC` meanwhile, and nothing from before the job joined is recorded.
+A lock with no state whose id was made 90 s ago or more belongs to a request
+that ended between steps 1 and 3 (it failed or its instance died); the API
+releases it when it next needs the room's lock.
 
 The API accepts only a prefix of at least two elements under `--namespace-root`
 (`anon` by default) and one recording per prefix. Anonymous rooms are public,
@@ -657,10 +660,9 @@ the recorder started with.
   composited (`skipped`).
 - A composite job that dies stays `composing`: unlike the recording job it
   writes no heartbeat.
-- A lock left by an API that died between taking it and writing the state
-  counts toward `--max-recordings` for 90 s after its id was made, and is
-  never released: with no state, nothing tells that its recording ended,
-  so its room answers `409` until someone deletes `locks/<prefix>`.
+- A lock left by a request that ended between taking it and writing the
+  state counts toward `--max-recordings`, and its room answers `409`, for
+  90 s after its id was made.
 - A single recording (`recorder --upload`) writes no manifest; the capture
   origin of its files is only logged.
 - Clocks of the participants' devices are trusted as they are; a skewed

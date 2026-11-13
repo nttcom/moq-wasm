@@ -311,6 +311,9 @@ impl Recordings {
         if self.holds_active_recording(&holder).await? {
             return Ok(false);
         }
+        // `holds_active_recording` releases an ended holder through its state file;
+        // a holder without one is released here.
+        self.store.unlock_room(namespace_prefix, &holder).await?;
         self.store.lock_room(namespace_prefix, id).await
     }
 
@@ -556,6 +559,62 @@ mod tests {
         assert_eq!(dead_view["state"], "failed");
         assert_eq!(dead_view["error"], "the recording job stopped");
         assert_eq!(started["state"], "starting");
+    }
+
+    #[tokio::test]
+    async fn takes_over_a_room_locked_long_ago_by_a_request_that_wrote_no_state() {
+        // Arrange
+        let recordings = recordings(2, false);
+        let orphan = "1700000000000-000001";
+        recordings
+            .store
+            .lock_room("anon/research", orphan)
+            .await
+            .unwrap();
+
+        // Act
+        let started = recordings
+            .start(
+                "anon/research",
+                Layout::Combined,
+                false,
+                RecordingFormat::Mp4,
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(started["state"], "starting");
+        assert_eq!(
+            recordings.store.room_lock("anon/research").await.unwrap(),
+            started["id"].as_str().map(str::to_string)
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_a_room_locked_just_now_by_a_request_that_wrote_no_state() {
+        // Arrange
+        let recordings = recordings(2, false);
+        recordings
+            .store
+            .lock_room("anon/research", &recording_id())
+            .await
+            .unwrap();
+
+        // Act
+        let second = recordings
+            .start(
+                "anon/research",
+                Layout::Combined,
+                false,
+                RecordingFormat::Mp4,
+                None,
+            )
+            .await;
+
+        // Assert
+        assert!(matches!(second, Err(StartRejection::AlreadyRecording)));
     }
 
     #[tokio::test]
