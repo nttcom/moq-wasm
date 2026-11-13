@@ -215,8 +215,13 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `on_client_connected`, `on_client_disconnected`, `on_track_subscribed`,
   `on_error`), so a pipeline changes its import and its params. The session
   comes from `moq_wasm.connect`, which owns reconnection and tokens, instead
-  of the transport dialing the relay.
-- **Peers.** Every broadcast under `room` is a participant, its last
+  of the transport dialing the relay. The input and the output processors
+  share one room: the first `StartFrame` publishes the transport's broadcast
+  and starts following the participants, and the last `EndFrame` or
+  `CancelFrame` withdraws it. `on_connected` and `on_disconnected` mark those
+  two moments; `on_track_subscribed` takes a `MoqWasmTrack` (participant id,
+  track name, `audio` or `video`).
+- **Peers.** Every broadcast one level under `room` is a participant, its last
   namespace element the participant id, followed with `watch_broadcasts`.
   `MOQTransport` follows one peer; a room is what the transcriber, chat
   moderation, camera detection and PTZ tracking serve. `on_client_connected`
@@ -228,19 +233,24 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   lowest bitrate is the profile the room's viewers already take, so it starts
   no extra encoder in the participant's browser. The track is unsubscribed
   when its audio stops being in the catalog.
-- **Video in.** For each participant, the H.264 LOC video track of its
-  catalog with the lowest bitrate, decoded with a fresh decoder for each
-  group (a group starts at a keyframe), is pushed as `UserImageRawFrame` at
-  most `video_in_max_fps` times a second. `video_in_track` (a callable from
-  `Catalog` to a track name) picks another track, as PTZ tracking picks the
-  profile its viewer chose.
+- **Video in.** For each participant, the LOC video track of its catalog
+  with the lowest bitrate that PyAV decodes, decoded with a fresh decoder for
+  each group (a group starts at a keyframe), is pushed as an RGB
+  `UserImageRawFrame` at most `video_in_max_fps` times a second.
+  `video_in_track` (a callable from `Catalog` to a `CatalogTrack`) picks
+  another track, as PTZ tracking picks the profile its viewer chose.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
   `OutputImageRawFrame` with PyAV to `video_out_codec` (`"H264"` by default,
   the codec the browser SDK publishes; `"VP8"` is royalty-free), at
   `video_out_width`, `video_out_height` and `video_out_framerate`, all
   fields of pipecat's `TransportParams`. Both are pushed into the transport's
-  broadcast, so the browser plays it with `RemoteBroadcast`. A
-  NEW_GROUP_REQUEST from a subscriber makes the encoder emit a keyframe.
+  broadcast, so the browser plays it with `RemoteBroadcast`. The encoder
+  makes a keyframe every two seconds, and on `MediaSource.keyframe_request`
+  (a NEW_GROUP_REQUEST, or a rebuilt source after reconnecting). Timestamps
+  are wall-clock microseconds that follow the previous frame by its
+  duration. `write_audio_frame` waits while the speech written so far runs
+  more than 100 ms ahead of the clock, as `MOQTransport` paces its own, so
+  an interruption stops speech the browser has not yet received.
 - **Codecs are the transport's job.** pipecat's frames carry raw audio and
   pictures, and each transport encodes and decodes with its own stack (the
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and

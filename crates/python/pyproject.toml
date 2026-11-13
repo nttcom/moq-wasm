@@ -8,8 +8,12 @@ version = "0.1.0"
 description = "Python SDK of this repository's MoQT implementation"
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+# The codecs of the pipecat transport come from PyAV, outside the wheel (docs/architecture/python/sdk.md).
+pipecat = ["pipecat-ai>=1.12", "av>=14"]
+
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "pipecat-ai>=1.12", "av>=14"]
 
 [tool.maturin]
 python-source = "python"
