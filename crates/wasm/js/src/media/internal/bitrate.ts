@@ -2,7 +2,9 @@ export type BitrateAccumulator = {
   addBytes: (byteLength: number) => void
 }
 
-export function createBitrateLogger(onReport: (kbps: number) => void, intervalMs = 1000): BitrateAccumulator {
+const INTERVAL_MS = 1_000
+
+export function createBitrateLogger(onReport: (kbps: number) => void): BitrateAccumulator {
   let bytesThisInterval = 0
   let lastLogTime = performance.now()
 
@@ -10,7 +12,7 @@ export function createBitrateLogger(onReport: (kbps: number) => void, intervalMs
     addBytes(byteLength: number) {
       bytesThisInterval += byteLength
       const now = performance.now()
-      if (now - lastLogTime >= intervalMs) {
+      if (now - lastLogTime >= INTERVAL_MS) {
         const kbps = (bytesThisInterval * 8) / 1_000
         onReport(kbps)
         bytesThisInterval = 0
