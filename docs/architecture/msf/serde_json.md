@@ -16,7 +16,7 @@ Move `serde_json` from a dev-dependency to a dependency of the `msf` crate.
 
 ## Context
 
-draft-ietf-moq-msf-01 §5.1.1: "A subscriber MUST NOT attempt to parse a
+draft-ietf-moq-msf-02 §5.1.1: "A subscriber MUST NOT attempt to parse a
 catalog version which it does not understand." Every reader (the recorder,
 live-translate, live-egress, moq-cli and the browser through
 `crates/wasm`) deserialized the catalog with `serde_json` itself and never

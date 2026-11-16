@@ -6,7 +6,7 @@ layout, the publishing flow or the invariants described here change.
 
 ## Scope
 `crates/broadcast` turns `mediapack` media events into an MSF broadcast, the
-unit draft-ietf-moq-msf-01 initiates and ends (§11.2, §11.3): a catalog, LOC and
+unit draft-ietf-moq-msf-02 initiates and ends (§11.3, §11.4): a catalog, LOC and
 CMAF media tracks, a media timeline and a publisher-side FETCH cache.
 `services/live-ingest`, `crates/gst-plugin-moqt`, `services/onvif-ingest`, `moq-cli` and the
 Live Viewer's MP4 publisher, through `crates/wasm`, build on it. The track
@@ -80,7 +80,7 @@ sample, advanced by each later sample's presentation time offset from that
 sample, so the time the publish task spends connecting to the relay does not
 move it into the future. A track's
 initialization data is a Base64-encoded entry of the catalog `initDataList` that
-the track's `initRef` names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); each entry
+the track's `initRef` names (draft-ietf-moq-msf-02 §5.1.7, §5.2.14); each entry
 takes the name of its track as its id, which keeps the ids unique. An AAC audio
 track's AudioSpecificConfig is published this way; A-law, Opus and MP3 need none
 beyond the codec, sample rate and channel count the catalog lists, and an H.264
@@ -104,8 +104,8 @@ interchangeable; each format forms its own switching set. The video tracks of
 one source and its renditions are alternates; a source of another picture,
 such as a shared screen, names its own `SourceTracks::switching_set`. Each
 switching set with more than one track takes an odd `altGroup` for LOC and the
-next one for CMAF. Every switching set also takes a `renderGroup` (msf-01
-§5.2.11) shared by its video, its CMAF siblings and the audio of the same
+next one for CMAF. Every switching set also takes a `renderGroup` (msf-02
+§5.2.12) shared by its video, its CMAF siblings and the audio of the same
 `SourceTracks`, so a player that shows several sources of one broadcast pairs
 each picture with its sound. The numbers carry no meaning beyond the grouping:
 a player picks a source by its video track's name.
@@ -134,7 +134,7 @@ The catalog is the exception to the 60 seconds: its newest object is kept for
 as long as the publisher runs. It is sent when it changes, and a
 `CatalogRefreshTask` of the connection sends it again so that two sends are at
 most 30 seconds apart, half the relay's default cache retention
-(draft-ietf-moq-msf-01 §5). The task runs on its own timer, so a broadcast
+(draft-ietf-moq-msf-02 §5). The task runs on its own timer, so a broadcast
 that sends no media, such as a meeting member with camera and microphone off,
 keeps its catalog fresh too. The relay can still drop it before the next send,
 since a track that has sent nothing since the relay subscribed does not count
@@ -255,7 +255,7 @@ that reuses a known location as malformed, so a restarted publisher must never
 produce a location an earlier run already used.
 
 ## Media timeline
-Every writer publishes a media timeline track (draft-ietf-moq-msf-01 §7) named
+Every writer publishes a media timeline track (draft-ietf-moq-msf-02 §7) named
 after its video track, `<video>_timeline` (`video_timeline` for the default
 names), even a writer that never publishes video. Its `depends` lists the
 writer's tracks the catalog lists: the video, the renditions and the audio,

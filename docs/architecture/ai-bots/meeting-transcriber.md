@@ -210,7 +210,7 @@ The bot publishes under `{root}/{room}/bots/transcriber`. The namespace has
 four elements, so the Meeting's member logic, which takes three-element
 namespaces, does not show the bot as a participant, and no user name can
 collide with it. The track is `transcript`, an MSF event timeline
-(draft-ietf-moq-msf-01 §8) indexed by wallclock time:
+(draft-ietf-moq-msf-02 §8) indexed by wallclock time:
 
 ```json
 [
@@ -225,8 +225,8 @@ collide with it. The track is `transcript`, an MSF event timeline
   FETCH. Its group ids start at the wall-clock time in µs, since the relay
   isolates a track whose publisher reuses a location.
 - The track is one group: its first object is an empty record list, and
-  each later object adds one record (§8.3).
-- The bot publishes no MSF catalog. §8.2 requires an event timeline's catalog
+  each later object adds one record (§8.4).
+- The bot publishes no MSF catalog. §8.3 requires an event timeline's catalog
   entry to list the tracks it applies to in `depends`, whose names MSF
   resolves in the event timeline's own namespace, and the audio it describes
   belongs to other broadcasts. The page knows the fixed track name, as the

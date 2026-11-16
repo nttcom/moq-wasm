@@ -6,13 +6,13 @@ use serde_json::Value;
 use crate::track::Track;
 use crate::types::{KnownPackaging, Packaging};
 
-/// draft-ietf-moq-msf-01 §5: the catalog track MUST have this name.
+/// draft-ietf-moq-msf-02 §5: the catalog track MUST have this name.
 pub const CATALOG_TRACK_NAME: &str = "catalog";
 
-/// The catalog `version` (draft-ietf-moq-msf-01 §5.1.1).
+/// The catalog `version` (draft-ietf-moq-msf-02 §5.1.1).
 const MSF_VERSION: &str = "draft-01";
 
-/// An independent catalog (draft-ietf-moq-msf-01 §5.1).
+/// An independent catalog (draft-ietf-moq-msf-02 §5.1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Catalog {
@@ -25,7 +25,7 @@ pub struct Catalog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<Track>>,
     /// Declared after `tracks`: serde writes the fields in declaration order,
-    /// and draft-ietf-moq-msf-01 §5.1.7 requires the list to follow the
+    /// and draft-ietf-moq-msf-02 §5.1.7 requires the list to follow the
     /// tracks array.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init_data_list: Option<Vec<InitData>>,
@@ -36,7 +36,7 @@ pub struct Catalog {
 pub enum CatalogParseError {
     /// Not JSON, or not an MSF catalog.
     Malformed(serde_json::Error),
-    /// A `version` this crate does not understand, or none; draft-ietf-moq-msf-01
+    /// A `version` this crate does not understand, or none; draft-ietf-moq-msf-02
     /// §5.1.1 forbids parsing it.
     UnsupportedVersion(Option<String>),
     /// A delta update (§5.1.6).
@@ -58,8 +58,8 @@ impl fmt::Display for CatalogParseError {
 
 impl std::error::Error for CatalogParseError {}
 
-/// An entry of `initDataList` (draft-ietf-moq-msf-01 §5.1.7), named by the
-/// `initRef` of the tracks it initializes (§5.2.13).
+/// An entry of `initDataList` (draft-ietf-moq-msf-02 §5.1.7), named by the
+/// `initRef` of the tracks it initializes (§5.2.14).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InitData {
     pub id: String,
@@ -69,7 +69,7 @@ pub struct InitData {
 }
 
 impl Catalog {
-    /// `isComplete` is left absent: draft-ietf-moq-msf-01 §5.1.3 reserves it
+    /// `isComplete` is left absent: draft-ietf-moq-msf-02 §5.1.3 reserves it
     /// for a broadcast that will publish nothing more.
     pub fn new(tracks: Vec<Track>, generated_at_ms: u64) -> Self {
         Self {
@@ -82,7 +82,7 @@ impl Catalog {
     }
 
     /// Reads a catalog object, refusing one this crate cannot read as
-    /// draft-ietf-moq-msf-01 requires (§5.1.1, §5.1.6).
+    /// draft-ietf-moq-msf-02 requires (§5.1.1, §5.1.6).
     pub fn parse(payload: &[u8]) -> Result<Self, CatalogParseError> {
         let document: Value =
             serde_json::from_slice(payload).map_err(CatalogParseError::Malformed)?;
@@ -108,7 +108,7 @@ impl Catalog {
     }
 
     /// The Base64 `data` of the `initDataList` entry `track`'s `initRef`
-    /// names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13).
+    /// names (draft-ietf-moq-msf-02 §5.1.7, §5.2.14).
     pub fn init_data(&self, track: &Track) -> Option<&str> {
         let init_ref = track.init_ref.as_deref()?;
         self.init_data_list
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn parse_refuses_a_delta_update() {
-        // Arrange: draft-ietf-moq-msf-01 §5.1.6, with no version as §5.3 requires
+        // Arrange: draft-ietf-moq-msf-02 §5.1.6, with no version as §5.3 requires
         let delta = br#"{"deltaUpdate":[{"op":"remove","tracks":[{"name":"video"}]}]}"#;
 
         // Act / Assert

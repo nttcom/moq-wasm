@@ -60,7 +60,7 @@ impl TrackWriter {
     }
 
     /// Sends `payload` as a group of its own, the layout of an MSF catalog
-    /// (draft-ietf-moq-msf-01 §5). Returns the group's id when a subscriber
+    /// (draft-ietf-moq-msf-02 §5). Returns the group's id when a subscriber
     /// took it, and `None` otherwise.
     pub async fn write_group(&self, payload: Bytes) -> anyhow::Result<Option<u64>> {
         let outcome = self

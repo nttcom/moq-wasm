@@ -122,8 +122,8 @@ export type LivePlayerState = {
   cmafAvailable: boolean
   packaging: Packaging
   mode: 'live' | 'review'
-  /// False for a broadcast none of whose tracks is live (draft-ietf-moq-msf-01
-  /// §5.2.7), which plays as VOD.
+  /// False for a broadcast none of whose tracks is live (draft-ietf-moq-msf-02
+  /// §5.2.8), which plays as VOD.
   isLive: boolean
   /// Set once VOD playback has reached the end, which pauses it.
   ended: boolean

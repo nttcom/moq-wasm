@@ -364,7 +364,7 @@ review canvas, audio on a review `AudioContext`. `LIVE` returns to live.
 ### VOD
 
 A broadcast none of whose played tracks is live (`isLive: false`,
-draft-ietf-moq-msf-01 §5.2.7), such as the recorder's replay, gets no new
+draft-ietf-moq-msf-02 §5.2.8), such as the recorder's replay, gets no new
 objects, so the player plays it as VOD (`state.isLive` false). Nothing but the
 catalog's own fields tells it from a live broadcast.
 
@@ -376,7 +376,7 @@ catalog's own fields tells it from a live broadcast.
   group, all of them closed, the newest one too, so review neither waits for a
   group to close nor follows a live edge with TRACK_STATUS.
 - The seek bar runs from the timeline's first record to the tracks'
-  `trackDuration` (§5.2.35) after it, or to the newest group's start without
+  `trackDuration` (§5.2.36) after it, or to the newest group's start without
   one. The elapsed readout stays the publisher's presentation time.
 - Playback starts at the first group as soon as the timeline arrives, playing
   as a live watch does; a player paused before then shows the first frame and
@@ -512,7 +512,7 @@ A live LOC video change to another track of the same `altGroup` does not
 interrupt the picture. The incoming rendition is subscribed (Next Group Start)
 while the outgoing one keeps playing, and `RenditionSplice` decides at the
 first group start it delivers where it takes over. Renditions of one switching
-set number their groups by media time (draft-ietf-moq-msf-01 §4.2), so that
+set number their groups by media time (draft-ietf-moq-msf-02 §4.2), so that
 start is the group after the newest one the outgoing rendition has begun: the
 decoder worker receives the groups before it from the outgoing rendition and
 the rest from the incoming one, one continuous track, and the seek timeline is
@@ -607,11 +607,11 @@ track it is subscribed to under the same name, as a new publisher with another
 audio codec does, the decoder is reconfigured from the new definition.
 
 A track's init data is the `initDataList` entry its `initRef` names
-(draft-ietf-moq-msf-01 §5.1.7, §5.2.13). A reference to an entry that is
+(draft-ietf-moq-msf-02 §5.1.7, §5.2.14). A reference to an entry that is
 missing or not `inline`, the only type the draft defines, leaves the track
 without init data and logs a warning instead of rejecting the catalog.
 
-A track that names a `namespace` (draft-ietf-moq-msf-01 §5.2.2) is subscribed
+A track that names a `namespace` (draft-ietf-moq-msf-02 §5.2.2) is subscribed
 to there instead of under the catalog's, so a catalog can refer to the tracks
 of another broadcast, as the live translation's catalog does for the source's
 video and original audio.
@@ -830,7 +830,7 @@ another position or press Live to resume.
 The readout above the slider shows `position / broadcast`, both measured from the
 start of the broadcast, and the label at its left end the elapsed time at the axis
 start. The numbers come from the MSF media timeline track
-(draft-ietf-moq-msf-01 section 7), which the bridge publishes as a JSON array of
+(draft-ietf-moq-msf-02 section 7), which the bridge publishes as a JSON array of
 `[presentation time, [group id, object id], encode wallclock]` records covering
 the groups the relay still caches. Every source of a broadcast has its own; the
 viewer finds the one of the source it plays in the catalog by its

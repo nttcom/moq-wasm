@@ -34,7 +34,7 @@ def wait_log_records() -> list[tuple[str, str, str | None]]:
 
 def parse_catalog(payload: bytes) -> dict:
     """Raises `ValueError` when `payload` is not an independent MSF catalog: malformed, of a
-    `version` other than `"draft-01"` (draft-ietf-moq-msf-01 §5.1.1), or a delta update, which the
+    `version` other than `"draft-01"` (draft-ietf-moq-msf-02 §5.1.1), or a delta update, which the
     bindings do not apply."""
 
 class Session:

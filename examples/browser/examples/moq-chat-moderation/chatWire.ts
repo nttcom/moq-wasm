@@ -16,7 +16,7 @@ export function encodeChatMessage(text: string, labels: Label[]): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({ text, labels }))
 }
 
-/// draft-ietf-moq-msf-01 §8.1: an event timeline object is a JSON array of records indexed by
+/// draft-ietf-moq-msf-02 §8.2: an event timeline object is a JSON array of records indexed by
 /// `l`, the [group id, object id] of the chat object they judge.
 export function parseModerationVerdicts(payload: Uint8Array): ModerationVerdict[] {
   const records: unknown = JSON.parse(new TextDecoder().decode(payload))

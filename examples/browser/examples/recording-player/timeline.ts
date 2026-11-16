@@ -4,7 +4,7 @@ export type EventKind = 'chat' | 'transcript'
 /// of the replay's LOC Timestamps.
 export type TimelineEvent = { at: number; kind: EventKind; speaker: string; text: string }
 
-/// The kind of each `eventType` (draft-ietf-moq-msf-01 §5.2.5) the page shows.
+/// The kind of each `eventType` (draft-ietf-moq-msf-02 §5.2.6) the page shows.
 export const EVENT_KINDS: Readonly<Record<string, EventKind>> = {
   'com.skyway.chat.v1': 'chat',
   'com.skyway.transcript.v1': 'transcript'
@@ -13,7 +13,7 @@ export const EVENT_KINDS: Readonly<Record<string, EventKind>> = {
 /// How long a transcribed utterance stays on its speaker's tile.
 const CAPTION_US = 4_000_000
 
-/// The records of one event timeline object (§8.1), indexed by media time `m`
+/// The records of one event timeline object (§8.2), indexed by media time `m`
 /// in milliseconds, as the recorder stores them. A chat record names no
 /// speaker; its speaker is the participant whose broadcast carries the chat.
 export function eventRecords(payload: Uint8Array, kind: EventKind, participant: string): TimelineEvent[] {
@@ -37,7 +37,7 @@ export function eventRecords(payload: Uint8Array, kind: EventKind, participant: 
 }
 
 /// Keeps one event per time and speaker, and per text for a chat: a group of
-/// an event timeline repeats the records before it (§8.3), and a later
+/// an event timeline repeats the records before it (§8.4), and a later
 /// transcript record at the same time corrects the earlier one.
 export function mergeEvents(events: TimelineEvent[]): TimelineEvent[] {
   const merged = new Map<string, TimelineEvent>()

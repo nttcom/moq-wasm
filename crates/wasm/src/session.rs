@@ -412,7 +412,7 @@ impl TrackWriter {
     }
 
     /// Sends `payload` as a group of its own, the layout of an MSF catalog
-    /// (draft-ietf-moq-msf-01 §5). Resolves to the group's id when a
+    /// (draft-ietf-moq-msf-02 §5). Resolves to the group's id when a
     /// subscriber took it, and to `undefined` otherwise.
     #[wasm_bindgen(js_name = writeGroup)]
     pub async fn write_group(&self, payload: Vec<u8>) -> Result<Option<u64>, JsValue> {

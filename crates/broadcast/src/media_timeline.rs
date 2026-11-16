@@ -34,7 +34,7 @@ impl MediaTimeline {
     }
 }
 
-/// draft-ietf-moq-msf-01 §7.1.1 wants the presentation timestamp as the floor in
+/// draft-ietf-moq-msf-02 §7.1.1 wants the presentation timestamp as the floor in
 /// integral milliseconds, not rounded to the nearest one.
 fn millis_from_micros(micros: u64) -> u64 {
     micros / MICROS_PER_MILLI

@@ -3,7 +3,7 @@ use moqt::{Session, TrackReader, subscribe::SubscribeOption};
 use msf::Catalog;
 
 /// Yields the catalog's current group from the joining FETCH
-/// (draft-ietf-moq-msf-01 §5), then later objects from the subscription,
+/// (draft-ietf-moq-msf-02 §5), then later objects from the subscription,
 /// whose first stream arrives with the next catalog object, up to 30 s later.
 pub(crate) struct CatalogReader {
     reader: TrackReader,

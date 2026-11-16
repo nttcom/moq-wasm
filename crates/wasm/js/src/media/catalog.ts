@@ -2,7 +2,7 @@ import { sdkLog } from '../core/log'
 
 export const CATALOG_TRACK_NAME = 'catalog'
 
-/// The catalog `version` (draft-ietf-moq-msf-01 §5.1.1).
+/// The catalog `version` (draft-ietf-moq-msf-02 §5.1.1).
 const MSF_VERSION = 'draft-01'
 
 export type MsfTrack = {
@@ -26,7 +26,7 @@ export type MsfTrack = {
   initRef?: string
 }
 
-/// An entry of the catalog `initDataList` (draft-ietf-moq-msf-01 §5.1.7).
+/// An entry of the catalog `initDataList` (draft-ietf-moq-msf-02 §5.1.7).
 export type MsfInitData = {
   id: string
   type: 'inline'
@@ -45,12 +45,12 @@ export type CatalogTrackRole = 'video' | 'audio' | 'mediatimeline'
 
 export type MediaCatalogTrack = {
   /// The namespace the track is subscribed under when it is not the catalog's
-  /// (draft-ietf-moq-msf-01 §5.2.2), as a `/`-joined tuple.
+  /// (draft-ietf-moq-msf-02 §5.2.2), as a `/`-joined tuple.
   namespace?: string
   name: string
   label: string
   packaging?: string
-  /// draft-ietf-moq-msf-01 §5.2.5: the type and structure of the records of an
+  /// draft-ietf-moq-msf-02 §5.2.6: the type and structure of the records of an
   /// event timeline (§8).
   eventType?: string
   role?: string
@@ -61,19 +61,19 @@ export type MediaCatalogTrack = {
   channelConfig?: string
   width?: number
   height?: number
-  /// draft-ietf-moq-msf-01 §5.2.20; this project's publishers list it only for
+  /// draft-ietf-moq-msf-02 §5.2.21; this project's publishers list it only for
   /// a track they cap at that frame rate.
   framerate?: number
   initData?: string
   depends?: string[]
   lang?: string
-  /// draft-ietf-moq-msf-01 §5.2.7: false when no new objects will be added.
+  /// draft-ietf-moq-msf-02 §5.2.8: false when no new objects will be added.
   isLive?: boolean
-  /// draft-ietf-moq-msf-01 §5.2.35, in milliseconds; only on a track that is not live.
+  /// draft-ietf-moq-msf-02 §5.2.36, in milliseconds; only on a track that is not live.
   trackDuration?: number
 }
 
-/// The JSON of an MSF catalog listing `tracks` (draft-ietf-moq-msf-01 §5);
+/// The JSON of an MSF catalog listing `tracks` (draft-ietf-moq-msf-02 §5);
 /// publish it on the `CATALOG_TRACK_NAME` track.
 export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitData[] = []): string {
   const catalog: MsfCatalog = {
@@ -81,14 +81,14 @@ export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitDat
     generatedAt: Date.now(),
     tracks,
     // Keep after `tracks`: JSON.stringify writes keys in insertion order, and
-    // draft-ietf-moq-msf-01 §5.1.7 requires initDataList to follow tracks.
+    // draft-ietf-moq-msf-02 §5.1.7 requires initDataList to follow tracks.
     initDataList: initDataList.length > 0 ? initDataList : undefined
   }
   return JSON.stringify(catalog)
 }
 
 /// The Base64 init data of the `initDataList` entry a track's `initRef` names
-/// (draft-ietf-moq-msf-01 §5.2.13). A missing or non-`inline` entry returns
+/// (draft-ietf-moq-msf-02 §5.2.14). A missing or non-`inline` entry returns
 /// `undefined` and logs a warning instead of rejecting the catalog.
 export function resolveInitData(catalog: unknown, track: Record<string, unknown>): string | undefined {
   const initRef = asString(track.initRef)
@@ -113,8 +113,8 @@ export function resolveInitData(catalog: unknown, track: Record<string, unknown>
 export type LiveSource = { video: string; audio?: string }
 
 /// The audio is returned even when the video track is absent, such as a muted
-/// camera's. The alternates of the named video and audio (draft-ietf-moq-msf-01
-/// §5.2.12), such as renditions or translated audio, belong to the source too.
+/// camera's. The alternates of the named video and audio (draft-ietf-moq-msf-02
+/// §5.2.13), such as renditions or translated audio, belong to the source too.
 export function sourceTracks(tracks: MediaCatalogTrack[], source: LiveSource): MediaCatalogTrack[] {
   const named = [source.video, source.audio].flatMap((name) => tracks.find((track) => track.name === name) ?? [])
   const own = tracks.filter(
@@ -208,7 +208,7 @@ function matchesRole(
   if (!expectedRole) {
     return true
   }
-  /// draft-ietf-moq-msf-01 §7.2 requires the packaging; the role of §5.2.6 is
+  /// draft-ietf-moq-msf-02 §7.2 requires the packaging; the role of §5.2.7 is
   /// optional, so either one identifies a media timeline track.
   if (expectedRole === 'mediatimeline') {
     return trackPackaging === 'mediatimeline' || trackRole === 'mediatimeline'

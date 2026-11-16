@@ -31,9 +31,9 @@ export class SeekTimeline {
     return this.groups.live
   }
 
-  /// A broadcast none of whose `tracks` is live (draft-ietf-moq-msf-01 §5.2.7)
+  /// A broadcast none of whose `tracks` is live (draft-ietf-moq-msf-02 §5.2.8)
   /// is played as VOD: every group its media timeline lists is closed, and the
-  /// axis ends the longest `trackDuration` (§5.2.35) after the timeline's first
+  /// axis ends the longest `trackDuration` (§5.2.36) after the timeline's first
   /// record.
   applyCatalogTracks(tracks: MediaCatalogTrack[]): void {
     this.groups.live = tracks.length === 0 || tracks.some((track) => track.isLive !== false)

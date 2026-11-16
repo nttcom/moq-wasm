@@ -37,7 +37,7 @@ export function parseTranscriberStatus(payload: Uint8Array): TranscriberStatus |
   return typeof asr === 'string' && (state === 'starting' || state === 'ready') ? { asr, state } : undefined
 }
 
-/// draft-ietf-moq-msf-01 §8.3 for the transcriber's event timeline: the first
+/// draft-ietf-moq-msf-02 §8.4 for the transcriber's event timeline: the first
 /// object of a group holds every record so far and each later object one new
 /// record. The joining FETCH and the live subscription deliver the objects of
 /// a group in any order, so the records follow the newest group whose first

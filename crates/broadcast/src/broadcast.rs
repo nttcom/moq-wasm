@@ -220,7 +220,7 @@ pub struct SourceTracks {
     /// subscriber takes it.
     pub cmaf: bool,
     /// The video tracks of one switching set are alternates of each other
-    /// (draft-ietf-moq-msf-01 §5.2.12), so sources of the same picture, such
+    /// (draft-ietf-moq-msf-02 §5.2.13), so sources of the same picture, such
     /// as the profiles of one camera, share it and a shared screen does not.
     pub switching_set: String,
     /// The video's target bitrate in bits per second, known when the source
@@ -377,7 +377,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
 
     let mut tracks = Vec::new();
     let mut init_data_list = Vec::new();
-    // Per source, the tracks its media timeline depends on (draft-ietf-moq-msf-01 §7.2).
+    // Per source, the tracks its media timeline depends on (draft-ietf-moq-msf-02 §7.2).
     let mut source_track_names = BTreeMap::<&str, Vec<String>>::new();
     for (name, info) in &metadata.video_tracks {
         let alt_group = alt_groups.get(info.switching_set.as_str()).copied();
@@ -483,7 +483,7 @@ fn audio_placeholder(
     Some(audio)
 }
 
-/// A source's media timeline (draft-ietf-moq-msf-01 §7), listed while the
+/// A source's media timeline (draft-ietf-moq-msf-02 §7), listed while the
 /// catalog lists any of the source's tracks.
 fn timeline_track(namespace: &Option<String>, source: &str, depends: Vec<String>) -> Track {
     let mut timeline = track(
@@ -498,8 +498,8 @@ fn timeline_track(namespace: &Option<String>, source: &str, depends: Vec<String>
     timeline
 }
 
-/// The chat depends on the default tracks the catalog lists (draft-ietf-moq-msf-01
-/// §8.2), none for a chat offered without media.
+/// The chat depends on the default tracks the catalog lists (draft-ietf-moq-msf-02
+/// §8.3), none for a chat offered without media.
 fn chat_track(namespace: &Option<String>, metadata: &CatalogMetadata) -> Track {
     let mut chat = track(
         namespace,
@@ -554,7 +554,7 @@ fn alt_groups(metadata: &CatalogMetadata) -> BTreeMap<&str, u64> {
         .collect()
 }
 
-/// One `renderGroup` per switching set (draft-ietf-moq-msf-01 §5.2.11): the
+/// One `renderGroup` per switching set (draft-ietf-moq-msf-02 §5.2.12): the
 /// video of a source, its renditions and its audio are rendered together. The
 /// numbers mean nothing beyond that grouping.
 fn render_groups(metadata: &CatalogMetadata) -> BTreeMap<&str, u64> {

@@ -7,5 +7,5 @@ Location = tuple[int, int]
 
 
 def location_record(location: Location, data: dict[str, Any]) -> EventRecord:
-    """A draft-ietf-moq-msf-01 §8 event timeline record indexed by `location`."""
+    """A draft-ietf-moq-msf-02 §8 event timeline record indexed by `location`."""
     return {"l": [location[0], location[1]], "data": data}

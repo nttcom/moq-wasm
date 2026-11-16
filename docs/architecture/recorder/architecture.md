@@ -43,7 +43,7 @@ both tracks into one init segment and one fragment stream.
    session-migration.md).
 2. `catalog_reader::CatalogReader` subscribes to the catalog first with
    `Subscriber::subscribe_current_group`: the SUBSCRIBE and joining FETCH
-   (offset 0) draft-ietf-moq-msf-01 §5 asks for, read through one
+   (offset 0) draft-ietf-moq-msf-02 §5 asks for, read through one
    `TrackReader` that yields the current group before the live objects, or
    only the live objects when the publisher has sent none yet.
    `track_selection::select_tracks` picks the LOC track named by
@@ -107,10 +107,10 @@ both tracks into one init segment and one fragment stream.
 A broadcast can carry several sources: a meeting participant publishes the
 camera with its renditions and the microphone, and the screen share with
 its renditions. The recorder groups the tracks into sources by the catalog's
-`renderGroup` (draft-ietf-moq-msf-01 §5.2.11): a source
+`renderGroup` (draft-ietf-moq-msf-02 §5.2.12): a source
 is the LOC video and audio tracks of one `renderGroup`, and the tracks
 without one form one source. `broadcast` gives a source's renditions one
-`altGroup` (§5.2.12), so the video tracks of a source are the renditions
+`altGroup` (§5.2.13), so the video tracks of a source are the renditions
 the recorder chooses from. A `renderGroup` number means nothing beyond its
 catalog: `broadcast` numbers the sources anew in each catalog, and the
 camera's number changes when a screen share starts. So the source is found
@@ -453,7 +453,7 @@ with a Timescale property of 1,000,000 (draft-ietf-moq-loc-04 §2.3.1.2), and a
 group whose objects begin before the start is not stored, so a publisher
 whose clock runs behind the recorder's loses its first group. Each event timeline record
 indexed by wallclock (`t`) becomes a media time record (`m`,
-draft-ietf-moq-msf-01 §8.1), and one from before the start is left out. So
+draft-ietf-moq-msf-02 §8.2), and one from before the start is left out. So
 every participant shares one time axis, and a replay's media timeline names
 each group at the presentation time its first object carries, with wallclock
 0, as §7.1.1 asks of VOD. The replay serves the stored objects unchanged. The
@@ -468,7 +468,7 @@ and `screenshare` (`archive::record_broadcast`). A track swapped before any
 of its media was stored, added or dropped keeps the archive going. Each
 archive then holds one track per kind: the tracks of a switch listed side by
 side would share an `altGroup` without the matching media time sequences
-draft-ietf-moq-msf-01 §5.2.12 requires.
+draft-ietf-moq-msf-02 §5.2.13 requires.
 The chunks go straight to the object store; no local copy is written. A reset
 subgroup stream ends only that stream, as in `moqt`'s `TrackReader`. The
 recording fails if a subscription, task or upload fails, and its final room
@@ -503,11 +503,11 @@ media timeline tracks, one object each, at group 0, object 0:
 
 - The catalog lists every stored track a stored catalog object describes, in
   the archive's order, with the fields of the last object that describes it.
-  Each track is `isLive: false` (draft-ietf-moq-msf-01 §5.2.7) and has the
-  namespace's one `trackDuration` (§5.2.35): from the earliest to the latest
+  Each track is `isLive: false` (draft-ietf-moq-msf-02 §5.2.8) and has the
+  namespace's one `trackDuration` (§5.2.36): from the earliest to the latest
   LOC Timestamp of its media. `namespace` is left out, so every track inherits the replay
   namespace (§5.2.2) rather than naming the original publisher's;
-  `targetLatency` is dropped (§5.2.8). `depends` names only listed tracks, and
+  `targetLatency` is dropped (§5.2.9). `depends` names only listed tracks, and
   `initDataList` holds the entries the listed `initRef`s name. The LOC tracks
   take one `renderGroup`, the first one's: a replay namespace holds one source,
   but `broadcast` numbers the sources anew in each catalog, so tracks described
@@ -529,8 +529,8 @@ media timeline tracks, one object each, at group 0, object 0:
 
 The transcriber publishes one `transcript` for the whole room under
 `<room>/bots/transcriber`, without a catalog: its catalog entry would have to
-name the audio it transcribes in `depends` (draft-ietf-moq-msf-01 §8.2), whose
-names MSF resolves in the timeline's own namespace (§5.2.14), and that audio is
+name the audio it transcribes in `depends` (draft-ietf-moq-msf-02 §8.3), whose
+names MSF resolves in the timeline's own namespace (§5.2.15), and that audio is
 in the participants' (see [its design](../ai-bots/meeting-transcriber.md)). The
 replay therefore splits the transcript by speaker and serves each part in the
 speaker's camera namespace, where it can name the audio, and does not announce
@@ -545,11 +545,11 @@ the transcriber's namespace:
   between them moves the boundaries by as much.
 - The session's catalog lists `transcript` after its other tracks:
   `packaging` `eventtimeline`, role `subtitle` ("a transcription of the spoken
-  dialogue", §5.2.6), `eventType` `com.skyway.transcript.v1`, label
+  dialogue", §5.2.7), `eventType` `com.skyway.transcript.v1`, label
   `Transcript`, `mimeType` `application/json`, `depends` the session's audio
   tracks, and the namespace's `trackDuration` like the others.
 - The track is one object at group 0, object 0: the session's records as one
-  §8.1 array sorted by `m`, a record stored twice listed once.
+  §8.2 array sorted by `m`, a record stored twice listed once.
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk
