@@ -674,10 +674,7 @@ async fn carry_subscription(
             return (request_id, Carried::Stays);
         }
     };
-    let largest = match subscribe_ok.content_exists {
-        ContentExists::True { location } => Some(location),
-        ContentExists::False => None,
-    };
+    let largest = subscribe_ok.content_exists.largest();
     let start = option.filter_type.start_location(largest);
     let (cut_over, cut_over_receiver) = oneshot::channel();
     let Some(CutoverStart {
