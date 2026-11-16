@@ -285,7 +285,9 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>>
     let sample_rate = track
         .sample_rate
         .with_context(|| format!("{codec} audio track lists no sampleRate"))?;
-    let channels = channel_count(track.channel_config.as_deref().unwrap_or("mono"))?;
+    let channel_config = track.channel_config.as_deref().unwrap_or("mono");
+    let channels = msf::channel_count(channel_config)
+        .with_context(|| format!("unknown channelConfig {channel_config:?}"))?;
     Ok(Some(match codec {
         "opus" => AudioConfig::Opus {
             sample_rate,
@@ -300,18 +302,6 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<Option<AudioConfig>>
             channels,
         },
     }))
-}
-
-/// The labels `broadcast` writes: `mono`, `stereo` or `<n>ch`.
-fn channel_count(label: &str) -> Result<u8> {
-    match label {
-        "mono" => Ok(1),
-        "stereo" => Ok(2),
-        other => other
-            .strip_suffix("ch")
-            .and_then(|count| count.parse().ok())
-            .with_context(|| format!("unknown channelConfig {other:?}")),
-    }
 }
 
 #[cfg(test)]

@@ -400,7 +400,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         audio.codec = Some(info.config.codec_string());
         audio.mime_type = Some(audio_mime_type(&info.config).to_string());
         audio.sample_rate = Some(info.config.sample_rate());
-        audio.channel_config = Some(channel_config_label(info.config.channels()));
+        audio.channel_config = Some(msf::channel_config(info.config.channels()));
         let mut audio_cmaf = None;
         if let AudioConfig::Aac(config) = &info.config {
             let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
@@ -588,14 +588,6 @@ fn audio_mime_type(config: &AudioConfig) -> &'static str {
         AudioConfig::Pcma { .. } => "audio/pcma",
         AudioConfig::Opus { .. } => "audio/opus",
         AudioConfig::Mp3 { .. } => "audio/mpeg",
-    }
-}
-
-fn channel_config_label(channels: u8) -> String {
-    match channels {
-        1 => "mono".to_string(),
-        2 => "stereo".to_string(),
-        n => format!("{n}ch"),
     }
 }
 

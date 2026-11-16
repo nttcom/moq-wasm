@@ -2,7 +2,7 @@ mod track_receive_task;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
 use moqt::{Session, subscribe::FilterType};
@@ -141,7 +141,9 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
             .channel_config
             .as_deref()
             .context("audio track has no channelConfig")?;
-        Ok((sample_rate, channel_count(channels)?))
+        let channels = msf::channel_count(channels)
+            .with_context(|| format!("unknown channelConfig {channels:?}"))?;
+        Ok((sample_rate, channels))
     };
     match track.codec.as_deref() {
         Some(PCMA_CODEC) => {
@@ -160,22 +162,6 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
         }
         _ => Ok(AudioConfig::Aac(aac_config(catalog, track)?)),
     }
-}
-
-/// `channelConfig` as `broadcast` writes it (`mono`, `stereo`, `<n>ch`) or as
-/// the draft's examples do (`<n>`).
-fn channel_count(label: &str) -> Result<u8> {
-    let count = match label {
-        "mono" => 1,
-        "stereo" => 2,
-        other => other
-            .strip_suffix("ch")
-            .unwrap_or(other)
-            .parse()
-            .with_context(|| format!("unknown channelConfig {other:?}"))?,
-    };
-    ensure!(count > 0, "channelConfig {label:?} names no channel");
-    Ok(count)
 }
 
 fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
