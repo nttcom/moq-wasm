@@ -127,14 +127,10 @@ impl Session {
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
-                let defaults = SubscribeOption::default();
                 let option = SubscribeOption {
                     filter_type: filter_type(filter.as_deref())?,
                     forward: forward.unwrap_or(true),
-                    subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
-                    delivery_timeout: delivery_timeout_ms.map(u64::from),
-                    group_order: parse_group_order(group_order.as_deref())?,
-                    ..defaults
+                    ..subscribe_option(priority, delivery_timeout_ms, group_order.as_deref())?
                 };
                 let mut subscriber = self.session.subscriber();
                 let subscription = subscriber
@@ -190,7 +186,8 @@ impl Session {
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
-                let defaults = SubscribeOption::default();
+                let option =
+                    subscribe_option(priority, delivery_timeout_ms, group_order.as_deref())?;
                 let (subscription, reader) = self
                     .session
                     .subscriber()
@@ -198,12 +195,7 @@ impl Session {
                         namespace.join("/"),
                         track,
                         new_group_after.into(),
-                        SubscribeOption {
-                            subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
-                            delivery_timeout: delivery_timeout_ms.map(u64::from),
-                            group_order: parse_group_order(group_order.as_deref())?,
-                            ..defaults
-                        },
+                        option,
                     )
                     .await
                     .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
@@ -1045,12 +1037,22 @@ fn filter_type(filter: Option<&str>) -> Result<FilterType, JsValue> {
     }
 }
 
-fn parse_group_order(group_order: Option<&str>) -> Result<GroupOrder, JsValue> {
-    match group_order {
-        None | Some("ascending") => Ok(GroupOrder::Ascending),
-        Some("descending") => Ok(GroupOrder::Descending),
-        Some(other) => Err(js_error(format!("unknown group order: {other}"))),
-    }
+fn subscribe_option(
+    priority: Option<u8>,
+    delivery_timeout_ms: Option<u32>,
+    group_order: Option<&str>,
+) -> Result<SubscribeOption, JsValue> {
+    let defaults = SubscribeOption::default();
+    Ok(SubscribeOption {
+        subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
+        delivery_timeout: delivery_timeout_ms.map(u64::from),
+        group_order: match group_order {
+            None | Some("ascending") => GroupOrder::Ascending,
+            Some("descending") => GroupOrder::Descending,
+            Some(other) => return Err(js_error(format!("unknown group order: {other}"))),
+        },
+        ..defaults
+    })
 }
 
 fn largest(content_exists: ContentExists) -> Option<MoqLocation> {
