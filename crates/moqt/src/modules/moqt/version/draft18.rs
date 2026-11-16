@@ -14,7 +14,7 @@ pub(crate) mod request_streams;
 pub(crate) mod setup;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc, Weak,
         atomic::{AtomicU64, Ordering},
@@ -40,6 +40,8 @@ use crate::{
             domains::{connection::Connection, session_context::SessionContext},
             version::{
                 self, Notification, OutgoingRequest, OutgoingResponse, RequestIdReservation,
+                UpdateAnswer,
+                update_answer::{UpdateAnswerSender, UpdateOutcome},
             },
         },
         transport::{
@@ -138,6 +140,10 @@ struct RequestStream {
     /// namespaces to send as NAMESPACE after its REQUEST_OK, as the first
     /// message of the response is REQUEST_OK or REQUEST_ERROR (§10.18).
     held_namespaces: Option<HashSet<Vec<String>>>,
+    /// The waiters of this side's REQUEST_UPDATEs on the stream, oldest
+    /// first: the peer answers each with exactly one REQUEST_OK or
+    /// REQUEST_ERROR, in order (§10.9).
+    update_waiters: Arc<std::sync::Mutex<VecDeque<UpdateAnswerSender>>>,
 }
 
 impl RequestStream {
@@ -150,6 +156,7 @@ impl RequestStream {
             fetch_response: None,
             reader_stop: Arc::default(),
             held_namespaces: None,
+            update_waiters: Arc::default(),
         }
     }
 }
@@ -794,7 +801,7 @@ impl ControlChannel {
         &self,
         reservation: RequestIdReservation<'_>,
         update: SubscribeUpdate,
-    ) -> Result<(), TransportSendError> {
+    ) -> Result<UpdateAnswer, TransportSendError> {
         debug_assert_eq!(update.request_id, reservation.request_id());
         let message =
             messages::encode_request_update(update.request_id, &update).map_err(encode_error)?;
@@ -813,6 +820,7 @@ impl ControlChannel {
                 .map_err(encode_error)?;
         self.send_request_update(reservation, subscription_request_id, message)
             .await
+            .map(drop)
     }
 
     /// The stream is the one this endpoint opened for its SUBSCRIBE or the
@@ -822,7 +830,7 @@ impl ControlChannel {
         reservation: RequestIdReservation<'_>,
         subscription_request_id: RequestId,
         message: BytesMut,
-    ) -> Result<(), TransportSendError> {
+    ) -> Result<UpdateAnswer, TransportSendError> {
         let stream = {
             let requests = self.requests();
             requests
@@ -834,9 +842,48 @@ impl ControlChannel {
         let Some(stream) = stream else {
             return Err(TransportSendError::ClosedStream);
         };
-        stream.sender.send(&message).await?;
+        // The reservation keeps the waiters in the order the updates are
+        // written.
+        let (answer_sender, answer) = tokio::sync::oneshot::channel();
+        stream
+            .update_waiters
+            .lock()
+            .expect("draft-18 update waiters poisoned")
+            .push_back(answer_sender);
+        if let Err(error) = stream.sender.send(&message).await {
+            stream
+                .update_waiters
+                .lock()
+                .expect("draft-18 update waiters poisoned")
+                .pop_back();
+            return Err(error);
+        }
         self.consume(reservation);
-        Ok(())
+        Ok(UpdateAnswer(Some(answer)))
+    }
+
+    /// Hands the peer's REQUEST_OK or REQUEST_ERROR on `request_id`'s stream
+    /// to the oldest REQUEST_UPDATE this side sent on it. A peer that
+    /// coalesced several updates into one REQUEST_ERROR then ends the
+    /// subscription (§10.9.1), which fails the updates still waiting.
+    fn answer_update(&self, request_id: RequestId, outcome: UpdateOutcome) {
+        let waiters = {
+            let requests = self.requests();
+            requests
+                .outgoing
+                .get(&request_id)
+                .or_else(|| requests.incoming.get(&request_id))
+                .map(|stream| stream.update_waiters.clone())
+        };
+        let waiter = waiters.and_then(|waiters| {
+            waiters
+                .lock()
+                .expect("draft-18 update waiters poisoned")
+                .pop_front()
+        });
+        if let Some(waiter) = waiter {
+            let _ = waiter.send(outcome);
+        }
     }
 
     /// A response to a synthetic Request ID goes nowhere.
@@ -1199,7 +1246,7 @@ mod tests {
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
                 datagram_object, mandatory_track_properties, next_datagram, next_subgroup,
-                notify_datagram, published_track_between, read_fetch_objects,
+                notify_datagram, published_track_between, read_fetch_objects, sent_update,
                 spawn_connected_draft18_sessions, subscribed_track_reader,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
             },
@@ -3717,24 +3764,20 @@ mod tests {
             spawn_connected_draft18_sessions("draft18-publish-update", "moqt").await;
         let track = published_track_between(client, server).await;
         let subscriber = track.server.subscriber();
-        subscriber
-            .update_forward(&track.accepted, false)
-            .await
-            .unwrap();
-        subscriber
-            .update_forward(&track.accepted, true)
-            .await
-            .unwrap();
-        let SessionEvent::SubscribeUpdate(first) = next_event(&track.client).await else {
-            panic!("expected SUBSCRIBE_UPDATE");
-        };
+        let first = sent_update(
+            subscriber.update_forward(&track.accepted, false),
+            &track.client,
+        )
+        .await;
         first.ok(Some(Location {
             group_id: 3,
             object_id: 1,
         }));
-        let SessionEvent::SubscribeUpdate(_second) = next_event(&track.client).await else {
-            panic!("expected SUBSCRIBE_UPDATE");
-        };
+        let _second = sent_update(
+            subscriber.update_forward(&track.accepted, true),
+            &track.client,
+        )
+        .await;
 
         // Act
         track

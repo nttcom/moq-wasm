@@ -653,7 +653,14 @@ impl IncomingRequestTask {
             (_, Message::RequestUpdate(_)) => FollowUp::AcceptUpdate,
             // Answers to our REQUEST_UPDATE of the subscription the PUBLISH
             // started (§10.9); a failed one is followed by PUBLISH_DONE.
-            (RequestStreamKind::Publish, Message::RequestOk(_) | Message::RequestError(_)) => {
+            (RequestStreamKind::Publish, Message::RequestOk(_)) => {
+                scope.channel().answer_update(request_id, Ok(()));
+                FollowUp::Continue
+            }
+            (RequestStreamKind::Publish, Message::RequestError(error)) => {
+                scope
+                    .channel()
+                    .answer_update(request_id, Err((error.code, error.reason)));
                 FollowUp::Continue
             }
             (RequestStreamKind::Publish, Message::PublishDone(done)) => {
@@ -1094,7 +1101,14 @@ impl OutgoingRequestTask {
                     ))));
                 }
                 // Answers to our REQUEST_UPDATE.
-                Ok(Some(Message::RequestOk(_) | Message::RequestError(_))) => {}
+                Ok(Some(Message::RequestOk(_))) => {
+                    context.channel().answer_update(request_id, Ok(()));
+                }
+                Ok(Some(Message::RequestError(error))) => {
+                    context
+                        .channel()
+                        .answer_update(request_id, Err((error.code, error.reason)));
+                }
                 // §6.1: the peer could not open the stream of a PUBLISH; this
                 // side can still SUBSCRIBE to the track.
                 Ok(Some(Message::PublishBlocked(blocked))) => {

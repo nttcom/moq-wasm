@@ -721,7 +721,10 @@ when its last subscriber leaves.
   (draft-14) or REQUEST_UPDATE (draft-18). A worker handles one event at a
   time, so the updates to one publisher go out in the order they were decided,
   a burst of changes is sent as its latest state, and none precedes the
-  PUBLISH_OK.
+  PUBLISH_OK. The worker does not wait for the publisher's REQUEST_OK
+  (`moqt::Subscriber::send_forward_update`): the publisher's other events
+  queue behind it, and a publisher that never answers would hold them for
+  the control message timeout.
 
 A subscriber between the track lookup and its registration is not counted, so
 a SUBSCRIBE in Forward State 0 does not turn the publisher on for a moment.

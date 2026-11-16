@@ -84,6 +84,10 @@ mod tests {
         matches!(published, Subscription::PublisherInitiated(published) if published.forward)
     }
 
+    /// Below the 10 s control message timeout, so a worker blocked on the
+    /// REQUEST_OK fails the test.
+    const NEXT_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+
     async fn next_forward_update(publisher: &Session) -> bool {
         loop {
             if let SessionEvent::SubscribeUpdate(handler) = next_event(publisher).await {
@@ -137,6 +141,33 @@ mod tests {
 
         // Assert
         assert_eq!(forward, [false, true, false]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unanswered_forward_update_does_not_hold_back_the_publisher_s_next_request() {
+        // Arrange: the publisher keeps the update without answering it
+        let relay = spawn_draft18_relay(app_token(Some(""), Some("")));
+        let publisher = connect_draft18_client(&relay).await;
+        let subscriber = connect_draft18_client(&relay).await;
+        publish_track(&publisher, false).await;
+        let _subscription = subscribe_track(&subscriber, SubscribeOption::default()).await;
+        let _unanswered = loop {
+            if let SessionEvent::SubscribeUpdate(handler) = next_event(&publisher).await {
+                break handler;
+            }
+        };
+
+        // Act
+        let announced = tokio::time::timeout(
+            NEXT_REQUEST_TIMEOUT,
+            publisher
+                .publisher()
+                .publish_namespace(format!("{NAMESPACE}/other")),
+        )
+        .await;
+
+        // Assert: the publisher's session worker answers it without waiting for the REQUEST_OK
+        assert!(matches!(announced, Ok(Ok(()))), "{announced:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

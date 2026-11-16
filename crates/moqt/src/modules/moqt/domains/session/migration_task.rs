@@ -814,8 +814,8 @@ mod tests {
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
                 client_with_config, data_receiver, datagram_object, native_client_with_config,
                 next_datagram, next_subgroup, open_subgroup, self_signed_server_config,
-                send_payload, spawn_native_server, spawn_native_server_handshake, spawn_server,
-                subscribe_namespace_accepted, subscribed_track_reader,
+                send_payload, sent_update, spawn_native_server, spawn_native_server_handshake,
+                spawn_server, subscribe_namespace_accepted, subscribed_track_reader,
             },
         },
         namespace::NamespaceInterest,
@@ -1070,19 +1070,10 @@ mod tests {
         let closed = tokio::time::timeout(DISCONNECT_TIMEOUT, server_a.closed()).await;
         assert!(closed.is_ok(), "the migration ends once A is closed");
 
-        client
-            .subscriber()
-            .update_forward(&subscription, false)
+        let subscriber = client.subscriber();
+        sent_update(subscriber.update_forward(&subscription, false), &server_b)
             .await
-            .unwrap();
-        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
-            .await
-            .expect("the update arrives")
-            .unwrap();
-        let SessionEvent::SubscribeUpdate(update) = event else {
-            panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
-        };
-        update.filter()
+            .filter()
     }
 
     /// The Start Location the SUBSCRIBE sent again established: past B's

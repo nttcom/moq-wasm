@@ -26,7 +26,7 @@ use crate::{
             request_failure::record_outcome,
             session_context::{CarriedSubscription, PendingFetch, SessionContext},
         },
-        version::{Notification, OutgoingRequest, PendingResponse, ReceivedResponse},
+        version::{Notification, OutgoingRequest, PendingResponse, ReceivedResponse, UpdateAnswer},
     },
     object::{GroupOrder, Location},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateOption},
@@ -622,9 +622,10 @@ impl Subscriber {
     }
 
     /// Sends a SUBSCRIBE_UPDATE for `subscription` on each connection that
-    /// carries it (draft-14 §9.10).
-    /// The draft defines no response, so this returns once the message is
-    /// written.
+    /// carries it (draft-14 §9.10). On draft-18 it returns once the peer
+    /// answers the REQUEST_UPDATE (§10.9) and fails on REQUEST_ERROR or after
+    /// the control message timeout; draft-14 defines no response, so there it
+    /// returns once written.
     #[tracing::instrument(
         level = "debug",
         name = "moqt.subscriber.subscribe_update",
@@ -637,17 +638,18 @@ impl Subscriber {
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
         let start = option.start_location;
-        self.send_update(subscription, option, |_| start).await
+        let answers = self.write_update(subscription, option, |_| start).await?;
+        wait_for(answers).await
     }
 
-    /// `subscribe_update` with the Start Location `start_on` gives for each
-    /// connection.
-    async fn send_update(
+    /// Writes `subscribe_update`'s message with the Start Location `start_on`
+    /// gives for each connection, and returns the answers to wait for.
+    async fn write_update(
         &self,
         subscription: &Subscription,
         option: SubscribeUpdateOption,
         start_on: impl Fn(&Connection) -> Location,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<UpdateAnswer>> {
         subscription.last_update().set(option);
         let carried = self.session.read_carried().await;
         if let Some(carried) = &carried {
@@ -666,6 +668,7 @@ impl Subscriber {
                 }
             });
         }
+        let mut answers = Vec::new();
         for (connection, subscription_request_id) in
             self.on_live_connections(subscription.request_id())
         {
@@ -681,12 +684,14 @@ impl Subscriber {
                 delivery_timeout: None,
                 new_group_request: None,
             };
-            connection
-                .control
-                .send_subscribe_update(reservation, subscribe_update)
-                .await?;
+            answers.push(
+                connection
+                    .control
+                    .send_subscribe_update(reservation, subscribe_update)
+                    .await?,
+            );
         }
-        Ok(())
+        Ok(answers)
     }
 
     /// Asks the Original Publisher to start a new group, with a REQUEST_UPDATE
@@ -741,6 +746,22 @@ impl Subscriber {
         .await
     }
 
+    /// `update_forward` without waiting for the peer's answer: returns once
+    /// the update is written, for a caller that must not wait on the peer,
+    /// such as a relay's session worker, which handles the peer's other
+    /// requests in turn.
+    pub async fn send_forward_update(
+        &self,
+        subscription: &Subscription,
+        forward: bool,
+    ) -> anyhow::Result<()> {
+        let option = SubscribeUpdateOption {
+            forward,
+            ..repeated_update(subscription)
+        };
+        self.write_repeat(subscription, option).await.map(drop)
+    }
+
     /// Changes the Subscriber Priority (draft-14 §7.1) and repeats the
     /// subscription's current Start Location, End Group and Forward State.
     pub async fn update_priority(
@@ -785,8 +806,17 @@ impl Subscriber {
         subscription: &Subscription,
         option: SubscribeUpdateOption,
     ) -> anyhow::Result<()> {
+        let answers = self.write_repeat(subscription, option).await?;
+        wait_for(answers).await
+    }
+
+    async fn write_repeat(
+        &self,
+        subscription: &Subscription,
+        option: SubscribeUpdateOption,
+    ) -> anyhow::Result<Vec<UpdateAnswer>> {
         let start = option.start_location;
-        self.send_update(subscription, option, |connection| {
+        self.write_update(subscription, option, |connection| {
             connection
                 .carried_start(subscription.request_id())
                 .map_or(start, |carried| carried.max(start))
@@ -1070,6 +1100,13 @@ fn new_group_request(
     }
 }
 
+async fn wait_for(answers: Vec<UpdateAnswer>) -> anyhow::Result<()> {
+    for answer in answers {
+        answer.wait().await?;
+    }
+    Ok(())
+}
+
 /// The last SUBSCRIBE_UPDATE sent for `subscription`, or before any update,
 /// the range, priority and Forward State of its SUBSCRIBE or PUBLISH_OK.
 /// `end_group` is the SUBSCRIBE_UPDATE field: the end group plus one, or 0
@@ -1300,6 +1337,7 @@ mod tests {
 
     use crate::namespace::NamespaceInterest;
     use crate::object::GroupOrder;
+    use crate::publish::PublishDoneCode;
 
     use tokio::task::JoinHandle;
 
@@ -1317,7 +1355,7 @@ mod tests {
                 connected_sessions, data_receiver, first_subgroup_stream, location, next_subgroup,
                 notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
                 receive_disconnected, send_subgroup_object, send_until_stopped,
-                send_without_waiting, spawn_connected_draft18_sessions,
+                send_without_waiting, sent_update, spawn_connected_draft18_sessions,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 subscribe_namespace_accepted, subscribed_track, wait_for_control_delivery, within,
             },
@@ -2179,17 +2217,11 @@ mod tests {
             let (subscription, handler) = subscribed(&client, &server).await;
 
             // Act
-            client
-                .subscriber()
-                .update_forward(&subscription, false)
-                .await
-                .unwrap();
+            let subscriber = client.subscriber();
+            let update =
+                sent_update(subscriber.update_forward(&subscription, false), &server).await;
 
             // Assert
-            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_UPDATE from the client");
-            };
             assert_eq!(update.subscription_request_id(), handler.request_id());
             assert!(!update.forward());
             assert_eq!(
@@ -2213,17 +2245,10 @@ mod tests {
             let (subscription, handler) = subscribed(&client, &server).await;
 
             // Act
-            client
-                .subscriber()
-                .update_priority(&subscription, 7)
-                .await
-                .unwrap();
+            let subscriber = client.subscriber();
+            let update = sent_update(subscriber.update_priority(&subscription, 7), &server).await;
 
             // Assert
-            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_UPDATE from the client");
-            };
             assert_eq!(update.subscription_request_id(), handler.request_id());
             assert_eq!(update.subscriber_priority(), 7);
             assert!(update.forward());
@@ -2266,20 +2291,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_draft18_update_returns_once_the_peer_answered_it() {
+        // Arrange
+        let (client, server) =
+            connected_sessions("subscriber-update-answered", Version::Draft18).await;
+        let (subscription, _handler) = subscribed(&client, &server).await;
+        let subscriber = client.subscriber();
+        let mut update = Box::pin(subscriber.update_forward(&subscription, false));
+        let SessionEvent::SubscribeUpdate(handler) =
+            send_without_waiting(&mut update, &server).await
+        else {
+            panic!("expected SUBSCRIBE_UPDATE from the client");
+        };
+        let before_the_answer = (&mut update).now_or_never();
+
+        // Act
+        handler.ok(None);
+        let updated = within(update).await;
+
+        // Assert: §10.9, the REQUEST_OK tells the subscriber the update is in effect
+        assert!(before_the_answer.is_none());
+        assert!(updated.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_draft18_update_fails_when_the_subscription_ends_before_its_answer() {
+        // Arrange
+        let (client, server) =
+            connected_sessions("subscriber-update-ended", Version::Draft18).await;
+        let (request, handler) = start_subscribe(&client, &server, "track").await;
+        let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
+        let subscription = request.await.unwrap().unwrap();
+        let served = handler.into_subscription(track_alias);
+        let subscriber = client.subscriber();
+        let mut update = Box::pin(subscriber.update_forward(&subscription, false));
+        let SessionEvent::SubscribeUpdate(_unanswered) =
+            send_without_waiting(&mut update, &server).await
+        else {
+            panic!("expected SUBSCRIBE_UPDATE from the client");
+        };
+
+        // Act
+        server
+            .publisher()
+            .publish_done(&served, PublishDoneCode::TrackEnded, 0, String::new())
+            .await
+            .unwrap();
+        let updated = within(update).await;
+
+        // Assert: §10.9 the update was neither answered nor applied
+        assert!(updated.is_err());
+    }
+
+    #[tokio::test]
+    async fn send_forward_update_returns_before_the_peer_answers() {
+        // Arrange
+        let (client, server) =
+            connected_sessions("subscriber-forward-unanswered", Version::Draft18).await;
+        let (subscription, _handler) = subscribed(&client, &server).await;
+
+        // Act
+        within(
+            client
+                .subscriber()
+                .send_forward_update(&subscription, false),
+        )
+        .await
+        .unwrap();
+
+        // Assert: the update was written although nobody answered it
+        assert!(!receive_subscribe_update(&server).await.forward());
+    }
+
+    #[tokio::test]
     async fn accepting_an_update_tells_the_subscriber_the_largest_object_only_on_draft18() {
         for version in DRAFTS {
             // Arrange
             let (client, server) = connected_sessions("subscriber-update-largest", version).await;
             let (subscription, _handler) = subscribed(&client, &server).await;
-            client
-                .subscriber()
-                .update_forward(&subscription, true)
-                .await
-                .unwrap();
-            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_UPDATE from the client");
-            };
+            let subscriber = client.subscriber();
+            let update = sent_update(subscriber.update_forward(&subscription, true), &server).await;
 
             // Act
             let told = update.ok(Some(location(3, 1)));
@@ -2303,17 +2394,10 @@ mod tests {
             let (subscription, handler) = subscribed(&client, &server).await;
 
             // Act
-            client
-                .subscriber()
-                .end_before_group(&subscription, 7)
-                .await
-                .unwrap();
+            let subscriber = client.subscriber();
+            let update = sent_update(subscriber.end_before_group(&subscription, 7), &server).await;
 
             // Assert: groups up to 6 stay in the range, which the field encodes as 6 + 1
-            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_UPDATE from the client");
-            };
             assert_eq!(update.subscription_request_id(), handler.request_id());
             assert!(update.forward());
             assert_eq!(
@@ -2344,14 +2428,11 @@ mod tests {
             let subscription = request.await.unwrap().unwrap();
 
             // Act
-            client
-                .subscriber()
-                .end_before_group(&subscription, 7)
-                .await
-                .unwrap();
+            let subscriber = client.subscriber();
+            let update = sent_update(subscriber.end_before_group(&subscription, 7), &server).await;
 
             // Assert: Forward 1 would start the delivery the SUBSCRIBE held back
-            assert!(!receive_subscribe_update(&server).await.forward());
+            assert!(!update.forward());
         }
     }
 
@@ -2476,17 +2557,11 @@ mod tests {
             let (subscription, handler) = subscribed(&client, &server).await;
 
             // Act
-            client
-                .subscriber()
-                .subscribe_update(&subscription, option)
-                .await
-                .unwrap();
+            let subscriber = client.subscriber();
+            let update =
+                sent_update(subscriber.subscribe_update(&subscription, option), &server).await;
 
             // Assert
-            let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap()
-            else {
-                panic!("expected SUBSCRIBE_UPDATE from the client");
-            };
             assert_eq!(update.subscription_request_id(), handler.request_id());
             assert_eq!(
                 update.filter(),

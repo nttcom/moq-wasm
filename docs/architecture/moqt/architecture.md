@@ -418,6 +418,21 @@ call through the adapter; a draft never gets a task of its own (see
       A NEW_GROUP_REQUEST (§10.2.13) the update carries is read with
       `SubscribeUpdateHandler::new_group_request()`. It belongs to that
       update only and is not part of the state the next update starts from.
+    - This side's own REQUEST_UPDATEs of a subscription wait for their
+      answer: `send_request_update` queues a waiter on the request stream
+      (in write order, which the Request ID reservation keeps), and the task
+      reading that stream hands each REQUEST_OK or REQUEST_ERROR to the
+      oldest waiter. So `Subscriber::subscribe_update` and the methods built
+      on it (`update_forward`, `update_priority`, `end_before_group`) return
+      once the peer has applied the update, and fail on REQUEST_ERROR, when
+      the stream ends without an answer (a peer that coalesced updates into
+      one REQUEST_ERROR ends the subscription, §10.9.1), or after the control
+      message timeout. `send_forward_update` does not wait: a relay's session
+      worker handles a publisher's events in turn and cannot hold them behind
+      that publisher's answer. A NEW_GROUP_REQUEST does not wait either.
+      Draft-14's
+      SUBSCRIBE_UPDATE has no response (§9.10), so there they return once
+      the message is written.
     - A REQUEST_UPDATE with TRACK_NAMESPACE_PREFIX on the peer's
       SUBSCRIBE_NAMESPACE or SUBSCRIBE_TRACKS raises
       `SubscribeNamespaceUpdate` (§10.9.2), which draft-14 never raises; the

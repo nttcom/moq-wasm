@@ -8,6 +8,9 @@
 
 pub(crate) mod draft14;
 pub(crate) mod draft18;
+mod update_answer;
+
+pub(crate) use update_answer::UpdateAnswer;
 
 use std::{
     sync::{Arc, Weak},
@@ -977,12 +980,13 @@ impl ControlChannel {
         &self,
         reservation: RequestIdReservation<'_>,
         subscribe_update: SubscribeUpdate,
-    ) -> Result<(), TransportSendError> {
+    ) -> Result<UpdateAnswer, TransportSendError> {
         match self {
             Self::Draft14(channel) => {
                 channel
                     .send_subscribe_update(reservation, subscribe_update)
-                    .await
+                    .await?;
+                Ok(UpdateAnswer(None))
             }
             Self::Draft18(channel) => {
                 channel

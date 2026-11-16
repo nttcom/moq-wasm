@@ -755,17 +755,38 @@ pub(crate) async fn subscribed_track(name: &str, version: Version) -> Subscribed
 /// Has the server update the Forward State of the track it accepted and
 /// returns the update as the publishing client receives it.
 pub(crate) async fn received_subscribe_update(track: &PublishedTrack) -> SubscribeUpdateHandler {
-    track
-        .server
-        .subscriber()
-        .update_forward(&track.accepted, true)
-        .await
-        .unwrap();
-    let event = within(track.client.receive_event()).await.unwrap();
-    let SessionEvent::SubscribeUpdate(update) = event else {
-        panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
-    };
-    update
+    let subscriber = track.server.subscriber();
+    sent_update(
+        subscriber.update_forward(&track.accepted, true),
+        &track.client,
+    )
+    .await
+}
+
+/// Runs `update` until `peer` receives its SUBSCRIBE_UPDATE and returns
+/// that, unanswered: on draft-18 `update` waits for the answer (§10.9), so
+/// it is dropped still pending; on draft-14 it completes once sent.
+pub(crate) async fn sent_update(
+    update: impl Future<Output = anyhow::Result<()>>,
+    peer: &Session,
+) -> SubscribeUpdateHandler {
+    let mut update = std::pin::pin!(update);
+    let mut sent = false;
+    loop {
+        tokio::select! {
+            result = &mut update, if !sent => {
+                result.unwrap();
+                sent = true;
+            }
+            event = within(peer.receive_event()) => {
+                let event = event.unwrap();
+                let SessionEvent::SubscribeUpdate(handler) = event else {
+                    panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
+                };
+                return handler;
+            }
+        }
+    }
 }
 
 pub(crate) fn object_with_extensions() -> Object {
