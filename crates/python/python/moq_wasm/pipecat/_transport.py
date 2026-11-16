@@ -102,7 +102,7 @@ class MoqWasmOutputTransport(BaseOutputTransport):
 
 
 class MoqWasmTransport(BaseTransport):
-    """Takes the place of pipecat's `MOQTransport` on a `moq_wasm.Session`, which owns reconnection
+    """Takes the place of pipecat's `MOQTransport` on a `moq_wasm.Session`, which owns the connection
     and tokens. Every broadcast one level under `params.room` is a participant.
 
     Event handlers, as `MOQTransport`'s: `on_connected` and `on_disconnected` (the transport started

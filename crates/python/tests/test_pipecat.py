@@ -13,7 +13,7 @@ from moq_wasm.pipecat._room import Room, RoomOptions
 
 from tests.fake_native import STAY_OPEN, FakeRelay, open_session
 
-pytestmark = pytest.mark.usefixtures("no_reconnect_delay")
+pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
 TIMEOUT_SECONDS = 5
 ROOM = ["anon", "room"]

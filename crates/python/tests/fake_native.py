@@ -99,7 +99,8 @@ class FakeMediaBroadcast:
 
 
 class FakeNativeSession:
-    """One connection. `calls` lists its requests in order; `drop()` ends it as the relay would.
+    """One native session. `calls` lists its requests in order; `drop()` ends it as one that gave up
+    replacing its connection.
     `tracks[name]` lists, for each SUBSCRIBE to `name` in turn, the payloads it yields; a SUBSCRIBE
     beyond them fails."""
 
@@ -178,7 +179,6 @@ class FakeRelay:
     def __init__(self):
         self.sessions: list[FakeNativeSession] = []
         self.refuse_next = 0
-        self._dialed = asyncio.Event()
 
     async def dial(self, token: str | None) -> FakeNativeSession:
         if self.refuse_next > 0:
@@ -186,22 +186,8 @@ class FakeRelay:
             raise RuntimeError("connection refused")
         session = FakeNativeSession(token)
         self.sessions.append(session)
-        self._dialed.set()
         return session
-
-    async def next_session(self, count: int) -> FakeNativeSession:
-        """Waits until `count` sessions have been opened, and returns the `count`-th."""
-        while len(self.sessions) < count:
-            self._dialed.clear()
-            await self._dialed.wait()
-        return self.sessions[count - 1]
 
 
 async def open_session(relay: FakeRelay, keeper: TokenKeeper | None = None, token: str | None = None) -> Session:
     return await _Connecting(relay.dial, keeper, token)
-
-
-async def restored_on(session: Session, native: FakeNativeSession) -> None:
-    """Waits until `session` has restored its state on `native`."""
-    while session._native is not native:
-        await asyncio.sleep(0)

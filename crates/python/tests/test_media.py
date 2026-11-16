@@ -7,9 +7,9 @@ import pytest
 import moq_wasm
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast, create_broadcast, watch_broadcasts
 
-from tests.fake_native import FakeRelay, open_session, restored_on
+from tests.fake_native import FakeRelay, open_session
 
-pytestmark = pytest.mark.usefixtures("no_reconnect_delay")
+pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
 TIMEOUT_SECONDS = 5
 ROOM = ["anon", "room"]
@@ -93,23 +93,19 @@ async def test_a_track_added_while_the_namespace_is_being_published_is_registere
     await session.close()
 
 
-async def test_an_event_timeline_opens_each_connection_with_its_records_when_it_replays():
+async def test_an_event_timeline_opens_one_group_with_no_record_and_adds_one_object_per_record():
     # Arrange
     relay = FakeRelay()
     session = await open_session(relay)
     async with create_broadcast(session, BOT) as bot:
-        timeline = bot.event_timeline("verdicts", replay=True)
+        timeline = bot.event_timeline("verdicts")
         await bot.published()
-        await timeline.append({"l": [0, 0], "data": "ok"})
 
         # Act
-        relay.sessions[0].drop()
-        second = await within(relay.next_session(2))
-        await within(restored_on(session, second))
+        await timeline.append({"l": [0, 0], "data": "ok"})
 
-    # Assert: each connection opens a group with the records so far
+    # Assert
     assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True), (b'[{"l":[0,0],"data":"ok"}]', False)]
-    assert second.writers["verdicts"].objects == [(b'[{"l":[0,0],"data":"ok"}]', True)]
     await session.close()
 
 

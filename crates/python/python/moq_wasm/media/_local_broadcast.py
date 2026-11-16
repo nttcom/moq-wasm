@@ -37,10 +37,8 @@ class LocalBroadcast:
             task.add_done_callback(self._registering.discard)
         return writer
 
-    def event_timeline(
-        self, name: str, *, retention_seconds: float = DEFAULT_RETENTION_SECONDS, replay: bool = False
-    ) -> EventTimeline:
-        return EventTimeline(self.publish_track(name, retention_seconds=retention_seconds), replay=replay)
+    def event_timeline(self, name: str, *, retention_seconds: float = DEFAULT_RETENTION_SECONDS) -> EventTimeline:
+        return EventTimeline(self.publish_track(name, retention_seconds=retention_seconds))
 
     def add_media_source(
         self,
