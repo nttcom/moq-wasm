@@ -7,7 +7,7 @@ dependencies = [
     "aiohttp>=3.11",
     "av>=14",
     "moq-bot-rooms",
-    "moqt",
+    "moq-wasm",
 ]
 
 [dependency-groups]
@@ -15,7 +15,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 
 [tool.uv.sources]
 moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
-moqt = { path = "../../../crates/python" }
+moq-wasm = { path = "../../../crates/python" }
 
 [build-system]
 requires = ["hatchling"]

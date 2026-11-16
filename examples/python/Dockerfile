@@ -1,8 +1,8 @@
 FROM ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b AS uv
 
-# The moqt bindings (crates/python) build into an abi3 wheel for Python 3.11+, so the Debian
+# The moq-wasm SDK (crates/python) builds into an abi3 wheel for Python 3.11+, so the Debian
 # python3 that runs maturin here need not be 3.11.
-FROM rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6 AS moqt-wheel
+FROM rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6 AS moq-wasm-wheel
 COPY --from=uv /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
@@ -29,12 +29,12 @@ COPY examples/python/moq-chat-moderation/pyproject.toml examples/python/moq-chat
 COPY examples/python/moq-camera-detection/pyproject.toml examples/python/moq-camera-detection/uv.lock moq-camera-detection/
 COPY examples/python/moq-ptz-tracking/pyproject.toml examples/python/moq-ptz-tracking/uv.lock moq-ptz-tracking/
 COPY examples/python/moq-meeting-transcriber/pyproject.toml examples/python/moq-meeting-transcriber/uv.lock moq-meeting-transcriber/
-COPY --from=moqt-wheel /wheels /wheels
-# This stage has no crates/python for the lock's path source, so uv skips moqt and the prebuilt
+COPY --from=moq-wasm-wheel /wheels /wheels
+# This stage has no crates/python for the lock's path source, so uv skips moq-wasm and the prebuilt
 # wheel is installed instead.
 RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-meeting-transcriber; do \
-        uv sync --frozen --no-dev --no-install-project --no-install-package moqt --directory $bot \
-        && uv pip install --python $bot/.venv/bin/python --no-deps /wheels/moqt-*.whl || exit 1; \
+        uv sync --frozen --no-dev --no-install-project --no-install-package moq-wasm --directory $bot \
+        && uv pip install --python $bot/.venv/bin/python --no-deps /wheels/moq_wasm-*.whl || exit 1; \
     done
 COPY examples/python/moq-chat-moderation/moq_chat_moderation moq-chat-moderation/moq_chat_moderation
 COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detection/moq_camera_detection

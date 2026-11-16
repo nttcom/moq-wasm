@@ -1,17 +1,18 @@
 # python
 
-Python bindings for the `moqt` crate, built with PyO3 and maturin into the
-module `moqt`. They cover what a bot that follows a room and publishes into it
-needs: see [the design](../../docs/architecture/python/architecture.md) and
-[`moqt.pyi`](moqt.pyi).
+`moq-wasm`, the Python SDK of this repository's MoQT implementation, imported
+as `moq_wasm`. The PyO3 module `moq_wasm._native` (`src/`), built with
+maturin, binds the `moqt` crate; the package around it is in `python/`. See
+[the design](../../docs/architecture/python/sdk.md) and
+[`_native.pyi`](python/moq_wasm/_native.pyi).
 
 ```python
-import moqt
+import moq_wasm
 
-session = await moqt.connect("moqt://127.0.0.1:4433", verify_certificate=False)
-async for event in await session.subscribe_namespace(["anon", "room"]):
+session = await moq_wasm.connect("moqt://127.0.0.1:4433", verify_certificate=False)
+async for event in await session.watch_namespaces(["anon", "room"]):
     if event.active:
-        catalog = await session.subscribe(event.namespace, "catalog", current_group=True)
+        catalog = await session.subscribe_current_group(event.namespace, "catalog")
         print((await anext(catalog)).payload)
 ```
 
@@ -22,15 +23,15 @@ drafts to offer instead.
 
 ```toml
 [project]
-dependencies = ["moqt"]
+dependencies = ["moq-wasm"]
 
 [tool.uv.sources]
-moqt = { path = "../../../crates/python" }
+moq-wasm = { path = "../../../crates/python" }
 ```
 
 uv builds the module with maturin, which needs this repository's Rust
 toolchain. After an uncommitted change to the `moqt` crate, or in a git
-worktree, run `uv sync --reinstall-package moqt`.
+worktree, run `uv sync --reinstall-package moq-wasm`.
 
 ## Test
 

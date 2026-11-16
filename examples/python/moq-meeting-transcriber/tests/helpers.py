@@ -62,13 +62,13 @@ class SessionRefusingNamespaces:
     def __init__(self):
         self.publications: dict[str, RecordingPublication] = {}
 
-    async def track(self, namespace: list[str], name: str, *, retention_seconds: float) -> RecordingPublication:
+    async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> RecordingPublication:
         return self.publications.setdefault(name, RecordingPublication())
 
-    async def publish_namespace(self, namespace: list[str]) -> None:
+    async def announce(self, namespace: list[str]) -> None:
         pass
 
-    async def subscribe_namespace(self, prefix: list[str]):
+    async def watch_namespaces(self, prefix: list[str]):
         raise RuntimeError("SUBSCRIBE_NAMESPACE refused")
 
     def closed(self) -> asyncio.Future:
@@ -86,12 +86,15 @@ class SessionWithParticipants(SessionRefusingNamespaces):
     def publish(self, namespace: list[str], *, active: bool = True) -> None:
         self._events.put_nowait(SimpleNamespace(namespace=namespace, active=active))
 
-    async def subscribe_namespace(self, prefix: list[str]):
+    async def watch_namespaces(self, prefix: list[str]):
         return self._iterate()
 
     async def _iterate(self):
         while True:
             yield await self._events.get()
 
-    async def subscribe(self, namespace: list[str], name: str, *, current_group: bool = False):
+    async def subscribe(self, namespace: list[str], name: str):
+        raise RuntimeError("no such track")
+
+    async def subscribe_current_group(self, namespace: list[str], name: str):
         raise RuntimeError("no such track")

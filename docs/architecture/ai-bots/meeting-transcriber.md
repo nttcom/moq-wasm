@@ -25,7 +25,7 @@ participant with the pieces the other bots already use:
 
 moq-rs then fell short in a room of two: it has no joining FETCH, so a
 catalog the relay already serves to the other participant never reached the
-bot. The bot uses the module `moqt` instead. pipecat's `MOQTransport`, which
+bot. The bot uses the Python SDK `moq-wasm` instead. pipecat's `MOQTransport`, which
 is built on moq-rs, does not fit a meeting either:
 
 - It follows one peer at a fixed path; a meeting has any number.
@@ -107,7 +107,7 @@ characters without `/`.
   `{root}/{room}/{user}` is a participant, the same rule as
   `parseTrackNamespace`; anything else is ignored.
 - For each participant it subscribes to `catalog` with a joining FETCH of the
-  group the relay holds (`current_group=True`): the relay already serves the
+  group the relay holds (`subscribe_current_group`): the relay already serves the
   catalog to the other participants, and a SUBSCRIBE alone would deliver
   nothing until the catalog changes. The subscription follows catalog updates.
 - From the catalog it picks the audio track the Meeting's viewers pick, the

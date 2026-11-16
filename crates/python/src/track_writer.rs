@@ -4,15 +4,15 @@ use pyo3::prelude::*;
 
 /// A track this session publishes through its origin, which numbers and caches
 /// what is written and answers the track's SUBSCRIBEs and FETCHes.
-#[pyclass(module = "moqt")]
-pub struct TrackPublication {
+#[pyclass(module = "moq_wasm")]
+pub struct TrackWriter {
     pub(crate) origin: Origin,
     pub(crate) namespace: String,
     pub(crate) name: String,
 }
 
 #[pymethods]
-impl TrackPublication {
+impl TrackWriter {
     #[pyo3(signature = (payload, *, new_group = false))]
     fn write<'py>(
         &self,

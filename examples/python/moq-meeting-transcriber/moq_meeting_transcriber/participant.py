@@ -1,6 +1,6 @@
 import asyncio
 
-import moqt
+import moq_wasm
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import UserAudioRawFrame
@@ -23,7 +23,7 @@ class Participant:
 
     def __init__(
         self,
-        session: moqt.Session,
+        session: moq_wasm.Session,
         namespace: list[str],
         recognizer: Recognizer,
         timeline: TranscriptTimeline,
@@ -36,7 +36,7 @@ class Participant:
 
     async def run(self) -> None:
         # The joining FETCH brings the catalog the relay holds for the participant's other viewers.
-        catalog = await self._session.subscribe(self._namespace, CATALOG_TRACK, current_group=True)
+        catalog = await self._session.subscribe_current_group(self._namespace, CATALOG_TRACK)
         audio_track: str | None = None
         transcribing: asyncio.Task | None = None
         try:
@@ -97,6 +97,6 @@ class Participant:
         finally:
             # Ends the profile's encoder in the participant's browser when no one else takes it.
             try:
-                await track.unsubscribe()
+                await track.close()
             except RuntimeError as error:
                 logger.debug(f"{self._name}: UNSUBSCRIBE {track_name} failed: {error}")

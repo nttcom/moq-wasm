@@ -1,0 +1,2 @@
+# The extension module an editable install (uv sync) builds next to the package.
+/python/moq_wasm/*.so

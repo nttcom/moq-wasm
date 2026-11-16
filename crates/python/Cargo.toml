@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "moqt"
+name = "moq_wasm"
 crate-type = ["cdylib"]
 # An extension module cannot link as a test binary; pytest covers it.
 test = false

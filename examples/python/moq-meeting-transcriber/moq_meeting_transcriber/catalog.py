@@ -1,4 +1,4 @@
-import moqt
+import moq_wasm
 from loguru import logger
 
 
@@ -9,7 +9,7 @@ def audio_track_name(catalog: bytes) -> str | None:
     starts no extra encoder in the participant's browser.
     """
     try:
-        tracks = moqt.parse_catalog(catalog).get("tracks", [])
+        tracks = moq_wasm.parse_catalog(catalog).get("tracks", [])
     except ValueError as error:
         logger.warning(f"catalog ignored: {error}")
         return None
