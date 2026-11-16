@@ -16,6 +16,10 @@ use pyo3::prelude::*;
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(session::connect, module)?)?;
     module.add_function(wrap_pyfunction!(catalog::parse_catalog, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        media_broadcast::check_audio_specific_config,
+        module
+    )?)?;
     module.add_class::<session::Session>()?;
     module.add_class::<errors::CloseInfo>()?;
     module.add_class::<errors::TransportStats>()?;
@@ -35,5 +39,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<track_writer::TrackWriter>()?;
     module.add_class::<media_broadcast::MediaBroadcast>()?;
     module.add_class::<media_broadcast::MediaSource>()?;
+    module.add_class::<media_broadcast::Rendition>()?;
     Ok(())
 }

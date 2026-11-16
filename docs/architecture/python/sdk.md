@@ -333,9 +333,29 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   broadcast, so its tracks are no longer answered and later frames are
   dropped.
 - `keyframe_request()` is awaited rather than registered as a callback, the
-  asyncio form of the browser SDK's `on_keyframe_request`. Renditions, on
-  demand publishing (the browser's `on_demand_change`) and AAC are left out
-  until a bot needs them.
+  asyncio form of the browser SDK's `on_keyframe_request`. On demand
+  publishing (the browser's `on_demand_change`) is left out until a bot
+  needs it.
+- The source's methods are the browser SDK's `MediaSource` in snake_case,
+  minus what WebCodecs does there:
+
+  ```python
+  media.configure_audio("mp4a.40.2", 48000, 1, description=audio_specific_config)
+  media.push_audio(frame, timestamp_micros, level=30, voice_activity=True)
+  low = media.add_rendition("low", label="180p", bitrate=200_000)
+  low.configure_video("vp8")
+  low.push_video(packet, timestamp_micros)  # the same picture as a video frame
+  ```
+
+  A rendition is a `Rendition` object rather than the browser's index
+  (`addRendition` returns one, `configureRendition(index, ...)` and
+  `pushRenditionVideo(index, ...)` take it): the caller encodes each
+  rendition itself and pushes its frames, with keyframes on the same
+  pictures as the video's; `keyframe_request()` asks for them too. A
+  rendition joins the video's switching set, so one in another codec (VP8
+  beside H.264) is an alternative in the same catalog `altGroup`, as the
+  browser's multi-codec renditions are. AAC needs its AudioSpecificConfig,
+  as WebCodecs' `description`; `level` is the LOC Audio Level property.
 
 Encoding stays in Python with PyAV, through `moq_wasm.codecs`.
 

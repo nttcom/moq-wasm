@@ -16,6 +16,9 @@ async def connect(
     without it draft-18, then draft-14, are offered. An unknown name raises `ValueError`, and an empty
     list fails the connect."""
 
+def check_audio_specific_config(description: bytes) -> None:
+    """Raises ValueError for bytes that are no AudioSpecificConfig (ISO/IEC 14496-3 §1.6.2.1)."""
+
 def parse_catalog(payload: bytes) -> dict:
     """Raises `ValueError` when `payload` is not an independent MSF catalog: malformed, of a
     `version` other than `"draft-01"` (draft-ietf-moq-msf-01 §5.1.1), or a delta update, which the
@@ -233,9 +236,32 @@ class MediaSource:
     def push_video(self, data: bytes, timestamp_micros: int) -> None:
         """One encoded frame; a keyframe opens a group. Raises RuntimeError before
         `configure_video`."""
-    def configure_audio(self, codec: str, sample_rate: int, channels: int) -> None:
-        """Only `"opus"`; raises ValueError for another codec."""
-    def push_audio(self, data: bytes, timestamp_micros: int) -> None: ...
+    def add_rendition(
+        self, name: str, *, label: str, bitrate: int | None = None, framerate: int | None = None
+    ) -> Rendition:
+        """Another encoding of the video in the track `<video>_<name>`, in the group ids of the
+        video's keyframes on the same pictures (draft-ietf-moq-cmsf-01 §3.2). It joins the video's
+        switching set (one catalog `altGroup`), so a rendition in another codec is an alternative
+        to the video. `bitrate` (bits per second) and `framerate` go into the catalog."""
+    def configure_audio(
+        self, codec: str, sample_rate: int, channels: int, *, description: bytes | None = None
+    ) -> None:
+        """`"opus"`, or an AAC `"mp4a.40.*"` whose `description` is the AudioSpecificConfig. Raises
+        ValueError for another codec, an AAC without `description` or a malformed one."""
+    def push_audio(
+        self, data: bytes, timestamp_micros: int, *, level: int | None = None, voice_activity: bool = False
+    ) -> None:
+        """One encoded audio frame. `level` is its RFC 6464 level in -dBov (0 to 127), written with
+        `voice_activity` as its LOC Audio Level property."""
     async def keyframe_request(self) -> None:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
-        broadcast needs one, as after dropping frames."""
+        broadcast needs one, as after dropping frames; encode the renditions' next frame as a keyframe
+        too."""
+
+class Rendition:
+    def configure_video(self, codec: str) -> None:
+        """As `MediaSource.configure_video`; it may differ from the video's codec."""
+    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+        """An encoded frame of the same picture as a video frame, at that frame's timestamp. Raises
+        RuntimeError before `configure_video`, and once an earlier frame stopped the rendition, as
+        when the session ended."""
