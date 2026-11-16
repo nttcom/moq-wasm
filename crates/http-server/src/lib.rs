@@ -1,6 +1,6 @@
 use std::{convert::Infallible, error::Error, future::Future, net::SocketAddr, sync::Arc};
 
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     Request, Response, StatusCode,
     body::{Body, Bytes, Incoming},
@@ -9,7 +9,7 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::TokioIo;
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -80,6 +80,24 @@ pub fn error_response(status: StatusCode, error: &str) -> Response<Full<Bytes>> 
     json_response(status, &json!({ "error": error }))
 }
 
+pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
+
+/// `None` when the body is longer than `MAX_JSON_BODY_BYTES`, fails to read,
+/// or is not JSON of `T`.
+pub async fn read_json<T, B>(body: B) -> Option<T>
+where
+    T: DeserializeOwned,
+    B: Body,
+    B::Error: Into<Box<dyn Error + Send + Sync>>,
+{
+    let bytes = Limited::new(body, MAX_JSON_BODY_BYTES)
+        .collect()
+        .await
+        .ok()?
+        .to_bytes();
+    serde_json::from_slice(&bytes).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -138,6 +156,38 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
         assert_eq!(body_of(response).await, r#"{"error":"not_found"}"#);
+    }
+
+    #[tokio::test]
+    async fn a_json_body_is_read() {
+        // Act
+        let read: Option<BTreeMap<String, u32>> =
+            read_json(Full::<Bytes>::from(r#"{"a":1}"#)).await;
+
+        // Assert
+        assert_eq!(read, Some(BTreeMap::from([("a".to_string(), 1)])));
+    }
+
+    #[tokio::test]
+    async fn a_body_that_is_not_json_of_the_type_is_not_read() {
+        // Act
+        let read: Option<BTreeMap<String, u32>> =
+            read_json(Full::<Bytes>::from(r#"{"a":"b"}"#)).await;
+
+        // Assert
+        assert_eq!(read, None);
+    }
+
+    #[tokio::test]
+    async fn a_body_over_the_limit_is_not_read() {
+        // Arrange: valid JSON one byte over the limit
+        let body = format!("\"{}\"", "a".repeat(MAX_JSON_BODY_BYTES - 1));
+
+        // Act
+        let read: Option<String> = read_json(Full::<Bytes>::from(body)).await;
+
+        // Assert
+        assert_eq!(read, None);
     }
 
     #[tokio::test]

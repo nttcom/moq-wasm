@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use http_body_util::{BodyExt, Full, Limited};
-use http_server::{HttpServer, error_response, json_response};
+use http_body_util::Full;
+use http_server::{HttpServer, error_response, json_response, read_json};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -12,8 +12,6 @@ use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{registry::Registry, verify::verify_token};
-
-const MAX_BODY_BYTES: usize = 16 * 1024;
 
 pub struct VtsServer {
     _http: HttpServer,
@@ -68,11 +66,7 @@ async fn handle(request: Request<Incoming>, secrets: Arc<Secrets>) -> JsonRespon
 }
 
 async fn verify(body: Incoming, secrets: &Secrets) -> JsonResponse {
-    let request = match Limited::new(body, MAX_BODY_BYTES).collect().await {
-        Ok(collected) => serde_json::from_slice::<VerifyRequest>(&collected.to_bytes()).ok(),
-        Err(_) => None,
-    };
-    let Some(request) = request else {
+    let Some(request) = read_json::<VerifyRequest, _>(body).await else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
     let apps = secrets.registry.current().await;
@@ -270,7 +264,7 @@ mod tests {
     async fn post_verify_returns_400_for_a_body_over_the_size_limit() {
         // Arrange
         let server = start_server().await;
-        let body = json!({ "token": "a".repeat(MAX_BODY_BYTES) }).to_string();
+        let body = json!({ "token": "a".repeat(http_server::MAX_JSON_BODY_BYTES) }).to_string();
 
         // Act
         let response = post_verify(&server, body).await;
