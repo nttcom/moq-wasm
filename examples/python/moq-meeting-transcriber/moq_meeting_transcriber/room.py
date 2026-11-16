@@ -3,7 +3,6 @@ import time
 
 import moq_wasm
 from loguru import logger
-from moq_bot_rooms.app_token import while_fresh
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 
 from moq_meeting_transcriber.participant import Participant
@@ -38,12 +37,15 @@ class Room:
         self._room = room
 
     async def run(self) -> None:
-        """Transcribes the room until it is cancelled or nobody is in it, reconnecting when the relay
-        session ends. Raises once the room's token cannot be kept fresh."""
+        """Transcribes the room until it is cancelled or nobody is in it. The session reconnects by
+        itself; this retries the first connection. Raises once the room's token cannot be kept fresh."""
         while True:
             try:
                 session = await moq_wasm.connect(
-                    self._relay_url, verify_certificate=self._verify_certificate, token=self._room.relay_token
+                    self._relay_url,
+                    verify_certificate=self._verify_certificate,
+                    token=self._room.relay_token,
+                    refresh_token=self._room.token.refresh if self._room.token else None,
                 )
             except RuntimeError as error:
                 logger.warning(f"room {self._room.key}: cannot connect to {self._relay_url}: {error}")
@@ -51,7 +53,7 @@ class Room:
                 continue
             logger.info(f"room {self._room.key}: connected to {self._relay_url}")
             try:
-                if await while_fresh(self._room.token, session, self._transcribe(session)):
+                if await session.run(self._transcribe(session)):
                     return
             finally:
                 await session.close()

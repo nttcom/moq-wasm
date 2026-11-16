@@ -5,6 +5,8 @@ import uuid
 import pytest
 
 import moq_wasm
+from moq_wasm import _native
+from tests.conftest import started_relay
 
 TIMEOUT_SECONDS = 10
 # moqt ends a subscription this long after its PUBLISH_DONE (PUBLISH_DONE_GRACE_PERIOD).
@@ -12,6 +14,8 @@ PUBLISH_DONE_GRACE_SECONDS = 10
 # The relay's default drain timeout bounds how long a client keeps the connection a GOAWAY retired.
 DRAIN_SECONDS = 30
 TRACK = "timeline"
+# A client notices a killed relay at QUIC's idle timeout (30 s), then redials after 1 s.
+RECONNECT_SECONDS = 60
 
 
 def room() -> list[str]:
@@ -90,7 +94,7 @@ async def test_a_subscribe_to_a_track_the_publisher_does_not_have_fails(relay_ur
 async def test_close_resolves_closed_and_fails_later_calls(relay_url):
     # Arrange
     namespace = [*room(), "alice"]
-    session = await connect(relay_url)
+    session = await _native.connect(relay_url, verify_certificate=False)
 
     # Act
     await within(session.close())
@@ -129,7 +133,7 @@ def temporary_app_id() -> str:
 async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    session = await _native.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
 
     # Act
     await within(session.refresh_token(temporary_app_token(app_id), app_id=app_id))
@@ -142,7 +146,7 @@ async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_u
 async def test_a_token_of_another_app_is_refused_as_a_refresh(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    session = await _native.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
 
     # Act / Assert
     with pytest.raises(RuntimeError):
@@ -153,7 +157,7 @@ async def test_a_token_of_another_app_is_refused_as_a_refresh(relay_url, tempora
 async def test_a_session_without_a_token_cannot_refresh_one(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await connect(relay_url)
+    session = await _native.connect(relay_url, verify_certificate=False)
 
     # Act / Assert
     with pytest.raises(RuntimeError, match="without a token"):
@@ -240,3 +244,27 @@ async def test_a_subscription_continues_on_the_relay_a_draining_relay_names(rela
     assert [(await within(objects.__anext__())).payload for _ in range(2)] == [b"v2", b"v3"]
     for session in (subscriber, publisher):
         await session.close()
+
+
+async def test_a_session_serves_its_track_again_on_a_restarted_relay(relay_auth):
+    # Arrange
+    namespace = [*room(), "alice"]
+    with started_relay(relay_auth, "relay-restart") as relay:
+        publisher, track = await publisher_with_track(relay.url, namespace)
+        # A crash: a terminated relay would drain its clients first.
+        relay.process.kill()
+        relay.process.wait()
+
+    # Act: the publisher redials the relay started on the same port
+    with started_relay(relay_auth, "relay-restart", port=relay.port):
+        subscriber = await connect(relay.url)
+        watch = await within(subscriber.watch_namespaces(namespace[:-1]))
+        announced = await asyncio.wait_for(anext(watch), RECONNECT_SECONDS)
+        objects = await within(subscriber.subscribe(namespace, TRACK))
+        await track.write(b"after restart", new_group=True)
+
+        # Assert
+        assert announced.namespace == namespace
+        assert (await within(anext(objects))).payload == b"after restart"
+        for session in (subscriber, publisher):
+            await session.close()
