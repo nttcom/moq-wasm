@@ -4158,7 +4158,6 @@ dependencies = [
  "msf",
  "serde-wasm-bindgen",
  "serde_json",
- "telemetry",
  "tokio",
  "tracing",
  "tracing-subscriber",

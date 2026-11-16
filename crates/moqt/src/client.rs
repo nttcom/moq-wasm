@@ -4,12 +4,13 @@
 //! not for its caller. Namespaces are element lists.
 //!
 //! Requests the draft lets the peer reject fail with `RequestError`, which
-//! carries the draft's error code.
+//! carries the draft's error code; a FETCH fails with `FetchError`, which
+//! wraps one.
 pub use crate::modules::client::announcement::Announcement;
 pub use crate::modules::client::event_handler::{EventHandler, HandlerId};
 pub use crate::modules::client::fetch::Fetch;
 pub use crate::modules::client::namespace_watch::NamespaceWatch;
-pub use crate::modules::client::request_error::RequestError;
+pub use crate::modules::client::request_error::{FetchError, RequestError};
 pub use crate::modules::client::session::{
     GroupStartOptions, PublishTrackOptions, Session, SubscribeOptions,
 };

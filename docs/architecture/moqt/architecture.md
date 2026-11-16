@@ -50,8 +50,8 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
 - The whole stack compiles for `wasm32` as well; the quinn-based transports
   and their markers (`QUIC`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
-  `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
-  API; it also uses the message codecs for the JavaScript message types.
+  `Endpoint::<BROWSER>` and wraps the connected session in a
+  `client::Session`, whose types it binds to JavaScript.
 - `wire.rs` exports the draft-14 numeric codes (`RequestKind` and the
   request-error / PUBLISH_DONE conversions) for the wasm bindings, whose
   JavaScript API carries draft-14 numbers, and the types public items expose:
@@ -798,9 +798,8 @@ event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
 PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
 watcher on `Disconnected` and hands every other event back. A watcher is
 registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
-the namespaces it knows right away. The Python bindings and the browser SDK's
-`Session` (`crates/wasm/src/session.rs`), which hand out one iterator per
-namespace subscription, use it.
+the namespaces it knows right away. `client::Session` and the Python
+bindings, which hand out one iterator per namespace subscription, use it.
 
 ### `client` — the client session
 
@@ -817,7 +816,7 @@ point; its API and its mapping to the JavaScript and Python SDKs are in
 | `event_loop_task.rs` | `EventLoopTask`: runs `Routes::route` on `executor::spawn`; dropping it (with the `Session`) or `close` stops it |
 | `event_handler.rs` | `EventHandler`, the `handle(event) -> Option<event>` shape `Origin`, `NamespaceWatchers` and `broadcast::RelayConnection` share, and `HandlerId` |
 | `subscription.rs`, `fetch.rs`, `namespace_watch.rs`, `announcement.rs`, `track_writer.rs` | What the requests return; each holds the `Arc<moqt::Session>` (and `Routes` where it reads them) |
-| `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code |
+| `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code; `FetchError`: a rejected FETCH, or a response stream that did not arrive (`fetch` returns once the stream has) |
 
 Each event goes, in order, to the handlers `add_handler` added (in the order
 added), to the session's `Origin` (which answers SUBSCRIBE, FETCH and

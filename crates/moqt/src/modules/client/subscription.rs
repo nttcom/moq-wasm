@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use anyhow::bail;
 use bytes::Bytes;
@@ -109,8 +109,9 @@ impl Subscription {
 
     /// Resolves once the publisher ends the subscription with PUBLISH_DONE,
     /// or to `None` once the session ends or `close` is called without one.
-    pub async fn done(&self) -> Option<PublishDone> {
-        self.done.clone().await.ok()
+    pub fn done(&self) -> impl Future<Output = Option<PublishDone>> + 'static {
+        let done = self.done.clone();
+        async move { done.await.ok() }
     }
 
     /// The next object; `None` once the track has no more streams. Objects
