@@ -102,20 +102,25 @@ impl Broadcast {
     }
 
     /// Registers the keyframe requests and the demand of a video track its
-    /// source encodes. Call before the catalog update that publishes the track.
+    /// source encodes and, with `cmaf`, of its CMAF sibling, whose demand is
+    /// reported under the sibling's name. Call before the catalog update that
+    /// publishes them.
     pub(crate) async fn prepare_encoded_video(
         &self,
         track_name: &str,
+        cmaf: bool,
         keyframe_requests: Option<&Arc<Notify>>,
         demand_sender: Option<&mpsc::UnboundedSender<TrackDemand>>,
     ) -> Result<()> {
-        if let Some(requested) = keyframe_requests {
-            self.accept_keyframe_requests(track_name, requested.clone())
-                .await?;
-        }
-        if let Some(demand_sender) = demand_sender {
-            self.publish_on_demand(track_name, demand_sender.clone())
-                .await?;
+        let cmaf_name = cmaf.then(|| cmaf_track_name(track_name));
+        for name in std::iter::once(track_name).chain(cmaf_name.as_deref()) {
+            if let Some(requested) = keyframe_requests {
+                self.accept_keyframe_requests(name, requested.clone())
+                    .await?;
+            }
+            if let Some(demand_sender) = demand_sender {
+                self.publish_on_demand(name, demand_sender.clone()).await?;
+            }
         }
         Ok(())
     }

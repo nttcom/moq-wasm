@@ -122,6 +122,9 @@ impl MediaBroadcast {
     /// subscriber takes it: `on_demand_change` is called with a track's name
     /// and whether one does, when the track is published and at every change,
     /// and the page need not encode a track nobody takes.
+    /// With `cmaf`, the video and its renditions also travel as CMAF in
+    /// `<track>_cmaf` (draft-ietf-moq-cmsf-01), sent only while a subscriber
+    /// takes it and reported to `on_demand_change` under that name.
     #[wasm_bindgen(js_name = addSource)]
     #[allow(clippy::too_many_arguments)]
     pub fn add_source(
@@ -131,6 +134,7 @@ impl MediaBroadcast {
         video_bitrate: Option<f64>,
         video_framerate: Option<f64>,
         audio: String,
+        cmaf: bool,
         on_keyframe_request: Function,
         on_demand_change: Function,
     ) -> MediaSource {
@@ -148,7 +152,7 @@ impl MediaBroadcast {
             audio_label: format!("{video_label} audio"),
             video_label,
             audio,
-            cmaf: false,
+            cmaf,
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
             video_framerate: video_framerate.map(|framerate| framerate as u32),
             keyframe_requests: Some(keyframe_requests),
@@ -242,7 +246,7 @@ impl MediaSource {
             label,
             bitrate: bitrate.map(|bitrate| bitrate as u64),
             framerate: framerate.map(|framerate| framerate as u32),
-            cmaf: false,
+            cmaf: self.tracks.cmaf,
             keyframes: RenditionKeyframes::SameFrames,
         };
         let broadcast = self.writer.broadcast().clone();

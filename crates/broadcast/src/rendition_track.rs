@@ -97,6 +97,7 @@ impl RenditionTrack {
                 self.broadcast
                     .prepare_encoded_video(
                         &self.config.track,
+                        self.config.cmaf,
                         self.keyframe_requests.as_ref(),
                         self.demand_sender.as_ref(),
                     )

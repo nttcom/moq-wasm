@@ -208,15 +208,18 @@ notifies it when it starts dropping media because the relay is not keeping up,
 and again whenever it drops a keyframe, so video resumes once the queue drains
 rather than at the source's next periodic keyframe. The browser sets it (`MediaBroadcast`'s
 `onKeyframeRequest`); `live-ingest`, `gst-plugin-moqt` and `onvif-ingest`
-cannot ask their encoders for a keyframe and leave it unset. CMAF siblings do
-not get dynamic groups.
+cannot ask their encoders for a keyframe and leave it unset. The same
+`Notify` is registered for a video's CMAF sibling, so it has dynamic groups
+exactly when its LOC track does.
 
 A source that can stop encoding a track sets `SourceTracks::demand_sender`.
 `TrackPublisher` (for the video and the audio) and each `RenditionTrack` then
 call `Broadcast::publish_on_demand` before the catalog update that publishes
 the track, so `Origin` sends its PUBLISH in Forward State 0 and reports on
 that channel whether a subscriber takes the track (draft-ietf-moq-transport-18
-§10.10). The catalog, the media timeline and the chat stay in Forward State 1:
+§10.10). A video's CMAF sibling, which is never PUBLISHed, is registered too:
+its SUBSCRIBEs are reported under the sibling's name, and the browser
+encodes the video while either track is taken. The catalog, the media timeline and the chat stay in Forward State 1:
 they hold a state a late subscriber needs, which a relay could not hand it
 had it never received it. The browser sets the sender (`MediaBroadcast`'s
 `onDemandChange`); the other sources encode whether or not anyone watches and

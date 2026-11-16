@@ -226,7 +226,10 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    フィールドではなく、MSF の `label`、`role` に入れる。
 8. **CMAF の opt-in。** 今の `broadcast` は、すべての media track に `_cmaf` の兄弟
    track を作る。`SourceTracks` に CMAF を作るかどうかのフラグを足す。既定は今のまま
-   にして live-ingest などは変えず、ブラウザの配信だけ既定で切る。
+   にして live-ingest などは変えず、ブラウザの配信だけ既定で切る。`addSource` の
+   `cmaf: true` は、映像と rendition にだけ兄弟 track を作る（Opus の音声には作れない）。
+   兄弟 track は LOC の track と encoder を共有し、encoder はどちらかに購読者がいる間
+   動く。
 
 ## 映像 encoder のウォームアップ
 

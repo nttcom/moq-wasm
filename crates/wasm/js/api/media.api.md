@@ -643,6 +643,7 @@ export type SourceOptions = {
     encoding?: VideoEncoding;
     main?: MainVideo;
     renditions?: Rendition[];
+    cmaf?: boolean;
 };
 
 // @public (undocumented)

@@ -66,6 +66,22 @@ test('a video set during a video removal is published and previewed after it', a
   expect(environment.encoders(next)).toHaveLength(1)
 })
 
+test('the video is encoded while a subscriber takes its CMAF sibling and not its LOC track', async () => {
+  // Arrange
+  const camera = new FakeTrack('video')
+  await cameraSource(camera)
+  const [encoder] = environment.encoders(camera)
+  environment.broadcast.onDemandChange('camera', false)
+  environment.broadcast.onDemandChange('camera_cmaf', false)
+
+  // Act
+  environment.broadcast.onDemandChange('camera_cmaf', true)
+  environment.broadcast.onDemandChange('camera', false)
+
+  // Assert
+  expect(encoder.messages.filter(({ type }) => type === 'wanted').at(-1)).toMatchObject({ rendition: 0, wanted: true })
+})
+
 test('addSource rejects and releases the camera when the broadcast closes while its tracks are declared', async () => {
   // Arrange
   const broadcast = await createBroadcast(environment.session, ['room'])

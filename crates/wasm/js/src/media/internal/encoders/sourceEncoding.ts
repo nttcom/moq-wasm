@@ -23,6 +23,10 @@ export type SourceOptions = {
   /// Renditions of the video, each in the track `<source>_<name>` and
   /// encoded from the video's frames.
   renditions?: Rendition[]
+  /// Also sends the video and each rendition as CMAF in `<track>_cmaf`, while
+  /// a subscriber takes it, for a `LivePlayer` set to `setPackaging('cmaf')`.
+  /// The Opus audio has no CMAF track.
+  cmaf?: boolean
 }
 
 /// Encoder settings shared by the video and its renditions.
@@ -149,6 +153,9 @@ export function publishSource(
     trackNames.video,
     ...(options.renditions ?? []).map(({ name }) => `${trackNames.video}_${name}`)
   ]
+  // A video track and its CMAF sibling share an encoder, which encodes while
+  // a subscriber takes either.
+  const wantedTracks = new Set<string>()
   // The audio encoder stamps its chunks from the samples it was given, so it
   // cannot skip input like the video's: it is stopped, and a new one started
   // on a new timeline.
@@ -176,10 +183,17 @@ export function publishSource(
         setAudioWanted(wanted)
         return
       }
-      const rendition = videoTrackNames.indexOf(trackName)
-      if (rendition >= 0) {
-        kinds.get('video')?.encoder?.setWanted?.(rendition, wanted)
+      const rendition = videoTrackNames.findIndex((name) => trackName === name || trackName === `${name}_cmaf`)
+      if (rendition < 0) {
+        return
       }
+      if (wanted) {
+        wantedTracks.add(trackName)
+      } else {
+        wantedTracks.delete(trackName)
+      }
+      const name = videoTrackNames[rendition]
+      kinds.get('video')?.encoder?.setWanted?.(rendition, wantedTracks.has(name) || wantedTracks.has(`${name}_cmaf`))
     }
   )
   const renditionIndices = (options.renditions ?? []).map(({ name, label, bitrate, framerate }) =>

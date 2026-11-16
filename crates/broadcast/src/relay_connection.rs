@@ -952,6 +952,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscribe_for_the_cmaf_sibling_of_an_encoded_video_reports_its_demand() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("cmaf-demand");
+        let broadcast = live_cam(connection_to(&relay));
+        let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+        broadcast
+            .prepare_encoded_video(VIDEO_TRACK_NAME, true, None, Some(&demand_sender))
+            .await
+            .unwrap();
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        relay.received_catalogs().await;
+        let relay_session = relay.session().await;
+
+        // Act
+        let subscribed = relay_subscribe(&relay_session, "live/cam", "video_cmaf").await;
+
+        // Assert
+        assert!(subscribed);
+        let wanted = tokio::time::timeout(TEST_TIMEOUT, async {
+            loop {
+                let demand = demand_receiver.recv().await.unwrap();
+                if demand.wanted {
+                    return demand.track_name;
+                }
+            }
+        })
+        .await
+        .expect("the SUBSCRIBE makes the CMAF sibling wanted");
+        assert_eq!(wanted, "video_cmaf");
+    }
+
+    #[tokio::test]
     async fn go_away_moves_the_broadcast_to_the_named_relay_and_closes_the_old_session() {
         // Arrange: the broadcast announces and publishes its catalog on relay A
         let mut relay_a = FakeRelay::spawn("goaway-a");
