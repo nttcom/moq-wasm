@@ -2590,14 +2590,17 @@ dependencies = [
  "anyhow",
  "broadcast",
  "bytes",
+ "client-telemetry",
  "mediapack",
  "moqt",
  "msf",
  "pyo3",
  "pyo3-async-runtimes",
  "pyo3-build-config",
+ "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 """The Python SDK of this repository's MoQT implementation (docs/architecture/python/sdk.md)."""
 
 from moq_wasm._errors import RequestErrorCode
+from moq_wasm._log import init, report_log
 from moq_wasm._native import (
     CloseInfo,
     Fetch,
@@ -45,5 +46,7 @@ __all__ = [
     "TrackWriter",
     "TransportStats",
     "connect",
+    "init",
     "parse_catalog",
+    "report_log",
 ]
