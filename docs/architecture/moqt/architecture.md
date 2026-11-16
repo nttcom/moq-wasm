@@ -806,15 +806,17 @@ forward from their own cache through the raw stream senders.
 
 ### `NamespaceWatchers` — the namespaces a peer publishes
 
-`namespace::NamespaceWatchers` (`domains/namespace_watchers.rs`) is the
+`NamespaceWatchers` (`domains/namespace_watchers.rs`, crate-internal; its
+`NamespaceEvent` is public as `namespace::NamespaceEvent`) is the
 subscribing side's counterpart of `Origin` for namespaces: `watch(prefix)`
 returns a channel of `NamespaceEvent`s, and `handle(event)` in the session
 event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
 PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
 watcher on `Disconnected` and hands every other event back. A watcher is
 registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
-the namespaces it knows right away. `client::Session` and the Python
-bindings, which hand out one iterator per namespace subscription, use it.
+the namespaces it knows right away. `client::Session`, which hands out one
+iterator per namespace subscription (and so do the Python bindings built on
+it), uses it.
 
 ### `client` — the client session
 

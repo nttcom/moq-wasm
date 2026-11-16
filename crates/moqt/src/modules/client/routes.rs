@@ -10,6 +10,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument;
 
 use crate::modules::extensions::mutex::lock;
+use crate::modules::moqt::domains::namespace_watchers::NamespaceWatchers;
 use crate::{
     RequestErrorCode, Session, SessionEvent,
     modules::{
@@ -19,7 +20,6 @@ use crate::{
         },
         telemetry::join_trace,
     },
-    namespace::NamespaceWatchers,
     publish::Origin,
 };
 

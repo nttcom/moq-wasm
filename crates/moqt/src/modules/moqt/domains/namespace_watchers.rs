@@ -14,7 +14,7 @@ pub struct NamespaceEvent {
 }
 
 #[derive(Clone, Default)]
-pub struct NamespaceWatchers {
+pub(crate) struct NamespaceWatchers {
     watchers: Arc<Mutex<Vec<Watcher>>>,
 }
 
@@ -24,7 +24,7 @@ impl NamespaceWatchers {
     /// Call this before sending the SUBSCRIBE_NAMESPACE: the peer publishes the
     /// namespaces it knows right away. The receiver ends once the session
     /// disconnects or `close` is called.
-    pub fn watch(&self, prefix: Vec<String>) -> mpsc::UnboundedReceiver<NamespaceEvent> {
+    pub(crate) fn watch(&self, prefix: Vec<String>) -> mpsc::UnboundedReceiver<NamespaceEvent> {
         let (sender, receiver) = mpsc::unbounded_channel();
         lock(&self.watchers).push((prefix, sender));
         receiver
@@ -33,7 +33,7 @@ impl NamespaceWatchers {
     /// Acknowledges PUBLISH_NAMESPACE, reports it and PUBLISH_NAMESPACE_DONE to the
     /// watchers, and returns every other event. On `Disconnected` it first ends
     /// every watcher.
-    pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+    pub(crate) async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         match event {
             SessionEvent::PublishNamespace(handler) => {
                 tracing::info!(track_namespace = %handler.track_namespace, "PUBLISH_NAMESPACE received");
@@ -56,7 +56,7 @@ impl NamespaceWatchers {
         }
     }
 
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         lock(&self.watchers).clear();
     }
 
