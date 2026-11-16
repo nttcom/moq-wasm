@@ -707,18 +707,18 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）、`renew_after_seconds`、録画の開始時刻（`started_at_ms`）だけにする |
 
 transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
-メディアの範囲が記録の `m` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
+メディアの範囲が記録の `M` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
 録画していない session の記録は捨てる。catalog では `packaging` を `eventtimeline`、role を
 `subtitle`（Table 4）、`eventType` を `com.skyway.transcript.v1`、`depends` をその namespace の
 media timeline にし、`trackDuration` はほかの track と同じにする。track は group 0 の Object 1つで、その
-session の記録を `m` の順に並べ、同じ記録は1つにまとめる。
+session の記録を `M` の順に並べ、同じ記録は1つにまとめる。
 
 `trackDuration` は replay の namespace の全 track で同じ値にし、最初の media の Timestamp から
 最後の media の Timestamp までのミリ秒とする。
 
 録画の時刻は、録画の開始を起点にした1つの時計に揃える。recorder は保存するときに、LOC の
 Timestamp を開始からの media time（Timescale 1,000,000、draft-ietf-moq-loc-04 §2.3.1.2）にし、
-chat などの event timeline の wallclock の記録（`t`）を media time の記録（`m`、
+chat などの event timeline の wallclock の記録（`T`）を media time の記録（`M`、
 draft-ietf-moq-msf-02 §8.2）にする。開始より前のものは保存しない。こうすると参加者全員が1つの
 時間軸に乗り、timeline の wallclock は §7.1.1 が VOD に勧めるとおり 0 にできる。replay は保存した
 Object をそのまま出す。会議の時刻は、publish の応答の `started_at_ms` に media time を足して求める。

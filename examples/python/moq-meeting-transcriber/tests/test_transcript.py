@@ -17,5 +17,5 @@ async def test_each_utterance_is_one_record_at_the_time_it_began():
     # Assert
     assert publication.writes == [
         (True, []),
-        (False, [{"t": 1_792_399_956_554, "data": {"speaker": "alice", "text": "こんにちは"}}]),
+        (False, [{"T": 1_792_399_956_554, "data": {"speaker": "alice", "text": "こんにちは"}}]),
     ]

@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { TranscriptTimeline, freshCaptions, parseTranscriberStatus, transcriptRecordKey } from './transcript'
 
 const encode = (records: { t: number; speaker: string; text: string }[]) =>
-  new TextEncoder().encode(JSON.stringify(records.map(({ t, speaker, text }) => ({ t, data: { speaker, text } }))))
+  new TextEncoder().encode(JSON.stringify(records.map(({ t, speaker, text }) => ({ T: t, data: { speaker, text } }))))
 const ALICE = { t: 1_000, speaker: 'alice', text: 'こんにちは' }
 const BOB = { t: 2_000, speaker: 'bob', text: '今日は良い天気ですね' }
 const CAROL = { t: 3_000, speaker: 'carol', text: 'よろしくお願いします' }

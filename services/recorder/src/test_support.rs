@@ -342,7 +342,7 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
 }
 
 pub(crate) fn transcript_record(m_ms: u64, speaker: &str) -> serde_json::Value {
-    serde_json::json!({ "m": m_ms, "data": { "speaker": speaker, "text": format!("{speaker} at {m_ms}") } })
+    serde_json::json!({ "M": m_ms, "data": { "speaker": speaker, "text": format!("{speaker} at {m_ms}") } })
 }
 
 pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";

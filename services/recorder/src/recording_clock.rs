@@ -11,7 +11,7 @@ pub(crate) const MICROS_PER_MILLI: u64 = 1_000;
 /// The clock a room recording's archives are stored on: time since the
 /// recording started. Each wall-clock LOC Timestamp becomes media time with a Timescale
 /// of 1,000,000 (draft-ietf-moq-loc-04 §2.3.1.2), and each wall-clock record
-/// (`t`) of an event timeline becomes a media time record (`m`,
+/// (`T`) of an event timeline becomes a media time record (`M`,
 /// draft-ietf-moq-msf-02 §8.2), so every participant shares one time axis and
 /// the replay's media timelines need no wallclock (§7.1.1).
 #[derive(Debug, Clone, Copy)]
@@ -55,7 +55,7 @@ impl RecordingClock {
         Some(object)
     }
 
-    /// An event timeline document with each `t` record as an `m` record, and
+    /// An event timeline document with each `T` record as an `M` record, and
     /// those from before the recording started left out. A payload that is
     /// not a JSON array of records is kept as it is.
     pub(crate) fn event_timeline(&self, payload: &Bytes) -> Bytes {
@@ -65,13 +65,13 @@ impl RecordingClock {
         let records: Vec<Value> = records
             .into_iter()
             .filter_map(|mut record| {
-                let Some(wallclock_ms) = record.get("t").and_then(Value::as_u64) else {
+                let Some(wallclock_ms) = record.get("T").and_then(Value::as_u64) else {
                     return Some(record);
                 };
                 let media_ms = wallclock_ms.checked_sub(self.started_at_ms)?;
                 let fields = record.as_object_mut()?;
-                fields.remove("t");
-                fields.insert("m".to_string(), json!(media_ms));
+                fields.remove("T");
+                fields.insert("M".to_string(), json!(media_ms));
                 Some(record)
             })
             .collect();
@@ -134,7 +134,7 @@ mod tests {
         // Arrange
         let clock = RecordingClock::started_at(1_000);
         let payload = Bytes::from(
-            r#"[{"t":900,"data":"before"},{"t":1500,"data":"hello"},{"L":[1,0],"data":"kept"}]"#,
+            r#"[{"T":900,"data":"before"},{"T":1500,"data":"hello"},{"L":[1,0],"data":"kept"}]"#,
         );
 
         // Act
@@ -143,7 +143,7 @@ mod tests {
         // Assert
         assert_eq!(
             stored,
-            json!([{"m": 500, "data": "hello"}, {"L": [1, 0], "data": "kept"}])
+            json!([{"M": 500, "data": "hello"}, {"L": [1, 0], "data": "kept"}])
         );
     }
 

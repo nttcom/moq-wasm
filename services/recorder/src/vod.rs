@@ -186,11 +186,11 @@ async fn namespace_tracks(
 }
 
 /// The transcriber's records, split by the camera replay namespace of the
-/// speaker's first session whose media spans the record's `m`, each list
-/// sorted by `m` with a record stored twice kept once. `m` and the LOC
+/// speaker's first session whose media spans the record's `M`, each list
+/// sorted by `M` with a record stored twice kept once. `M` and the LOC
 /// Timestamps are both time since the recording started (`RecordingClock`).
 /// The transcriber names a speaker after the one namespace element below the
-/// room, so a record is left out when `<room>/<speaker>` is no member or `m`
+/// room, so a record is left out when `<room>/<speaker>` is no member or `M`
 /// falls outside all of that member's sessions.
 async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Value>>> {
     let mut records = BTreeMap::new();
@@ -202,7 +202,7 @@ async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Va
         let documents: Vec<Vec<Value>> =
             documents(recording, track, |payload| serde_json::from_slice(payload)).await?;
         for record in documents.into_iter().flatten() {
-            if let Some(m) = record["m"].as_u64() {
+            if let Some(m) = record["M"].as_u64() {
                 records.insert((m, record.to_string()), record);
             }
         }

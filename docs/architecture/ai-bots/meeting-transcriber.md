@@ -214,11 +214,11 @@ collide with it. The track is `transcript`, an MSF event timeline
 
 ```json
 [
-  { "t": 1792399956554, "data": { "speaker": "alice", "text": "今日は良い天気ですね" } }
+  { "T": 1792399956554, "data": { "speaker": "alice", "text": "今日は良い天気ですね" } }
 ]
 ```
 
-- `t` is the bot's wall-clock time, in ms, at which the utterance began: the
+- `T` is the bot's wall-clock time, in ms, at which the utterance began: the
   time the VAD closed the segment minus the segment's length.
 - The track is published through the session's `Origin`, which keeps it for
   an hour, the longest a room runs, and answers the relay's SUBSCRIBE and
@@ -226,11 +226,8 @@ collide with it. The track is `transcript`, an MSF event timeline
   isolates a track whose publisher reuses a location.
 - The track is one group: its first object is an empty record list, and
   each later object adds one record (§8.4).
-- The bot publishes no MSF catalog. §8.3 requires an event timeline's catalog
-  entry to list the tracks it applies to in `depends`, whose names MSF
-  resolves in the event timeline's own namespace, and the audio it describes
-  belongs to other broadcasts. The page knows the fixed track name, as the
-  MoQ Chat Moderation page does.
+- The bot publishes no MSF catalog: the page knows the fixed track name, as
+  the MoQ Chat Moderation page does.
 
 ### The page
 - While the bot's namespace is announced, every page in the room shows `CC`

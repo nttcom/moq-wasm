@@ -102,10 +102,10 @@ async def test_an_event_timeline_opens_one_group_with_no_record_and_adds_one_obj
         await bot.published()
 
         # Act
-        await timeline.append({"l": [0, 0], "data": "ok"})
+        await timeline.append({"L": [0, 0], "data": "ok"})
 
     # Assert
-    assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True), (b'[{"l":[0,0],"data":"ok"}]', False)]
+    assert relay.sessions[0].writers["verdicts"].objects == [(b"[]", True), (b'[{"L":[0,0],"data":"ok"}]', False)]
     await session.close()
 
 

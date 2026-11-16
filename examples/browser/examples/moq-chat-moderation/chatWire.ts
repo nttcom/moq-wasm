@@ -17,14 +17,14 @@ export function encodeChatMessage(text: string, labels: Label[]): Uint8Array {
 }
 
 /// draft-ietf-moq-msf-02 §8.2: an event timeline object is a JSON array of records indexed by
-/// `l`, the [group id, object id] of the chat object they judge.
+/// `L`, the [group id, object id] of the chat object they judge.
 export function parseModerationVerdicts(payload: Uint8Array): ModerationVerdict[] {
   const records: unknown = JSON.parse(new TextDecoder().decode(payload))
   if (!Array.isArray(records)) {
     return []
   }
   return records.flatMap((record) => {
-    const location = record?.l
+    const location = record?.L
     const labels = record?.data?.labels
     if (
       !Array.isArray(location) ||
