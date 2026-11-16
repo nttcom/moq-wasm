@@ -415,13 +415,10 @@ mod tests {
         .unwrap();
         let session = relay.clone();
         let reading = tokio::spawn(async move { BroadcastReader::run(&session, NAMESPACE).await });
-        assert_eq!(
-            publisher.served.recv().await.as_deref(),
-            Some(msf::CATALOG_TRACK_NAME)
-        );
+        assert_eq!(publisher.next_served().await, msf::CATALOG_TRACK_NAME);
         write_catalog(GroupBoundary::Within).await.unwrap();
         for track in ["video", "audio"] {
-            assert_eq!(publisher.served.recv().await.as_deref(), Some(track));
+            assert_eq!(publisher.next_served().await, track);
         }
 
         // Act: audio captured before the video's keyframe opens the audio stream and is held back
