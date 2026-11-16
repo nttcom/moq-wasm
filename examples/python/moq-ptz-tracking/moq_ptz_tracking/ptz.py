@@ -60,7 +60,7 @@ class PtzCommands:
     def __init__(self):
         self._publication: Publication | None = None
 
-    async def publish_on(self, publication: Publication) -> None:
+    def publish_on(self, publication: Publication) -> None:
         self._publication = publication
 
     async def sweep(self, heading: "Heading") -> "Sweep":

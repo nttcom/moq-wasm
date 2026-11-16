@@ -44,7 +44,7 @@ class RecordingPublication(testing.RecordingPublication):
 async def published_commands() -> tuple[PtzCommands, RecordingPublication]:
     commands = PtzCommands()
     publication = RecordingPublication()
-    await commands.publish_on(publication)
+    commands.publish_on(publication)
     return commands, publication
 
 

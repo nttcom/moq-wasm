@@ -910,18 +910,15 @@ version = "0.1.0"
 source = { editable = "../moq-system-one-bot" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "av", version = "19.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "moq-bot-rooms" },
-    { name = "moq-wasm" },
+    { name = "moq-wasm", extra = ["codecs"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
-    { name = "av", specifier = ">=14" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
-    { name = "moq-wasm", directory = "../../../crates/python" },
+    { name = "moq-wasm", extras = ["codecs"], directory = "../../../crates/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -935,10 +932,27 @@ name = "moq-wasm"
 version = "0.1.0"
 source = { directory = "../../../crates/python" }
 
+[package.optional-dependencies]
+codecs = [
+    { name = "av", version = "18.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "av", version = "19.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
 [package.metadata]
+requires-dist = [
+    { name = "av", marker = "extra == 'codecs'", specifier = ">=14" },
+    { name = "moq-wasm", extras = ["codecs"], marker = "extra == 'pipecat'" },
+    { name = "numpy", marker = "extra == 'codecs'", specifier = ">=1.26" },
+    { name = "pipecat-ai", marker = "extra == 'pipecat'", specifier = ">=1.12" },
+]
+provides-extras = ["codecs", "pipecat"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "av", specifier = ">=14" },
+    { name = "pipecat-ai", specifier = ">=1.12" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
 ]

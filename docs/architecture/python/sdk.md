@@ -269,6 +269,18 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
 
+### The bots in this repository
+The bots under `examples/python/` run on the media layer and
+`moq_wasm.codecs`, not on `MoqWasmTransport`, because each needs what the
+transport's frames do not carry:
+- The Meeting transcriber runs a pipeline per participant, so that its voice
+  activity detector hears one speaker, and publishes under
+  `{root}/{room}/bots/transcriber`, two levels down, so the Meeting lists no
+  participant for it.
+- Chat moderation, camera detection and PTZ tracking record each verdict at
+  the Location of the chat message or picture it judged, and follow tracks of
+  their own (`prompt`, `chat`) next to the media.
+
 ### Publishing media: `_native.MediaBroadcast`
 The browser SDK encodes with WebCodecs and hands the encoded samples to
 `crates/wasm`'s `MediaBroadcast`, which wraps `broadcast::Broadcast`: the

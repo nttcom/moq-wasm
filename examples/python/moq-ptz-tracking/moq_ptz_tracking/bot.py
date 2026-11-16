@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from functools import partial
 
@@ -8,22 +9,22 @@ import aiohttp
 import moq_wasm
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_bot_rooms.rooms import BotRoom
+from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_system_one_bot.namespace import until_room_empty, while_published
 from moq_system_one_bot.relay import add_relay_arguments, stay_connected
+from moq_system_one_bot.video import picture_to_jpeg
+from moq_wasm.codecs import VideoDecoder
+from moq_wasm.media import RemoteBroadcast, create_broadcast, watch_broadcasts
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
-from moq_system_one_bot.event_timeline import EventTimeline
 from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.target import LatestTarget, parse_prompt
 from moq_ptz_tracking.tracker import CameraPicture, PtzTracker
-from moq_system_one_bot.video import GroupDecoder, picture_to_jpeg
 from moq_ptz_tracking.vision import SystemOneVisionClient
 
 DEFAULT_PORT = 8099
@@ -35,7 +36,8 @@ EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
 # What the bot publishes is kept for FETCH as long as a room runs by default (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
-RESUBSCRIBE_DELAY_SECONDS = 1.0
+# onvif-ingest publishes the camera's H.264.
+CAMERA_CODEC = "avc1"
 SAMPLE_INTERVAL_SECONDS = 0.1
 JPEG_WIDTH = 640
 
@@ -99,67 +101,50 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def follow_prompts(session: moq_wasm.Session, viewer_namespace: list[str], latest_target: LatestTarget):
-    while True:
-        try:
-            async for prompt_object in await session.subscribe(viewer_namespace, PROMPT_TRACK):
-                location = (prompt_object.group_id, prompt_object.object_id)
-                try:
-                    target = parse_prompt(prompt_object.payload, location)
-                except ValueError as error:
-                    logger.warning(f"ignoring an invalid prompt at {location}: {error}")
-                    continue
-                logger.info(f"prompt {location}: {target}")
-                latest_target.set(target)
-            logger.info("prompt track ended")
-        except RuntimeError as error:
-            logger.info(f"prompt track ended: {error}")
-        finally:
-            latest_target.set(None)
-        await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
+async def follow_prompts(latest_target: LatestTarget, viewer: RemoteBroadcast):
+    try:
+        async for prompt_object in viewer.follow(PROMPT_TRACK):
+            location = (prompt_object.group_id, prompt_object.object_id)
+            try:
+                target = parse_prompt(prompt_object.payload, location)
+            except ValueError as error:
+                logger.warning(f"ignoring an invalid prompt at {location}: {error}")
+                continue
+            logger.info(f"prompt {location}: {target}")
+            latest_target.set(target)
+    finally:
+        latest_target.set(None)
 
 
 async def forward_video(
-    session: moq_wasm.Session,
-    camera_namespace: list[str],
-    video_track: str,
-    latest_target: LatestTarget,
-    worker: PipelineWorker,
+    video: AsyncIterator[moq_wasm.Object], latest_target: LatestTarget, worker: PipelineWorker
 ):
-    try:
-        video = await session.subscribe(camera_namespace, video_track)
-        logger.info(f"watching {'/'.join(camera_namespace)}/{video_track}")
-        next_sample_at = 0.0
-        decoder: GroupDecoder | None = None
-        group_id: int | None = None
-        async for video_object in video:
-            # Each group starts at a keyframe, so each gets a fresh decoder. A group joined in the
-            # middle has no keyframe and decodes to nothing.
-            if video_object.group_id != group_id:
-                decoder = GroupDecoder()
-                group_id = video_object.group_id
-            picture = await asyncio.to_thread(decoder.decode, video_object.payload)
-            decoded_at = time.monotonic()
-            target = latest_target.target
-            if picture is not None and target is not None and decoded_at >= next_sample_at:
-                next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
-                jpeg = await asyncio.to_thread(picture_to_jpeg, picture, JPEG_WIDTH)
-                await worker.queue_frame(
-                    CameraPicture(
-                        jpeg=jpeg,
-                        location=(video_object.group_id, video_object.object_id),
-                        decoded_at=decoded_at,
-                        target=target,
-                    )
+    next_sample_at = 0.0
+    decoder: VideoDecoder | None = None
+    group_id: int | None = None
+    async for video_object in video:
+        # Each group starts at a keyframe, so each gets a fresh decoder. A group joined in the
+        # middle has no keyframe and decodes to nothing.
+        if video_object.group_id != group_id:
+            decoder = VideoDecoder(CAMERA_CODEC)
+            group_id = video_object.group_id
+        picture = await asyncio.to_thread(decoder.decode, video_object.payload)
+        decoded_at = time.monotonic()
+        target = latest_target.target
+        if picture is not None and target is not None and decoded_at >= next_sample_at:
+            next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
+            jpeg = await asyncio.to_thread(picture_to_jpeg, picture, JPEG_WIDTH)
+            await worker.queue_frame(
+                CameraPicture(
+                    jpeg=jpeg,
+                    location=(video_object.group_id, video_object.object_id),
+                    decoded_at=decoded_at,
+                    target=target,
                 )
-        logger.info("camera track ended")
-    except RuntimeError as error:
-        logger.info(f"camera track ended: {error}")
+            )
 
 
-async def forward_camera(
-    session: moq_wasm.Session, camera_namespace: list[str], latest_target: LatestTarget, worker: PipelineWorker
-):
+async def forward_camera(latest_target: LatestTarget, worker: PipelineWorker, camera: RemoteBroadcast):
     """Subscribes to the camera only while a target is set, because onvif-ingest streams the profile
     its first subscriber picks and rejects the others."""
     while True:
@@ -167,56 +152,30 @@ async def forward_camera(
         if target is None:
             await latest_target.changed()
             continue
-        watching = asyncio.create_task(forward_video(session, camera_namespace, target.video_track, latest_target, worker))
-        leaving = asyncio.create_task(latest_target.leaves(target.video_track))
+        logger.info(f"watching {'/'.join(camera.namespace)}/{target.video_track}")
+        watching = asyncio.create_task(forward_video(camera.follow(target.video_track), latest_target, worker))
         try:
-            done, _ = await asyncio.wait({watching, leaving}, return_when=asyncio.FIRST_COMPLETED)
+            await latest_target.leaves(target.video_track)
         finally:
             watching.cancel()
-            leaving.cancel()
-        if watching in done:
-            await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
 async def track_in_session(
-    session: moq_wasm.Session,
+    args: argparse.Namespace,
+    http: aiohttp.ClientSession,
+    identity_token: IdentityToken | None,
     namespaces: RoomNamespaces,
-    timeline: EventTimeline,
-    status: SystemOneStatus,
-    commands: PtzCommands,
-    latest_target: LatestTarget,
-    worker: PipelineWorker,
-) -> bool:
-    """True once no viewer has published `namespaces.viewer` for the grace period; False when the relay
-    session closed."""
-    # Registered before the namespaces are published, since the relay may forward a SUBSCRIBE at once.
-    for namespace, track_name, publisher in (
-        (namespaces.tracker, EVENT_TIMELINE_TRACK, timeline),
-        (namespaces.tracker, STATUS_TRACK, status),
-        (namespaces.command, COMMAND_TRACK, commands),
-    ):
-        await publisher.publish_on(await session.publish_track(namespace, track_name, retention_seconds=RETENTION_SECONDS))
-    await session.announce(namespaces.tracker)
-    await session.announce(namespaces.command)
-    forwarding = asyncio.create_task(
-        while_published(
-            session, namespaces.camera, partial(forward_camera, session, namespaces.camera, latest_target, worker)
-        )
-    )
-    try:
-        return await until_room_empty(
-            session, namespaces.viewer, partial(follow_prompts, session, namespaces.viewer, latest_target)
-        )
-    finally:
-        forwarding.cancel()
-
-
-async def track_in_room(
-    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
+    session: moq_wasm.Session,
 ) -> None:
-    timeline = EventTimeline()
+    """Returns once no viewer has published `namespaces.viewer` for the grace period."""
+    # Both broadcasts take their tracks before either is published.
+    tracker_broadcast = create_broadcast(session, namespaces.tracker)
+    command_broadcast = create_broadcast(session, namespaces.command)
+    timeline = tracker_broadcast.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS)
     status = SystemOneStatus()
+    status.publish_on(tracker_broadcast.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS))
     commands = PtzCommands()
+    commands.publish_on(command_broadcast.publish_track(COMMAND_TRACK, retention_seconds=RETENTION_SECONDS))
     latest_target = LatestTarget()
     vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
     calibration = PtzCalibration(args.pan_per_second, args.tilt_per_second, args.margin, args.dead_zone)
@@ -225,19 +184,31 @@ async def track_in_room(
     # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
-    async with asyncio.TaskGroup() as tasks:
+    async with tracker_broadcast, command_broadcast, asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
-        in_session = partial(
-            track_in_session,
-            namespaces=RoomNamespaces.of(room),
-            timeline=timeline,
-            status=status,
-            commands=commands,
-            latest_target=latest_target,
-            worker=worker,
+        forwarding = tasks.create_task(
+            watch_broadcasts(
+                session,
+                namespaces.camera[:-1],
+                partial(forward_camera, latest_target, worker),
+                filter=lambda published: published == namespaces.camera,
+            )
         )
-        await stay_connected(args, room, in_session)
+        await watch_broadcasts(
+            session,
+            namespaces.viewer[:-1],
+            partial(follow_prompts, latest_target),
+            filter=lambda published: published == namespaces.viewer,
+            empty_timeout=GRACE_SECONDS,
+        )
+        forwarding.cancel()
         await runner.cancel()
+
+
+async def track_in_room(
+    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
+) -> None:
+    await stay_connected(args, room, partial(track_in_session, args, http, identity_token, RoomNamespaces.of(room)))
 
 
 async def main():
