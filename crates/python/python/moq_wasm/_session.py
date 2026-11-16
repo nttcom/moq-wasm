@@ -22,7 +22,11 @@ class SessionClosed(Exception):
 class ConnectionLost(Exception):
     """The relay connection ended, other than by `close()`, and the native session could not
     replace it: it stopped retrying after 60 s, or the relay closed it with a termination code other
-    than EXPIRED_AUTH_TOKEN."""
+    than EXPIRED_AUTH_TOKEN. `close_info` is how the last connection closed."""
+
+    def __init__(self, message: str, close_info: _native.CloseInfo):
+        super().__init__(message)
+        self.close_info = close_info
 
 
 @dataclass(frozen=True)
@@ -220,13 +224,13 @@ class Session:
         return await self._connected().subscribe_current_group(namespace, name)
 
     async def watch_namespaces(self, prefix: list[str]) -> NamespaceWatch:
-        """Raises RuntimeError when the relay refuses the SUBSCRIBE_NAMESPACE."""
+        """Raises `RequestError` when the relay refuses the SUBSCRIBE_NAMESPACE."""
         watch = NamespaceWatch(prefix, await self._connected().watch_namespaces(prefix))
         self._watches.append(watch)
         return watch
 
     async def announce(self, namespace: list[str]) -> Announcement:
-        """PUBLISH_NAMESPACE. Raises RuntimeError when the relay refuses it."""
+        """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it."""
         await self._connected().announce(namespace)
         self._announced.append(namespace)
         return Announcement(self, namespace)
@@ -306,6 +310,9 @@ class Session:
         """Waits until the session ends: `close()`, or a failure, which this raises."""
         await asyncio.shield(self._done)
 
+    def transport_stats(self) -> _native.TransportStats:
+        return self._native.transport_stats()
+
     async def close(self) -> None:
         await self._end(None)
 
@@ -315,8 +322,8 @@ class Session:
         return self._native
 
     async def _watch_connection(self) -> None:
-        await self._native.closed()
-        await self._end(ConnectionLost("the relay connection was lost"))
+        close_info = await self._native.closed()
+        await self._end(ConnectionLost("the relay connection was lost", close_info))
 
     async def _keep_token_fresh(self, keeper: TokenKeeper) -> None:
         try:

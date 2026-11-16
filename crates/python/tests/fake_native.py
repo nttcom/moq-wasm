@@ -120,9 +120,9 @@ class FakeNativeSession:
     def publish(self, namespace: list[str], *, active: bool = True) -> None:
         self._namespace_events.put_nowait(SimpleNamespace(namespace=namespace, active=active))
 
-    def drop(self) -> None:
+    def drop(self, code: int | None = None, reason: str = "the connection was lost") -> None:
         if not self._closed.done():
-            self._closed.set_result(None)
+            self._closed.set_result(SimpleNamespace(code=code, reason=reason))
 
     async def publish_track(self, namespace: list[str], name: str, **options) -> FakeWriter:
         self.calls.append(("publish_track", name))
@@ -166,8 +166,8 @@ class FakeNativeSession:
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         self.refreshed.append(token)
 
-    async def closed(self) -> None:
-        await self._closed
+    async def closed(self):
+        return await self._closed
 
     async def close(self) -> None:
         self.drop()

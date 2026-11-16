@@ -22,6 +22,9 @@ def parse_catalog(payload: bytes) -> dict:
     bindings do not apply."""
 
 class Session:
+    """`watch_namespaces`, `subscribe`, `subscribe_current_group`, `subscribe_group_start`,
+    `fetch`, `track_status` and `announce` raise `RequestError` when the relay refuses the request,
+    does not answer it within 10 s or the session ends first."""
     async def watch_namespaces(self, prefix: list[str]) -> NamespaceWatch:
         """Namespaces published and withdrawn under `prefix`, including those already published."""
     async def subscribe(
@@ -39,8 +42,7 @@ class Session:
         group. With `forward=False` the relay sends nothing until `set_forward(True)`. `priority` is
         the Subscriber Priority, 128 by default: the relay sends a lower value first.
         `delivery_timeout` is in seconds: the relay stops sending an object that long after receiving
-        it. An unknown `filter` or `group_order` raises ValueError, and a SUBSCRIBE the relay refuses
-        RuntimeError."""
+        it. An unknown `filter` or `group_order` raises ValueError."""
     async def subscribe_group_start(
         self,
         namespace: list[str],
@@ -57,10 +59,9 @@ class Session:
     async def fetch(self, namespace: list[str], name: str, start: Location, end: Location) -> Fetch:
         """A Standalone FETCH from `start` to `end`, returned once the response stream arrives.
         `end.object_id` is the last object plus 1, and 0 means the whole group. Raises RuntimeError
-        when the relay refuses the FETCH or the stream does not arrive."""
+        when the response stream does not arrive."""
     async def track_status(self, namespace: list[str], name: str) -> Location | None:
-        """TRACK_STATUS: the track's largest location, or None while it has none. Raises
-        RuntimeError when the relay refuses it."""
+        """TRACK_STATUS: the track's largest location, or None while it has none."""
     async def subscribe_current_group(self, namespace: list[str], name: str) -> Subscription:
         """The objects of the group the relay holds come first (a joining FETCH), then the live ones."""
     async def announce(self, namespace: list[str]) -> None: ...
@@ -91,9 +92,31 @@ class Session:
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it
         opens from now on. Raises RuntimeError for a session connected without a token or a token the
         relay refuses; the relay then keeps the connection's token until it expires."""
-    async def closed(self) -> None:
-        """Waits until the relay closes the session."""
+    async def closed(self) -> CloseInfo:
+        """How the session's last connection closed, once it has."""
     async def close(self) -> None: ...
+    def transport_stats(self) -> TransportStats:
+        """The bytes the session's connections have carried, a reconnection's included."""
+
+class RequestError(RuntimeError):
+    """A request that failed: the relay refused it (its `*_ERROR`), it timed out (TIMEOUT), or it
+    failed on this side or with the session (INTERNAL_ERROR)."""
+    message_type: str
+    """The request, such as `"SUBSCRIBE"` or `"FETCH"`."""
+    code: int
+    """The draft-14 number of the error code, also on a draft-18 session; `RequestErrorCode` names
+    those of SUBSCRIBE, FETCH and TRACK_STATUS."""
+    reason: str
+    """The relay's reason phrase, or a description of the failure."""
+
+class CloseInfo:
+    code: int | None
+    """The termination code the connection closed with; None when it was lost without one."""
+    reason: str
+
+class TransportStats:
+    sent_bytes: int
+    received_bytes: int
 
 class NamespaceEvent:
     namespace: list[str]

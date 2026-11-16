@@ -35,6 +35,20 @@ async def test_run_raises_connection_lost_once_the_native_session_ends():
     assert work.cancelled()
 
 
+async def test_connection_lost_carries_how_the_last_connection_closed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+
+    # Act
+    relay.sessions[0].drop(code=0x10, reason="going away")
+
+    # Assert
+    with pytest.raises(ConnectionLost) as lost:
+        await within(session.closed())
+    assert (lost.value.close_info.code, lost.value.close_info.reason) == (0x10, "going away")
+
+
 async def test_a_refreshed_token_is_handed_to_the_relay():
     # Arrange: the first token is due for refresh at once
     first = unsigned_token("temp-app", time.time() + 300)
