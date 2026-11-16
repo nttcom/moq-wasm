@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bytes::Bytes;
-use moqt::{Session, TrackObject, TrackReader, subscribe::SubscribeOption};
+use moqt::client::{self, ReceivedObject};
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*, types::PyBytes};
 
 #[pyclass(frozen, module = "moq_wasm")]
@@ -21,8 +21,8 @@ impl Object {
     }
 }
 
-impl From<TrackObject> for Object {
-    fn from(object: TrackObject) -> Self {
+impl From<ReceivedObject> for Object {
+    fn from(object: ReceivedObject) -> Self {
         Self {
             group_id: object.group_id,
             object_id: object.object_id,
@@ -34,35 +34,14 @@ impl From<TrackObject> for Object {
 /// A subscription, iterated for its objects until the publisher ends it.
 #[pyclass(module = "moq_wasm")]
 pub struct Subscription {
-    session: Arc<Session>,
-    subscription: Arc<moqt::Subscription>,
-    reader: Arc<tokio::sync::Mutex<TrackReader>>,
+    subscription: Arc<client::Subscription>,
 }
 
-impl Subscription {
-    /// The SUBSCRIBE starts after the largest object. With `current_group`, the
-    /// objects of that object's group up to and including it are read first.
-    pub(crate) async fn subscribe(
-        session: Arc<Session>,
-        namespace: String,
-        name: String,
-        current_group: bool,
-    ) -> anyhow::Result<Self> {
-        let mut subscriber = session.subscriber();
-        let (subscription, reader) = if current_group {
-            subscriber.subscribe_current_group(namespace, name).await?
-        } else {
-            let subscription = subscriber
-                .subscribe(namespace, name, SubscribeOption::default())
-                .await?;
-            let reader = subscriber.track_reader(&subscription);
-            (subscription, reader)
-        };
-        Ok(Self {
-            session,
+impl From<client::Subscription> for Subscription {
+    fn from(subscription: client::Subscription) -> Self {
+        Self {
             subscription: Arc::new(subscription),
-            reader: Arc::new(tokio::sync::Mutex::new(reader)),
-        })
+        }
     }
 }
 
@@ -73,9 +52,9 @@ impl Subscription {
     }
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let reader = self.reader.clone();
+        let subscription = self.subscription.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            match reader.lock().await.next_object().await? {
+            match subscription.next().await? {
                 Some(object) => Ok(Object::from(object)),
                 None => Err(PyStopAsyncIteration::new_err("the track ended")),
             }
@@ -84,10 +63,9 @@ impl Subscription {
 
     /// Sends UNSUBSCRIBE; the iterator ends once the relay stops the track.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let session = self.session.clone();
         let subscription = self.subscription.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            session.subscriber().unsubscribe(&subscription).await?;
+            subscription.close().await?;
             Ok(())
         })
     }

@@ -1,50 +1,17 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
-use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
+use broadcast::{Broadcast, BroadcastWriter, SourceTracks};
 use bytes::Bytes;
 use mediapack::{
     AudioConfig, AudioSample, MediaEvent, Timestamp,
     loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
 };
+use moqt::client::{self, HandlerId};
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
 use tokio::sync::Notify;
-
-/// The connections of a session's media broadcasts, which see each event
-/// before the session's origin.
-#[derive(Clone, Default)]
-pub(crate) struct MediaBroadcasts {
-    connections: Arc<Mutex<Vec<(u64, RelayConnection)>>>,
-    next_id: Arc<AtomicU64>,
-}
-
-impl MediaBroadcasts {
-    pub(crate) fn add(&self, connection: RelayConnection) -> u64 {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.connections.lock().unwrap().push((id, connection));
-        id
-    }
-
-    pub(crate) fn connections(&self) -> Vec<RelayConnection> {
-        let connections = self.connections.lock().unwrap();
-        connections
-            .iter()
-            .map(|(_, connection)| connection.clone())
-            .collect()
-    }
-
-    fn remove(&self, id: u64) {
-        self.connections
-            .lock()
-            .unwrap()
-            .retain(|(entry, _)| *entry != id);
-    }
-}
 
 /// An MSF broadcast of media the caller encodes, built by `broadcast` as the
 /// browser SDK's is: it publishes the catalog, the LOC tracks and the media
@@ -54,8 +21,8 @@ impl MediaBroadcasts {
 #[pyclass(module = "moq_wasm")]
 pub struct MediaBroadcast {
     pub(crate) broadcast: Broadcast,
-    pub(crate) broadcasts: MediaBroadcasts,
-    pub(crate) id: u64,
+    pub(crate) session: Arc<client::Session>,
+    pub(crate) handler: HandlerId,
 }
 
 #[pymethods]
@@ -71,7 +38,7 @@ impl MediaBroadcast {
     /// Stops answering for the broadcast's tracks; withdraw the namespace
     /// with `Session.unannounce` first.
     fn close(&self) {
-        self.broadcasts.remove(self.id);
+        self.session.remove_handler(self.handler);
     }
 
     /// A source on the tracks `video` and `audio`, with the media timeline
