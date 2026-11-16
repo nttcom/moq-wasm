@@ -207,6 +207,22 @@ impl Session {
         })
     }
 
+    /// PUBLISH_NAMESPACE_DONE for a namespace `announce` published.
+    fn unannounce<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            session
+                .publisher()
+                .publish_namespace_done(namespace.join("/"))
+                .await?;
+            Ok(())
+        })
+    }
+
     /// Registers a track with the session's origin, which keeps what is written
     /// for `retention_seconds` to answer FETCH. Its group ids start at the
     /// wall-clock time in µs, so a later run of the same publisher does not
