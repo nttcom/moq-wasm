@@ -49,6 +49,48 @@ class FakeSubscription:
         self.closed = True
 
 
+class FakeMediaSource:
+    def __init__(self, video: str, audio: str):
+        self.video = video
+        self.audio = audio
+        self.calls: list[tuple] = []
+        self.keyframe_requested = asyncio.Event()
+
+    def configure_video(self, codec: str) -> None:
+        self.calls.append(("configure_video", codec))
+
+    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+        self.calls.append(("push_video", data))
+
+    def configure_audio(self, codec: str, sample_rate: int, channels: int) -> None:
+        self.calls.append(("configure_audio", codec, sample_rate, channels))
+
+    def push_audio(self, data: bytes, timestamp_micros: int) -> None:
+        self.calls.append(("push_audio", data))
+
+    async def keyframe_request(self) -> None:
+        await self.keyframe_requested.wait()
+        self.keyframe_requested.clear()
+
+
+class FakeMediaBroadcast:
+    def __init__(self, session: "FakeNativeSession", namespace: list[str]):
+        self._session = session
+        self._namespace = namespace
+        self.sources: list[FakeMediaSource] = []
+
+    def add_source(self, video: str, audio: str, **options) -> FakeMediaSource:
+        source = FakeMediaSource(video, audio)
+        self.sources.append(source)
+        return source
+
+    async def announce(self) -> None:
+        self._session.calls.append(("media_announce", self._namespace))
+
+    def close(self) -> None:
+        self._session.calls.append(("media_close", self._namespace))
+
+
 class FakeNativeSession:
     """One connection. `calls` lists its requests in order; `drop()` ends it as the relay would.
     `tracks[name]` lists, for each SUBSCRIBE to `name` in turn, the payloads it yields; a SUBSCRIBE
@@ -60,6 +102,7 @@ class FakeNativeSession:
         # While set and not released, PUBLISH_NAMESPACE waits for the relay's answer.
         self.announce_gate: asyncio.Event | None = None
         self.subscriptions: list[FakeSubscription] = []
+        self.media_broadcasts: list[FakeMediaBroadcast] = []
         self.calls: list[tuple] = []
         self.writers: dict[str, FakeWriter] = {}
         self.refreshed: list[str] = []
@@ -104,6 +147,10 @@ class FakeNativeSession:
         subscription = FakeSubscription(self.tracks[name].pop(0))
         self.subscriptions.append(subscription)
         return subscription
+
+    def media_broadcast(self, namespace: list[str]) -> FakeMediaBroadcast:
+        self.media_broadcasts.append(FakeMediaBroadcast(self, namespace))
+        return self.media_broadcasts[-1]
 
     async def unannounce(self, namespace: list[str]) -> None:
         self.calls.append(("unannounce", namespace))

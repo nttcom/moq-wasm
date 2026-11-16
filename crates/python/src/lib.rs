@@ -1,4 +1,5 @@
 mod catalog;
+mod media_broadcast;
 mod namespace_watch;
 mod session;
 mod subscription;
@@ -18,5 +19,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<subscription::Subscription>()?;
     module.add_class::<subscription::Object>()?;
     module.add_class::<track_writer::TrackWriter>()?;
+    module.add_class::<media_broadcast::MediaBroadcast>()?;
+    module.add_class::<media_broadcast::MediaSource>()?;
     Ok(())
 }

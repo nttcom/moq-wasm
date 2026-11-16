@@ -12,7 +12,9 @@ doctest = false
 
 [dependencies]
 anyhow = "1.0.102"
+broadcast = { path = "../broadcast" }
 bytes = "1.11.1"
+mediapack = { path = "../mediapack", features = ["moqt"] }
 moqt = { path = "../moqt" }
 msf = { path = "../msf" }
 pyo3 = { version = "0.30.1", features = ["abi3-py311", "anyhow"] }
