@@ -19,7 +19,7 @@ The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` 
 6. On a branch `chore/wasm-release-<version>` from `origin/master`:
    - Add `## <version>` under `# Changelog` in `crates/wasm/js/CHANGELOG.md` with the entries, `Breaking:` ones first. Fold in any entries left under `## Unreleased` and remove that heading.
    - Set the version in `crates/wasm/js/package.json` and in the `crates/wasm/js` entry of `package-lock.json`.
-   - Check `node crates/wasm/js/scripts/release-notes.mjs <version>` prints the section, and run prettier on the changed files.
+   - Check `node crates/wasm/js/scripts/release-notes.mjs crates/wasm/js/CHANGELOG.md <version>` prints the section, and run prettier on the changed files.
    - Commit as `chore(wasm): release moq-wasm <version>`.
 7. Open the release PR with the `create-pull-request` skill, titled `chore(wasm): moq-wasm <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート` section.
 8. After the user merges it, confirm with them, then tag the merge commit and push the tag: `git tag sdk-v<version> <merge commit>` and `git push origin sdk-v<version>`. Check the commit's `crates/wasm/js/package.json` names `<version>` first; the workflow stops otherwise.
