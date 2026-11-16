@@ -2,6 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, bail};
 use moqt::CertificateVerification;
+use telemetry::non_empty_env;
 
 use auth_token::ClaimPolicy;
 
@@ -184,12 +185,6 @@ pub struct RelayConfig {
     /// first, and those the relay offers when it dials another relay's or
     /// its own inner transport.
     pub moqt_versions: Vec<moqt::Version>,
-}
-
-/// `KEY=` in an env file and compose `${KEY:-}` set the variable to an empty
-/// string.
-pub(crate) fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 /// Shared by `init_logging`, which runs before `RelayConfig::from_env`, so logs

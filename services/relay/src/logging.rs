@@ -1,11 +1,11 @@
 use std::sync::OnceLock;
 
 use opentelemetry::trace::{Status, TraceContextExt as _};
-use telemetry::{LogOutput, TelemetryConfig, TelemetryGuard};
+use telemetry::{LogOutput, TelemetryConfig, TelemetryGuard, non_empty_env};
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use crate::config::{non_empty_env, relay_id};
+use crate::config::relay_id;
 
 /// For a span that roots its own trace but starts from another span's work.
 pub(crate) fn link_span(span: &Span, linked: &Span) {

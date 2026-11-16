@@ -95,7 +95,9 @@ impl Drop for TelemetryGuard {
     }
 }
 
-fn non_empty_env(name: &str) -> Option<String> {
+/// `KEY=` in an env file and compose `${KEY:-}` set the variable to an empty
+/// string, which this reads as unset.
+pub fn non_empty_env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 

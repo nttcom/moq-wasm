@@ -1,4 +1,5 @@
 use anyhow::Context;
+use telemetry::non_empty_env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClickHouseConfig {
@@ -22,29 +23,27 @@ pub struct ObservabilityConfig {
     pub vts_url: Option<String>,
 }
 
-fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
-}
-
 impl ObservabilityConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let http_port = env("OBSERVABILITY_HTTP_PORT")
+        let http_port = non_empty_env("OBSERVABILITY_HTTP_PORT")
             .map(|port| port.parse::<u16>())
             .transpose()
             .context("OBSERVABILITY_HTTP_PORT must be a port number")?
             .unwrap_or(8095);
         Ok(Self {
             clickhouse: ClickHouseConfig {
-                url: env("CLICKHOUSE_URL").unwrap_or_else(|| "http://127.0.0.1:8123".to_string()),
-                database: env("CLICKHOUSE_DATABASE").unwrap_or_else(|| "observability".to_string()),
-                user: env("CLICKHOUSE_USER"),
-                password: env("CLICKHOUSE_PASSWORD"),
+                url: non_empty_env("CLICKHOUSE_URL")
+                    .unwrap_or_else(|| "http://127.0.0.1:8123".to_string()),
+                database: non_empty_env("CLICKHOUSE_DATABASE")
+                    .unwrap_or_else(|| "observability".to_string()),
+                user: non_empty_env("CLICKHOUSE_USER"),
+                password: non_empty_env("CLICKHOUSE_PASSWORD"),
             },
             http_port,
-            otlp_metrics_endpoint: env("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
-            otlp_logs_endpoint: env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
-            otlp_traces_endpoint: env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
-            vts_url: env("AUTH_VTS_URL"),
+            otlp_metrics_endpoint: non_empty_env("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"),
+            otlp_logs_endpoint: non_empty_env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT"),
+            otlp_traces_endpoint: non_empty_env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
+            vts_url: non_empty_env("AUTH_VTS_URL"),
         })
     }
 }
