@@ -165,7 +165,7 @@ impl StreamDataSender<Uninitialized> {
     pub(crate) async fn start_raw(
         mut self,
         group_id: u64,
-        subgroup_id: crate::wire::SubgroupId,
+        subgroup_id: crate::modules::moqt::data_plane::object::subgroup::SubgroupId,
         publisher_priority: u8,
     ) -> anyhow::Result<StreamDataSender<HeaderSent>> {
         let mut results = Vec::with_capacity(self.streams.len());
@@ -255,7 +255,7 @@ impl StreamDataSender<HeaderSent> {
     pub(crate) async fn send_raw(
         &mut self,
         object_id_delta: u64,
-        subgroup_object: crate::wire::SubgroupObject,
+        subgroup_object: crate::modules::moqt::data_plane::object::subgroup::SubgroupObject,
     ) -> anyhow::Result<()> {
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
@@ -274,6 +274,7 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
+        modules::moqt::data_plane::object::subgroup::SubgroupId,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, PublishedTrack, first_subgroup_stream, object_with_extensions,
             published_track, published_track_between, spawn_connected_draft18_sessions,
@@ -283,7 +284,6 @@ mod tests {
             StreamReceiveError, Subgroup, SubgroupObjectSender, SubgroupPart, SubgroupPartReceiver,
             SubgroupStart,
         },
-        wire::SubgroupId,
     };
 
     const START: SubgroupStart = SubgroupStart {

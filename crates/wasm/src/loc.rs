@@ -1,5 +1,5 @@
 use mediapack::loc::{LocExtension, to_extension_headers};
-use moqt::wire::ExtensionHeaders;
+use moqt::object::ExtensionHeaders;
 use wasm_bindgen::JsValue;
 
 use crate::js_error;

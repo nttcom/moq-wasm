@@ -42,6 +42,7 @@ use crate::{
     CertificateVerification, ClientConfig, Endpoint, NATIVE, RequestFailure, Session, SessionEvent,
     Subscription, TrackReader, TransportProtocol,
     fetch::{Fetch, FetchDataReceiver, FetchDataSender, FetchOption},
+    modules::moqt::data_plane::object::subgroup::{SubgroupId, SubgroupObject},
     modules::moqt::{
         data_plane::object::{
             datagram_field::{DatagramField, ObjectDatagramPayload},
@@ -62,7 +63,6 @@ use crate::{
     server::Handshake,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
     subscribe::{FilterType, SubscribeOption, SubscribeUpdateHandler},
-    wire::{SubgroupId, SubgroupObject},
 };
 
 /// Key 0x4000 is in draft-18's Mandatory Track Property range (§2.5.1).

@@ -1244,7 +1244,10 @@ mod tests {
     async fn track_status(
         peers: &Peers,
         track_name: &str,
-    ) -> std::result::Result<crate::wire::TrackStatusOk, RequestFailure> {
+    ) -> std::result::Result<
+        crate::modules::moqt::control_plane::control_messages::messages::subscribe_ok::SubscribeOk,
+        RequestFailure,
+    > {
         let subscriber = peers.server.subscriber();
         let (status, ()) = within(async {
             tokio::join!(

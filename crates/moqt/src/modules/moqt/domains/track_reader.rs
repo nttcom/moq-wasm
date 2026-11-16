@@ -335,12 +335,12 @@ mod tests {
 
     use crate::{
         TrackObject, TrackReader,
+        modules::moqt::data_plane::object::subgroup::{SubgroupId, SubgroupObject},
         modules::test_support::{
             HANDSHAKE_TIMEOUT, datagram_object, open_raw_subgroup, open_subgroup, published_track,
             send_payload, send_raw_payload, subscribed_track_reader,
         },
         object::{DataStreamResetCode, ForwardingPreference, MalformedTrackError},
-        wire::{SubgroupId, SubgroupObject},
     };
 
     const NO_OBJECT_TIMEOUT: Duration = Duration::from_millis(500);

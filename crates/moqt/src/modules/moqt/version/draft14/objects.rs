@@ -143,12 +143,11 @@ impl SubgroupEncoder {
         subgroup_object: SubgroupObject,
     ) -> BytesMut {
         SubgroupObjectField {
-            message_type: self.message_type(),
             object_id_delta,
             extension_headers: ExtensionHeaders::default(),
             subgroup_object,
         }
-        .encode()
+        .encode(self.message_type())
     }
 }
 

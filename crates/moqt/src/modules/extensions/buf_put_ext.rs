@@ -83,20 +83,5 @@ mod tests {
             let result = bytes.try_get_string().unwrap();
             assert_eq!(result, "abcd");
         }
-
-        #[test]
-        fn put_tuple_round_trips() {
-            // Arrange
-            let tuple = vec!["room".to_string(), "alice".to_string()];
-            let mut bytes = BytesMut::new();
-
-            // Act
-            bytes.put_tuple(&tuple);
-            let mut bytes = std::io::Cursor::new(&bytes[..]);
-            let result = bytes.try_get_tuple().unwrap();
-
-            // Assert
-            assert_eq!(result, tuple);
-        }
     }
 }

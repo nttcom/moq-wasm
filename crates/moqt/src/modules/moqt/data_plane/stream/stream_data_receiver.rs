@@ -242,6 +242,7 @@ mod tests {
 
     use super::Subgroup;
     use crate::{
+        modules::moqt::data_plane::object::subgroup::{SubgroupId, SubgroupObject},
         modules::test_support::{
             HANDSHAKE_TIMEOUT, first_subgroup_stream, open_raw_subgroup, published_track,
         },
@@ -249,7 +250,6 @@ mod tests {
             ForwardingPreference, Location, ObjectStatus, StreamReceiveError, SubgroupObjectSender,
             SubgroupStart,
         },
-        wire::{SubgroupId, SubgroupObject},
     };
 
     async fn send_raw(sender: &mut SubgroupObjectSender, delta: u64, object: SubgroupObject) {

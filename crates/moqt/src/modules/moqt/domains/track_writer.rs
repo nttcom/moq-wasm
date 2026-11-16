@@ -2,11 +2,11 @@ use anyhow::{Context, ensure};
 use bytes::Bytes;
 
 use crate::{
+    object::Location,
     object::{
         DataStreamResetCode, ExtensionHeaders, ForwardingPreference, Object, ObjectStatus,
         StreamDataSenderFactory, SubgroupObjectSender, SubgroupStart,
     },
-    wire::Location,
 };
 
 const PUBLISHER_PRIORITY: u8 = 128;
