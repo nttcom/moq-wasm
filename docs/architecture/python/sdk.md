@@ -155,7 +155,12 @@ and received.
 ### Logs and spans: `moq_wasm.init`
 
 ```python
-moq_wasm.init(log_level="info", on_log=on_log, on_span=on_span)
+moq_wasm.init(
+    log_level="info",
+    on_log=on_log,
+    on_span=on_span,
+    telemetry=moq_wasm.TelemetryOptions(url="https://observability.example", page="my-bot"),
+)
 moq_wasm.report_log("warn", "my-bot", "room joined", room=room)
 ```
 
@@ -182,8 +187,27 @@ SDK's `init({ logLevel, onLog, onSpan })`:
   thread takes them with the GIL released while it waits, and hands them to
   `logging` and the callbacks, which therefore run on that thread. At exit
   it is stopped before the interpreter finalizes.
-- **`report_log`** hands the app's own log to `on_log`, not to `logging`,
-  as the browser's `reportLog` keeps it off the console.
+- **Tokens.** Each native `Session` and every object it returns (a
+  subscription, a fetch, a track writer, a media broadcast with its
+  sources and renditions) runs its calls in a `client_telemetry` scope that
+  the log sink maps to the session's token, its newest after
+  `refresh_token`, as the browser SDK's `SessionScope` does. The tasks
+  `moqt::executor::spawn` starts keep the scope they are spawned in
+  (`set_spawn_wrapper`), and a span keeps the scope it is opened in, so the
+  session's own tasks, its writers' publish tasks and its renditions carry
+  it too. What runs outside them (quinn's own tasks, a record of no
+  session) goes without a token.
+- **`telemetry`** is the browser's `TelemetryOptions` minus the player
+  stats, and turns span recording on as `on_span` does: `ClientTelemetry`
+  keeps the newest 100 logs and 100 spans per token and posts them every
+  10 s to the observability server's `/api/client-telemetry` with
+  `service: "python"`, a `clientId` per process and the `page`. At exit
+  the sink thread drains the queue (at most 1.5 s), then one last report
+  goes out with a 2 s request timeout (at most 3 s). A token the server
+  answered 401 to is left out of later reports. It posts with `urllib` on
+  a thread of its own, so the module gains no HTTP client.
+- **`report_log`** hands the app's own log to `on_log` and `telemetry`, not
+  to `logging`, as the browser's `reportLog` keeps it off the console.
 - The subscriber is process-wide, so only the first `init` takes effect, as
   in the browser.
 
