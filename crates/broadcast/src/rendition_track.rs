@@ -94,16 +94,13 @@ impl RenditionTrack {
                     cmaf: self.config.cmaf,
                     ..VideoTrackInfo::from_config(&config, self.config.label.clone())?
                 };
-                if let Some(requested) = &self.keyframe_requests {
-                    self.broadcast
-                        .accept_keyframe_requests(&self.config.track, requested.clone())
-                        .await?;
-                }
-                if let Some(demand_sender) = &self.demand_sender {
-                    self.broadcast
-                        .publish_on_demand(&self.config.track, demand_sender.clone())
-                        .await?;
-                }
+                self.broadcast
+                    .prepare_encoded_video(
+                        &self.config.track,
+                        self.keyframe_requests.as_ref(),
+                        self.demand_sender.as_ref(),
+                    )
+                    .await?;
                 self.broadcast
                     .update_video_catalog(&self.config.track, info)
                     .await
