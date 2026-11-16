@@ -326,9 +326,3 @@
   font-family: var(--font-mono, 'SFMono-Regular', Menlo, monospace);
   font-size: 0.78rem;
 }
-
-.viewer-menu .field-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
