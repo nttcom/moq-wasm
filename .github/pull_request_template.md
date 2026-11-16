@@ -23,7 +23,11 @@
 
 
 ## リリースノート
-<!-- SDK（moq-wasm）の利用者に見える変更なら、CHANGELOG.md にそのまま載せる英文の箇条書き。見えない変更ならこの節を消す -->
+<!-- ブラウザ SDK（moq-wasm）の利用者に見える変更なら、crates/wasm/js/CHANGELOG.md にそのまま載せる英文の箇条書き。見えない変更ならこの節を消す -->
+
+
+## リリースノート（Python）
+<!-- Python SDK（crates/python の moq-wasm）の利用者に見える変更なら、crates/python/CHANGELOG.md にそのまま載せる英文の箇条書き。見えない変更ならこの節を消す -->
 
 
 ## 備考
