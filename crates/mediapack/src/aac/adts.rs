@@ -153,17 +153,12 @@ mod tests {
     }
 
     #[test]
-    fn header_round_trips() {
-        // Arrange
-        let frame = adts_frame(&[1, 2, 3]);
-
+    fn writes_the_adts_header_of_aac_lc_48k_mono() {
         // Act
-        let header = parse_header(&frame).unwrap().unwrap();
+        let header = write_header(&mono_48k(), 3).unwrap();
 
-        // Assert
-        assert_eq!(header.config, mono_48k());
-        assert_eq!(header.frame_length, 10);
-        assert_eq!(header.header_length, 7);
+        // Assert: frame_length 10 spans the low bits of bytes 3 to 5
+        assert_eq!(header, [0xFF, 0xF1, 0x4C, 0x40, 0x01, 0x5F, 0xFC]);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use bytes::Bytes;
 
 use crate::{
-    aac::{AudioSpecificConfig, adts::HEADER_LENGTH},
+    aac::{self, AudioSpecificConfig},
     h264::{
         AvcDecoderConfigurationRecord,
         annexb::{nal_units, with_start_codes},
@@ -151,18 +151,9 @@ pub(crate) fn audio_event(pts_ms: u64) -> MediaEvent {
 }
 
 pub(crate) fn adts_frame(payload: &[u8]) -> Vec<u8> {
-    let frame_length = payload.len() + HEADER_LENGTH;
-    let mut frame = vec![
-        0xFF,
-        0xF1,
-        0x4C,
-        0x40 | (frame_length >> 11) as u8 & 0x03,
-        (frame_length >> 3) as u8,
-        ((frame_length as u8 & 0x07) << 5) | 0x1F,
-        0xFC,
-    ];
-    frame.extend_from_slice(payload);
-    frame
+    aac::adts::frame(&mono_48k(), payload)
+        .expect("ADTS signals AAC-LC at 48 kHz")
+        .to_vec()
 }
 
 pub(crate) fn video_samples(events: &[MediaEvent]) -> Vec<&VideoSample> {
