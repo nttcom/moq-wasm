@@ -161,6 +161,15 @@ session's lifetime belongs to its owner, so `close` leaves it open. A
 connection that opened its own session rejects the SUBSCRIBEs no broadcast
 takes with TRACK_DOES_NOT_EXIST.
 
+On a `moqt::client::Session`, which reads its own events,
+`RelayConnection::with_client_session` takes the session's connection and
+`Origin`, and the owner adds the connection with `add_handler`:
+`RelayConnection` implements `client::EventHandler` with `handle`, so the
+session passes it each event before its `Origin`, and what it returns goes on
+to the `Origin` and the session's own answers. Registration stays with the
+owner, which keeps the `HandlerId` to remove the connection when its
+broadcasts end.
+
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
 an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).

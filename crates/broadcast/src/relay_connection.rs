@@ -8,9 +8,11 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
+use async_trait::async_trait;
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
     TransportStats,
+    client::{self, EventHandler},
     executor::{self, JoinHandle},
     publish::{Origin, OutgoingObject, Retention, TrackDemand, WriteOutcome},
     subscribe::SubscribeHandler,
@@ -147,6 +149,14 @@ struct OwnedSession {
     event_task: JoinHandle,
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl EventHandler for RelayConnection {
+    async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+        RelayConnection::handle(self, event).await
+    }
+}
+
 impl Drop for OwnedSession {
     fn drop(&mut self) {
         self.event_task.abort();
@@ -184,6 +194,13 @@ impl RelayConnection {
             connected: Arc::new(Mutex::new(Some(Arc::new(relay)))),
             ledger,
         }
+    }
+
+    /// `with_session` on `session`'s connection and `Origin`. Add it to
+    /// `session` with `add_handler` before a broadcast on it announces, so it
+    /// takes the broadcasts' requests before the `Origin` does.
+    pub fn with_client_session(session: &client::Session) -> Self {
+        Self::with_session(session.moqt_session().clone(), session.origin().clone())
     }
 
     /// Answers SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS
@@ -1339,6 +1356,54 @@ mod tests {
             Some("live/cam/prompt")
         );
         owned.owner_loop.abort();
+    }
+
+    #[tokio::test]
+    async fn a_connection_added_to_a_client_session_takes_its_broadcast_s_subscribe_before_the_origin()
+     {
+        // Arrange
+        let mut relay = FakeRelay::spawn("client-session");
+        let session = client::Session::connect(
+            &relay.url,
+            &ClientConfig {
+                certificate_verification: CertificateVerification::Disabled,
+                ..ClientConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        let connection = RelayConnection::with_client_session(&session);
+        session.add_handler(Arc::new(connection.clone()));
+        let broadcast = live_cam(connection);
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        session
+            .publish_track(
+                &["live", "cam"],
+                "prompt",
+                client::PublishTrackOptions::default(),
+            )
+            .await
+            .unwrap();
+        relay.received_catalogs().await;
+        let relay_session = relay.session().await;
+
+        // Act
+        let catalog_subscribed =
+            relay_subscribe(&relay_session, "live/cam", CATALOG_TRACK_NAME).await;
+        let prompt_subscribed = relay_subscribe(&relay_session, "live/cam", "prompt").await;
+
+        // Assert: only the connection raises the broadcast's subscriber signal;
+        // the session's own track is answered by the Origin
+        assert!(catalog_subscribed);
+        assert!(
+            tokio::time::timeout(TEST_TIMEOUT, broadcast.wait_for_subscriber())
+                .await
+                .is_ok_and(|waited| waited.is_ok())
+        );
+        assert!(prompt_subscribed);
     }
 
     #[tokio::test]
