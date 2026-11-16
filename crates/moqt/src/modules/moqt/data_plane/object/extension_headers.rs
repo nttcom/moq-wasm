@@ -10,7 +10,6 @@ use crate::modules::{
 
 pub enum ExtensionHeaderType {
     PriorGroupIdGap = 0x3c,
-    PriorObjectIdGap = 0x3e,
     ImmutableExtensions = 0xb,
 }
 
@@ -70,10 +69,6 @@ impl ExtensionHeaders {
         self.even_values(ExtensionHeaderType::PriorGroupIdGap as u64)
     }
 
-    pub fn prior_object_id_gap(&self) -> Vec<u64> {
-        self.even_values(ExtensionHeaderType::PriorObjectIdGap as u64)
-    }
-
     pub fn immutable_extensions(&self) -> Vec<Bytes> {
         self.key_value_pairs
             .iter()
@@ -87,10 +82,6 @@ impl ExtensionHeaders {
 
     pub fn push_prior_group_id_gap(&mut self, gap: u64) {
         self.push_even(ExtensionHeaderType::PriorGroupIdGap as u64, gap);
-    }
-
-    pub fn push_prior_object_id_gap(&mut self, gap: u64) {
-        self.push_even(ExtensionHeaderType::PriorObjectIdGap as u64, gap);
     }
 
     pub fn push_immutable_extension(&mut self, value: Bytes) {
@@ -154,11 +145,9 @@ mod tests {
     fn accessors_filter_by_header_type() {
         let mut headers = ExtensionHeaders::default();
         headers.push_prior_group_id_gap(1);
-        headers.push_prior_object_id_gap(2);
         headers.push_immutable_extension(Bytes::from(vec![9]));
 
         assert_eq!(headers.prior_group_id_gap(), vec![1]);
-        assert_eq!(headers.prior_object_id_gap(), vec![2]);
         assert_eq!(headers.immutable_extensions(), vec![Bytes::from(vec![9])]);
     }
 
