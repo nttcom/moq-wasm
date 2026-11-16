@@ -6,9 +6,9 @@ import pytest
 import moq_wasm
 from moq_wasm.media import MediaSource, RemoteBroadcast, create_broadcast
 
-from tests.fake_native import FakeRelay, open_session, restored_on
+from tests.fake_native import FakeRelay, open_session
 
-pytestmark = pytest.mark.usefixtures("no_reconnect_delay")
+pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
 TIMEOUT_SECONDS = 5
 BOT = ["anon", "room", "bot"]
@@ -43,28 +43,6 @@ async def test_a_broadcast_with_media_publishes_its_namespace_through_the_media_
     await session.close()
 
 
-async def test_a_new_connection_rebuilds_the_source_with_its_configuration_and_asks_for_a_keyframe():
-    # Arrange: the first keyframe request is answered by the first build
-    relay = FakeRelay()
-    session = await open_session(relay)
-    async with create_broadcast(session, BOT) as bot:
-        media = bot.add_media_source(label="bot")
-        media.configure_video("avc1.42e01f")
-        await bot.published()
-        await within(media.keyframe_request())
-        requested = asyncio.create_task(media.keyframe_request())
-
-        # Act
-        relay.sessions[0].drop()
-        second = await within(relay.next_session(2))
-        await within(restored_on(session, second))
-
-        # Assert
-        await within(requested)
-        assert second.media_broadcasts[0].sources[0].calls == [("configure_video", "avc1.42e01f")]
-    await session.close()
-
-
 async def test_a_keyframe_request_of_a_subscriber_resolves_keyframe_request():
     # Arrange
     relay = FakeRelay()
@@ -72,7 +50,6 @@ async def test_a_keyframe_request_of_a_subscriber_resolves_keyframe_request():
     async with create_broadcast(session, BOT) as bot:
         media = bot.add_media_source(label="bot")
         await bot.published()
-        await within(media.keyframe_request())
         requested = asyncio.create_task(media.keyframe_request())
         await asyncio.sleep(0)
 

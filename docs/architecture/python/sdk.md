@@ -88,41 +88,38 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as sessi
     ...
 ```
 
-`connect` returns a `Session` that stays usable across connections:
+`connect` returns a `Session`:
 
-- **Reconnection.** When the native session closes, other than by
-  `close()`, the session dials again after 1 s, doubling the wait up to 30 s,
-  and restores what the caller set up, in this order: it registers the tracks,
-  publishes the namespaces, and sends the namespace subscriptions. The native
-  session already follows GOAWAY and reopens after a token expiry by itself;
-  this covers the rest (a relay restart, a network outage). The first
-  connection's failure raises from `connect`, so a wrong URL does not retry
-  forever.
-- **What a lost connection takes.** A track subscription ends; the media
-  layer's `follow` subscribes again. A namespace watch reports every
-  namespace it had as withdrawn, and the next connection's
-  SUBSCRIBE_NAMESPACE reports the published ones again. A `TrackWriter`
-  drops what is written while the session reconnects, and the new
-  connection's origin starts the track's groups afresh, numbered from the
-  wall-clock time, so a subscriber never sees a group id go back. Its cache
-  does not carry over, so `TrackWriter.on_connected(callback)` awaits
-  `callback` each time a connection registers the track, before the
-  namespace is published on it, for a track whose subscribers need its
-  current state first (a status).
+- **Reconnection is the native session's.** The native session (the `moqt`
+  crate, shared with the browser SDK) follows GOAWAY, and replaces a
+  connection that ended without a termination code (a network outage, a
+  relay killed and restarted) or with EXPIRED_AUTH_TOKEN, retrying from
+  0.5 s, doubling up to 10 s, for at most 60 s
+  ([moqt/session-migration.md](../moqt/session-migration.md) "Reconnecting
+  after a lost connection"). It sends the namespace subscriptions,
+  namespaces and subscriptions again on the new connection; each
+  subscription continues from the next group start, and the objects
+  published in between are not filled in. The origin, and so the tracks the
+  session publishes and their cache, stay. When the native session cannot
+  replace its connection, the session ends with `ConnectionLost`, as the
+  browser SDK's `MoqSession.closed` resolves. It does not dial again: a bot
+  whose session ended ends its room, and the page that asked for the room
+  asks again. A failure to connect raises from `connect`.
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
   `exp` from the token's claims, calls it five minutes before `exp`, retries
   every 30 s until the token expires, and hands each new token to the relay
   (`_native.Session.refresh_token`). Getting the token stays the caller's
-  job, as in architecture.md "Authorization tokens".
+  job, as in architecture.md "Authorization tokens". The native session
+  also presents the latest token when it reconnects.
 - **Lifetime.** Leaving the `async with` block closes the session; awaiting
-  `connect` instead leaves `close()` to the caller. The one failure the
-  session cannot recover from is `TokenExpired`: the token expired while
-  `refresh_token` kept failing. It raises from `async with`, after cancelling
-  what runs inside it through `session.run`, which raises `SessionClosed`
-  when `close()` ends the session instead. `run` raises the failure even
-  when the work returned because of it, as a watch does when the session
-  ends:
+  `connect` instead leaves `close()` to the caller. A session ends with
+  `ConnectionLost`, or with `TokenExpired` when the token expired while
+  `refresh_token` kept failing. The failure raises from `async with`, after
+  cancelling what runs inside it through `session.run`, which raises
+  `SessionClosed` when `close()` ends the session instead. `run` raises the
+  failure even when the work returned because of it, as a watch does when
+  the session ends:
 
 ```python
 async with moq_wasm.connect(...) as session:
@@ -130,8 +127,7 @@ async with moq_wasm.connect(...) as session:
 ```
 
 The request methods keep the bindings' shape (`subscribe`,
-`subscribe_current_group`, `watch_namespaces`, `publish_track`, `announce`),
-with the reconnection above.
+`subscribe_current_group`, `watch_namespaces`, `publish_track`, `announce`).
 
 ### Media: `moq_wasm.media`
 
@@ -161,11 +157,10 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   PUBLISH_NAMESPACE. A track added later is registered on its own, and
   what is written to it before that is dropped. This replaces the
   register-then-publish rule each bot comments.
-- **`EventTimeline`** writes a draft-ietf-moq-msf-01 §8 event timeline: each
-  connection's first group opens with the record list (every record so far
-  with `replay=True`, empty otherwise), and each later record is one object.
-  It writes the list through `TrackWriter.on_connected`.
-  It replaces the two copies.
+- **`EventTimeline`** writes a draft-ietf-moq-msf-01 §8 event timeline as
+  one group: it opens with an empty record list once the track is
+  registered, and each record is one more object, so a late joiner's joining
+  FETCH brings those the track still keeps. It replaces the two copies.
 - **`watch_broadcasts(session, prefix, handler, *, filter=None,
   empty_timeout=None)`** runs `handler` as a task for each broadcast
   published under `prefix` that `filter` accepts, cancels it when the
@@ -222,7 +217,7 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   events of `MOQTransport` (`on_connected`, `on_disconnected`,
   `on_client_connected`, `on_client_disconnected`, `on_track_subscribed`,
   `on_error`), so a pipeline changes its import and its params. The session
-  comes from `moq_wasm.connect`, which owns reconnection and tokens, instead
+  comes from `moq_wasm.connect`, which owns the connection and tokens, instead
   of the transport dialing the relay. The input and the output processors
   share one room: the first `StartFrame` publishes the transport's broadcast
   and starts following the participants, and the last `EndFrame` or
@@ -254,7 +249,7 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   fields of pipecat's `TransportParams`. Both are pushed into the transport's
   broadcast, so the browser plays it with `RemoteBroadcast`. The encoder
   makes a keyframe every two seconds, and on `MediaSource.keyframe_request`
-  (a NEW_GROUP_REQUEST, or a rebuilt source after reconnecting). Timestamps
+  (a NEW_GROUP_REQUEST). Timestamps
   are wall-clock microseconds that follow the previous frame by its
   duration. `write_audio_frame` waits while the speech written so far runs
   more than 100 ms ahead of the clock, as `MOQTransport` paces its own, so
@@ -309,12 +304,9 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   are answered as before; they are not listed in the catalog.
 - A broadcast with a media source is published by the media broadcast's
   `announce` instead of `Session.announce`, so the namespace is published
-  once. On a new connection the session builds the media broadcast again:
-  each source replays its `configure_video` and `configure_audio`, and
-  `keyframe_request` resolves so that the next frame opens a group. Frames
-  pushed while the session reconnects are dropped. Leaving the block
-  withdraws the namespace and closes the media broadcast, so its tracks are
-  no longer answered and later frames are dropped.
+  once. Leaving the block withdraws the namespace and closes the media
+  broadcast, so its tracks are no longer answered and later frames are
+  dropped.
 - `keyframe_request()` is awaited rather than registered as a callback, the
   asyncio form of the browser SDK's `on_keyframe_request`. Renditions, on
   demand publishing (the browser's `on_demand_change`) and AAC are left out
@@ -348,8 +340,8 @@ release, and is not done.
 
 ### Negative
 - The import changes from `moqt` to `moq_wasm` in every bot.
-- The SDK's reconnection restores state the bots now rebuild themselves, so
-  its tests need a relay that restarts in the middle of a session.
+- An outage longer than the native session's 60 s ends the session, and the
+  bot's room with it.
 - The `pipecat` extra follows pipecat's transport API, which pipecat may
   change in a minor version.
 
@@ -368,6 +360,14 @@ apart.
 ### One peer per transport, as `MOQTransport`
 Matches `MOQTransport`'s params exactly, but every bot here serves a room, so
 each would run one pipeline per participant and merge their output itself.
+
+### Dial again after the native session ends
+The SDK dialed again from 1 s, doubling up to 30 s, without a limit, and
+registered the tracks, published the namespaces and watched the prefixes
+again on the new session. It kept a bot through an outage longer than 60 s,
+but retried forever, while no page waits that long for a bot; it rebuilt
+what the native session already carries over, and it differed from the
+browser SDK, whose session ends there.
 
 ### Keep the building blocks in `examples/python/moq-system-one-bot`
 They work for the bots in this repository, but a bot outside it would copy

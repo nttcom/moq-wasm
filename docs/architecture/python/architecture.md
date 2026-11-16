@@ -103,8 +103,9 @@ session's current token, so a connection the session opens by itself (to
 follow GOAWAY, or after the relay closed it for an expired token) presents the
 latest one. `refresh_token` sends the relay's in-session refresh, a
 TRACK_STATUS for `[app_id]` that carries the token (docs/architecture/relay/
-architecture.md "Token refresh"), and makes the token current once the relay
-accepts it. Getting a later token is the caller's job: the module knows
+architecture.md "Token refresh"), and makes the token current whether or not
+the relay accepts it: a relay that refuses it keeps the connection's token
+until it expires, and the next connection presents the new one. Getting a later token is the caller's job: the module knows
 nothing of the token mint.
 
 ### One event loop per session
@@ -150,8 +151,7 @@ these bindings directly:
 - `RemoteBroadcast.catalogs` and `follow` read a participant's catalog and
   tracks, subscribing again when the page that published them leaves;
 - `create_broadcast` publishes the bot's namespace with its event timeline
-  and status tracks, written again on each connection, so a late joiner's
-  FETCH is answered from the cache;
+  and status tracks, so a late joiner's FETCH is answered from the cache;
 - `moq_wasm.codecs` decodes the Opus audio and H.264 video. A video
   subscription that joins a group in the middle decodes nothing until the
   next group, which starts at a keyframe.

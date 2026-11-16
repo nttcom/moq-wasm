@@ -69,9 +69,9 @@ async def moderate_session(
     namespace = room_namespace(room)
     chat_namespace = [*namespace, "chat"]
     async with create_broadcast(session, [*namespace, "moderator"]) as moderator:
-        timeline = moderator.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS, replay=True)
+        timeline = moderator.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS)
+        status_track = moderator.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS)
         status = SystemOneStatus()
-        status.publish_on(moderator.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS))
         system_one = SystemOneClient(http, args.system_one_url, status, identity_token)
         worker = PipelineWorker(
             Pipeline([ChatModerator(system_one, timeline)]),
@@ -81,6 +81,8 @@ async def moderate_session(
         # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
         runner = WorkerRunner(handle_sigint=False)
         await runner.add_workers(worker)
+        await moderator.published()
+        await status.publish_on(status_track)
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(runner.run())
             await watch_broadcasts(

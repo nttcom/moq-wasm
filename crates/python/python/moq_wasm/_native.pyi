@@ -38,8 +38,9 @@ class Session:
         `announce`, since the relay may forward a SUBSCRIBE at once."""
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         """Hands the relay `token`, a later token of the same app, before the current one expires
-        (a TRACK_STATUS for `[app_id]` that carries it). Raises RuntimeError for a session connected
-        without a token or a token the relay refuses; the session then keeps its current token."""
+        (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it
+        opens from now on. Raises RuntimeError for a session connected without a token or a token the
+        relay refuses; the relay then keeps the connection's token until it expires."""
     async def closed(self) -> None:
         """Waits until the relay closes the session."""
     async def close(self) -> None: ...

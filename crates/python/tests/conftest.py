@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from moq_wasm import _session
 from moq_wasm.media import _remote_broadcast
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -86,9 +85,8 @@ def signed_token(app_id: str, secret: str, ttl: str = "1h") -> str:
 
 
 @pytest.fixture
-def no_reconnect_delay(monkeypatch):
-    """A session redials and resubscribes at once, for the tests on fake native sessions."""
-    monkeypatch.setattr(_session, "FIRST_RECONNECT_DELAY_SECONDS", 0.0)
+def no_resubscribe_delay(monkeypatch):
+    """`follow` subscribes again at once, for the tests on fake native sessions."""
     monkeypatch.setattr(_remote_broadcast, "RESUBSCRIBE_DELAY_SECONDS", 0.0)
 
 

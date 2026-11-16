@@ -11,7 +11,7 @@ LABELS = (Label("喜", "喜んでいる、うれしい"), Label("暴言", "相�
 
 async def test_chat_is_recorded_with_each_label_probability_at_its_location():
     # Arrange
-    timeline, publication = await published_timeline(replay=True)
+    timeline, publication = await published_timeline()
     chat = ChatMessage(text="shut up", labels=LABELS, location=(7, 0))
 
     # Act
@@ -30,7 +30,7 @@ async def test_chat_without_labels_is_not_judged():
 
     # Act
     await run_test(
-        ChatModerator(system_one, (await published_timeline(replay=True))[0]),
+        ChatModerator(system_one, (await published_timeline())[0]),
         frames_to_send=[ChatMessage(text="hello", labels=(), location=(8, 0))],
         expected_down_frames=[],
     )
@@ -45,7 +45,7 @@ async def test_other_frames_pass_through_unjudged():
 
     # Act
     await run_test(
-        ChatModerator(system_one, (await published_timeline(replay=True))[0]),
+        ChatModerator(system_one, (await published_timeline())[0]),
         frames_to_send=[TextFrame(text="hello")],
         expected_down_frames=[TextFrame],
     )

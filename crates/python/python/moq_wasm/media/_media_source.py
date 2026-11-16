@@ -11,9 +11,8 @@ VIDEO_CODECS = {"avc1", "avc3", "hvc1", "hev1", "vp8", "vp09", "av01"}
 
 class MediaSource:
     """A video and an audio track of a broadcast, fed with encoded frames, as the browser SDK's
-    source is: `broadcast` builds the catalog, the LOC tracks and the media timeline. On a new
-    connection the source is built again with its configuration, and `keyframe_request` resolves so
-    that the next frame opens a group; frames pushed while the session reconnects are dropped."""
+    source is: `broadcast` builds the catalog, the LOC tracks and the media timeline. Frames pushed
+    before the broadcast is published, or after it ended, are dropped."""
 
     def __init__(
         self,
@@ -32,7 +31,7 @@ class MediaSource:
         self._source: _native.MediaSource | None = None
         self._video_codec: str | None = None
         self._audio_config: tuple[str, int, int] | None = None
-        self._rebuilt = asyncio.Event()
+        self._built = asyncio.Event()
 
     def configure_video(self, codec: str) -> None:
         """`codec` is a WebCodecs codec string: `avc1.*` (Annex B), `hvc1.*` (Annex B), `vp8`,
@@ -49,7 +48,7 @@ class MediaSource:
         if self._video_codec is None:
             raise RuntimeError("call configure_video first")
         if self._source is not None:
-            _drop_on_lost_connection(self._source.push_video, data, timestamp_micros)
+            _drop_once_ended(self._source.push_video, data, timestamp_micros)
 
     def configure_audio(self, codec: str, sample_rate: int, channels: int) -> None:
         """Only `"opus"`; raises ValueError for another codec."""
@@ -64,22 +63,15 @@ class MediaSource:
         if self._audio_config is None:
             raise RuntimeError("call configure_audio first")
         if self._source is not None:
-            _drop_on_lost_connection(self._source.push_audio, data, timestamp_micros)
+            _drop_once_ended(self._source.push_audio, data, timestamp_micros)
 
     async def keyframe_request(self) -> None:
-        """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST), the
-        broadcast needs one, or a new connection rebuilt the source: encode the next frame as a
-        keyframe then."""
-        rebuilt = asyncio.ensure_future(self._rebuilt.wait())
-        waits = [rebuilt]
-        if self._source is not None:
-            waits.append(asyncio.ensure_future(self._source.keyframe_request()))
-        try:
-            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
-        finally:
-            for wait in waits:
-                wait.cancel()
-        self._rebuilt.clear()
+        """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
+        broadcast needs one: encode the next frame as a keyframe then. Waits while the broadcast is
+        not published."""
+        await self._built.wait()
+        assert self._source is not None
+        await self._source.keyframe_request()
 
     def _build(self, broadcast: _native.MediaBroadcast) -> None:
         source = broadcast.add_source(
@@ -94,15 +86,16 @@ class MediaSource:
         if self._audio_config is not None:
             source.configure_audio(*self._audio_config)
         self._source = source
-        self._rebuilt.set()
+        self._built.set()
 
     def _detach(self) -> None:
         self._source = None
+        self._built.clear()
 
 
-def _drop_on_lost_connection(push, data: bytes, timestamp_micros: int) -> None:
-    """The configuration is checked before, so the native source refuses a frame once its
-    publishing stopped, which a lost connection causes; the next connection rebuilds it."""
+def _drop_once_ended(push, data: bytes, timestamp_micros: int) -> None:
+    """The configuration is checked before, so the native source refuses a frame only once its
+    publishing stopped, as when the session ended."""
     try:
         push(data, timestamp_micros)
     except RuntimeError as error:

@@ -172,8 +172,8 @@ async def track_in_session(
     tracker_broadcast = create_broadcast(session, namespaces.tracker)
     command_broadcast = create_broadcast(session, namespaces.command)
     timeline = tracker_broadcast.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS)
+    status_track = tracker_broadcast.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS)
     status = SystemOneStatus()
-    status.publish_on(tracker_broadcast.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS))
     commands = PtzCommands()
     commands.publish_on(command_broadcast.publish_track(COMMAND_TRACK, retention_seconds=RETENTION_SECONDS))
     latest_target = LatestTarget()
@@ -186,6 +186,8 @@ async def track_in_session(
     await runner.add_workers(worker)
     async with tracker_broadcast, command_broadcast, asyncio.TaskGroup() as tasks:
         tasks.create_task(runner.run())
+        await tracker_broadcast.published()
+        await status.publish_on(status_track)
         forwarding = tasks.create_task(
             watch_broadcasts(
                 session,

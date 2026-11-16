@@ -297,9 +297,11 @@ impl Session {
 
     /// Sends `token` to the relay as the session's new authorization token
     /// (docs/architecture/relay/architecture.md "Token refresh"), and presents
-    /// it on the connections the session opens from now on. Fails for a
-    /// session connected without a token, or when the relay rejects `token`;
-    /// the relay then keeps the session's current token.
+    /// it on the connections the session opens from now on, even when the
+    /// relay rejects it for this connection. Fails for a session connected
+    /// without a token, or when the relay rejects `token`; the relay then
+    /// keeps the connection's token until it expires, and the session opens
+    /// its next connection with `token`.
     #[pyo3(signature = (token, *, app_id))]
     fn refresh_token<'py>(
         &self,
@@ -312,6 +314,7 @@ impl Session {
                 "the session was connected without a token",
             ));
         };
+        *current.lock().unwrap() = token.clone();
         let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
@@ -323,7 +326,6 @@ impl Session {
                 )
                 .await
                 .map_err(anyhow::Error::from)?;
-            *current.lock().unwrap() = token;
             Ok(())
         })
     }

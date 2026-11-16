@@ -22,10 +22,10 @@ def add_relay_arguments(parser: argparse.ArgumentParser) -> None:
 async def stay_connected(
     args: argparse.Namespace, room: BotRoom, in_session: Callable[[moq_wasm.Session], Awaitable[None]]
 ) -> None:
-    """Runs `in_session` on a relay session with `room`'s token until it returns. The session
-    reconnects and keeps the token fresh by itself; this retries the first connection and runs
-    `in_session` again on a new session when it raises RuntimeError, and raises
-    `moq_wasm.TokenExpired` once the token cannot be kept fresh."""
+    """Runs `in_session` on a relay session with `room`'s token until it returns. Retries the first
+    connection, and runs `in_session` again on a new session when `in_session` raises
+    RuntimeError. Raises what ended the session, such as `moq_wasm.ConnectionLost` or
+    `moq_wasm.TokenExpired`."""
     log_prefix = f"room {room.key}: "
     while True:
         try:

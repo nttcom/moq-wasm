@@ -3,6 +3,7 @@
 from moq_wasm._native import Object, Subscription, parse_catalog
 from moq_wasm._session import (
     Announcement,
+    ConnectionLost,
     NamespaceEvent,
     NamespaceWatch,
     Session,
@@ -14,6 +15,7 @@ from moq_wasm._token import TokenExpired
 
 __all__ = [
     "Announcement",
+    "ConnectionLost",
     "NamespaceEvent",
     "NamespaceWatch",
     "Object",

@@ -255,7 +255,7 @@ async def test_a_session_serves_its_track_again_on_a_restarted_relay(relay_auth)
         relay.process.kill()
         relay.process.wait()
 
-    # Act: the publisher redials the relay started on the same port
+    # Act: the publisher's native session reconnects to the relay started on the same port
     with started_relay(relay_auth, "relay-restart", port=relay.port):
         subscriber = await connect(relay.url)
         watch = await within(subscriber.watch_namespaces(namespace[:-1]))

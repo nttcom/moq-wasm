@@ -3,12 +3,10 @@ import asyncio
 import pytest
 
 from moq_bot_rooms.rooms import BotRoom
-from moq_wasm.media import EventTimeline
 
 from moq_meeting_transcriber import room as room_module
 from moq_meeting_transcriber.room import BOT_NAMESPACE, Room, participant_name
-from moq_meeting_transcriber.status import RecognizerStatus
-from tests.helpers import NamedRecognizer, RecordingPublication, SessionRefusingNamespaces
+from tests.helpers import NamedRecognizer, RecordingPublication, SessionRefusingNamespaces, recorded_timeline
 
 ROOM = BotRoom("team a")
 
@@ -37,11 +35,11 @@ def test_other_namespaces_are_not_participants(namespace):
     assert participant_name(namespace, ROOM) is None
 
 
-def follow_participants(room: Room, session) -> tuple[asyncio.Task, RecordingPublication, RecordingPublication]:
-    transcript, status = RecordingPublication(), RecordingPublication()
-    timeline = EventTimeline(transcript)
-    recognizer_status = RecognizerStatus(status, "whisper")
-    return asyncio.create_task(room._follow_participants(session, timeline, recognizer_status)), transcript, status
+async def follow_participants(room: Room, session) -> tuple[asyncio.Task, RecordingPublication, RecordingPublication]:
+    timeline, transcript = await recorded_timeline()
+    transcript.writes.clear()
+    status = RecordingPublication()
+    return asyncio.create_task(room._follow_participants(session, timeline, status)), transcript, status
 
 
 async def test_a_failure_to_follow_the_participants_ends_the_room():
@@ -49,7 +47,7 @@ async def test_a_failure_to_follow_the_participants_ends_the_room():
     room = Room("https://relay.invalid", True, NamedRecognizer("whisper"), ROOM)
 
     # Act
-    following, _, _ = follow_participants(room, SessionRefusingNamespaces())
+    following, _, _ = await follow_participants(room, SessionRefusingNamespaces())
 
     # Assert
     with pytest.raises(RuntimeError, match="SUBSCRIBE_NAMESPACE refused"):
@@ -62,7 +60,7 @@ async def test_a_recognizer_that_is_starting_gets_a_notice_and_no_audio_until_it
     started = asyncio.Event()
     recognizer = NamedRecognizer("qwen3-asr")
     recognizer.ready = started.wait
-    following, transcript, status = follow_participants(Room("https://relay.invalid", True, recognizer, ROOM), SessionRefusingNamespaces())
+    following, transcript, status = await follow_participants(Room("https://relay.invalid", True, recognizer, ROOM), SessionRefusingNamespaces())
 
     # Act
     await asyncio.sleep(0.1)
@@ -75,12 +73,12 @@ async def test_a_recognizer_that_is_starting_gets_a_notice_and_no_audio_until_it
     assert [record["data"]["speaker"] for _, records in before_ready for record in records] == ["transcriber"]
     with pytest.raises(RuntimeError, match="SUBSCRIBE_NAMESPACE refused"):
         await following
-    assert status.writes == [(True, {"asr": "whisper", "state": "ready"})]
+    assert status.writes == [(True, {"asr": "qwen3-asr", "state": "ready"})]
 
 
 async def test_a_recognizer_that_answers_at_once_gets_no_notice():
     # Arrange
-    following, transcript, _ = follow_participants(
+    following, transcript, _ = await follow_participants(
         Room("https://relay.invalid", True, NamedRecognizer("whisper"), ROOM), SessionRefusingNamespaces()
     )
 
