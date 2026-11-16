@@ -101,7 +101,10 @@ function createSubscriberPageModel(page: Page) {
 export type PublisherPageModel = ReturnType<typeof createPublisherPageModel>
 export type SubscriberPageModel = ReturnType<typeof createSubscriberPageModel>
 
-export async function arrangeMediaE2ESession(browser: Browser) {
+export async function arrangeMediaE2ESession(
+  browser: Browser,
+  paths = { publisher: MEDIA_PUBLISHER_PATH, subscriber: MEDIA_SUBSCRIBER_PATH }
+) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     permissions: ['camera', 'microphone']
@@ -111,8 +114,8 @@ export async function arrangeMediaE2ESession(browser: Browser) {
   const subscriberPage = await context.newPage()
 
   await Promise.all([
-    openExamplePage(publisherPage, MEDIA_PUBLISHER_PATH),
-    openExamplePage(subscriberPage, MEDIA_SUBSCRIBER_PATH)
+    openExamplePage(publisherPage, paths.publisher),
+    openExamplePage(subscriberPage, paths.subscriber)
   ])
 
   return {

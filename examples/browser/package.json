@@ -13,7 +13,7 @@
     "test": "playwright test --config playwright.unit.config.ts",
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
-    "e2e:media": "playwright test tests/media-e2e.spec.ts tests/remote-broadcast-e2e.spec.ts",
+    "e2e:media": "playwright test tests/media-e2e.spec.ts tests/media-cmaf-e2e.spec.ts tests/remote-broadcast-e2e.spec.ts",
     "e2e:meeting": "playwright test tests/meeting-e2e.spec.ts",
     "e2e:message": "playwright test tests/message-e2e.spec.ts",
     "e2e:datagram": "playwright test tests/datagram-e2e.spec.ts",
@@ -47,7 +47,6 @@
   "dependencies": {
     "@types/dom-mediacapture-transform": "^0.1.11",
     "lucide-react": "^1.56.0",
-    "mediabunny": "^1.35.1",
     "moq-wasm": "*",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
