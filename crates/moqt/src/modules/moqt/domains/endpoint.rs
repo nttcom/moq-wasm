@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use crate::{
-    Connecting, TransportProtocol,
+    Session, TransportProtocol,
     executor::{MaybeSend, MaybeSync},
     modules::{
         executor::BoxFuture,
@@ -15,8 +15,15 @@ use crate::{
             accept_error::AcceptError, transport_connection_creator::TransportConnectionCreator,
         },
     },
-    server::Accepting,
+    server::Handshake,
 };
+
+/// Resolves after the transport handshake and the SETUP exchange.
+pub type Connecting = BoxFuture<anyhow::Result<Session>>;
+
+/// Resolves after the transport handshake and the client's SETUP; the reply
+/// waits for `Handshake::accept`.
+pub type Accepting = BoxFuture<anyhow::Result<Handshake>>;
 
 /// The AUTHORIZATION TOKEN a client sends in CLIENT_SETUP (draft-14 §9.2.1.1).
 #[derive(Clone)]

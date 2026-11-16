@@ -176,9 +176,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             tracing::info!("session established");
             Ok(session)
         };
-        Ok(Connecting {
-            inner: Box::pin(handshake),
-        })
+        Ok(Box::pin(handshake))
     }
 
     /// Opens the transport outside `connect_span`: quinn runs a connection's
@@ -377,9 +375,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 setup,
             })
         };
-        Ok(Accepting {
-            inner: Box::pin(handshake),
-        })
+        Ok(Box::pin(handshake))
     }
 }
 
