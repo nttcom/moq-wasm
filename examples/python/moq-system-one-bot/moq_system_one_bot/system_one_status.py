@@ -32,10 +32,9 @@ class SystemOneStatus:
         self._since_ms = epoch_ms()
         self._publication: Publication | None = None
 
-    def publish_on(self, publication: Publication) -> None:
-        """Writes the state on each connection, so a page that joins later reads it first."""
+    async def publish_on(self, publication: Publication) -> None:
         self._publication = publication
-        publication.on_connected(self._write)
+        await self._write()
 
     @asynccontextmanager
     async def request(self) -> AsyncIterator[None]:

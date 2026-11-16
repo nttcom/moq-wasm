@@ -150,8 +150,7 @@ these bindings directly:
 - `RemoteBroadcast.catalogs` and `follow` read a participant's catalog and
   tracks, subscribing again when the page that published them leaves;
 - `create_broadcast` publishes the bot's namespace with its event timeline
-  and status tracks, written again on each connection, so a late joiner's
-  FETCH is answered from the cache;
+  and status tracks, so a late joiner's FETCH is answered from the cache;
 - `moq_wasm.codecs` decodes the Opus audio and H.264 video. A video
   subscription that joins a group in the middle decodes nothing until the
   next group, which starts at a keyframe.

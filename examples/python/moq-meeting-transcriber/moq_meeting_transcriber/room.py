@@ -5,11 +5,11 @@ from functools import partial
 import moq_wasm
 from loguru import logger
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
+from moq_wasm import TrackWriter
 from moq_wasm.media import EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
 from moq_meeting_transcriber import status
 from moq_meeting_transcriber.participant import Participant
-from moq_meeting_transcriber.status import RecognizerStatus
 from moq_meeting_transcriber.stt import Recognizer
 from moq_meeting_transcriber.transcript import TRACK_NAME, TranscriptRecord
 
@@ -66,13 +66,13 @@ class Room:
         """Returns once the room has had no participant for the grace period."""
         async with create_broadcast(session, [*room_namespace(self._room), *BOT_NAMESPACE]) as bot:
             timeline = bot.event_timeline(TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
-            recognizer_status = RecognizerStatus(
-                bot.publish_track(status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS), self._recognizer.name
-            )
-            await self._follow_participants(session, timeline, recognizer_status)
+            status_track = bot.publish_track(status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
+            await bot.published()
+            await status.write_status(status_track, self._recognizer.name, status.STARTING)
+            await self._follow_participants(session, timeline, status_track)
 
     async def _follow_participants(
-        self, session: moq_wasm.Session, timeline: EventTimeline, recognizer_status: RecognizerStatus
+        self, session: moq_wasm.Session, timeline: EventTimeline, status_track: TrackWriter
     ) -> None:
         # Audio is subscribed only once the recognizer answers, so a GPU service starting from zero
         # does not receive every utterance of its startup minutes at once.
@@ -86,7 +86,7 @@ class Room:
         finally:
             ready.cancel()
         logger.info(f"room {self._room.key}: {self._recognizer.name} is ready")
-        await recognizer_status.set(status.READY)
+        await status.write_status(status_track, self._recognizer.name, status.READY)
         # Returning is safe once the room is empty: a page still open sees its request end and asks for
         # the room again, which starts a new bot.
         await watch_broadcasts(

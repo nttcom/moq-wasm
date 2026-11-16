@@ -142,8 +142,8 @@ async def detect_in_session(
     camera_namespace = [*namespace, "camera"]
     async with create_broadcast(session, [*namespace, "detector"]) as detector:
         timeline = detector.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS)
+        status_track = detector.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS)
         status = SystemOneStatus()
-        status.publish_on(detector.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS))
         vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
         worker = PipelineWorker(
             Pipeline([CameraDetector(vision, timeline)]),
@@ -153,6 +153,8 @@ async def detect_in_session(
         # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
         runner = WorkerRunner(handle_sigint=False)
         await runner.add_workers(worker)
+        await detector.published()
+        await status.publish_on(status_track)
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(runner.run())
             await watch_broadcasts(

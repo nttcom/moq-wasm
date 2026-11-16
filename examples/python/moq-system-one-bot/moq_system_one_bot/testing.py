@@ -3,29 +3,21 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestServer
+from moq_wasm import TrackWriter
 from moq_wasm.media import EventRecord, EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
 
 
 class RecordingPublication:
-    """`connect` stands for a connection registering the track."""
+    """A `Publication` for tests: keeps each JSON write and whether it opened a group."""
 
     def __init__(self):
         self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
-        self._on_connected: list[Callable[[], Awaitable[None]]] = []
-
-    def on_connected(self, callback: Callable[[], Awaitable[None]]) -> None:
-        self._on_connected.append(callback)
-
-    async def connect(self) -> None:
-        for callback in self._on_connected:
-            await callback()
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
         self._writes.put_nowait((new_group, json.loads(payload)))
@@ -39,11 +31,13 @@ async def next_records(publication: RecordingPublication) -> list[EventRecord]:
     return records
 
 
-async def published_timeline(*, replay: bool = False) -> tuple[EventTimeline, RecordingPublication]:
-    """A timeline publishing on a connected `RecordingPublication`, with its first write already read."""
+async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
+    """A timeline on a registered track writing to a `RecordingPublication`, with its first write
+    already read."""
+    writer = TrackWriter(["test"], "eventtimeline", retention_seconds=60)
+    timeline = EventTimeline(writer)
     publication = RecordingPublication()
-    timeline = EventTimeline(publication, replay=replay)
-    await publication.connect()
+    await writer._bind(publication)
     await publication.next_write()
     return timeline, publication
 

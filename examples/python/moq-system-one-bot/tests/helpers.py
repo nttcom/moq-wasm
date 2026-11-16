@@ -19,8 +19,7 @@ def h264_group(frame_count: int, width: int = 64, height: int = 48) -> list[byte
 
 async def published_status(status: SystemOneStatus) -> RecordingPublication:
     publication = RecordingPublication()
-    status.publish_on(publication)
-    await publication.connect()
+    await status.publish_on(publication)
     return publication
 
 

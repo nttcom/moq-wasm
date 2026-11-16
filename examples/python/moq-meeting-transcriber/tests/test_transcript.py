@@ -1,17 +1,14 @@
-from moq_wasm.media import EventTimeline
 from pipecat.frames.frames import TextFrame
 from pipecat.tests.utils import run_test
 
 from moq_meeting_transcriber.stt import LANGUAGE, UtteranceTranscriptionFrame
 from moq_meeting_transcriber.transcript import TranscriptWriter
-from tests.helpers import RecordingPublication
+from tests.helpers import recorded_timeline
 
 
 async def test_each_utterance_is_one_record_at_the_time_it_began():
     # Arrange
-    publication = RecordingPublication()
-    timeline = EventTimeline(publication)
-    await publication.connect()
+    timeline, publication = await recorded_timeline()
     utterance = UtteranceTranscriptionFrame("こんにちは", "alice", "2026-11-16T00:00:00Z", LANGUAGE, started_at_ms=1_792_399_956_554)
 
     # Act

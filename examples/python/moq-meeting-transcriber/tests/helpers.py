@@ -1,23 +1,24 @@
 import json
-from collections.abc import Awaitable, Callable
+
+from moq_wasm import TrackWriter
+from moq_wasm.media import EventTimeline
 
 
 class RecordingPublication:
-    """`connect` stands for a connection registering the track."""
-
     def __init__(self):
         self.writes: list[tuple[bool, object]] = []
-        self._on_connected: list[Callable[[], Awaitable[None]]] = []
-
-    def on_connected(self, callback: Callable[[], Awaitable[None]]) -> None:
-        self._on_connected.append(callback)
-
-    async def connect(self) -> None:
-        for callback in self._on_connected:
-            await callback()
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
         self.writes.append((new_group, json.loads(payload)))
+
+
+async def recorded_timeline() -> tuple[EventTimeline, RecordingPublication]:
+    """A timeline on a registered track writing to a `RecordingPublication`."""
+    writer = TrackWriter(["test"], "transcript", retention_seconds=60)
+    timeline = EventTimeline(writer)
+    publication = RecordingPublication()
+    await writer._bind(publication)
+    return timeline, publication
 
 
 class NamedRecognizer:
