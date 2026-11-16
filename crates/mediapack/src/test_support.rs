@@ -5,6 +5,7 @@ use crate::{
     h264::{
         AvcDecoderConfigurationRecord,
         annexb::{nal_units, with_start_codes},
+        avcc::length_prefixed,
     },
     hevc::{self, HevcDecoderConfigurationRecord},
     loc,
@@ -148,6 +149,10 @@ pub(crate) fn audio_event(pts_ms: u64) -> MediaEvent {
         pts: Timestamp::from_millis(pts_ms),
         audio_level: None,
     })
+}
+
+pub(crate) fn annexb_to_avcc(data: &[u8], nal_length_size: usize) -> Bytes {
+    length_prefixed(nal_units(data), nal_length_size)
 }
 
 pub(crate) fn adts_frame(payload: &[u8]) -> Vec<u8> {
