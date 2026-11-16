@@ -8,13 +8,13 @@ from functools import partial
 import aiohttp
 import moq_wasm
 from loguru import logger
-from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_rooms.identity_token import IdentityToken, add_identity_token_arguments, identity_token_from_arguments
+from moq_bot_rooms.relay import add_relay_arguments
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
-from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_system_one_bot.relay import add_relay_arguments, stay_connected
+from moq_system_one_bot.relay import stay_connected
 from moq_system_one_bot.video import picture_to_jpeg
 from moq_wasm.codecs import VideoDecoder
 from moq_wasm.media import CatalogTrack, RemoteBroadcast, create_broadcast, watch_broadcasts

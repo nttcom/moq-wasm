@@ -31,6 +31,13 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 | `--no-telemetry` | なし | ログを送らない |
 | `--token-mint-url` | 環境変数 `TOKEN_MINT_URL`、なければ relay がローカルなら `http://localhost:8083`、それ以外は `https://token-mint.moqt.research.skyway.io` | 一時アプリのトークンを更新する token mint |
 
+bot は自分のオプションに、次の 2 つの関数で relay と ID トークンのオプションを足せます。
+
+| 関数 | 足すオプション |
+| --- | --- |
+| `relay.add_relay_arguments` | `--relay-url`（既定値 `https://127.0.0.1:4433`）と、TLS 検証を省く `--insecure` |
+| `identity_token.add_identity_token_arguments` | `--gcloud-auth` と `--metadata-auth`。`identity_token_from_arguments` がそれに応じた ID トークンを返す |
+
 ## テスト
 
 ```shell
