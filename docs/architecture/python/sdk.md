@@ -333,9 +333,9 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   broadcast, so its tracks are no longer answered and later frames are
   dropped.
 - `keyframe_request()` is awaited rather than registered as a callback, the
-  asyncio form of the browser SDK's `on_keyframe_request`. On demand
-  publishing (the browser's `on_demand_change`) is left out until a bot
-  needs it.
+  asyncio form of the browser SDK's `on_keyframe_request`. It and
+  `demand_change()` raise RuntimeError once the broadcast was left or the
+  session ended, so a loop awaiting them ends.
 - The source's methods are the browser SDK's `MediaSource` in snake_case,
   minus what WebCodecs does there:
 
@@ -356,6 +356,15 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   beside H.264) is an alternative in the same catalog `altGroup`, as the
   browser's multi-codec renditions are. AAC needs its AudioSpecificConfig,
   as WebCodecs' `description`; `level` is the LOC Audio Level property.
+- `add_media_source(..., cmaf=True)` also sends the video, its renditions
+  and AAC audio as CMAF in `<track>_cmaf`, as the browser's
+  `addSource({ cmaf })` does. The video, its renditions, their CMAF
+  siblings and the audio are published on demand, as every browser source
+  is, and `await media.demand_change()` returns each change as a
+  `Demand(track_name, wanted)` (the browser's `on_demand_change`); the
+  caller can stop encoding a track nobody takes. `on_demand=False` keeps a
+  source's tracks sent with no subscriber, for a track that should stay in
+  the relay's cache, FETCHable, while nobody takes it.
 
 Encoding stays in Python with PyAV, through `moq_wasm.codecs`.
 

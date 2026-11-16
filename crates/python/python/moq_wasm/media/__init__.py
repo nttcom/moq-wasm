@@ -1,6 +1,7 @@
 """Follows and publishes MSF broadcasts on a `moq_wasm.Session` (docs/architecture/python/sdk.md
 "Media")."""
 
+from moq_wasm._native import Demand
 from moq_wasm.media._catalog import CATALOG_TRACK_NAME, Catalog, CatalogTrack
 from moq_wasm.media._event_timeline import EventRecord, EventTimeline
 from moq_wasm.media._local_broadcast import LocalBroadcast, create_broadcast
@@ -11,6 +12,7 @@ __all__ = [
     "CATALOG_TRACK_NAME",
     "Catalog",
     "CatalogTrack",
+    "Demand",
     "EventRecord",
     "EventTimeline",
     "LocalBroadcast",
