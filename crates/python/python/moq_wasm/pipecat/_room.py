@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from moq_wasm._session import Session
+from moq_wasm.codecs import OPUS_SAMPLE_RATE, OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder
 from moq_wasm.media import Catalog, CatalogTrack, LocalBroadcast, MediaSource, RemoteBroadcast, create_broadcast, watch_broadcasts
-from moq_wasm.pipecat._codecs import OPUS_SAMPLE_RATE, OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder
 
 logger = logging.getLogger("moq_wasm")
 

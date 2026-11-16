@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 import moq_wasm
+from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoEncoder
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTrack, MoqWasmTransport
-from moq_wasm.pipecat._codecs import OpusDecoder, OpusEncoder, VideoEncoder
 from moq_wasm.pipecat._room import Room, RoomOptions
 
 from tests.fake_native import STAY_OPEN, FakeRelay, open_session

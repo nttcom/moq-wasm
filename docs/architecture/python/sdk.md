@@ -50,9 +50,10 @@ transcriber does.
   `async with` and task groups are what the SDK is made of, and they are
   plain in Python and awkward through PyO3. The browser SDK splits its Rust
   and TypeScript the same way.
-- The SDK depends on nothing beyond the native module. The pipecat transport
-  is the `pipecat` extra (`moq-wasm[pipecat]`), which adds `pipecat-ai` and
-  `av` (PyAV, for Opus and H.264).
+- The SDK depends on nothing beyond the native module. `moq_wasm.codecs` is
+  the `codecs` extra (`moq-wasm[codecs]`), which adds `av` (PyAV, for Opus,
+  H.264 and VP8) and `numpy`. The pipecat transport is the `pipecat` extra
+  (`moq-wasm[pipecat]`), which adds `pipecat-ai` and the `codecs` extra.
 - The package is released on GitHub only, as abi3 wheels for Linux x86_64,
   Linux aarch64 and macOS arm64 attached to a `python-sdk-v<version>` tag's
   Release. The workflow and the bots' switch to the wheels are designed with
@@ -64,11 +65,13 @@ transcriber does.
 flowchart TB
     subgraph moq_wasm
         pipecat["moq_wasm.pipecat<br/>MoqWasmTransport"]
+        codecs["moq_wasm.codecs<br/>OpusDecoder · OpusEncoder · VideoDecoder · VideoEncoder (PyAV)"]
         media["moq_wasm.media<br/>watch_broadcasts · RemoteBroadcast · create_broadcast · Catalog · EventTimeline"]
         core["moq_wasm<br/>connect · Session"]
         native["moq_wasm._native<br/>(PyO3, crates/python/src)"]
     end
     pipecat --> media --> core --> native
+    pipecat --> codecs
 ```
 
 The same split as the browser SDK's `moq-wasm` and `moq-wasm/media`. What
@@ -259,7 +262,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
 - **Codecs are the transport's job.** pipecat's frames carry raw audio and
   pictures, and each transport encodes and decodes with its own stack (the
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
-  PyAV). `MoqWasmTransport` does it with PyAV.
+  PyAV). `MoqWasmTransport` does it with PyAV through `moq_wasm.codecs`,
+  which a bot running its own pipeline (one per participant, or with the
+  location of each picture) uses too.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
@@ -303,15 +308,14 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   demand publishing (the browser's `on_demand_change`) and AAC are left out
   until a bot needs them.
 
-Encoding stays in Python with PyAV, which the `pipecat` extra already
-depends on for decoding.
+Encoding stays in Python with PyAV, through `moq_wasm.codecs`.
 
 ### No codec in the wheel
 The `moq-wasm` wheel holds this repository's code (MIT) and Rust crates
 under permissive licenses, and no codec: it packs encoded H.264 and Opus
 into LOC objects and never encodes or decodes them. Encoding and decoding go
 through PyAV, which the user's pip or uv installs from PyPI for the
-`pipecat` extra. PyAV's wheels are built with libx264 and libx265, so they
+`codecs` extra, and so for the `pipecat` extra. PyAV's wheels are built with libx264 and libx265, so they
 are under the GPL, and H.264 is covered by patents (the Via LA AVC pool) for
 encoders and decoders alike. Keeping codecs out of the wheel keeps both out
 of what this repository distributes. The SDK's documentation tells its
