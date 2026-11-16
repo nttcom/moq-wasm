@@ -17,9 +17,9 @@ use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
-use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc, oneshot};
 
-use rendition_task::RenditionTask;
+use rendition_task::{RenditionCommand, RenditionTask};
 
 /// An MSF broadcast of media the caller encodes, built by `broadcast` as the
 /// browser SDK's is: it publishes the catalog, the LOC tracks and the media
@@ -91,6 +91,7 @@ impl MediaBroadcast {
             ))),
             video: Mutex::new(None),
             keyframe_requests,
+            renditions: Mutex::new(Vec::new()),
             demands: demand_receiver.map(|receiver| Arc::new(AsyncMutex::new(receiver))),
         }
     }
@@ -105,6 +106,8 @@ pub struct MediaSource {
     /// configuration changes and a sample.
     video: Mutex<Option<LocDemuxer>>,
     keyframe_requests: Arc<Notify>,
+    /// The renditions' command senders, for remove_track.
+    renditions: Mutex<Vec<mpsc::UnboundedSender<RenditionCommand>>>,
     /// `None` for a source not published on demand.
     demands: Option<Arc<AsyncMutex<mpsc::UnboundedReceiver<TrackDemand>>>>,
 }
@@ -162,10 +165,58 @@ impl MediaSource {
             keyframes: RenditionKeyframes::SameFrames,
         };
         let rendition = RenditionTrack::new(&writer, config);
+        let task = RenditionTask::run(rendition, writer.broadcast().clone(), track);
+        self.renditions.lock().unwrap().push(task.command_sender());
         Rendition {
-            task: RenditionTask::run(rendition, track),
+            task,
             video: Mutex::new(None),
         }
+    }
+
+    /// Ends the source's video or audio track (`kind` is `video` or `audio`)
+    /// with PUBLISH_DONE and sends the catalog without it; removing the video
+    /// removes its renditions too. Stop pushing its media first;
+    /// `configure_video` or `configure_audio` and the media pushed after it
+    /// publish the track again. Fails when the relay session has ended.
+    fn remove_track<'py>(&self, py: Python<'py>, kind: &str) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.writer.lock().unwrap();
+        let tracks = writer.source_tracks();
+        let track_name = match kind {
+            "video" => tracks.video.clone(),
+            "audio" => tracks.audio.clone(),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown track kind: {other}"
+                )));
+            }
+        };
+        let removal = writer.remove_track(&track_name);
+        let renditions: Vec<_> = if kind == "video" {
+            self.renditions
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|command_sender| {
+                    let (done_sender, done_receiver) = oneshot::channel();
+                    let sent = command_sender.send(RenditionCommand::Remove(done_sender));
+                    async move {
+                        sent.map_err(|_| anyhow::anyhow!("rendition task ended"))?;
+                        done_receiver
+                            .await
+                            .map_err(|_| anyhow::anyhow!("rendition task ended"))?
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let mut result = removal.await;
+            for removed in renditions {
+                result = result.and(removed.await);
+            }
+            Ok(result?)
+        })
     }
 
     /// `codec` is `opus`, or an AAC `mp4a.40.*` whose `description` is the

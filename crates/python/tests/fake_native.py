@@ -101,6 +101,9 @@ class FakeMediaSource:
     async def demand_change(self):
         return await self.demands.get()
 
+    async def remove_track(self, kind: str) -> None:
+        self.calls.append(("remove_track", kind))
+
 
 class FakeMediaBroadcast:
     def __init__(self, session: "FakeNativeSession", namespace: list[str]):

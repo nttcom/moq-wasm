@@ -267,6 +267,13 @@ async def test_a_subscriber_gets_aac_audio_listed_with_its_codec(relay_url):
         await session.close()
 
 
+async def catalog_without(catalogs, tracks: set[str]):
+    """The first catalog that lists none of `tracks`."""
+    async for catalog in catalogs:
+        if not tracks & {listed.name for listed in catalog.tracks}:
+            return catalog
+
+
 async def catalog_listing(catalogs, track: str, push_frame):
     """The first catalog that lists `track`, pushing a frame after each that does not."""
     async for catalog in catalogs:
@@ -455,3 +462,74 @@ async def test_keyframe_request_raises_once_the_broadcast_was_left():
     with pytest.raises(RuntimeError, match="stopped publishing"):
         await within(waiting)
     await session.close()
+
+
+async def test_remove_track_before_publishing_forgets_the_kind_and_after_it_reaches_the_native_source():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video("vp8")
+        low = media.add_rendition("low", label="low")
+        low.configure_video("vp8")
+        media.configure_audio("opus", 48000, 1)
+        await media.remove_track("video")
+        await bot.published()
+
+        # Act
+        await media.remove_track("audio")
+
+        # Assert: the removal before publishing reached no native source; the video was never configured
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+        assert native.calls == [("configure_audio", "opus", 48000, 1), ("remove_track", "audio")]
+        assert native.renditions[0].calls == []
+        with pytest.raises(ValueError, match="screen"):
+            await media.remove_track("screen")
+    await session.close()
+
+
+async def test_removing_the_video_ends_it_and_its_renditions_and_drops_them_from_the_catalog(relay_url):
+    # Arrange
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    remote = RemoteBroadcast(subscriber, namespace)
+    h264 = VideoEncoder("H264", *SIZE, FRAMERATE)
+    vp8 = VideoEncoder("VP8", *SIZE, FRAMERATE)
+
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_video(h264.codec_string)
+        low = media.add_rendition("vp8", label="bot vp8")
+        low.configure_video(vp8.codec_string)
+        media.configure_audio("opus", 48000, 1)
+        await bot.published()
+        frames = 0
+
+        def push_frame() -> None:
+            nonlocal frames
+            image, timestamp = picture(frames), frames * 1_000_000 // FRAMERATE
+            for packet in h264.encode(image, SIZE, "RGB"):
+                media.push_video(packet, timestamp)
+            for packet in vp8.encode(image, SIZE, "RGB"):
+                low.push_video(packet, timestamp)
+            media.push_audio(b"opus frame", timestamp)
+            frames += 1
+
+        push_frame()
+        catalogs = remote.catalogs()
+        await within(catalog_listing(catalogs, "video_vp8", push_frame))
+        video = await within(subscriber.subscribe(namespace, "video"))
+
+        # Act
+        await within(media.remove_track("video"))
+        done = await within(video.done())
+        catalog = await within(catalog_without(catalogs, {"video", "video_vp8"}))
+
+        # Assert: the audio stays
+        assert done is not None
+        assert "audio" in {track.name for track in catalog.tracks}
+        await catalogs.aclose()
+    for session in (subscriber, publisher):
+        await session.close()

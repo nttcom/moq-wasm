@@ -262,6 +262,12 @@ class MediaSource:
     ) -> None:
         """One encoded audio frame. `level` is its RFC 6464 level in -dBov (0 to 127), written with
         `voice_activity` as its LOC Audio Level property."""
+    async def remove_track(self, kind: str) -> None:
+        """Ends the source's video or audio track (`kind` is `"video"` or `"audio"`) with
+        PUBLISH_DONE and sends the catalog without it; removing the video removes its renditions
+        too. Stop pushing its media first; `configure_video` or `configure_audio` and the media
+        pushed after it publish the track again. Raises ValueError for another kind and
+        RuntimeError when the relay session has ended."""
     async def keyframe_request(self) -> None:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
         broadcast needs one, as after dropping frames; encode the renditions' next frame as a keyframe
