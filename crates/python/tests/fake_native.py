@@ -141,7 +141,7 @@ class FakeNativeSession:
         while True:
             yield await self._namespace_events.get()
 
-    async def subscribe(self, namespace: list[str], name: str) -> FakeSubscription:
+    async def subscribe(self, namespace: list[str], name: str, **options) -> FakeSubscription:
         self.calls.append(("subscribe", name))
         return self._subscription(name)
 

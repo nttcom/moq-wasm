@@ -1,4 +1,6 @@
 mod catalog;
+mod fetch;
+mod location;
 mod media_broadcast;
 mod namespace_watch;
 mod session;
@@ -18,6 +20,11 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<namespace_watch::NamespaceWatch>()?;
     module.add_class::<subscription::Subscription>()?;
     module.add_class::<subscription::Object>()?;
+    module.add_class::<subscription::PublishDone>()?;
+    module.add_class::<subscription::Groups>()?;
+    module.add_class::<subscription::Group>()?;
+    module.add_class::<fetch::Fetch>()?;
+    module.add_class::<location::Location>()?;
     module.add_class::<track_writer::TrackWriter>()?;
     module.add_class::<media_broadcast::MediaBroadcast>()?;
     module.add_class::<media_broadcast::MediaSource>()?;

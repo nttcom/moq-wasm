@@ -6,8 +6,12 @@ use std::{
 use moqt::{
     AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
     NATIVE, Version,
-    client::{self, PublishTrackOptions, RequestError, SubscribeOptions},
+    client::{
+        self, FetchError, GroupStartOptions, PublishTrackOptions, RequestError, SubscribeOptions,
+    },
+    object::GroupOrder,
     publish::Retention,
+    subscribe::FilterType,
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
@@ -17,8 +21,8 @@ use pyo3::{
 use broadcast::{Broadcast, RelayConnection};
 
 use crate::{
-    media_broadcast::MediaBroadcast, namespace_watch::NamespaceWatch, subscription::Subscription,
-    track_writer::TrackWriter,
+    fetch::Fetch, location::Location, media_broadcast::MediaBroadcast,
+    namespace_watch::NamespaceWatch, subscription::Subscription, track_writer::TrackWriter,
 };
 
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
@@ -64,6 +68,43 @@ pub fn connect(
     })
 }
 
+fn filter_type(filter: &str) -> PyResult<FilterType> {
+    match filter {
+        "largest_object" => Ok(FilterType::LargestObject),
+        "next_group_start" => Ok(FilterType::NextGroupStart),
+        other => Err(PyValueError::new_err(format!(
+            "unknown subscribe filter: {other}"
+        ))),
+    }
+}
+
+fn group_start_options(
+    priority: Option<u8>,
+    delivery_timeout: Option<f64>,
+    group_order: &str,
+) -> PyResult<GroupStartOptions> {
+    let defaults = GroupStartOptions::default();
+    let delivery_timeout = delivery_timeout
+        .map(|seconds| {
+            Duration::try_from_secs_f64(seconds)
+                .map_err(|_| PyValueError::new_err(format!("invalid delivery_timeout: {seconds}")))
+        })
+        .transpose()?;
+    Ok(GroupStartOptions {
+        priority: priority.unwrap_or(defaults.priority),
+        delivery_timeout,
+        group_order: match group_order {
+            "ascending" => GroupOrder::Ascending,
+            "descending" => GroupOrder::Descending,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown group order: {other}"
+                )));
+            }
+        },
+    })
+}
+
 /// The message of a failed request's Python exception: the `RequestFailure` alone, without the
 /// `{kind:?} failed:` prefix `RequestError` displays.
 fn request_error(error: RequestError) -> anyhow::Error {
@@ -95,7 +136,91 @@ impl Session {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        namespace, name, *, filter = "largest_object", forward = true, priority = None,
+        delivery_timeout = None, group_order = "ascending"
+    ))]
     fn subscribe<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+        filter: &str,
+        forward: bool,
+        priority: Option<u8>,
+        delivery_timeout: Option<f64>,
+        group_order: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let delivery = group_start_options(priority, delivery_timeout, group_order)?;
+        let options = SubscribeOptions {
+            filter: filter_type(filter)?,
+            forward,
+            priority: delivery.priority,
+            delivery_timeout: delivery.delivery_timeout,
+            group_order: delivery.group_order,
+        };
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let subscription = session
+                .subscribe(&namespace, &name, options)
+                .await
+                .map_err(request_error)?;
+            Ok(Subscription::from(subscription))
+        })
+    }
+
+    #[pyo3(signature = (
+        namespace, name, new_group_after, *, priority = None, delivery_timeout = None,
+        group_order = "ascending"
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn subscribe_group_start<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+        new_group_after: u64,
+        priority: Option<u8>,
+        delivery_timeout: Option<f64>,
+        group_order: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let options = group_start_options(priority, delivery_timeout, group_order)?;
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let subscription = session
+                .subscribe_group_start(&namespace, &name, new_group_after, options)
+                .await
+                .map_err(request_error)?;
+            Ok(Subscription::from(subscription))
+        })
+    }
+
+    /// A Standalone FETCH from `start` to `end`; `end.object_id` is the last
+    /// object plus 1, and 0 means the whole group.
+    fn fetch<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+        start: Location,
+        end: Location,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let fetch = session
+                .fetch(&namespace, &name, start.into(), end.into())
+                .await
+                .map_err(|error| match error {
+                    FetchError::Request(error) => request_error(error),
+                    error => error.into(),
+                })?;
+            Ok(Fetch::from(fetch))
+        })
+    }
+
+    /// TRACK_STATUS: the track's largest location, or None while it has none.
+    fn track_status<'py>(
         &self,
         py: Python<'py>,
         namespace: Vec<String>,
@@ -103,11 +228,11 @@ impl Session {
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let subscription = session
-                .subscribe(&namespace, &name, SubscribeOptions::default())
+            let largest = session
+                .track_status(&namespace, &name)
                 .await
                 .map_err(request_error)?;
-            Ok(Subscription::from(subscription))
+            Ok(largest.map(Location::from))
         })
     }
 

@@ -81,9 +81,9 @@ await session.close()
 ```
 
 Left out: the server side (`listen`), raw request handlers, datagram tracks,
-extension headers (the transcriber reads no LOC property), PUBLISH from a peer
-(rejected as `Uninterested`, as the recorder does), SUBSCRIBE_UPDATE and
-standalone FETCH.
+extension headers (the transcriber reads no LOC property) and PUBLISH from a
+peer (rejected as `Uninterested`, as the recorder does). The request methods
+are listed in sdk.md "Core: `moq_wasm`".
 
 ### Authorization tokens
 A bot that serves a temporary app's room connects with that app's token and
