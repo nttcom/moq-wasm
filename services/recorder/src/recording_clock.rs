@@ -1,9 +1,9 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use bytes::Bytes;
 use mediapack::loc::{TIMESCALE_ID, TIMESTAMP_ID};
 use moqt::object::{KeyValuePair, Object, VariantType};
 use serde_json::{Value, json};
+
+use crate::state_sync_task::now_ms;
 
 const MICROS_PER_SECOND: u64 = 1_000_000;
 pub(crate) const MICROS_PER_MILLI: u64 = 1_000;
@@ -21,10 +21,7 @@ pub(crate) struct RecordingClock {
 
 impl RecordingClock {
     pub(crate) fn starting_now() -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        Self::started_at(now.as_millis() as u64)
+        Self::started_at(now_ms())
     }
 
     pub(crate) fn started_at(started_at_ms: u64) -> Self {
