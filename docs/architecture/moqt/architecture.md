@@ -14,9 +14,10 @@ the browser, and the bridges/examples use its client API natively.
 
 ```
 lib.rs + subscribe.rs, publish.rs, fetch.rs,     wire.rs (draft-14 numeric codes)
-namespace.rs, object.rs, server.rs (public re-exports)
+namespace.rs, object.rs, server.rs, client.rs (public re-exports)
         │
         ▼
+modules/client            ← one client Session that subscribes, publishes and answers the peer, over the domains below
 modules/moqt/domains      ← public API objects (Endpoint, Session, Publisher, …)
 modules/moqt/runtime      ← background tasks + incoming-object dispatch
 modules/moqt/control_plane← control messages, handlers, session events
@@ -42,6 +43,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   | `moqt::object` | Draft-independent object model (`Object`, `ForwardingPreference`, `SubgroupStart`, `Location`, `GroupOrder`, `ExtensionHeaders`, `ObjectStatus`) and the subgroup stream / datagram senders and receivers both SUBSCRIBE and PUBLISH deliver over |
   | `moqt::server` | `Accepting`, `Handshake`, `ServerConfig`, `TransportAddresses` |
   | `moqt::executor` | `spawn` / `JoinHandle`, `sleep`, the monotonic clock `now` and the wall clock `system_time`, for crates built on moqt that also run on wasm32 |
+  | `moqt::client` | A client `Session` with `Subscription`, `Group`, `Fetch`, `NamespaceWatch`, `Announcement`, `TrackWriter`, `EventHandler` and `RequestError` (see "`client` — the client session") |
 
   Implementation files under `modules/` are not arranged by these modules;
   each public module only re-exports.
@@ -800,6 +802,48 @@ the namespaces it knows right away. The Python bindings and the browser SDK's
 `Session` (`crates/wasm/src/session.rs`), which hand out one iterator per
 namespace subscription, use it.
 
+### `client` — the client session
+
+`moqt::client` (`modules/client/`) is the language-independent client entry
+point; its API and its mapping to the JavaScript and Python SDKs are in
+`sdk.md`. `client::Session` wraps one
+`moqt::Session` and owns its event loop, so the caller does not read
+`receive_event`:
+
+| File | Role |
+| --- | --- |
+| `session.rs` | `Session`: `new(moqt::Session)` (a connected session; the bindings build their endpoints themselves) or `connect(url, &ClientConfig)`, and the requests: `subscribe`, `subscribe_current_group`, `subscribe_group_start`, `fetch`, `track_status`, `watch_namespaces`, `announce`, `publish_track`, `closed`, `close`. Namespaces are element lists, joined with `/` here |
+| `routes.rs` | `Routes`: the event routing below and the tables it fills |
+| `event_loop_task.rs` | `EventLoopTask`: runs `Routes::route` on `executor::spawn`; dropping it (with the `Session`) or `close` stops it |
+| `event_handler.rs` | `EventHandler`, the `handle(event) -> Option<event>` shape `Origin`, `NamespaceWatchers` and `broadcast::RelayConnection` share, and `HandlerId` |
+| `subscription.rs`, `fetch.rs`, `namespace_watch.rs`, `announcement.rs`, `track_writer.rs` | What the requests return; each holds the `Arc<moqt::Session>` (and `Routes` where it reads them) |
+| `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code |
+
+Each event goes, in order, to the handlers `add_handler` added (in the order
+added), to the session's `Origin` (which answers SUBSCRIBE, FETCH and
+TRACK_STATUS for the tracks `publish_track` registered, and notifies the
+track's `TrackWriter::next_subscriber` when it took a SUBSCRIBE), to
+`NamespaceWatchers`, and last to `Routes::answer`: PUBLISH_DONE resolves the
+`done` of its subscription, SUBSCRIBE_NAMESPACE is acknowledged, any other
+SUBSCRIBE is rejected with TRACK_DOES_NOT_EXIST and every PUBLISH with
+UNINTERESTED. The answers run in root spans (`moqt.client.subscribe`,
+`moqt.client.publish`, `moqt.client.subscribe_namespace`) that join the
+peer's trace through the joiner the application set with
+`set_trace_context_joiner` ("Request spans"). `moqt` cannot depend on
+`broadcast`, so a media broadcast is routed as an `EventHandler`.
+
+Invariants:
+- `Session` and what it returns are `Send + Sync` natively, for the Python
+  bindings' tokio threads; the same types compile on wasm32, where
+  `MaybeSend` / `MaybeSync` drop the bounds. The tables in `Routes` are
+  `std::sync::Mutex`es never held across an `.await`; the handlers are
+  cloned out before they are called.
+- When the session ends (or on `close`), every namespace watch, `done` and
+  `next_subscriber` ends with it.
+- A subscription is read by object (`next`) or by subgroup stream
+  (`next_group`), whichever is called first.
+- GOAWAY and reconnection stay in `moqt::Session`; `client` adds nothing.
+
 ### `SessionContext` and `Connection` — shared session state
 
 `Connection` (`domains/connection.rs`) holds what draft-14 scopes to one
@@ -920,7 +964,11 @@ registration.
 span's `traceparent` with `set_trace_context_provider` (the relay through
 `telemetry::current_traceparent`, the wasm module and `moq-cli` through
 `client_telemetry::current_traceparent`), and the send functions read it inside the request span. Without a
-provider the parameter is omitted. On receipt, `trace_context()` on
+provider the parameter is omitted. In the other direction,
+`set_trace_context_joiner` gives it the function that makes a span a child
+of a received `traceparent` (`telemetry::continue_trace_from_traceparent` or
+`client_telemetry::continue_trace_from_traceparent`); `client::Session` calls
+it on the spans that answer the peer's requests. On receipt, `trace_context()` on
 `SubscribeHandler`, `PublishHandler`, `FetchHandler`,
 `SubscribeNamespaceHandler` and `PublishNamespaceHandler` returns the
 `TraceContext`; a value that is not a traceparent counts as absent.
