@@ -93,4 +93,4 @@ after the latest one (draft-14 §9.7).
 | `moqt::namespace` | PUBLISH_NAMESPACE and SUBSCRIBE_NAMESPACE |
 | `moqt::object` | Object model and subgroup stream / datagram senders and receivers |
 | `moqt::server` | Accepting sessions |
-| `moqt::wire` | Raw message codecs |
+| `moqt::wire` | Draft-14 numeric error codes for bindings that expose them |

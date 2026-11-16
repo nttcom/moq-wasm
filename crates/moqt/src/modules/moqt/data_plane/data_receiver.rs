@@ -91,6 +91,7 @@ impl DataReceiver {
 mod tests {
     use crate::{
         Version,
+        modules::moqt::data_plane::object::subgroup::SubgroupId,
         modules::test_support::{
             HANDSHAKE_TIMEOUT, PublishedTrack, data_receiver, datagram_object, next_datagram,
             next_subgroup, object_with_extensions, open_raw_subgroup, published_track,
@@ -100,7 +101,6 @@ mod tests {
             DataReceiver, ForwardingPreference, MalformedTrackError, ObjectStatus,
             SubgroupObjectSender, SubgroupStart,
         },
-        wire::SubgroupId,
     };
 
     async fn send_datagram(track: &PublishedTrack, group_id: u64) {

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use js_sys::{Function, Promise, Uint8Array};
 use mediapack::loc::from_extension_headers;
 use moqt::{
-    AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, RequestFailure,
+    AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure,
     Session as MoqtSession, Subscription as MoqtSubscription, TerminationErrorCode, TrackObject,
     TrackReader, Version, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
@@ -30,7 +30,6 @@ use crate::{
     media_broadcast::MediaBroadcast,
     mp4::Mp4Index,
     mp4_broadcast::Mp4Broadcast,
-    request_rejection::request_failure_code,
     session_routes::{NamespaceEvents, SessionRoutes},
 };
 
@@ -128,14 +127,10 @@ impl Session {
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
-                let defaults = SubscribeOption::default();
                 let option = SubscribeOption {
                     filter_type: filter_type(filter.as_deref())?,
                     forward: forward.unwrap_or(true),
-                    subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
-                    delivery_timeout: delivery_timeout_ms.map(u64::from),
-                    group_order: parse_group_order(group_order.as_deref())?,
-                    ..defaults
+                    ..subscribe_option(priority, delivery_timeout_ms, group_order.as_deref())?
                 };
                 let mut subscriber = self.session.subscriber();
                 let subscription = subscriber
@@ -191,7 +186,8 @@ impl Session {
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
-                let defaults = SubscribeOption::default();
+                let option =
+                    subscribe_option(priority, delivery_timeout_ms, group_order.as_deref())?;
                 let (subscription, reader) = self
                     .session
                     .subscriber()
@@ -199,12 +195,7 @@ impl Session {
                         namespace.join("/"),
                         track,
                         new_group_after.into(),
-                        SubscribeOption {
-                            subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
-                            delivery_timeout: delivery_timeout_ms.map(u64::from),
-                            group_order: parse_group_order(group_order.as_deref())?,
-                            ..defaults
-                        },
+                        option,
                     )
                     .await
                     .map_err(|error| request_error(RequestKind::Subscribe, &error))?;
@@ -1046,12 +1037,22 @@ fn filter_type(filter: Option<&str>) -> Result<FilterType, JsValue> {
     }
 }
 
-fn parse_group_order(group_order: Option<&str>) -> Result<GroupOrder, JsValue> {
-    match group_order {
-        None | Some("ascending") => Ok(GroupOrder::Ascending),
-        Some("descending") => Ok(GroupOrder::Descending),
-        Some(other) => Err(js_error(format!("unknown group order: {other}"))),
-    }
+fn subscribe_option(
+    priority: Option<u8>,
+    delivery_timeout_ms: Option<u32>,
+    group_order: Option<&str>,
+) -> Result<SubscribeOption, JsValue> {
+    let defaults = SubscribeOption::default();
+    Ok(SubscribeOption {
+        subscriber_priority: priority.unwrap_or(defaults.subscriber_priority),
+        delivery_timeout: delivery_timeout_ms.map(u64::from),
+        group_order: match group_order {
+            None | Some("ascending") => GroupOrder::Ascending,
+            Some("descending") => GroupOrder::Descending,
+            Some(other) => return Err(js_error(format!("unknown group order: {other}"))),
+        },
+        ..defaults
+    })
 }
 
 fn largest(content_exists: ContentExists) -> Option<MoqLocation> {
@@ -1065,7 +1066,11 @@ fn largest(content_exists: ContentExists) -> Option<MoqLocation> {
 }
 
 fn request_error(kind: RequestKind, error: &RequestFailure) -> JsValue {
-    let (code, reason) = request_failure_code(error);
+    let (code, reason) = match error {
+        RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),
+        RequestFailure::Timeout => (RequestErrorCode::Timeout, error.to_string()),
+        _ => (RequestErrorCode::InternalError, error.to_string()),
+    };
     let js_error = js_sys::Error::new(&reason);
     let _ = js_sys::Reflect::set(
         &js_error,

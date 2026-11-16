@@ -1,6 +1,5 @@
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod loc;
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[cfg(target_arch = "wasm32")]
 mod log_sink;
 #[cfg(target_arch = "wasm32")]
@@ -9,13 +8,10 @@ mod mp4;
 #[cfg(target_arch = "wasm32")]
 mod mp4_broadcast;
 mod msf_catalog;
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-mod request_rejection;
 #[cfg(target_arch = "wasm32")]
 mod session;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod session_routes;
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[cfg(target_arch = "wasm32")]
 pub use log_sink::set_log_sink;
 #[cfg(target_arch = "wasm32")]

@@ -2,8 +2,6 @@ use std::time::Duration;
 
 use crate::modules::executor::now;
 
-pub(crate) mod accepting;
-pub(crate) mod connecting;
 pub(crate) mod connection;
 pub(crate) mod endpoint;
 pub(crate) mod fetch_handle;

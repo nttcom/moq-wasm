@@ -1,4 +1,4 @@
-pub use crate::modules::moqt::domains::accepting::Accepting;
+pub use crate::modules::moqt::domains::endpoint::Accepting;
 pub use crate::modules::moqt::domains::endpoint::ServerConfig;
 pub use crate::modules::moqt::domains::handshake::Handshake;
 #[cfg(all(not(target_arch = "wasm32"), any(test, feature = "self-signed-cert")))]

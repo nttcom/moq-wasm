@@ -47,16 +47,6 @@ pub enum SubgroupId {
     Value(u64),
 }
 
-impl SubgroupId {
-    // TODO: FirstObjectIdDelta should use the first object's object_id as subgroup_id
-    pub fn resolve(&self) -> u64 {
-        match self {
-            SubgroupId::None | SubgroupId::FirstObjectIdDelta => 0,
-            SubgroupId::Value(id) => *id,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct SubgroupHeaderType(u64);
 
@@ -231,7 +221,6 @@ impl SubgroupHeader {
 
 #[derive(Debug, Clone)]
 pub struct SubgroupObjectField {
-    pub message_type: SubgroupHeaderType,
     pub object_id_delta: u64,
     pub extension_headers: ExtensionHeaders,
     pub subgroup_object: SubgroupObject,
@@ -242,7 +231,8 @@ impl SubgroupObjectField {
         object_id_from_delta(self.object_id_delta, prev)
     }
 
-    pub fn encode(&self) -> BytesMut {
+    #[cfg(test)]
+    pub(crate) fn encode(&self, message_type: SubgroupHeaderType) -> BytesMut {
         let (head, payload) = match &self.subgroup_object {
             SubgroupObject::Payload { data, .. } => (
                 SubgroupObjectHead::payload(
@@ -261,7 +251,7 @@ impl SubgroupObjectField {
                 &[][..],
             ),
         };
-        let mut buf = head.encode(self.message_type);
+        let mut buf = head.encode(message_type);
         buf.extend_from_slice(payload);
         buf
     }
@@ -369,17 +359,12 @@ impl SubgroupObjectHead {
     }
 
     /// `payload` must be `payload_len()` bytes long.
-    pub(crate) fn with_payload(
-        self,
-        message_type: SubgroupHeaderType,
-        payload: Bytes,
-    ) -> SubgroupObjectField {
+    pub(crate) fn with_payload(self, payload: Bytes) -> SubgroupObjectField {
         let subgroup_object = match self.body {
             ObjectBody::Payload { .. } => SubgroupObject::new_payload(payload),
             ObjectBody::Status { code } => SubgroupObject::new_status(code),
         };
         SubgroupObjectField {
-            message_type,
             object_id_delta: self.object_id_delta,
             extension_headers: self.extension_headers,
             subgroup_object,
@@ -494,7 +479,7 @@ mod tests {
             let head = SubgroupObjectHead::decode(message_type, &mut cursor).unwrap();
             let payload = Bytes::copy_from_slice(&buf[cursor.position() as usize..]);
             assert_eq!(payload.len(), head.payload_len());
-            head.with_payload(message_type, payload)
+            head.with_payload(payload)
         }
 
         #[test]
@@ -502,13 +487,12 @@ mod tests {
             let message_type = SubgroupHeaderType::new(0x10).unwrap();
             let payload = Bytes::from(vec![0xDE, 0xAD, 0xBE, 0xEF]);
             let object_field = SubgroupObjectField {
-                message_type,
                 object_id_delta: 1,
                 extension_headers: ExtensionHeaders::default(),
                 subgroup_object: SubgroupObject::new_payload(payload.clone()),
             };
 
-            let buf = object_field.encode();
+            let buf = object_field.encode(message_type);
             let depacketized = decode_field(message_type, &buf);
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
@@ -529,13 +513,12 @@ mod tests {
             extension_headers.push_prior_group_id_gap(10);
             extension_headers.push_immutable_extension(Bytes::from(vec![0x01, 0x02]));
             let object_field = SubgroupObjectField {
-                message_type,
                 object_id_delta: 5,
                 extension_headers,
                 subgroup_object: SubgroupObject::new_payload(payload.clone()),
             };
 
-            let buf = object_field.encode();
+            let buf = object_field.encode(message_type);
             let depacketized = decode_field(message_type, &buf);
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
@@ -554,13 +537,12 @@ mod tests {
         fn subgroup_object_field_packetize_and_depacketize_status() {
             let message_type = SubgroupHeaderType::new(0x10).unwrap();
             let object_field = SubgroupObjectField {
-                message_type,
                 object_id_delta: 10,
                 extension_headers: ExtensionHeaders::default(),
                 subgroup_object: SubgroupObject::new_status(3), // EndOfGroup
             };
 
-            let buf = object_field.encode();
+            let buf = object_field.encode(message_type);
             let depacketized = decode_field(message_type, &buf);
 
             assert_eq!(object_field.object_id_delta, depacketized.object_id_delta);
@@ -597,7 +579,6 @@ mod tests {
 
         fn make_field(delta: u64) -> SubgroupObjectField {
             SubgroupObjectField {
-                message_type: SubgroupHeaderType::new(0x10).unwrap(),
                 object_id_delta: delta,
                 extension_headers: ExtensionHeaders::default(),
                 subgroup_object: SubgroupObject::new_payload(bytes::Bytes::new()),

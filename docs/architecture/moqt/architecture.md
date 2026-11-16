@@ -13,7 +13,7 @@ the browser, and the bridges/examples use its client API natively.
 ## Layering
 
 ```
-lib.rs + subscribe.rs, publish.rs, fetch.rs,     wire.rs (raw message codecs, wasm-safe)
+lib.rs + subscribe.rs, publish.rs, fetch.rs,     wire.rs (draft-14 numeric codes)
 namespace.rs, object.rs, server.rs (public re-exports)
         │
         ▼
@@ -50,15 +50,15 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
   `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
   API; it also uses the message codecs for the JavaScript message types.
-- `wire.rs` re-exports raw control-message structs, framing helpers
-  (`encode_control_message` / `take_control_message`), and data-plane object
-  types for consumers that need direct wire access (the wasm bindings use
-  the codecs for the JavaScript message types). The draft-14 object wire
-  structs (`SubgroupHeader`, `SubgroupObjectField`, `ObjectDatagram`,
-  `FetchObjectField`, …) are exported only here. Types the other crates
-  reason about (`AuthorizationToken`, `fetch::FetchParams`, the typed codes)
-  are exported from the operation modules instead, so a consumer that does
-  not import `wire` depends on no draft-14 message layout.
+- `wire.rs` exports the draft-14 numeric codes (`RequestKind` and the
+  request-error / PUBLISH_DONE conversions) for the wasm bindings, whose
+  JavaScript API carries draft-14 numbers, and the types public items expose:
+  `TrackStatusOk` (with `SubscribeOk`), the `Fetch` message in the public
+  field `FetchHandler::fetch`, and `DecodeError` from the `decode` functions.
+  The control-message framing is crate-private. Types the other crates reason about
+  (`AuthorizationToken`, `fetch::FetchParams`, the typed codes) are exported
+  from the operation modules, so a consumer that does not import `wire`
+  depends on no draft-14 message layout.
 
 ## Transport layer (`modules/transport`)
 
@@ -981,7 +981,7 @@ provider the parameter is omitted. On receipt, `trace_context()` on
   - A code the message does not define is sent as INTERNAL_ERROR; an unknown
     received value (request error or PUBLISH_DONE status) reads as
     INTERNAL_ERROR.
-  - Integers remain only in the `moqt::wire` structs. `moqt::wire` also
+  - Integers remain only in the draft-14 message structs. `moqt::wire`
     exports `RequestKind` and the draft-14 conversions
     (`request_error_code_to_wire` / `request_error_code_from_wire`,
     `publish_done_code_from_wire`) for the wasm bindings, whose JavaScript

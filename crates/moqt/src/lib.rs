@@ -18,7 +18,7 @@ pub use crate::modules::moqt::control_plane::control_messages::messages::paramet
 pub use crate::modules::moqt::control_plane::enums::SessionEvent;
 pub use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 pub use crate::modules::moqt::control_plane::handler::go_away_handler::GoAwayHandler;
-pub use crate::modules::moqt::domains::connecting::Connecting;
+pub use crate::modules::moqt::domains::endpoint::Connecting;
 pub use crate::modules::moqt::domains::endpoint::AuthorizationTokenSource;
 pub use crate::modules::moqt::domains::endpoint::CertificateVerification;
 pub use crate::modules::moqt::domains::endpoint::ClientConfig;

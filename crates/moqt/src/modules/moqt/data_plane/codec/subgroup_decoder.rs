@@ -5,8 +5,10 @@ use tokio_util::codec::Decoder;
 
 use super::payload_splitter::{PayloadSplit, PayloadSplitter};
 use crate::{
+    modules::moqt::data_plane::object::subgroup::{
+        SubgroupHeader, SubgroupHeaderType, SubgroupObjectField,
+    },
     modules::moqt::data_plane::object::{decode_error::DecodeError, subgroup::SubgroupObjectHead},
-    wire::{SubgroupHeader, SubgroupHeaderType, SubgroupObjectField},
 };
 
 /// One frame of a subgroup stream as draft-14 encodes it.
@@ -65,7 +67,7 @@ impl Decoder for SubgroupDecoder {
                 payload,
                 receive_time,
             } => SubgroupFrame::Object {
-                field: head.with_payload(message_type, payload),
+                field: head.with_payload(payload),
                 receive_time,
             },
             PayloadSplit::Head { head, .. } => SubgroupFrame::ObjectHead(head),
@@ -149,7 +151,9 @@ mod tests {
     use super::{SubgroupDecoder, SubgroupFrame};
     use crate::{
         modules::moqt::data_plane::object::extension_headers::ExtensionHeaders,
-        wire::{SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField},
+        modules::moqt::data_plane::object::subgroup::{
+            SubgroupHeader, SubgroupId, SubgroupObject, SubgroupObjectField,
+        },
     };
 
     const GAP: Duration = Duration::from_millis(20);
@@ -160,12 +164,11 @@ mod tests {
 
     fn object(payload: &'static [u8]) -> BytesMut {
         SubgroupObjectField {
-            message_type: header().message_type,
             object_id_delta: 0,
             extension_headers: ExtensionHeaders::default(),
             subgroup_object: SubgroupObject::new_payload(Bytes::from_static(payload)),
         }
-        .encode()
+        .encode(header().message_type)
     }
 
     fn head_len(object: &BytesMut, payload: &[u8]) -> usize {

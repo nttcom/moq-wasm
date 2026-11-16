@@ -220,7 +220,8 @@ mod tests {
     use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
     use crate::modules::moqt::data_plane::stream::received_message::ReceivedMessage;
     use crate::modules::test_support::wire_noise;
-    use crate::wire::{ControlMessageType, encode_control_message};
+    use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
+    use crate::wire::encode_control_message;
 
     use super::ControlMessageDecoder;
 

@@ -2,61 +2,23 @@ use anyhow::anyhow;
 use bytes::{Buf, BufMut, BytesMut};
 use std::io::Cursor;
 
-pub use crate::modules::extensions::buf_get_ext::BufGetExt;
-pub use crate::modules::extensions::buf_put_ext::BufPutExt;
-pub use crate::modules::moqt::control_plane::constants::MOQ_TRANSPORT_VERSION;
+use crate::modules::extensions::buf_get_ext::BufGetExt;
+use crate::modules::extensions::buf_put_ext::BufPutExt;
+pub use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
+pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::Fetch;
+pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_ok::SubscribeOk;
 pub use crate::modules::moqt::control_plane::error_codes::RequestKind;
+pub use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
 pub use crate::modules::moqt::version::draft14::error_codes::{
     publish_done_code_from_wire, publish_done_code_to_wire, request_error_code_from_wire,
     request_error_code_to_wire,
 };
-pub use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
-pub use crate::modules::moqt::control_plane::control_messages::messages::client_setup::ClientSetup;
-pub use crate::modules::moqt::control_plane::control_messages::messages::namespace_ok::NamespaceOk;
-pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::content_exists::ContentExists;
-pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::filter_type::FilterType;
-pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::group_order::GroupOrder;
-pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
-pub use crate::modules::moqt::control_plane::control_messages::messages::parameters::setup_parameters::SetupParameter;
-pub use crate::modules::moqt::control_plane::control_messages::messages::fetch::Fetch;
-pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_cancel::FetchCancel;
-pub use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
-pub use crate::modules::moqt::control_plane::control_messages::messages::max_request_id::MaxRequestId;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish_done::PublishDone;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace_cancel::PublishNamespaceCancel;
-pub use crate::modules::moqt::control_plane::control_messages::messages::requests_blocked::RequestsBlocked;
-pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_update::SubscribeUpdate;
-pub use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe::Unsubscribe;
-pub use crate::modules::moqt::control_plane::control_messages::messages::unsubscribe_namespace::UnsubscribeNamespace;
-pub use crate::modules::moqt::control_plane::control_messages::messages::fetch_ok::FetchOk;
-pub use crate::modules::moqt::data_plane::object::fetch::FetchHeader;
-pub use crate::modules::moqt::data_plane::object::fetch::FetchObject;
-pub use crate::modules::moqt::data_plane::object::fetch::FetchObjectField;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish::Publish;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace::PublishNamespace;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish_namespace_done::PublishNamespaceDone;
-pub use crate::modules::moqt::control_plane::control_messages::messages::publish_ok::PublishOk;
-pub use crate::modules::moqt::control_plane::control_messages::messages::request_error::RequestError;
-pub use crate::modules::moqt::control_plane::control_messages::messages::server_setup::ServerSetup;
-pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe::Subscribe;
-pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_namespace::SubscribeNamespace;
-pub use crate::modules::moqt::control_plane::control_messages::messages::subscribe_ok::SubscribeOk;
-pub use crate::modules::moqt::data_plane::object::datagram_field::DatagramField;
-pub use crate::modules::moqt::data_plane::object::datagram_field::ObjectDatagramPayload;
-pub use crate::modules::moqt::data_plane::object::decode_error::DecodeError;
-pub use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
-pub use crate::modules::moqt::data_plane::object::object_datagram::ObjectDatagram;
-pub use crate::modules::moqt::data_plane::object::object_status::ObjectStatus;
-pub use crate::modules::moqt::data_plane::object::subgroup::{
-    SubgroupHeader, SubgroupHeaderType, SubgroupId, SubgroupObject, SubgroupObjectField,
-};
 
 // draft-14 §9.20-9.22: identical payload formats.
-pub type TrackStatus = Subscribe;
 pub type TrackStatusOk = SubscribeOk;
 
 /// Fails when the payload exceeds the 16-bit Message Length (draft-14 §9).
-pub fn encode_control_message(
+pub(crate) fn encode_control_message(
     message_type: ControlMessageType,
     payload: BytesMut,
 ) -> anyhow::Result<BytesMut> {
@@ -69,7 +31,7 @@ pub fn encode_control_message(
     Ok(buf)
 }
 
-pub fn take_control_message(
+pub(crate) fn take_control_message(
     buf: &mut BytesMut,
 ) -> anyhow::Result<Option<(ControlMessageType, BytesMut)>> {
     let mut cursor = Cursor::new(buf.as_ref());
@@ -98,9 +60,9 @@ pub fn take_control_message(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ClientSetup, ControlMessageType, SetupParameter, encode_control_message,
-        take_control_message,
+    use super::{ControlMessageType, encode_control_message, take_control_message};
+    use crate::modules::moqt::control_plane::control_messages::messages::{
+        client_setup::ClientSetup, parameters::setup_parameters::SetupParameter,
     };
     use bytes::BytesMut;
 

@@ -74,13 +74,13 @@ mod tests {
 
     use super::{StreamReceiveError, UniStreamReceiver};
     use crate::{
+        modules::moqt::data_plane::object::subgroup::{SubgroupHeader, SubgroupId},
         modules::{
             moqt::data_plane::codec::uni_stream_decoder::UniStreamDecoder,
             transport::{
                 read_error::ReadError, transport_receive_stream::MockTransportReceiveStream,
             },
         },
-        wire::{SubgroupHeader, SubgroupId},
     };
 
     fn receiver_reading(result: Result<&'static [u8], ReadError>) -> UniStreamReceiver {
