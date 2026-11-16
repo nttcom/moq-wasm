@@ -539,7 +539,7 @@ the server's GOAWAY by itself (draft-14 §3.5; see
 [session-migration.md](session-migration.md)). Its connections send their
 events to a `MigrationTask` (`domains/session/migration_task.rs`) instead of
 the application: it forwards them with logical ids, and on GOAWAY it opens
-the next connection through the endpoint's `SessionCreator` (`Reconnect`),
+the next connection through the endpoint's `SessionCreator` (`ClientEndpoint`),
 sends every namespace subscription (with its `NamespaceInterest`), PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
 made on the session again (`NextGroupStart`, or an AbsoluteRange from the
 group after the newest one delivered to its End Group, which is not sent

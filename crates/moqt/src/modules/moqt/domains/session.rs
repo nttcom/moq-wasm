@@ -10,7 +10,7 @@ use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
 use crate::modules::moqt::domains::session_context::SessionContext;
-use crate::modules::moqt::domains::session_creator::WaitIdle;
+use crate::modules::moqt::domains::session_creator::ClientEndpoint;
 use crate::modules::moqt::domains::session_events::SessionEventReceiver;
 use crate::modules::moqt::runtime::tasks::connection_tasks::ConnectionTasks;
 use crate::modules::moqt::version::{ControlReceiver, Notification};
@@ -35,7 +35,7 @@ pub struct Session {
     /// `None` for a session that does not follow GOAWAY.
     closed: Option<watch::Receiver<Option<TransportClose>>>,
     /// The endpoint a client session was opened on; `None` on a server.
-    endpoint: Option<Arc<dyn WaitIdle>>,
+    endpoint: Option<Arc<dyn ClientEndpoint>>,
 }
 
 /// What reads the session's connections.
@@ -55,7 +55,7 @@ impl Session {
         inner: SessionContext,
         event_receiver: SessionEventReceiver,
         follow: Option<Follow>,
-        endpoint: Option<Arc<dyn WaitIdle>>,
+        endpoint: Option<Arc<dyn ClientEndpoint>>,
         parent_span: Span,
     ) -> Self {
         let inner = Arc::new(inner);
@@ -120,7 +120,7 @@ impl Session {
         self.inner
             .close_with_error(TerminationErrorCode::NoError, "");
         if let Some(endpoint) = &self.endpoint {
-            endpoint.wait_idle().await;
+            endpoint.clone().wait_idle().await;
         }
     }
 

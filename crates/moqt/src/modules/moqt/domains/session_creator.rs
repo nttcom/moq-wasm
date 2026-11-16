@@ -60,33 +60,24 @@ pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) versions: Vec<Version>,
 }
 
-/// Opens another connection of a session that follows GOAWAY, on the same
-/// endpoint and transport as the first.
-pub(crate) trait Reconnect: MaybeSend + MaybeSync {
+/// The endpoint a client session was opened on, with its transport erased.
+pub(crate) trait ClientEndpoint: MaybeSend + MaybeSync {
     fn refreshes_token(&self) -> bool;
 
+    /// Opens another connection of a session that follows GOAWAY, on the same
+    /// endpoint and transport as the first.
     fn connect(
-        &self,
+        self: Arc<Self>,
         url: String,
         generation: u64,
         event_sender: SessionEventSender,
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>>;
+
+    /// Resolves once the transport has finished closing, for `Session::close`.
+    fn wait_idle(self: Arc<Self>) -> BoxFuture<()>;
 }
 
-/// The endpoint of a client session, whose transport `Session::close` waits
-/// to finish closing.
-pub(crate) trait WaitIdle: MaybeSend + MaybeSync {
-    fn wait_idle(&self) -> BoxFuture<()>;
-}
-
-impl<T: TransportProtocol> WaitIdle for Arc<SessionCreator<T>> {
-    fn wait_idle(&self) -> BoxFuture<()> {
-        let creator = self.clone();
-        Box::pin(async move { creator.transport_creator.wait_idle().await })
-    }
-}
-
-impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
+impl<T: TransportProtocol> ClientEndpoint for SessionCreator<T> {
     fn refreshes_token(&self) -> bool {
         self.authorization_token
             .as_ref()
@@ -94,17 +85,16 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
     }
 
     fn connect(
-        &self,
+        self: Arc<Self>,
         url: String,
         generation: u64,
         event_sender: SessionEventSender,
     ) -> BoxFuture<anyhow::Result<(Connection, ControlReceiver)>> {
-        let creator = self.clone();
         Box::pin(async move {
             let target = ConnectTarget::parse(&url)?;
             let connect_span = connect_span(&url);
-            let transport_conn = creator.open_transport_for(&target, &connect_span).await?;
-            let (connection, control_receiver) = creator
+            let transport_conn = self.open_transport_for(&target, &connect_span).await?;
+            let (connection, control_receiver) = self
                 .set_up_in(
                     connect_span,
                     transport_conn,
@@ -115,6 +105,10 @@ impl<T: TransportProtocol> Reconnect for Arc<SessionCreator<T>> {
                 .await?;
             Ok((connection, control_receiver))
         })
+    }
+
+    fn wait_idle(self: Arc<Self>) -> BoxFuture<()> {
+        Box::pin(async move { self.transport_creator.wait_idle().await })
     }
 }
 
@@ -148,7 +142,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
             let (connection_event_sender, follow) = if creator.follow_go_away {
                 let (connection_event_sender, connection_events) = session_events::channel();
                 let follow = Follow {
-                    reconnect: Arc::new(creator.clone()),
+                    reconnect: creator.clone(),
                     url,
                     connection_events,
                 };
@@ -170,7 +164,7 @@ impl<T: TransportProtocol> SessionCreator<T> {
                 SessionContext::new(connection, event_sender, creator.follow_go_away),
                 event_receiver,
                 follow,
-                Some(Arc::new(creator.clone())),
+                Some(creator.clone()),
                 Span::current(),
             );
             tracing::info!("session established");
