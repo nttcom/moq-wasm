@@ -5,10 +5,9 @@ use std::{
 
 use moqt::{
     AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
-    NATIVE, RequestErrorCode, SessionEvent, Version,
-    executor::{self, JoinHandle},
-    namespace::{NamespaceInterest, NamespaceWatchers},
-    publish::{Origin, Retention},
+    NATIVE, Version,
+    client::{self, PublishTrackOptions, RequestError, SubscribeOptions},
+    publish::Retention,
 };
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
@@ -18,9 +17,7 @@ use pyo3::{
 use broadcast::{Broadcast, RelayConnection};
 
 use crate::{
-    media_broadcast::{MediaBroadcast, MediaBroadcasts},
-    namespace_watch::NamespaceWatch,
-    subscription::Subscription,
+    media_broadcast::MediaBroadcast, namespace_watch::NamespaceWatch, subscription::Subscription,
     track_writer::TrackWriter,
 };
 
@@ -59,126 +56,25 @@ pub fn connect(
             versions,
             ..ClientConfig::default()
         })?;
-        let session = Arc::new(endpoint.connect(&url).await?.await?);
-        let origin = Origin::default();
-        let watchers = NamespaceWatchers::default();
-        let broadcasts = MediaBroadcasts::default();
-        let event_loop = executor::spawn(
-            "python-session-events",
-            route_events(
-                session.clone(),
-                origin.clone(),
-                watchers.clone(),
-                broadcasts.clone(),
-            ),
-        );
+        let session = endpoint.connect(&url).await?.await?;
         Ok(Session {
-            session,
-            origin,
-            watchers,
-            broadcasts,
-            event_loop,
+            session: Arc::new(client::Session::new(session)),
             token,
         })
     })
 }
 
-/// A session has one event receiver: the media broadcasts and the origin
-/// answer what concerns the tracks this session publishes, and namespace
-/// events go to the iterators.
-async fn route_events(
-    session: Arc<moqt::Session>,
-    origin: Origin,
-    watchers: NamespaceWatchers,
-    broadcasts: MediaBroadcasts,
-) {
-    loop {
-        let event = match session.receive_event().await {
-            Ok(event) => event,
-            Err(err) => {
-                tracing::info!(?err, "session event loop ended");
-                break;
-            }
-        };
-        let connections = broadcasts.connections();
-        let mut unhandled = Some(event);
-        for connection in connections {
-            let Some(event) = unhandled.take() else {
-                break;
-            };
-            unhandled = connection.handle(event).await;
-        }
-        let Some(event) = unhandled else {
-            continue;
-        };
-        let Some(event) = origin.handle(event).await else {
-            continue;
-        };
-        let Some(event) = watchers.handle(event).await else {
-            continue;
-        };
-        match event {
-            SessionEvent::SubscribeNameSpace(handler) => {
-                if let Err(err) = handler.ok().await {
-                    tracing::warn!(prefix = %handler.track_namespace_prefix, ?err, "failed to ack SUBSCRIBE_NAMESPACE");
-                }
-            }
-            SessionEvent::Subscribe(handler) => {
-                let reason = format!("{} is not a track of this session", handler.track_name);
-                if let Err(err) = handler
-                    .error(RequestErrorCode::TrackDoesNotExist, reason)
-                    .await
-                {
-                    tracing::warn!(?err, "failed to reject SUBSCRIBE");
-                }
-            }
-            SessionEvent::Publish(handler) => {
-                let reason = "this session takes no PUBLISH".to_string();
-                if let Err(err) = handler.error(RequestErrorCode::Uninterested, reason).await {
-                    tracing::warn!(?err, "failed to reject PUBLISH");
-                }
-            }
-            SessionEvent::Disconnected() | SessionEvent::ProtocolViolation() => break,
-            event => tracing::debug!(?event, "unhandled control message"),
-        }
-    }
-    watchers.close();
+/// The message of a failed request's Python exception: the `RequestFailure` alone, without the
+/// `{kind:?} failed:` prefix `RequestError` displays.
+fn request_error(error: RequestError) -> anyhow::Error {
+    error.failure.into()
 }
 
 #[pyclass(module = "moq_wasm")]
 pub struct Session {
-    session: Arc<moqt::Session>,
-    origin: Origin,
-    watchers: NamespaceWatchers,
-    broadcasts: MediaBroadcasts,
-    event_loop: JoinHandle,
+    session: Arc<client::Session>,
     /// The token the session presents when it follows a GOAWAY.
     token: Option<Arc<Mutex<String>>>,
-}
-
-// The event loop holds the session, so a Session dropped without `close` would
-// otherwise keep the connection open until the relay ends it.
-impl Drop for Session {
-    fn drop(&mut self) {
-        self.event_loop.abort();
-    }
-}
-
-impl Session {
-    fn start_subscription<'py>(
-        &self,
-        py: Python<'py>,
-        namespace: Vec<String>,
-        name: String,
-        current_group: bool,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Subscription::subscribe(session, namespace.join("/"), name, current_group)
-                .await
-                .map_err(PyErr::from)
-        })
-    }
 }
 
 #[pymethods]
@@ -190,15 +86,12 @@ impl Session {
         prefix: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        // Registered before the request, since the relay answers with the namespaces it knows at once.
-        let events = NamespaceWatch::from(self.watchers.watch(prefix.clone()));
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            session
-                .subscriber()
-                .subscribe_namespace(prefix.join("/"), NamespaceInterest::Namespaces)
+            let watch = session
+                .watch_namespaces(&prefix)
                 .await
-                .map_err(anyhow::Error::from)?;
-            Ok(events)
+                .map_err(request_error)?;
+            Ok(NamespaceWatch::from(watch))
         })
     }
 
@@ -208,7 +101,14 @@ impl Session {
         namespace: Vec<String>,
         name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.start_subscription(py, namespace, name, false)
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let subscription = session
+                .subscribe(&namespace, &name, SubscribeOptions::default())
+                .await
+                .map_err(request_error)?;
+            Ok(Subscription::from(subscription))
+        })
     }
 
     fn subscribe_current_group<'py>(
@@ -217,7 +117,14 @@ impl Session {
         namespace: Vec<String>,
         name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
-        self.start_subscription(py, namespace, name, true)
+        let session = self.session.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let subscription = session
+                .subscribe_current_group(&namespace, &name)
+                .await
+                .map_err(request_error)?;
+            Ok(Subscription::from(subscription))
+        })
     }
 
     /// PUBLISH_NAMESPACE.
@@ -228,11 +135,7 @@ impl Session {
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            session
-                .publisher()
-                .publish_namespace(namespace.join("/"))
-                .await
-                .map_err(anyhow::Error::from)?;
+            session.announce(&namespace).await.map_err(request_error)?;
             Ok(())
         })
     }
@@ -242,12 +145,12 @@ impl Session {
     fn media_broadcast(&self, namespace: Vec<String>) -> MediaBroadcast {
         // The connection spawns its tasks, which need the runtime the module's futures run on.
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let connection = RelayConnection::with_session(self.session.clone(), self.origin.clone());
-        let id = self.broadcasts.add(connection.clone());
+        let connection = RelayConnection::with_client_session(&self.session);
+        let handler = self.session.add_handler(Arc::new(connection.clone()));
         MediaBroadcast {
             broadcast: Broadcast::new(connection, namespace),
-            broadcasts: self.broadcasts.clone(),
-            id,
+            session: self.session.clone(),
+            handler,
         }
     }
 
@@ -257,7 +160,7 @@ impl Session {
         py: Python<'py>,
         namespace: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let session = self.session.clone();
+        let session = self.session.moqt_session().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
                 .publisher()
@@ -279,19 +182,14 @@ impl Session {
         name: String,
         retention_seconds: f64,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let origin = self.origin.clone();
-        let namespace = namespace.join("/");
+        let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let first_group_id = executor::system_time().as_micros() as u64;
-            let retention = Retention::For(Duration::from_secs_f64(retention_seconds));
-            origin
-                .ensure_track(&namespace, &name, first_group_id, retention)
-                .await;
-            Ok(TrackWriter {
-                origin,
-                namespace,
-                name,
-            })
+            let options = PublishTrackOptions {
+                retention: Retention::For(Duration::from_secs_f64(retention_seconds)),
+                ..PublishTrackOptions::default()
+            };
+            let writer = session.publish_track(&namespace, &name, options).await?;
+            Ok(TrackWriter::from(writer))
         })
     }
 
@@ -315,7 +213,7 @@ impl Session {
             ));
         };
         *current.lock().unwrap() = token.clone();
-        let session = self.session.clone();
+        let session = self.session.moqt_session().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session
                 .subscriber()
@@ -332,7 +230,7 @@ impl Session {
 
     /// Waits until the relay closes the session.
     fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let session = self.session.clone();
+        let session = self.session.moqt_session().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session.closed().await;
             Ok(())
@@ -341,8 +239,6 @@ impl Session {
 
     /// Closes the session and waits until the relay has seen the close.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.event_loop.abort();
-        self.watchers.close();
         let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             session.close().await;

@@ -109,23 +109,21 @@ until it expires, and the next connection presents the new one. Getting a later 
 nothing of the token mint.
 
 ### One event loop per session
-A session has one event receiver, so the module runs one loop per session:
+A session has one event receiver. The native `Session` wraps a
+`moqt::client::Session`, which owns the loop
+(docs/architecture/moqt/architecture.md "`client` — the client session"):
 
-- Each event goes first to the `broadcast::RelayConnection` of every media
-  broadcast the session built (sdk.md "Publishing media"), which answers
-  what concerns the broadcast's tracks.
-- SUBSCRIBE, UNSUBSCRIBE, FETCH, FETCH_CANCEL and TRACK_STATUS go to the
-  session's `Origin` through `Origin::handle`. A SUBSCRIBE for a track the
-  origin does not have is rejected with TRACK_DOES_NOT_EXIST.
-- PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE go through
-  `moqt::namespace::NamespaceWatchers` to every `subscribe_namespace`
-  iterator whose prefix they match. PUBLISH_NAMESPACE is answered `ok`. An
-  iterator is registered before its SUBSCRIBE_NAMESPACE is sent, since the
-  relay answers with the namespaces it already knows.
-- `Disconnected` and `ProtocolViolation` end every iterator.
+- The `RelayConnection` of each media broadcast (sdk.md "Publishing media")
+  sees an event first. `media_broadcast` adds it with `add_handler`;
+  `MediaBroadcast.close` removes it.
+- The session's `Origin` answers SUBSCRIBE, FETCH and TRACK_STATUS for the
+  tracks `publish_track` registered.
+- `NamespaceWatchers` hands PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE to
+  every `watch_namespaces` iterator whose prefix matches.
+- Any other SUBSCRIBE gets TRACK_DOES_NOT_EXIST, any PUBLISH UNINTERESTED.
+- The session ending, or `close`, ends every iterator.
 
-`Origin::handle` is shared with `broadcast::RelayConnection`, so the module
-holds no copy of the publisher-side routing.
+The browser SDK binds the same `client::Session`, so both answer the relay alike.
 
 ### Build and CI
 - `[lib] test = false`: an extension module cannot link as a test binary, so

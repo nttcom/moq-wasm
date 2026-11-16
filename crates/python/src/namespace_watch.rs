@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use moqt::namespace;
+use moqt::client;
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*};
-use tokio::sync::mpsc;
 
 /// A namespace a peer published (`active`) or withdrew under a prefix this
 /// session subscribed to.
@@ -15,13 +14,13 @@ pub struct NamespaceEvent {
 
 #[pyclass(module = "moq_wasm")]
 pub struct NamespaceWatch {
-    receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<namespace::NamespaceEvent>>>,
+    watch: Arc<client::NamespaceWatch>,
 }
 
-impl From<mpsc::UnboundedReceiver<namespace::NamespaceEvent>> for NamespaceWatch {
-    fn from(receiver: mpsc::UnboundedReceiver<namespace::NamespaceEvent>) -> Self {
+impl From<client::NamespaceWatch> for NamespaceWatch {
+    fn from(watch: client::NamespaceWatch) -> Self {
         Self {
-            receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
+            watch: Arc::new(watch),
         }
     }
 }
@@ -33,9 +32,9 @@ impl NamespaceWatch {
     }
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let receiver = self.receiver.clone();
+        let watch = self.watch.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            match receiver.lock().await.recv().await {
+            match watch.next().await {
                 Some(event) => Ok(NamespaceEvent {
                     namespace: event.namespace,
                     active: event.active,
