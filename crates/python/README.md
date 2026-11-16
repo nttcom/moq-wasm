@@ -74,7 +74,9 @@ async with create_broadcast(session, ["app", "room", "camera"]) as broadcast:
 
 `await media.keyframe_request()` returns when a viewer asks for a new group;
 answer it with a keyframe. `broadcast.publish_track` and
-`broadcast.event_timeline` add tracks of your own to the broadcast.
+`broadcast.event_timeline` add tracks of your own to the broadcast. A track
+whose subscribers need its current state first writes it in
+`writer.on_connected(callback)`, which runs on each connection.
 
 ## pipecat
 

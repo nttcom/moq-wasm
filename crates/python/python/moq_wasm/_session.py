@@ -92,8 +92,7 @@ class TrackWriter:
         self.name = name
         self.retention_seconds = retention_seconds
         self._writer: _native.TrackWriter | None = None
-        # Called each time a connection registers the track.
-        self._on_bound: list[Callable[[], Awaitable[None]]] = []
+        self._on_connected: list[Callable[[], Awaitable[None]]] = []
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
         """The object is cached for FETCH whether or not a subscriber takes it. While the session
@@ -101,10 +100,17 @@ class TrackWriter:
         if self._writer is not None:
             await self._writer.write(payload, new_group=new_group)
 
+    def on_connected(self, callback: Callable[[], Awaitable[None]]) -> None:
+        """Awaits `callback` each time a connection registers the track, before the namespace is
+        published on it: write there what a subscriber should find first, such as the current state.
+        A track from `LocalBroadcast.publish_track` is first registered after this call; one from
+        `Session.publish_track` already was."""
+        self._on_connected.append(callback)
+
     async def _bind(self, writer: _native.TrackWriter) -> None:
         self._writer = writer
-        for bound in self._on_bound:
-            await bound()
+        for callback in self._on_connected:
+            await callback()
 
 
 class Announcement:

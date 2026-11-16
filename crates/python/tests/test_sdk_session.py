@@ -81,6 +81,28 @@ async def test_a_track_writes_to_the_new_connection_once_it_is_restored():
     await session.close()
 
 
+async def test_a_track_writes_its_state_on_each_connection_through_on_connected():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status", retention_seconds=60)
+
+    async def write_state() -> None:
+        await writer.write(b"ready", new_group=True)
+
+    writer.on_connected(write_state)
+
+    # Act
+    relay.sessions[0].drop()
+    second = await within(relay.next_session(2))
+    await within(restored_on(session, second))
+
+    # Assert: the first connection registered the track before on_connected
+    assert relay.sessions[0].writers["status"].objects == []
+    assert second.writers["status"].objects == [(b"ready", True)]
+    await session.close()
+
+
 async def test_a_refused_redial_is_retried():
     # Arrange
     relay = FakeRelay()

@@ -102,7 +102,10 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as sessi
   drops what is written while the session reconnects, and the new
   connection's origin starts the track's groups afresh, numbered from the
   wall-clock time, so a subscriber never sees a group id go back. Its cache
-  does not carry over.
+  does not carry over, so `TrackWriter.on_connected(callback)` awaits
+  `callback` each time a connection registers the track, before the
+  namespace is published on it, for a track whose subscribers need its
+  current state first (a status).
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
   `exp` from the token's claims, calls it five minutes before `exp`, retries
@@ -156,7 +159,7 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
 - **`EventTimeline`** writes a draft-ietf-moq-msf-01 §8 event timeline: each
   connection's first group opens with the record list (every record so far
   with `replay=True`, empty otherwise), and each later record is one object.
-  A `TrackWriter` calls it back each time a connection registers the track.
+  It writes the list through `TrackWriter.on_connected`.
   It replaces the two copies.
 - **`watch_broadcasts(session, prefix, handler, *, filter=None,
   empty_timeout=None)`** runs `handler` as a task for each broadcast
