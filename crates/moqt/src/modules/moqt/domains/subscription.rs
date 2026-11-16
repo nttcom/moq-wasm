@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::modules::extensions::mutex::lock;
 use crate::{
     TrackProperties,
     modules::moqt::control_plane::control_messages::messages::{
@@ -111,17 +112,11 @@ pub struct LastSubscribeUpdate(Arc<std::sync::Mutex<Option<SubscribeUpdateOption
 
 impl LastSubscribeUpdate {
     pub(crate) fn get(&self) -> Option<SubscribeUpdateOption> {
-        *self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        *lock(&self.0)
     }
 
     pub(crate) fn set(&self, option: SubscribeUpdateOption) {
-        *self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(option);
+        *lock(&self.0) = Some(option);
     }
 }
 

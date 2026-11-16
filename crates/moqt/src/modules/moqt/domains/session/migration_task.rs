@@ -5,6 +5,7 @@ use futures::future::join_all;
 use tokio::sync::{oneshot, watch};
 use tracing::Span;
 
+use crate::modules::extensions::mutex::lock;
 use crate::{
     RequestFailure, SessionEvent, TerminationErrorCode,
     modules::{
@@ -326,11 +327,7 @@ impl Router {
             )));
         }
         for cutover in previous.cutovers {
-            cutover
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .cutover
-                .previous_ended();
+            lock(&cutover).cutover.previous_ended();
         }
     }
 
@@ -597,9 +594,7 @@ async fn release_when_idle(
             if !open.is_empty() {
                 continue;
             }
-            let mut shared = cutover
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut shared = lock(cutover);
             if shared.cutover.release_previous() {
                 shared.cut_over = None;
                 return;

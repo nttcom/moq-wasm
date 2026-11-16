@@ -3,6 +3,7 @@ use std::{
     hash::{BuildHasher, DefaultHasher, Hasher, RandomState},
 };
 
+use crate::modules::extensions::mutex::lock;
 use crate::modules::moqt::{
     control_plane::control_messages::messages::parameters::location::Location,
     data_plane::{
@@ -91,10 +92,7 @@ impl ObjectLedger {
         source: CopySource,
     ) -> Result<(), MalformedTrackError> {
         let received = Recorded::new(object, payload.0.finish(), source.forwarding_inferred());
-        let mut objects = self
-            .objects
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut objects = lock(&self.objects);
         match objects.entry(object.location) {
             Entry::Vacant(slot) => {
                 slot.insert(received);

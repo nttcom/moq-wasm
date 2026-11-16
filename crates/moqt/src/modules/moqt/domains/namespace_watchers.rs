@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::SessionEvent;
+use crate::modules::extensions::mutex::lock;
 
 /// A namespace the peer published (`active`) or withdrew
 /// (PUBLISH_NAMESPACE / PUBLISH_NAMESPACE_DONE, draft-14 §9.23, §9.26).
@@ -25,7 +26,7 @@ impl NamespaceWatchers {
     /// disconnects or `close` is called.
     pub fn watch(&self, prefix: Vec<String>) -> mpsc::UnboundedReceiver<NamespaceEvent> {
         let (sender, receiver) = mpsc::unbounded_channel();
-        self.lock().push((prefix, sender));
+        lock(&self.watchers).push((prefix, sender));
         receiver
     }
 
@@ -56,22 +57,14 @@ impl NamespaceWatchers {
     }
 
     pub fn close(&self) {
-        self.lock().clear();
+        lock(&self.watchers).clear();
     }
 
     fn notify(&self, namespace: Vec<String>, active: bool) {
         let event = NamespaceEvent { namespace, active };
-        self.lock().retain(|(prefix, sender)| {
+        lock(&self.watchers).retain(|(prefix, sender)| {
             !event.namespace.starts_with(prefix) || sender.send(event.clone()).is_ok()
         });
-    }
-
-    fn lock(
-        &self,
-    ) -> std::sync::MutexGuard<'_, Vec<(Vec<String>, mpsc::UnboundedSender<NamespaceEvent>)>> {
-        self.watchers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

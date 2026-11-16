@@ -10,6 +10,7 @@ use std::{
 
 use tokio::sync::{mpsc, oneshot, watch};
 
+use crate::modules::extensions::mutex::lock;
 use crate::{
     RequestFailure, SessionEvent,
     modules::{
@@ -166,10 +167,7 @@ fn location_of(object: &IncomingObject) -> (u64, u64) {
 
 impl SinkCutover {
     fn takes(&self, (group_id, object_id): (u64, u64)) -> bool {
-        let mut shared = self
-            .shared
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut shared = lock(&self.shared);
         if self.previous {
             return shared.cutover.take_previous(group_id);
         }
@@ -420,7 +418,7 @@ impl Connection {
     }
 
     pub(crate) fn logical_request_id(&self, wire_id: u64) -> u64 {
-        self.carried_ids()
+        lock(&self.carried)
             .logical_by_wire
             .get(&wire_id)
             .copied()
@@ -432,12 +430,15 @@ impl Connection {
         if generation_of(logical_id) == self.generation {
             return Some(wire_part(logical_id));
         }
-        self.carried_ids().wire_by_logical.get(&logical_id).copied()
+        lock(&self.carried)
+            .wire_by_logical
+            .get(&logical_id)
+            .copied()
     }
 
     /// Records that the request `logical_id` was sent again here as `wire_id`.
     pub(crate) fn carry(&self, logical_id: u64, wire_id: u64) {
-        let mut carried = self.carried_ids();
+        let mut carried = lock(&self.carried);
         carried.wire_by_logical.insert(logical_id, wire_id);
         carried.logical_by_wire.insert(wire_id, logical_id);
     }
@@ -445,7 +446,7 @@ impl Connection {
     /// `carry` for a SUBSCRIBE whose SUBSCRIBE_OK here established `start`.
     pub(crate) fn carry_subscription(&self, logical_id: u64, wire_id: u64, start: Location) {
         self.carry(logical_id, wire_id);
-        self.carried_ids()
+        lock(&self.carried)
             .subscription_starts
             .insert(logical_id, start);
     }
@@ -454,38 +455,26 @@ impl Connection {
     /// it was first sent here, so that the application's `Subscription` holds
     /// it.
     pub(crate) fn carried_start(&self, logical_id: u64) -> Option<Location> {
-        self.carried_ids()
+        lock(&self.carried)
             .subscription_starts
             .get(&logical_id)
             .copied()
     }
 
     pub(crate) fn serve(&self, request_id: u64) {
-        self.served_ids().insert(request_id);
+        lock(&self.served).insert(request_id);
     }
 
     pub(crate) fn stop_serving(&self, request_id: u64) {
-        self.served_ids().remove(&request_id);
+        lock(&self.served).remove(&request_id);
     }
 
     pub(crate) fn take_served(&self) -> Vec<u64> {
-        self.served_ids().drain().collect()
+        lock(&self.served).drain().collect()
     }
 
     pub(crate) fn serves_subscriptions(&self) -> bool {
-        !self.served_ids().is_empty()
-    }
-
-    fn served_ids(&self) -> std::sync::MutexGuard<'_, HashSet<u64>> {
-        self.served
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn carried_ids(&self) -> std::sync::MutexGuard<'_, CarriedIds> {
-        self.carried
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        !lock(&self.served).is_empty()
     }
 
     pub(crate) async fn notify_incoming_object(

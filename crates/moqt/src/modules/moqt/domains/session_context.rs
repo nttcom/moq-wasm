@@ -6,6 +6,7 @@ use std::{
 
 use tokio::sync::watch;
 
+use crate::modules::extensions::mutex::lock;
 use crate::{
     modules::{
         executor,
@@ -136,12 +137,7 @@ pub(crate) struct CarriedGuard<'a>(
 
 impl CarriedGuard<'_> {
     pub(crate) fn update<T>(&self, update: impl FnOnce(&mut CarriedRequests) -> T) -> T {
-        update(
-            &mut self
-                .0
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        )
+        update(&mut lock(&self.0))
     }
 }
 
@@ -224,10 +220,7 @@ impl SessionContext {
         track_namespace: &str,
         track_name: &str,
     ) -> Arc<ObjectLedger> {
-        let mut ledgers = self
-            .ledgers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut ledgers = lock(&self.ledgers);
         let key = (track_namespace.to_string(), track_name.to_string());
         if let Some(ledger) = ledgers.get(&key).and_then(Weak::upgrade) {
             return ledger;
@@ -268,7 +261,7 @@ impl SessionContext {
     /// publication left on no connection; returns the removed ids.
     pub(crate) fn forget_connection(&self, connection: &Connection) -> Vec<u64> {
         let mut ended = Vec::new();
-        self.publications().retain(|request_id, publication| {
+        lock(&self.publications).retain(|request_id, publication| {
             let still_published = publication.leave(connection);
             if !still_published {
                 ended.push(*request_id);
@@ -279,18 +272,12 @@ impl SessionContext {
         ended
     }
 
-    fn publications(&self) -> std::sync::MutexGuard<'_, HashMap<u64, Publication>> {
-        self.publications
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
     pub(crate) fn add_publication(&self, request_id: u64, publication: Publication) {
-        self.publications().insert(request_id, publication);
+        lock(&self.publications).insert(request_id, publication);
     }
 
     pub(crate) fn remove_publication(&self, request_id: u64) -> Option<Publication> {
-        let publication = self.publications().remove(&request_id);
+        let publication = lock(&self.publications).remove(&request_id);
         self.served_changed.send_replace(());
         publication
     }
@@ -298,7 +285,7 @@ impl SessionContext {
     /// The live connections the publication `request_id` is on, with its
     /// wire track alias on each.
     pub(crate) fn publication_targets(&self, request_id: u64) -> Vec<(Arc<Connection>, u64)> {
-        self.publications()
+        lock(&self.publications)
             .get(&request_id)
             .map(|publication| {
                 publication
@@ -311,12 +298,12 @@ impl SessionContext {
     }
 
     pub(crate) fn has_publication(&self, request_id: u64) -> bool {
-        self.publications().contains_key(&request_id)
+        lock(&self.publications).contains_key(&request_id)
     }
 
     /// What a migration sends again: each publication with its logical id.
     pub(crate) fn publication_requests(&self) -> Vec<(u64, String, String, PublishOption)> {
-        self.publications()
+        lock(&self.publications)
             .iter()
             .map(|(request_id, publication)| {
                 (
@@ -330,7 +317,7 @@ impl SessionContext {
     }
 
     pub(crate) fn add_publication_target(&self, request_id: u64, target: PublicationTarget) {
-        if let Some(publication) = self.publications().get_mut(&request_id) {
+        if let Some(publication) = lock(&self.publications).get_mut(&request_id) {
             publication.targets.push(target);
         }
     }
@@ -339,7 +326,7 @@ impl SessionContext {
     /// publication once it is on no connection. `true` when it is still on
     /// another one.
     pub(crate) fn leave_publication(&self, request_id: u64, connection: &Connection) -> bool {
-        let mut publications = self.publications();
+        let mut publications = lock(&self.publications);
         let still_published = publications
             .get_mut(&request_id)
             .is_some_and(|publication| publication.leave(connection));
@@ -355,7 +342,7 @@ impl SessionContext {
     /// a publication on it or a SUBSCRIBE it sent that it has not ended.
     pub(crate) fn serves_on(&self, connection: &Arc<Connection>) -> bool {
         connection.serves_subscriptions()
-            || self.publications().values().any(|publication| {
+            || lock(&self.publications).values().any(|publication| {
                 publication.targets.iter().any(|target| {
                     target
                         .connection
@@ -381,12 +368,12 @@ impl SessionContext {
 
     /// The connection requests are sent on.
     pub(crate) fn connection(&self) -> Arc<Connection> {
-        self.connections().current.clone()
+        lock(&self.connections).current.clone()
     }
 
     /// The current connection first, then the one being migrated away from.
     pub(crate) fn live_connections(&self) -> Vec<Arc<Connection>> {
-        let connections = self.connections();
+        let connections = lock(&self.connections);
         std::iter::once(connections.current.clone())
             .chain(connections.previous.clone())
             .collect()
@@ -394,7 +381,7 @@ impl SessionContext {
 
     /// Makes `next` the current connection and the current one the previous.
     pub(crate) fn move_to(&self, next: Arc<Connection>) -> Arc<Connection> {
-        let mut connections = self.connections();
+        let mut connections = lock(&self.connections);
         let moved_from = std::mem::replace(&mut connections.current, next);
         if let Some(older) = connections.previous.replace(moved_from.clone()) {
             connections.retire(&older);
@@ -460,7 +447,7 @@ impl SessionContext {
     }
 
     pub(crate) fn forget_previous(&self, connection: &Arc<Connection>) {
-        let mut connections = self.connections();
+        let mut connections = lock(&self.connections);
         if connections
             .previous
             .as_ref()
@@ -472,18 +459,12 @@ impl SessionContext {
     }
 
     pub(crate) fn transferred_bytes(&self) -> TransferredBytes {
-        let connections = self.connections();
+        let connections = lock(&self.connections);
         std::iter::once(&connections.current)
             .chain(&connections.previous)
             .fold(connections.retired, |total, connection| {
                 total.add(connection.transport.stats())
             })
-    }
-
-    fn connections(&self) -> std::sync::MutexGuard<'_, Connections> {
-        self.connections
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Registers the receiver of a subscription accepted on `connection`
