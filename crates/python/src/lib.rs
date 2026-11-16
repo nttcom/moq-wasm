@@ -2,6 +2,7 @@ mod catalog;
 mod errors;
 mod fetch;
 mod location;
+mod log_sink;
 mod media_broadcast;
 mod namespace_watch;
 mod session;
@@ -16,6 +17,8 @@ use pyo3::prelude::*;
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(session::connect, module)?)?;
     module.add_function(wrap_pyfunction!(catalog::parse_catalog, module)?)?;
+    module.add_function(wrap_pyfunction!(log_sink::set_log_sink, module)?)?;
+    module.add_function(wrap_pyfunction!(log_sink::wait_log_records, module)?)?;
     module.add_function(wrap_pyfunction!(
         media_broadcast::check_audio_specific_config,
         module

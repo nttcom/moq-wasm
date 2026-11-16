@@ -19,6 +19,19 @@ async def connect(
 def check_audio_specific_config(description: bytes) -> None:
     """Raises ValueError for bytes that are no AudioSpecificConfig (ISO/IEC 14496-3 §1.6.2.1)."""
 
+def set_log_sink(level: str, spans: bool) -> None:
+    """Installs the process-wide `tracing` subscriber that queues every event at `level` (`error`,
+    `warn`, `info`, `debug` or `trace`) or above as a log record and, with `spans`, every closed INFO
+    or higher span as a span record, which then carries the trace of the requests that send
+    TRACE_CONTEXT. Raises ValueError for an unknown level and RuntimeError when a subscriber is
+    already set."""
+
+def wait_log_records() -> list[tuple[str, str]]:
+    """The records queued since the last call, as `(kind, json)` with `kind` `"log"` or
+    `"span"`, led by a `log records dropped` warning when the queue was full meanwhile; waits half a
+    second for the first one, releasing the GIL, and returns an empty list after that.
+    Raises RuntimeError before `set_log_sink`."""
+
 def parse_catalog(payload: bytes) -> dict:
     """Raises `ValueError` when `payload` is not an independent MSF catalog: malformed, of a
     `version` other than `"draft-01"` (draft-ietf-moq-msf-01 §5.1.1), or a delta update, which the

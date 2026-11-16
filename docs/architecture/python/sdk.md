@@ -152,6 +152,41 @@ arrives raise a plain `RuntimeError`. A
 of the last connection, and `transport_stats()` the bytes the session sent
 and received.
 
+### Logs and spans: `moq_wasm.init`
+
+```python
+moq_wasm.init(log_level="info", on_log=on_log, on_span=on_span)
+moq_wasm.report_log("warn", "my-bot", "room joined", room=room)
+```
+
+The native module writes its logs and spans with `tracing`, as the browser
+SDK's wasm module does, and installs no subscriber until `init`, the browser
+SDK's `init({ logLevel, onLog, onSpan })`:
+- **Logs go to `logging`.** Each event at `log_level` or above becomes a
+  `logging` record under `moq_wasm.native` and its target with `.` for `::`
+  (`moq_wasm.native.moqt.modules.client.routes`), so
+  `logging.getLogger("moq_wasm")` configures them with the SDK's own logs,
+  at the matching level (`trace` is 5, named `TRACE`), its fields appended
+  to the message and kept in `record.moq_fields`. Without `init` no
+  subscriber is installed.
+- **`on_log` and `on_span`** receive the records in the shape the browser
+  SDK's callbacks and the observability server's `/api/client-telemetry`
+  take (`crates/client-telemetry`). With `on_span`, the requests a session
+  sends carry the span's TRACE_CONTEXT and the answers to the relay's
+  requests join its trace (`moqt::set_trace_context_provider` and
+  `set_trace_context_joiner` with `client-telemetry`'s functions, as the
+  wasm module registers them).
+- **No GIL in `tracing`.** The subscriber only queues records, from
+  whichever tokio thread logs, in a queue of 4096 that drops and counts
+  what overflows (reported as a `log records dropped` warning). A daemon
+  thread takes them with the GIL released while it waits, and hands them to
+  `logging` and the callbacks, which therefore run on that thread. At exit
+  it is stopped before the interpreter finalizes.
+- **`report_log`** hands the app's own log to `on_log`, not to `logging`,
+  as the browser's `reportLog` keeps it off the console.
+- The subscriber is process-wide, so only the first `init` takes effect, as
+  in the browser.
+
 ### Media: `moq_wasm.media`
 
 ```python

@@ -305,7 +305,8 @@ async def test_frames_of_a_rendition_are_dropped_once_the_session_ended(relay_ur
 
         async def push_until_dropped() -> None:
             nonlocal frames
-            while "rendition publishing stopped" not in caplog.text:
+            # The native module's own log says so too once `moq_wasm.init` forwards it.
+            while "frame dropped: rendition publishing stopped" not in caplog.text:
                 for packet in encoder.encode(picture(frames), SIZE, "RGB"):
                     low.push_video(packet, frames * 1_000_000 // FRAMERATE)
                 frames += 1
