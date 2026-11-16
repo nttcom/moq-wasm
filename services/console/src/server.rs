@@ -346,7 +346,7 @@ async fn recording_file(
             let mut response = empty_response(StatusCode::FOUND);
             let location = HeaderValue::from_str(url.as_str()).map_err(|_| RECORDER_UNAVAILABLE)?;
             response.headers_mut().insert(LOCATION, location);
-            Ok(no_store(response))
+            Ok(response)
         }
         Ok(None) => Err(Refusal(StatusCode::NOT_FOUND, "no_file")),
         Err(error) => {
