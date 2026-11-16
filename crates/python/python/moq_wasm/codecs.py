@@ -1,5 +1,5 @@
-"""The PyAV codecs of `MoqWasmTransport`: the SDK's wheel carries none (docs/architecture/python/sdk.md
-"No codec in the wheel")."""
+"""PyAV codecs for the media of LOC tracks. Needs the `codecs` extra, `moq-wasm[codecs]`: the wheel
+carries no codec of its own (docs/architecture/python/sdk.md "No codec in the wheel")."""
 
 from fractions import Fraction
 

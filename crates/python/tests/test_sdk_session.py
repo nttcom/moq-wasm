@@ -81,6 +81,28 @@ async def test_a_track_writes_to_the_new_connection_once_it_is_restored():
     await session.close()
 
 
+async def test_a_track_writes_its_state_on_each_connection_through_on_connected():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    writer = await session.publish_track(NAMESPACE, "status", retention_seconds=60)
+
+    async def write_state() -> None:
+        await writer.write(b"ready", new_group=True)
+
+    writer.on_connected(write_state)
+
+    # Act
+    relay.sessions[0].drop()
+    second = await within(relay.next_session(2))
+    await within(restored_on(session, second))
+
+    # Assert: the first connection registered the track before on_connected
+    assert relay.sessions[0].writers["status"].objects == []
+    assert second.writers["status"].objects == [(b"ready", True)]
+    await session.close()
+
+
 async def test_a_refused_redial_is_retried():
     # Arrange
     relay = FakeRelay()
@@ -133,6 +155,25 @@ async def test_run_cancels_the_work_and_raises_once_the_token_expired():
     with pytest.raises(TokenExpired):
         await within(session.run(work))
     assert work.cancelled()
+
+
+async def test_run_raises_the_expiry_even_when_the_work_returned_because_of_it():
+    # Arrange: the work is a watch, which ends with the session
+    token = unsigned_token("temp-app", time.time() + 20)
+
+    async def refresh(token: str) -> str:
+        raise RuntimeError("token mint unavailable")
+
+    relay = FakeRelay()
+    session = await open_session(relay, TokenKeeper(token, refresh), token)
+
+    async def watch_until_it_ends() -> None:
+        async for _ in await session.watch_namespaces(["anon", "room"]):
+            pass
+
+    # Act / Assert
+    with pytest.raises(TokenExpired):
+        await within(session.run(watch_until_it_ends()))
 
 
 async def test_run_raises_session_closed_after_close():

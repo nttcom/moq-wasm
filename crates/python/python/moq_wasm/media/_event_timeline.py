@@ -16,7 +16,7 @@ class EventTimeline:
     def __init__(self, writer: TrackWriter, *, replay: bool = False):
         self._writer = writer
         self._records: list[EventRecord] | None = [] if replay else None
-        writer._on_bound.append(self._open)
+        writer.on_connected(self._open)
 
     async def append(self, record: EventRecord) -> None:
         if self._records is not None:

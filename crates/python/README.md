@@ -13,6 +13,7 @@ It has three layers, each built on the one before:
 | `moq_wasm` | A session to a relay and raw MoQT tracks, with the method names of the browser SDK's `MoqSession` |
 | `moq_wasm.media` | MSF broadcasts: following participants' catalogs and tracks, publishing encoded media |
 | `moq_wasm.pipecat` | `MoqWasmTransport`, in place of pipecat's `MOQTransport` |
+| `moq_wasm.codecs` | PyAV's Opus, H.264 and VP8 encoders and decoders, which the transport uses, for a bot that runs its own pipeline |
 
 ## Session
 
@@ -74,7 +75,9 @@ async with create_broadcast(session, ["app", "room", "camera"]) as broadcast:
 
 `await media.keyframe_request()` returns when a viewer asks for a new group;
 answer it with a keyframe. `broadcast.publish_track` and
-`broadcast.event_timeline` add tracks of your own to the broadcast.
+`broadcast.event_timeline` add tracks of your own to the broadcast. A track
+whose subscribers need its current state first writes it in
+`writer.on_connected(callback)`, which runs on each connection.
 
 ## pipecat
 
@@ -110,8 +113,8 @@ dependencies = ["moq-wasm[pipecat]"]
 moq-wasm = { path = "../../../crates/python" }
 ```
 
-The `pipecat` extra adds pipecat and the PyAV that `MoqWasmTransport` encodes
-and decodes with; the wheel carries no codec of its own, so leave the extra
+The wheel carries no codec of its own. The `codecs` extra adds PyAV for
+`moq_wasm.codecs`, and the `pipecat` extra adds pipecat with it; leave both
 out when you only use `moq_wasm` and `moq_wasm.media`.
 
 uv builds the module with maturin, which needs this repository's Rust

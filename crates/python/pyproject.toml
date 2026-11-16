@@ -9,8 +9,9 @@ description = "Python SDK of this repository's MoQT implementation"
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-# The codecs of the pipecat transport come from PyAV, outside the wheel (docs/architecture/python/sdk.md).
-pipecat = ["pipecat-ai>=1.12", "av>=14"]
+# moq_wasm.codecs comes from PyAV, outside the wheel (docs/architecture/python/sdk.md).
+codecs = ["av>=14", "numpy>=1.26"]
+pipecat = ["moq-wasm[codecs]", "pipecat-ai>=1.12"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "pipecat-ai>=1.12", "av>=14"]
