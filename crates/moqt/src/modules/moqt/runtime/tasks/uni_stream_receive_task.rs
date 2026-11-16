@@ -10,8 +10,7 @@ use crate::{
         data_plane::stream::stream_receiver::StreamReceiveError,
         domains::connection::Connection,
         runtime::dispatch::{
-            fetch_notifier::FetchNotifier, incoming_object::IncomingObject,
-            subscription_notifier::SubscriptionNotifier,
+            fetch_notifier, incoming_object::IncomingObject, subscription_notifier,
         },
         version::IncomingStream,
     },
@@ -88,7 +87,7 @@ impl UniStreamReceiveTask {
                     track_alias = receiver.track_alias,
                     "received subgroup header"
                 );
-                SubscriptionNotifier::notify(
+                subscription_notifier::notify(
                     connection,
                     receiver.track_alias,
                     IncomingObject::Subgroup(receiver),
@@ -96,7 +95,7 @@ impl UniStreamReceiveTask {
                 .await;
             }
             IncomingStream::Fetch(receiver) => {
-                FetchNotifier::notify(connection, receiver.request_id, receiver).await;
+                fetch_notifier::notify(connection, receiver.request_id, receiver).await;
             }
         }
         true

@@ -89,7 +89,7 @@ application sees logical ids:
 - **Track aliases**: the logical alias is the alias of the first connection
   (assigned by the peer for SUBSCRIBE, by this side for PUBLISH). A later
   connection translates its wire alias to the logical one where objects enter
-  (`SubscriptionNotifier::notify`) and where streams and datagrams are opened.
+  (`subscription_notifier::notify`) and where streams and datagrams are opened.
 
 The JavaScript API keeps its shape: the ids it passes and receives are logical
 ids.
