@@ -23,7 +23,8 @@ pub(crate) trait Subscriber: 'static + Send + Sync {
         new_group_request: u64,
     ) -> anyhow::Result<bool>;
     /// Sets the Forward State of `subscription`, with a SUBSCRIBE_UPDATE
-    /// (draft-14 §9.10) or REQUEST_UPDATE (draft-18 §10.9.1).
+    /// (draft-14 §9.10) or REQUEST_UPDATE (draft-18 §10.9.1); returns once
+    /// it is written, without waiting for the publisher's REQUEST_OK.
     async fn send_forward_update(
         &self,
         subscription: &UpstreamSubscription,
@@ -94,7 +95,7 @@ impl Subscriber for moqt::Subscriber {
         subscription: &UpstreamSubscription,
         forward: bool,
     ) -> anyhow::Result<()> {
-        self.update_forward(subscription.as_moqt(), forward).await
+        moqt::Subscriber::send_forward_update(self, subscription.as_moqt(), forward).await
     }
 
     #[tracing::instrument(
