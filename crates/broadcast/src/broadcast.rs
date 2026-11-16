@@ -101,6 +101,25 @@ impl Broadcast {
             .await
     }
 
+    /// Registers the keyframe requests and the demand of a video track its
+    /// source encodes. Call before the catalog update that publishes the track.
+    pub(crate) async fn prepare_encoded_video(
+        &self,
+        track_name: &str,
+        keyframe_requests: Option<&Arc<Notify>>,
+        demand_sender: Option<&mpsc::UnboundedSender<TrackDemand>>,
+    ) -> Result<()> {
+        if let Some(requested) = keyframe_requests {
+            self.accept_keyframe_requests(track_name, requested.clone())
+                .await?;
+        }
+        if let Some(demand_sender) = demand_sender {
+            self.publish_on_demand(track_name, demand_sender.clone())
+                .await?;
+        }
+        Ok(())
+    }
+
     /// Has the track published on demand (draft-18 §10.10): the relay has it
     /// sent only while a subscriber takes it, and `demand_sender` is sent
     /// whether one does, now and at every change. Call before the catalog

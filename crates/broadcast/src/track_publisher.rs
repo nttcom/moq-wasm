@@ -122,16 +122,13 @@ impl TrackPublisher {
                     framerate: self.tracks.video_framerate,
                     ..VideoTrackInfo::from_config(config, self.tracks.video_label.clone())?
                 };
-                if let Some(requested) = &self.tracks.keyframe_requests {
-                    self.broadcast
-                        .accept_keyframe_requests(&self.tracks.video, requested.clone())
-                        .await?;
-                }
-                if let Some(demand_sender) = &self.tracks.demand_sender {
-                    self.broadcast
-                        .publish_on_demand(&self.tracks.video, demand_sender.clone())
-                        .await?;
-                }
+                self.broadcast
+                    .prepare_encoded_video(
+                        &self.tracks.video,
+                        self.tracks.keyframe_requests.as_ref(),
+                        self.tracks.demand_sender.as_ref(),
+                    )
+                    .await?;
                 self.broadcast
                     .update_video_catalog(&self.tracks.video, info)
                     .await
