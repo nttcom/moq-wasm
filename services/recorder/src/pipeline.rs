@@ -89,7 +89,7 @@ impl Pipeline {
             .video_codec
             .context("video object without a video track")?;
         let group_complete = self.group_complete(object);
-        let loc_object = to_loc_object(object);
+        let loc_object = LocObject::from(object);
         let events = demuxer(&mut self.video, capture_origin, || {
             loc::Demuxer::video(codec)
         })
@@ -158,7 +158,7 @@ impl Pipeline {
             return Ok(Output::default());
         }
         let group_complete = self.video_codec.is_none() && self.group_complete(object);
-        let loc_object = to_loc_object(object);
+        let loc_object = LocObject::from(object);
         let events = demuxer(&mut self.audio, capture_origin, || {
             loc::Demuxer::audio(config)
         })
@@ -264,7 +264,7 @@ impl Pipeline {
 }
 
 pub(crate) fn capture_timestamp(object: &TrackObject) -> Option<Timestamp> {
-    to_loc_object(object).capture_timestamp()
+    LocObject::from(object).capture_timestamp()
 }
 
 fn demuxer(
@@ -292,13 +292,6 @@ fn new_muxer(
         muxer.push(&MediaEvent::AudioConfig(config.clone()))?;
     }
     Ok(muxer)
-}
-
-fn to_loc_object(object: &TrackObject) -> LocObject {
-    LocObject {
-        extensions: loc::from_extension_headers(&object.extension_headers),
-        payload: object.payload.clone(),
-    }
 }
 
 #[cfg(test)]

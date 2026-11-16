@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use mediapack::loc::{LocObject, from_extension_headers};
+use mediapack::loc::LocObject;
 use moqt::{Session, subscribe::SubscribeOption};
 use tokio::{
     sync::{broadcast, mpsc},
@@ -102,10 +102,7 @@ async fn decode(
                 let Some(object) = object? else {
                     return Ok(());
                 };
-                let loc = LocObject {
-                    extensions: from_extension_headers(&object.extension_headers),
-                    payload: object.payload,
-                };
+                let loc = LocObject::from(&object);
                 let Some(timestamp) = loc.capture_timestamp() else {
                     tracing::warn!("source audio object without a capture timestamp");
                     continue;

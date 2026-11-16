@@ -2,9 +2,9 @@ use std::sync::{Arc, OnceLock};
 
 use mediapack::{
     AudioConfig, MediaEvent, Timestamp,
-    loc::{self, LocObject, from_extension_headers},
+    loc::{self, LocObject},
 };
-use moqt::{TrackObject, TrackReader};
+use moqt::TrackReader;
 use tokio::sync::mpsc;
 
 pub(super) enum TrackKind {
@@ -70,7 +70,7 @@ pub(super) async fn receive_track(
                 break;
             }
         };
-        let object = loc_object(object);
+        let object = LocObject::from(&object);
         if !start.admits(&kind, &object) {
             continue;
         }
@@ -101,13 +101,6 @@ pub(super) async fn receive_track(
                 return;
             }
         }
-    }
-}
-
-fn loc_object(object: TrackObject) -> LocObject {
-    LocObject {
-        extensions: from_extension_headers(&object.extension_headers),
-        payload: object.payload,
     }
 }
 

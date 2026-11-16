@@ -1,6 +1,9 @@
-use moqt::object::{ExtensionHeaders, KeyValuePair, VariantType};
+use moqt::{
+    TrackObject,
+    object::{ExtensionHeaders, KeyValuePair, VariantType},
+};
 
-use crate::loc::object::{LocExtension, LocValue};
+use crate::loc::object::{LocExtension, LocObject, LocValue};
 
 /// draft-ietf-moq-loc-04 §2.2: each LOC public property is its own MoQT
 /// extension header keyed by the property id.
@@ -28,6 +31,15 @@ pub fn from_extension_headers(headers: &ExtensionHeaders) -> Vec<LocExtension> {
             VariantType::Odd(bytes) => LocExtension::bytes(kv_pair.key, bytes.clone()),
         })
         .collect()
+}
+
+impl From<&TrackObject> for LocObject {
+    fn from(object: &TrackObject) -> Self {
+        Self {
+            extensions: from_extension_headers(&object.extension_headers),
+            payload: object.payload.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
