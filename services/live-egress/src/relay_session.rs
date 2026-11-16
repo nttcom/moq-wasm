@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use moqt::{
-    ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
+    ClientConfig, Endpoint, NATIVE, Session, Subscription,
     subscribe::{FilterType, SubscribeOption},
 };
 
@@ -36,15 +36,6 @@ pub async fn subscribe(
         .subscribe(namespace.to_string(), name.to_string(), option)
         .await
         .with_context(|| format!("subscribe {namespace}/{name}"))
-}
-
-pub async fn track_reader(session: &Session, subscription: &Subscription) -> Result<TrackReader> {
-    let receiver = session
-        .subscriber()
-        .accept_data_receiver(subscription)
-        .await
-        .context("accept data receiver")?;
-    Ok(TrackReader::new(receiver))
 }
 
 /// Reads the first object of the catalog's current group with the SUBSCRIBE and

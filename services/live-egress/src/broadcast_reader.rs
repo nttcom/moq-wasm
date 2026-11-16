@@ -11,7 +11,7 @@ use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::{
     broadcast_reader::track_receive_task::{StartPoint, TrackKind, receive_track},
-    relay_session::{read_catalog, subscribe, track_reader},
+    relay_session::{read_catalog, subscribe},
 };
 
 const MEDIA_CHANNEL_CAPACITY: usize = 256;
@@ -61,10 +61,7 @@ impl BroadcastReader {
         if let Some((name, config)) = tracks.audio {
             kinds.push((name, TrackKind::Audio(config)));
         }
-        // Subscribe to every track before waiting on any: `track_reader` blocks
-        // until the video's next group starts, and audio subscribed after that
-        // wait would start later than the video.
-        let mut subscriptions = Vec::new();
+        let mut tasks = JoinSet::new();
         for (name, kind) in kinds {
             // NextGroupStart begins the video at a keyframe. An audio object decodes
             // alone, and a publisher that sends its audio as one endless group never
@@ -75,11 +72,7 @@ impl BroadcastReader {
                 TrackKind::Audio(_) => FilterType::LargestObject,
             };
             let subscription = subscribe(session, namespace, &name, filter_type).await?;
-            subscriptions.push((name, kind, subscription));
-        }
-        let mut tasks = JoinSet::new();
-        for (name, kind, subscription) in subscriptions {
-            let reader = track_reader(session, &subscription).await?;
+            let reader = session.subscriber().track_reader(&subscription);
             tasks.spawn(receive_track(
                 name,
                 reader,
