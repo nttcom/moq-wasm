@@ -157,6 +157,25 @@ async def test_run_cancels_the_work_and_raises_once_the_token_expired():
     assert work.cancelled()
 
 
+async def test_run_raises_the_expiry_even_when_the_work_returned_because_of_it():
+    # Arrange: the work is a watch, which ends with the session
+    token = unsigned_token("temp-app", time.time() + 20)
+
+    async def refresh(token: str) -> str:
+        raise RuntimeError("token mint unavailable")
+
+    relay = FakeRelay()
+    session = await open_session(relay, TokenKeeper(token, refresh), token)
+
+    async def watch_until_it_ends() -> None:
+        async for _ in await session.watch_namespaces(["anon", "room"]):
+            pass
+
+    # Act / Assert
+    with pytest.raises(TokenExpired):
+        await within(session.run(watch_until_it_ends()))
+
+
 async def test_run_raises_session_closed_after_close():
     # Arrange
     relay = FakeRelay()

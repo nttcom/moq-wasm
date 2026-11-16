@@ -228,6 +228,9 @@ class Session:
         running = asyncio.ensure_future(work)
         try:
             await asyncio.wait([running, self._done], return_when=asyncio.FIRST_COMPLETED)
+            # A failure also ends the watches, so `work` may have returned because of it.
+            if self._done.done() and self._done.exception() is not None:
+                raise self._done.exception()
             if running.done():
                 return running.result()
             self._done.result()

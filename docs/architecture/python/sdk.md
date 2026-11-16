@@ -117,7 +117,9 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as sessi
   session cannot recover from is `TokenExpired`: the token expired while
   `refresh_token` kept failing. It raises from `async with`, after cancelling
   what runs inside it through `session.run`, which raises `SessionClosed`
-  when `close()` ends the session instead:
+  when `close()` ends the session instead. `run` raises the failure even
+  when the work returned because of it, as a watch does when the session
+  ends:
 
 ```python
 async with moq_wasm.connect(...) as session:
