@@ -54,10 +54,36 @@ transcriber does.
   the `codecs` extra (`moq-wasm[codecs]`), which adds `av` (PyAV, for Opus,
   H.264 and VP8) and `numpy`. The pipecat transport is the `pipecat` extra
   (`moq-wasm[pipecat]`), which adds `pipecat-ai` and the `codecs` extra.
-- The package is released on GitHub only, as abi3 wheels for Linux x86_64,
-  Linux aarch64 and macOS arm64 attached to a `python-sdk-v<version>` tag's
-  Release. The workflow and the bots' switch to the wheels are designed with
-  that change.
+- The package is released on GitHub only, as abi3 wheels for Python 3.11+
+  on Linux x86_64, Linux aarch64 and macOS arm64 attached to a
+  `python-sdk-v<version>` tag's Release, not marked Latest, which stays on
+  the browser SDK's. The version is `[project] version` in `pyproject.toml`,
+  which maturin writes into the wheel; the crate's Cargo version is not read.
+  A release goes:
+  1. PRs do not edit `crates/python/CHANGELOG.md`; a change a user of the
+     package would notice carries its entry in the PR body's
+     `## リリースノート（Python）` section. The release PR collects them into
+     the version's section and sets the version
+     (`.agents/skills/release-python-sdk/SKILL.md`).
+  2. `python-sdk-v<version>` is pushed on its merge commit.
+  3. `.github/workflows/python-release.yml` stops unless the tag names the
+     version and the changelog has its section. It builds each wheel with
+     maturin-action on a runner of its platform, the Linux ones in the PyPA
+     `manylinux_2_28` image of the runner's architecture rather than through
+     maturin's zig cross-compilation: the image's GCC builds the C and
+     assembly of `aws-lc-sys` with no other tool, and maturin checks the
+     wheel against the manylinux policy. glibc 2.28 is Debian 10 and Ubuntu
+     20.04 or later.
+  4. The binding tests run against each wheel on Python 3.11, the oldest the
+     abi3 wheel takes: the locked test dependencies are installed without
+     the project, then the wheel, with a relay and a VTS built from the tag.
+  5. The GitHub Release is created with the three wheels and the changelog
+     section as its body.
+
+  The release page's asset list is a flat index pip and uv read (README,
+  "Install"). The bots in `examples/python` keep building the package from
+  the sources at the same commit, so a change to the SDK and the bots that
+  use it land together without a release.
 
 ### Layers
 
