@@ -12,7 +12,7 @@ Accepted
 
 Move `serde_json` from a dev-dependency to a dependency of the `msf` crate.
 `Catalog::parse` uses it to read a catalog object and to refuse one whose
-`version` is not `draft-01` or that is a delta update.
+`version` it does not read or that is a delta update.
 
 ## Context
 

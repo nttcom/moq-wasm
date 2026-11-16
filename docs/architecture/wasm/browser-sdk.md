@@ -687,7 +687,7 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 
 | 項目 | 今 | 変更後 |
 | --- | --- | --- |
-| timeline を出すソース | 名前が `video` の track（カメラ）だけ | すべてのソース。ソースごとに timeline track を1本出し、`depends` にそのソースの映像、rendition、音声を並べる。track 名は `<ソースの映像の track 名>_timeline`（既定のソースは `video_timeline`） |
+| timeline を出すソース | 名前が `video` の track（カメラ）だけ | すべてのソース。ソースごとに timeline track を1本出し、そのソースの映像、rendition、音声を対象にする。`depends` は、それらがソースの renderGroup のすべてならその番号（§7.2）、そうでなければ track 名を並べる。track 名は `<ソースの映像の track 名>_timeline`（既定のソースは `video_timeline`） |
 | entry を書く時 | `video` のキーフレームごと | ソースの group が始まるごと。映像があるときはキーフレームで、無いとき（ミュート中、音声だけのソース）は音声が始める group で書く。1つのソースの映像と音声は同じ Group ID の列を使うので、1本で両方の位置を表せる |
 | group ID が飛んだとき | 一覧を空にする（映像をミュートすると起きる） | 音声の group でも entry を書くので、ID は飛ばない。一覧を空にするのは publisher が配信をやり直したときだけにする |
 
@@ -703,14 +703,14 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
 | 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
 | 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の、room より後の要素（会議では参加者名）を `<member-index>` の代わりに入れる。最後の要素だけにしないのは、room より深い namespace どうしで名前が重ならないようにするため |
-| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。§8.3 は event timeline の `depends` に当てはまる track を並べることを求め（MUST）、§5.2.15 はその名前を同じ namespace で引くので、音声のある namespace に置く |
+| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。replay の記録は media time なので、§8.3 は `depends` にその media timeline を並べることを求め（MUST）、§5.2.15 はその名前を同じ namespace で引く。参加者の media timeline はその参加者の namespace にあるので、そこに置く |
 | HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）、`renew_after_seconds`、録画の開始時刻（`started_at_ms`）だけにする |
 
 transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
 メディアの範囲が記録の `m` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
 録画していない session の記録は捨てる。catalog では `packaging` を `eventtimeline`、role を
-`subtitle`（Table 4）、`eventType` を `com.skyway.transcript.v1`、`depends` をその session の音声
-track にし、`trackDuration` はほかの track と同じにする。track は group 0 の Object 1つで、その
+`subtitle`（Table 4）、`eventType` を `com.skyway.transcript.v1`、`depends` をその namespace の
+media timeline にし、`trackDuration` はほかの track と同じにする。track は group 0 の Object 1つで、その
 session の記録を `m` の順に並べ、同じ記録は1つにまとめる。
 
 `trackDuration` は replay の namespace の全 track で同じ値にし、最初の media の Timestamp から

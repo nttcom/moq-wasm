@@ -4,8 +4,8 @@ use anyhow::Result;
 use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus};
 use msf::{
-    CATALOG_TRACK_NAME, Catalog, InitData, KnownPackaging, KnownTrackRole, MediaTimelineRecord,
-    Packaging, Track,
+    CATALOG_TRACK_NAME, Catalog, Dependency, InitData, KnownPackaging, KnownTrackRole,
+    MediaTimelineRecord, Packaging, Track,
 };
 use serde_json::Value;
 
@@ -117,10 +117,8 @@ async fn namespace_tracks(
         .filter(|track| track.packaging == Packaging::Known(KnownPackaging::MediaTimeline))
     {
         let tracks = timeline
-            .depends
-            .iter()
-            .flatten()
-            .filter_map(|name| stored_track(name));
+            .dependencies(&listed.tracks)
+            .filter_map(|track| stored_track(&track.name));
         let records = recorded_timeline(tracks)?;
         built.push(BuiltTrack::new(
             namespace,
@@ -136,21 +134,30 @@ async fn namespace_tracks(
             .filter_map(|track| stored_track(&track.name)?.timestamp_range_us()),
     )
     .map(|(first_us, last_us)| (last_us - first_us) / MICROS_PER_MILLI);
-    let audio: Vec<String> = listed
+    let has_audio = listed
         .tracks
         .iter()
-        .filter(|track| track.has_role(KnownTrackRole::Audio))
-        .map(|track| track.name.clone())
-        .collect();
-    if !transcript.is_empty() && !audio.is_empty() {
-        listed.tracks.push(transcript_track(audio));
+        .any(|track| track.has_role(KnownTrackRole::Audio));
+    if !transcript.is_empty() && has_audio {
+        listed.tracks.push(transcript_track());
         built.push(BuiltTrack::new(
             namespace,
             TRANSCRIPT_TRACK_NAME,
             serde_json::to_vec(&transcript)?,
         ));
     }
+    let media_timelines: Vec<Dependency> = listed
+        .tracks
+        .iter()
+        .filter(|track| track.packaging == Packaging::Known(KnownPackaging::MediaTimeline))
+        .map(|track| Dependency::TrackName(track.name.clone()))
+        .collect();
     for track in &mut listed.tracks {
+        if track.packaging == Packaging::Known(KnownPackaging::EventTimeline) {
+            // Its records are indexed by media time, which the media
+            // timelines map (§8.3).
+            track.depends = (!media_timelines.is_empty()).then(|| media_timelines.clone());
+        }
         track.is_live = false;
         track.track_duration = duration_ms;
         // Without it each track inherits the replay namespace (§5.2.2).
@@ -236,14 +243,13 @@ async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Va
 
 /// A participant's part of the transcript as an event timeline
 /// (draft-ietf-moq-msf-02 §8.3). It is listed in their own catalog because
-/// `depends`, which §8.3 requires, names tracks of the timeline's own
-/// namespace (§5.2.15).
-fn transcript_track(audio: Vec<String>) -> Track {
+/// its `depends` names the media timelines of the timeline's own namespace
+/// (§5.2.15).
+fn transcript_track() -> Track {
     let mut track = Track::new(TRANSCRIPT_TRACK_NAME, KnownPackaging::EventTimeline, false);
     track.event_type = Some(TRANSCRIPT_EVENT_TYPE.to_string());
     track.role = Some(KnownTrackRole::Subtitle.into());
     track.label = Some("Transcript".to_string());
-    track.depends = Some(audio);
     track.mime_type = Some("application/json".to_string());
     track
 }
@@ -307,23 +313,27 @@ fn listed_tracks(catalogs: &[Catalog], names: &[&str]) -> Listed {
         .find(|(_, track)| track.packaging == Packaging::Known(KnownPackaging::Loc))
         .and_then(|(_, track)| track.render_group);
     let mut init_data: Vec<InitData> = Vec::new();
-    let tracks = listed
+    let mut tracks: Vec<Track> = listed
         .iter()
         .map(|(catalog, track)| {
             let mut track = (*track).clone();
             if track.depends.is_some() {
                 let named: BTreeSet<&str> = catalogs
                     .iter()
-                    .flat_map(|catalog| catalog.tracks.iter().flatten())
-                    .filter(|other| other.name == track.name)
-                    .flat_map(|other| other.depends.iter().flatten())
-                    .map(String::as_str)
+                    .flat_map(|catalog| {
+                        let tracks = catalog.tracks.as_deref().unwrap_or_default();
+                        tracks
+                            .iter()
+                            .filter(|other| other.name == track.name)
+                            .flat_map(move |other| other.dependencies(tracks))
+                    })
+                    .map(|dependency| dependency.name.as_str())
                     .collect();
                 track.depends = Some(
                     listed_names
                         .iter()
                         .filter(|name| named.contains(*name))
-                        .map(|name| name.to_string())
+                        .map(|name| Dependency::from(*name))
                         .collect(),
                 );
             }
@@ -342,6 +352,19 @@ fn listed_tracks(catalogs: &[Catalog], names: &[&str]) -> Listed {
             track
         })
         .collect();
+    let named_tracks = tracks.clone();
+    for track in &mut tracks {
+        if let Some(depends) = &track.depends {
+            let names = depends
+                .iter()
+                .filter_map(|dependency| match dependency {
+                    Dependency::TrackName(name) => Some(name.clone()),
+                    Dependency::RenderGroup(_) => None,
+                })
+                .collect();
+            track.depends = Some(Dependency::on_tracks(&named_tracks, names));
+        }
+    }
     Listed { tracks, init_data }
 }
 
@@ -394,8 +417,8 @@ mod tests {
         Track::new(name, packaging, true)
     }
 
-    fn with_depends(mut track: Track, depends: &[&str]) -> Track {
-        track.depends = Some(depends.iter().map(|name| name.to_string()).collect());
+    fn with_render_group_depends(mut track: Track, render_group: u64) -> Track {
+        track.depends = Some(vec![Dependency::RenderGroup(render_group)]);
         track
     }
 
@@ -410,7 +433,7 @@ mod tests {
 
     #[test]
     fn lists_each_stored_track_as_the_last_catalog_describing_it() {
-        // Arrange: the audio left the catalog before the end, and the camera's renderGroup changed with it
+        // Arrange: the audio left the catalog before the end, and the camera's renderGroup changed with it, which the media timeline follows
         let mut audio = in_source(track("audio", KnownPackaging::Loc), 1);
         audio.codec = Some("mp4a.40.2".to_string());
         let init_data = audio.set_inline_init_data("ERA=".to_string());
@@ -418,9 +441,9 @@ mod tests {
             vec![
                 in_source(track("video", KnownPackaging::Loc), 1),
                 audio,
-                with_depends(
-                    track("chat", KnownPackaging::EventTimeline),
-                    &["video", "audio"],
+                with_render_group_depends(
+                    track("video_timeline", KnownPackaging::MediaTimeline),
+                    1,
                 ),
             ],
             1,
@@ -432,13 +455,19 @@ mod tests {
             vec![
                 in_source(track("screen", KnownPackaging::Loc), 1),
                 video,
-                with_depends(track("chat", KnownPackaging::EventTimeline), &["video"]),
+                with_render_group_depends(
+                    track("video_timeline", KnownPackaging::MediaTimeline),
+                    2,
+                ),
             ],
             2,
         );
 
         // Act
-        let listed = listed_tracks(&[first, last], &["video", "audio", "chat", "transcript"]);
+        let listed = listed_tracks(
+            &[first, last],
+            &["video", "audio", "video_timeline", "transcript"],
+        );
 
         // Assert: the stored transcript is described by no catalog
         let names: Vec<&str> = listed
@@ -446,12 +475,14 @@ mod tests {
             .iter()
             .map(|track| track.name.as_str())
             .collect();
-        assert_eq!(names, ["video", "audio", "chat"]);
+        assert_eq!(names, ["video", "audio", "video_timeline"]);
         assert_eq!(listed.tracks[0].height, Some(720));
         assert_eq!(listed.tracks[0].render_group, listed.tracks[1].render_group);
         assert_eq!(
-            listed.tracks[2].depends.as_deref(),
-            Some(&["video".to_string(), "audio".to_string()][..])
+            listed.tracks[2].depends,
+            Some(vec![Dependency::RenderGroup(
+                listed.tracks[0].render_group.unwrap()
+            )])
         );
         assert_eq!(listed.init_data, [init_data]);
     }
@@ -479,10 +510,7 @@ mod tests {
             assert_eq!(track.namespace, None, "{}", track.name);
             assert_eq!(track.target_latency, None, "{}", track.name);
         }
-        assert_eq!(
-            tracks[1].depends.as_deref(),
-            Some(&["video".to_string()][..])
-        );
+        assert_eq!(tracks[1].depends, Some(vec![Dependency::RenderGroup(1)]));
         let timeline: Vec<MediaTimelineRecord> =
             serde_json::from_slice(&built[0].object.payload).unwrap();
         assert_eq!(
@@ -654,7 +682,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lists_a_participants_transcript_as_a_subtitle_timeline_of_their_audio() {
+    async fn lists_a_participants_transcript_as_a_subtitle_timeline_on_their_media_timeline() {
         // Arrange
         let recording = recorded_meeting(vec![json!([transcript_record(1_000, "alice")])]).await;
 
@@ -672,7 +700,7 @@ mod tests {
         transcript.event_type = Some("com.skyway.transcript.v1".to_string());
         transcript.role = Some(KnownTrackRole::Subtitle.into());
         transcript.label = Some("Transcript".to_string());
-        transcript.depends = Some(vec!["audio".to_string()]);
+        transcript.depends = Some(vec!["video_timeline".into()]);
         transcript.mime_type = Some("application/json".to_string());
         transcript.track_duration = Some(2_000);
         assert_eq!(tracks.last(), Some(&transcript));

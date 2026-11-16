@@ -52,9 +52,9 @@ impl Drop for SourceStreamer {
 
 fn catalog_payload(namespace: &str) -> Result<Bytes> {
     let catalog = serde_json::json!({
-        "version": "draft-01",
+        "version": "draft-02",
         "tracks": [
-            { "namespace": namespace, "name": "video", "packaging": "loc", "role": "video", "isLive": true, "codec": "avc1.640028" },
+            { "namespace": namespace, "name": "video", "packaging": "loc", "role": "video", "isLive": true, "codec": "avc1.640028", "bitrate": 2500000, "framerate": 30 },
             { "namespace": namespace, "name": SOURCE_AUDIO_TRACK, "packaging": "loc", "role": "audio", "isLive": true, "codec": "opus", "bitrate": 128000, "samplerate": 48000, "channelConfig": "mono" }
         ]
     });

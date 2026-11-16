@@ -3,7 +3,7 @@ import { sdkLog } from '../core/log'
 export const CATALOG_TRACK_NAME = 'catalog'
 
 /// The catalog `version` (draft-ietf-moq-msf-02 §5.1.1).
-const MSF_VERSION = 'draft-01'
+const MSF_VERSION = 'draft-02'
 
 export type MsfTrack = {
   namespace?: string
@@ -15,7 +15,9 @@ export type MsfTrack = {
   label?: string
   codec?: string
   mimeType?: string
-  depends?: string[]
+  /// A String names a track, a Number a `renderGroup` (draft-ietf-moq-msf-02 §5.2.15).
+  depends?: (string | number)[]
+  renderGroup?: number
   altGroup?: number
   bitrate?: number
   width?: number
@@ -61,10 +63,11 @@ export type MediaCatalogTrack = {
   channelConfig?: string
   width?: number
   height?: number
-  /// draft-ietf-moq-msf-02 §5.2.21; this project's publishers list it only for
-  /// a track they cap at that frame rate.
+  /// draft-ietf-moq-msf-02 §5.2.21.
   framerate?: number
   initData?: string
+  /// The names of the tracks `depends` refers to, a `renderGroup` resolved to
+  /// its tracks (draft-ietf-moq-msf-02 §5.2.15).
   depends?: string[]
   lang?: string
   /// draft-ietf-moq-msf-02 §5.2.8: false when no new objects will be added.
@@ -81,7 +84,7 @@ export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitDat
     generatedAt: Date.now(),
     tracks,
     // Keep after `tracks`: JSON.stringify writes keys in insertion order, and
-    // draft-ietf-moq-msf-02 §5.1.7 requires initDataList to follow tracks.
+    // draft-ietf-moq-msf-02 §5.1.7 recommends initDataList follow tracks.
     initDataList: initDataList.length > 0 ? initDataList : undefined
   }
   return JSON.stringify(catalog)
@@ -170,7 +173,7 @@ export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole):
       height: asNumber(track.height),
       framerate: asNumber(track.framerate),
       initData: resolveInitData(catalog, track),
-      depends: asStrings(track.depends),
+      depends: dependencyNames(tracks, track),
       lang: asString(track.lang),
       isLive: typeof track.isLive === 'boolean' ? track.isLive : undefined,
       trackDuration: asNumber(track.trackDuration)
@@ -191,8 +194,20 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined
 }
 
-function asStrings(value: unknown): string[] | undefined {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : undefined
+/// A String names a track; a Number names every other track of that
+/// `renderGroup` (draft-ietf-moq-msf-02 §5.2.15).
+function dependencyNames(tracks: unknown[], track: Record<string, unknown>): string[] | undefined {
+  if (!Array.isArray(track.depends)) {
+    return undefined
+  }
+  return track.depends.flatMap((dependency) => {
+    if (typeof dependency === 'string') {
+      return [dependency]
+    }
+    return tracks.flatMap((other) =>
+      isObject(other) && other !== track && other.renderGroup === dependency ? (asString(other.name) ?? []) : []
+    )
+  })
 }
 
 function asNumber(value: unknown): number | undefined {

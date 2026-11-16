@@ -5,12 +5,13 @@ use serde_json::Value;
 
 use crate::track::Track;
 use crate::types::{KnownPackaging, Packaging};
+use crate::validation;
 
 /// draft-ietf-moq-msf-02 §5: the catalog track MUST have this name.
 pub const CATALOG_TRACK_NAME: &str = "catalog";
 
 /// The catalog `version` (draft-ietf-moq-msf-02 §5.1.1).
-const MSF_VERSION: &str = "draft-01";
+const MSF_VERSION: &str = "draft-02";
 
 /// An independent catalog (draft-ietf-moq-msf-02 §5.1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,7 +26,7 @@ pub struct Catalog {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tracks: Option<Vec<Track>>,
     /// Declared after `tracks`: serde writes the fields in declaration order,
-    /// and draft-ietf-moq-msf-02 §5.1.7 requires the list to follow the
+    /// and draft-ietf-moq-msf-02 §5.1.7 recommends the list follow the
     /// tracks array.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init_data_list: Option<Vec<InitData>>,
@@ -41,6 +42,10 @@ pub enum CatalogParseError {
     UnsupportedVersion(Option<String>),
     /// A delta update (§5.1.6).
     DeltaUpdate,
+    /// A catalog the draft calls invalid: a malformed name or namespace, a
+    /// dependency that does not resolve, or a track without a field its
+    /// packaging and role require.
+    Invalid(String),
 }
 
 impl fmt::Display for CatalogParseError {
@@ -52,6 +57,7 @@ impl fmt::Display for CatalogParseError {
             }
             Self::UnsupportedVersion(None) => write!(f, "MSF catalog has no version"),
             Self::DeltaUpdate => write!(f, "MSF catalog delta updates are not supported"),
+            Self::Invalid(reason) => write!(f, "invalid MSF catalog: {reason}"),
         }
     }
 }
@@ -82,7 +88,8 @@ impl Catalog {
     }
 
     /// Reads a catalog object, refusing one this crate cannot read as
-    /// draft-ietf-moq-msf-02 requires (§5.1.1, §5.1.6).
+    /// draft-ietf-moq-msf-02 requires (§5.1.1, §5.1.6) and one the draft
+    /// calls invalid (§5.2.2, §5.2.3, §5.2.4.1, §5.2.15, §8.3).
     pub fn parse(payload: &[u8]) -> Result<Self, CatalogParseError> {
         let document: Value =
             serde_json::from_slice(payload).map_err(CatalogParseError::Malformed)?;
@@ -97,7 +104,10 @@ impl Catalog {
                 ));
             }
         }
-        serde_json::from_value(document).map_err(CatalogParseError::Malformed)
+        let catalog: Self =
+            serde_json::from_value(document).map_err(CatalogParseError::Malformed)?;
+        validation::validate(&catalog).map_err(CatalogParseError::Invalid)?;
+        Ok(catalog)
     }
 
     pub fn loc_tracks(&self) -> impl Iterator<Item = &Track> {
@@ -125,7 +135,7 @@ mod tests {
     use crate::types::KnownPackaging;
 
     #[test]
-    fn parse_reads_a_draft_01_catalog() {
+    fn parse_reads_a_draft_02_catalog() {
         // Arrange
         let catalog = Catalog::new(
             vec![Track::new("video", KnownPackaging::Loc, true)],
@@ -171,6 +181,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_refuses_an_invalid_catalog() {
+        // Arrange
+        let json = br#"{"version":"draft-02","tracks":[{"name":"timeline","packaging":"mediatimeline","isLive":true,"depends":["video"]}]}"#;
+
+        // Act / Assert
+        assert!(matches!(
+            Catalog::parse(json),
+            Err(CatalogParseError::Invalid(_))
+        ));
+    }
+
+    #[test]
     fn parse_refuses_what_is_not_a_catalog() {
         // Act / Assert
         assert!(matches!(
@@ -178,13 +200,13 @@ mod tests {
             Err(CatalogParseError::Malformed(_))
         ));
         assert!(matches!(
-            Catalog::parse(br#"{"version":"draft-01","tracks":[{"name":"video"}]}"#),
+            Catalog::parse(br#"{"version":"draft-02","tracks":[{"name":"video"}]}"#),
             Err(CatalogParseError::Malformed(_))
         ));
     }
 
     #[test]
-    fn new_is_an_independent_draft_01_catalog_without_is_complete() {
+    fn new_is_an_independent_draft_02_catalog_without_is_complete() {
         // Act
         let catalog = Catalog::new(
             vec![Track::new("video", KnownPackaging::Loc, true)],
@@ -194,7 +216,7 @@ mod tests {
         // Assert
         assert_eq!(
             serde_json::to_string(&catalog).unwrap(),
-            r#"{"version":"draft-01","generatedAt":1759924160383,"tracks":[{"name":"video","packaging":"loc","isLive":true}]}"#
+            r#"{"version":"draft-02","generatedAt":1759924160383,"tracks":[{"name":"video","packaging":"loc","isLive":true}]}"#
         );
     }
 
@@ -212,14 +234,14 @@ mod tests {
         // Assert
         assert_eq!(
             json,
-            r#"{"version":"draft-01","generatedAt":1759924160383,"tracks":[{"name":"audio","packaging":"loc","isLive":true,"initRef":"audio"}],"initDataList":[{"id":"audio","type":"inline","data":"ERA="}]}"#
+            r#"{"version":"draft-02","generatedAt":1759924160383,"tracks":[{"name":"audio","packaging":"loc","isLive":true,"initRef":"audio"}],"initDataList":[{"id":"audio","type":"inline","data":"ERA="}]}"#
         );
     }
 
     #[test]
     fn a_catalog_with_unresolvable_init_data_still_parses() {
         // Arrange: the list precedes the tracks, its entry has a type the draft does not define, and the initRef names no entry
-        let json = r#"{"version":"draft-01","initDataList":[{"id":"init-url","type":"url","data":"https://example.com/init.mp4"}],"tracks":[{"name":"video","packaging":"cmaf","isLive":true,"initRef":"init-hd"}]}"#;
+        let json = r#"{"version":"draft-02","initDataList":[{"id":"init-url","type":"url","data":"https://example.com/init.mp4"}],"tracks":[{"name":"video","packaging":"cmaf","isLive":true,"initRef":"init-hd"}]}"#;
 
         // Act
         let catalog: Catalog = serde_json::from_str(json).unwrap();

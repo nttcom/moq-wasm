@@ -43,7 +43,7 @@ class CatalogTrack:
 
 @dataclass(frozen=True)
 class Catalog:
-    """An independent draft-01 MSF catalog."""
+    """An independent draft-02 MSF catalog."""
 
     tracks: list[CatalogTrack]
 
@@ -62,7 +62,8 @@ class Catalog:
     ) -> CatalogTrack | None:
         """The track whose fields match those given, the first in the catalog or the one `prefer`
         names. `codec` matches the codec string or its first element: `"avc1"` matches
-        `"avc1.42e01f"`. A track without a bitrate counts as the highest."""
+        `"avc1.42e01f"`. A track without a bitrate, which draft-ietf-moq-msf-02 requires only of
+        audio and video, counts as the highest."""
         matching = [
             track
             for track in self.tracks

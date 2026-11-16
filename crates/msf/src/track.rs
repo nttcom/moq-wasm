@@ -3,6 +3,48 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::InitData;
 use crate::types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole};
 
+/// An element of `depends` (draft-ietf-moq-msf-02 §5.2.15): a String names
+/// a track, a Number a `renderGroup`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Dependency {
+    TrackName(String),
+    RenderGroup(u64),
+}
+
+impl Dependency {
+    /// `depends` naming the tracks `names` among `tracks`: their
+    /// `renderGroup` when they are exactly its tracks, which
+    /// draft-ietf-moq-msf-02 §7.2 requires of a media timeline, and their
+    /// names otherwise.
+    pub fn on_tracks(tracks: &[Track], names: Vec<String>) -> Vec<Self> {
+        let render_group = |name: &String| {
+            tracks
+                .iter()
+                .find(|track| &track.name == name)
+                .and_then(|track| track.render_group)
+        };
+        let mut render_groups = names.iter().map(render_group);
+        if let Some(Some(group)) = render_groups.next()
+            && render_groups.all(|other| other == Some(group))
+            && tracks
+                .iter()
+                .filter(|track| track.render_group == Some(group))
+                .count()
+                == names.len()
+        {
+            return vec![Self::RenderGroup(group)];
+        }
+        names.into_iter().map(Self::TrackName).collect()
+    }
+}
+
+impl From<&str> for Dependency {
+    fn from(track_name: &str) -> Self {
+        Self::TrackName(track_name.to_string())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
@@ -26,7 +68,7 @@ pub struct Track {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub init_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub depends: Option<Vec<String>>,
+    pub depends: Option<Vec<Dependency>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporal_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,6 +110,21 @@ pub struct Track {
 impl Track {
     pub fn has_role(&self, role: KnownTrackRole) -> bool {
         self.role == Some(TrackRole::Known(role))
+    }
+
+    /// The tracks of `tracks` this track's `depends` refers to
+    /// (draft-ietf-moq-msf-02 §5.2.15): the one each name names and every
+    /// other track of each `renderGroup`.
+    pub fn dependencies<'a>(&'a self, tracks: &'a [Track]) -> impl Iterator<Item = &'a Track> {
+        self.depends.iter().flatten().flat_map(move |dependency| {
+            tracks.iter().filter(move |other| {
+                other.name != self.name
+                    && match dependency {
+                        Dependency::TrackName(name) => &other.name == name,
+                        Dependency::RenderGroup(group) => other.render_group == Some(*group),
+                    }
+            })
+        })
     }
 
     /// The fields draft-ietf-moq-msf-02 §5.2 requires of every track object.
@@ -162,6 +219,67 @@ pub fn channel_config(channels: u8) -> String {
 mod tests {
     use super::*;
     use crate::types::KnownTrackRole;
+
+    fn in_render_group(name: &str, render_group: Option<u64>) -> Track {
+        let mut track = Track::new(name, KnownPackaging::Loc, true);
+        track.render_group = render_group;
+        track
+    }
+
+    #[test]
+    fn depends_on_every_track_of_a_render_group_names_the_render_group() {
+        // Arrange
+        let tracks = [
+            in_render_group("video", Some(1)),
+            in_render_group("audio", Some(1)),
+        ];
+
+        // Act
+        let depends = Dependency::on_tracks(&tracks, vec!["video".into(), "audio".into()]);
+
+        // Assert
+        assert_eq!(depends, [Dependency::RenderGroup(1)]);
+    }
+
+    #[test]
+    fn depends_on_part_of_a_render_group_or_on_tracks_without_one_names_the_tracks() {
+        // Arrange
+        let tracks = [
+            in_render_group("video", Some(1)),
+            in_render_group("audio", Some(1)),
+            in_render_group("screen", None),
+        ];
+
+        // Act
+        let part = Dependency::on_tracks(&tracks, vec!["video".into()]);
+        let ungrouped = Dependency::on_tracks(&tracks, vec!["screen".into()]);
+
+        // Assert
+        assert_eq!(part, [Dependency::from("video")]);
+        assert_eq!(ungrouped, [Dependency::from("screen")]);
+    }
+
+    #[test]
+    fn dependencies_resolve_track_names_and_render_groups() {
+        // Arrange
+        let mut timeline = Track::new("timeline", KnownPackaging::MediaTimeline, true);
+        timeline.depends = Some(vec![Dependency::RenderGroup(1), "screen".into()]);
+        let tracks = [
+            in_render_group("video", Some(1)),
+            in_render_group("audio", Some(1)),
+            in_render_group("screen", None),
+            timeline.clone(),
+        ];
+
+        // Act
+        let names: Vec<&str> = timeline
+            .dependencies(&tracks)
+            .map(|track| track.name.as_str())
+            .collect();
+
+        // Assert
+        assert_eq!(names, ["video", "audio", "screen"]);
+    }
 
     #[test]
     fn new_carries_only_the_required_fields() {

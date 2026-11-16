@@ -507,20 +507,24 @@ media timeline tracks, one object each, at group 0, object 0:
   namespace's one `trackDuration` (§5.2.36): from the earliest to the latest
   LOC Timestamp of its media. `namespace` is left out, so every track inherits the replay
   namespace (§5.2.2) rather than naming the original publisher's;
-  `targetLatency` is dropped (§5.2.9). `depends` names only listed tracks, and
+  `targetLatency` is dropped (§5.2.9). A media timeline's `depends` refers only
+  to listed tracks, by their `renderGroup` when it covers all of it (§7.2), and
   `initDataList` holds the entries the listed `initRef`s name. The LOC tracks
   take one `renderGroup`, the first one's: a replay namespace holds one source,
   but `broadcast` numbers the sources anew in each catalog, so tracks described
   by different objects may disagree. The root is `isComplete: true` (§5.1.3)
   without `generatedAt` (§5.1.2).
 - The catalog also lists each media timeline a stored catalog object lists
-  whose `depends` names a stored track. Its object has one record per group a
+  whose `depends` refers to a stored track. Its object has one record per group a
   track it depends on holds media of, at the group's earliest first object
   with a Timestamp among those tracks (the chunks' `groups`): presentation
   time that Timestamp floored to milliseconds, wallclock 0 (§7.1.1), in
   presentation order.
 - A participant's transcript is an event timeline of its own, built from the
   transcriber's recording (see below).
+- The event timelines, the chat and the transcript, hold media time records
+  (`m`, see `RecordingClock`), so their `depends` names the namespace's media
+  timelines (§8.3).
 - All of them come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
   requires an object to be the same bytes wherever it is read, and several
   instances may replay one recording under the same namespaces, which the
@@ -528,13 +532,14 @@ media timeline tracks, one object each, at group 0, object 0:
   contents at one location.
 
 The transcriber publishes one `transcript` for the whole room under
-`<room>/bots/transcriber`, without a catalog: its catalog entry would have to
-name the audio it transcribes in `depends` (draft-ietf-moq-msf-02 §8.3), whose
-names MSF resolves in the timeline's own namespace (§5.2.15), and that audio is
-in the participants' (see [its design](../ai-bots/meeting-transcriber.md)). The
-replay therefore splits the transcript by speaker and serves each part in the
-speaker's camera namespace, where it can name the audio, and does not announce
-the transcriber's namespace:
+`<room>/bots/transcriber`, without a catalog (see [its
+design](../ai-bots/meeting-transcriber.md)). The replay's records are media
+time, so the replayed transcript's `depends` names the media timelines they
+refer to (draft-ietf-moq-msf-02 §8.3), whose names MSF resolves in the
+timeline's own namespace (§5.2.15), and each participant's timeline is in
+their own. The replay therefore splits the transcript by speaker and serves
+each part in the speaker's camera namespace, where it can name the timeline,
+and does not announce the transcriber's namespace:
 
 - The transcriber names a speaker after the element below the room of the
   namespace it transcribed, so a record goes to the member `<room>/<speaker>`,
@@ -546,8 +551,8 @@ the transcriber's namespace:
 - The session's catalog lists `transcript` after its other tracks:
   `packaging` `eventtimeline`, role `subtitle` ("a transcription of the spoken
   dialogue", §5.2.7), `eventType` `com.skyway.transcript.v1`, label
-  `Transcript`, `mimeType` `application/json`, `depends` the session's audio
-  tracks, and the namespace's `trackDuration` like the others.
+  `Transcript`, `mimeType` `application/json`, `depends` the namespace's media
+  timelines, and the namespace's `trackDuration` like the others.
 - The track is one object at group 0, object 0: the session's records as one
   §8.2 array sorted by `m`, a record stored twice listed once.
 

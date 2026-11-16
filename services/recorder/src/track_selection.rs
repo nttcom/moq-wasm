@@ -200,18 +200,17 @@ pub(crate) fn event_timelines(catalog: &Catalog) -> impl Iterator<Item = &Track>
     packaged(catalog, KnownPackaging::EventTimeline)
 }
 
-/// The media timeline tracks (draft-ietf-moq-msf-02 §7) whose `depends` names
-/// any of `tracks`.
+/// The media timeline tracks (draft-ietf-moq-msf-02 §7) whose `depends`
+/// refers to any of `tracks`.
 pub(crate) fn media_timelines<'a>(
     catalog: &'a Catalog,
     tracks: &[&str],
 ) -> impl Iterator<Item = &'a Track> {
-    packaged(catalog, KnownPackaging::MediaTimeline).filter(|timeline| {
+    let listed = catalog.tracks.as_deref().unwrap_or_default();
+    packaged(catalog, KnownPackaging::MediaTimeline).filter(move |timeline| {
         timeline
-            .depends
-            .iter()
-            .flatten()
-            .any(|name| tracks.contains(&name.as_str()))
+            .dependencies(listed)
+            .any(|track| tracks.contains(&track.name.as_str()))
     })
 }
 
@@ -423,7 +422,7 @@ mod tests {
         let mut catalog = meeting();
         let timeline = |name: &str, depends: &[&str]| {
             let mut timeline = Track::new(name, KnownPackaging::MediaTimeline, true);
-            timeline.depends = Some(depends.iter().map(|name| name.to_string()).collect());
+            timeline.depends = Some(depends.iter().map(|name| (*name).into()).collect());
             timeline
         };
         catalog.tracks.as_mut().unwrap().extend([

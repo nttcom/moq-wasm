@@ -33,6 +33,7 @@ pub enum KnownTrackRole {
     Caption,
     Subtitle,
     SignLanguage,
+    Data,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

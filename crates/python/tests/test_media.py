@@ -21,7 +21,7 @@ async def within(awaitable):
 
 
 def catalog_payload(*tracks: dict) -> bytes:
-    return json.dumps({"version": "draft-01", "tracks": list(tracks)}).encode()
+    return json.dumps({"version": "draft-02", "tracks": list(tracks)}).encode()
 
 
 def test_select_picks_the_lowest_bitrate_track_whose_codec_starts_with_the_one_given():
