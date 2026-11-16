@@ -481,9 +481,7 @@ fn json_response(status: StatusCode, body: Value) -> JsonResponse {
 }
 
 fn empty_response(status: StatusCode) -> JsonResponse {
-    let mut response = Response::new(Full::default());
-    *response.status_mut() = status;
-    no_store(response)
+    no_store(http_server::empty_response(status))
 }
 
 fn no_store(mut response: JsonResponse) -> JsonResponse {

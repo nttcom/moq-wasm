@@ -5,7 +5,7 @@ use std::{
 };
 
 use http_body_util::Full;
-use http_server::{HttpServer, error_response, json_response, read_json};
+use http_server::{HttpServer, empty_response, error_response, json_response, read_json};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -178,12 +178,6 @@ fn internal_error(error: &anyhow::Error) -> JsonResponse {
         "temporary token signing failed"
     );
     error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
-}
-
-fn empty_response(status: StatusCode) -> JsonResponse {
-    let mut response = Response::new(Full::default());
-    *response.status_mut() = status;
-    response
 }
 
 #[cfg(test)]

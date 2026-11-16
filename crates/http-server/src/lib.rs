@@ -80,6 +80,12 @@ pub fn error_response(status: StatusCode, error: &str) -> Response<Full<Bytes>> 
     json_response(status, &json!({ "error": error }))
 }
 
+pub fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::default());
+    *response.status_mut() = status;
+    response
+}
+
 pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
 
 /// `None` when the body is longer than `MAX_JSON_BODY_BYTES`, fails to read,
@@ -156,6 +162,17 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(response.headers()[CONTENT_TYPE], "application/json");
         assert_eq!(body_of(response).await, r#"{"error":"not_found"}"#);
+    }
+
+    #[tokio::test]
+    async fn an_empty_response_has_its_status_and_no_body() {
+        // Act
+        let response = empty_response(StatusCode::NO_CONTENT);
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(response.headers().is_empty());
+        assert_eq!(body_of(response).await, "");
     }
 
     #[tokio::test]

@@ -17,6 +17,7 @@ accepts connections, reads JSON request bodies and builds responses.
 | `HttpServer::run(listener, handler)` | Spawns the accept loop and owns its `JoinHandle`. Each connection runs hyper HTTP/1 on its own task and calls `handler(request, peer)` for every request. |
 | `json_response(status, body)` | `body` serialized as JSON with `Content-Type: application/json`. |
 | `error_response(status, error)` | `{"error": error}` through `json_response`. |
+| `empty_response(status)` | `status` with an empty body and no headers. |
 | `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
 
 ## Runtime flow
