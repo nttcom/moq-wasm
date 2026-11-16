@@ -103,23 +103,56 @@ Every other broadcast one level under `room` is a participant: its audio comes
 in as `UserAudioRawFrame` and its video as `UserImageRawFrame`, with the
 participant id as `user_id`. The transport has the events of `MOQTransport`.
 
-## Use from another Python project
+## Install
+
+Each release is a `python-sdk-v<version>` GitHub Release with abi3 wheels for
+Python 3.11 and later on Linux x86_64 and aarch64 (glibc 2.28 or later) and
+macOS arm64; the package is not on PyPI. Its release page is a list of links
+pip and uv read, so they pick the wheel of the platform they run on. With uv,
+declare it as an explicit index used only for `moq-wasm`:
 
 ```toml
 [project]
-dependencies = ["moq-wasm[pipecat]"]
+dependencies = ["moq-wasm[pipecat]==0.1.0"]
 
 [tool.uv.sources]
-moq-wasm = { path = "../../../crates/python" }
+moq-wasm = { index = "moq-wasm" }
+
+[[tool.uv.index]]
+name = "moq-wasm"
+url = "https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.1.0"
+format = "flat"
+explicit = true
 ```
+
+`uv lock` records the wheels of all three platforms. With pip:
+
+```shell
+pip install "moq-wasm[pipecat]==0.1.0" \
+  --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.1.0
+```
+
+Pin the version, or pip takes a newer `moq-wasm` from PyPI if one appears.
 
 The wheel carries no codec of its own. The `codecs` extra adds PyAV for
 `moq_wasm.codecs`, and the `pipecat` extra adds pipecat with it; leave both
 out when you only use `moq_wasm` and `moq_wasm.media`.
 
+### From the sources
+
+On another platform, or for a change not yet released, depend on this
+directory; the bots in `examples/python` do:
+
+```toml
+[tool.uv.sources]
+moq-wasm = { path = "../../../crates/python" }
+```
+
 uv builds the module with maturin, which needs this repository's Rust
 toolchain. After an uncommitted change to the `moqt` crate, or in a git
 worktree, run `uv sync --reinstall-package moq-wasm`.
+
+The changes of each release are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Test
 
