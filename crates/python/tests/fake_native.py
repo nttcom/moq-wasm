@@ -56,12 +56,10 @@ class FakeSubscription:
         self.closed = True
 
 
-class FakeMediaSource:
-    def __init__(self, video: str, audio: str):
-        self.video = video
-        self.audio = audio
+class FakeRendition:
+    def __init__(self, name: str):
+        self.name = name
         self.calls: list[tuple] = []
-        self.keyframe_requested = asyncio.Event()
 
     def configure_video(self, codec: str) -> None:
         self.calls.append(("configure_video", codec))
@@ -69,10 +67,30 @@ class FakeMediaSource:
     def push_video(self, data: bytes, timestamp_micros: int) -> None:
         self.calls.append(("push_video", data))
 
-    def configure_audio(self, codec: str, sample_rate: int, channels: int) -> None:
-        self.calls.append(("configure_audio", codec, sample_rate, channels))
 
-    def push_audio(self, data: bytes, timestamp_micros: int) -> None:
+class FakeMediaSource:
+    def __init__(self, video: str, audio: str):
+        self.video = video
+        self.audio = audio
+        self.calls: list[tuple] = []
+        self.renditions: list[FakeRendition] = []
+        self.keyframe_requested = asyncio.Event()
+
+    def add_rendition(self, name: str, **options) -> FakeRendition:
+        self.renditions.append(FakeRendition(name))
+        return self.renditions[-1]
+
+    def configure_video(self, codec: str) -> None:
+        self.calls.append(("configure_video", codec))
+
+    def push_video(self, data: bytes, timestamp_micros: int) -> None:
+        self.calls.append(("push_video", data))
+
+    def configure_audio(self, codec: str, sample_rate: int, channels: int, *, description=None) -> None:
+        described = () if description is None else (description,)
+        self.calls.append(("configure_audio", codec, sample_rate, channels, *described))
+
+    def push_audio(self, data: bytes, timestamp_micros: int, **level) -> None:
         self.calls.append(("push_audio", data))
 
     async def keyframe_request(self) -> None:
