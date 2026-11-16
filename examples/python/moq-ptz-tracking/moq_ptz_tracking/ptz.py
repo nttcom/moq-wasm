@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from moq_system_one_bot.publication import Publication
+from moq_wasm import TrackWriter
 
 from moq_ptz_tracking.vision import Box
 
@@ -58,9 +58,9 @@ class PtzCommands:
     group reach onvif-ingest in order and a Stop never overtakes the next ContinuousMove."""
 
     def __init__(self):
-        self._publication: Publication | None = None
+        self._publication: TrackWriter | None = None
 
-    def publish_on(self, publication: Publication) -> None:
+    def publish_on(self, publication: TrackWriter) -> None:
         self._publication = publication
 
     async def sweep(self, heading: "Heading") -> "Sweep":

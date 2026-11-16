@@ -9,7 +9,6 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 | `system_one_status` | System One の状態 `{"system_one", "since"}` を status トラックに書く。1 状態 1 group |
 | `relay` | 最初の接続がつながるまで試し続ける `stay_connected`（つなぎ直しは `moq_wasm.Session` が行う） |
 | `video` | `moq_wasm.codecs` の `VideoDecoder` で復号した絵を JPEG にする `picture_to_jpeg`（幅を指定すると縦横比を保って縮小する） |
-| `publication` | bot が書くトラックの型（`moq_wasm.TrackWriter` とテストの代役） |
 
 ## テスト
 
