@@ -5,10 +5,9 @@ description = "pipecat bot that transcribes every participant of a MoQ Meeting r
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
-    "av>=14",
     "moq-bot-rooms",
     "faster-whisper~=1.2.1",
-    "moq-wasm",
+    "moq-wasm[pipecat]",
     "pipecat-ai[silero]>=1.12",
     "torch>=2.11",
     "torchaudio>=2.11",

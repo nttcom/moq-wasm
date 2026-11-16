@@ -1,23 +1,24 @@
-from moq_meeting_transcriber.transcript import TranscriptRecord, TranscriptTimeline
+from moq_wasm.media import EventTimeline
+from pipecat.frames.frames import TextFrame
+from pipecat.tests.utils import run_test
+
+from moq_meeting_transcriber.stt import LANGUAGE, UtteranceTranscriptionFrame
+from moq_meeting_transcriber.transcript import TranscriptWriter
 from tests.helpers import RecordingPublication
 
-ALICE = TranscriptRecord(1_792_399_956_554, "alice", "こんにちは")
-BOB = TranscriptRecord(1_792_399_960_000, "bob", "今日は良い天気ですね")
 
-
-async def test_the_group_opens_empty_and_adds_one_record_per_object():
+async def test_each_utterance_is_one_record_at_the_time_it_began():
     # Arrange
     publication = RecordingPublication()
-    timeline = TranscriptTimeline(publication)
-    await timeline.open()
+    timeline = EventTimeline(publication)
+    await publication.connect()
+    utterance = UtteranceTranscriptionFrame("こんにちは", "alice", "2026-11-16T00:00:00Z", LANGUAGE, started_at_ms=1_792_399_956_554)
 
     # Act
-    await timeline.append(ALICE)
-    await timeline.append(BOB)
+    await run_test(TranscriptWriter(timeline), frames_to_send=[utterance, TextFrame("other")], expected_down_frames=[UtteranceTranscriptionFrame, TextFrame])
 
     # Assert
     assert publication.writes == [
         (True, []),
-        (False, [{"t": ALICE.started_at_ms, "data": {"speaker": "alice", "text": "こんにちは"}}]),
-        (False, [{"t": BOB.started_at_ms, "data": {"speaker": "bob", "text": "今日は良い天気ですね"}}]),
+        (False, [{"t": 1_792_399_956_554, "data": {"speaker": "alice", "text": "こんにちは"}}]),
     ]

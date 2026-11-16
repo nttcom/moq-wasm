@@ -143,27 +143,18 @@ in `[tool.uv.sources]`), and uv builds it with maturin, so building a bot
 needs a Rust toolchain. `examples/python/Dockerfile` gains a builder stage
 that compiles the wheel.
 
-The Meeting transcriber is the first user:
-- participants come from `watch_namespaces`, which also reports when they
-  leave;
-- catalogs are subscribed with `subscribe_current_group`;
-- the transcript is published through `session.publish_track`, so a late joiner's
-  FETCH is answered from the cache.
-
-The chat moderation bot is the second:
-- the page's chat is subscribed whenever `watch_namespaces` reports the
-  chat namespace, and again when the relay ends the track while the namespace
-  stays published;
-- the chat is plain UTF-8 text, one message per group, instead of moq-rs's
-  compressed JSON stream; a verdict names a message by its object's Location;
-- the verdicts and the System One status are published through `session.publish_track`
-  instead of the broadcast inside pipecat's `MOQTransport`.
-
-Camera detection and PTZ tracking follow: each subscribes to its page's
-prompt and the camera's video while their namespaces are published, and
-publishes its event timeline, System One status and, for PTZ, the ONVIF
-commands through `session.publish_track`. A video subscription that joins a group in
-the middle decodes nothing until the next group, which starts at a keyframe.
+The bots use the SDK's media layer ([sdk.md](sdk.md) "Media") rather than
+these bindings directly:
+- `watch_broadcasts` runs a handler per participant, or per page namespace,
+  and returns once the room has stayed empty for the grace period;
+- `RemoteBroadcast.catalogs` and `follow` read a participant's catalog and
+  tracks, subscribing again when the page that published them leaves;
+- `create_broadcast` publishes the bot's namespace with its event timeline
+  and status tracks, written again on each connection, so a late joiner's
+  FETCH is answered from the cache;
+- `moq_wasm.codecs` decodes the Opus audio and H.264 video. A video
+  subscription that joins a group in the middle decodes nothing until the
+  next group, which starts at a keyframe.
 
 ## Consequences
 

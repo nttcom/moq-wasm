@@ -1,7 +1,8 @@
 import asyncio
 
-import moq_wasm
 from loguru import logger
+from moq_wasm.codecs import OpusDecoder
+from moq_wasm.media import EventTimeline, RemoteBroadcast
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import UserAudioRawFrame
 from pipecat.pipeline.pipeline import Pipeline
@@ -9,46 +10,38 @@ from pipecat.pipeline.worker import PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.workers.runner import WorkerRunner
 
-from moq_meeting_transcriber.audio import SAMPLE_RATE, OpusDecoder
-from moq_meeting_transcriber.catalog import audio_track_name
+from moq_meeting_transcriber.audio import SAMPLE_RATE
 from moq_meeting_transcriber.stt import Recognizer, UtteranceSTTService
-from moq_meeting_transcriber.transcript import TranscriptTimeline, TranscriptWriter
-
-CATALOG_TRACK = "catalog"
-RESUBSCRIBE_DELAY_SECONDS = 1.0
+from moq_meeting_transcriber.transcript import TranscriptWriter
 
 
 class Participant:
-    """Transcribes one participant of the room for as long as their catalog track lasts."""
+    """Transcribes one participant of the room for as long as their catalog track lasts, each in a
+    pipeline of their own so that the voice activity detector hears one speaker."""
 
-    def __init__(
-        self,
-        session: moq_wasm.Session,
-        namespace: list[str],
-        recognizer: Recognizer,
-        timeline: TranscriptTimeline,
-    ):
-        self._session = session
-        self._namespace = namespace
-        self._name = namespace[-1]
+    def __init__(self, broadcast: RemoteBroadcast, recognizer: Recognizer, timeline: EventTimeline):
+        self._broadcast = broadcast
+        self._name = broadcast.namespace[-1]
         self._recognizer = recognizer
         self._timeline = timeline
 
     async def run(self) -> None:
-        # The joining FETCH brings the catalog the relay holds for the participant's other viewers.
-        catalog = await self._session.subscribe_current_group(self._namespace, CATALOG_TRACK)
         audio_track: str | None = None
         transcribing: asyncio.Task | None = None
         try:
-            async for catalog_object in catalog:
-                track = audio_track_name(catalog_object.payload)
-                if track == audio_track:
+            async for catalog in self._broadcast.catalogs():
+                # The lowest bitrate is the profile the Meeting's viewers take. The publisher encodes a
+                # profile only while someone subscribes to it, so this starts no extra encoder in the
+                # participant's browser.
+                track = catalog.select(role="audio", packaging="loc", codec="opus", prefer="lowest_bitrate")
+                name = track.name if track else None
+                if name == audio_track:
                     continue
                 if transcribing is not None:
                     transcribing.cancel()
-                audio_track = track
-                transcribing = asyncio.create_task(self._transcribe(track)) if track else None
-                logger.info(f"{self._name}: transcribing {track}" if track else f"{self._name}: no audio track")
+                audio_track = name
+                transcribing = asyncio.create_task(self._transcribe(name)) if name else None
+                logger.info(f"{self._name}: transcribing {name}" if name else f"{self._name}: no audio track")
         finally:
             if transcribing is not None:
                 transcribing.cancel()
@@ -69,34 +62,15 @@ class Participant:
         runner = WorkerRunner(handle_sigint=False)
         await runner.add_workers(worker)
         running = asyncio.create_task(runner.run())
+        decoder = OpusDecoder(SAMPLE_RATE)
         try:
-            while True:
-                await self._forward_audio(track_name, worker)
-                # A muted participant's audio track ends; it comes back on unmute.
-                await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
-        finally:
-            await runner.cancel()
-            await running
-
-    async def _forward_audio(self, track_name: str, worker: PipelineWorker) -> None:
-        decoder = OpusDecoder()
-        try:
-            track = await self._session.subscribe(self._namespace, track_name)
-        except RuntimeError as error:
-            logger.info(f"{self._name}: cannot subscribe to {track_name}: {error}")
-            return
-        try:
-            async for audio_object in track:
+            # A muted participant's audio track ends until they unmute.
+            async for audio_object in self._broadcast.follow(track_name):
                 pcm = decoder.decode(audio_object.payload)
                 if pcm:
                     await worker.queue_frame(
                         UserAudioRawFrame(user_id=self._name, audio=pcm, sample_rate=SAMPLE_RATE, num_channels=1)
                     )
-        except RuntimeError as error:
-            logger.info(f"{self._name}: {track_name} ended: {error}")
         finally:
-            # Ends the profile's encoder in the participant's browser when no one else takes it.
-            try:
-                await track.close()
-            except RuntimeError as error:
-                logger.debug(f"{self._name}: UNSUBSCRIBE {track_name} failed: {error}")
+            await runner.cancel()
+            await running

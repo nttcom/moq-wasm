@@ -1,14 +1,17 @@
 import asyncio
 import time
+from functools import partial
 
 import moq_wasm
 from loguru import logger
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
+from moq_wasm.media import EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
-from moq_meeting_transcriber.participant import Participant
 from moq_meeting_transcriber import status
+from moq_meeting_transcriber.participant import Participant
+from moq_meeting_transcriber.status import RecognizerStatus
 from moq_meeting_transcriber.stt import Recognizer
-from moq_meeting_transcriber.transcript import TRACK_NAME, Publication, TranscriptRecord, TranscriptTimeline
+from moq_meeting_transcriber.transcript import TRACK_NAME, TranscriptRecord
 
 # Two elements under the room, so the Meeting, which takes {root}/{room}/{user}, shows no participant for it.
 BOT_NAMESPACE = ["bots", "transcriber"]
@@ -38,7 +41,8 @@ class Room:
 
     async def run(self) -> None:
         """Transcribes the room until it is cancelled or nobody is in it. The session reconnects by
-        itself; this retries the first connection. Raises once the room's token cannot be kept fresh."""
+        itself; this retries the first connection. Raises once the room's token cannot be kept fresh,
+        or the relay refuses to show the room's participants."""
         while True:
             try:
                 session = await moq_wasm.connect(
@@ -53,41 +57,22 @@ class Room:
                 continue
             logger.info(f"room {self._room.key}: connected to {self._relay_url}")
             try:
-                if await session.run(self._transcribe(session)):
-                    return
+                await session.run(self._transcribe(session))
+                return
             finally:
                 await session.close()
-            logger.warning(f"room {self._room.key}: relay session closed")
-            await asyncio.sleep(RECONNECT_DELAY_SECONDS)
 
-    async def _transcribe(self, session: moq_wasm.Session) -> bool:
-        """True once the room has had no participant for the grace period; False when the relay session closed."""
-        bot_namespace = [*room_namespace(self._room), *BOT_NAMESPACE]
-        # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
-        publication = await session.publish_track(bot_namespace, TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
-        timeline = TranscriptTimeline(publication)
-        await timeline.open()
-        status_publication = await session.publish_track(
-            bot_namespace, status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS
-        )
-        await status.write_status(status_publication, self._recognizer.name, status.STARTING)
-        await session.announce(bot_namespace)
-        following = asyncio.create_task(self._follow_participants(session, timeline, status_publication))
-        # The binding's methods return futures, not coroutines.
-        closed = asyncio.ensure_future(session.closed())
-        try:
-            await asyncio.wait([following, closed], return_when=asyncio.FIRST_COMPLETED)
-            if not following.done():
-                return False
-            # Raises what stopped following the participants, so the room fails instead of going quiet.
-            following.result()
-            return True
-        finally:
-            for task in (following, closed):
-                task.cancel()
+    async def _transcribe(self, session: moq_wasm.Session) -> None:
+        """Returns once the room has had no participant for the grace period."""
+        async with create_broadcast(session, [*room_namespace(self._room), *BOT_NAMESPACE]) as bot:
+            timeline = bot.event_timeline(TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
+            recognizer_status = RecognizerStatus(
+                bot.publish_track(status.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS), self._recognizer.name
+            )
+            await self._follow_participants(session, timeline, recognizer_status)
 
     async def _follow_participants(
-        self, session: moq_wasm.Session, timeline: TranscriptTimeline, status_publication: Publication
+        self, session: moq_wasm.Session, timeline: EventTimeline, recognizer_status: RecognizerStatus
     ) -> None:
         # Audio is subscribed only once the recognizer answers, so a GPU service starting from zero
         # does not receive every utterance of its startup minutes at once.
@@ -96,44 +81,28 @@ class Room:
             done, _ = await asyncio.wait([ready], timeout=STARTING_NOTICE_AFTER_SECONDS)
             if not done:
                 notice = f"{self._recognizer.name} を起動しています。書き起こしが始まるまで時間がかかることがあります"
-                await timeline.append(TranscriptRecord(int(time.time() * 1000), "transcriber", notice))
+                await timeline.append(TranscriptRecord(int(time.time() * 1000), "transcriber", notice).to_json())
             await ready
         finally:
             ready.cancel()
         logger.info(f"room {self._room.key}: {self._recognizer.name} is ready")
-        await status.write_status(status_publication, self._recognizer.name, status.READY)
-        participants: dict[str, asyncio.Task] = {}
-        loop = asyncio.get_running_loop()
-        empty_until = loop.time() + GRACE_SECONDS
-        events = aiter(await session.watch_namespaces(room_namespace(self._room)))
-        try:
-            while True:
-                try:
-                    async with asyncio.timeout_at(None if participants else empty_until):
-                        event = await anext(events)
-                except (TimeoutError, StopAsyncIteration):
-                    # Safe to return: a page still open sees its request end and asks for the room again,
-                    # which starts a new bot.
-                    return
-                name = participant_name(event.namespace, self._room)
-                if name is None:
-                    continue
-                if name in participants:
-                    participants.pop(name).cancel()
-                if event.active:
-                    participant = Participant(session, event.namespace, self._recognizer, timeline)
-                    participants[name] = asyncio.create_task(self._run_participant(name, participant))
-                else:
-                    logger.info(f"room {self._room.key}: {name} left")
-                    if not participants:
-                        empty_until = loop.time() + GRACE_SECONDS
-        finally:
-            for task in participants.values():
-                task.cancel()
+        await recognizer_status.set(status.READY)
+        # Returning is safe once the room is empty: a page still open sees its request end and asks for
+        # the room again, which starts a new bot.
+        await watch_broadcasts(
+            session,
+            room_namespace(self._room),
+            partial(self._run_participant, timeline),
+            filter=lambda namespace: participant_name(namespace, self._room) is not None,
+            empty_timeout=GRACE_SECONDS,
+        )
 
-    async def _run_participant(self, name: str, participant: Participant) -> None:
+    async def _run_participant(self, timeline: EventTimeline, broadcast: RemoteBroadcast) -> None:
+        name = broadcast.namespace[-1]
         logger.info(f"room {self._room.key}: {name} joined")
         try:
-            await participant.run()
+            await Participant(broadcast, self._recognizer, timeline).run()
         except RuntimeError as error:
             logger.info(f"room {self._room.key}: {name}'s catalog ended: {error}")
+        finally:
+            logger.info(f"room {self._room.key}: {name} left")
