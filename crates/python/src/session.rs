@@ -6,9 +6,7 @@ use std::{
 use moqt::{
     AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
     NATIVE, Version,
-    client::{
-        self, FetchError, GroupStartOptions, PublishTrackOptions, RequestError, SubscribeOptions,
-    },
+    client::{self, FetchError, GroupStartOptions, PublishTrackOptions, SubscribeOptions},
     object::GroupOrder,
     publish::Retention,
     subscribe::FilterType,
@@ -21,8 +19,13 @@ use pyo3::{
 use broadcast::{Broadcast, RelayConnection};
 
 use crate::{
-    fetch::Fetch, location::Location, media_broadcast::MediaBroadcast,
-    namespace_watch::NamespaceWatch, subscription::Subscription, track_writer::TrackWriter,
+    errors::{CloseInfo, TransportStats, request_error},
+    fetch::Fetch,
+    location::Location,
+    media_broadcast::MediaBroadcast,
+    namespace_watch::NamespaceWatch,
+    subscription::Subscription,
+    track_writer::TrackWriter,
 };
 
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
@@ -103,12 +106,6 @@ fn group_start_options(
             }
         },
     })
-}
-
-/// The message of a failed request's Python exception: the `RequestFailure` alone, without the
-/// `{kind:?} failed:` prefix `RequestError` displays.
-fn request_error(error: RequestError) -> anyhow::Error {
-    error.failure.into()
 }
 
 #[pyclass(module = "moq_wasm")]
@@ -213,7 +210,7 @@ impl Session {
                 .await
                 .map_err(|error| match error {
                     FetchError::Request(error) => request_error(error),
-                    error => error.into(),
+                    error => anyhow::Error::from(error).into(),
                 })?;
             Ok(Fetch::from(fetch))
         })
@@ -362,13 +359,20 @@ impl Session {
         })
     }
 
-    /// Waits until the relay closes the session.
+    /// The way the session's last connection closed, once it has.
     fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.moqt_session().clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            session.closed().await;
-            Ok(())
+            Ok(CloseInfo::from(session.closed().await))
         })
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        let bytes = self.session.transferred_bytes();
+        TransportStats {
+            sent_bytes: bytes.sent,
+            received_bytes: bytes.received,
+        }
     }
 
     /// Closes the session and waits until the relay has seen the close.

@@ -1,4 +1,5 @@
 mod catalog;
+mod errors;
 mod fetch;
 mod location;
 mod media_broadcast;
@@ -16,6 +17,12 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(session::connect, module)?)?;
     module.add_function(wrap_pyfunction!(catalog::parse_catalog, module)?)?;
     module.add_class::<session::Session>()?;
+    module.add_class::<errors::CloseInfo>()?;
+    module.add_class::<errors::TransportStats>()?;
+    module.add(
+        "RequestError",
+        module.py().get_type::<errors::RequestError>(),
+    )?;
     module.add_class::<namespace_watch::NamespaceEvent>()?;
     module.add_class::<namespace_watch::NamespaceWatch>()?;
     module.add_class::<subscription::Subscription>()?;
