@@ -88,7 +88,7 @@ impl Broadcast {
     /// notified when a subscriber asks for a new group, which the source
     /// starts by encoding a keyframe. Call before the track's first
     /// `update_video_catalog`, which publishes it.
-    pub async fn accept_keyframe_requests(
+    pub(crate) async fn accept_keyframe_requests(
         &self,
         track_name: &str,
         requested: Arc<Notify>,
@@ -129,7 +129,7 @@ impl Broadcast {
     /// sent only while a subscriber takes it, and `demand_sender` is sent
     /// whether one does, now and at every change. Call before the catalog
     /// update that publishes the track.
-    pub async fn publish_on_demand(
+    pub(crate) async fn publish_on_demand(
         &self,
         track_name: &str,
         demand_sender: mpsc::UnboundedSender<TrackDemand>,
@@ -142,7 +142,11 @@ impl Broadcast {
             .await
     }
 
-    pub async fn update_video_catalog(&self, track_name: &str, info: VideoTrackInfo) -> Result<()> {
+    pub(crate) async fn update_video_catalog(
+        &self,
+        track_name: &str,
+        info: VideoTrackInfo,
+    ) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
