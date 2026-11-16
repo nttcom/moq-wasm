@@ -497,7 +497,8 @@ export type MsfTrack = {
     label?: string;
     codec?: string;
     mimeType?: string;
-    depends?: string[];
+    depends?: (string | number)[];
+    renderGroup?: number;
     altGroup?: number;
     bitrate?: number;
     width?: number;
