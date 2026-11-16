@@ -4,7 +4,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use client_telemetry::{
-    Scoped, SpanRecordLayer, current_scope, current_traceparent, in_scope, log_record, scoped,
+    Scoped, SpanRecordLayer, continue_trace_from_traceparent, current_scope, current_traceparent,
+    in_scope, log_record, scoped,
 };
 use js_sys::Function;
 use serde_json::Value;
@@ -106,6 +107,7 @@ pub fn set_log_sink(
     moqt::executor::set_spawn_wrapper(carry_scope);
     if span_callback.is_some() {
         moqt::set_trace_context_provider(current_traceparent);
+        moqt::set_trace_context_joiner(continue_trace_from_traceparent);
     }
     SPAN_CALLBACK.with(|slot| *slot.borrow_mut() = span_callback);
     Ok(())

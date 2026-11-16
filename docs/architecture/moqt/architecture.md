@@ -50,8 +50,8 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
 - The whole stack compiles for `wasm32` as well; the quinn-based transports
   and their markers (`QUIC`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
   and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
-  `Endpoint::<BROWSER>` and adapts its `Session` to the JavaScript callback
-  API; it also uses the message codecs for the JavaScript message types.
+  `Endpoint::<BROWSER>` and wraps the connected session in a
+  `client::Session`, whose types it binds to JavaScript.
 - `wire.rs` exports the draft-14 numeric codes (`RequestKind` and the
   request-error / PUBLISH_DONE conversions) for the wasm bindings, whose
   JavaScript API carries draft-14 numbers, and the types public items expose:
@@ -798,9 +798,8 @@ event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
 PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
 watcher on `Disconnected` and hands every other event back. A watcher is
 registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
-the namespaces it knows right away. The Python bindings and the browser SDK's
-`Session` (`crates/wasm/src/session.rs`), which hand out one iterator per
-namespace subscription, use it.
+the namespaces it knows right away. `client::Session` and the Python
+bindings, which hand out one iterator per namespace subscription, use it.
 
 ### `client` — the client session
 

@@ -991,16 +991,19 @@ export interface TrackWriter extends AsyncDisposable {
 wasm 側の実装は `crates/wasm/src/session.rs` の `Session`、`Subscription`、
 `FetchStream`、`NamespaceWatch` で、iterator は `next()` の Promise として出す。
 JS の `AsyncIterable` への包み直しと `groups()` は、最初の利用者である `LivePlayer` を
-載せる手順で足す。session のイベントは `crates/wasm/src/session_routes.rs` の
-`SessionRoutes` が振り分ける。配信側のリクエスト（SUBSCRIBE、UNSUBSCRIBE、FETCH、
-FETCH_CANCEL、TRACK_STATUS）は session の `moqt::Origin` へ、PUBLISH_NAMESPACE は
-`moqt::namespace::NamespaceWatchers` へ、PUBLISH_DONE は該当する `Subscription` の
-`done` へ送る。`announce` と `publishTrack` が返す `Announcement` と `TrackWriter` は、
-その `Origin` に書く。どこも引き受けないイベントには `SessionRoutes` 自身が答える。
-SUBSCRIBE は TRACK_DOES_NOT_EXIST、PUBLISH は UNINTERESTED で断り、SUBSCRIBE_NAMESPACE
-には OK を返す。それぞれ `wasm.subscribe`、`wasm.publish`、`wasm.subscribe_namespace`
-の span の中で答え、リクエストが TRACE_CONTEXT を持っていれば、その span を
-`client_telemetry::continue_trace_from_traceparent` で相手の request span の子にする。
+載せる手順で足す。これらは `moqt::client` の同名の型（`FetchStream` は
+`client::Fetch`）の wasm_bindgen の包みで、JsValue との変換、`SessionScope` による
+telemetry の帰属、`RequestError` から draft-14 のコードを持つ `Error` への変換だけを
+持つ。session のイベントの振り分けと、どこも引き受けないリクエストへの答え方は
+`docs/architecture/moqt/architecture.md` の「`client` — the client session」にある。
+`broadcast` と `mp4Broadcast` の `RelayConnection` は
+`RelayConnection::with_client_session` で作り、`add_handler` で `Origin` より前に
+並べる（外さない）。相手のリクエストへの答えは `moqt.client.subscribe`、
+`moqt.client.publish`、`moqt.client.subscribe_namespace` の span に入る。`setLogSink`
+が span の callback とともに `client_telemetry::continue_trace_from_traceparent` を
+`moqt::set_trace_context_joiner` に渡すので、その span は相手の request span の子に
+なる。`close()` は `moqt::Session::close_with_error` で "closed by the application"
+を送り、待たずに戻る。
 
 ### 認証トークン
 
