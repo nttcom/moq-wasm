@@ -19,7 +19,7 @@ records go stays with each client.
 | `current_traceparent` | The innermost span `SpanRecordLayer` saw entered on this thread, as a W3C `traceparent`; clients give it to `moqt::set_trace_context_provider` |
 | `continue_trace_from_traceparent` | Makes a span not yet entered the child of the remote span a `traceparent` names, as the wasm module does for the answers to a peer's request that carries TRACE_CONTEXT |
 | `ReportBuffer` | The newest 100 logs and 100 spans since a client last took them, the most one report carries |
-| `report_layer` | `log_record` and `SpanRecordLayer` writing into a `ReportBuffer`, timed by `SystemTime` and std's randomly keyed hasher, for the native clients (`moq-cli`, the Python module) |
+| `report_layer` | `log_record` and `SpanRecordLayer` writing into a `ReportBuffer`, timed by `now_ms` (`SystemTime`) and `random_u64` (std's randomly keyed hasher), for `moq-cli`; the Python module builds its own layer from the same parts |
 
 ## Invariants
 - A child span takes its parent's trace id; a span without a parent starts a

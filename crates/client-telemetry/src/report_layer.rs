@@ -32,15 +32,17 @@ impl<S: Subscriber> Layer<S> for LogLayer {
     }
 }
 
-fn now_ms() -> u64 {
+/// Milliseconds since the Unix epoch, from `SystemTime`, for native clients.
+pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_millis() as u64)
 }
 
 /// A random 64-bit value from std's randomly keyed hasher, so the crate needs
-/// no RNG crate.
-fn random_u64() -> u64 {
+/// no RNG crate; enough for trace and span ids, which need to be unique, not
+/// unpredictable. For native clients.
+pub fn random_u64() -> u64 {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_u64(COUNTER.fetch_add(1, Ordering::Relaxed));
