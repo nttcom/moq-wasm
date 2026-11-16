@@ -12,7 +12,7 @@
         <div>
           <span class="pill">CMAF Publisher</span>
           <h1>MoQT CMAF Publisher</h1>
-          <p>Publish video and audio as fMP4 segments (moof+mdat per GoP) over MoQT.</p>
+          <p>Publishes the camera with <code>createBroadcast()</code> and <code>cmaf: true</code>.</p>
         </div>
       </header>
       <div id="app">
@@ -20,34 +20,55 @@
           <section class="card stack full">
             <h2>Console</h2>
             <p class="hint">info / warn / error を表示します。</p>
-            <div id="logPanel"></div>
+            <div id="logPanel" data-testid="publisher-log-panel"></div>
           </section>
           <section class="card stack">
             <h2>Connection</h2>
             <div id="urlPresets"></div>
-            <input type="url" name="url" id="url" aria-label="Relay URL" />
+            <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="publisher-url-input" />
             <div class="button-row">
-              <button type="button" id="connectBtn">Connect</button>
-              <button type="button" id="closeBtn">Close</button>
+              <button type="button" id="connectBtn" data-testid="publisher-connect-button">Connect</button>
+              <button type="button" id="closeBtn" data-testid="publisher-close-button">Close</button>
             </div>
           </section>
 
           <section class="card stack">
-            <h3>PUBLISH_NAMESPACE</h3>
-            <label
-              >Track Namespace:
-              <input type="text" name="publish-track-namespace" id="publish-track-namespace" value="" />
-            </label>
-            <div class="button-row action-row">
-              <button type="button" id="sendPublishNamespaceBtn">Send</button>
+            <h2>Status</h2>
+            <div class="status-list">
+              <div class="status-item">
+                <span class="status-label">Connection</span>
+                <span id="publisher-connection-status" class="status-value" data-testid="publisher-connection-status">
+                  Not connected
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Capture</span>
+                <span id="publisher-capture-status" class="status-value" data-testid="publisher-capture-status">
+                  Capture idle
+                </span>
+              </div>
+              <div class="status-item">
+                <span class="status-label">Publish</span>
+                <span id="publisher-send-status" class="status-value" data-testid="publisher-send-status">
+                  Not publishing
+                </span>
+              </div>
             </div>
           </section>
 
           <section class="card stack full">
-            <h3>OBJECT (Video + Audio)</h3>
-            <p class="hint">
-              Published tracks: catalog, video_720p, audio_aac (CMAF packaging — 1 GoP = 1 moof+mdat segment)
-            </p>
+            <h3>Broadcast</h3>
+            <label
+              >Track Namespace:
+              <input
+                type="text"
+                name="publish-track-namespace"
+                id="publish-track-namespace"
+                value=""
+                data-testid="publisher-namespace-input"
+              />
+            </label>
+            <p class="hint">Published tracks: catalog, camera, camera_cmaf, camera_audio, camera_timeline</p>
             <div class="field-row">
               <label
                 >Keyframe Interval:
@@ -59,59 +80,16 @@
               </label>
             </div>
             <div class="button-row">
-              <button type="button" id="startGetUserMediaBtn">getUserMedia</button>
-            </div>
-            <div>
-              <button type="button" id="sendSubgroupObjectBtn">Send</button>
+              <button type="button" id="startGetUserMediaBtn" data-testid="publisher-get-user-media-button">
+                getUserMedia
+              </button>
+              <button type="button" id="publishBtn" data-testid="publisher-send-button">Publish</button>
             </div>
           </section>
 
           <section class="card stack full">
-            <div class="card-title-row">
-              <h2>Preview</h2>
-              <button
-                type="button"
-                id="toggleMoqSendVisualizerBtn"
-                class="icon-button"
-                aria-label="MoQ送信可視化を表示"
-                aria-pressed="false"
-                title="MoQ送信可視化を表示"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-              </button>
-            </div>
+            <h2>Preview</h2>
             <video id="video" autoplay muted inline></video>
-            <div id="moqSendVisualizerPanel" class="visualizer-panel">
-              <div class="visualizer-cards">
-                <section class="visualizer-card">
-                  <h3>Current MoQ Object</h3>
-                  <table class="visualizer-table">
-                    <thead>
-                      <tr>
-                        <th>Track</th>
-                        <th>Group ID</th>
-                        <th>Object ID</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <th>Video</th>
-                        <td id="send-viz-video-group-id">-</td>
-                        <td id="send-viz-video-object-id">-</td>
-                      </tr>
-                      <tr>
-                        <th>Audio</th>
-                        <td id="send-viz-audio-group-id">-</td>
-                        <td id="send-viz-audio-object-id">-</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </section>
-              </div>
-            </div>
           </section>
         </form>
       </div>

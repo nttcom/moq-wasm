@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path'
 
 export const MEDIA_PUBLISHER_PATH = '/moq-wasm/examples/media/publisher/index.html'
 export const MEDIA_SUBSCRIBER_PATH = '/moq-wasm/examples/media/subscriber/index.html'
+export const MEDIA_CMAF_PUBLISHER_PATH = '/moq-wasm/examples/media-cmaf/publisher/index.html'
+export const MEDIA_CMAF_SUBSCRIBER_PATH = '/moq-wasm/examples/media-cmaf/subscriber/index.html'
 export const MEETING_INDEX_PATH = '/moq-wasm/examples/meeting/index.html'
 export const MESSAGE_INDEX_PATH = '/moq-wasm/examples/message/index.html'
 export const DATAGRAM_INDEX_PATH = '/moq-wasm/examples/datagram/index.html'
