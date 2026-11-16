@@ -89,7 +89,7 @@ subscriptions to each other and authenticate sessions through the VTS.
 | --- | --- |
 | [`crates/moqt/`](crates/moqt/README.md) | Protocol library every other component builds on |
 | [`services/relay/`](services/relay/README.md) | Relay: cache, FETCH, cascading, JWT auth |
-| [`crates/wasm/`](crates/wasm/README.md), [`crates/python/`](crates/python/README.md) | Browser (`moq-wasm` SDK) and Python bindings |
+| [`crates/wasm/`](crates/wasm/README.md), [`crates/python/`](crates/python/README.md) | `moq-wasm` SDK for the browser and for Python |
 | [`services/live-ingest/`](services/live-ingest/README.md), [`onvif-ingest/`](services/onvif-ingest/README.md), [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | Publishers: RTMP/SRT/RTP, ONVIF cameras, GStreamer `moqtsink` |
 | [`services/live-egress/`](services/live-egress/README.md), [`recorder/`](services/recorder/README.md) | Subscribers: plain RTP output, MP4 recording |
 | [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media: containers, MSF catalog, track layout, re-encoding |
