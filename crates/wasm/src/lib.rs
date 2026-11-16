@@ -1,4 +1,4 @@
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[cfg(target_arch = "wasm32")]
 mod loc;
 #[cfg(target_arch = "wasm32")]
 mod log_sink;
@@ -10,11 +10,6 @@ mod mp4_broadcast;
 mod msf_catalog;
 #[cfg(target_arch = "wasm32")]
 mod session;
-#[cfg(target_arch = "wasm32")]
-pub use log_sink::set_log_sink;
-#[cfg(target_arch = "wasm32")]
-pub use mp4_broadcast::{Mp4Broadcast, PublishedStream};
-pub use msf_catalog::*;
 
 use wasm_bindgen::prelude::*;
 
