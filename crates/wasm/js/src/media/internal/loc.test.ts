@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
-import { AUDIO_LEVEL_ID, TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID, buildLocHeader, readLocHeader } from './loc'
+import { AUDIO_LEVEL_ID, TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID, readLocHeader } from './loc'
+import { buildLocHeader } from './testing/locHeader'
 
 test('the capture time and video config round-trip as LOC-04 properties', () => {
   // Arrange
