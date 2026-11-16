@@ -47,11 +47,13 @@ class FakeMediaStream {
   }
 }
 
+type WorkerMessage = { type?: string; track?: FakeTrack; rendition?: number; wanted?: boolean }
+
 class FakeWorker {
-  readonly messages: { type?: string; track?: FakeTrack }[] = []
+  readonly messages: WorkerMessage[] = []
   private terminated = false
 
-  postMessage(message: { type?: string; track?: FakeTrack }): void {
+  postMessage(message: WorkerMessage): void {
     this.messages.push(message)
   }
 
@@ -91,7 +93,11 @@ class FakeMediaBroadcast {
     return this.declaring
   }
 
-  addSource(): FakeMediaSource {
+  /// The callback the last `addSource` was given.
+  onDemandChange: (trackName: string, wanted: boolean) => void = () => {}
+
+  addSource(...args: unknown[]): FakeMediaSource {
+    this.onDemandChange = args.at(-1) as (trackName: string, wanted: boolean) => void
     const source = new FakeMediaSource()
     this.sources.push(source)
     return source

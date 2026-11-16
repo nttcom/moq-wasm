@@ -133,6 +133,9 @@ await local.close() // PUBLISH_DONE on every track; the session stays open
   the page passed. A refused permission rejects with the `getUserMedia` error.
 - Each track is encoded and sent only while a subscriber takes it, so
   `stats()` reports 0 for a track nobody watches.
+- `cmaf: true` also sends the video and each rendition as CMAF in
+  `<track>_cmaf`, which a `LivePlayer` plays after `setPackaging('cmaf')`.
+  The Opus audio has no CMAF track, so CMAF playback is video only.
 - `source.stats()` returns `encodedKbps`, `encodedFramesPerSecond` and
   `encoderErrors` for `video` and `audio`; `video` also has `frameSize`,
   `droppedFrames` and each rendition by name in `renditions`.

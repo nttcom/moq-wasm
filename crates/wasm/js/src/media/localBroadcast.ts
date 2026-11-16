@@ -202,6 +202,7 @@ class Broadcast implements LocalBroadcast {
           videoBitrate(options),
           videoFramerate(options),
           audioName,
+          options.cmaf ?? false,
           onKeyframeRequest,
           onDemandChange
         ),
