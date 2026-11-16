@@ -25,6 +25,7 @@ use tracing_subscriber::{
     registry::LookupSpan,
 };
 
+use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT;
 use crate::modules::moqt::control_plane::error_codes::RequestErrorCode;
 use crate::modules::moqt::domains::session_events::MAX_UNREAD_EVENTS;
 use crate::modules::transport::{
@@ -574,6 +575,18 @@ pub(crate) async fn spawn_connected_native_sessions(name: &str) -> (Session, Ses
     connect_sessions(&format!("moqt://127.0.0.1:{port}"), accept)
         .await
         .unwrap()
+}
+
+/// `spawn_connected_native_sessions`, each side wrapped in a
+/// `client::Session`, as (client, server).
+pub(crate) async fn connected_client_sessions(
+    name: &str,
+) -> (crate::client::Session, crate::client::Session) {
+    let (client, server) = spawn_connected_native_sessions(name).await;
+    (
+        crate::client::Session::new(client),
+        crate::client::Session::new(server),
+    )
 }
 
 /// Connects a NATIVE client and server over raw QUIC that offer only
@@ -1281,6 +1294,24 @@ where
             span: None,
         });
     }
+}
+
+thread_local! {
+    static PROVIDES_TRACE_CONTEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The provider is process-global and set once, so it answers only on the
+/// thread of the test that opts in.
+fn test_trace_context_provider() -> Option<String> {
+    PROVIDES_TRACE_CONTEXT
+        .get()
+        .then(|| TEST_TRACEPARENT.to_string())
+}
+
+/// Makes the requests sent on this thread carry `TEST_TRACEPARENT`.
+pub(crate) fn provide_trace_context() {
+    crate::set_trace_context_provider(test_trace_context_provider);
+    PROVIDES_TRACE_CONTEXT.set(true);
 }
 
 thread_local! {

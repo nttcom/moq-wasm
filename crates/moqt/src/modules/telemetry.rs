@@ -1,10 +1,13 @@
 use std::sync::OnceLock;
 
+use tracing::Span;
+
 use crate::modules::moqt::version::ControlChannel;
 
 use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TraceContext;
 
 static TRACE_CONTEXT_PROVIDER: OnceLock<fn() -> Option<String>> = OnceLock::new();
+static TRACE_CONTEXT_JOINER: OnceLock<fn(&Span, &str)> = OnceLock::new();
 
 /// Sets the function that returns the W3C `traceparent` of the current span.
 /// SUBSCRIBE, PUBLISH, FETCH, SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE and, on
@@ -13,6 +16,22 @@ static TRACE_CONTEXT_PROVIDER: OnceLock<fn() -> Option<String>> = OnceLock::new(
 /// inside `moqt.session.connect`. Only the first call takes effect.
 pub fn set_trace_context_provider(provider: fn() -> Option<String>) {
     let _ = TRACE_CONTEXT_PROVIDER.set(provider);
+}
+
+/// Sets the function that makes a span a child of the remote span a W3C
+/// `traceparent` names. `client::Session` calls it on the span that answers
+/// a peer's request carrying TRACE_CONTEXT, before the span is entered.
+/// Without one, those spans root their own traces. Only the first call takes
+/// effect.
+pub fn set_trace_context_joiner(joiner: fn(&Span, &str)) {
+    let _ = TRACE_CONTEXT_JOINER.set(joiner);
+}
+
+/// Makes `span` continue the peer's trace when the request carried one.
+pub(crate) fn join_trace(span: &Span, trace_context: Option<&TraceContext>) {
+    if let (Some(joiner), Some(trace_context)) = (TRACE_CONTEXT_JOINER.get(), trace_context) {
+        joiner(span, trace_context.as_str());
+    }
 }
 
 /// `None` unless the peer's SETUP declared TRACE_CONTEXT, a provider is set
@@ -43,37 +62,17 @@ pub(crate) fn current_traceparent() -> Option<TraceContext> {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use std::cell::Cell;
-
-    use super::set_trace_context_provider;
     use crate::SessionEvent;
     use crate::TraceContext;
     use crate::Version;
     use crate::modules::moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT;
     use crate::modules::test_support::{
         DRAFTS, client_with_config, connected_sessions, insecure_client_config,
-        send_without_waiting, spawn_native_server_handshake_offering, within,
+        provide_trace_context, send_without_waiting, spawn_native_server_handshake_offering, within,
         without_trace_context_declaration,
     };
     use crate::namespace::NamespaceInterest;
     use crate::subscribe::SubscribeOption;
-
-    thread_local! {
-        static PROVIDES_TRACE_CONTEXT: Cell<bool> = const { Cell::new(false) };
-    }
-
-    /// The provider is process-global and set once, so it answers only on
-    /// the thread of the test that opts in.
-    fn test_provider() -> Option<String> {
-        PROVIDES_TRACE_CONTEXT
-            .get()
-            .then(|| TEST_TRACEPARENT.to_string())
-    }
-
-    fn provide_trace_context() {
-        set_trace_context_provider(test_provider);
-        PROVIDES_TRACE_CONTEXT.set(true);
-    }
 
     async fn subscribe_trace_context(name: &str, version: Version) -> Option<String> {
         provide_trace_context();

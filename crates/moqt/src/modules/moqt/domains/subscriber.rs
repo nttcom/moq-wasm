@@ -1078,10 +1078,7 @@ fn repeated_update(subscription: &Subscription) -> SubscribeUpdateOption {
     if let Some(last) = subscription.last_update().get() {
         return last;
     }
-    let largest = match subscription.content_exists() {
-        ContentExists::True { location } => Some(location),
-        ContentExists::False => None,
-    };
+    let largest = subscription.content_exists().largest();
     let filter_type = subscription.filter_type();
     SubscribeUpdateOption {
         start_location: filter_type.start_location(largest),

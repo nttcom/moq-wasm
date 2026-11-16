@@ -2,6 +2,7 @@
 
 mod modules;
 
+pub mod client;
 pub mod executor;
 pub mod fetch;
 pub mod namespace;
@@ -42,7 +43,7 @@ pub use crate::modules::moqt::protocol::NATIVE;
 pub use crate::modules::moqt::protocol::QUIC;
 pub use crate::modules::moqt::protocol::TransportProtocol;
 pub use crate::modules::moqt::version::{DEFAULT_VERSIONS, Version};
-pub use crate::modules::telemetry::set_trace_context_provider;
+pub use crate::modules::telemetry::{set_trace_context_joiner, set_trace_context_provider};
 pub use crate::modules::transport::accept_error::AcceptError;
 pub use crate::modules::transport::transport_connection::TransportClose;
 pub use crate::modules::transport::transport_send_stream::TransportSendError;

@@ -105,15 +105,21 @@ session.close().await;
 | `moqt::client` | JS | 中身 |
 | --- | --- | --- |
 | `Session` | `MoqSession` | `Arc<moqt::Session>`、`Origin`、`NamespaceWatchers`、PUBLISH_DONE の待ち手、イベントループの `JoinHandle` を持つ。`close` はイベントループを止め、`moqt::Session::close` を呼ぶ |
-| `Subscription` | `MoqSubscription` | `next`、`groups`、`largest`、`done`、`set_forward`、`end_before_group`、`close` |
+| `Subscription` | `MoqSubscription` | `next`、`next_group`（JS の `groups()`）、`largest`、`done`、`set_forward`、`set_priority`、`request_new_group`、`end_before_group`、`close` |
 | `Group` | `MoqGroup` | 1本の subgroup stream |
 | `Fetch` | `MoqFetch` | 1つの FETCH の応答 |
 | `NamespaceWatch` | `MoqNamespaceWatch` | `next` と `close`（UNSUBSCRIBE_NAMESPACE） |
 | `Announcement` | `Announcement` | `close`（PUBLISH_NAMESPACE_DONE） |
-| `TrackWriter` | `TrackWriter` | `Origin` に書く `write`、`write_group`、`next_subscriber` |
+| `TrackWriter` | `TrackWriter` | `Origin` に書く `write`（拡張ヘッダーは `ExtensionHeaders`）、`write_group`、`next_subscriber` |
 | `EventHandler` | なし | 下記 |
+| `RequestError` | `RequestError` | `kind`（`RequestKind`）、`failure`（`RequestFailure`）、`code()`（draft のエラーコード）、`reason()` |
 
 決めごと:
+
+- 作り方は2つある。`Session::new(moqt::Session)` は、接続済みの session のイベントを
+  引き取る。wasm と Python の binding は、endpoint（ブラウザの transport、トークン、
+  telemetry の span）を自分で作ってから、これを呼ぶ。`Session::connect(url, &ClientConfig)`
+  は、自分の endpoint で接続する（native は `NATIVE`、wasm32 は `BROWSER`）。
 
 - 名前は JS に合わせる（`publish_track`、`watch_namespaces`、`announce`）。
   `moqt::TrackWriter` と `moqt::Subscription` は、1本の stream に書く低い層の型として
@@ -136,6 +142,8 @@ wasm の `SessionRoutes` は、イベントを `Origin` より先に、ページ
 `async fn handle(&self, SessionEvent) -> Option<SessionEvent>`（引き受けなければ
 イベントを返す）という同じ形をしている。そこで、この形を `client::EventHandler`
 trait にし、`Session::add_handler` で `Origin` より前に並べられるようにする。
+`add_handler` が返す `HandlerId` を `remove_handler` に渡すと外れる（Python の
+`MediaBroadcast.close` が使う）。
 `broadcast` は `RelayConnection` にこの trait を実装し、`client::Session` から
 `RelayConnection` を作る関数を足す（今の `with_session(session, origin)` の
 引数を、`client::Session` が渡す）。

@@ -10,6 +10,14 @@ pub enum ContentExists {
 }
 
 impl ContentExists {
+    /// The Largest Location, when the track has content.
+    pub fn largest(self) -> Option<Location> {
+        match self {
+            ContentExists::True { location } => Some(location),
+            ContentExists::False => None,
+        }
+    }
+
     pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let value = bytes.try_get_u8().context("content exists u8")?;
         let content_exists = u8_to_bool(value).context("content exists")?;

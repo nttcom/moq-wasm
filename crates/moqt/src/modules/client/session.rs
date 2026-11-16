@@ -1,0 +1,654 @@
+use std::{sync::Arc, time::Duration};
+
+use crate::{
+    ClientConfig, Endpoint, Session as MoqtSession, Subscription as MoqtSubscription,
+    TransferredBytes, TransportClose,
+    fetch::FetchOption,
+    modules::{
+        client::{
+            announcement::Announcement,
+            event_handler::{EventHandler, HandlerId},
+            event_loop_task::EventLoopTask,
+            fetch::Fetch,
+            join_namespace,
+            namespace_watch::NamespaceWatch,
+            request_error::RequestError,
+            routes::Routes,
+            subscription::{Reading, Subscription},
+            track_writer::TrackWriter,
+        },
+        executor,
+    },
+    namespace::NamespaceInterest,
+    object::{GroupOrder, Location},
+    publish::{Origin, Retention},
+    subscribe::{FilterType, SubscribeOption},
+    wire::RequestKind,
+};
+
+#[cfg(not(target_arch = "wasm32"))]
+type ClientTransport = crate::NATIVE;
+#[cfg(target_arch = "wasm32")]
+type ClientTransport = crate::BROWSER;
+
+/// Matches the relay's default RELAY_CACHE_TTL_SECS, so a FETCH the relay
+/// forwards for a range it never cached can still be answered here.
+const DEFAULT_RETENTION: Duration = Duration::from_secs(60);
+
+/// How `Session::subscribe` subscribes (draft-14 §9.7).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SubscribeOptions {
+    pub filter: FilterType,
+    pub forward: bool,
+    /// The Subscriber Priority (draft-14 §7.2): the relay sends a lower value
+    /// first.
+    pub priority: u8,
+    /// The DELIVERY TIMEOUT (draft-14 §9.2.1.2): the relay stops sending an
+    /// object this long after receiving it. `None` has every object sent.
+    pub delivery_timeout: Option<Duration>,
+    pub group_order: GroupOrder,
+}
+
+impl Default for SubscribeOptions {
+    fn default() -> Self {
+        let defaults = SubscribeOption::default();
+        Self {
+            filter: defaults.filter_type,
+            forward: defaults.forward,
+            priority: defaults.subscriber_priority,
+            delivery_timeout: None,
+            group_order: defaults.group_order,
+        }
+    }
+}
+
+/// How `Session::subscribe_group_start` subscribes; its filter is Largest
+/// Object and its Forward State 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupStartOptions {
+    pub priority: u8,
+    pub delivery_timeout: Option<Duration>,
+    pub group_order: GroupOrder,
+}
+
+impl Default for GroupStartOptions {
+    fn default() -> Self {
+        let defaults = SubscribeOptions::default();
+        Self {
+            priority: defaults.priority,
+            delivery_timeout: defaults.delivery_timeout,
+            group_order: defaults.group_order,
+        }
+    }
+}
+
+impl GroupStartOptions {
+    fn subscribe_option(self) -> SubscribeOption {
+        SubscribeOption {
+            subscriber_priority: self.priority,
+            delivery_timeout: self
+                .delivery_timeout
+                .map(|timeout| timeout.as_millis() as u64),
+            group_order: self.group_order,
+            ..SubscribeOption::default()
+        }
+    }
+}
+
+/// How `Session::publish_track` registers a track.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublishTrackOptions {
+    /// How long the cache keeps objects to answer FETCH; 60 s by default.
+    pub retention: Retention,
+    /// Also sends the track with PUBLISH (draft-14 §9.13); announce the
+    /// namespace first.
+    pub publish: bool,
+    /// Sends each object in its own datagram (draft-14 §10.3) instead of on
+    /// subgroup streams.
+    pub datagram: bool,
+}
+
+impl Default for PublishTrackOptions {
+    fn default() -> Self {
+        Self {
+            retention: Retention::For(DEFAULT_RETENTION),
+            publish: false,
+            datagram: false,
+        }
+    }
+}
+
+/// A client session. It reads
+/// every event of the `moqt::Session` it wraps, and stops reading once it is
+/// dropped or closed. GOAWAY and reconnection stay with `moqt::Session`.
+pub struct Session {
+    session: Arc<MoqtSession>,
+    routes: Arc<Routes>,
+    event_loop: EventLoopTask,
+}
+
+impl Session {
+    /// Takes over `session`'s events. Natively, call it inside a tokio
+    /// runtime: it spawns the event loop there.
+    // On wasm32 the browser session is !Send, but wasm32 runs on one thread.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
+    pub fn new(session: MoqtSession) -> Self {
+        let session = Arc::new(session);
+        let routes = Arc::new(Routes::default());
+        let event_loop = EventLoopTask::run(session.clone(), routes.clone());
+        Self {
+            session,
+            routes,
+            event_loop,
+        }
+    }
+
+    /// Connects to `url` (`moqt://` for raw QUIC, `https://` for
+    /// WebTransport) on an endpoint of its own; in a browser, over
+    /// WebTransport with the WebSocket fallback.
+    pub async fn connect(url: &str, config: &ClientConfig) -> anyhow::Result<Self> {
+        let endpoint = Endpoint::<ClientTransport>::create_client(config)?;
+        let session = endpoint.connect(url).await?.await?;
+        Ok(Self::new(session))
+    }
+
+    /// The wrapped session, for what this type does not cover; its events
+    /// are not for the caller.
+    pub fn moqt_session(&self) -> &Arc<MoqtSession> {
+        &self.session
+    }
+
+    /// The tracks `publish_track` registered, which a handler may write into
+    /// as well.
+    pub fn origin(&self) -> &Origin {
+        &self.routes.origin
+    }
+
+    /// Hands the session's events to `handler` before the `Origin`, after
+    /// the handlers added earlier.
+    pub fn add_handler(&self, handler: Arc<dyn EventHandler>) -> HandlerId {
+        self.routes.add_handler(handler)
+    }
+
+    pub fn remove_handler(&self, id: HandlerId) {
+        self.routes.remove_handler(id);
+    }
+
+    /// SUBSCRIBE (draft-14 §9.7).
+    pub async fn subscribe(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+        options: SubscribeOptions,
+    ) -> Result<Subscription, RequestError> {
+        let option = SubscribeOption {
+            filter_type: options.filter,
+            forward: options.forward,
+            ..GroupStartOptions {
+                priority: options.priority,
+                delivery_timeout: options.delivery_timeout,
+                group_order: options.group_order,
+            }
+            .subscribe_option()
+        };
+        let subscription = self
+            .session
+            .subscriber()
+            .subscribe(join_namespace(namespace), track.to_string(), option)
+            .await
+            .map_err(RequestError::of(RequestKind::Subscribe))?;
+        Ok(self.subscription(subscription, Reading::Unstarted))
+    }
+
+    /// Subscribes and reads the group the largest object is in from its
+    /// first object, through a Joining FETCH (draft-14 §9.16.2).
+    pub async fn subscribe_current_group(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+    ) -> Result<Subscription, RequestError> {
+        let (subscription, reader) = self
+            .session
+            .subscriber()
+            .subscribe_current_group(join_namespace(namespace), track.to_string())
+            .await
+            .map_err(RequestError::of(RequestKind::Subscribe))?;
+        Ok(self.subscription(subscription, Reading::Objects(reader)))
+    }
+
+    /// Subscribes and reads the track from the first object of a group
+    /// (draft-18 §5.1.3.1), chosen once the SUBSCRIBE_OK arrives: the
+    /// current group, through a Joining FETCH, or, when the track has
+    /// dynamic groups and its largest object ID is `new_group_after` or
+    /// more, a new group it asks the publisher to start (NEW_GROUP_REQUEST,
+    /// §10.2.13).
+    pub async fn subscribe_group_start(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+        new_group_after: u64,
+        options: GroupStartOptions,
+    ) -> Result<Subscription, RequestError> {
+        let (subscription, reader) = self
+            .session
+            .subscriber()
+            .subscribe_group_start(
+                join_namespace(namespace),
+                track.to_string(),
+                new_group_after,
+                options.subscribe_option(),
+            )
+            .await
+            .map_err(RequestError::of(RequestKind::Subscribe))?;
+        Ok(self.subscription(subscription, Reading::Objects(reader)))
+    }
+
+    fn subscription(&self, subscription: MoqtSubscription, reading: Reading) -> Subscription {
+        Subscription::new(
+            self.session.clone(),
+            self.routes.clone(),
+            subscription,
+            reading,
+        )
+    }
+
+    /// A Standalone FETCH (draft-14 §9.16.1). `end`'s object is the last
+    /// object plus 1, and 0 means the whole group.
+    pub async fn fetch(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+        start: Location,
+        end: Location,
+    ) -> Result<Fetch, RequestError> {
+        let handle = self
+            .session
+            .subscriber()
+            .fetch(
+                join_namespace(namespace),
+                track.to_string(),
+                start,
+                end,
+                FetchOption::default(),
+            )
+            .await
+            .map_err(RequestError::of(RequestKind::Fetch))?;
+        Ok(Fetch::new(self.session.clone(), handle))
+    }
+
+    /// TRACK_STATUS (draft-14 §9.20): the track's largest location, or
+    /// `None` while it has none.
+    pub async fn track_status(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+    ) -> Result<Option<Location>, RequestError> {
+        let status = self
+            .session
+            .subscriber()
+            .track_status(join_namespace(namespace), track.to_string(), Vec::new())
+            .await
+            .map_err(RequestError::of(RequestKind::TrackStatus))?;
+        Ok(status.content_exists.largest())
+    }
+
+    /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
+    /// `prefix`.
+    pub async fn watch_namespaces(
+        &self,
+        prefix: &[impl AsRef<str>],
+    ) -> Result<NamespaceWatch, RequestError> {
+        let elements = prefix
+            .iter()
+            .map(|element| element.as_ref().to_string())
+            .collect();
+        // Watched before the request: the peer publishes the namespaces it
+        // knows right away.
+        let events = self.routes.watchers.watch(elements);
+        let prefix = join_namespace(prefix);
+        self.session
+            .subscriber()
+            .subscribe_namespace(prefix.clone(), NamespaceInterest::Namespaces)
+            .await
+            .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
+        Ok(NamespaceWatch::new(self.session.clone(), prefix, events))
+    }
+
+    /// PUBLISH_NAMESPACE (draft-14 §9.23).
+    pub async fn announce(
+        &self,
+        namespace: &[impl AsRef<str>],
+    ) -> Result<Announcement, RequestError> {
+        let namespace = join_namespace(namespace);
+        self.session
+            .publisher()
+            .publish_namespace(namespace.clone())
+            .await
+            .map_err(RequestError::of(RequestKind::PublishNamespace))?;
+        Ok(Announcement::new(self.session.clone(), namespace))
+    }
+
+    /// Registers a track to publish, whose group ids start at the wall-clock
+    /// time in µs, so a later run of the same publisher does not reuse a
+    /// location the relay still caches. Fails when the PUBLISH fails, and,
+    /// with `datagram`, for a track already written to on streams.
+    pub async fn publish_track(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+        options: PublishTrackOptions,
+    ) -> anyhow::Result<TrackWriter> {
+        let namespace = join_namespace(namespace);
+        let origin = &self.routes.origin;
+        origin
+            .ensure_track(
+                &namespace,
+                track,
+                executor::system_time().as_micros() as u64,
+                options.retention,
+            )
+            .await;
+        if options.datagram {
+            origin.send_in_datagrams(&namespace, track).await?;
+        }
+        if options.publish {
+            origin.publish(&self.session, &namespace, track).await?;
+        }
+        Ok(TrackWriter::new(
+            self.routes.clone(),
+            namespace,
+            track.to_string(),
+        ))
+    }
+
+    pub fn transferred_bytes(&self) -> TransferredBytes {
+        self.session.transferred_bytes()
+    }
+
+    /// Resolves once the session's last connection has closed.
+    pub async fn closed(&self) -> TransportClose {
+        self.session.closed().await
+    }
+
+    /// Stops answering the peer, ends every namespace watch, `done` and
+    /// `next_subscriber`, and closes the session with NO_ERROR, as
+    /// `moqt::Session::close` does.
+    pub async fn close(&self) {
+        self.event_loop.stop();
+        self.routes.end();
+        self.session.close().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::*;
+    use crate::{
+        RequestErrorCode,
+        modules::{
+            client::subscription::ReceivedObject,
+            test_support::{
+                TEST_VERSIONS, connected_client_sessions, insecure_client_config,
+                object_with_extensions, spawn_native_server, within,
+            },
+        },
+        namespace::NamespaceEvent,
+        object::ExtensionHeaders,
+    };
+
+    const NAMESPACE: &[&str] = &["room", "alice"];
+
+    fn assert_send_sync<T: Send + Sync>(_: &T) {}
+
+    fn assert_send<T: Send>(_: T) {}
+
+    #[tokio::test]
+    async fn the_session_and_what_it_returns_can_be_used_from_other_threads() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-send-sync").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+
+        // Act / Assert: compiles only when the types and futures are Send (+ Sync)
+        assert_send_sync(&client);
+        assert_send_sync(&writer);
+        assert_send_sync(&subscription);
+        let namespace = vec!["room".to_string()];
+        assert_send(client.subscribe(&namespace, "chat", SubscribeOptions::default()));
+        assert_send(client.watch_namespaces(&namespace));
+        assert_send(client.publish_track(&namespace, "t", PublishTrackOptions::default()));
+        assert_send(subscription.next());
+        assert_send(writer.write(Bytes::new(), true, ExtensionHeaders::default()));
+    }
+
+    #[tokio::test]
+    async fn connect_opens_a_session_that_closes_with_no_error() {
+        // Arrange
+        let (port, accept) = spawn_native_server("client-connect");
+
+        // Act
+        let session = within(Session::connect(
+            &format!("moqt://127.0.0.1:{port}"),
+            &ClientConfig {
+                versions: TEST_VERSIONS.to_vec(),
+                ..insecure_client_config()
+            },
+        ))
+        .await
+        .unwrap();
+        let server = within(accept).await.unwrap();
+        within(session.close()).await;
+
+        // Assert
+        assert_eq!(within(server.closed()).await.code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn a_subscription_reads_what_the_peer_s_track_writer_writes() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-subscribe").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+        let extension_headers = object_with_extensions().extension_headers;
+
+        // Act
+        let group_id = writer
+            .write(Bytes::from_static(b"o0"), true, extension_headers.clone())
+            .await
+            .unwrap();
+        let object = within(subscription.next()).await.unwrap().unwrap();
+
+        // Assert
+        assert_eq!(
+            object,
+            ReceivedObject {
+                group_id: group_id.unwrap(),
+                subgroup_id: 0,
+                object_id: 0,
+                status: None,
+                payload: Bytes::from_static(b"o0"),
+                extension_headers,
+            }
+        );
+        assert_eq!(subscription.largest(), None);
+    }
+
+    #[tokio::test]
+    async fn a_subscription_read_by_group_yields_each_subgroup_stream() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-groups").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+
+        // Act
+        let group_id = writer
+            .write_group(Bytes::from_static(b"catalog"))
+            .await
+            .unwrap();
+        let group = within(subscription.next_group()).await.unwrap().unwrap();
+        let object = within(group.next()).await.unwrap().unwrap();
+
+        // Assert
+        assert_eq!(Some(group.group_id()), group_id);
+        assert_eq!(object.payload, Bytes::from_static(b"catalog"));
+        assert!(subscription.next().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_fetch_returns_the_objects_of_the_group_then_ends() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-fetch").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        for (new_group, payload) in [(true, b"o0"), (false, b"o1")] {
+            writer
+                .write(
+                    Bytes::from_static(payload),
+                    new_group,
+                    ExtensionHeaders::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let largest = within(client.track_status(NAMESPACE, "chat"))
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Act
+        let fetch = within(client.fetch(
+            NAMESPACE,
+            "chat",
+            Location {
+                group_id: largest.group_id,
+                object_id: 0,
+            },
+            Location {
+                group_id: largest.group_id,
+                object_id: 0,
+            },
+        ))
+        .await
+        .unwrap();
+        let mut payloads = Vec::new();
+        while let Some(object) = within(fetch.next()).await.unwrap() {
+            payloads.push(object.payload);
+        }
+
+        // Assert
+        assert_eq!(largest.object_id, 1);
+        assert_eq!(
+            payloads,
+            [Bytes::from_static(b"o0"), Bytes::from_static(b"o1")]
+        );
+    }
+
+    #[tokio::test]
+    async fn track_status_of_a_track_without_objects_is_none() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-track-status").await;
+        server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+
+        // Act
+        let largest = within(client.track_status(NAMESPACE, "chat")).await;
+
+        // Assert
+        assert_eq!(largest.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_request_carries_the_draft_error_code() {
+        // Arrange
+        let (client, _server) = connected_client_sessions("client-request-error").await;
+
+        // Act
+        let rejected = within(client.subscribe(NAMESPACE, "missing", SubscribeOptions::default()))
+            .await
+            .err()
+            .unwrap();
+
+        // Assert
+        assert_eq!(rejected.kind, RequestKind::Subscribe);
+        assert_eq!(rejected.code(), RequestErrorCode::TrackDoesNotExist);
+        assert_eq!(rejected.reason(), "missing is not published here");
+    }
+
+    #[tokio::test]
+    async fn a_watch_reports_a_namespace_announced_and_withdrawn_under_its_prefix() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-watch").await;
+        let watch = within(client.watch_namespaces(&["room"])).await.unwrap();
+
+        // Act
+        let announcement = within(server.announce(NAMESPACE)).await.unwrap();
+        let published = within(watch.next()).await;
+        within(announcement.close()).await.unwrap();
+        let withdrawn = within(watch.next()).await;
+
+        // Assert
+        let namespace: Vec<String> = NAMESPACE.iter().map(|e| e.to_string()).collect();
+        assert_eq!(
+            [published, withdrawn],
+            [
+                Some(NamespaceEvent {
+                    namespace: namespace.clone(),
+                    active: true,
+                }),
+                Some(NamespaceEvent {
+                    namespace,
+                    active: false,
+                }),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn closing_a_namespace_watch_ends_the_read_that_waits() {
+        // Arrange
+        let (client, _server) = connected_client_sessions("client-watch-close").await;
+        let watch = within(client.watch_namespaces(&["room"])).await.unwrap();
+
+        // Act
+        let (event, closed) = within(async { tokio::join!(watch.next(), watch.close()) }).await;
+
+        // Assert
+        closed.unwrap();
+        assert_eq!(event, None);
+        assert_eq!(watch.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn closing_the_session_ends_its_namespace_watches() {
+        // Arrange
+        let (client, _server) = connected_client_sessions("client-close").await;
+        let watch = within(client.watch_namespaces(&["room"])).await.unwrap();
+
+        // Act
+        within(client.close()).await;
+
+        // Assert
+        assert_eq!(within(watch.next()).await, None);
+    }
+}
