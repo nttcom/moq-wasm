@@ -817,7 +817,7 @@ point; its API and its mapping to the JavaScript and Python SDKs are in
 | `event_loop_task.rs` | `EventLoopTask`: runs `Routes::route` on `executor::spawn`; dropping it (with the `Session`) or `close` stops it |
 | `event_handler.rs` | `EventHandler`, the `handle(event) -> Option<event>` shape `Origin`, `NamespaceWatchers` and `broadcast::RelayConnection` share, and `HandlerId` |
 | `subscription.rs`, `fetch.rs`, `namespace_watch.rs`, `announcement.rs`, `track_writer.rs` | What the requests return; each holds the `Arc<moqt::Session>` (and `Routes` where it reads them) |
-| `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code |
+| `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code; `FetchError`: a rejected FETCH, or a response stream that did not arrive (`fetch` returns once the stream has) |
 
 Each event goes, in order, to the handlers `add_handler` added (in the order
 added), to the session's `Origin` (which answers SUBSCRIBE, FETCH and

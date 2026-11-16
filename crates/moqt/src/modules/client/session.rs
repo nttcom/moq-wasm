@@ -12,7 +12,7 @@ use crate::{
             fetch::Fetch,
             join_namespace,
             namespace_watch::NamespaceWatch,
-            request_error::RequestError,
+            request_error::{FetchError, RequestError},
             routes::Routes,
             subscription::{Reading, Subscription},
             track_writer::TrackWriter,
@@ -253,17 +253,17 @@ impl Session {
     }
 
     /// A Standalone FETCH (draft-14 §9.16.1). `end`'s object is the last
-    /// object plus 1, and 0 means the whole group.
+    /// object plus 1, and 0 means the whole group. Returns once the response
+    /// stream has arrived.
     pub async fn fetch(
         &self,
         namespace: &[impl AsRef<str>],
         track: &str,
         start: Location,
         end: Location,
-    ) -> Result<Fetch, RequestError> {
-        let handle = self
-            .session
-            .subscriber()
+    ) -> Result<Fetch, FetchError> {
+        let mut subscriber = self.session.subscriber();
+        let handle = subscriber
             .fetch(
                 join_namespace(namespace),
                 track.to_string(),
@@ -273,7 +273,11 @@ impl Session {
             )
             .await
             .map_err(RequestError::of(RequestKind::Fetch))?;
-        Ok(Fetch::new(self.session.clone(), handle))
+        let receiver = subscriber
+            .accept_fetch_receiver(&handle)
+            .await
+            .map_err(FetchError::Stream)?;
+        Ok(Fetch::new(receiver))
     }
 
     /// TRACK_STATUS (draft-14 §9.20): the track's largest location, or
@@ -386,7 +390,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        RequestErrorCode,
+        RequestErrorCode, TerminationErrorCode,
         modules::{
             client::subscription::ReceivedObject,
             test_support::{
@@ -416,7 +420,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Act / Assert: compiles only when the types and futures are Send (+ Sync)
+        // Act / Assert: compiles only when the types and futures are Send (+ Sync), and `done` outlives its subscription
         assert_send_sync(&client);
         assert_send_sync(&writer);
         assert_send_sync(&subscription);
@@ -426,6 +430,9 @@ mod tests {
         assert_send(client.publish_track(&namespace, "t", PublishTrackOptions::default()));
         assert_send(subscription.next());
         assert_send(writer.write(Bytes::new(), true, ExtensionHeaders::default()));
+        let done = subscription.done();
+        drop(subscription);
+        assert_send(done);
     }
 
     #[tokio::test]
@@ -563,6 +570,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_fetch_the_peer_rejects_fails_with_its_request_error() {
+        // Arrange
+        let (client, _server) = connected_client_sessions("client-fetch-rejected").await;
+        let location = Location {
+            group_id: 0,
+            object_id: 0,
+        };
+
+        // Act
+        let failed = within(client.fetch(NAMESPACE, "missing", location, location)).await;
+
+        // Assert
+        let Err(FetchError::Request(rejected)) = failed else {
+            panic!("expected the FETCH to be rejected");
+        };
+        assert_eq!(rejected.kind, RequestKind::Fetch);
+        assert_ne!(rejected.code(), RequestErrorCode::InternalError);
+    }
+
+    #[tokio::test]
     async fn track_status_of_a_track_without_objects_is_none() {
         // Arrange
         let (client, server) = connected_client_sessions("client-track-status").await;
@@ -637,6 +664,24 @@ mod tests {
         closed.unwrap();
         assert_eq!(event, None);
         assert_eq!(watch.next().await, None);
+    }
+
+    #[tokio::test]
+    async fn closing_the_wrapped_session_with_an_error_ends_the_namespace_watches() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-close-with-error").await;
+        let watch = within(client.watch_namespaces(&["room"])).await.unwrap();
+
+        // Act
+        client
+            .moqt_session()
+            .close_with_error(TerminationErrorCode::NoError, "closed by the application");
+        let close = within(server.closed()).await;
+
+        // Assert
+        assert_eq!(close.code, Some(0));
+        assert_eq!(close.reason, "closed by the application");
+        assert_eq!(within(watch.next()).await, None);
     }
 
     #[tokio::test]

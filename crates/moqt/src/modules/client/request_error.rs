@@ -11,6 +11,18 @@ pub struct RequestError {
     pub failure: RequestFailure,
 }
 
+/// A FETCH that did not succeed: the peer did not accept it (`Request`), or
+/// its response stream did not arrive (`Stream`), as when the session ends
+/// first.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum FetchError {
+    #[error(transparent)]
+    Request(#[from] RequestError),
+    #[error(transparent)]
+    Stream(anyhow::Error),
+}
+
 impl RequestError {
     pub(super) fn of(kind: RequestKind) -> impl FnOnce(RequestFailure) -> Self {
         move |failure| Self { kind, failure }
