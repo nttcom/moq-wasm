@@ -125,6 +125,7 @@ impl TrackPublisher {
                 self.broadcast
                     .prepare_encoded_video(
                         &self.tracks.video,
+                        self.tracks.cmaf,
                         self.tracks.keyframe_requests.as_ref(),
                         self.tracks.demand_sender.as_ref(),
                     )
