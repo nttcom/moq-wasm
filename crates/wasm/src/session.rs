@@ -4,7 +4,7 @@ use bytes::Bytes;
 use js_sys::{Function, Promise, Uint8Array};
 use mediapack::loc::from_extension_headers;
 use moqt::{
-    AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, RequestFailure,
+    AuthorizationTokenSource, BROWSER, ClientConfig, Endpoint, RequestErrorCode, RequestFailure,
     Session as MoqtSession, Subscription as MoqtSubscription, TerminationErrorCode, TrackObject,
     TrackReader, Version, executor,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
@@ -30,7 +30,6 @@ use crate::{
     media_broadcast::MediaBroadcast,
     mp4::Mp4Index,
     mp4_broadcast::Mp4Broadcast,
-    request_rejection::request_failure_code,
     session_routes::{NamespaceEvents, SessionRoutes},
 };
 
@@ -1065,7 +1064,11 @@ fn largest(content_exists: ContentExists) -> Option<MoqLocation> {
 }
 
 fn request_error(kind: RequestKind, error: &RequestFailure) -> JsValue {
-    let (code, reason) = request_failure_code(error);
+    let (code, reason) = match error {
+        RequestFailure::Rejected { code, reason, .. } => (*code, reason.clone()),
+        RequestFailure::Timeout => (RequestErrorCode::Timeout, error.to_string()),
+        _ => (RequestErrorCode::InternalError, error.to_string()),
+    };
     let js_error = js_sys::Error::new(&reason);
     let _ = js_sys::Reflect::set(
         &js_error,
