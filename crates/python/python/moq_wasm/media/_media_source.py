@@ -103,6 +103,22 @@ class MediaSource:
                 )
             )
 
+    async def remove_track(self, kind: str) -> None:
+        """`_native.MediaSource.remove_track` (`kind` is `"video"` or `"audio"`): stop pushing its
+        media first; `configure_video` or `configure_audio` and the media pushed after it publish
+        the track again. Before the broadcast is published, it forgets the kind's configuration
+        (the renditions' too, for the video). Raises ValueError for another kind."""
+        if kind not in ("video", "audio"):
+            raise ValueError(f"unknown track kind: {kind}")
+        if self._source is not None:
+            await self._source.remove_track(kind)
+        elif kind == "video":
+            self._video_codec = None
+            for rendition in self._renditions:
+                rendition._video_codec = None
+        else:
+            self._audio_config = None
+
     async def keyframe_request(self) -> None:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
         broadcast needs one: encode the next frame as a keyframe then. Waits while the broadcast is

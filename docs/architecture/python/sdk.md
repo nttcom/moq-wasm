@@ -365,6 +365,10 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   caller can stop encoding a track nobody takes. `on_demand=False` keeps a
   source's tracks sent with no subscriber, for a track that should stay in
   the relay's cache, FETCHable, while nobody takes it.
+- `await media.remove_track("video" | "audio")` is the browser's
+  `removeTrack`: it ends the track with PUBLISH_DONE, the video's renditions
+  with it, and sends the catalog without them. The caller stops pushing that
+  kind first; configuring it again and pushing republishes it.
 
 Encoding stays in Python with PyAV, through `moq_wasm.codecs`.
 
