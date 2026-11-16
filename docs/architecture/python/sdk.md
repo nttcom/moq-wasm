@@ -126,8 +126,16 @@ async with moq_wasm.connect(...) as session:
     await session.run(work())
 ```
 
-The request methods keep the bindings' shape (`subscribe`,
-`subscribe_current_group`, `watch_namespaces`, `publish_track`, `announce`).
+The request methods keep the bindings' shape, which follows the browser
+SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
+`priority`, `delivery_timeout` in seconds and `group_order`),
+`subscribe_current_group`, `subscribe_group_start`, `fetch` (between two
+`Location`s), `track_status`, `watch_namespaces`, `publish_track` and
+`announce`. A `Subscription` iterates its objects, or its subgroup streams
+through `groups()`, and has `largest`, `done()`, `set_forward`,
+`set_priority`, `request_new_group`, `end_before_group` and `close`. An
+`Object` carries `group_id`, `subgroup_id`, `object_id`, `status` and
+`payload`; its extension headers are left out until a bot reads one.
 
 ### Media: `moq_wasm.media`
 

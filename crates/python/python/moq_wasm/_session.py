@@ -2,7 +2,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from moq_wasm import _native
 from moq_wasm._token import RefreshToken, TokenKeeper
@@ -119,9 +119,58 @@ class Session:
         if keeper is not None:
             self._tasks.append(asyncio.create_task(self._keep_token_fresh(keeper)))
 
-    async def subscribe(self, namespace: list[str], name: str) -> _native.Subscription:
-        """Only the objects published after the SUBSCRIBE."""
-        return await self._connected().subscribe(namespace, name)
+    async def subscribe(
+        self,
+        namespace: list[str],
+        name: str,
+        *,
+        filter: Literal["largest_object", "next_group_start"] = "largest_object",
+        forward: bool = True,
+        priority: int | None = None,
+        delivery_timeout: float | None = None,
+        group_order: Literal["ascending", "descending"] = "ascending",
+    ) -> _native.Subscription:
+        """SUBSCRIBE (`_native.Session.subscribe`): by default only the objects published after
+        it."""
+        return await self._connected().subscribe(
+            namespace,
+            name,
+            filter=filter,
+            forward=forward,
+            priority=priority,
+            delivery_timeout=delivery_timeout,
+            group_order=group_order,
+        )
+
+    async def subscribe_group_start(
+        self,
+        namespace: list[str],
+        name: str,
+        new_group_after: int,
+        *,
+        priority: int | None = None,
+        delivery_timeout: float | None = None,
+        group_order: Literal["ascending", "descending"] = "ascending",
+    ) -> _native.Subscription:
+        """Subscribes from the first object of a group (`_native.Session.subscribe_group_start`)."""
+        return await self._connected().subscribe_group_start(
+            namespace,
+            name,
+            new_group_after,
+            priority=priority,
+            delivery_timeout=delivery_timeout,
+            group_order=group_order,
+        )
+
+    async def fetch(
+        self, namespace: list[str], name: str, start: _native.Location, end: _native.Location
+    ) -> _native.Fetch:
+        """A Standalone FETCH (`_native.Session.fetch`)."""
+        return await self._connected().fetch(namespace, name, start, end)
+
+    async def track_status(self, namespace: list[str], name: str) -> _native.Location | None:
+        """TRACK_STATUS (`_native.Session.track_status`)."""
+        return await self._connected().track_status(namespace, name)
 
     async def subscribe_current_group(self, namespace: list[str], name: str) -> _native.Subscription:
         """The objects of the group the relay holds come first (a joining FETCH), then the live
