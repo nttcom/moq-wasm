@@ -25,6 +25,11 @@ const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const TIMELINE_TRACK_SUFFIX: &str = "_timeline";
 const CHAT_TRACK_NAME: &str = "chat";
 const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
+/// The `framerate` listed for a video whose source does not cap its rate.
+const NOMINAL_FRAMERATE: u32 = 30;
+/// Upper estimates of the bitrate an encoder spends on one channel.
+const AAC_BITRATE_PER_CHANNEL: u64 = 128_000;
+const OPUS_BITRATE_PER_CHANNEL: u64 = 64_000;
 
 #[derive(Clone)]
 pub struct Broadcast {
@@ -273,10 +278,10 @@ pub struct VideoTrackInfo {
     pub height: u32,
     pub init_segment: String,
     /// Target bitrate in bits per second, known when the publisher encodes
-    /// the track itself.
+    /// the track itself; the catalog lists an estimate otherwise.
     pub bitrate: Option<u64>,
     /// Frames per second, known when the publisher caps the track's frame
-    /// rate; the catalog leaves `framerate` out otherwise.
+    /// rate; the catalog lists `NOMINAL_FRAMERATE` otherwise.
     pub framerate: Option<u32>,
     pub cmaf: bool,
     /// `SourceTracks::switching_set` of the track's source.
@@ -368,6 +373,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
     let video_role = TrackRole::Known(KnownTrackRole::Video);
     let alt_groups = alt_groups(metadata);
     let render_groups = render_groups(metadata);
+    let reference_videos = reference_videos(metadata);
 
     let mut tracks = Vec::new();
     let mut init_data_list = Vec::new();
@@ -382,10 +388,15 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         loc.render_group = render_groups.get(info.switching_set.as_str()).copied();
         loc.codec = Some(info.codec.clone());
         loc.mime_type = Some(video_mime_type(&info.codec).to_string());
-        loc.framerate = info.framerate.map(f64::from);
+        let framerate = info.framerate.unwrap_or(NOMINAL_FRAMERATE);
+        loc.framerate = Some(f64::from(framerate));
         loc.width = Some(info.width);
         loc.height = Some(info.height);
-        loc.bitrate = info.bitrate;
+        loc.bitrate = Some(video_bitrate(
+            info,
+            framerate,
+            reference_videos.get(info.switching_set.as_str()).copied(),
+        ));
         let cmaf = info.cmaf.then(|| {
             let mut cmaf = cmaf_sibling(&loc, "video/mp4", cmaf_alt_group);
             init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
@@ -405,6 +416,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         audio.mime_type = Some(audio_mime_type(&info.config).to_string());
         audio.sample_rate = Some(info.config.sample_rate());
         audio.channel_config = Some(msf::channel_config(info.config.channels()));
+        audio.bitrate = Some(audio_bitrate(&info.config));
         let mut audio_cmaf = None;
         if let AudioConfig::Aac(config) = &info.config {
             let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
@@ -465,6 +477,9 @@ fn audio_placeholder(
     audio.render_group = render_group;
     audio.codec = Some("mp4a.40.2".to_string());
     audio.mime_type = Some("audio/aac".to_string());
+    audio.sample_rate = Some(48_000);
+    audio.channel_config = Some(msf::channel_config(2));
+    audio.bitrate = Some(AAC_BITRATE_PER_CHANNEL * 2);
     Some(audio)
 }
 
@@ -555,6 +570,59 @@ fn render_groups(metadata: &CatalogMetadata) -> BTreeMap<&str, u64> {
         )
         .collect();
     switching_sets.into_iter().zip(1..).collect()
+}
+
+/// Per switching set, the largest video with a known bitrate, which
+/// `video_bitrate` scales to the videos without one.
+fn reference_videos(metadata: &CatalogMetadata) -> BTreeMap<&str, &VideoTrackInfo> {
+    let mut references = BTreeMap::<&str, &VideoTrackInfo>::new();
+    for info in metadata.video_tracks.values() {
+        if info.bitrate.is_none() {
+            continue;
+        }
+        let reference = references
+            .entry(info.switching_set.as_str())
+            .or_insert(info);
+        if pixels(info) > pixels(reference) {
+            *reference = info;
+        }
+    }
+    references
+}
+
+/// A video's maximum bitrate: the encoder's target; for a video the
+/// publisher relays without encoding it, the reference's bitrate scaled by
+/// pixel count, or without a reference, an estimate from codec, size and
+/// frame rate.
+fn video_bitrate(info: &VideoTrackInfo, framerate: u32, reference: Option<&VideoTrackInfo>) -> u64 {
+    if let Some(bitrate) = info.bitrate {
+        return bitrate;
+    }
+    if let Some(reference) = reference
+        && let Some(reference_bitrate) = reference.bitrate
+        && pixels(reference) > 0
+    {
+        return reference_bitrate * pixels(info) / pixels(reference);
+    }
+    let bits_per_pixel = match VideoCodec::from_codec_string(&info.codec) {
+        Some(VideoCodec::H265 | VideoCodec::Vp9 | VideoCodec::Av1) => 0.07,
+        Some(VideoCodec::H264 | VideoCodec::Vp8) | None => 0.1,
+    };
+    (pixels(info) as f64 * f64::from(framerate) * bits_per_pixel) as u64
+}
+
+fn pixels(info: &VideoTrackInfo) -> u64 {
+    u64::from(info.width) * u64::from(info.height)
+}
+
+/// An audio track's maximum bitrate, estimated as no source states it.
+fn audio_bitrate(config: &AudioConfig) -> u64 {
+    let per_channel = match config {
+        AudioConfig::Pcma { sample_rate, .. } => u64::from(*sample_rate) * 8,
+        AudioConfig::Opus { .. } => OPUS_BITRATE_PER_CHANNEL,
+        AudioConfig::Aac(_) | AudioConfig::Mp3 { .. } => AAC_BITRATE_PER_CHANNEL,
+    };
+    per_channel * u64::from(config.channels())
 }
 
 fn cmaf_sibling(loc: &Track, mime_type: &str, alt_group: Option<u64>) -> Track {
@@ -746,7 +814,7 @@ mod tests {
     }
 
     #[test]
-    fn a_video_track_lists_its_frame_rate_only_when_the_publisher_caps_it() {
+    fn a_video_track_lists_the_frame_rate_its_publisher_caps_it_at_or_a_nominal_one() {
         // Arrange: the camera is capped at 30 fps, its rendition at 2, the screen not at all
         let metadata = CatalogMetadata {
             video_tracks: BTreeMap::from([
@@ -776,7 +844,7 @@ mod tests {
         let framerate = |name: &str| track_named(&catalog, name).framerate;
         assert_eq!(framerate("video"), Some(30.0));
         assert_eq!(framerate("video_low"), Some(2.0));
-        assert_eq!(framerate("screen"), None);
+        assert_eq!(framerate("screen"), Some(f64::from(NOMINAL_FRAMERATE)));
     }
 
     #[test]
@@ -878,6 +946,25 @@ mod tests {
             track_named(&catalog, "audio").render_group,
             track_named(&catalog, "video").render_group
         );
+    }
+
+    #[test]
+    fn the_audio_placeholder_lists_the_fields_of_an_aac_stereo_track() {
+        // Arrange
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([("video".to_string(), video("video"))]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        let audio = track_named(&catalog, "audio");
+        assert_eq!(audio.codec.as_deref(), Some("mp4a.40.2"));
+        assert_eq!(audio.sample_rate, Some(48_000));
+        assert_eq!(audio.channel_config.as_deref(), Some("stereo"));
+        assert_eq!(audio.bitrate, Some(AAC_BITRATE_PER_CHANNEL * 2));
     }
 
     #[test]
@@ -996,9 +1083,11 @@ mod tests {
 
     #[test]
     fn rendition_bitrate_reaches_both_of_its_catalog_tracks() {
-        // Arrange
+        // Arrange: a rendition of a quarter of the source's pixels
         let mut metadata = metadata_with_video_and_audio();
         let mut rendition = metadata.video_tracks[VIDEO_TRACK_NAME].clone();
+        rendition.width /= 2;
+        rendition.height /= 2;
         rendition.bitrate = Some(1_200_000);
         metadata
             .video_tracks
@@ -1007,13 +1096,60 @@ mod tests {
         // Act
         let catalog = build_catalog("live/test", &metadata).unwrap();
 
-        // Assert: the source track has no known bitrate
+        // Assert: the source's unknown bitrate scales the rendition's by pixel count
         assert_eq!(track_named(&catalog, "video_480p").bitrate, Some(1_200_000));
         assert_eq!(
             track_named(&catalog, "video_480p_cmaf").bitrate,
             Some(1_200_000)
         );
-        assert_eq!(track_named(&catalog, "video").bitrate, None);
+        assert_eq!(track_named(&catalog, "video").bitrate, Some(4_800_000));
+    }
+
+    #[test]
+    fn a_video_without_a_known_bitrate_in_its_switching_set_lists_an_estimate() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        let video = metadata.video_tracks.get_mut(VIDEO_TRACK_NAME).unwrap();
+        video.width = 1280;
+        video.height = 720;
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert: 0.1 bit per pixel of H.264 at the nominal 30 fps
+        assert_eq!(track_named(&catalog, "video").bitrate, Some(2_764_800));
+    }
+
+    #[test]
+    fn an_audio_track_lists_a_bitrate_estimated_from_its_codec_and_channels() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        metadata.audio_tracks.insert(
+            "screen_audio".to_string(),
+            AudioTrackInfo {
+                label: "Screen audio".to_string(),
+                config: AudioConfig::Opus {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                cmaf: false,
+                switching_set: "screen".to_string(),
+                source: "screen".to_string(),
+            },
+        );
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        assert_eq!(
+            track_named(&catalog, "audio").bitrate,
+            Some(AAC_BITRATE_PER_CHANNEL)
+        );
+        assert_eq!(
+            track_named(&catalog, "screen_audio").bitrate,
+            Some(OPUS_BITRATE_PER_CHANNEL * 2)
+        );
     }
 
     #[test]
