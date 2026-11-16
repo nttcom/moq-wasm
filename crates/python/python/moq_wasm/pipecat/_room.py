@@ -150,9 +150,12 @@ class Room:
         return len(namespace) == len(room) + 1 and namespace[: len(room)] == room
 
     async def _answer_keyframe_requests(self, media: MediaSource, encoder: VideoEncoder) -> None:
-        while True:
-            await media.keyframe_request()
-            encoder.request_keyframe()
+        try:
+            while True:
+                await media.keyframe_request()
+                encoder.request_keyframe()
+        except RuntimeError as error:
+            logger.info("keyframe requests ended: %s", error)
 
     async def _follow(self, remote: RemoteBroadcast) -> None:
         participant_id = remote.namespace[-1]

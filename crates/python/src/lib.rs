@@ -40,5 +40,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<media_broadcast::MediaBroadcast>()?;
     module.add_class::<media_broadcast::MediaSource>()?;
     module.add_class::<media_broadcast::Rendition>()?;
+    module.add_class::<media_broadcast::Demand>()?;
     Ok(())
 }

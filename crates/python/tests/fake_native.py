@@ -75,6 +75,7 @@ class FakeMediaSource:
         self.calls: list[tuple] = []
         self.renditions: list[FakeRendition] = []
         self.keyframe_requested = asyncio.Event()
+        self.demands: asyncio.Queue = asyncio.Queue()
 
     def add_rendition(self, name: str, **options) -> FakeRendition:
         self.renditions.append(FakeRendition(name))
@@ -97,6 +98,9 @@ class FakeMediaSource:
         await self.keyframe_requested.wait()
         self.keyframe_requested.clear()
 
+    async def demand_change(self):
+        return await self.demands.get()
+
 
 class FakeMediaBroadcast:
     def __init__(self, session: "FakeNativeSession", namespace: list[str]):
@@ -106,6 +110,7 @@ class FakeMediaBroadcast:
 
     def add_source(self, video: str, audio: str, **options) -> FakeMediaSource:
         source = FakeMediaSource(video, audio)
+        source.options = options
         self.sources.append(source)
         return source
 

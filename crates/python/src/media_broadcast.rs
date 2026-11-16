@@ -12,11 +12,12 @@ use mediapack::{
     loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
 };
 use moqt::client::{self, HandlerId};
+use moqt::publish::TrackDemand;
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
-use tokio::sync::Notify;
+use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
 
 use rendition_task::RenditionTask;
 
@@ -52,7 +53,11 @@ impl MediaBroadcast {
     /// `<video>_timeline`. `video_bitrate` is the encoder's target in bits per
     /// second and `video_framerate` the frames per second it is capped at, if
     /// it is; both go into the catalog.
-    #[pyo3(signature = (video, audio, *, label, video_bitrate = None, video_framerate = None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        video, audio, *, label, video_bitrate = None, video_framerate = None, cmaf = false,
+        on_demand = true
+    ))]
     fn add_source(
         &self,
         video: String,
@@ -60,19 +65,22 @@ impl MediaBroadcast {
         label: String,
         video_bitrate: Option<u64>,
         video_framerate: Option<u32>,
+        cmaf: bool,
+        on_demand: bool,
     ) -> MediaSource {
         let keyframe_requests = Arc::new(Notify::new());
+        let (demand_sender, demand_receiver) = on_demand.then(mpsc::unbounded_channel).unzip();
         let tracks = SourceTracks {
             switching_set: video.clone(),
             video,
             audio_label: format!("{label} audio"),
             video_label: label,
             audio,
-            cmaf: false,
+            cmaf,
             video_bitrate,
             video_framerate,
             keyframe_requests: Some(keyframe_requests.clone()),
-            demand_sender: None,
+            demand_sender,
         };
         // The writer spawns its publish task, which needs the runtime the module's futures run on.
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
@@ -83,6 +91,7 @@ impl MediaBroadcast {
             ))),
             video: Mutex::new(None),
             keyframe_requests,
+            demands: demand_receiver.map(|receiver| Arc::new(AsyncMutex::new(receiver))),
         }
     }
 }
@@ -96,6 +105,8 @@ pub struct MediaSource {
     /// configuration changes and a sample.
     video: Mutex<Option<LocDemuxer>>,
     keyframe_requests: Arc<Notify>,
+    /// `None` for a source not published on demand.
+    demands: Option<Arc<AsyncMutex<mpsc::UnboundedReceiver<TrackDemand>>>>,
 }
 
 impl MediaSource {
@@ -216,6 +227,27 @@ impl MediaSource {
             Ok(())
         })
     }
+
+    /// The next change of whether a subscriber takes one of the source's
+    /// tracks, the video's and renditions' CMAF siblings included, for a
+    /// source published on demand. Fails once every track of the source
+    /// is gone.
+    fn demand_change<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let demands = self
+            .demands
+            .clone()
+            .ok_or_else(|| PyRuntimeError::new_err("the source was added with on_demand=False"))?;
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let demand =
+                demands.lock().await.recv().await.ok_or_else(|| {
+                    PyRuntimeError::new_err("the media source stopped publishing")
+                })?;
+            Ok(Demand {
+                track_name: demand.track_name,
+                wanted: demand.wanted,
+            })
+        })
+    }
 }
 
 /// One rendition of a `MediaSource`'s video, fed with encoded frames of the
@@ -281,4 +313,11 @@ fn demux(
             payload: Bytes::from(data),
         })
         .map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+/// Whether a subscriber takes `track_name` (draft-18 §10.10).
+#[pyclass(frozen, get_all, module = "moq_wasm")]
+pub struct Demand {
+    pub track_name: String,
+    pub wanted: bool,
 }

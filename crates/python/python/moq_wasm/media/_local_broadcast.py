@@ -53,15 +53,24 @@ class LocalBroadcast:
         label: str,
         video_bitrate: int | None = None,
         video_framerate: int | None = None,
+        cmaf: bool = False,
+        on_demand: bool = True,
     ) -> MediaSource:
         """A source of encoded video and audio on the tracks `video` and `audio`, listed in the
-        broadcast's MSF catalog (`catalog`) with the media timeline `<video>_timeline`. Add it
-        before the first `await` inside `async with`, since the media broadcast publishes the
-        namespace; raises RuntimeError after that."""
+        broadcast's MSF catalog (`catalog`) with the media timeline `<video>_timeline`; `cmaf` and
+        `on_demand` as in `_native.MediaBroadcast.add_source`. Add it before the first `await`
+        inside `async with`, since the media broadcast publishes the namespace; raises RuntimeError
+        after that."""
         if not self._batching:
             raise RuntimeError("add media sources before the broadcast is published")
         source = MediaSource(
-            video, audio, label=label, video_bitrate=video_bitrate, video_framerate=video_framerate
+            video,
+            audio,
+            label=label,
+            video_bitrate=video_bitrate,
+            video_framerate=video_framerate,
+            cmaf=cmaf,
+            on_demand=on_demand,
         )
         self._media_sources.append(source)
         return source
@@ -83,7 +92,7 @@ class LocalBroadcast:
         broadcast = native.media_broadcast(self.namespace)
         self._media_broadcast = broadcast
         for source in self._media_sources:
-            source._build(broadcast)
+            source._build(broadcast, self._session._done)
         await broadcast.announce()
 
     async def published(self) -> None:

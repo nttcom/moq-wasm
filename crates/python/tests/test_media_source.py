@@ -310,3 +310,148 @@ async def test_frames_of_a_rendition_are_dropped_once_the_session_ended(relay_ur
 
         # Assert: the native rendition refuses frames, which the media layer drops with a warning
         assert "frame dropped: rendition publishing stopped" in caplog.text
+
+
+async def test_demand_changes_reach_a_source_published_on_demand():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot", cmaf=True)
+        await bot.published()
+        native = relay.sessions[0].media_broadcasts[0].sources[0]
+
+        # Act
+        native.demands.put_nowait("audio wanted")
+        demand = await within(media.demand_change())
+
+        # Assert
+        assert demand == "audio wanted"
+        assert (native.options["cmaf"], native.options["on_demand"]) == (True, True)
+    await session.close()
+
+
+async def test_a_source_is_published_on_demand_unless_it_opts_out():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+
+    # Act
+    async with create_broadcast(session, BOT) as bot:
+        bot.add_media_source("video", "audio", label="camera")
+        bot.add_media_source("cache", "cache_audio", label="cached", on_demand=False)
+        await bot.published()
+
+    # Assert
+    sources = relay.sessions[0].media_broadcasts[0].sources
+    assert [source.options["on_demand"] for source in sources] == [True, False]
+    await session.close()
+
+
+async def test_demand_change_of_a_source_not_published_on_demand_is_refused():
+    # Arrange
+    media = MediaSource("video", "audio", label="bot", on_demand=False)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="on_demand"):
+        await media.demand_change()
+
+
+async def test_a_cmaf_source_sends_the_video_as_cmaf_to_its_subscriber(relay_url):
+    # Arrange
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    remote = RemoteBroadcast(subscriber, namespace)
+    encoder = VideoEncoder("H264", *SIZE, FRAMERATE)
+
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot", cmaf=True)
+        media.configure_video(encoder.codec_string)
+        await bot.published()
+        frames = 0
+
+        def push_frame() -> None:
+            nonlocal frames
+            for packet in encoder.encode(picture(frames), SIZE, "RGB"):
+                media.push_video(packet, frames * 1_000_000 // FRAMERATE)
+            frames += 1
+
+        # Act
+        push_frame()
+        catalogs = remote.catalogs()
+        catalog = await within(catalog_listing(catalogs, "video_cmaf", push_frame))
+        cmaf = await within(subscriber.subscribe(namespace, "video_cmaf"))
+        encoder.request_keyframe()
+        push_frame()
+        received = await within(anext(cmaf))
+
+        # Assert
+        assert catalog.select(packaging="cmaf").name == "video_cmaf"
+        assert received.payload
+        await catalogs.aclose()
+    for session in (subscriber, publisher):
+        await session.close()
+
+
+async def test_a_source_published_on_demand_reports_a_subscriber_coming_and_going(relay_url):
+    # Arrange
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        await bot.published()
+        media.push_audio(b"opus frame 0", 0)
+        published = await within(media.demand_change())
+
+        # Act
+        audio = await within(subscriber.subscribe(namespace, "audio"))
+        taken = await within(media.demand_change())
+        await within(audio.close())
+        left = await within(media.demand_change())
+
+        # Assert
+        assert [(demand.track_name, demand.wanted) for demand in (published, taken, left)] == [
+            ("audio", False),
+            ("audio", True),
+            ("audio", False),
+        ]
+    for session in (subscriber, publisher):
+        await session.close()
+
+
+async def test_demand_change_raises_once_the_session_ends():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        waiting = asyncio.ensure_future(media.demand_change())
+        await asyncio.sleep(0)
+
+        # Act
+        relay.sessions[0].drop()
+
+        # Assert
+        with pytest.raises(RuntimeError, match="stopped publishing"):
+            await within(waiting)
+
+
+async def test_keyframe_request_raises_once_the_broadcast_was_left():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    async with create_broadcast(session, BOT) as bot:
+        media = bot.add_media_source(label="bot")
+        await bot.published()
+        waiting = asyncio.ensure_future(media.keyframe_request())
+        await asyncio.sleep(0)
+
+    # Act / Assert: leaving the block stopped the source
+    with pytest.raises(RuntimeError, match="stopped publishing"):
+        await within(waiting)
+    await session.close()

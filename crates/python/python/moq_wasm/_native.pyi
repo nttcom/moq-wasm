@@ -226,8 +226,17 @@ class MediaBroadcast:
         label: str,
         video_bitrate: int | None = None,
         video_framerate: int | None = None,
+        cmaf: bool = False,
+        on_demand: bool = True,
     ) -> MediaSource:
-        """A source on the tracks `video` and `audio`, with the media timeline `<video>_timeline`."""
+        """A source on the tracks `video` and `audio`, with the media timeline `<video>_timeline`.
+        With `cmaf`, the video, its renditions and AAC audio also travel as CMAF in `<track>_cmaf`
+        (draft-ietf-moq-cmsf-01); Opus stays LOC alone. The video, its renditions, their CMAF
+        siblings and the audio are published on demand (draft-18 §10.10), as the browser SDK's
+        are: the relay has each sent only while a subscriber takes it, and
+        `MediaSource.demand_change` reports when that changes. `on_demand=False` keeps them sent
+        with no subscriber, for a track that should stay in the relay's cache, FETCHable, while
+        nobody takes it."""
 
 class MediaSource:
     def configure_video(self, codec: str) -> None:
@@ -257,6 +266,16 @@ class MediaSource:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
         broadcast needs one, as after dropping frames; encode the renditions' next frame as a keyframe
         too."""
+
+    async def demand_change(self) -> Demand:
+        """The next change of whether a subscriber takes one of the source's tracks, the video's and
+        renditions' CMAF siblings included: reported once when a track is published, then at each
+        change. The caller need not encode a track nobody takes. Raises RuntimeError for a source
+        added with `on_demand=False`, and once every track of the source is gone."""
+
+class Demand:
+    track_name: str
+    wanted: bool
 
 class Rendition:
     def configure_video(self, codec: str) -> None:

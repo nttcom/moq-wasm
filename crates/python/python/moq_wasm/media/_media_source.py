@@ -1,9 +1,13 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from moq_wasm import _native
 
 logger = logging.getLogger("moq_wasm")
+
+T = TypeVar("T")
 
 # The first element of the WebCodecs codec strings `broadcast` publishes as LOC.
 VIDEO_CODECS = {"avc1", "avc3", "hvc1", "hev1", "vp8", "vp09", "av01"}
@@ -22,17 +26,24 @@ class MediaSource:
         label: str,
         video_bitrate: int | None = None,
         video_framerate: int | None = None,
+        cmaf: bool = False,
+        on_demand: bool = True,
     ):
         self.video = video
         self.audio = audio
         self._label = label
         self._video_bitrate = video_bitrate
         self._video_framerate = video_framerate
+        self._cmaf = cmaf
+        self._on_demand = on_demand
         self._source: _native.MediaSource | None = None
         self._video_codec: str | None = None
         self._audio_config: tuple[str, int, int, bytes | None] | None = None
         self._renditions: list[Rendition] = []
         self._built = asyncio.Event()
+        # Set once the broadcast was left; the session ending stops the source too.
+        self._stopped = asyncio.Event()
+        self._session_ended: asyncio.Future[None] | None = None
 
     def configure_video(self, codec: str) -> None:
         """`codec` is a WebCodecs codec string: `avc1.*` (Annex B), `hvc1.*` (Annex B), `vp8`,
@@ -95,18 +106,45 @@ class MediaSource:
     async def keyframe_request(self) -> None:
         """Resolves the next time a subscriber asks for a new group (NEW_GROUP_REQUEST) or the
         broadcast needs one: encode the next frame as a keyframe then. Waits while the broadcast is
-        not published."""
-        await self._built.wait()
-        assert self._source is not None
-        await self._source.keyframe_request()
+        not published; raises RuntimeError once the broadcast was left or the session ended."""
+        await self._while_publishing(lambda source: source.keyframe_request())
 
-    def _build(self, broadcast: _native.MediaBroadcast) -> None:
+    async def demand_change(self) -> _native.Demand:
+        """`_native.MediaSource.demand_change`; waits while the broadcast is not published. Raises
+        RuntimeError for a source added with `on_demand=False`, and once the broadcast was left or the
+        session ended."""
+        if not self._on_demand:
+            raise RuntimeError("the source was added with on_demand=False")
+        return await self._while_publishing(lambda source: source.demand_change())
+
+    async def _while_publishing(self, request: Callable[[_native.MediaSource], Awaitable[T]]) -> T:
+        """`request` on the native source once it is built, ended by the source stopping."""
+        stopped = asyncio.ensure_future(self._stopped.wait())
+        built = asyncio.ensure_future(self._built.wait())
+        try:
+            await asyncio.wait([built, stopped], return_when=asyncio.FIRST_COMPLETED)
+            if self._source is None:
+                raise RuntimeError("the media source stopped publishing")
+            answered = asyncio.ensure_future(request(self._source))
+            ending = [stopped] if self._session_ended is None else [stopped, self._session_ended]
+            await asyncio.wait([answered, *ending], return_when=asyncio.FIRST_COMPLETED)
+            if not answered.done():
+                answered.cancel()
+                raise RuntimeError("the media source stopped publishing")
+            return answered.result()
+        finally:
+            stopped.cancel()
+            built.cancel()
+
+    def _build(self, broadcast: _native.MediaBroadcast, session_ended: asyncio.Future[None]) -> None:
         source = broadcast.add_source(
             self.video,
             self.audio,
             label=self._label,
             video_bitrate=self._video_bitrate,
             video_framerate=self._video_framerate,
+            cmaf=self._cmaf,
+            on_demand=self._on_demand,
         )
         if self._video_codec is not None:
             source.configure_video(self._video_codec)
@@ -114,6 +152,7 @@ class MediaSource:
             codec, sample_rate, channels, description = self._audio_config
             source.configure_audio(codec, sample_rate, channels, description=description)
         self._source = source
+        self._session_ended = session_ended
         for rendition in self._renditions:
             rendition._build(source)
         self._built.set()
@@ -123,6 +162,7 @@ class MediaSource:
         for rendition in self._renditions:
             rendition._rendition = None
         self._built.clear()
+        self._stopped.set()
 
 
 class Rendition:
