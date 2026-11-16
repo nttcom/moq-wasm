@@ -130,8 +130,11 @@ The request methods keep the bindings' shape, which follows the browser
 SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 `priority`, `delivery_timeout` in seconds and `group_order`),
 `subscribe_current_group`, `subscribe_group_start`, `fetch` (between two
-`Location`s), `track_status`, `watch_namespaces`, `publish_track` and
-`announce`. A `Subscription` iterates its objects, or its subgroup streams
+`Location`s), `track_status`, `watch_namespaces`, `publish_track` (with
+`retention_seconds`, `publish` and `datagram`) and `announce`. A
+`TrackWriter` has `write` and `write_group`, which return the group id an
+object went into when a subscriber took it, and `next_subscriber`; its
+objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
 through `groups()`, and has `largest`, `done()`, `set_forward`,
 `set_priority`, `request_new_group`, `end_before_group` and `close`. An
 `Object` carries `group_id`, `subgroup_id`, `object_id`, `status` and
@@ -163,8 +166,10 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   and `event_timeline` are synchronous so that a block can declare its
   tracks before anything yields; `published()` waits for the
   PUBLISH_NAMESPACE. A track added later is registered on its own, and
-  what is written to it before that is dropped. This replaces the
-  register-then-publish rule each bot comments.
+  what is written to it before that is dropped. `LocalBroadcast.publish_track` takes
+  `datagram` but not `publish`: the batch is registered before the
+  namespace is published, and a PUBLISH must follow the namespace. This
+  replaces the register-then-publish rule each bot comments.
 - **`EventTimeline`** writes a draft-ietf-moq-msf-01 §8 event timeline as
   one group: it opens with an empty record list once the track is
   registered, and each record is one more object, so a late joiner's joining

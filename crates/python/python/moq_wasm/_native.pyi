@@ -69,9 +69,23 @@ class Session:
         instead of `announce`."""
     async def unannounce(self, namespace: list[str]) -> None:
         """PUBLISH_NAMESPACE_DONE for a namespace `announce` published."""
-    async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> TrackWriter:
-        """Registers a track that the session answers SUBSCRIBE and FETCH for. Register it before
-        `announce`, since the relay may forward a SUBSCRIBE at once."""
+    async def publish_track(
+        self,
+        namespace: list[str],
+        name: str,
+        *,
+        retention_seconds: float,
+        publish: bool,
+        datagram: bool,
+    ) -> TrackWriter:
+        """Registers a track that the session answers SUBSCRIBE and FETCH for, keeping each object
+        `retention_seconds` to answer FETCH; 0 keeps only the newest. Register it before `announce`,
+        since the relay may forward a SUBSCRIBE at once; with `publish`, announce first: it also
+        sends PUBLISH, so the relay takes the track before anyone subscribes. `datagram` sends each
+        object in its own datagram: a lost one is not resent, one larger than the path's datagram
+        size (about 1 KB is safe) is dropped, and a subscriber reads it by object, not with
+        `groups()`. Raises RuntimeError when the relay refuses the PUBLISH or, with `datagram`, when
+        the track was already written to on streams."""
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         """Hands the relay `token`, a later token of the same app, before the current one expires
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it
@@ -161,8 +175,17 @@ class Fetch(AsyncIterator[Object]):
         """Raises StopAsyncIteration once the response ends."""
 
 class TrackWriter:
-    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
-        """The object is cached for FETCH whether or not a subscriber takes it."""
+    async def write(self, payload: bytes, *, new_group: bool = False) -> int | None:
+        """The object is cached for FETCH whether or not a subscriber takes it. Returns its group id
+        when a subscriber took it, and None otherwise; an object within a group that was never
+        started is dropped."""
+    async def write_group(self, payload: bytes) -> int | None:
+        """Sends `payload` as a group of its own, the layout of an MSF catalog. Returns the group id
+        when a subscriber took it, and None otherwise."""
+    async def next_subscriber(self) -> bool:
+        """True once a SUBSCRIBE for the track is answered, False once the session has ended: the
+        moment to send what a new subscriber needs, since its SUBSCRIBE starts after the largest
+        object."""
 
 class MediaBroadcast:
     async def announce(self) -> None: ...

@@ -30,10 +30,24 @@ impl TrackWriter {
     ) -> PyResult<Bound<'py, PyAny>> {
         let writer = self.writer.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            writer
+            Ok(writer
                 .write(Bytes::from(payload), new_group, ExtensionHeaders::default())
-                .await?;
-            Ok(())
+                .await?)
         })
+    }
+
+    fn write_group<'py>(&self, py: Python<'py>, payload: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.writer.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            Ok(writer.write_group(Bytes::from(payload)).await?)
+        })
+    }
+
+    fn next_subscriber<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.writer.clone();
+        pyo3_async_runtimes::tokio::future_into_py(
+            py,
+            async move { Ok(writer.next_subscriber().await) },
+        )
     }
 }

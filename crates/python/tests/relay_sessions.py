@@ -22,6 +22,11 @@ async def connect(relay_url: str) -> moq_wasm.Session:
     return await moq_wasm.connect(relay_url, verify_certificate=False)
 
 
+async def close_all(*sessions: moq_wasm.Session) -> None:
+    for session in sessions:
+        await session.close()
+
+
 async def publisher_with_track(relay_url: str, namespace: list[str]):
     session = await connect(relay_url)
     # Registered before the namespace, since the relay may forward a SUBSCRIBE at once.

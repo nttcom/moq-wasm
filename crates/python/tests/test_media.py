@@ -216,3 +216,33 @@ async def test_a_watcher_reads_the_catalog_of_a_broadcast_through_a_relay(relay_
     assert [track.name for track in received.tracks] == ["audio"]
     for session in (watcher, publisher):
         await session.close()
+
+
+async def test_next_subscriber_is_false_once_the_session_ends_before_the_track_is_registered():
+    # Arrange: the broadcast is never entered, so its track is never registered
+    relay = FakeRelay()
+    session = await open_session(relay)
+    status = create_broadcast(session, BOT).publish_track("status")
+    waiting = asyncio.ensure_future(status.next_subscriber())
+
+    # Act
+    await session.close()
+
+    # Assert
+    assert await within(waiting) is False
+
+
+async def test_next_subscriber_is_false_for_a_track_its_broadcast_left_unregistered():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+
+    # Act: leaving before the first await leaves the batch unregistered
+    async with create_broadcast(session, BOT) as bot:
+        status = bot.publish_track("status")
+    subscribed = await within(status.next_subscriber())
+
+    # Assert
+    assert subscribed is False
+    assert ("publish_track", "status") not in relay.sessions[0].calls
+    await session.close()
