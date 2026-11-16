@@ -126,9 +126,11 @@ class Announcement:
 
 
 class Session:
-    """A relay session that stays usable across connections: when a connection ends other than by
-    `close()`, it dials again with backoff and registers its tracks, publishes its namespaces and
-    watches its prefixes again. A subscription ends with its connection."""
+    """A relay session that stays usable across connections. A connection here is one native
+    session, which itself follows GOAWAY and replaces a lost transport for up to 60 s, carrying its
+    requests over. When a connection ends other than by `close()`, this dials again with backoff and
+    registers its tracks, publishes its namespaces and watches its prefixes again. A subscription
+    ends with its connection."""
 
     def __init__(self, dial: Dial, keeper: TokenKeeper | None, first_token: str | None):
         self._dial = dial

@@ -90,25 +90,35 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as sessi
 
 `connect` returns a `Session` that stays usable across connections:
 
-- **Reconnection.** When the native session closes, other than by
-  `close()`, the session dials again after 1 s, doubling the wait up to 30 s,
-  and restores what the caller set up, in this order: it registers the tracks,
-  publishes the namespaces, and sends the namespace subscriptions. The native
-  session already follows GOAWAY and reopens after a token expiry by itself;
-  this covers the rest (a relay restart, a network outage). The first
-  connection's failure raises from `connect`, so a wrong URL does not retry
-  forever.
-- **What a lost connection takes.** A track subscription ends; the media
-  layer's `follow` subscribes again. A namespace watch reports every
-  namespace it had as withdrawn, and the next connection's
-  SUBSCRIBE_NAMESPACE reports the published ones again. A `TrackWriter`
-  drops what is written while the session reconnects, and the new
-  connection's origin starts the track's groups afresh, numbered from the
+- **Reconnection, in two layers.**
+  - The native session (the `moqt` crate, shared with the browser SDK)
+    follows GOAWAY, and replaces a connection that ended without a
+    termination code (a network outage, a relay killed and restarted) or with
+    EXPIRED_AUTH_TOKEN, retrying from 0.5 s, doubling up to 10 s, for at most
+    60 s ([moqt/session-migration.md](../moqt/session-migration.md)
+    "Reconnecting after a lost connection"). It sends the namespace
+    subscriptions, namespaces and subscriptions again on the new connection;
+    each subscription continues from the next group start, and the objects
+    published in between are not filled in. The Python session sees none of
+    this.
+  - When the native session ends, other than by `close()` (those 60 s ran
+    out, or the relay closed it with another termination code), the Python
+    session dials again after 1 s, doubling the wait up to 30 s, and restores
+    what the caller set up, in this order: it registers the tracks, publishes
+    the namespaces, and sends the namespace subscriptions. The first
+    connection's failure raises from `connect`, so a wrong URL does not retry
+    forever.
+- **What a new native session takes.** This is the second layer only. A
+  track subscription ends; the media layer's `follow` subscribes again. A
+  namespace watch reports every namespace it had as withdrawn, and the new
+  session's SUBSCRIBE_NAMESPACE reports the published ones again. A
+  `TrackWriter` drops what is written while the session reconnects, and the
+  new session's origin starts the track's groups afresh, numbered from the
   wall-clock time, so a subscriber never sees a group id go back. Its cache
   does not carry over, so `TrackWriter.on_connected(callback)` awaits
-  `callback` each time a connection registers the track, before the
-  namespace is published on it, for a track whose subscribers need its
-  current state first (a status).
+  `callback` each time a session registers the track, before the namespace is
+  published on it, for a track whose subscribers need its current state
+  first (a status).
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
   `exp` from the token's claims, calls it five minutes before `exp`, retries

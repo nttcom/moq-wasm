@@ -32,8 +32,10 @@ async with moq_wasm.connect(
         print(message.payload)
 ```
 
-The session dials the relay again when the connection ends, with a backoff
-from 1 s to 30 s, and restores its tracks, namespaces and watches. It refreshes
+A lost connection is replaced in two layers. The native session, shared with
+the browser SDK, follows GOAWAY and reconnects for up to 60 s, carrying its
+subscriptions over. Once it gives up, the Python session dials again with a
+backoff from 1 s to 30 s, and restores its tracks, namespaces and watches. It refreshes
 the token five minutes before it expires. `session.run(work)` awaits `work` and
 cancels it once the session ends, raising what ended it: `TokenExpired` when no refresh came in time,
 `SessionClosed` after `close()`.
@@ -77,7 +79,8 @@ async with create_broadcast(session, ["app", "room", "camera"]) as broadcast:
 answer it with a keyframe. `broadcast.publish_track` and
 `broadcast.event_timeline` add tracks of your own to the broadcast. A track
 whose subscribers need its current state first writes it in
-`writer.on_connected(callback)`, which runs on each connection.
+`writer.on_connected(callback)`, which runs each time the Python session
+dials again.
 
 ## pipecat
 
