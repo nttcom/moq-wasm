@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 import moq_wasm
-from tests.relay_sessions import TRACK, connect, publisher_with_track, room, within
+from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room, within
 
 # Long enough for the relay to have forwarded an object it was going to forward.
 NOTHING_ARRIVES_SECONDS = 1
@@ -22,11 +22,6 @@ async def subscribed_track(relay_url: str, namespace: list[str]):
     group_id = (await within(objects.__anext__())).group_id
     await within(objects.__anext__())
     return (publisher, holder), track, group_id
-
-
-async def close_all(*sessions: moq_wasm.Session) -> None:
-    for session in sessions:
-        await session.close()
 
 
 async def test_a_subscription_without_forward_receives_once_forward_is_set(relay_url):

@@ -10,6 +10,7 @@ from moq_wasm._token import RefreshToken, TokenKeeper
 logger = logging.getLogger("moq_wasm")
 
 T = TypeVar("T")
+DEFAULT_RETENTION_SECONDS = 60.0
 Dial = Callable[[str | None], Awaitable[_native.Session]]
 MediaBuilder = Callable[[_native.Session], Awaitable[None]]
 
@@ -70,24 +71,65 @@ class NamespaceWatch(AsyncIterator[NamespaceEvent]):
 
 class TrackWriter:
     """A track the session publishes. What is written before the track is registered, or after the
-    session ended, is dropped."""
+    session ended, is dropped. Objects carry no extension headers (LOC properties)."""
 
-    def __init__(self, namespace: list[str], name: str, retention_seconds: float):
+    def __init__(
+        self,
+        namespace: list[str],
+        name: str,
+        retention_seconds: float,
+        *,
+        publish: bool = False,
+        datagram: bool = False,
+        session_ended: asyncio.Future[None] | None = None,
+    ):
         self.namespace = namespace
         self.name = name
         self.retention_seconds = retention_seconds
+        self.publish = publish
+        self.datagram = datagram
+        self._session_ended = session_ended
         self._writer: _native.TrackWriter | None = None
+        # Set once the track is registered, or will not be.
+        self._settled = asyncio.Event()
         self._on_bound: list[Callable[[], Awaitable[None]]] = []
 
-    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
-        """The object is cached for FETCH whether or not a subscriber takes it."""
-        if self._writer is not None:
-            await self._writer.write(payload, new_group=new_group)
+    async def write(self, payload: bytes, *, new_group: bool = False) -> int | None:
+        """`_native.TrackWriter.write`; None for an object dropped before the track is
+        registered."""
+        if self._writer is None:
+            return None
+        return await self._writer.write(payload, new_group=new_group)
+
+    async def write_group(self, payload: bytes) -> int | None:
+        """`_native.TrackWriter.write_group`; None for an object dropped before the track is
+        registered."""
+        if self._writer is None:
+            return None
+        return await self._writer.write_group(payload)
+
+    async def next_subscriber(self) -> bool:
+        """`_native.TrackWriter.next_subscriber`; False when the session ends before the track is
+        registered."""
+        settled = asyncio.ensure_future(self._settled.wait())
+        ended = [] if self._session_ended is None else [self._session_ended]
+        try:
+            await asyncio.wait([settled, *ended], return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            settled.cancel()
+        if self._writer is None:
+            return False
+        return await self._writer.next_subscriber()
 
     async def _bind(self, writer: _native.TrackWriter) -> None:
         self._writer = writer
+        self._settled.set()
         for bound in self._on_bound:
             await bound()
+
+    def _abandon(self) -> None:
+        """The track will not be registered."""
+        self._settled.set()
 
 
 class Announcement:
@@ -189,18 +231,42 @@ class Session:
         self._announced.append(namespace)
         return Announcement(self, namespace)
 
-    async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> TrackWriter:
-        """Registers a track that the session answers SUBSCRIBE and FETCH for. Register it before
-        `announce`, since the relay may forward a SUBSCRIBE at once."""
-        writer = TrackWriter(namespace, name, retention_seconds)
+    async def publish_track(
+        self,
+        namespace: list[str],
+        name: str,
+        *,
+        retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+        publish: bool = False,
+        datagram: bool = False,
+    ) -> TrackWriter:
+        """Registers a track that the session answers SUBSCRIBE and FETCH for
+        (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
+        a SUBSCRIBE at once; with `publish`, announce first."""
+        writer = self._track_writer(namespace, name, retention_seconds, publish=publish, datagram=datagram)
         await self._register(writer)
         return writer
 
-    async def _register(self, writer: TrackWriter) -> None:
-        native = self._connected()
-        await writer._bind(
-            await native.publish_track(writer.namespace, writer.name, retention_seconds=writer.retention_seconds)
+    def _track_writer(
+        self, namespace: list[str], name: str, retention_seconds: float, *, publish: bool, datagram: bool
+    ) -> TrackWriter:
+        return TrackWriter(
+            namespace, name, retention_seconds, publish=publish, datagram=datagram, session_ended=self._done
         )
+
+    async def _register(self, writer: TrackWriter) -> None:
+        try:
+            native = await self._connected().publish_track(
+                writer.namespace,
+                writer.name,
+                retention_seconds=writer.retention_seconds,
+                publish=writer.publish,
+                datagram=writer.datagram,
+            )
+        except BaseException:
+            writer._abandon()
+            raise
+        await writer._bind(native)
 
     async def _add_media_broadcast(self, namespace: list[str], build: MediaBuilder) -> Announcement:
         """Publishes `namespace` through `build`, which builds the media broadcast and announces it."""

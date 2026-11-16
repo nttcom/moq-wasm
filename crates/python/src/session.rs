@@ -295,23 +295,32 @@ impl Session {
         })
     }
 
-    /// Registers a track with the session's origin, which keeps what is written
-    /// for `retention_seconds` to answer FETCH. Its group ids start at the
-    /// wall-clock time in µs, so a later run of the same publisher does not
-    /// reuse a location the relay still caches.
-    #[pyo3(signature = (namespace, name, *, retention_seconds))]
+    /// Registers a track with the session's origin. Its group ids start at
+    /// the wall-clock time in µs, so a later run of the same publisher does
+    /// not reuse a location the relay still caches.
+    #[pyo3(signature = (namespace, name, *, retention_seconds, publish, datagram))]
     fn publish_track<'py>(
         &self,
         py: Python<'py>,
         namespace: Vec<String>,
         name: String,
         retention_seconds: f64,
+        publish: bool,
+        datagram: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let retention = if retention_seconds == 0.0 {
+            Retention::NewestOnly
+        } else {
+            Retention::For(Duration::try_from_secs_f64(retention_seconds).map_err(|_| {
+                PyValueError::new_err(format!("invalid retention_seconds: {retention_seconds}"))
+            })?)
+        };
         let session = self.session.clone();
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             let options = PublishTrackOptions {
-                retention: Retention::For(Duration::from_secs_f64(retention_seconds)),
-                ..PublishTrackOptions::default()
+                retention,
+                publish,
+                datagram,
             };
             let writer = session.publish_track(&namespace, &name, options).await?;
             Ok(TrackWriter::from(writer))

@@ -124,7 +124,7 @@ class FakeNativeSession:
         if not self._closed.done():
             self._closed.set_result(None)
 
-    async def publish_track(self, namespace: list[str], name: str, *, retention_seconds: float) -> FakeWriter:
+    async def publish_track(self, namespace: list[str], name: str, **options) -> FakeWriter:
         self.calls.append(("publish_track", name))
         return self.writers.setdefault(name, FakeWriter())
 
