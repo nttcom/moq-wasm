@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::scope::SessionScope;
 use bytes::Bytes;
 use moqt::{client, object::ExtensionHeaders};
 use pyo3::prelude::*;
@@ -9,12 +10,14 @@ use pyo3::prelude::*;
 #[pyclass(module = "moq_wasm")]
 pub struct TrackWriter {
     writer: Arc<client::TrackWriter>,
+    scope: SessionScope,
 }
 
-impl From<client::TrackWriter> for TrackWriter {
-    fn from(writer: client::TrackWriter) -> Self {
+impl TrackWriter {
+    pub(crate) fn new(writer: client::TrackWriter, scope: SessionScope) -> Self {
         Self {
             writer: Arc::new(writer),
+            scope,
         }
     }
 }
@@ -29,7 +32,7 @@ impl TrackWriter {
         new_group: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let writer = self.writer.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             Ok(writer
                 .write(Bytes::from(payload), new_group, ExtensionHeaders::default())
                 .await?)
@@ -38,7 +41,7 @@ impl TrackWriter {
 
     fn write_group<'py>(&self, py: Python<'py>, payload: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
         let writer = self.writer.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             Ok(writer.write_group(Bytes::from(payload)).await?)
         })
     }

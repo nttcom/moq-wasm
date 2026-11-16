@@ -22,8 +22,10 @@ use crate::{
     errors::{CloseInfo, TransportStats, request_error},
     fetch::Fetch,
     location::Location,
+    log_sink,
     media_broadcast::MediaBroadcast,
     namespace_watch::NamespaceWatch,
+    scope::SessionScope,
     subscription::Subscription,
     track_writer::TrackWriter,
 };
@@ -47,7 +49,8 @@ pub fn connect(
     let versions = Version::offered(versions.as_deref())
         .map_err(|error| PyValueError::new_err(error.to_string()))?;
     let token = token.map(|token| Arc::new(Mutex::new(token)));
-    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+    let scope = log_sink::session_scope(token.as_ref());
+    scope.future_into_py(py, async move {
         let authorization_token = token.clone().map(|current| {
             AuthorizationTokenSource::provider(move || {
                 let token = current.lock().unwrap().clone();
@@ -67,6 +70,7 @@ pub fn connect(
         Ok(Session {
             session: Arc::new(client::Session::new(session)),
             token,
+            scope,
         })
     })
 }
@@ -113,6 +117,7 @@ pub struct Session {
     session: Arc<client::Session>,
     /// The token the session presents when it follows a GOAWAY.
     token: Option<Arc<Mutex<String>>>,
+    scope: SessionScope,
 }
 
 #[pymethods]
@@ -124,12 +129,13 @@ impl Session {
         prefix: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             let watch = session
                 .watch_namespaces(&prefix)
                 .await
                 .map_err(request_error)?;
-            Ok(NamespaceWatch::from(watch))
+            Ok(NamespaceWatch::new(watch, scope))
         })
     }
 
@@ -158,12 +164,13 @@ impl Session {
             group_order: delivery.group_order,
         };
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             let subscription = session
                 .subscribe(&namespace, &name, options)
                 .await
                 .map_err(request_error)?;
-            Ok(Subscription::from(subscription))
+            Ok(Subscription::new(subscription, scope))
         })
     }
 
@@ -184,12 +191,13 @@ impl Session {
     ) -> PyResult<Bound<'py, PyAny>> {
         let options = group_start_options(priority, delivery_timeout, group_order)?;
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             let subscription = session
                 .subscribe_group_start(&namespace, &name, new_group_after, options)
                 .await
                 .map_err(request_error)?;
-            Ok(Subscription::from(subscription))
+            Ok(Subscription::new(subscription, scope))
         })
     }
 
@@ -204,7 +212,8 @@ impl Session {
         end: Location,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             let fetch = session
                 .fetch(&namespace, &name, start.into(), end.into())
                 .await
@@ -212,7 +221,7 @@ impl Session {
                     FetchError::Request(error) => request_error(error),
                     error => anyhow::Error::from(error).into(),
                 })?;
-            Ok(Fetch::from(fetch))
+            Ok(Fetch::new(fetch, scope))
         })
     }
 
@@ -224,7 +233,7 @@ impl Session {
         name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             let largest = session
                 .track_status(&namespace, &name)
                 .await
@@ -240,12 +249,13 @@ impl Session {
         name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             let subscription = session
                 .subscribe_current_group(&namespace, &name)
                 .await
                 .map_err(request_error)?;
-            Ok(Subscription::from(subscription))
+            Ok(Subscription::new(subscription, scope))
         })
     }
 
@@ -256,7 +266,7 @@ impl Session {
         namespace: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             session.announce(&namespace).await.map_err(request_error)?;
             Ok(())
         })
@@ -267,12 +277,15 @@ impl Session {
     fn media_broadcast(&self, namespace: Vec<String>) -> MediaBroadcast {
         // The connection spawns its tasks, which need the runtime the module's futures run on.
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let connection = RelayConnection::with_client_session(&self.session);
+        let connection = self
+            .scope
+            .run(|| RelayConnection::with_client_session(&self.session));
         let handler = self.session.add_handler(Arc::new(connection.clone()));
         MediaBroadcast {
             broadcast: Broadcast::new(connection, namespace),
             session: self.session.clone(),
             handler,
+            scope: self.scope,
         }
     }
 
@@ -283,7 +296,7 @@ impl Session {
         namespace: Vec<String>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.moqt_session().clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             session
                 .publisher()
                 .publish_namespace_done(namespace.join("/"))
@@ -313,14 +326,15 @@ impl Session {
             })?)
         };
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             let options = PublishTrackOptions {
                 retention,
                 publish,
                 datagram,
             };
             let writer = session.publish_track(&namespace, &name, options).await?;
-            Ok(TrackWriter::from(writer))
+            Ok(TrackWriter::new(writer, scope))
         })
     }
 
@@ -345,7 +359,7 @@ impl Session {
         };
         *current.lock().unwrap() = token.clone();
         let session = self.session.moqt_session().clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             session
                 .subscriber()
                 .track_status(
@@ -362,9 +376,10 @@ impl Session {
     /// The way the session's last connection closed, once it has.
     fn closed<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.moqt_session().clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            Ok(CloseInfo::from(session.closed().await))
-        })
+        self.scope.future_into_py(
+            py,
+            async move { Ok(CloseInfo::from(session.closed().await)) },
+        )
     }
 
     fn transport_stats(&self) -> TransportStats {
@@ -378,7 +393,7 @@ impl Session {
     /// Closes the session and waits until the relay has seen the close.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let session = self.session.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             session.close().await;
             Ok(())
         })

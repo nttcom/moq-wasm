@@ -2,6 +2,7 @@
 
 from moq_wasm._errors import RequestErrorCode
 from moq_wasm._log import init, report_log
+from moq_wasm._telemetry import TelemetryOptions
 from moq_wasm._native import (
     CloseInfo,
     Fetch,
@@ -42,6 +43,7 @@ __all__ = [
     "Session",
     "SessionClosed",
     "Subscription",
+    "TelemetryOptions",
     "TokenExpired",
     "TrackWriter",
     "TransportStats",

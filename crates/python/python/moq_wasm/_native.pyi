@@ -26,11 +26,11 @@ def set_log_sink(level: str, spans: bool) -> None:
     TRACE_CONTEXT. Raises ValueError for an unknown level and RuntimeError when a subscriber is
     already set."""
 
-def wait_log_records() -> list[tuple[str, str]]:
-    """The records queued since the last call, as `(kind, json)` with `kind` `"log"` or
-    `"span"`, led by a `log records dropped` warning when the queue was full meanwhile; waits half a
-    second for the first one, releasing the GIL, and returns an empty list after that.
-    Raises RuntimeError before `set_log_sink`."""
+def wait_log_records() -> list[tuple[str, str, str | None]]:
+    """The records queued since the last call, as `(kind, json, token)` with `kind` `"log"` or
+    `"span"` and the token of the session the record belongs to, led by a `log records dropped`
+    warning when the queue was full meanwhile; waits half a second for the first one, releasing
+    the GIL, and returns an empty list after that. Raises RuntimeError before `set_log_sink`."""
 
 def parse_catalog(payload: bytes) -> dict:
     """Raises `ValueError` when `payload` is not an independent MSF catalog: malformed, of a

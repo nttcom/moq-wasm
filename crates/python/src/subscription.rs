@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::scope::SessionScope;
 use bytes::Bytes;
 use moqt::{
     client::{self, ReceivedObject},
@@ -55,12 +56,14 @@ pub struct PublishDone {
 #[pyclass(module = "moq_wasm")]
 pub struct Subscription {
     subscription: Arc<client::Subscription>,
+    scope: SessionScope,
 }
 
-impl From<client::Subscription> for Subscription {
-    fn from(subscription: client::Subscription) -> Self {
+impl Subscription {
+    pub(crate) fn new(subscription: client::Subscription, scope: SessionScope) -> Self {
         Self {
             subscription: Arc::new(subscription),
+            scope,
         }
     }
 }
@@ -73,7 +76,7 @@ impl Subscription {
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             match subscription.next().await? {
                 Some(object) => Ok(Object::from(object)),
                 None => Err(PyStopAsyncIteration::new_err("the track ended")),
@@ -88,7 +91,7 @@ impl Subscription {
 
     fn done<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let done = self.subscription.done();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             Ok(done.await.map(|done| PublishDone {
                 code: publish_done_code_to_wire(done.code),
                 reason: done.reason,
@@ -99,12 +102,13 @@ impl Subscription {
     fn groups(&self) -> Groups {
         Groups {
             subscription: self.subscription.clone(),
+            scope: self.scope,
         }
     }
 
     fn set_forward<'py>(&self, py: Python<'py>, forward: bool) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             subscription.set_forward(forward).await?;
             Ok(())
         })
@@ -112,7 +116,7 @@ impl Subscription {
 
     fn set_priority<'py>(&self, py: Python<'py>, priority: u8) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             subscription.set_priority(priority).await?;
             Ok(())
         })
@@ -125,14 +129,14 @@ impl Subscription {
         largest_group: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             Ok(subscription.request_new_group(largest_group).await?)
         })
     }
 
     fn end_before_group<'py>(&self, py: Python<'py>, group_id: u64) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             subscription.end_before_group(group_id).await?;
             Ok(())
         })
@@ -141,7 +145,7 @@ impl Subscription {
     /// Sends UNSUBSCRIBE; the iterator ends once the relay stops the track.
     fn close<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             subscription.close().await?;
             Ok(())
         })
@@ -152,6 +156,7 @@ impl Subscription {
 #[pyclass(module = "moq_wasm")]
 pub struct Groups {
     subscription: Arc<client::Subscription>,
+    scope: SessionScope,
 }
 
 #[pymethods]
@@ -162,12 +167,14 @@ impl Groups {
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let subscription = self.subscription.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let scope = self.scope;
+        self.scope.future_into_py(py, async move {
             match subscription.next_group().await? {
                 Some(group) => Ok(Group {
                     group_id: group.group_id(),
                     subgroup_id: group.subgroup_id(),
                     group: Arc::new(group),
+                    scope,
                 }),
                 None => Err(PyStopAsyncIteration::new_err("the track ended")),
             }
@@ -184,6 +191,7 @@ pub struct Group {
     #[pyo3(get)]
     subgroup_id: u64,
     group: Arc<client::Group>,
+    scope: SessionScope,
 }
 
 #[pymethods]
@@ -194,7 +202,7 @@ impl Group {
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let group = self.group.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             match group.next().await? {
                 Some(object) => Ok(Object::from(object)),
                 None => Err(PyStopAsyncIteration::new_err("the stream ended")),

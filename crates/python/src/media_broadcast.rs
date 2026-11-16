@@ -19,6 +19,7 @@ use pyo3::{
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc, oneshot};
 
+use crate::scope::SessionScope;
 use rendition_task::{RenditionCommand, RenditionTask};
 
 /// An MSF broadcast of media the caller encodes, built by `broadcast` as the
@@ -31,13 +32,14 @@ pub struct MediaBroadcast {
     pub(crate) broadcast: Broadcast,
     pub(crate) session: Arc<client::Session>,
     pub(crate) handler: HandlerId,
+    pub(crate) scope: SessionScope,
 }
 
 #[pymethods]
 impl MediaBroadcast {
     fn announce<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let broadcast = self.broadcast.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             broadcast.announce().await?;
             Ok(())
         })
@@ -82,13 +84,15 @@ impl MediaBroadcast {
             keyframe_requests: Some(keyframe_requests.clone()),
             demand_sender,
         };
-        // The writer spawns its publish task, which needs the runtime the module's futures run on.
+        // The writer spawns its publish task, which needs the runtime the module's futures run on
+        // and keeps the scope it is spawned in.
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
+        let writer = self
+            .scope
+            .run(|| BroadcastWriter::run(self.broadcast.clone(), tracks));
         MediaSource {
-            writer: Arc::new(Mutex::new(BroadcastWriter::run(
-                self.broadcast.clone(),
-                tracks,
-            ))),
+            writer: Arc::new(Mutex::new(writer)),
+            scope: self.scope,
             video: Mutex::new(None),
             keyframe_requests,
             renditions: Mutex::new(Vec::new()),
@@ -102,6 +106,7 @@ impl MediaBroadcast {
 #[pyclass(module = "moq_wasm")]
 pub struct MediaSource {
     writer: Arc<Mutex<BroadcastWriter>>,
+    scope: SessionScope,
     /// Reads a frame as it reads a received LOC object: into the track's
     /// configuration changes and a sample.
     video: Mutex<Option<LocDemuxer>>,
@@ -114,11 +119,13 @@ pub struct MediaSource {
 
 impl MediaSource {
     fn push(&self, event: MediaEvent) -> PyResult<()> {
-        self.writer
-            .lock()
-            .unwrap()
-            .push(event)
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+        self.scope.run(|| {
+            self.writer
+                .lock()
+                .unwrap()
+                .push(event)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))
+        })
     }
 }
 
@@ -165,10 +172,13 @@ impl MediaSource {
             keyframes: RenditionKeyframes::SameFrames,
         };
         let rendition = RenditionTrack::new(&writer, config);
-        let task = RenditionTask::run(rendition, writer.broadcast().clone(), track);
+        let task = self
+            .scope
+            .run(|| RenditionTask::run(rendition, writer.broadcast().clone(), track));
         self.renditions.lock().unwrap().push(task.command_sender());
         Rendition {
             task,
+            scope: self.scope,
             video: Mutex::new(None),
         }
     }
@@ -210,7 +220,7 @@ impl MediaSource {
         } else {
             Vec::new()
         };
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             let mut result = removal.await;
             for removed in renditions {
                 result = result.and(removed.await);
@@ -273,7 +283,7 @@ impl MediaSource {
     /// frames; encode the next frame as a keyframe then.
     fn keyframe_request<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let requests = self.keyframe_requests.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             requests.notified().await;
             Ok(())
         })
@@ -288,7 +298,7 @@ impl MediaSource {
             .demands
             .clone()
             .ok_or_else(|| PyRuntimeError::new_err("the source was added with on_demand=False"))?;
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             let demand =
                 demands.lock().await.recv().await.ok_or_else(|| {
                     PyRuntimeError::new_err("the media source stopped publishing")
@@ -306,6 +316,7 @@ impl MediaSource {
 #[pyclass(module = "moq_wasm")]
 pub struct Rendition {
     task: RenditionTask,
+    scope: SessionScope,
     video: Mutex<Option<LocDemuxer>>,
 }
 
@@ -320,12 +331,15 @@ impl Rendition {
     /// An encoded frame of the same picture as a video frame, at that
     /// frame's timestamp. Fails once an earlier frame stopped the rendition.
     fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<()> {
-        for event in demux(&self.video, data, timestamp_micros)? {
-            self.task
-                .push(event)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        }
-        Ok(())
+        let events = demux(&self.video, data, timestamp_micros)?;
+        self.scope.run(|| {
+            for event in events {
+                self.task
+                    .push(event)
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            }
+            Ok(())
+        })
     }
 }
 

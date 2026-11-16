@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::scope::SessionScope;
 use moqt::client;
 use pyo3::{exceptions::PyStopAsyncIteration, prelude::*};
 
@@ -15,12 +16,14 @@ pub struct NamespaceEvent {
 #[pyclass(module = "moq_wasm")]
 pub struct NamespaceWatch {
     watch: Arc<client::NamespaceWatch>,
+    scope: SessionScope,
 }
 
-impl From<client::NamespaceWatch> for NamespaceWatch {
-    fn from(watch: client::NamespaceWatch) -> Self {
+impl NamespaceWatch {
+    pub(crate) fn new(watch: client::NamespaceWatch, scope: SessionScope) -> Self {
         Self {
             watch: Arc::new(watch),
+            scope,
         }
     }
 }
@@ -33,7 +36,7 @@ impl NamespaceWatch {
 
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let watch = self.watch.clone();
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        self.scope.future_into_py(py, async move {
             match watch.next().await {
                 Some(event) => Ok(NamespaceEvent {
                     namespace: event.namespace,

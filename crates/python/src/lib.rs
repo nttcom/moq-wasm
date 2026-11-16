@@ -5,6 +5,7 @@ mod location;
 mod log_sink;
 mod media_broadcast;
 mod namespace_watch;
+mod scope;
 mod session;
 mod subscription;
 mod track_writer;
