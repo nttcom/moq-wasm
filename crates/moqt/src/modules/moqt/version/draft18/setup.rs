@@ -39,7 +39,6 @@ fn client_setup(target: &ConnectTarget, authorization_token: Option<&str>) -> Se
             .map(AuthorizationToken::use_value_utf8)
             .into_iter()
             .collect(),
-        max_auth_token_cache_size: 0,
         implementation: Some(IMPLEMENTATION.to_string()),
         declares_trace_context: true,
         traceparent: current_traceparent(),
