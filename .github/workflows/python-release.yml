@@ -1,0 +1,136 @@
+name: Python SDK release
+
+# `docs/architecture/python/sdk.md` "Package".
+on:
+  push:
+    tags:
+      - "python-sdk-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Check the tag names the package version
+        id: version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('crates/python/pyproject.toml', 'rb'))['project']['version'])")
+          if [ "${GITHUB_REF_NAME}" != "python-sdk-v${version}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not name the package version ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Check the changelog has the version's section
+        run: node crates/wasm/js/scripts/release-notes.mjs crates/python/CHANGELOG.md "${{ steps.version.outputs.version }}"
+
+  wheel:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: manylinux_2_28_x86_64
+          - runner: ubuntu-24.04-arm
+            platform: manylinux_2_28_aarch64
+          # The macOS runner has no Docker for the Redis the GOAWAY test starts.
+          - runner: macos-14
+            platform: macosx_11_0_arm64
+            pytest-args: --deselect tests/test_session.py::test_a_subscription_continues_on_the_relay_a_draining_relay_names
+    runs-on: ${{ matrix.runner }}
+    env:
+      WHEEL: moq_wasm-${{ needs.version.outputs.version }}-cp311-abi3-${{ matrix.platform }}.whl
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Build the wheel
+        # PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b = v1.51.0
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
+        with:
+          maturin-version: v1.16.0
+          rust-toolchain: 1.99.1
+          manylinux: "2_28"
+          working-directory: crates/python
+          args: --release --locked --out dist
+      - name: Check the wheel's name
+        run: test -f "crates/python/dist/${WHEEL}"
+      - name: Upload the wheel
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: wheel-${{ matrix.platform }}
+          path: crates/python/dist/${{ env.WHEEL }}
+          if-no-files-found: error
+      # The tests start a relay and a VTS built from this workspace.
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.99.1
+      - name: Setup uv
+        # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: 0.13.4
+          checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
+          save-cache: false
+      # Python 3.11 is the oldest the abi3 wheel takes; --no-install-project keeps the tests on the wheel.
+      - name: Install the wheel and the test dependencies
+        working-directory: crates/python
+        run: |
+          uv sync --locked --no-install-project --python 3.11
+          uv pip install --no-deps "dist/${WHEEL}"
+          uv run --no-sync python -c "import moq_wasm; assert 'site-packages' in moq_wasm.__file__, moq_wasm.__file__"
+      - name: Run binding tests
+        working-directory: crates/python
+        # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
+        run: uv run --no-sync pytest --basetemp="${RUNNER_TEMP}/pytest" ${{ matrix.pytest-args }}
+      - name: Upload binding test logs
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: python-binding-logs-${{ matrix.platform }}
+          path: ${{ runner.temp }}/pytest/**/*.log
+          if-no-files-found: ignore
+
+  release:
+    needs: [version, wheel]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Download the wheels
+        # actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c = v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/wheels
+      - name: Take the release notes from the changelog
+        run: node crates/wasm/js/scripts/release-notes.mjs crates/python/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${RUNNER_TEMP}"/wheels/*.whl \
+            --verify-tag --latest=false \
+            --title "moq-wasm (Python) ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"
