@@ -3,6 +3,7 @@ use moqt::{
     publish::Origin,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
 };
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// A publisher that serves the tracks registered with `origin` to the one
@@ -11,7 +12,7 @@ pub(crate) struct FakePublisher {
     pub(crate) url: String,
     pub(crate) origin: Origin,
     /// The track name of each SUBSCRIBE, sent once `origin` serves it.
-    pub(crate) served: mpsc::UnboundedReceiver<String>,
+    served: mpsc::UnboundedReceiver<String>,
 }
 
 impl FakePublisher {
@@ -52,6 +53,17 @@ impl FakePublisher {
             origin,
             served,
         }
+    }
+
+    /// The track name of the next SUBSCRIBE `origin` serves.
+    ///
+    /// # Panics
+    /// When none arrives within 5 seconds, as when the subscriber gave up.
+    pub(crate) async fn next_served(&mut self) -> String {
+        tokio::time::timeout(Duration::from_secs(5), self.served.recv())
+            .await
+            .expect("no track was subscribed")
+            .expect("the publisher stopped serving")
     }
 }
 
