@@ -1,28 +1,30 @@
 import argparse
 import asyncio
 import time
+from collections.abc import AsyncIterator
+from contextlib import aclosing
 from functools import partial
 
 import aiohttp
 import moq_wasm
 from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken
-from moq_bot_rooms.rooms import BotRoom
+from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_system_one_bot.namespace import until_room_empty
 from moq_system_one_bot.relay import add_relay_arguments, stay_connected
+from moq_system_one_bot.video import picture_to_jpeg
+from moq_wasm.codecs import VideoDecoder
+from moq_wasm.media import CatalogTrack, RemoteBroadcast, create_broadcast, watch_broadcasts
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from moq_camera_detection.catalog import camera_video_track
 from moq_camera_detection.detector import CameraDetector, CameraPicture
-from moq_system_one_bot.event_timeline import EventTimeline
 from moq_camera_detection.prompt import Prompt, parse_prompt
-from moq_system_one_bot.video import GroupDecoder, picture_to_jpeg
 from moq_camera_detection.vision import SystemOneVisionClient
 
 DEFAULT_PORT = 8098
@@ -30,7 +32,6 @@ DEFAULT_PORT = 8098
 # SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
 DEMO_NAME = "moq-camera-detection"
-CATALOG_TRACK = "catalog"
 PROMPT_TRACK = "prompt"
 EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
@@ -64,29 +65,28 @@ class LatestPrompt:
     def __init__(self):
         self.prompt: Prompt | None = None
 
-    async def follow(self, track: moq_wasm.Subscription):
-        try:
-            async for prompt_object in track:
-                location = (prompt_object.group_id, prompt_object.object_id)
-                prompt = parse_prompt(prompt_object.payload, location)
-                if prompt is None:
-                    logger.warning(f"ignoring an invalid prompt at {location}")
-                    continue
-                logger.info(f"prompt {prompt.location}: {prompt.questions}")
-                self.prompt = prompt
-        except RuntimeError as error:
-            logger.info(f"prompt track ended: {error}")
+    async def follow(self, prompts: AsyncIterator[moq_wasm.Object]):
+        async for prompt_object in prompts:
+            location = (prompt_object.group_id, prompt_object.object_id)
+            prompt = parse_prompt(prompt_object.payload, location)
+            if prompt is None:
+                logger.warning(f"ignoring an invalid prompt at {location}")
+                continue
+            logger.info(f"prompt {prompt.location}: {prompt.questions}")
+            self.prompt = prompt
 
 
-async def forward_pictures(video: moq_wasm.Subscription, latest_prompt: LatestPrompt, worker: PipelineWorker):
+async def forward_pictures(
+    video: AsyncIterator[moq_wasm.Object], codec: str, latest_prompt: LatestPrompt, worker: PipelineWorker
+):
     next_sample_at = 0.0
-    decoder: GroupDecoder | None = None
+    decoder: VideoDecoder | None = None
     group_id: int | None = None
     async for video_object in video:
         # Each group starts at a keyframe, so each gets a fresh decoder. A group joined in the middle
         # has no keyframe and decodes to nothing.
         if video_object.group_id != group_id:
-            decoder = GroupDecoder()
+            decoder = VideoDecoder(codec)
             group_id = video_object.group_id
         picture = await asyncio.to_thread(decoder.decode, video_object.payload)
         decoded_at = time.monotonic()
@@ -104,72 +104,71 @@ async def forward_pictures(video: moq_wasm.Subscription, latest_prompt: LatestPr
             )
 
 
-async def video_track_name(session: moq_wasm.Session, camera_namespace: list[str]) -> str:
-    # The joining FETCH brings the catalog the relay holds for the page's other viewers.
-    catalog = await session.subscribe_current_group(camera_namespace, CATALOG_TRACK)
-    try:
-        async for catalog_object in catalog:
-            track = camera_video_track(catalog_object.payload)
-            if track:
-                return track
-    finally:
-        await catalog.close()
-    raise RuntimeError("the catalog ended before it listed a video track")
-
-
-async def forward_camera(session: moq_wasm.Session, camera_namespace: list[str], worker: PipelineWorker):
+async def video_track(camera: RemoteBroadcast) -> CatalogTrack:
+    """The camera's video track, from the catalog the relay holds for the page's other viewers or a
+    later one; retries while the catalog cannot be read."""
     while True:
         try:
-            latest_prompt = LatestPrompt()
-            prompts = await session.subscribe(camera_namespace, PROMPT_TRACK)
-            following = asyncio.create_task(latest_prompt.follow(prompts))
-            try:
-                video = await session.subscribe(camera_namespace, await video_track_name(session, camera_namespace))
-                await forward_pictures(video, latest_prompt, worker)
-                logger.info("camera track ended")
-            finally:
-                following.cancel()
+            async with aclosing(camera.catalogs()) as catalogs:
+                async for catalog in catalogs:
+                    track = camera_video_track(catalog)
+                    if track is not None:
+                        return track
+            logger.info("the catalog ended before it listed a video track")
         except RuntimeError as error:
-            logger.info(f"camera track ended: {error}")
-        # The relay ends the tracks when the page it subscribed to leaves; another page in the room
-        # may still publish the camera namespace, so subscribe again.
+            logger.info(f"cannot read the catalog: {error}")
         await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
 
 
+async def forward_camera(worker: PipelineWorker, camera: RemoteBroadcast):
+    latest_prompt = LatestPrompt()
+    following = asyncio.create_task(latest_prompt.follow(camera.follow(PROMPT_TRACK)))
+    try:
+        track = await video_track(camera)
+        await forward_pictures(camera.follow(track.name), track.codec or "", latest_prompt, worker)
+    finally:
+        following.cancel()
+
+
 async def detect_in_session(
-    session: moq_wasm.Session, room: BotRoom, timeline: EventTimeline, status: SystemOneStatus, worker: PipelineWorker
-) -> bool:
-    """True once no page has published the room's camera for the grace period; False when the relay session closed."""
-    detector_namespace = [*room_namespace(room), "detector"]
-    # Registered before the namespace is published, since the relay may forward a SUBSCRIBE at once.
-    for track_name, publisher in ((EVENT_TIMELINE_TRACK, timeline), (STATUS_TRACK, status)):
-        await publisher.publish_on(
-            await session.publish_track(detector_namespace, track_name, retention_seconds=RETENTION_SECONDS)
+    args: argparse.Namespace,
+    http: aiohttp.ClientSession,
+    identity_token: IdentityToken | None,
+    room: BotRoom,
+    session: moq_wasm.Session,
+) -> None:
+    """Returns once no page has published the room's camera for the grace period."""
+    namespace = room_namespace(room)
+    camera_namespace = [*namespace, "camera"]
+    async with create_broadcast(session, [*namespace, "detector"]) as detector:
+        timeline = detector.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS)
+        status = SystemOneStatus()
+        status.publish_on(detector.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS))
+        vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
+        worker = PipelineWorker(
+            Pipeline([CameraDetector(vision, timeline)]),
+            enable_rtvi=False,
+            idle_timeout_secs=None,
         )
-    await session.announce(detector_namespace)
-    camera_namespace = [*room_namespace(room), "camera"]
-    return await until_room_empty(session, camera_namespace, partial(forward_camera, session, camera_namespace, worker))
+        # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+        runner = WorkerRunner(handle_sigint=False)
+        await runner.add_workers(worker)
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(runner.run())
+            await watch_broadcasts(
+                session,
+                namespace,
+                partial(forward_camera, worker),
+                filter=lambda published: published == camera_namespace,
+                empty_timeout=GRACE_SECONDS,
+            )
+            await runner.cancel()
 
 
 async def detect_in_room(
     args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
 ) -> None:
-    timeline = EventTimeline()
-    status = SystemOneStatus()
-    vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
-    worker = PipelineWorker(
-        Pipeline([CameraDetector(vision, timeline)]),
-        enable_rtvi=False,
-        idle_timeout_secs=None,
-    )
-    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
-    runner = WorkerRunner(handle_sigint=False)
-    await runner.add_workers(worker)
-    async with asyncio.TaskGroup() as tasks:
-        tasks.create_task(runner.run())
-        in_session = partial(detect_in_session, room=room, timeline=timeline, status=status, worker=worker)
-        await stay_connected(args, room, in_session)
-        await runner.cancel()
+    await stay_connected(args, room, partial(detect_in_session, args, http, identity_token, room))
 
 
 async def main():

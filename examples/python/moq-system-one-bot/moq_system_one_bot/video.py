@@ -3,18 +3,6 @@ import av
 JPEG_PIXEL_FORMAT = "yuvj420p"
 
 
-class GroupDecoder:
-    def __init__(self):
-        self._decoder = av.CodecContext.create("h264", "r")
-
-    def decode(self, annexb: bytes) -> av.VideoFrame | None:
-        try:
-            pictures = self._decoder.decode(av.Packet(annexb))
-        except av.FFmpegError:
-            return None
-        return pictures[-1] if pictures else None
-
-
 def picture_to_jpeg(picture: av.VideoFrame, width: int | None = None) -> bytes:
     """Scales the picture to `width`, keeping its aspect ratio, when one is given."""
     if width is None:

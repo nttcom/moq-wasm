@@ -7,8 +7,7 @@ dependencies = [
     "aiohttp>=3.11",
     "moq-bot-rooms",
     "moq-system-one-bot",
-    "moq-wasm",
-    "pipecat-ai>=1.12",
+    "moq-wasm[pipecat]",
 ]
 
 [dependency-groups]

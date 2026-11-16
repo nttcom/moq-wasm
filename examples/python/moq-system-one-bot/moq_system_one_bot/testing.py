@@ -3,21 +3,29 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-
-from moq_system_one_bot.event_timeline import EventRecord, EventTimeline
+from moq_wasm.media import EventRecord, EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
 
 
 class RecordingPublication:
-    """A `Publication` for tests: keeps each JSON write and whether it opened a group."""
+    """`connect` stands for a connection registering the track."""
 
     def __init__(self):
         self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()
+        self._on_connected: list[Callable[[], Awaitable[None]]] = []
+
+    def on_connected(self, callback: Callable[[], Awaitable[None]]) -> None:
+        self._on_connected.append(callback)
+
+    async def connect(self) -> None:
+        for callback in self._on_connected:
+            await callback()
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> None:
         self._writes.put_nowait((new_group, json.loads(payload)))
@@ -32,10 +40,10 @@ async def next_records(publication: RecordingPublication) -> list[EventRecord]:
 
 
 async def published_timeline(*, replay: bool = False) -> tuple[EventTimeline, RecordingPublication]:
-    """A timeline publishing on a `RecordingPublication`, with its first write already read."""
-    timeline = EventTimeline(replay=replay)
+    """A timeline publishing on a connected `RecordingPublication`, with its first write already read."""
     publication = RecordingPublication()
-    await timeline.publish_on(publication)
+    timeline = EventTimeline(publication, replay=replay)
+    await publication.connect()
     await publication.next_write()
     return timeline, publication
 
