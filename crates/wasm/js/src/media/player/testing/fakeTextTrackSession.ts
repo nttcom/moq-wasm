@@ -1,10 +1,17 @@
-import type { MoqSession, MoqSubscription, PublishDone, ReceivedObject } from '../../../core/session'
+import type {
+  MoqSession,
+  MoqSubscribeGroupStartOptions,
+  MoqSubscription,
+  PublishDone,
+  ReceivedObject
+} from '../../../core/session'
 import { RequestError, RequestErrorCode } from '../../../core/requestError'
 
 /// One SUBSCRIBE the session answered: `deliver` hands its reader an object,
 /// `end` ends it with PUBLISH_DONE.
 export type FakeTextSubscription = {
   track: string
+  options: MoqSubscribeGroupStartOptions
   closed: boolean
   deliver(groupId: bigint, text: string): void
   end(done: PublishDone): void
@@ -24,7 +31,11 @@ export class FakeTextTrackSession {
     return true
   }
 
-  async subscribeCurrentGroup(_namespace: string[], track: string): Promise<MoqSubscription> {
+  async subscribeCurrentGroup(
+    _namespace: string[],
+    track: string,
+    options: MoqSubscribeGroupStartOptions = {}
+  ): Promise<MoqSubscription> {
     if (this.absent) {
       throw new RequestError('SUBSCRIBE_ERROR', {
         errorCode: RequestErrorCode.TrackDoesNotExist,
@@ -39,6 +50,7 @@ export class FakeTextTrackSession {
     })
     const subscription: FakeTextSubscription = {
       track,
+      options,
       closed: false,
       deliver: (groupId, text) => {
         queued.push(textObject(groupId, text))

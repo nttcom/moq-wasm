@@ -136,18 +136,24 @@ impl Session {
     }
 
     /// Subscribes and reads the group the largest object is in from its first
-    /// object, through a joining FETCH (draft-14 §9.16.2).
+    /// object, through a joining FETCH (draft-14 §9.16.2). `priority`,
+    /// `delivery_timeout_ms` and `group_order` are as in `subscribe`.
     #[wasm_bindgen(js_name = subscribeCurrentGroup)]
     pub async fn subscribe_current_group(
         &self,
         namespace: Vec<String>,
         track: String,
+        priority: Option<u8>,
+        delivery_timeout_ms: Option<u32>,
+        group_order: Option<String>,
     ) -> Result<Subscription, JsValue> {
         self.scope
             .scoped(async {
+                let options =
+                    group_start_options(priority, delivery_timeout_ms, group_order.as_deref())?;
                 let subscription = self
                     .session
-                    .subscribe_current_group(&namespace, &track)
+                    .subscribe_current_group(&namespace, &track, options)
                     .await
                     .map_err(request_error)?;
                 Ok(Subscription::new(subscription, self.scope))

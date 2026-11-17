@@ -197,6 +197,7 @@ impl Subscriber {
                         sent.request_id,
                         &track_namespace,
                         &track_name,
+                        option.subscriber_priority,
                     )
                     .await
                     .inspect_err(|error| {
@@ -289,6 +290,7 @@ impl Subscriber {
         subscribe_request_id: RequestId,
         track_namespace: &str,
         track_name: &str,
+        subscriber_priority: u8,
     ) -> Result<SentFetch, RequestFailure> {
         let fetch_params = FetchParams::RelativeJoining {
             joining_request_id: subscribe_request_id,
@@ -297,7 +299,10 @@ impl Subscriber {
         self.send_fetch_request(
             connection.clone(),
             fetch_params,
-            &FetchOption::default(),
+            &FetchOption {
+                subscriber_priority,
+                ..FetchOption::default()
+            },
             (track_namespace.to_string(), track_name.to_string()),
         )
         .await
@@ -917,15 +922,19 @@ impl Subscriber {
     /// its first object, through a Relative Joining FETCH with offset 0
     /// (draft-14 §9.16.2). The reader yields the fetched objects before the live
     /// ones. A track without content, or a FETCH that fails, yields the live
-    /// objects only.
+    /// objects only. `option`'s `filter_type`, `forward` and
+    /// `new_group_request` are replaced by Largest Object, Forward 1 and none.
     pub async fn subscribe_current_group(
         &mut self,
         track_namespace: String,
         track_name: String,
+        option: SubscribeOption,
     ) -> Result<(Subscription, TrackReader), RequestFailure> {
         let option = SubscribeOption {
             filter_type: FilterType::LargestObject,
-            ..SubscribeOption::default()
+            forward: true,
+            new_group_request: None,
+            ..option
         };
         let (subscription, joining_fetch) = self
             .subscribe_joining(track_namespace, track_name, option, true)
@@ -2794,6 +2803,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn subscribe_current_group_sends_its_priority_delivery_timeout_and_group_order() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("subscriber-current-group-options", "moqt").await;
+        let mut subscriber = client.subscriber();
+
+        // Act
+        let request = tokio::spawn(async move {
+            subscriber
+                .subscribe_current_group(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    SubscribeOption {
+                        subscriber_priority: SUBSCRIBER_PRIORITY,
+                        delivery_timeout: Some(2_000),
+                        group_order: GroupOrder::Descending,
+                        ..SubscribeOption::default()
+                    },
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Assert
+        assert_eq!(
+            (
+                handler.subscriber_priority,
+                handler.delivery_timeout,
+                handler.group_order
+            ),
+            (SUBSCRIBER_PRIORITY, Some(2_000), GroupOrder::Descending)
+        );
+        request.abort();
+    }
+
+    #[tokio::test]
     async fn subscribe_group_start_sends_its_delivery_timeout_and_group_order() {
         // Arrange
         let (client, server) =
@@ -3025,7 +3072,11 @@ mod tests {
         let mut subscriber = client.subscriber();
         let request = tokio::spawn(async move {
             subscriber
-                .subscribe_current_group("ns".to_string(), TRACK.to_string())
+                .subscribe_current_group(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    SubscribeOption::default(),
+                )
                 .await
         });
         let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
@@ -3125,7 +3176,11 @@ mod tests {
         let mut subscriber = client.subscriber();
         let _request = tokio::spawn(async move {
             subscriber
-                .subscribe_current_group("ns".to_string(), TRACK.to_string())
+                .subscribe_current_group(
+                    "ns".to_string(),
+                    TRACK.to_string(),
+                    SubscribeOption::default(),
+                )
                 .await
         });
         let SessionEvent::Subscribe(subscribe) = within(server.receive_event()).await.unwrap()

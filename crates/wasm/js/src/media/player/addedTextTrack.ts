@@ -2,6 +2,7 @@ import { readLocHeader } from '../internal/loc'
 import { subscribeAddedTrack } from './addedTrack'
 import type { LivePlayout } from './livePlayout'
 import type { TrackContext } from './trackContext'
+import { TEXT_PRIORITY } from './trackPriority'
 
 export type AddedTextTrackListener = {
   /// The payload of an object, as UTF-8 text, when the sound captured with it
@@ -32,6 +33,7 @@ export class AddedTextTrack {
       context,
       context.namespace,
       name,
+      TEXT_PRIORITY,
       (_groupId, object) => {
         const captureMicros = readLocHeader(object.locHeader).timestampMicros
         const dueMs = captureMicros === undefined ? undefined : playout.dueAt(captureMicros)

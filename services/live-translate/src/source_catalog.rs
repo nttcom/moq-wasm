@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use moqt::{Session, Subscriber, Subscription, TrackReader};
+use moqt::{Session, Subscriber, Subscription, TrackReader, subscribe::SubscribeOption};
 use msf::{CATALOG_TRACK_NAME, Catalog};
 use tokio::{sync::mpsc, task::JoinHandle};
 
@@ -64,7 +64,11 @@ async fn subscribe_with_retry(
     let mut attempt = 1;
     loop {
         match subscriber
-            .subscribe_current_group(namespace.to_string(), CATALOG_TRACK_NAME.to_string())
+            .subscribe_current_group(
+                namespace.to_string(),
+                CATALOG_TRACK_NAME.to_string(),
+                SubscribeOption::default(),
+            )
             .await
         {
             Ok(subscribed) => return Ok(subscribed),

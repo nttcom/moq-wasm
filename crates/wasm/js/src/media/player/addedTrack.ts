@@ -10,10 +10,11 @@ export async function subscribeAddedTrack(
   context: TrackContext,
   namespace: string[],
   name: string,
+  priority: number,
   onObject: ObjectHandler,
   onEnded: ((done: PublishDone) => void) | undefined
 ): Promise<() => Promise<void>> {
-  const subscription = await sessionOf(context).subscribeCurrentGroup(namespace, name)
+  const subscription = await sessionOf(context).subscribeCurrentGroup(namespace, name, { priority })
   let closed = false
   void readJoinedObjects(context, streamId(), subscription, (groupId, object, cached) => {
     if (!closed) {

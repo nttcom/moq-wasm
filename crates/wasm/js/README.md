@@ -233,29 +233,29 @@ caller's to close.
 Without `PlayerControls`, draw the controls from `player.state` in
 `onStateChange`:
 
-| Need                          | API                                                                                                          |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Tracks and the current choice | `state.videoTracks`, `state.audioTracks`, `state.selectedVideoTrack`, `state.selectedAudioTrack`             |
-| Pick a track                  | `selectVideoTrack(name)`, `selectAudioTrack(name)`; `setAdaptiveVideo(true)` chooses the rendition by itself |
-| Live or rewound               | `state.mode` (`'live'` / `'review'`), `goLive()`                                                             |
-| Seek                          | `seek(captureMicros)`, `skip(seconds)`; `state.seek` holds the seekable range                                |
-| Pause, volume, speed          | `setPaused(paused)`, `setVolume(volume)`, `setPlaybackRate(rate)`                                            |
-| Hide the picture              | `setVideoEnabled(false)` unsubscribes the video and keeps the audio                                          |
-| Video ahead of other videos   | `setVideoPriority(priority)`: 0 to 255, the lower value first on a congested downlink (128 by default)       |
-| Status texts                  | `state.catalogStatus`, `state.playbackStatus`, `state.rewindStatus`                                          |
-| Delivery statistics           | `stats()`, `formatLiveStats(stats)`                                                                          |
+| Need                          | API                                                                                                                                                            |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tracks and the current choice | `state.videoTracks`, `state.audioTracks`, `state.selectedVideoTrack`, `state.selectedAudioTrack`                                                               |
+| Pick a track                  | `selectVideoTrack(name)`, `selectAudioTrack(name)`; `setAdaptiveVideo(true)` chooses the rendition by itself                                                   |
+| Live or rewound               | `state.mode` (`'live'` / `'review'`), `goLive()`                                                                                                               |
+| Seek                          | `seek(captureMicros)`, `skip(seconds)`; `state.seek` holds the seekable range                                                                                  |
+| Pause, volume, speed          | `setPaused(paused)`, `setVolume(volume)`, `setPlaybackRate(rate)`                                                                                              |
+| Hide the picture              | `setVideoEnabled(false)` unsubscribes the video and keeps the audio                                                                                            |
+| Video ahead of other videos   | `setVideoPriority(priority)`: 0 to 255, the lower value first on a congested downlink (128 by default). The catalog is at 0, text tracks at 16 and audio at 32 |
+| Status texts                  | `state.catalogStatus`, `state.playbackStatus`, `state.rewindStatus`                                                                                            |
+| Delivery statistics           | `stats()`, `formatLiveStats(stats)`                                                                                                                            |
 
 Options of `new LivePlayer`:
 
-| Option                   | Effect                                                                                                                                        |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `source`                 | Plays only this source of the catalog, `{ video: 'screen', audio: 'screen_audio' }`                                                           |
-| `keepLiveWhileReviewing` | Keeps the live tracks playing behind a rewind, so `goLive()` shows the live picture at once                                                   |
-| `deliveryTimeoutMs`      | The relay stops sending a group of the selected video and audio once one of its objects is that many milliseconds old                         |
-| `groupOrder`             | `'descending'` has the relay send the newest group of the selected video and audio first on a congested link                                  |
-| `callbacks.onAudioLevel` | Receives the LOC Audio Level of each live audio object that carries one                                                                       |
-| `audioContext`           | Plays the live sound through the page's context (see [Audio output](#audio-output))                                                           |
-| `latencyTolerance`       | How far the live video may fall behind before the automatic quality steps down: `'low'` (400 ms, the default), `'high'` (2 s) or milliseconds |
+| Option                   | Effect                                                                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `source`                 | Plays only this source of the catalog, `{ video: 'screen', audio: 'screen_audio' }`                                                             |
+| `keepLiveWhileReviewing` | Keeps the live tracks playing behind a rewind, so `goLive()` shows the live picture at once                                                     |
+| `deliveryTimeoutMs`      | The relay stops sending a group of the selected video and audio and of the media timeline once one of its objects is that many milliseconds old |
+| `groupOrder`             | `'descending'` has the relay send the newest group of the selected video and audio and of the media timeline first on a congested link          |
+| `callbacks.onAudioLevel` | Receives the LOC Audio Level of each live audio object that carries one                                                                         |
+| `audioContext`           | Plays the live sound through the page's context (see [Audio output](#audio-output))                                                             |
+| `latencyTolerance`       | How far the live video may fall behind before the automatic quality steps down: `'low'` (400 ms, the default), `'high'` (2 s) or milliseconds   |
 
 - `player.start(session, namespace, { video: [track], audio: [track] })` plays
   tracks the page already knows instead of the catalog's.
