@@ -32,7 +32,7 @@ jobs:
           fi
           echo "VERSION=${version}" >> "${GITHUB_ENV}"
       - name: Take the release notes from the changelog
-        run: node crates/wasm/js/scripts/release-notes.mjs "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+        run: node crates/wasm/js/scripts/release-notes.mjs crates/wasm/js/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
       - name: Install Rust
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9

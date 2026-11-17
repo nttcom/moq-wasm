@@ -2,7 +2,7 @@
 
 ## ステータス
 提案。「決定事項」の3点は決めた。実装は「移行計画」の手順で行い、手順 1〜8
-は済んだ。「現状」は手順 1 の前の状態を書いている。採用後は、
+と 11 は済んだ。「現状」は手順 1 の前の状態を書いている。採用後は、
 `moqt::client` の公開 API、Python モジュールの公開 API、配布の手順を変える変更で、
 このファイルも同時に更新する。
 
@@ -280,8 +280,8 @@ moqt = { git = "https://github.com/nttcom/moq-wasm", tag = "rust-v0.1.0" }
 
 ### Python
 `docs/architecture/python/sdk.md` の「Package」に書く。wheel は Linux x86_64、
-Linux aarch64、macOS arm64 の abi3 wheel で、`python-sdk-v<version>` の tag の
-GitHub Release に添付する。workflow はその変更で設計する。
+Linux aarch64、macOS arm64 の abi3 wheel（Python 3.11 以上）で、
+`python-sdk-v<version>` の tag の GitHub Release に添付する。
 
 ### レジストリ（crates.io、PyPI、npm）に公開しない理由
 

@@ -149,3 +149,4 @@ A span that lives longer than the request that starts it (a track, a session) ro
 - This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
 - When releasing the browser SDK (`moq-wasm`), follow the skill in `.agents/skills/release-sdk/SKILL.md`.
+- When releasing the Python SDK (`moq-wasm` in `crates/python`), follow the skill in `.agents/skills/release-python-sdk/SKILL.md`.

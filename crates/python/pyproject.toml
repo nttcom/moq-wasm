@@ -19,6 +19,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "pipecat-ai>=1.12", "av>=14"]
 [tool.maturin]
 python-source = "python"
 module-name = "moq_wasm._native"
+exclude = ["**/__pycache__/**"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
