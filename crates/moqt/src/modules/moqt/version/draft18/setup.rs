@@ -6,6 +6,7 @@ use super::{
     message_stream::{MessageDecoder, MessageReceiver},
     messages::{Message, SetupMessage, encode_setup},
 };
+use crate::modules::moqt::version::IMPLEMENTATION;
 use crate::modules::{
     moqt::{
         control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
@@ -14,8 +15,6 @@ use crate::modules::{
     telemetry::{current_traceparent, server_declares_trace_context},
     transport::{connect_target::ConnectTarget, transport_connection::BoxedConnection},
 };
-
-const IMPLEMENTATION: &str = "MOQ-WASM";
 
 async fn receive_setup(peer: &mut MessageReceiver) -> anyhow::Result<SetupMessage> {
     match peer.receive().await {
@@ -39,7 +38,6 @@ fn client_setup(target: &ConnectTarget, authorization_token: Option<&str>) -> Se
             .map(AuthorizationToken::use_value_utf8)
             .into_iter()
             .collect(),
-        max_auth_token_cache_size: 0,
         implementation: Some(IMPLEMENTATION.to_string()),
         declares_trace_context: true,
         traceparent: current_traceparent(),

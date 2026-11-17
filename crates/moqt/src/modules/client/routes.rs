@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Mutex, MutexGuard,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -9,6 +9,8 @@ use std::{
 use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument;
 
+use crate::modules::extensions::mutex::lock;
+use crate::modules::moqt::domains::namespace_watchers::NamespaceWatchers;
 use crate::{
     RequestErrorCode, Session, SessionEvent,
     modules::{
@@ -18,7 +20,6 @@ use crate::{
         },
         telemetry::join_trace,
     },
-    namespace::NamespaceWatchers,
     publish::Origin,
 };
 
@@ -192,14 +193,6 @@ impl Routes {
             let _ = sender.send(());
         }
     }
-}
-
-/// A panic while a table is locked leaves it consistent: every update is a
-/// single map or vector call.
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

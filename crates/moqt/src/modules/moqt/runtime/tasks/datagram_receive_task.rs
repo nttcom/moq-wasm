@@ -8,9 +8,7 @@ use crate::{
     modules::moqt::{
         control_plane::constants::TerminationErrorCode,
         domains::connection::Connection,
-        runtime::dispatch::{
-            incoming_object::IncomingObject, subscription_notifier::SubscriptionNotifier,
-        },
+        runtime::dispatch::{incoming_object::IncomingObject, subscription_notifier},
     },
 };
 
@@ -62,7 +60,7 @@ impl DatagramReceiveTask {
             }
         };
 
-        SubscriptionNotifier::notify(connection, track_alias, IncomingObject::Datagram(datagram))
+        subscription_notifier::notify(connection, track_alias, IncomingObject::Datagram(datagram))
             .await;
         ControlFlow::Continue(())
     }

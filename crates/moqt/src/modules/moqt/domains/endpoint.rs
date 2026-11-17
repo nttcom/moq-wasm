@@ -32,22 +32,13 @@ pub struct AuthorizationTokenSource(TokenSource);
 #[derive(Clone)]
 enum TokenSource {
     Fixed(String),
-    Provider(Arc<dyn TokenProvider>),
+    Provider(Arc<TokenProvider>),
 }
 
-trait TokenProvider: MaybeSend + MaybeSync {
-    fn token(&self) -> BoxFuture<anyhow::Result<String>>;
-}
-
-impl<F, Fut> TokenProvider for F
-where
-    F: Fn() -> Fut + MaybeSend + MaybeSync,
-    Fut: Future<Output = anyhow::Result<String>> + MaybeSend + 'static,
-{
-    fn token(&self) -> BoxFuture<anyhow::Result<String>> {
-        Box::pin(self())
-    }
-}
+#[cfg(not(target_arch = "wasm32"))]
+type TokenProvider = dyn Fn() -> BoxFuture<anyhow::Result<String>> + Send + Sync;
+#[cfg(target_arch = "wasm32")]
+type TokenProvider = dyn Fn() -> BoxFuture<anyhow::Result<String>>;
 
 impl AuthorizationTokenSource {
     /// `provider` is called before every CLIENT_SETUP, including on connections
@@ -59,7 +50,9 @@ impl AuthorizationTokenSource {
         F: Fn() -> Fut + MaybeSend + MaybeSync + 'static,
         Fut: Future<Output = anyhow::Result<String>> + MaybeSend + 'static,
     {
-        Self(TokenSource::Provider(Arc::new(provider)))
+        let provider: Arc<TokenProvider> =
+            Arc::new(move || -> BoxFuture<anyhow::Result<String>> { Box::pin(provider()) });
+        Self(TokenSource::Provider(provider))
     }
 
     pub(crate) fn is_provider(&self) -> bool {
@@ -69,7 +62,7 @@ impl AuthorizationTokenSource {
     pub(crate) async fn token(&self) -> anyhow::Result<String> {
         match &self.0 {
             TokenSource::Fixed(token) => Ok(token.clone()),
-            TokenSource::Provider(provider) => provider.token().await,
+            TokenSource::Provider(provider) => provider().await,
         }
     }
 }

@@ -5,43 +5,39 @@ use crate::modules::moqt::{
     version::ControlChannel,
 };
 
-pub(crate) struct FetchNotifier;
-
-impl FetchNotifier {
-    #[tracing::instrument(
-        level = "debug",
-        name = "moqt.fetch_notifier.notify",
-        skip_all,
-        fields(request_id = request_id)
-    )]
-    pub(crate) async fn notify(
-        connection: &Arc<Connection>,
-        request_id: u64,
-        mut fetch_data_receiver: FetchDataReceiver,
-    ) {
-        // Draft-14 §9.16.3: a FETCH response is delivered on a single stream.
-        let sender = connection
-            .fetch_notification_map
-            .lock()
-            .expect("fetch_notification_map poisoned")
-            .remove(&request_id);
-        if let Some(sender) = sender {
-            // Only the stream handed to this side's FETCH may end its request.
-            fetch_data_receiver
-                .end_request_with(ControlChannel::fetch_request_end(connection, request_id));
-            if let Err(e) = sender.send(fetch_data_receiver) {
-                tracing::warn!(error = %e, "failed to notify a fetch stream");
-            }
-        } else {
-            // A FETCH this side cancelled can cross its stream, which the
-            // publisher closes only once it reads FETCH_CANCEL (§9.19).
-            if connection.control.wrote_request_id(request_id) {
-                tracing::debug!(request_id, "stopping the stream of a FETCH no longer open");
-            } else {
-                tracing::error!(request_id, "no fetch stream sender for the request");
-            }
-            fetch_data_receiver.stop();
+#[tracing::instrument(
+    level = "debug",
+    name = "moqt.fetch_notifier.notify",
+    skip_all,
+    fields(request_id = request_id)
+)]
+pub(crate) async fn notify(
+    connection: &Arc<Connection>,
+    request_id: u64,
+    mut fetch_data_receiver: FetchDataReceiver,
+) {
+    // Draft-14 §9.16.3: a FETCH response is delivered on a single stream.
+    let sender = connection
+        .fetch_notification_map
+        .lock()
+        .expect("fetch_notification_map poisoned")
+        .remove(&request_id);
+    if let Some(sender) = sender {
+        // Only the stream handed to this side's FETCH may end its request.
+        fetch_data_receiver
+            .end_request_with(ControlChannel::fetch_request_end(connection, request_id));
+        if let Err(e) = sender.send(fetch_data_receiver) {
+            tracing::warn!(error = %e, "failed to notify a fetch stream");
         }
+    } else {
+        // A FETCH this side cancelled can cross its stream, which the
+        // publisher closes only once it reads FETCH_CANCEL (§9.19).
+        if connection.control.wrote_request_id(request_id) {
+            tracing::debug!(request_id, "stopping the stream of a FETCH no longer open");
+        } else {
+            tracing::error!(request_id, "no fetch stream sender for the request");
+        }
+        fetch_data_receiver.stop();
     }
 }
 

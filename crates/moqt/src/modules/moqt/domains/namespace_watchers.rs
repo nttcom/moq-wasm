@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::SessionEvent;
+use crate::modules::extensions::mutex::lock;
 
 /// A namespace the peer published (`active`) or withdrew
 /// (PUBLISH_NAMESPACE / PUBLISH_NAMESPACE_DONE, draft-14 §9.23, §9.26).
@@ -13,7 +14,7 @@ pub struct NamespaceEvent {
 }
 
 #[derive(Clone, Default)]
-pub struct NamespaceWatchers {
+pub(crate) struct NamespaceWatchers {
     watchers: Arc<Mutex<Vec<Watcher>>>,
 }
 
@@ -23,16 +24,16 @@ impl NamespaceWatchers {
     /// Call this before sending the SUBSCRIBE_NAMESPACE: the peer publishes the
     /// namespaces it knows right away. The receiver ends once the session
     /// disconnects or `close` is called.
-    pub fn watch(&self, prefix: Vec<String>) -> mpsc::UnboundedReceiver<NamespaceEvent> {
+    pub(crate) fn watch(&self, prefix: Vec<String>) -> mpsc::UnboundedReceiver<NamespaceEvent> {
         let (sender, receiver) = mpsc::unbounded_channel();
-        self.lock().push((prefix, sender));
+        lock(&self.watchers).push((prefix, sender));
         receiver
     }
 
     /// Acknowledges PUBLISH_NAMESPACE, reports it and PUBLISH_NAMESPACE_DONE to the
     /// watchers, and returns every other event. On `Disconnected` it first ends
     /// every watcher.
-    pub async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+    pub(crate) async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
         match event {
             SessionEvent::PublishNamespace(handler) => {
                 tracing::info!(track_namespace = %handler.track_namespace, "PUBLISH_NAMESPACE received");
@@ -55,23 +56,15 @@ impl NamespaceWatchers {
         }
     }
 
-    pub fn close(&self) {
-        self.lock().clear();
+    pub(crate) fn close(&self) {
+        lock(&self.watchers).clear();
     }
 
     fn notify(&self, namespace: Vec<String>, active: bool) {
         let event = NamespaceEvent { namespace, active };
-        self.lock().retain(|(prefix, sender)| {
+        lock(&self.watchers).retain(|(prefix, sender)| {
             !event.namespace.starts_with(prefix) || sender.send(event.clone()).is_ok()
         });
-    }
-
-    fn lock(
-        &self,
-    ) -> std::sync::MutexGuard<'_, Vec<(Vec<String>, mpsc::UnboundedSender<NamespaceEvent>)>> {
-        self.watchers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

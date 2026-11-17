@@ -529,8 +529,8 @@ all named and all aborted when `ConnectionTasks` is dropped:
 | Task | Role |
 | --- | --- |
 | control receiver (`ControlReceiver::spawn`; draft-14: `ControlMessageReceiveTask`) | reads the control stream, decodes messages, routes them (see below); the handlers it creates answer on its connection. Holds only `Weak` references to the `SessionContext` and the `Connection`, so it cannot keep the session alive. |
-| `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `SubscriptionNotifier`, a FETCH response to `FetchNotifier`. Headers are read concurrently, so a stream whose header has not arrived does not block the streams accepted after it. |
-| `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `SubscriptionNotifier`. |
+| `UniStreamReceiveTask` | accepts incoming unidirectional streams and reads their header through `Version::accept_uni_stream`: a subgroup stream goes to `subscription_notifier::notify`, a FETCH response to `fetch_notifier::notify`. Headers are read concurrently, so a stream whose header has not arrived does not block the streams accepted after it. |
+| `DatagramReceiveTask` | receives datagrams, decodes them through `Version::decode_datagram`, dispatches the `Object` via `subscription_notifier::notify`. |
 | `DisconnectWatchTask` | awaits transport close, then emits `SessionEvent::Disconnected`. This is also how a close this side requested with any code other than PROTOCOL_VIOLATION is reported; `close_with_error(ProtocolViolation, ..)` emits `SessionEvent::ProtocolViolation` at once instead. |
 | `PublishDoneExpiryTask` | receives every PUBLISH_DONE from `ControlMessageReceiveTask` and cancels that subscription of its connection once the streams its Stream Count counts have arrived, or 10 s later (see *Key invariants*). Holds only `Weak` references. |
 
@@ -539,7 +539,7 @@ the server's GOAWAY by itself (draft-14 §3.5; see
 [session-migration.md](session-migration.md)). Its connections send their
 events to a `MigrationTask` (`domains/session/migration_task.rs`) instead of
 the application: it forwards them with logical ids, and on GOAWAY it opens
-the next connection through the endpoint's `SessionCreator` (`Reconnect`),
+the next connection through the endpoint's `SessionCreator` (`ClientEndpoint`),
 sends every namespace subscription (with its `NamespaceInterest`), PUBLISH_NAMESPACE, PUBLISH and SUBSCRIBE
 made on the session again (`NextGroupStart`, or an AbsoluteRange from the
 group after the newest one delivered to its End Group, which is not sent
@@ -806,15 +806,17 @@ forward from their own cache through the raw stream senders.
 
 ### `NamespaceWatchers` — the namespaces a peer publishes
 
-`namespace::NamespaceWatchers` (`domains/namespace_watchers.rs`) is the
+`NamespaceWatchers` (`domains/namespace_watchers.rs`, crate-internal; its
+`NamespaceEvent` is public as `namespace::NamespaceEvent`) is the
 subscribing side's counterpart of `Origin` for namespaces: `watch(prefix)`
 returns a channel of `NamespaceEvent`s, and `handle(event)` in the session
 event loop answers PUBLISH_NAMESPACE with `ok`, sends it and
 PUBLISH_NAMESPACE_DONE to every watcher of a matching prefix, ends every
 watcher on `Disconnected` and hands every other event back. A watcher is
 registered before its SUBSCRIBE_NAMESPACE is sent, since the peer publishes
-the namespaces it knows right away. `client::Session` and the Python
-bindings, which hand out one iterator per namespace subscription, use it.
+the namespaces it knows right away. `client::Session`, which hands out one
+iterator per namespace subscription (and so do the Python bindings built on
+it), uses it.
 
 ### `client` — the client session
 
@@ -880,7 +882,7 @@ transport connection:
 - `object_sinks: ObjectSinks` — the sink of each track alias: the objects arriving on
   this connection, keyed by wire alias; a sink sets the logical alias on
   every stream it hands out; see buffering invariant below.
-- `fetch_notification_map` — keyed by request id; `FetchNotifier` removes the
+- `fetch_notification_map` — keyed by request id; `fetch_notifier::notify` removes the
   sender when the FETCH stream arrives, since a FETCH is answered on a single
   stream (draft-14 §9.16.3). A stream that finds no sender is stopped with
   STOP_SENDING (CANCELLED). This is expected when this side cancelled the
@@ -1230,9 +1232,9 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
 
 ## Runtime dispatch (`modules/moqt/runtime/dispatch`)
 
-- `SubscriptionNotifier` routes incoming objects by track alias into
+- `subscription_notifier::notify` routes incoming objects by track alias into
   `Connection::object_sinks`.
-- `FetchNotifier` routes FETCH streams by request id as a
+- `fetch_notifier::notify` routes FETCH streams by request id as a
   `FetchDataReceiver`.
 - `IncomingObject` is the per-track-alias envelope (`Subgroup` holding a
   `StreamDataReceiver` / `Datagram` holding an `Object`); FETCH streams never

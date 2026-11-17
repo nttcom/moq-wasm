@@ -168,7 +168,6 @@ pub(crate) struct SetupMessage {
     pub(crate) path: Option<String>,
     pub(crate) authority: Option<String>,
     pub(crate) authorization_tokens: Vec<AuthorizationToken>,
-    pub(crate) max_auth_token_cache_size: u64,
     pub(crate) implementation: Option<String>,
     /// The sender reads the TRACE_CONTEXT parameter (`TRACE_CONTEXT_OPTION`).
     pub(crate) declares_trace_context: bool,
@@ -179,7 +178,6 @@ pub(crate) struct SetupMessage {
 
 const PATH_OPTION: u64 = 0x01;
 const AUTHORIZATION_TOKEN_OPTION: u64 = 0x03;
-const MAX_AUTH_TOKEN_CACHE_SIZE_OPTION: u64 = 0x04;
 const AUTHORITY_OPTION: u64 = 0x05;
 const MOQT_IMPLEMENTATION_OPTION: u64 = 0x07;
 /// Not in draft-18: declares the TRACE_CONTEXT Message Parameter (§3.2).
@@ -448,9 +446,6 @@ fn decode_setup(buf: &mut Bytes) -> Result<SetupMessage, DecodeError> {
             (MOQT_IMPLEMENTATION_OPTION, VariantType::Odd(value)) => {
                 setup.implementation = Some(String::from_utf8_lossy(&value).into_owned())
             }
-            (MAX_AUTH_TOKEN_CACHE_SIZE_OPTION, VariantType::Even(value)) => {
-                setup.max_auth_token_cache_size = value
-            }
             (AUTHORIZATION_TOKEN_OPTION, VariantType::Odd(value)) => {
                 setup.authorization_tokens.push(decode_token(value)?)
             }
@@ -483,12 +478,6 @@ pub(crate) fn encode_setup(setup: &SetupMessage) -> anyhow::Result<BytesMut> {
         options.push(KeyValuePair {
             key: AUTHORIZATION_TOKEN_OPTION,
             value: VariantType::Odd(encode_token(token)?.freeze()),
-        });
-    }
-    if setup.max_auth_token_cache_size != 0 {
-        options.push(KeyValuePair {
-            key: MAX_AUTH_TOKEN_CACHE_SIZE_OPTION,
-            value: VariantType::Even(setup.max_auth_token_cache_size),
         });
     }
     if let Some(authority) = &setup.authority {
@@ -1259,7 +1248,6 @@ mod tests {
             path: Some("/moq".to_string()),
             authority: Some("relay.example:443".to_string()),
             authorization_tokens: vec![AuthorizationToken::use_value_utf8("jwt")],
-            max_auth_token_cache_size: 0,
             implementation: Some("moq-wasm".to_string()),
             declares_trace_context: true,
             traceparent: traceparent(),
@@ -1274,7 +1262,7 @@ mod tests {
 
     #[test]
     fn setup_ignores_unknown_options() {
-        // Arrange: PATH between an unknown varint option and an unknown bytes option
+        // Arrange: PATH among unknown options and MAX_AUTH_TOKEN_CACHE_SIZE (0x04), which moqt does not read
         let mut payload = BytesMut::new();
         let options = [
             varint_property(0x00, 7),
@@ -1282,6 +1270,7 @@ mod tests {
                 key: PATH_OPTION,
                 value: VariantType::Odd(Bytes::from_static(b"/moq")),
             },
+            varint_property(0x04, 16),
             KeyValuePair {
                 key: 0x9D,
                 value: VariantType::Odd(Bytes::from_static(b"grease")),

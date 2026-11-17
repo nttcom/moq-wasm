@@ -5,6 +5,7 @@ use futures::future::join_all;
 use tokio::sync::{oneshot, watch};
 use tracing::Span;
 
+use crate::modules::extensions::mutex::lock;
 use crate::{
     RequestFailure, SessionEvent, TerminationErrorCode,
     modules::{
@@ -18,7 +19,7 @@ use crate::{
                 connection::{Connection, CutoverStart, SharedCutover, SinkCutover, SinkReceiver},
                 publisher::{send_publish, send_publish_namespace},
                 session_context::{CarriedSubscription, PublicationTarget, SessionContext},
-                session_creator::{Reconnect, SetupRejected},
+                session_creator::{ClientEndpoint, SetupRejected},
                 session_events::{self, SessionEventReceiver},
                 subscriber::{send_subscribe, send_subscribe_namespace},
             },
@@ -59,7 +60,7 @@ const PREVIOUS_CONNECTION_GRACE: Duration = Duration::from_millis(300);
 /// What a client session that follows GOAWAY needs to open its next
 /// connection.
 pub(crate) struct Follow {
-    pub(crate) reconnect: Arc<dyn Reconnect>,
+    pub(crate) reconnect: Arc<dyn ClientEndpoint>,
     pub(crate) url: String,
     /// The events of the first connection.
     pub(crate) connection_events: SessionEventReceiver,
@@ -135,7 +136,7 @@ struct Migrated {
 
 struct Router {
     session: Arc<SessionContext>,
-    reconnect: Arc<dyn Reconnect>,
+    reconnect: Arc<dyn ClientEndpoint>,
     url: String,
     closed_sender: watch::Sender<Option<TransportClose>>,
     session_span: Span,
@@ -158,7 +159,7 @@ impl Router {
                             };
                             tracing::info!(%url, "GOAWAY received; migrating the session");
                             let (event_sender, events) = session_events::channel();
-                            let connecting = self.reconnect.connect(
+                            let connecting = self.reconnect.clone().connect(
                                 url.clone(),
                                 current.connection.generation + 1,
                                 event_sender,
@@ -326,11 +327,7 @@ impl Router {
             )));
         }
         for cutover in previous.cutovers {
-            cutover
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .cutover
-                .previous_ended();
+            lock(&cutover).cutover.previous_ended();
         }
     }
 
@@ -374,7 +371,7 @@ async fn optional<F: Future + Unpin>(future: Option<&mut F>) -> F::Output {
 
 async fn reconnect(
     session: Arc<SessionContext>,
-    reconnect: Arc<dyn Reconnect>,
+    reconnect: Arc<dyn ClientEndpoint>,
     url: String,
     generation: u64,
     session_span: Span,
@@ -384,7 +381,9 @@ async fn reconnect(
     let mut token_retried = false;
     loop {
         let (event_sender, events) = session_events::channel();
-        let connecting = reconnect.connect(url.clone(), generation, event_sender);
+        let connecting = reconnect
+            .clone()
+            .connect(url.clone(), generation, event_sender);
         let attempt = migrate(
             session.clone(),
             connecting,
@@ -597,9 +596,7 @@ async fn release_when_idle(
             if !open.is_empty() {
                 continue;
             }
-            let mut shared = cutover
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut shared = lock(cutover);
             if shared.cutover.release_previous() {
                 shared.cut_over = None;
                 return;
