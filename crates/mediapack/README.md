@@ -33,7 +33,8 @@ Timestamps are `Timestamp` values in microseconds.
 | `mpegts`, `flv`, `mp4` | Demuxers and muxers; `mp4::Fmp4TrackMuxer` writes one track with its init segment apart (draft-ietf-moq-cmsf-01 §3.1/§3.3) |
 | `loc` | `Muxer`, `Demuxer` and the transport-independent `LocObject` with typed extensions |
 | `rtp` | `Demuxer` / `Muxer` over RTP datagrams, the H.264, AAC, G.711 A-law and Opus payload formats, and `sdp::SessionDescription` |
-| `h264`, `hevc` | NAL unit types, SPS parsing, Annex-B/AVCC conversion; `h264::ElementaryStreamDemuxer` splits a raw Annex-B stream into access units |
+| `h264`, `hevc` | NAL unit types, SPS parsing, Annex-B/AVCC conversion |
+| `elementary_stream` | `ElementaryStreamDemuxer`: splits a raw Annex-B stream into access units; `h264::ElementaryStreamDemuxer` reads H.264 |
 | `parameter_sets` | `ParameterSetTracker`: reports a changed configuration and completes a keyframe that lacks its parameter sets |
 | `vp8`, `vp9`, `av1` | Keyframe detection and the configuration a keyframe carries |
 | `aac` | AudioSpecificConfig and ADTS parsing |

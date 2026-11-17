@@ -124,6 +124,22 @@ impl NalDecoderConfig for AvcDecoderConfigurationRecord {
         }
     }
 
+    /// H.264 Table 7-1, types 1 to 5.
+    fn is_slice(nal: &[u8]) -> bool {
+        (1..=5).contains(&raw_nal_unit_type(nal))
+    }
+
+    /// H.264 §7.4.1.2.3: an access unit delimiter, SEI, SPS, PPS or types 14
+    /// to 18, or the first slice of a picture. A first slice has
+    /// first_mb_in_slice 0, coded as Exp-Golomb `1`, so the top bit of the
+    /// byte after the NAL header is set.
+    fn starts_access_unit(nal: &[u8]) -> bool {
+        if Self::is_slice(nal) {
+            return nal.get(1).is_some_and(|byte| byte & 0x80 != 0);
+        }
+        matches!(raw_nal_unit_type(nal), 6..=9 | 14..=18)
+    }
+
     fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self> {
         let [sps, pps]: [Vec<Bytes>; 2] = sets
             .try_into()
@@ -148,6 +164,10 @@ impl From<AvcDecoderConfigurationRecord> for VideoConfig {
     fn from(record: AvcDecoderConfigurationRecord) -> Self {
         Self::Avc(record)
     }
+}
+
+fn raw_nal_unit_type(nal: &[u8]) -> u8 {
+    nal.first().map_or(0, |header| header & 0x1F)
 }
 
 fn read_parameter_sets(data: &[u8], offset: &mut usize, count: usize) -> Result<Vec<Bytes>> {

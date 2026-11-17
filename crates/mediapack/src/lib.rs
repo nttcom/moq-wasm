@@ -4,6 +4,7 @@ mod test_support;
 
 pub mod aac;
 pub mod av1;
+pub mod elementary_stream;
 pub mod flv;
 pub mod h264;
 pub mod hevc;

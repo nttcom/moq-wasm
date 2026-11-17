@@ -30,6 +30,12 @@ pub trait NalDecoderConfig: Clone + PartialEq + Into<VideoConfig> {
 
     fn nal_kind(nal: &[u8]) -> NalKind;
 
+    fn is_slice(nal: &[u8]) -> bool;
+
+    /// Whether `nal` starts a new access unit, given that the current one
+    /// already holds a slice.
+    fn starts_access_unit(nal: &[u8]) -> bool;
+
     /// `sets` holds one list per kind, in the order `parameter_sets` gives.
     fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self>;
 

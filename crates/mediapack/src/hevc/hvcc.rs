@@ -3,8 +3,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::{
     hevc::nal::{
-        ACCESS_UNIT_DELIMITER, GENERAL_PROFILE_TIER_LEVEL_LENGTH, IRAP_SLICES, PPS, SPS,
-        SequenceParameterSet, VPS, nal_unit_type,
+        ACCESS_UNIT_DELIMITER, GENERAL_PROFILE_TIER_LEVEL_LENGTH, IRAP_SLICES, PPS, PREFIX_SEI,
+        SLICES, SPS, SequenceParameterSet, VPS, nal_unit_type,
     },
     parameter_sets::{NalDecoderConfig, NalKind},
     sample::VideoConfig,
@@ -180,6 +180,24 @@ impl NalDecoderConfig for HevcDecoderConfigurationRecord {
         }
     }
 
+    fn is_slice(nal: &[u8]) -> bool {
+        nal_unit_type(nal).is_some_and(|nal_unit_type| SLICES.contains(&nal_unit_type))
+    }
+
+    /// H.265 §7.4.2.4.4: an access unit delimiter, VPS, SPS, PPS, prefix SEI
+    /// or types 41 to 44 and 48 to 55, or the first slice segment of a
+    /// picture. first_slice_segment_in_pic_flag is the top bit of the byte
+    /// after the two-byte NAL header.
+    fn starts_access_unit(nal: &[u8]) -> bool {
+        if Self::is_slice(nal) {
+            return nal.get(2).is_some_and(|byte| byte & 0x80 != 0);
+        }
+        matches!(
+            nal_unit_type(nal),
+            Some(VPS | SPS | PPS | ACCESS_UNIT_DELIMITER | PREFIX_SEI | 41..=44 | 48..=55)
+        )
+    }
+
     fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self> {
         let [vps, sps, pps]: [Vec<Bytes>; 3] = sets
             .try_into()
@@ -261,6 +279,31 @@ mod tests {
         // Act / Assert: trailing zero constraint bytes are left out
         assert_eq!(main.codec_string(), "hvc1.1.6.L30.90");
         assert_eq!(main10_high_tier.codec_string(), "hvc1.2.4.H153.B0.0.0.8");
+    }
+
+    #[test]
+    fn an_access_unit_starts_at_a_parameter_set_or_the_first_slice_segment_of_a_picture() {
+        // Arrange: without first_slice_segment_in_pic_flag the segment continues its picture
+        let parameter_set = hevc_fixture_nal(VPS);
+        let first_segment = hevc_fixture_nal(1);
+        let mut continuing_segment = first_segment.to_vec();
+        continuing_segment[2] &= 0x7F;
+
+        // Act / Assert
+        assert!(HevcDecoderConfigurationRecord::starts_access_unit(
+            &parameter_set
+        ));
+        assert!(!HevcDecoderConfigurationRecord::is_slice(&parameter_set));
+        assert!(HevcDecoderConfigurationRecord::starts_access_unit(
+            &first_segment
+        ));
+        assert!(HevcDecoderConfigurationRecord::is_slice(&first_segment));
+        assert!(!HevcDecoderConfigurationRecord::starts_access_unit(
+            &continuing_segment
+        ));
+        assert!(HevcDecoderConfigurationRecord::is_slice(
+            &continuing_segment
+        ));
     }
 
     #[test]
