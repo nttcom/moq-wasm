@@ -44,7 +44,7 @@ class TokenMint:
                 if response.status == 401:
                     raise TokenRejected(answer.get("error", "rejected"))
                 response.raise_for_status()
-                return IssuedToken(str(answer["token"]), str(answer["appId"]), float(answer["expiresAt"]))
+                return IssuedToken(str(answer["token"]), str(answer["appId"]))
         except (aiohttp.ClientError, TimeoutError, ValueError, KeyError, TypeError, AttributeError) as error:
             raise TokenMintUnavailable(f"{self._url}: {error!r}") from error
 
@@ -53,8 +53,6 @@ class TokenMint:
 class IssuedToken:
     token: str
     app_id: str
-    # Unix seconds.
-    expires_at: float
 
 
 class AppToken:

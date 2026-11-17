@@ -14,7 +14,7 @@ READ_TIMEOUT_SECONDS = 2
 
 
 class RecordingPublication:
-    """A `Publication` for tests: keeps each JSON write and whether it opened a group."""
+    """A `moq_wasm.TrackWriter` for tests: keeps each JSON write and whether it opened a group."""
 
     def __init__(self):
         self._writes: asyncio.Queue[tuple[bool, Any]] = asyncio.Queue()

@@ -38,19 +38,10 @@ class TokenExpired(Exception):
 
 
 class TokenKeeper:
-    def __init__(
-        self,
-        token: str,
-        refresh: RefreshToken,
-        *,
-        retry_seconds: float = RETRY_SECONDS,
-        now: Callable[[], float] = time.time,
-    ):
+    def __init__(self, token: str, refresh: RefreshToken):
         self.token = token
         self._claims = read_claims(token)
         self._refresh = refresh
-        self._retry_seconds = retry_seconds
-        self._now = now
 
     @property
     def app_id(self) -> str:
@@ -61,7 +52,7 @@ class TokenKeeper:
         each new one, until cancelled. Returns at once for a token that does not expire. Raises
         `TokenExpired` once the token expired while `refresh` kept failing."""
         while self._claims.expires_at is not None:
-            await asyncio.sleep(max(self._claims.expires_at - REFRESH_MARGIN_SECONDS - self._now(), 0))
+            await asyncio.sleep(max(self._claims.expires_at - REFRESH_MARGIN_SECONDS - time.time(), 0))
             await self._renew()
             await hand_over(self.token)
 
@@ -74,7 +65,7 @@ class TokenKeeper:
                 return
             except Exception as error:
                 expires_at = self._claims.expires_at
-                if expires_at is not None and self._now() + self._retry_seconds >= expires_at:
+                if expires_at is not None and time.time() + RETRY_SECONDS >= expires_at:
                     raise TokenExpired(f"app {self.app_id}: the token expired: {error!r}") from error
                 logger.warning("app %s: cannot refresh the token yet: %r", self.app_id, error)
-                await asyncio.sleep(self._retry_seconds)
+                await asyncio.sleep(RETRY_SECONDS)

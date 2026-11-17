@@ -157,8 +157,7 @@ class Session:
     def __init__(self, native: _native.Session, keeper: TokenKeeper | None):
         self._native = native
         self._keeper = keeper
-        self._announced: list[list[str]] = []
-        self._media: set[tuple[str, ...]] = set()
+        self._published: set[tuple[str, ...]] = set()
         self._watches: list[NamespaceWatch] = []
         self._done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._tasks = [asyncio.create_task(self._watch_connection())]
@@ -232,7 +231,7 @@ class Session:
     async def announce(self, namespace: list[str]) -> Announcement:
         """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it."""
         await self._connected().announce(namespace)
-        self._announced.append(namespace)
+        self._published.add(tuple(namespace))
         return Announcement(self, namespace)
 
     async def publish_track(
@@ -275,21 +274,18 @@ class Session:
     async def _add_media_broadcast(self, namespace: list[str], build: MediaBuilder) -> Announcement:
         """Publishes `namespace` through `build`, which builds the media broadcast and announces it."""
         await build(self._connected())
-        self._media.add(tuple(namespace))
+        self._published.add(tuple(namespace))
         return Announcement(self, namespace)
 
     async def _unannounce(self, namespace: list[str]) -> None:
-        if namespace in self._announced:
-            self._announced.remove(namespace)
-        elif tuple(namespace) in self._media:
-            self._media.discard(tuple(namespace))
-        else:
+        if tuple(namespace) not in self._published:
             return
+        self._published.discard(tuple(namespace))
         if not self._done.done():
             await self._native.unannounce(namespace)
 
     def _publishes(self, namespace: list[str]) -> bool:
-        return namespace in self._announced or tuple(namespace) in self._media
+        return tuple(namespace) in self._published
 
     async def run(self, work: Awaitable[T]) -> T:
         """Awaits `work`, cancelling it when the session ends. Raises what ended the session, such as

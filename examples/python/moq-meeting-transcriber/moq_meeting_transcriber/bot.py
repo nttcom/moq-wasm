@@ -7,7 +7,8 @@ from functools import partial
 import aiohttp
 from faster_whisper import WhisperModel
 from loguru import logger
-from moq_bot_rooms.identity_token import IdentityToken, gcloud_identity_token, metadata_identity_token
+from moq_bot_rooms.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_bot_rooms.relay import add_relay_arguments
 from moq_bot_rooms.rooms import BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 
@@ -16,7 +17,6 @@ from moq_meeting_transcriber.granite import SharedGranite
 from moq_meeting_transcriber.room import Room
 from moq_meeting_transcriber.stt import Recognizer, SharedWhisper
 
-DEFAULT_RELAY_URL = "https://127.0.0.1:4433"
 DEFAULT_PORT = 8100
 # Whisper runs on the CPU and every room shares it.
 DEFAULT_MAX_ROOMS = 2
@@ -31,12 +31,7 @@ def parse_args() -> argparse.Namespace:
     add_serve_arguments(
         parser, bot="moq-meeting-transcriber", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS
     )
-    parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL)
-    parser.add_argument(
-        "--insecure",
-        action="store_true",
-        help="skip TLS verification, for a local relay with a self-signed certificate",
-    )
+    add_relay_arguments(parser)
     parser.add_argument("--model", default=DEFAULT_MODEL, help="the faster-whisper model of `whisper`, such as small")
     parser.add_argument(
         "--asr",
@@ -47,17 +42,7 @@ def parse_args() -> argparse.Namespace:
         f"which a page picks with ?asr=NAME; {GRANITE_SPEECH} is called through the chat API, any other through the "
         "transcription API; repeatable",
     )
-    auth = parser.add_mutually_exclusive_group()
-    auth.add_argument(
-        "--gcloud-auth",
-        action="store_true",
-        help="send a gcloud identity token to the --asr services, for a Cloud Run service that requires IAM",
-    )
-    auth.add_argument(
-        "--metadata-auth",
-        action="store_true",
-        help="send the metadata server's identity token to the --asr services, for a bot on Cloud Run or GCE",
-    )
+    add_identity_token_arguments(parser)
     return parser.parse_args()
 
 
@@ -67,13 +52,7 @@ def http_recognizers(args: argparse.Namespace, session: aiohttp.ClientSession) -
         name, separator, url = entry.partition("=")
         if not separator or not name or not url:
             raise SystemExit(f"--asr wants NAME=URL, got {entry!r}")
-        token: IdentityToken | None = (
-            gcloud_identity_token()
-            if args.gcloud_auth
-            else metadata_identity_token(session, url)
-            if args.metadata_auth
-            else None
-        )
+        token = identity_token_from_arguments(args, session, url)
         recognizer = GraniteSpeechRecognizer if name == GRANITE_SPEECH else HttpRecognizer
         recognizers[name] = recognizer(name, url, session, token)
     return recognizers

@@ -85,8 +85,8 @@ def init(
             return
         if log_level not in LEVELS:
             raise ValueError(f"unknown log level: {log_level}")
-        logs = [callback for callback in (on_log,) if callback is not None]
-        spans = [callback for callback in (on_span,) if callback is not None]
+        logs = [on_log] if on_log is not None else []
+        spans = [on_span] if on_span is not None else []
         reports = ClientTelemetry(telemetry) if telemetry is not None else None
         if reports is not None:
             logs.append(reports.log)

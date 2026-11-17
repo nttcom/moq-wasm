@@ -90,9 +90,8 @@ class FakeIssuer:
     """Refreshes the tokens in `apps`, a token to its app ID, into `<token>+`, and refuses others;
     raises `failure` instead while it is set."""
 
-    def __init__(self, apps: dict[str, str] | None = None, expires_at: float = 2**40):
+    def __init__(self, apps: dict[str, str] | None = None):
         self.apps = dict(apps or {})
-        self.expires_at = expires_at
         self.failure: Exception | None = None
         self.refreshed: list[str] = []
 
@@ -104,4 +103,4 @@ class FakeIssuer:
         if app_id is None:
             raise TokenRejected("invalid_token")
         self.apps[f"{token}+"] = app_id
-        return IssuedToken(f"{token}+", app_id, self.expires_at)
+        return IssuedToken(f"{token}+", app_id)

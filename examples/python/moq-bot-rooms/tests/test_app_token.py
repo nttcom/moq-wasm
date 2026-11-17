@@ -43,7 +43,7 @@ def test_the_issuer_is_the_configured_one_or_the_one_next_to_the_relay(configure
     assert token_mint_url(configured, relay_url) == expected
 
 
-async def test_a_refresh_answers_the_token_its_app_and_expiry(issuer_server):
+async def test_a_refresh_answers_the_token_and_its_app(issuer_server):
     # Arrange
     answers, issuer = issuer_server
     answers["page-token"] = (200, {"token": "new", "appId": "temp-0123", "expiresAt": 1759603600})
@@ -52,7 +52,7 @@ async def test_a_refresh_answers_the_token_its_app_and_expiry(issuer_server):
     issued = await issuer.refresh("page-token")
 
     # Assert
-    assert (issued.token, issued.app_id, issued.expires_at) == ("new", "temp-0123", 1759603600)
+    assert (issued.token, issued.app_id) == ("new", "temp-0123")
 
 
 @pytest.mark.parametrize(
@@ -86,7 +86,7 @@ async def test_an_issuer_that_is_not_listening_is_unavailable():
 async def test_refresh_returns_the_issuers_later_token():
     # Arrange
     issuer = FakeIssuer({"page-token": "temp-0123"})
-    token = AppToken(issuer, IssuedToken("page-token", "temp-0123", 2**40))
+    token = AppToken(issuer, IssuedToken("page-token", "temp-0123"))
 
     # Act / Assert
     assert await token.refresh("page-token") == "page-token+"
