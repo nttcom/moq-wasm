@@ -68,7 +68,8 @@ function applyNamespaceOverride(namespaceInputId: string): void {
     firstSearchParam(['trackNamespace', 'namespace']) ?? (input.value.trim() || buildDefaultTrackNamespace())
 }
 
-export function buildDefaultTrackNamespace(date = new Date()): string {
+export function buildDefaultTrackNamespace(): string {
+  const date = new Date()
   const pad = (value: number) => String(value).padStart(2, '0')
   const day = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
   return `${access.namespaceRoot}/nttcom/${day}/${pad(date.getHours())}${pad(date.getMinutes())}`

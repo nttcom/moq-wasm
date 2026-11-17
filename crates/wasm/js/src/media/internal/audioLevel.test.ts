@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { audioLevelOfSamples, louderAudioLevel } from './audioLevel'
-import { AUDIO_LEVEL_ID, buildLocHeader, readLocHeader } from './loc'
+import { AUDIO_LEVEL_ID, readLocHeader } from './loc'
+import { buildLocHeader } from './testing/locHeader'
 
 test('a full-scale square wave is level 0 with voice activity', () => {
   // Arrange

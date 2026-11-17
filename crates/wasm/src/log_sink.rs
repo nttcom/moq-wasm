@@ -53,12 +53,10 @@ impl SessionScope {
     }
 }
 
-fn token_of(scope: u64) -> JsValue {
-    SCOPE_TOKENS.with_borrow(|tokens| {
-        tokens
-            .get(&scope)
-            .map_or(JsValue::UNDEFINED, |token| JsValue::from_str(token))
-    })
+fn token_of(scope: Option<u64>) -> JsValue {
+    scope
+        .and_then(|scope| SessionScope(scope).token())
+        .map_or(JsValue::UNDEFINED, JsValue::from)
 }
 
 fn carry_scope(future: Pin<Box<dyn Future<Output = ()>>>) -> Pin<Box<dyn Future<Output = ()>>> {
@@ -89,11 +87,7 @@ pub fn set_log_sink(
             now_ms,
             random_byte: || (js_sys::Math::random() * 256.0) as u8,
             emit: |record, scope: Option<u64>| {
-                call(
-                    &SPAN_CALLBACK,
-                    &record,
-                    &scope.map_or(JsValue::UNDEFINED, token_of),
-                );
+                call(&SPAN_CALLBACK, &record, &token_of(scope));
             },
         }
         .with_filter(LevelFilter::INFO)
@@ -136,7 +130,7 @@ impl<S: Subscriber> Layer<S> for JsLogLayer {
         call(
             &LOG_CALLBACK,
             &log_record(event, now_ms()),
-            &current_scope().map_or(JsValue::UNDEFINED, token_of),
+            &token_of(current_scope()),
         );
     }
 }

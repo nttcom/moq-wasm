@@ -12,13 +12,6 @@
     "types": ["@types/dom-mediacapture-transform", "@types/react", "@types/react-dom", "vite/client"],
     "lib": ["esnext", "webworker", "dom"]
   },
-  "include": [
-    "examples/**/*.ts",
-    "examples/**/*.tsx",
-    "examples/media/publisher/files/decoder.js",
-    "lib/**/*.ts",
-    "utils/**/*.ts",
-    "tests/playback-group/*.ts"
-  ],
+  "include": ["examples/**/*.ts", "examples/**/*.tsx", "lib/**/*.ts", "utils/**/*.ts", "tests/playback-group/*.ts"],
   "exclude": ["node_modules"]
 }

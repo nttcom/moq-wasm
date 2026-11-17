@@ -25,26 +25,8 @@ export type LocMetadata = {
 }
 
 const MICROS_PER_SECOND = 1_000_000
-const VOICE_ACTIVITY_BIT = 0x80
-const LEVEL_MASK = 0x7f
-
-export function buildLocHeader(meta: LocMetadata): LocHeader {
-  const extensions: LocHeader = []
-  if (typeof meta.timestampMicros === 'number') {
-    extensions.push({ id: TIMESTAMP_ID, value: { varint: meta.timestampMicros } })
-  }
-  if (meta.videoConfig) {
-    extensions.push({ id: VIDEO_CONFIG_ID, value: { bytes: meta.videoConfig } })
-  }
-  if (meta.audioLevel) {
-    const { level, voiceActivity } = meta.audioLevel
-    extensions.push({
-      id: AUDIO_LEVEL_ID,
-      value: { varint: (voiceActivity ? VOICE_ACTIVITY_BIT : 0) | (level & LEVEL_MASK) }
-    })
-  }
-  return extensions
-}
+export const VOICE_ACTIVITY_BIT = 0x80
+export const LEVEL_MASK = 0x7f
 
 /// A Timestamp with a Timescale property of 0 is not read.
 export function readLocHeader(header?: LocHeader): LocMetadata {

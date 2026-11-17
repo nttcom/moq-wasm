@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { FakeMediaEnvironment } from '../player/testing/fakeMediaEnvironment'
 import { GroupOrderGate } from './groupOrderGate'
 import type { SubgroupObjectWithLoc } from './jitterBufferTypes'
-import { buildLocHeader } from './loc'
+import { buildLocHeader } from './testing/locHeader'
 
 const CAPTURE_MICROS = 1_000_000_000
 
