@@ -10,13 +10,15 @@ module boundaries, runtime flow, or invariants described here change.
 `http-server` is the HTTP/1 server part every HTTP service shares: `console`,
 `vts`, `token-mint`, `observability`, `live-translate` and `recorder`. Each
 service keeps its own routing, state and response headers; this crate only
-accepts connections and builds JSON bodies.
+accepts connections, reads JSON request bodies and builds responses.
 
 | Item | Responsibility |
 | --- | --- |
 | `HttpServer::run(listener, handler)` | Spawns the accept loop and owns its `JoinHandle`. Each connection runs hyper HTTP/1 on its own task and calls `handler(request, peer)` for every request. |
 | `json_response(status, body)` | `body` serialized as JSON with `Content-Type: application/json`. |
 | `error_response(status, error)` | `{"error": error}` through `json_response`. |
+| `empty_response(status)` | `status` with an empty body and no headers. |
+| `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
 
 ## Runtime flow
 

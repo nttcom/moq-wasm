@@ -8,8 +8,8 @@ use moqt::{
 };
 
 use crate::{
-    CacheConfig, RelayServer,
-    config::DEFAULT_FETCH_FILL_TIMEOUT,
+    RelayServer,
+    config::{CacheConfig, DEFAULT_FETCH_FILL_TIMEOUT},
     modules::{
         auth::{
             session_authenticator::SessionAuthenticator,

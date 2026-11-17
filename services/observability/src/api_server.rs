@@ -2,7 +2,7 @@ use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use anyhow::Context;
 use http_body_util::Full;
-use http_server::{HttpServer, error_response, json_response};
+use http_server::{HttpServer, empty_response, error_response, json_response};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -110,8 +110,7 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
 
 /// A page sends its token in `Authorization`, which needs a CORS preflight.
 fn preflight() -> JsonResponse {
-    let mut response = Response::new(Full::new(Bytes::new()));
-    *response.status_mut() = StatusCode::NO_CONTENT;
+    let mut response = empty_response(StatusCode::NO_CONTENT);
     let headers = response.headers_mut();
     headers.insert(
         ACCESS_CONTROL_ALLOW_METHODS,

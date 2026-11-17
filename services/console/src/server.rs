@@ -5,7 +5,7 @@ use std::{
 };
 
 use app_registry::{App, RegistryStore};
-use http_body_util::{BodyExt, Full, Limited};
+use http_body_util::Full;
 use http_server::HttpServer;
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
@@ -30,7 +30,6 @@ use crate::{
 };
 
 pub const CSRF_HEADER: &str = "x-console-request";
-const MAX_BODY_BYTES: usize = 16 * 1024;
 /// The console signs a token per read of an app's usage or recordings, so it
 /// only has to outlive that request.
 const READ_TOKEN_TTL_SECONDS: u64 = 60;
@@ -347,7 +346,7 @@ async fn recording_file(
             let mut response = empty_response(StatusCode::FOUND);
             let location = HeaderValue::from_str(url.as_str()).map_err(|_| RECORDER_UNAVAILABLE)?;
             response.headers_mut().insert(LOCATION, location);
-            Ok(no_store(response))
+            Ok(response)
         }
         Ok(None) => Err(Refusal(StatusCode::NOT_FOUND, "no_file")),
         Err(error) => {
@@ -430,13 +429,9 @@ fn authority(url: &Url) -> Option<String> {
 }
 
 async fn read_json<T: DeserializeOwned>(body: Incoming) -> Result<T, Refusal> {
-    let invalid_request = || Refusal(StatusCode::BAD_REQUEST, "invalid_request");
-    let bytes = Limited::new(body, MAX_BODY_BYTES)
-        .collect()
+    http_server::read_json(body)
         .await
-        .map_err(|_| invalid_request())?
-        .to_bytes();
-    serde_json::from_slice(&bytes).map_err(|_| invalid_request())
+        .ok_or(Refusal(StatusCode::BAD_REQUEST, "invalid_request"))
 }
 
 fn respond<T>(
@@ -486,9 +481,7 @@ fn json_response(status: StatusCode, body: Value) -> JsonResponse {
 }
 
 fn empty_response(status: StatusCode) -> JsonResponse {
-    let mut response = Response::new(Full::default());
-    *response.status_mut() = status;
-    no_store(response)
+    no_store(http_server::empty_response(status))
 }
 
 fn no_store(mut response: JsonResponse) -> JsonResponse {

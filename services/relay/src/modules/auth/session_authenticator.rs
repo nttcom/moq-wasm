@@ -3,7 +3,7 @@ use std::sync::Arc;
 use moqt::{AuthorizationToken, TerminationErrorCode};
 
 use crate::{
-    AuthConfig,
+    config::AuthConfig,
     modules::{
         auth::{
             token_parameter::{TokenParameterError, extract_token},

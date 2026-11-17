@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use telemetry::non_empty_env;
 use token_mint::{RateLimit, TokenMint, TokenMintServer};
 use tokio::{
     net::TcpListener,
@@ -50,8 +51,4 @@ async fn main() -> anyhow::Result<()> {
     }
     tracing::info!("token-mint shutting down");
     Ok(())
-}
-
-fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
 }

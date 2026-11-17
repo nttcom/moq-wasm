@@ -1,7 +1,4 @@
-use std::{
-    convert::Infallible,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use aws_lc_rs::{
     rand::SystemRandom,
@@ -9,11 +6,8 @@ use aws_lc_rs::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::Full;
-use hyper::{
-    Request, Response, StatusCode, body::Bytes, header::AUTHORIZATION, server::conn::http1,
-    service::service_fn,
-};
-use hyper_util::rt::TokioIo;
+use http_server::HttpServer;
+use hyper::{Response, StatusCode, body::Bytes, header::AUTHORIZATION};
 use reqwest::Url;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
@@ -149,7 +143,7 @@ pub(crate) type ReceivedRequest = (String, Option<String>);
 pub(crate) struct FakeHttpServer {
     url: String,
     requests: Arc<Mutex<Vec<ReceivedRequest>>>,
-    _accept_handle: JoinHandle<()>,
+    _server: HttpServer,
 }
 
 impl FakeHttpServer {
@@ -160,12 +154,7 @@ impl FakeHttpServer {
         Self {
             url,
             requests: requests.clone(),
-            _accept_handle: tokio::spawn(serve_answer(
-                listener,
-                status,
-                Bytes::from(body.to_string()),
-                requests,
-            )),
+            _server: answering_server(listener, status, Bytes::from(body.to_string()), requests),
         }
     }
 
@@ -178,34 +167,24 @@ impl FakeHttpServer {
     }
 }
 
-async fn serve_answer(
+fn answering_server(
     listener: TcpListener,
     status: StatusCode,
     body: Bytes,
     requests: Arc<Mutex<Vec<ReceivedRequest>>>,
-) {
-    loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let body = body.clone();
-        let requests = requests.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request: Request<hyper::body::Incoming>| {
-                let authorization = request
-                    .headers()
-                    .get(AUTHORIZATION)
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_string);
-                requests
-                    .lock()
-                    .unwrap()
-                    .push((request.uri().to_string(), authorization));
-                let mut response = Response::new(Full::new(body.clone()));
-                *response.status_mut() = status;
-                async move { Ok::<_, Infallible>(response) }
-            });
-            let _ = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await;
-        });
-    }
+) -> HttpServer {
+    HttpServer::run(listener, move |request, _peer| {
+        let authorization = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        requests
+            .lock()
+            .unwrap()
+            .push((request.uri().to_string(), authorization));
+        let mut response = Response::new(Full::new(body.clone()));
+        *response.status_mut() = status;
+        async move { response }
+    })
 }

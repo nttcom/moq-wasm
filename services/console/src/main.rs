@@ -4,6 +4,7 @@ use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
 use console::{ConsoleServer, ConsoleState, GOOGLE_IAP_KEYS_URL, Identity, IdentitySettings};
 use reqwest::Url;
+use telemetry::non_empty_env;
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -52,8 +53,4 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(port, "console listening");
 
     future::pending().await
-}
-
-fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|value| !value.is_empty())
 }

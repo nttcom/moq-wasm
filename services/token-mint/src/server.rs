@@ -4,8 +4,8 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use http_body_util::{BodyExt, Full, Limited};
-use http_server::{HttpServer, error_response, json_response};
+use http_body_util::Full;
+use http_server::{HttpServer, empty_response, error_response, json_response, read_json};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -23,8 +23,6 @@ use crate::{
     issuer::{RefreshError, TokenMint},
     rate_limit::RateLimit,
 };
-
-const MAX_BODY_BYTES: usize = 16 * 1024;
 
 pub struct TokenMintServer {
     _http: HttpServer,
@@ -111,11 +109,7 @@ fn issue(state: &ServerState, client: IpAddr) -> JsonResponse {
 }
 
 async fn refresh(body: Incoming, issuer: &TokenMint) -> JsonResponse {
-    let request = match Limited::new(body, MAX_BODY_BYTES).collect().await {
-        Ok(collected) => serde_json::from_slice::<RefreshRequest>(&collected.to_bytes()).ok(),
-        Err(_) => None,
-    };
-    let Some(request) = request else {
+    let Some(request) = read_json::<RefreshRequest, _>(body).await else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
     match issuer.refresh(&request.token, unix_now()) {
@@ -184,12 +178,6 @@ fn internal_error(error: &anyhow::Error) -> JsonResponse {
         "temporary token signing failed"
     );
     error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
-}
-
-fn empty_response(status: StatusCode) -> JsonResponse {
-    let mut response = Response::new(Full::default());
-    *response.status_mut() = status;
-    response
 }
 
 #[cfg(test)]
