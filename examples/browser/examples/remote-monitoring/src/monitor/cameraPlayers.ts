@@ -10,6 +10,7 @@ import {
 import type { TelemetryStatsSample } from 'moq-wasm'
 import { reportRelay, sampleCameras } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
+import { PlaybackBadges } from './playbackBadges'
 import 'moq-wasm/media/player.css'
 
 const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
@@ -39,6 +40,7 @@ export class CameraPlayers {
   private readonly views = new Map<CameraId, { view: SourceView; trackNamespace: string }>()
   private readonly hosts = new Map<CameraId, HTMLDivElement>()
   private stageId: CameraId | undefined
+  private readonly badges = new PlaybackBadges()
 
   constructor(private readonly onStateChange: (camId: CameraId) => void) {}
 
@@ -113,6 +115,7 @@ export class CameraPlayers {
       host = document.createElement('div')
       host.className = 'cam-host'
       this.hosts.set(camId, host)
+      this.badges.add(host)
     }
     return host
   }
