@@ -79,10 +79,11 @@ async fn publish_stdin<C: NalDecoderConfig>(
             }
         };
         let events = if read == 0 {
-            demuxer.finish(arrival())?
+            demuxer.finish(arrival())
         } else {
-            demuxer.push(&read_buf[..read], arrival())?
-        };
+            demuxer.push(&read_buf[..read], arrival())
+        }
+        .context("failed to read the input; check --codec")?;
         for event in events {
             if let MediaEvent::VideoConfig(config) = &event {
                 info!(codec = %config.codec_string(), "codec resolved");
