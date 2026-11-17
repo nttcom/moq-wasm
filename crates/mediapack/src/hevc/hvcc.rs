@@ -198,6 +198,18 @@ impl NalDecoderConfig for HevcDecoderConfigurationRecord {
         )
     }
 
+    /// Only the base layer (nuh_layer_id 0, H.265 §7.3.1.2) is supported.
+    fn ensure_supported(nal: &[u8]) -> Result<()> {
+        if let [first, second, ..] = nal {
+            let nuh_layer_id = (first & 1) << 5 | second >> 3;
+            ensure!(
+                nuh_layer_id == 0,
+                "H.265 layer {nuh_layer_id} is not supported; an H.264 stream reads like this"
+            );
+        }
+        Ok(())
+    }
+
     fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self> {
         let [vps, sps, pps]: [Vec<Bytes>; 3] = sets
             .try_into()

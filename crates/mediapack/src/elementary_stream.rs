@@ -43,7 +43,8 @@ impl<C: NalDecoderConfig> ElementaryStreamDemuxer<C> {
         Self::default()
     }
 
-    /// Fails when 16 MiB arrive without a start code.
+    /// Fails when 16 MiB arrive without a start code, or on a NAL unit `C`
+    /// does not support, such as one from a stream of another codec.
     pub fn push(&mut self, data: &[u8], arrival: Timestamp) -> Result<Vec<MediaEvent>> {
         self.pending.extend_from_slice(data);
         let complete = match last_start_code(&self.pending) {
@@ -86,6 +87,7 @@ impl<C: NalDecoderConfig> ElementaryStreamDemuxer<C> {
         arrival: Timestamp,
         events: &mut Vec<MediaEvent>,
     ) -> Result<()> {
+        C::ensure_supported(&nal)?;
         if self.access_unit_has_slice && C::starts_access_unit(&nal) {
             self.finish_access_unit(arrival, events)?;
         }
@@ -132,9 +134,11 @@ mod tests {
     use super::*;
     use crate::{
         h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
+        hevc::HevcDecoderConfigurationRecord,
         sample::{VideoConfig, VideoSample},
         test_support::{
-            FIXTURE_PPS, FIXTURE_SPS, IDR_SLICE, NON_IDR_SLICE, delta_frame_annexb, fixture_record,
+            FIXTURE_HEVC, FIXTURE_PPS, FIXTURE_SPS, IDR_SLICE, NON_IDR_SLICE, delta_frame_annexb,
+            fixture_record, hevc_delta_frame_annexb, hevc_fixture_record, hevc_keyframe_annexb,
             keyframe_annexb,
         },
     };
@@ -284,6 +288,52 @@ mod tests {
         let samples = samples(&events);
         assert_eq!(samples.len(), 2);
         assert_eq!(samples[1].data, keyframe_annexb());
+    }
+
+    #[test]
+    fn splits_an_h265_stream_into_access_units_after_its_config() {
+        // Arrange
+        let mut demuxer = super::ElementaryStreamDemuxer::<HevcDecoderConfigurationRecord>::new();
+
+        // Act
+        let mut events = demuxer.push(FIXTURE_HEVC, Timestamp::ZERO).unwrap();
+        events.extend(demuxer.finish(Timestamp::ZERO).unwrap());
+
+        // Assert
+        assert_eq!(
+            events[0],
+            MediaEvent::VideoConfig(VideoConfig::Hevc(hevc_fixture_record()))
+        );
+        let samples = samples(&events);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].data, hevc_keyframe_annexb());
+        assert!(samples[0].is_keyframe);
+        assert_eq!(samples[1].data, hevc_delta_frame_annexb());
+        assert!(!samples[1].is_keyframe);
+    }
+
+    #[test]
+    fn rejects_an_h265_stream_read_as_h264() {
+        // Arrange
+        let mut demuxer = ElementaryStreamDemuxer::new();
+
+        // Act
+        let result = demuxer.push(FIXTURE_HEVC, Timestamp::ZERO);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_an_h264_stream_read_as_h265() {
+        // Arrange
+        let mut demuxer = super::ElementaryStreamDemuxer::<HevcDecoderConfigurationRecord>::new();
+
+        // Act
+        let result = demuxer.push(&stream(), Timestamp::ZERO);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]

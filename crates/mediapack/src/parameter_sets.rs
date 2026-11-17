@@ -36,6 +36,10 @@ pub trait NalDecoderConfig: Clone + PartialEq + Into<VideoConfig> {
     /// already holds a slice.
     fn starts_access_unit(nal: &[u8]) -> bool;
 
+    /// Rejects a stream of another codec, which reads as NAL units this one
+    /// does not support.
+    fn ensure_supported(nal: &[u8]) -> Result<()>;
+
     /// `sets` holds one list per kind, in the order `parameter_sets` gives.
     fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self>;
 

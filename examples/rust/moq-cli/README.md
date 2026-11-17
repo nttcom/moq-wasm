@@ -1,6 +1,6 @@
 # moq-cli
 
-Publishes a raw H.264 stream from stdin to a MoQ relay as an MSF broadcast,
+Publishes a raw H.264 or H.265 stream from stdin to a MoQ relay as an MSF broadcast,
 or subscribes to one track and writes it to stdout.
 
 ```sh
@@ -14,6 +14,7 @@ moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecu
 | --- | :-: | :-: | --- |
 | `--relay` | ● | ● | Relay URL, e.g. `moqt://localhost:4433` |
 | `--namespace` | ● | | Namespace of the broadcast, e.g. `anon/tokyo/cam01` |
+| `--codec` | ● | | Codec of the stream on stdin: `h264` (default) or `h265` |
 | `--track` | | ● | Full track name, e.g. `anon/tokyo/cam01/video` |
 | `--insecure` | ● | ● | Skip certificate verification, for self-signed relays |
 | `--auth-token` | ● | ● | JWT for the relay. Also `MOQT_AUTH_TOKEN` |
@@ -24,7 +25,8 @@ moq-cli subscribe --relay moqt://localhost:4433 --track anon/live/video --insecu
 
 ## Publish and subscribe
 
-- `publish` reads an H.264 Annex-B elementary stream and publishes `catalog`,
+- `publish` reads an H.264 Annex-B elementary stream, or an H.265 one with
+  `--codec h265` (`ffmpeg ... -c:v copy -f hevc -`), and publishes `catalog`,
   `video` (LOC), `video_cmaf` and `video_timeline` through `crates/broadcast`.
 - The stream carries no timestamps, so each access unit is stamped with the
   time it was read. Feed a file at its frame rate (`ffmpeg -re`): input that

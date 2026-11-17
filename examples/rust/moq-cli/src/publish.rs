@@ -2,12 +2,16 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
-use mediapack::{MediaEvent, Timestamp, h264::ElementaryStreamDemuxer};
+use mediapack::{
+    MediaEvent, Timestamp, elementary_stream::ElementaryStreamDemuxer,
+    h264::AvcDecoderConfigurationRecord, hevc::HevcDecoderConfigurationRecord,
+    parameter_sets::NalDecoderConfig,
+};
 use moqt::{RequestErrorCode, Session, SessionEvent, publish::Origin};
 use tokio::{io::AsyncReadExt, time::Instant};
 use tracing::{debug, info, warn};
 
-use crate::cli::PublishArgs;
+use crate::cli::{Codec, PublishArgs};
 use crate::track::Namespace;
 use crate::transport::connect_relay;
 
@@ -15,13 +19,24 @@ const READ_BUFFER_BYTES: usize = 64 * 1024;
 
 pub async fn run(args: PublishArgs) -> Result<()> {
     let connection = connect_relay(&args.relay, args.namespace.app_id()).await?;
-    let result = publish_stdin(&connection.session, &args.namespace).await;
+    let session = &connection.session;
+    let result = match args.codec {
+        Codec::H264 => {
+            publish_stdin::<AvcDecoderConfigurationRecord>(session, &args.namespace).await
+        }
+        Codec::H265 => {
+            publish_stdin::<HevcDecoderConfigurationRecord>(session, &args.namespace).await
+        }
+    };
     connection.close().await;
     result
 }
 
 /// Publishes stdin as the `video` track of an MSF broadcast in `namespace`.
-async fn publish_stdin(session: &Arc<Session>, namespace: &Namespace) -> Result<()> {
+async fn publish_stdin<C: NalDecoderConfig>(
+    session: &Arc<Session>,
+    namespace: &Namespace,
+) -> Result<()> {
     let relay = RelayConnection::with_session(session.clone(), Origin::default());
     let broadcast = Broadcast::new(relay.clone(), namespace.0.clone());
     broadcast
@@ -37,7 +52,7 @@ async fn publish_stdin(session: &Arc<Session>, namespace: &Namespace) -> Result<
         .remove_track(&audio_track)
         .await
         .context("failed to remove the audio track")?;
-    let mut demuxer = ElementaryStreamDemuxer::new();
+    let mut demuxer = ElementaryStreamDemuxer::<C>::new();
     let started = Instant::now();
     let arrival = || Timestamp::from_micros(started.elapsed().as_micros() as u64);
 
@@ -64,10 +79,11 @@ async fn publish_stdin(session: &Arc<Session>, namespace: &Namespace) -> Result<
             }
         };
         let events = if read == 0 {
-            demuxer.finish(arrival())?
+            demuxer.finish(arrival())
         } else {
-            demuxer.push(&read_buf[..read], arrival())?
-        };
+            demuxer.push(&read_buf[..read], arrival())
+        }
+        .context("failed to read the input; check --codec")?;
         for event in events {
             if let MediaEvent::VideoConfig(config) = &event {
                 info!(codec = %config.codec_string(), "codec resolved");

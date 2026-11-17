@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use url::Url;
 
@@ -104,6 +104,16 @@ pub struct PublishArgs {
     /// Namespace of the broadcast, e.g. `anon/tokyo/cam01`
     #[arg(long)]
     pub namespace: Namespace,
+    /// Codec of the Annex-B elementary stream on stdin
+    #[arg(long, value_enum, default_value_t)]
+    pub codec: Codec,
+}
+
+#[derive(ValueEnum, Clone, Copy, Debug, Default)]
+pub enum Codec {
+    #[default]
+    H264,
+    H265,
 }
 
 #[derive(Args, Debug)]
