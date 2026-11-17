@@ -2,7 +2,7 @@ mod track_receive_task;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
 use moqt::{Session, subscribe::FilterType};
@@ -11,7 +11,7 @@ use tokio::{sync::mpsc, task::JoinSet};
 
 use crate::{
     broadcast_reader::track_receive_task::{StartPoint, TrackKind, receive_track},
-    relay_session::{read_catalog, subscribe, track_reader},
+    relay_session::{read_catalog, subscribe},
 };
 
 const MEDIA_CHANNEL_CAPACITY: usize = 256;
@@ -61,10 +61,7 @@ impl BroadcastReader {
         if let Some((name, config)) = tracks.audio {
             kinds.push((name, TrackKind::Audio(config)));
         }
-        // Subscribe to every track before waiting on any: `track_reader` blocks
-        // until the video's next group starts, and audio subscribed after that
-        // wait would start later than the video.
-        let mut subscriptions = Vec::new();
+        let mut tasks = JoinSet::new();
         for (name, kind) in kinds {
             // NextGroupStart begins the video at a keyframe. An audio object decodes
             // alone, and a publisher that sends its audio as one endless group never
@@ -75,11 +72,7 @@ impl BroadcastReader {
                 TrackKind::Audio(_) => FilterType::LargestObject,
             };
             let subscription = subscribe(session, namespace, &name, filter_type).await?;
-            subscriptions.push((name, kind, subscription));
-        }
-        let mut tasks = JoinSet::new();
-        for (name, kind, subscription) in subscriptions {
-            let reader = track_reader(session, &subscription).await?;
+            let reader = session.subscriber().track_reader(&subscription);
             tasks.spawn(receive_track(
                 name,
                 reader,
@@ -148,7 +141,9 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
             .channel_config
             .as_deref()
             .context("audio track has no channelConfig")?;
-        Ok((sample_rate, channel_count(channels)?))
+        let channels = msf::channel_count(channels)
+            .with_context(|| format!("unknown channelConfig {channels:?}"))?;
+        Ok((sample_rate, channels))
     };
     match track.codec.as_deref() {
         Some(PCMA_CODEC) => {
@@ -167,22 +162,6 @@ fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
         }
         _ => Ok(AudioConfig::Aac(aac_config(catalog, track)?)),
     }
-}
-
-/// `channelConfig` as `broadcast` writes it (`mono`, `stereo`, `<n>ch`) or as
-/// the draft's examples do (`<n>`).
-fn channel_count(label: &str) -> Result<u8> {
-    let count = match label {
-        "mono" => 1,
-        "stereo" => 2,
-        other => other
-            .strip_suffix("ch")
-            .unwrap_or(other)
-            .parse()
-            .with_context(|| format!("unknown channelConfig {other:?}"))?,
-    };
-    ensure!(count > 0, "channelConfig {label:?} names no channel");
-    Ok(count)
 }
 
 fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {

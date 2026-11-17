@@ -246,9 +246,10 @@ impl<C: NalDecoderConfig> NalTrack<C> {
 mod tests {
     use super::*;
     use crate::{
-        h264::annexb::{annexb_to_avcc, with_start_codes},
+        h264::annexb::with_start_codes,
         loc::object::{AUDIO_LEVEL_ID, LocExtension, TIMESCALE_ID, TIMESTAMP_ID, VIDEO_CONFIG_ID},
         sample::AudioLevel,
+        test_support::annexb_to_avcc,
         test_support::{
             FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
             fixture_record, fixture_video_config, hevc_delta_frame_annexb, hevc_fixture_record,

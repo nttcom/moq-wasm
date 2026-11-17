@@ -125,8 +125,8 @@ impl Demuxer {
 mod tests {
     use super::*;
     use crate::{
-        h264::annexb::annexb_to_avcc,
         sample::StreamSet,
+        test_support::annexb_to_avcc,
         test_support::{
             FIXTURE_FLV, IDR_SLICE, audio_samples, count_events, delta_frame_annexb,
             fixture_record, fixture_video_config, keyframe_annexb, keyframe_sample, mono_48k,

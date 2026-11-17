@@ -5,5 +5,5 @@ pub mod types;
 
 pub use catalog::{CATALOG_TRACK_NAME, Catalog, CatalogParseError, InitData};
 pub use media_timeline::MediaTimelineRecord;
-pub use track::Track;
+pub use track::{Track, channel_config, channel_count};
 pub use types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole};

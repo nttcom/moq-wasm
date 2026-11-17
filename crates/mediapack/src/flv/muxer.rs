@@ -5,7 +5,8 @@ use anyhow::Context;
 
 use crate::{
     flv::tag::{Tag, TagType, encode_tag, file_header},
-    h264::{AvcDecoderConfigurationRecord, annexb::annexb_to_avcc_without_parameter_sets},
+    h264::AvcDecoderConfigurationRecord,
+    parameter_sets::NalDecoderConfig,
     sample::{MediaEvent, StreamSet, Timestamp},
 };
 
@@ -71,10 +72,12 @@ impl Muxer {
                 data.put_u8(if sample.is_keyframe { 0x17 } else { 0x27 });
                 data.put_u8(0x01);
                 data.put_slice(&(composition_offset_ms as i32).to_be_bytes()[1..]);
-                data.put_slice(&annexb_to_avcc_without_parameter_sets(
-                    &sample.data,
-                    nal_length_size,
-                ));
+                data.put_slice(
+                    &AvcDecoderConfigurationRecord::sample_without_parameter_sets(
+                        &sample.data,
+                        nal_length_size,
+                    ),
+                );
                 Tag {
                     tag_type: TagType::Video,
                     timestamp: sample.dts,

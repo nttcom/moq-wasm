@@ -1,10 +1,5 @@
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::{
-    h264::avcc::{AvcDecoderConfigurationRecord, length_prefixed},
-    parameter_sets::NalDecoderConfig,
-};
-
 const START_CODE: [u8; 4] = [0, 0, 0, 1];
 
 pub fn nal_units(data: &[u8]) -> NalUnits<'_> {
@@ -54,17 +49,13 @@ pub fn with_start_codes<'a>(nals: impl IntoIterator<Item = &'a [u8]>) -> Bytes {
     out.freeze()
 }
 
-pub fn annexb_to_avcc(data: &[u8], nal_length_size: usize) -> Bytes {
-    length_prefixed(nal_units(data), nal_length_size)
-}
-
-pub fn annexb_to_avcc_without_parameter_sets(data: &[u8], nal_length_size: usize) -> Bytes {
-    AvcDecoderConfigurationRecord::sample_without_parameter_sets(data, nal_length_size)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        h264::AvcDecoderConfigurationRecord, parameter_sets::NalDecoderConfig,
+        test_support::annexb_to_avcc,
+    };
 
     #[test]
     fn splits_nal_units_with_three_and_four_byte_start_codes() {
@@ -118,7 +109,7 @@ mod tests {
         ];
 
         // Act
-        let avcc = annexb_to_avcc_without_parameter_sets(&stream, 2);
+        let avcc = AvcDecoderConfigurationRecord::sample_without_parameter_sets(&stream, 2);
 
         // Assert
         assert_eq!(avcc.as_ref(), [0, 2, 0x65, 0xCC]);

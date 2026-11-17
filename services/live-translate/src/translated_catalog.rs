@@ -13,9 +13,7 @@ const TEXT_MIME_TYPE: &str = "application/json";
 
 pub(crate) fn source_audio_track(source: &Catalog) -> Option<&Track> {
     source
-        .tracks
-        .iter()
-        .flatten()
+        .loc_tracks()
         .filter(|track| is_opus_audio(track))
         .max_by_key(|track| track.bitrate.unwrap_or(0))
 }
@@ -29,12 +27,10 @@ pub(crate) fn build_translated_catalog(
         .tracks
         .iter()
         .flatten()
-        .filter(|track| has_role(track, KnownTrackRole::Video))
+        .filter(|track| track.has_role(KnownTrackRole::Video))
         .map(|track| referencing(track, source_namespace));
     let original_audio = source
-        .tracks
-        .iter()
-        .flatten()
+        .loc_tracks()
         .filter(|track| is_opus_audio(track))
         .map(|track| Track {
             lang: Some(SOURCE_LANGUAGE.to_string()),
@@ -102,13 +98,7 @@ fn referencing(track: &Track, source_namespace: &str) -> Track {
 }
 
 fn is_opus_audio(track: &Track) -> bool {
-    has_role(track, KnownTrackRole::Audio)
-        && track.packaging == Packaging::Known(KnownPackaging::Loc)
-        && track.codec.as_deref() == Some("opus")
-}
-
-fn has_role(track: &Track, role: KnownTrackRole) -> bool {
-    track.role == Some(TrackRole::Known(role))
+    track.has_role(KnownTrackRole::Audio) && track.codec.as_deref() == Some("opus")
 }
 
 #[cfg(test)]

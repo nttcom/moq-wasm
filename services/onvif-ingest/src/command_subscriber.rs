@@ -7,7 +7,7 @@ use moqt::{
     publish::PublishHandler,
     subscribe::{FilterType, SubscribeOption},
     ClientConfig, Endpoint, RequestErrorCode, RequestFailure, Session, SessionEvent, Subscriber,
-    Subscription, TrackReader, NATIVE,
+    Subscription, NATIVE,
 };
 use tokio::task::JoinHandle;
 
@@ -278,20 +278,13 @@ struct CommandReceiver {
 
 impl CommandReceiver {
     fn run(
-        mut subscriber: Subscriber,
+        subscriber: Subscriber,
         subscription: Subscription,
         command_sender: Sender<Command>,
     ) -> Self {
         let request_id = subscription.request_id();
         let join_handle = tokio::spawn(async move {
-            let receiver = match subscriber.accept_data_receiver(&subscription).await {
-                Ok(receiver) => receiver,
-                Err(err) => {
-                    tracing::warn!("command accept_data_receiver failed: {err}");
-                    return;
-                }
-            };
-            let mut reader = TrackReader::new(receiver);
+            let mut reader = subscriber.track_reader(&subscription);
             loop {
                 match reader.next_object().await {
                     Ok(Some(object)) => {
@@ -306,7 +299,7 @@ impl CommandReceiver {
                         return;
                     }
                     Err(err) => {
-                        tracing::warn!("command track is malformed: {err}");
+                        tracing::warn!("command track read failed: {err}");
                         return;
                     }
                 }

@@ -21,10 +21,6 @@ impl NalUnitType {
             other => Self::Other(other),
         }
     }
-
-    pub fn is_parameter_set(self) -> bool {
-        matches!(self, Self::Sps | Self::Pps)
-    }
 }
 
 pub fn nal_unit_type(nal: &[u8]) -> Option<NalUnitType> {
@@ -203,7 +199,6 @@ mod tests {
         // Act / Assert
         assert_eq!(nal_unit_type(&idr), Some(NalUnitType::IdrSlice));
         assert_eq!(nal_unit_type(&sps), Some(NalUnitType::Sps));
-        assert!(NalUnitType::Sps.is_parameter_set());
         assert_eq!(NalUnitType::from_header(0x41), NalUnitType::Other(1));
         assert_eq!(
             NalUnitType::from_header(0x09),

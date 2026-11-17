@@ -24,6 +24,7 @@ use crate::{
     recording_clock::RecordingClock,
     relay::{RelayConnection, ServiceToken},
     room_state::{MemberStatus, RecordingFormat, RoomState},
+    state_sync_task::now_ms,
     upload_task::UploadTask,
 };
 
@@ -524,10 +525,7 @@ fn record_transcript(
     mut stop: watch::Receiver<bool>,
     status: Arc<Mutex<RoomStatus>>,
 ) -> impl Future<Output = MemberFiles> + use<> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    let now = now_ms();
     let index = {
         let mut status = lock(&status);
         status.members.push(MemberStatus {

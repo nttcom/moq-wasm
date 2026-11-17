@@ -137,6 +137,27 @@ impl Track {
     }
 }
 
+/// The number of channels a `channelConfig` (draft-ietf-moq-msf-01 §5.2.29)
+/// names, as `channel_config` writes it (`mono`, `stereo`, `<n>ch`) or as the
+/// draft's examples do (`<n>`). `None` for any other label or zero channels.
+pub fn channel_count(channel_config: &str) -> Option<u8> {
+    let count = match channel_config {
+        "mono" => 1,
+        "stereo" => 2,
+        other => other.strip_suffix("ch").unwrap_or(other).parse().ok()?,
+    };
+    (count > 0).then_some(count)
+}
+
+/// The `channelConfig` (draft-ietf-moq-msf-01 §5.2.29) of `channels` channels.
+pub fn channel_config(channels: u8) -> String {
+    match channels {
+        1 => "mono".to_string(),
+        2 => "stereo".to_string(),
+        n => format!("{n}ch"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +236,21 @@ mod tests {
         assert!(json.contains("\"maxGrpSapStartingType\":1"));
         assert!(json.contains("\"maxObjSapStartingType\":2"));
         assert_eq!(serde_json::from_str::<Track>(&json).unwrap(), track);
+    }
+
+    #[test]
+    fn channel_config_round_trips_through_channel_count() {
+        // Act / Assert
+        for channels in [1, 2, 6] {
+            assert_eq!(channel_count(&channel_config(channels)), Some(channels));
+        }
+    }
+
+    #[test]
+    fn channel_count_reads_the_draft_notation_and_rejects_no_channel() {
+        // Act / Assert
+        assert_eq!(channel_count("2"), Some(2));
+        assert_eq!(channel_count("0"), None);
+        assert_eq!(channel_count("5.1"), None);
     }
 }

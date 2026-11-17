@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use crate::{
     aac::asc::SAMPLES_PER_FRAME,
     av1::{self, Av1Config},
-    h264::annexb::annexb_to_avcc_without_parameter_sets,
+    h264::AvcDecoderConfigurationRecord,
     hevc::HevcDecoderConfigurationRecord,
     mp4::track::{MPEG1_AUDIO_OBJECT_TYPE_INDICATION, MPEG2_AUDIO_OBJECT_TYPE_INDICATION},
     parameter_sets::NalDecoderConfig,
@@ -60,9 +60,10 @@ pub(super) fn video_fragment(
     config: &VideoConfig,
 ) -> Result<Bytes> {
     let data = match config {
-        VideoConfig::Avc(record) => {
-            annexb_to_avcc_without_parameter_sets(&sample.data, record.nal_length_size as usize)
-        }
+        VideoConfig::Avc(record) => AvcDecoderConfigurationRecord::sample_without_parameter_sets(
+            &sample.data,
+            usize::from(record.nal_length_size),
+        ),
         VideoConfig::Hevc(record) => HevcDecoderConfigurationRecord::sample_without_parameter_sets(
             &sample.data,
             usize::from(record.nal_length_size),

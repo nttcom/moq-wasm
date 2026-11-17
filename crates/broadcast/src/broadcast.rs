@@ -88,7 +88,7 @@ impl Broadcast {
     /// notified when a subscriber asks for a new group, which the source
     /// starts by encoding a keyframe. Call before the track's first
     /// `update_video_catalog`, which publishes it.
-    pub async fn accept_keyframe_requests(
+    pub(crate) async fn accept_keyframe_requests(
         &self,
         track_name: &str,
         requested: Arc<Notify>,
@@ -129,7 +129,7 @@ impl Broadcast {
     /// sent only while a subscriber takes it, and `demand_sender` is sent
     /// whether one does, now and at every change. Call before the catalog
     /// update that publishes the track.
-    pub async fn publish_on_demand(
+    pub(crate) async fn publish_on_demand(
         &self,
         track_name: &str,
         demand_sender: mpsc::UnboundedSender<TrackDemand>,
@@ -142,7 +142,11 @@ impl Broadcast {
             .await
     }
 
-    pub async fn update_video_catalog(&self, track_name: &str, info: VideoTrackInfo) -> Result<()> {
+    pub(crate) async fn update_video_catalog(
+        &self,
+        track_name: &str,
+        info: VideoTrackInfo,
+    ) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
@@ -400,7 +404,7 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         audio.codec = Some(info.config.codec_string());
         audio.mime_type = Some(audio_mime_type(&info.config).to_string());
         audio.sample_rate = Some(info.config.sample_rate());
-        audio.channel_config = Some(channel_config_label(info.config.channels()));
+        audio.channel_config = Some(msf::channel_config(info.config.channels()));
         let mut audio_cmaf = None;
         if let AudioConfig::Aac(config) = &info.config {
             let audio_specific_config = general_purpose::STANDARD.encode(config.to_bytes());
@@ -588,14 +592,6 @@ fn audio_mime_type(config: &AudioConfig) -> &'static str {
         AudioConfig::Pcma { .. } => "audio/pcma",
         AudioConfig::Opus { .. } => "audio/opus",
         AudioConfig::Mp3 { .. } => "audio/mpeg",
-    }
-}
-
-fn channel_config_label(channels: u8) -> String {
-    match channels {
-        1 => "mono".to_string(),
-        2 => "stereo".to_string(),
-        n => format!("{n}ch"),
     }
 }
 
