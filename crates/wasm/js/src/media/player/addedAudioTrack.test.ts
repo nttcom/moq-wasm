@@ -42,7 +42,7 @@ test('an added audio track joins its current group, and closing it unsubscribes 
   await added.close()
 
   // Assert
-  expect(session.calls).toEqual([{ method: 'subscribeCurrentGroup', track: 'audio_en' }])
+  expect(session.calls).toEqual([{ method: 'subscribeCurrentGroup', track: 'audio_en', options: { priority: 32 } }])
   expect(added.receivedObjects).toBe(2)
   expect(session.updates).toEqual(['close audio_en'])
 })

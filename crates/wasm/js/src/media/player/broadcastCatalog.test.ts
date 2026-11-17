@@ -37,6 +37,7 @@ test('every listener reads the catalog of one SUBSCRIBE, a late one at once', as
 
   // Assert
   expect(fake.subscriptions).toHaveLength(1)
+  expect(fake.subscriptions[0].options).toEqual({ priority: 0 })
   expect(first.heard.catalogs).toEqual(['v1'])
   expect(late.heard.catalogs).toEqual(['v1'])
 })

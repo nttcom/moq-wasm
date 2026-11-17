@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use moqt::{Session, TrackReader};
+use moqt::{Session, TrackReader, subscribe::SubscribeOption};
 use msf::Catalog;
 
 /// Yields the catalog's current group from the joining FETCH
@@ -13,7 +13,11 @@ impl CatalogReader {
     pub(crate) async fn open(session: &Session, namespace: &str) -> Result<Self> {
         let (_, reader) = session
             .subscriber()
-            .subscribe_current_group(namespace.to_string(), msf::CATALOG_TRACK_NAME.to_string())
+            .subscribe_current_group(
+                namespace.to_string(),
+                msf::CATALOG_TRACK_NAME.to_string(),
+                SubscribeOption::default(),
+            )
             .await
             .with_context(|| {
                 format!(

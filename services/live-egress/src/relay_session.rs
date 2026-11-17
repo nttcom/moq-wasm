@@ -53,7 +53,11 @@ pub async fn track_reader(session: &Session, subscription: &Subscription) -> Res
 pub async fn read_catalog(session: &Session, namespace: &str) -> Result<Bytes> {
     let (_subscription, mut reader) = session
         .subscriber()
-        .subscribe_current_group(namespace.to_string(), msf::CATALOG_TRACK_NAME.to_string())
+        .subscribe_current_group(
+            namespace.to_string(),
+            msf::CATALOG_TRACK_NAME.to_string(),
+            SubscribeOption::default(),
+        )
         .await
         .with_context(|| format!("subscribe {namespace}/{}", msf::CATALOG_TRACK_NAME))?;
     match reader.next_object().await? {

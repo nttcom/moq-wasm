@@ -42,7 +42,7 @@ test('added text is delivered when its capture time is due, late text at once wi
   environment.advanceTo(startMs + 1_000)
 
   // Assert
-  expect(session.calls).toEqual([{ method: 'subscribeCurrentGroup', track: 'text_en' }])
+  expect(session.calls).toEqual([{ method: 'subscribeCurrentGroup', track: 'text_en', options: { priority: 16 } }])
   expect(delivered).toEqual([
     [TEXT, 30, 0],
     [TEXT, 0, 50]

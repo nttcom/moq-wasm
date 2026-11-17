@@ -56,7 +56,11 @@ async fn read_catalog_with_retry(session: &Session, namespace: &str) -> Result<C
 async fn first_catalog_object(session: &Session, namespace: &str) -> Result<moqt::TrackObject> {
     let mut subscriber = session.subscriber();
     let (subscription, mut reader) = subscriber
-        .subscribe_current_group(namespace.to_string(), CATALOG_TRACK_NAME.to_string())
+        .subscribe_current_group(
+            namespace.to_string(),
+            CATALOG_TRACK_NAME.to_string(),
+            SubscribeOption::default(),
+        )
         .await?;
     let object = reader
         .next_object()

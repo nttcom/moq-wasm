@@ -5,6 +5,7 @@ import { CATALOG_TRACK_NAME } from '../catalog'
 import { getErrorMessage } from '../internal/status'
 import { type DeliveryObserver, UNOBSERVED_DELIVERIES } from './deliveryObserver'
 import { TextTracks } from './textTrack'
+import { CATALOG_PRIORITY } from './trackPriority'
 import type { LogLevel, TrackContext } from './trackContext'
 
 const PUBLISHER_RETRY_MS = 2_000
@@ -123,6 +124,7 @@ export class BroadcastCatalog {
     try {
       await this.textTracks.subscribe(CATALOG_TRACK_NAME, onText, {
         currentGroup: true,
+        priority: CATALOG_PRIORITY,
         onEnded: (done) => this.publisherLeft(generation, done)
       })
     } catch (error) {

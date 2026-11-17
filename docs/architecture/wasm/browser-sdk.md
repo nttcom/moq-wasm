@@ -318,8 +318,8 @@ listener になる。publisher がいないときの再購読と、catalog の P
 | 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを CSS ピクセルで監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`）。devicePixelRatio は掛けない。高密度の画面では rendition をその倍率まで拡大して表示する | 小さいタイルは低い rendition を受ける |
 | Audio Level | `LivePlayerCallbacks.onAudioLevel?(level: AudioLevel)`。音声 object の LOC Audio Level property（draft-ietf-moq-loc-04 §2.3.3.2）を渡す。`AudioLevel` を export する | 話者の検出（`dominantSpeaker.ts`） |
 | 最初の映像を group の先頭から取る | 映像の最初の購読は `subscribeGroupStart` にする（下の「keyframe の間隔と NEW_GROUP_REQUEST」）。rendition の切り替えは新しい group を要求し、その先頭で切り替える | 静止した画面共有も、参加した直後に映る |
-| 音声を映像より優先する | 音声の SUBSCRIBE の subscriber priority を映像より高くする。オプションにはしない | meeting の映像128、音声0 と同じ |
-| 映像どうしの優先度を変える | `LivePlayer.setVideoPriority(priority)`。映像の subscriber priority（0〜255、既定は128、小さいほど先）を変える。購読中の映像には SUBSCRIBE_UPDATE で送り、その後に購読する映像（rendition の切り替え、`setVideoEnabled(true)`）にも使う。音声は 0 のまま。view からは `view.player` で呼ぶ | 下りが詰まったとき、ピン留めした映像や画面共有をほかの映像より先に受ける |
+| 小さい track を映像より優先する | player が SUBSCRIBE する track の subscriber priority を、catalog 0、テキスト（media timeline、字幕）16、音声 32、映像 128 にする（`player/trackPriority.ts`、小さいほど先）。オプションにはしない。media timeline には、映像・音声と同じ `deliveryTimeoutMs` と `groupOrder` も付ける（毎回それまでの表を丸ごと送るので、遅れた object は届かなくてよい）。catalog には付けない | DELIVERY TIMEOUT のない track を映像と同じか下の優先度に置くと、下りが詰まったとき、映像の後ろで送られないままの stream が残る。relay が同時に開ける stream 数（subscriber が決める上限）をそれが埋め、優先度の高い映像の stream も開けなくなる |
+| 映像どうしの優先度を変える | `LivePlayer.setVideoPriority(priority)`。映像の subscriber priority（0〜255、既定は128、小さいほど先）を変える。購読中の映像には SUBSCRIBE_UPDATE で送り、その後に購読する映像（rendition の切り替え、`setVideoEnabled(true)`）にも使う。音声は 32 のまま。view からは `view.player` で呼ぶ | 下りが詰まったとき、ピン留めした映像や画面共有をほかの映像より先に受ける |
 | 古い映像と音声を送らせない | `LivePlayerOptions.deliveryTimeoutMs`（`RemoteBroadcastOptions` にも同名）。選択中の映像と音声の SUBSCRIBE に DELIVERY TIMEOUT（draft-14 §9.2.1.2）を付ける。`addAudioTrack` で足した音声には付けない。1〜4294967295 の整数以外は `RangeError`。relay は object を受け取ってからその時間を過ぎた Group の stream を reset する。指定しなければ全 object が届く | 下りが詰まったとき、遅れた映像を捨てて新しい映像を受ける。優先度だけでは、後回しの映像が送信バッファを埋めて優先した映像まで遅れる |
 | 詰まったとき新しい Group を先に受ける | `LivePlayerOptions.groupOrder`（`RemoteBroadcastOptions` にも同名）。選択中の映像と音声の SUBSCRIBE の Group Order（draft-14 §7）。既定の `'ascending'` は古い Group から送るので、遅れが伸びる。`'descending'` は新しい Group を先に送るので、遅れずに先へ飛ぶ。SUBSCRIBE のあとでは変えられない | ライブ視聴で、遅れるより飛ぶほうがよい場合。`deliveryTimeoutMs` と併用すると、送れなかった古い Group は捨てられる |
 
@@ -960,7 +960,7 @@ export interface Session extends EventTarget {
   readonly transport: 'webtransport' | 'websocket'
   readonly closed: Promise<CloseInfo>
   subscribe(namespace: string[], track: string, options?: SubscribeOptions): Promise<Subscription>
-  subscribeCurrentGroup(namespace: string[], track: string): Promise<Subscription>  // SUBSCRIBE + joining FETCH
+  subscribeCurrentGroup(namespace: string[], track: string, options?: SubscribeGroupStartOptions): Promise<Subscription>  // SUBSCRIBE + joining FETCH
   subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, options?: SubscribeGroupStartOptions): Promise<Subscription>  // joining FETCH または NEW_GROUP_REQUEST
   fetch(namespace: string[], track: string, range: FetchRange): Promise<AsyncIterable<MoqObject>>
   trackStatus(namespace: string[], track: string): Promise<TrackStatus>

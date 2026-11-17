@@ -62,8 +62,8 @@ impl Default for SubscribeOptions {
     }
 }
 
-/// How `Session::subscribe_group_start` subscribes; its filter is Largest
-/// Object and its Forward State 1.
+/// How `Session::subscribe_group_start` and `Session::subscribe_current_group`
+/// subscribe; their filter is Largest Object and their Forward State 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupStartOptions {
     pub priority: u8,
@@ -206,11 +206,16 @@ impl Session {
         &self,
         namespace: &[impl AsRef<str>],
         track: &str,
+        options: GroupStartOptions,
     ) -> Result<Subscription, RequestError> {
         let (subscription, reader) = self
             .session
             .subscriber()
-            .subscribe_current_group(join_namespace(namespace), track.to_string())
+            .subscribe_current_group(
+                join_namespace(namespace),
+                track.to_string(),
+                options.subscribe_option(),
+            )
             .await
             .map_err(RequestError::of(RequestKind::Subscribe))?;
         Ok(self.subscription(subscription, Reading::Objects(reader)))

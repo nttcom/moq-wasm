@@ -38,7 +38,7 @@ test('the delivery timeout and the group order are sent with a subscription from
     {
       method: 'subscribe',
       track: 'audio',
-      options: { forward: true, priority: 0, deliveryTimeoutMs: 2_000, groupOrder: 'descending' }
+      options: { forward: true, priority: 32, deliveryTimeoutMs: 2_000, groupOrder: 'descending' }
     }
   ])
 })
@@ -164,7 +164,7 @@ test('audio is subscribed with a lower subscriber priority value than video, so 
   // Assert
   expect(session.calls.map(({ track, options }) => [track, options?.priority])).toEqual([
     ['video-720p', 128],
-    ['audio', 0]
+    ['audio', 32]
   ])
 })
 
@@ -197,7 +197,7 @@ test('a video subscribed after its priority was set is subscribed with it', asyn
   expect(session.calls.map((call) => [call.track, call.options?.priority])).toEqual([
     ['video', 7],
     ['video_low', 7],
-    ['audio', 0]
+    ['audio', 32]
   ])
   expect(session.updates).toEqual([])
 })

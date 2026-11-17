@@ -252,7 +252,7 @@ impl Session {
         let scope = self.scope;
         self.scope.future_into_py(py, async move {
             let subscription = session
-                .subscribe_current_group(&namespace, &name)
+                .subscribe_current_group(&namespace, &name, GroupStartOptions::default())
                 .await
                 .map_err(request_error)?;
             Ok(Subscription::new(subscription, scope))

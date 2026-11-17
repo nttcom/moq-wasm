@@ -48,7 +48,11 @@ async fn subscribe_media(session: &Session, track: &FullTrackName) -> Result<Tra
     // catches the first media group of a burst publisher.
     let mut subscriber = session.subscriber();
     let (_catalog_subscription, mut catalog_reader) = subscriber
-        .subscribe_current_group(track.namespace.clone(), msf::CATALOG_TRACK_NAME.to_string())
+        .subscribe_current_group(
+            track.namespace.clone(),
+            msf::CATALOG_TRACK_NAME.to_string(),
+            SubscribeOption::default(),
+        )
         .await
         .with_context(|| {
             format!(

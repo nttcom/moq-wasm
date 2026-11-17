@@ -1,6 +1,7 @@
-import type { MoqSubscription, PublishDone } from '../../core/session'
+import type { MoqSubscribeOptions, MoqSubscription, PublishDone } from '../../core/session'
 import { type TrackContext, observedObjectHandler, sessionOf, streamId } from './trackContext'
 import { getErrorMessage } from '../internal/status'
+import { TEXT_PRIORITY } from './trackPriority'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 
@@ -10,6 +11,11 @@ export type TextTrackOptions = {
   currentGroup?: boolean
   /// Called when the publisher ends the track with PUBLISH_DONE.
   onEnded?: (done: PublishDone) => void
+  /// The Subscriber Priority, `TEXT_PRIORITY` by default.
+  priority?: number
+  /// For a track whose every object replaces the one before, so that a late
+  /// object need not be delivered.
+  delivery?: Pick<MoqSubscribeOptions, 'deliveryTimeoutMs' | 'groupOrder'>
 }
 
 type TextSubscription = { id: bigint; name: string; handle: MoqSubscription }
@@ -22,9 +28,10 @@ export class TextTracks {
   async subscribe(name: string, onText: TextTrackHandler, options: TextTrackOptions = {}): Promise<void> {
     const { namespace } = this.context
     const session = sessionOf(this.context)
+    const subscribe = { priority: options.priority ?? TEXT_PRIORITY, ...options.delivery }
     const handle = options.currentGroup
-      ? await session.subscribeCurrentGroup(namespace, name)
-      : await session.subscribe(namespace, name)
+      ? await session.subscribeCurrentGroup(namespace, name, subscribe)
+      : await session.subscribe(namespace, name, subscribe)
     const subscription = { id: streamId(), name, handle }
     this.subscribed.push(subscription)
     const observed = observedObjectHandler(this.context, subscription.id, name, (groupId, object) =>

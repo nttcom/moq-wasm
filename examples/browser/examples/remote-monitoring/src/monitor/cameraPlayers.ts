@@ -17,7 +17,7 @@ const log = (...args: unknown[]) => console.log('[mon][player]', ...args)
 export type CameraEvent = { kind: 'added' | 'removed'; camId: CameraId }
 
 /// The relay sends a lower Subscriber Priority first: on a downlink that cannot carry every
-/// camera, the stage's video goes before the others'. 128 is the SDK's default; audio stays at 0.
+/// camera, the stage's video goes before the others'. 128 is the SDK's default; audio stays ahead at 32.
 const STAGE_VIDEO_PRIORITY = 64
 const PREVIEW_VIDEO_PRIORITY = 128
 

@@ -12,11 +12,7 @@ import {
 } from './trackContext'
 import { getErrorMessage } from '../internal/status'
 import { type MediaCatalogTrack, catalogTrackNamespace } from '../catalog'
-
-/// draft-14 §7.2: the relay sends the lower subscriber priority value first,
-/// so audio takes the downlink ahead of video.
-const AUDIO_PRIORITY = 0
-const DEFAULT_VIDEO_PRIORITY = 128
+import { AUDIO_PRIORITY, DEFAULT_VIDEO_PRIORITY } from './trackPriority'
 
 /// A group whose largest object ID is below this is read from its start
 /// through a joining FETCH; a longer one is not worth catching up on when the

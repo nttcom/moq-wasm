@@ -62,8 +62,12 @@ export class FakeSession {
     return this.subscription(track)
   }
 
-  async subscribeCurrentGroup(_namespace: string[], track: string): Promise<MoqSubscription> {
-    this.calls.push({ method: 'subscribeCurrentGroup', track })
+  async subscribeCurrentGroup(
+    _namespace: string[],
+    track: string,
+    options: MoqSubscribeGroupStartOptions = {}
+  ): Promise<MoqSubscription> {
+    this.calls.push({ method: 'subscribeCurrentGroup', track, options })
     return this.subscription(track)
   }
 

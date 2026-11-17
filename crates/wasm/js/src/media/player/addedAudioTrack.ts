@@ -4,6 +4,7 @@ import { subscribeAddedTrack } from './addedTrack'
 import { AudioLane } from './audioLane'
 import type { LivePlayout } from './livePlayout'
 import type { TrackContext } from './trackContext'
+import { AUDIO_PRIORITY } from './trackPriority'
 
 export type AddedAudioTrackListener = {
   /// Once: the first chunk that arrived in time is scheduled for `dueMs` on
@@ -38,6 +39,7 @@ export class AddedAudioTrack {
         context,
         catalogTrackNamespace(track, context.namespace),
         track.name,
+        AUDIO_PRIORITY,
         (groupId, object, cached) => {
           added.received += 1
           lane.push(groupId, object, cached)

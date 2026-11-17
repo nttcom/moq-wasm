@@ -175,8 +175,20 @@ export class MoqSession {
 
   /// SUBSCRIBE with a joining FETCH (draft-14 §9.16.2): the objects of the group
   /// the largest object is in come first.
-  async subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription> {
-    const subscription = await request('SUBSCRIBE', () => this.inner.subscribeCurrentGroup(namespace, track))
+  async subscribeCurrentGroup(
+    namespace: string[],
+    track: string,
+    options: MoqSubscribeGroupStartOptions = {}
+  ): Promise<MoqSubscription> {
+    const subscription = await request('SUBSCRIBE', () =>
+      this.inner.subscribeCurrentGroup(
+        namespace,
+        track,
+        options.priority,
+        options.deliveryTimeoutMs,
+        options.groupOrder
+      )
+    )
     return new MoqSubscription(subscription, this)
   }
 

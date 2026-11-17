@@ -131,7 +131,7 @@ export class MoqSession {
     // (undocumented)
     subscribe(namespace: string[], track: string, options?: MoqSubscribeOptions): Promise<MoqSubscription>;
     // (undocumented)
-    subscribeCurrentGroup(namespace: string[], track: string): Promise<MoqSubscription>;
+    subscribeCurrentGroup(namespace: string[], track: string, options?: MoqSubscribeGroupStartOptions): Promise<MoqSubscription>;
     // (undocumented)
     subscribeGroupStart(namespace: string[], track: string, newGroupAfter: number, options?: MoqSubscribeGroupStartOptions): Promise<MoqSubscription>;
     // (undocumented)

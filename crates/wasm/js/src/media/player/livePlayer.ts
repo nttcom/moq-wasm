@@ -1,6 +1,6 @@
 import { forwardSdkLog } from '../../core/log'
 import { RequestError, RequestErrorCode } from '../../core/requestError'
-import type { MoqSession, PublishDone, ReceivedObject } from '../../core/session'
+import type { MoqSession, MoqSubscribeOptions, PublishDone, ReceivedObject } from '../../core/session'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
 import { type AudioLevel, readLocHeader } from '../internal/loc'
@@ -79,11 +79,12 @@ export type LivePlayerOptions = {
   /// while reviewing.
   keepLiveWhileReviewing?: boolean
   /// The DELIVERY TIMEOUT of the SUBSCRIBEs of the selected video and audio
-  /// track (`MoqSubscribeOptions.deliveryTimeoutMs`), an integer from 1 to
-  /// 4294967295: on a link that cannot carry the tracks, the relay stops
-  /// sending a group once one of its objects is this many milliseconds old,
-  /// instead of sending it late. Tracks added with `addAudioTrack` are not
-  /// covered. Without it every object is delivered. The constructor throws a
+  /// track and of the media timeline (`MoqSubscribeOptions.deliveryTimeoutMs`),
+  /// an integer from 1 to 4294967295: on a link that cannot carry the tracks,
+  /// the relay stops sending a group once one of its objects is this many
+  /// milliseconds old, instead of sending it late. The catalog, captions and
+  /// tracks added with `addAudioTrack` or `addTextTrack` are not covered.
+  /// Without it every object is delivered. The constructor throws a
   /// `RangeError` for any other value.
   deliveryTimeoutMs?: number
   /// The Group Order of the same SUBSCRIBEs (`MoqSubscribeOptions.groupOrder`),
@@ -160,6 +161,7 @@ export class LivePlayer {
   private readonly keepLiveWhileReviewing: boolean
   private readonly source: LiveSource | undefined
   private readonly textTracks: TextTracks
+  private readonly delivery: Pick<MoqSubscribeOptions, 'deliveryTimeoutMs' | 'groupOrder'>
   private readonly addedTracks = new Set<AddedAudioTrack | AddedTextTrack>()
   /// The catalog the player listens to since `start`; `owned` when the
   /// player created it and closes it at `stop`.
@@ -229,10 +231,11 @@ export class LivePlayer {
       }
     }
     this.textTracks = new TextTracks(this.context)
+    this.delivery = { deliveryTimeoutMs: options.deliveryTimeoutMs, groupOrder: options.groupOrder }
     this.subscriptions = new TrackSubscriptions(
       this.context,
       (kind, done, leading) => this.publisherEnded(kind, done, leading),
-      { deliveryTimeoutMs: options.deliveryTimeoutMs, groupOrder: options.groupOrder }
+      this.delivery
     )
     this.videoSwitcher = new VideoSwitcher({
       subscriptions: this.subscriptions,
@@ -637,7 +640,9 @@ export class LivePlayer {
   /// Sets the Subscriber Priority of the video (draft-14 §7.2), an integer
   /// from 0 to 255 that is 128 until set: among the tracks a session
   /// receives, the relay sends those of a lower value first. The audio stays
-  /// at 0, ahead of every video. Throws a `RangeError` for any other value.
+  /// at 32, the text tracks at 16 and the catalog at 0, so a video at 32 or
+  /// less is level with or ahead of them: keep it above 32 on a link the
+  /// videos can fill. Throws a `RangeError` for any other value.
   setVideoPriority(priority: number): void {
     if (!Number.isInteger(priority) || priority < 0 || priority > 255) {
       throw new RangeError(`video priority ${priority} is not an integer from 0 to 255`)
@@ -1045,7 +1050,13 @@ export class LivePlayer {
     if (!track || !this.timeline.followMediaTimeline(track)) {
       return
     }
-    const onTimeline = (text: string) => {
+    let newestGroup: bigint | undefined
+    const onTimeline = (text: string, groupId: bigint) => {
+      // Each group is a stream of its own, so an older one can arrive after a newer one.
+      if (newestGroup !== undefined && groupId < newestGroup) {
+        return
+      }
+      newestGroup = groupId
       try {
         this.timeline.replaceMediaTimeline(text, this.playedTrack('video')?.name)
       } catch (error) {
@@ -1059,7 +1070,10 @@ export class LivePlayer {
     }
     // A SUBSCRIBE to a track that is not live delivers no object, so the
     // timeline of a VOD broadcast arrives through the joining FETCH alone.
-    await this.textTracks.subscribe(track.name, onTimeline, { currentGroup: !this.timeline.live })
+    await this.textTracks.subscribe(track.name, onTimeline, {
+      currentGroup: !this.timeline.live,
+      delivery: this.delivery
+    })
   }
 
   private cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {

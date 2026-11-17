@@ -817,7 +817,11 @@ mod tests {
             .client
             .session
             .subscriber()
-            .subscribe_current_group(namespace, "video_timeline".into())
+            .subscribe_current_group(
+                namespace,
+                "video_timeline".into(),
+                SubscribeOption::default(),
+            )
             .await
             .unwrap();
         let timeline = tokio::time::timeout(Duration::from_secs(5), timeline.next_object())
