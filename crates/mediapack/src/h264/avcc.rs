@@ -140,6 +140,17 @@ impl NalDecoderConfig for AvcDecoderConfigurationRecord {
         matches!(raw_nal_unit_type(nal), 6..=9 | 14..=18)
     }
 
+    /// Data partitioning (H.264 Table 7-1, types 2 to 4) is not supported.
+    fn ensure_supported(nal: &[u8]) -> Result<()> {
+        let nal_unit_type = raw_nal_unit_type(nal);
+        ensure!(
+            !(2..=4).contains(&nal_unit_type),
+            "H.264 data partitioning (NAL unit type {nal_unit_type}) is not supported; \
+             an H.265 stream reads like this"
+        );
+        Ok(())
+    }
+
     fn from_parameter_sets(sets: Vec<Vec<Bytes>>) -> Result<Self> {
         let [sps, pps]: [Vec<Bytes>; 2] = sets
             .try_into()

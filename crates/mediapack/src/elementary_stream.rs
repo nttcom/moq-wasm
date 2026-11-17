@@ -43,7 +43,8 @@ impl<C: NalDecoderConfig> ElementaryStreamDemuxer<C> {
         Self::default()
     }
 
-    /// Fails when 16 MiB arrive without a start code.
+    /// Fails when 16 MiB arrive without a start code, or on a NAL unit `C`
+    /// does not support, as a stream of another codec carries.
     pub fn push(&mut self, data: &[u8], arrival: Timestamp) -> Result<Vec<MediaEvent>> {
         self.pending.extend_from_slice(data);
         let complete = match last_start_code(&self.pending) {
@@ -86,6 +87,7 @@ impl<C: NalDecoderConfig> ElementaryStreamDemuxer<C> {
         arrival: Timestamp,
         events: &mut Vec<MediaEvent>,
     ) -> Result<()> {
+        C::ensure_supported(&nal)?;
         if self.access_unit_has_slice && C::starts_access_unit(&nal) {
             self.finish_access_unit(arrival, events)?;
         }
@@ -308,6 +310,30 @@ mod tests {
         assert!(samples[0].is_keyframe);
         assert_eq!(samples[1].data, hevc_delta_frame_annexb());
         assert!(!samples[1].is_keyframe);
+    }
+
+    #[test]
+    fn rejects_an_h265_stream_read_as_h264() {
+        // Arrange
+        let mut demuxer = ElementaryStreamDemuxer::new();
+
+        // Act
+        let result = demuxer.push(FIXTURE_HEVC, Timestamp::ZERO);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_an_h264_stream_read_as_h265() {
+        // Arrange
+        let mut demuxer = super::ElementaryStreamDemuxer::<HevcDecoderConfigurationRecord>::new();
+
+        // Act
+        let result = demuxer.push(&stream(), Timestamp::ZERO);
+
+        // Assert
+        assert!(result.is_err());
     }
 
     #[test]
