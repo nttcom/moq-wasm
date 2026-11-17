@@ -36,3 +36,22 @@ body {
   height: 100%;
   --moq-object-fit: cover;
 }
+
+.cam-playback-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 10;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font:
+    700 14px ui-monospace,
+    monospace;
+  color: #fff;
+  background: rgb(24 24 27 / 80%);
+  pointer-events: none;
+}
+
+.cam-playback-badge-stalled {
+  background: #b91c1c;
+}
