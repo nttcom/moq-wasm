@@ -44,7 +44,7 @@ impl<C: NalDecoderConfig> ElementaryStreamDemuxer<C> {
     }
 
     /// Fails when 16 MiB arrive without a start code, or on a NAL unit `C`
-    /// does not support, as a stream of another codec carries.
+    /// does not support, such as one from a stream of another codec.
     pub fn push(&mut self, data: &[u8], arrival: Timestamp) -> Result<Vec<MediaEvent>> {
         self.pending.extend_from_slice(data);
         let complete = match last_start_code(&self.pending) {
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn splits_an_h265_stream_into_access_units_after_its_config() {
-        // Arrange: VPS, SPS, PPS and an IDR slice, then a trailing slice
+        // Arrange
         let mut demuxer = super::ElementaryStreamDemuxer::<HevcDecoderConfigurationRecord>::new();
 
         // Act
