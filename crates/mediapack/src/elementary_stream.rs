@@ -132,9 +132,11 @@ mod tests {
     use super::*;
     use crate::{
         h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
+        hevc::HevcDecoderConfigurationRecord,
         sample::{VideoConfig, VideoSample},
         test_support::{
-            FIXTURE_PPS, FIXTURE_SPS, IDR_SLICE, NON_IDR_SLICE, delta_frame_annexb, fixture_record,
+            FIXTURE_HEVC, FIXTURE_PPS, FIXTURE_SPS, IDR_SLICE, NON_IDR_SLICE, delta_frame_annexb,
+            fixture_record, hevc_delta_frame_annexb, hevc_fixture_record, hevc_keyframe_annexb,
             keyframe_annexb,
         },
     };
@@ -284,6 +286,28 @@ mod tests {
         let samples = samples(&events);
         assert_eq!(samples.len(), 2);
         assert_eq!(samples[1].data, keyframe_annexb());
+    }
+
+    #[test]
+    fn splits_an_h265_stream_into_access_units_after_its_config() {
+        // Arrange: VPS, SPS, PPS and an IDR slice, then a trailing slice
+        let mut demuxer = super::ElementaryStreamDemuxer::<HevcDecoderConfigurationRecord>::new();
+
+        // Act
+        let mut events = demuxer.push(FIXTURE_HEVC, Timestamp::ZERO).unwrap();
+        events.extend(demuxer.finish(Timestamp::ZERO).unwrap());
+
+        // Assert
+        assert_eq!(
+            events[0],
+            MediaEvent::VideoConfig(VideoConfig::Hevc(hevc_fixture_record()))
+        );
+        let samples = samples(&events);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[0].data, hevc_keyframe_annexb());
+        assert!(samples[0].is_keyframe);
+        assert_eq!(samples[1].data, hevc_delta_frame_annexb());
+        assert!(!samples[1].is_keyframe);
     }
 
     #[test]
