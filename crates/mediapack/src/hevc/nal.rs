@@ -9,6 +9,9 @@ pub(crate) const VPS: u8 = 32;
 pub(crate) const SPS: u8 = 33;
 pub(crate) const PPS: u8 = 34;
 pub(crate) const ACCESS_UNIT_DELIMITER: u8 = 35;
+pub(crate) const PREFIX_SEI: u8 = 39;
+/// VCL NAL units: the coded slice segments, and the types reserved for them.
+pub(crate) const SLICES: RangeInclusive<u8> = 0..=31;
 /// The slices of an IRAP picture: BLA, IDR and CRA.
 pub(crate) const IRAP_SLICES: RangeInclusive<u8> = 16..=23;
 

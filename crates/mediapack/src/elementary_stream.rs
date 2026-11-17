@@ -2,33 +2,43 @@ use anyhow::{Result, bail};
 use bytes::{Bytes, BytesMut};
 
 use crate::{
-    h264::{
-        ParameterSetTracker,
-        annexb::{nal_units, with_start_codes},
-    },
+    h264::annexb::{nal_units, with_start_codes},
+    parameter_sets::{NalDecoderConfig, ParameterSetTracker},
     sample::{MediaEvent, Timestamp},
 };
 
 /// A stream that shows no start code within this many bytes is not Annex-B.
 const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
 
-/// Reads a raw H.264 Annex-B elementary stream in chunks of any size and
-/// reports its access units as `MediaEvent`s. The stream carries no timestamps, so each access unit takes
+/// Reads a raw Annex-B elementary stream in chunks of any size and reports
+/// its access units as `MediaEvent`s; `C` is the decoder configuration of the
+/// stream's codec. The stream carries no timestamps, so each access unit takes
 /// the `arrival` of the chunk that completed it, moved 1 µs past the previous
 /// access unit when one chunk completes several; a keyframe without its
-/// SPS/PPS gets the last ones seen.
-#[derive(Default)]
-pub struct ElementaryStreamDemuxer {
+/// parameter sets gets the last ones seen.
+pub struct ElementaryStreamDemuxer<C> {
     /// Bytes from the last start code on; the NAL unit there may continue in
     /// the next chunk.
     pending: BytesMut,
     access_unit: Vec<Bytes>,
     access_unit_has_slice: bool,
-    parameter_sets: ParameterSetTracker,
+    parameter_sets: ParameterSetTracker<C>,
     last_pts: Option<Timestamp>,
 }
 
-impl ElementaryStreamDemuxer {
+impl<C: NalDecoderConfig> Default for ElementaryStreamDemuxer<C> {
+    fn default() -> Self {
+        Self {
+            pending: BytesMut::new(),
+            access_unit: Vec::new(),
+            access_unit_has_slice: false,
+            parameter_sets: ParameterSetTracker::new(),
+            last_pts: None,
+        }
+    }
+}
+
+impl<C: NalDecoderConfig> ElementaryStreamDemuxer<C> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -52,7 +62,7 @@ impl ElementaryStreamDemuxer {
         if let Some(next) = nal_units(&self.pending).next()
             && next.len() >= 2
             && self.access_unit_has_slice
-            && starts_access_unit(next)
+            && C::starts_access_unit(next)
         {
             self.finish_access_unit(arrival, &mut events)?;
         }
@@ -76,10 +86,10 @@ impl ElementaryStreamDemuxer {
         arrival: Timestamp,
         events: &mut Vec<MediaEvent>,
     ) -> Result<()> {
-        if self.access_unit_has_slice && starts_access_unit(&nal) {
+        if self.access_unit_has_slice && C::starts_access_unit(&nal) {
             self.finish_access_unit(arrival, events)?;
         }
-        self.access_unit_has_slice |= is_slice(&nal);
+        self.access_unit_has_slice |= C::is_slice(&nal);
         self.access_unit.push(nal);
         Ok(())
     }
@@ -117,37 +127,19 @@ fn last_start_code(data: &[u8]) -> Option<usize> {
     })
 }
 
-fn nal_type(nal: &[u8]) -> u8 {
-    nal.first().map_or(0, |header| header & 0x1F)
-}
-
-/// A coded slice (H.264 Table 7-1, types 1 to 5).
-fn is_slice(nal: &[u8]) -> bool {
-    (1..=5).contains(&nal_type(nal))
-}
-
-/// Whether `nal` starts a new access unit (H.264 §7.4.1.2.3): an access
-/// unit delimiter, SEI, SPS, PPS or types 14 to 18, or the first slice of
-/// a picture. A first slice has first_mb_in_slice 0, coded as Exp-Golomb
-/// `1`, so the top bit of the byte after the NAL header is set.
-fn starts_access_unit(nal: &[u8]) -> bool {
-    if is_slice(nal) {
-        return nal.get(1).is_some_and(|byte| byte & 0x80 != 0);
-    }
-    matches!(nal_type(nal), 6..=9 | 14..=18)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        h264::annexb::with_start_codes,
+        h264::{AvcDecoderConfigurationRecord, annexb::with_start_codes},
         sample::{VideoConfig, VideoSample},
         test_support::{
             FIXTURE_PPS, FIXTURE_SPS, IDR_SLICE, NON_IDR_SLICE, delta_frame_annexb, fixture_record,
             keyframe_annexb,
         },
     };
+
+    type ElementaryStreamDemuxer = super::ElementaryStreamDemuxer<AvcDecoderConfigurationRecord>;
 
     /// SPS, PPS and an IDR slice, then two P slices.
     fn stream() -> Bytes {
