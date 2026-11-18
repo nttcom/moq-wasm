@@ -89,23 +89,6 @@ impl Broadcast {
         relay.send_object(&self.namespace, track_name, object).await
     }
 
-    /// Gives the video track dynamic groups (draft-18 §12.6): `requested` is
-    /// notified when a subscriber asks for a new group, which the source
-    /// starts by encoding a keyframe. Call before the track's first
-    /// `update_video_catalog`, which publishes it.
-    pub(crate) async fn accept_keyframe_requests(
-        &self,
-        track_name: &str,
-        requested: Arc<Notify>,
-    ) -> Result<()> {
-        let Some(relay) = self.connection.connected().await? else {
-            return Ok(());
-        };
-        relay
-            .accept_new_group_requests(&self.namespace, track_name, requested)
-            .await
-    }
-
     /// Registers the keyframe requests and the demand of a video track its
     /// source encodes and, with `cmaf`, of its CMAF sibling, whose demand is
     /// reported under the sibling's name. Call before the catalog update that
@@ -119,8 +102,12 @@ impl Broadcast {
     ) -> Result<()> {
         let cmaf_name = cmaf.then(|| cmaf_track_name(track_name));
         for name in std::iter::once(track_name).chain(cmaf_name.as_deref()) {
-            if let Some(requested) = keyframe_requests {
-                self.accept_keyframe_requests(name, requested.clone())
+            // Dynamic groups (draft-18 §12.6).
+            if let Some(requested) = keyframe_requests
+                && let Some(relay) = self.connection.connected().await?
+            {
+                relay
+                    .accept_new_group_requests(&self.namespace, name, requested.clone())
                     .await?;
             }
             if let Some(demand_sender) = demand_sender {

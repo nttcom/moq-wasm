@@ -216,7 +216,7 @@ time itself, and the source's keyframe finds the same id.
 A source that encodes a keyframe when asked sets
 `SourceTracks::keyframe_requests`. `TrackPublisher` and each `RenditionTrack`
 then register that `Notify` for their video track with
-`Broadcast::accept_keyframe_requests` before the catalog update that
+`Broadcast::prepare_encoded_video` before the catalog update that
 publishes the track, so `Origin` sends the track with DYNAMIC_GROUPS
 (draft-ietf-moq-transport-18 §12.6) and notifies it when a subscriber sends
 NEW_GROUP_REQUEST (§10.2.13), once the track's open group is 2 seconds old
