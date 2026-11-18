@@ -1,9 +1,7 @@
 import json
 from dataclasses import dataclass
 
-import moq_wasm
 from moq_system_one_bot.event_timeline import Location
-from pipecat.frames.frames import DataFrame
 
 MAX_LABELS = 16
 MAX_LABEL_NAME_CHARS = 20
@@ -16,8 +14,8 @@ class Label:
     description: str
 
 
-@dataclass
-class ChatMessage(DataFrame):
+@dataclass(frozen=True)
+class ChatMessage:
     """A chat object the page sent; a verdict names it by its `location`."""
 
     text: str
@@ -25,10 +23,10 @@ class ChatMessage(DataFrame):
     location: Location
 
     @classmethod
-    def parse(cls, chat_object: moq_wasm.Object) -> "ChatMessage":
+    def parse(cls, payload: bytes, location: Location) -> "ChatMessage":
         """Raises ValueError for a payload that is not a valid `{"text", "labels": [{"name", "description"}]}`
         within the length and count limits."""
-        body = json.loads(chat_object.payload)
+        body = json.loads(payload)
         if not isinstance(body, dict):
             raise ValueError("chat is not an object")
         text = body.get("text")
@@ -42,7 +40,7 @@ class ChatMessage(DataFrame):
         parsed = tuple(_parse_label(label) for label in labels)
         if len({label.name for label in parsed}) < len(parsed):
             raise ValueError("two labels share a name")
-        return cls(text=text, labels=parsed, location=(chat_object.group_id, chat_object.object_id))
+        return cls(text=text, labels=parsed, location=location)
 
 
 def _parse_label(label: object) -> Label:
