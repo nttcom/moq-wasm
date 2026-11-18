@@ -1,10 +1,10 @@
 # Meeting
 
-Multi-party video meeting over MoQT. Every participant publishes an MSF
-catalog with camera, screen-share and microphone tracks under
-`/{RoomName}/{UserName}` and subscribes to the tracks of the others.
+A browser meeting with camera, screen sharing, audio and chat.
 
 ## Run
+
+Run each command in a separate terminal:
 
 ```shell
 make relay
@@ -12,13 +12,14 @@ make browser
 make chrome
 ```
 
-Open `http://localhost:5173/examples/meeting/`, choose a relay, enter a Room
-Name and a User Name and join. `?jwt=<token>` connects with an app-scoped JWT
-(see [`examples/browser/README.md`](../../README.md)).
+Open `http://localhost:5173/moq-wasm/examples/meeting/` in two tabs. Choose
+the local relay in both, then join the same room with different user names.
+Turn on both cameras and check that each tab shows the other participant.
+See [relay and authentication](../../README.md#relay-and-authentication) for access modes.
 
 ## Features
 
-- **Rooms**: participants are discovered through `SUBSCRIBE_NAMESPACE` on `/{RoomName}/`. Everyone's audio is subscribed, and their video while their tile is on the stage.
+- **Rooms**: Everyone's audio is subscribed, and their video while their tile is on the stage.
 - **Layout**: a gallery of equal tiles, or a speaker view with the active speaker large and the others in a filmstrip. A screen share takes the focus.
 - **Active speaker**: audio objects carry the LOC Audio Level (draft-ietf-moq-loc-04 §2.3.3.2); the loudest speaking participant takes the focus.
 - **Publishing**: camera and screen share in 1080p / 720p / 480p, audio at 128 / 64 / 32 kbps. Each profile is encoded only while someone subscribes to it. `Catalog Details` edits the tracks, codecs and keyframe intervals.
@@ -36,17 +37,17 @@ rooms, not `?jwt=` ones.
 
 ## Protocol flow
 
-| Item            | Name                                                          |
-| --------------- | ------------------------------------------------------------- |
-| Track namespace | `/{RoomName}/{UserName}`                                      |
-| Catalog         | `catalog`                                                     |
-| Camera          | `camera` (1080p), `camera_720p`, `camera_480p`                |
-| Screen share    | `screenshare` (1080p), `screenshare_720p`, `screenshare_480p` |
-| Audio           | `camera_audio`                                                |
-| Chat            | `chat`                                                        |
+| Item            | Name                                                               |
+| --------------- | ------------------------------------------------------------------ |
+| Track namespace | `<root>/<room>/<user>` (public root: `anon`; otherwise the app ID) |
+| Catalog         | `catalog`                                                          |
+| Camera          | `camera` (1080p), `camera_720p`, `camera_480p`                     |
+| Screen share    | `screenshare` (1080p), `screenshare_720p`, `screenshare_480p`      |
+| Audio           | `camera_audio`                                                     |
+| Chat            | `chat`                                                             |
 
-1. `SUBSCRIBE_NAMESPACE` on `/{RoomName}/`; `PUBLISH_NAMESPACE` arrives for every present and later participant.
-2. `createBroadcast()` announces `/{RoomName}/{UserName}` and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`.
+1. `SUBSCRIBE_NAMESPACE` on the room prefix; `PUBLISH_NAMESPACE` arrives for every present and later participant.
+2. `createBroadcast()` announces the participant namespace and `PUBLISH`es the catalog and every track it lists; a muted device's track leaves the catalog with `PUBLISH_DONE`.
 3. Receiving mirrors this: one catalog `SUBSCRIBE` per participant, then the players' per-track `SUBSCRIBE` and `UNSUBSCRIBE`. A new picture starts at the current group's keyframe through a joining `FETCH`.
 
 ## Stack

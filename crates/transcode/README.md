@@ -15,7 +15,11 @@ use transcode::{Transcoder, ladder_for};
 
 let renditions = ladder_for(source_sps.width, source_sps.height); // e.g. 720p/480p/360p below a 1080p source
 let mut transcoder = Transcoder::new(&renditions)?;
-transcoder.push(&video_sample)?;              // any number of times
+let input = transcoder.input();
+for sample in &video_samples {
+    input.push(sample)?;
+}
+input.finish()?;
 while let Some(output) = transcoder.next().await {
     let output = output?;                      // output.rendition indexes `renditions`
     publish(output.rendition, output.event);   // VideoConfig once, then Video samples
@@ -25,13 +29,12 @@ while let Some(output) = transcoder.next().await {
 - `ladder_for` never upscales: it returns the standard heights
   (1080/720/480/360) strictly below the source height.
 - `input()` returns a cloneable `TranscodeInput`, so a blocking feeder thread
-  can push while an async task drains `next()`. `finish()` flushes the
-  encoders; `next()` then returns `None`.
+  can push while an async task drains `next()`.
 - Rendition keyframes land exactly where the source's do
   (draft-ietf-moq-cmsf-01 §3.2).
 
 ```shell
-cargo run -p transcode --example transcode -- ../mediapack/fixtures/testsrc.ts out 54:100
+cargo run -p transcode --example transcode -- crates/mediapack/fixtures/testsrc.ts out 54:100
 ```
 
 ## Compositing
