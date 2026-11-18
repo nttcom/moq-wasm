@@ -432,3 +432,14 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+
+/* Watching is the page's purpose, so it is wider than the other examples and its stage takes the
+   largest 16:9 box that still fits the window below the bar. */
+body {
+  --content-width: 1680px;
+}
+
+#stage.viewer-stage {
+  width: min(100%, calc((100svh - var(--shell-height) - 200px) * 16 / 9));
+  margin-inline: auto;
+}
