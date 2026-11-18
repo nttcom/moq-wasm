@@ -110,9 +110,8 @@ export function bearerToken(): string | undefined {
   }
 }
 
-/// For a bot service (utils/botRoom.ts): the current temporary token, which it can keep refreshing on
-/// the temporary-apps service. A token given in the URL is not one the temporary-apps service refreshes, so it is not handed
-/// over.
+/// For the temporary-apps service (utils/roomBots.ts): the current temporary token. A token given in
+/// `?jwt=` is not a temporary app's, so it is not handed over.
 export function temporaryAppToken(): string | undefined {
   return access.kind === 'temporary' ? access.current().token : undefined
 }

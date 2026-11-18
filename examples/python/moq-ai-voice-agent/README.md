@@ -53,7 +53,7 @@ bots は自分の環境変数を bot に引き継ぐので、bots を `GOOGLE_AP
 
 ## オプション
 
-bot サービスが付ける引数と、接続先・TLS のオプションは [moq-bot-rooms](../moq-bot-rooms/README.md) を参照してください。`args` にはさらに次を書けます。
+bot サービスが付ける引数と、接続先・TLS のオプションは [moq-bot-job](../moq-bot-job/README.md) を参照してください。`args` にはさらに次を書けます。
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |

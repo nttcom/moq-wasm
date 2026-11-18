@@ -1,6 +1,6 @@
 import { type Announcement, MoqSession, type MoqNamespaceWatch, type MoqSubscription, type TrackWriter } from 'moq-wasm'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
-import { pageRoomId } from '../../utils/botRoom'
+import { pageRoomId } from '../../utils/roomId'
 import { setUpRelayUrlControls } from '../../utils/relayPicker'
 import { randomName } from '../../utils/randomName'
 import { element, getErrorMessage } from '../../utils/page'

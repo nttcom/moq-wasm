@@ -4,8 +4,8 @@ import os
 from functools import partial
 
 import moq_wasm
-from moq_bot_rooms.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
-from moq_bot_rooms.relay import add_relay_arguments
+from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
+from moq_bot_job.relay import add_relay_arguments
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer

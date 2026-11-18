@@ -1,7 +1,7 @@
 import type { TrackWriter } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
 import { createBroadcast } from 'moq-wasm/media'
-import { pageRoomId } from '../../utils/botRoom'
+import { pageRoomId } from '../../utils/roomId'
 import { icon } from '../../utils/icon'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'

@@ -3,7 +3,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_job.identity_token import IdentityToken
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GRANITE_SPEECH_PROMPT, GraniteSpeechRecognizer, HttpRecognizer
 
 

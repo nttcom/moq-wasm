@@ -240,9 +240,9 @@ from type name to entry:
 
 `launcher` is `{"kind": "local", "program": <path>}` for development.
 Every bot gets the same token claims (above), so they are not configured.
-Limits per app are added with the AI bots. Opening hours, which the AI bots
-have today, are not: a bot runs only while its room has a member, for its type's
-longest run at most, and the deployment's daily cost limit, which stops every
+There are no limits per app and no opening hours: a bot runs only while its
+room has a member, for its type's longest run at most, a type runs at most
+`max_running` bots, and the deployment's daily cost limit, which stops every
 paid workload once reached, bounds what bots spend around the clock. A request
 for a type not in the file is `400`.
 
@@ -311,7 +311,8 @@ bot's token call with `null`, so the bot joins with no token.
    `--temporary-apps-url` of `recorder record`.
 5. The AI bots, one at a time: a `run` entry point that serves one room,
    their presence under `<room>/bots/<type>`, the common end rule, and their
-   pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one.
+   pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one;
+   what the bots keep of it (their calls to `bots`, ID tokens, telemetry) becomes `moq-bot-job`.
 
 ## Alternatives Considered
 

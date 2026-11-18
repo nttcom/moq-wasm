@@ -5,7 +5,7 @@ import wave
 
 import aiohttp
 from loguru import logger
-from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_job.identity_token import IdentityToken
 
 from moq_meeting_transcriber.audio import SAMPLE_RATE
 from moq_meeting_transcriber.stt import LANGUAGE

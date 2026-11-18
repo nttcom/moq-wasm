@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "pipecat bot that talks with the MoQ AI Voice Agent page through Gemini speech-to-text, LLM and text-to-speech"
 requires-python = ">=3.11"
 dependencies = [
-    "moq-bot-rooms",
+    "moq-bot-job",
     "moq-system-one-bot",
     "moq-wasm[pipecat]",
     "pipecat-ai[google,silero]>=1.13",
@@ -23,7 +23,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 override-dependencies = ["pillow>=13"]
 
 [tool.uv.sources]
-moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
+moq-bot-job = { path = "../moq-bot-job", editable = true }
 moq-system-one-bot = { path = "../moq-system-one-bot", editable = true }
 moq-wasm = { path = "../../../crates/python" }
 

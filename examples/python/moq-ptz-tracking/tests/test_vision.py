@@ -1,6 +1,6 @@
 import aiohttp
 import pytest
-from moq_bot_rooms.identity_token import IdentityToken
+from moq_bot_job.identity_token import IdentityToken
 from moq_system_one_bot.system_one_status import SystemOneStatus
 
 from moq_ptz_tracking.vision import Answer, Box, Sighting, SystemOneVisionClient, TargetBox
