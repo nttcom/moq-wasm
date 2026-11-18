@@ -198,7 +198,7 @@ function draw(): void {
   const style = getComputedStyle(document.documentElement)
   const colors = {
     accent: style.getPropertyValue('--accent'),
-    muted: style.getPropertyValue('--muted'),
+    muted: style.getPropertyValue('--text-muted'),
     border: style.getPropertyValue('--border')
   }
   const now = nowMs()

@@ -3,28 +3,58 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Media CMAF Examples</title>
+    <title>Media CMAF · MoQT Playground</title>
     <link rel="stylesheet" href="../../utils/theme.css" />
     <link rel="stylesheet" href="../../utils/components.css" />
   </head>
-  <body>
+  <body data-title="Media CMAF">
     <div class="page">
       <header class="hero">
         <div>
-          <span class="pill">Media CMAF</span>
-          <h1>MoQT Media CMAF Examples</h1>
-          <p>Publish a broadcast with CMAF tracks next to its LOC tracks, and play them through MSE.</p>
+          <span class="pill">Media CMAF · 低レベル API</span>
+          <h1>CMAF トラックを MSE で再生</h1>
+          <p>
+            LOC トラックと並べて CMAF パッケージのトラックを Publish し、Subscriber は Media Source Extensions
+            で再生します。2 つのタブで開き、同じ Track Namespace を使ってください。
+          </p>
         </div>
       </header>
-      <main class="control-grid">
-        <a class="card link-card" href="./publisher/index.html">
-          <h2>Publisher</h2>
-          <p>Publish the camera with <code>cmaf: true</code>.</p>
-        </a>
-        <a class="card link-card" href="./subscriber/index.html">
-          <h2>Subscriber</h2>
-          <p>Play the CMAF video with <code>LivePlayer</code>.</p>
-        </a>
+      <main>
+        <div class="choice-grid">
+          <a class="card link-card choice" href="./publisher/index.html">
+            <span class="choice-icon" aria-hidden="true"
+              ><svg><use href="/icons.svg#icon-film" /></svg
+            ></span>
+            <h2>Publisher</h2>
+            <p>カメラを <code>createBroadcast()</code> の <code>cmaf: true</code> で Publish します。</p>
+            <ul>
+              <li>camera と camera_cmaf を同じ catalog に並べる</li>
+              <li>キーフレーム間隔を 0.5 / 1 / 2 秒から選択</li>
+            </ul>
+          </a>
+          <a class="card link-card choice" href="./subscriber/index.html">
+            <span class="choice-icon" aria-hidden="true"
+              ><svg><use href="/icons.svg#icon-monitor" /></svg
+            ></span>
+            <h2>Subscriber</h2>
+            <p>CMAF の映像を <code>LivePlayer</code> で MSE に流して再生します。</p>
+            <ul>
+              <li>catalog の CMAF トラックを Subscribe</li>
+              <li>再生統計を表示</li>
+            </ul>
+          </a>
+        </div>
+        <ol class="steps" aria-label="使い方">
+          <li>
+            <span><b>Publisher</b> で Relay に接続し、getUserMedia のあと Publish します</span>
+          </li>
+          <li>
+            <span>表示された <b>Track Namespace</b> をコピーします</span>
+          </li>
+          <li>
+            <span><b>Subscriber</b> に貼り付けて Subscribe します</span>
+          </li>
+        </ol>
       </main>
     </div>
     <script type="module" src="../../utils/preserveQueryLinks.js"></script>

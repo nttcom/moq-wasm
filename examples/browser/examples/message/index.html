@@ -1,456 +1,240 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MOQT Message Test</title>
+    <title>Message · MoQT Playground</title>
     <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap');
-
-      :root {
-        --font-sans: 'Space Grotesk', 'Helvetica Neue', Arial, sans-serif;
-        --font-mono: 'Spline Sans Mono', 'SFMono-Regular', Menlo, monospace;
-        --bg-0: #f6f4ee;
-        --bg-1: #e9f2ef;
-        --card: rgba(255, 255, 255, 0.88);
-        --ink: #0f2a29;
-        --muted: #516467;
-        --accent: #0d766e;
-        --accent-strong: #0a4f4a;
-        --relay-picker-accent: var(--accent);
-        --warn: #a16207;
-        --border: #cfe2dc;
-        --surface-solid: #fff;
-        --surface-soft: rgba(255, 255, 255, 0.72);
-        --glow-1: rgba(13, 118, 110, 0.14);
-        --glow-2: rgba(176, 114, 90, 0.16);
-        --radius: 16px;
-        --button-height: 36px;
-      }
-
-      /* utils/access.ts sets data-access-mode. */
-      :root[data-access-mode='temporary'] {
-        --bg-0: #0b0d10;
-        --bg-1: #11151a;
-        --card: rgba(24, 28, 34, 0.92);
-        --ink: #e9eef0;
-        --muted: #9aa6ad;
-        --accent: #2dd4bf;
-        --accent-strong: #5eead4;
-        --border: #2a3138;
-        --surface-solid: #161a20;
-        --surface-soft: rgba(22, 26, 32, 0.72);
-        --glow-1: rgba(45, 212, 191, 0.08);
-        --glow-2: rgba(224, 122, 95, 0.06);
-        color-scheme: dark;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: var(--font-sans);
-        color: var(--ink);
-        background:
-          radial-gradient(1200px 640px at 10% -10%, var(--glow-1), transparent 60%),
-          radial-gradient(1200px 760px at 90% -20%, var(--glow-2), transparent 56%),
-          linear-gradient(156deg, var(--bg-0), var(--bg-1));
-      }
-
-      .page {
-        max-width: 1240px;
-        margin: 0 auto;
-        padding: 32px 20px 52px;
-      }
-
-      .hero {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 20px;
-      }
-
-      .pill {
-        display: inline-block;
-        padding: 6px 10px;
-        border-radius: 999px;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        font-size: 0.72rem;
-        background: var(--accent);
-        color: #fff;
-      }
-
-      .hero h1 {
-        margin: 10px 0 8px;
-        font-size: clamp(1.85rem, 3.2vw, 2.5rem);
-        letter-spacing: -0.02em;
-      }
-
-      .hero p {
-        margin: 0;
-        color: var(--muted);
-      }
-
-      .layout {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 16px;
-      }
-
-      .card {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        min-height: 100%;
-        padding: 18px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        background: var(--card);
-        box-shadow: 0 26px 56px -42px rgba(15, 42, 41, 0.7);
-        backdrop-filter: blur(6px);
-      }
-
-      .span-2 {
-        grid-column: 1 / -1;
-      }
-
-      .subheading {
-        margin: 0;
-        letter-spacing: -0.01em;
-      }
-
-      h2,
-      h3,
-      h4 {
-        margin: 0;
-        letter-spacing: -0.01em;
-      }
-
-      .hint {
-        margin: 0;
-        color: var(--muted);
-        font-size: 0.9rem;
-      }
-
-      .hint.warn {
-        color: var(--warn);
-      }
-
-      label {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-        font-weight: 600;
-      }
-
-      input[type='text'],
-      input[type='url'],
-      textarea {
-        width: 100%;
-        max-width: 560px;
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        background: var(--surface-solid);
-        font-size: 0.94rem;
-        font-family: var(--font-sans);
-        color: var(--ink);
-        outline: none;
-        transition:
-          border-color 0.2s ease,
-          box-shadow 0.2s ease;
-      }
-
-      label input[type='text'],
-      label input[type='url'] {
-        width: auto;
-        flex: 1 1 230px;
-        max-width: none;
-      }
-
-      input[type='text']:focus,
-      input[type='url']:focus,
-      textarea:focus {
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(13, 118, 110, 0.2);
-      }
-
-      input[type='radio'] {
-        accent-color: var(--accent);
-      }
-
-      button {
-        min-height: var(--button-height);
-        border: none;
-        border-radius: 999px;
-        padding: 0 14px;
-        font-weight: 600;
-        background: var(--accent);
-        color: #fff;
-        cursor: pointer;
-        white-space: nowrap;
-        transition:
-          transform 0.16s ease,
-          background 0.16s ease;
-      }
-
-      button:hover {
-        transform: translateY(-1px);
-        background: var(--accent-strong);
-      }
-
-      #closeBtn {
-        background: #d97757;
-      }
-
-      #closeBtn:hover {
-        background: #bf6448;
-      }
-
-      .button-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-
-      .action-row {
-        margin-top: auto;
-        justify-content: flex-start;
-      }
-
       .message-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
+        gap: 12px;
       }
 
-      .panel {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        padding: 14px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        background: var(--surface-soft);
-      }
-
-      .panel.wide {
+      .message-grid > .wide {
         grid-column: 1 / -1;
       }
 
-      .inline-group {
-        display: flex;
-        flex-wrap: wrap;
+      .message-split {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
-        align-items: center;
       }
 
-      .counter {
-        display: inline-block;
-        min-width: 56px;
-        padding: 4px 8px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: rgba(13, 118, 110, 0.08);
+      /* The side column is taller than the window, so it scrolls with the page. */
+      .workspace-side {
+        position: static;
+        max-height: none;
+        overflow: visible;
+      }
+
+      #send-status {
+        min-height: 1.5em;
         font-family: var(--font-mono);
+        font-size: 0.8125rem;
+        overflow-wrap: anywhere;
       }
 
-      #received-text {
-        min-height: 180px;
-        max-height: 340px;
-        overflow: auto;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 12px;
-        background: rgba(15, 42, 41, 0.04);
-        font-family: var(--font-mono);
-        font-size: 0.84rem;
-        line-height: 1.45;
+      #send-status:empty::before {
+        color: var(--text-subtle);
+        content: 'まだ送信していません';
       }
 
-      #logPanel {
-        min-height: 140px;
-        max-height: 260px;
-        overflow: auto;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 12px;
-        background: rgba(15, 42, 41, 0.04);
-        font-family: var(--font-mono);
-        font-size: 0.82rem;
-        line-height: 1.4;
-      }
-
-      .log-entry {
-        margin: 0 0 6px;
-        color: var(--muted);
-      }
-
-      .log-entry strong {
-        color: var(--ink);
-      }
-
-      .log-entry.log-warn strong {
-        color: #b45309;
-      }
-
-      .log-entry.log-error strong {
-        color: #dc2626;
-      }
-
-      @media (max-width: 920px) {
-        .layout {
+      @media (max-width: 720px) {
+        .message-grid,
+        .message-split {
           grid-template-columns: 1fr;
-        }
-
-        .message-grid {
-          grid-template-columns: 1fr;
-        }
-
-        .panel.wide {
-          grid-column: 1;
-        }
-
-        button {
-          width: 100%;
         }
       }
     </style>
   </head>
-  <body>
+  <body data-title="Message">
     <div class="page">
       <header class="hero">
         <div>
-          <span class="pill">Message</span>
-          <h1>MoQT Message Test</h1>
-          <p>Each MoqSession request can be sent one at a time from one screen.</p>
+          <span class="pill">Message · 低レベル API</span>
+          <h1>MoQT の制御メッセージを 1 つずつ送る</h1>
+          <p>
+            <code>MoqSession</code> のリクエストを画面から 1 つずつ送り、Relay
+            の応答と受信したオブジェクトを確かめます。2 つのタブで開くと、片方で Publish したトラックをもう片方で
+            Subscribe できます。
+          </p>
         </div>
       </header>
 
       <div id="app">
-        <form name="form" id="form" class="layout">
-          <section class="card span-2">
-            <h2>Connection</h2>
-            <div id="urlPresets"></div>
-            <input type="url" name="url" id="url" aria-label="Relay URL" />
-            <div class="button-row action-row">
-              <button type="button" id="connectBtn">Connect</button>
-              <button type="button" id="closeBtn">Close</button>
-            </div>
-          </section>
+        <form name="form" id="form" class="workspace">
+          <div class="workspace-main">
+            <section class="card">
+              <div class="card-head">
+                <h2>Namespace</h2>
+                <span class="hint">Track Namespace の告知と購読</span>
+              </div>
+              <div class="message-grid">
+                <section class="panel">
+                  <div class="panel-head">
+                    <h3>announce</h3>
+                    <p class="hint">PUBLISH_NAMESPACE。PUBLISH_NAMESPACE_DONE で取り下げます</p>
+                  </div>
+                  <label class="stacked"
+                    >Track Namespace <input type="text" id="announce-namespace" value="anon/vc/aa"
+                  /></label>
+                  <div class="button-row action-row">
+                    <button type="button" id="announceBtn">Announce</button>
+                    <button type="button" id="withdrawBtn">Withdraw</button>
+                  </div>
+                </section>
 
-          <section class="card span-2">
-            <h2>Requests</h2>
-            <div class="message-grid">
+                <section class="panel">
+                  <div class="panel-head">
+                    <h3>watchNamespaces</h3>
+                    <p class="hint">SUBSCRIBE_NAMESPACE。UNSUBSCRIBE_NAMESPACE で止めます</p>
+                  </div>
+                  <label class="stacked"
+                    >Track Namespace Prefix <input type="text" id="watch-prefix" value="anon/vc"
+                  /></label>
+                  <div class="button-row action-row">
+                    <button type="button" id="watchBtn">Watch</button>
+                    <button type="button" id="unwatchBtn">Stop</button>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-head">
+                <h2>Publish</h2>
+                <span class="hint">トラックを用意してオブジェクトを書き込む</span>
+              </div>
               <section class="panel">
-                <h3>announce</h3>
-                <p class="hint">PUBLISH_NAMESPACE, withdrawn with PUBLISH_NAMESPACE_DONE</p>
-                <label>Track Namespace: <input type="text" id="announce-namespace" value="anon/vc/aa" /></label>
-                <div class="button-row action-row">
-                  <button type="button" id="announceBtn">Announce</button>
-                  <button type="button" id="withdrawBtn">Withdraw</button>
+                <div class="panel-head">
+                  <h3>publishTrack</h3>
+                  <p class="hint">
+                    トラックへの SUBSCRIBE / FETCH / TRACK_STATUS に応答します。チェックすると PUBLISH も送ります
+                  </p>
                 </div>
-              </section>
-
-              <section class="panel">
-                <h3>watchNamespaces</h3>
-                <p class="hint">SUBSCRIBE_NAMESPACE, stopped with UNSUBSCRIBE_NAMESPACE</p>
-                <label>Track Namespace Prefix: <input type="text" id="watch-prefix" value="anon/vc" /></label>
-                <div class="button-row action-row">
-                  <button type="button" id="watchBtn">Watch</button>
-                  <button type="button" id="unwatchBtn">Stop</button>
+                <div class="field-grid">
+                  <label>Track Namespace <input type="text" id="publish-namespace" value="anon/vc/aa" /></label>
+                  <label>Track Name <input type="text" id="publish-track" value="track" /></label>
+                  <label>Retention (ms) <input type="text" id="publish-retention" value="60000" /></label>
                 </div>
-              </section>
-
-              <section class="panel wide">
-                <h3>publishTrack</h3>
-                <p class="hint">Answers the track's SUBSCRIBE, FETCH and TRACK_STATUS; PUBLISH when checked</p>
-                <label>Track Namespace: <input type="text" id="publish-namespace" value="anon/vc/aa" /></label>
-                <label>Track Name: <input type="text" id="publish-track" value="track" /></label>
-                <label>Retention (ms): <input type="text" id="publish-retention" value="60000" /></label>
-                <label class="inline-group"><input type="checkbox" id="publish-publish" /> Send PUBLISH</label>
                 <div class="button-row action-row">
                   <button type="button" id="publishTrackBtn">Publish track</button>
+                  <label class="inline-toggle"><input type="checkbox" id="publish-publish" /> Send PUBLISH</label>
                 </div>
-                <label>Payload: <input type="text" id="write-payload" value="hello" /></label>
-                <label class="inline-group"><input type="checkbox" id="write-new-group" checked /> New group</label>
+                <hr class="divider" />
+                <div class="field-grid">
+                  <label>Payload <input type="text" id="write-payload" value="hello" /></label>
+                </div>
                 <div class="button-row action-row">
                   <button type="button" id="writeBtn">write</button>
                   <button type="button" id="writeGroupBtn">writeGroup</button>
+                  <label class="inline-toggle"><input type="checkbox" id="write-new-group" checked /> New group</label>
                 </div>
               </section>
+            </section>
 
-              <section class="panel wide">
-                <h3>subscribe</h3>
-                <p class="hint">SUBSCRIBE; forward is changed with SUBSCRIBE_UPDATE, ended with UNSUBSCRIBE</p>
-                <label>Track Namespace: <input type="text" id="subscribe-namespace" value="anon/vc/aa" /></label>
-                <label>Track Name: <input type="text" id="subscribe-track" value="track" /></label>
-                <label
-                  >Filter:
-                  <select id="subscribe-filter">
-                    <option value="largestObject" selected>Largest Object</option>
-                    <option value="nextGroupStart">Next Group Start</option>
-                  </select>
-                </label>
-                <label>Subscriber Priority: <input type="text" id="subscribe-priority" value="128" /></label>
-                <label class="inline-group"><input type="checkbox" id="subscribe-forward" checked /> Forward</label>
-                <div class="button-row action-row">
-                  <button type="button" id="subscribeBtn">Subscribe</button>
-                  <button type="button" id="setForwardBtn">Set forward</button>
-                  <button type="button" id="unsubscribeBtn">Unsubscribe</button>
-                </div>
-              </section>
+            <section class="card">
+              <div class="card-head">
+                <h2>Subscribe</h2>
+                <span class="hint">トラックを購読・取得する</span>
+              </div>
+              <div class="message-grid">
+                <section class="panel wide">
+                  <div class="panel-head">
+                    <h3>subscribe</h3>
+                    <p class="hint">SUBSCRIBE。forward は SUBSCRIBE_UPDATE で切り替え、UNSUBSCRIBE で終えます</p>
+                  </div>
+                  <div class="field-grid">
+                    <label>Track Namespace <input type="text" id="subscribe-namespace" value="anon/vc/aa" /></label>
+                    <label>Track Name <input type="text" id="subscribe-track" value="track" /></label>
+                    <label
+                      >Filter
+                      <select id="subscribe-filter">
+                        <option value="largestObject" selected>Largest Object</option>
+                        <option value="nextGroupStart">Next Group Start</option>
+                      </select>
+                    </label>
+                    <label>Subscriber Priority <input type="text" id="subscribe-priority" value="128" /></label>
+                  </div>
+                  <div class="button-row action-row">
+                    <button type="button" id="subscribeBtn">Subscribe</button>
+                    <button type="button" id="setForwardBtn">Set forward</button>
+                    <button type="button" id="unsubscribeBtn">Unsubscribe</button>
+                    <label class="inline-toggle"
+                      ><input type="checkbox" id="subscribe-forward" checked /> Forward</label
+                    >
+                  </div>
+                </section>
 
-              <section class="panel wide">
-                <h3>fetch</h3>
-                <p class="hint">FETCH; End Object 0 means the whole end group</p>
-                <label>Track Namespace: <input type="text" id="fetch-namespace" value="anon/vc/aa" /></label>
-                <label>Track Name: <input type="text" id="fetch-track" value="track" /></label>
-                <div class="inline-group">
-                  <label>Start Group: <input type="text" id="fetch-start-group" value="0" /></label>
-                  <label>Start Object: <input type="text" id="fetch-start-object" value="0" /></label>
-                  <label>End Group: <input type="text" id="fetch-end-group" value="0" /></label>
-                  <label>End Object: <input type="text" id="fetch-end-object" value="0" /></label>
-                </div>
-                <div class="button-row action-row">
-                  <button type="button" id="fetchBtn">Fetch</button>
-                </div>
-              </section>
+                <section class="panel wide">
+                  <div class="panel-head">
+                    <h3>fetch</h3>
+                    <p class="hint">FETCH。End Object 0 は End Group 全体を指します</p>
+                  </div>
+                  <div class="field-grid">
+                    <label>Track Namespace <input type="text" id="fetch-namespace" value="anon/vc/aa" /></label>
+                    <label>Track Name <input type="text" id="fetch-track" value="track" /></label>
+                  </div>
+                  <div class="field-grid">
+                    <label>Start Group <input type="text" id="fetch-start-group" value="0" /></label>
+                    <label>Start Object <input type="text" id="fetch-start-object" value="0" /></label>
+                    <label>End Group <input type="text" id="fetch-end-group" value="0" /></label>
+                    <label>End Object <input type="text" id="fetch-end-object" value="0" /></label>
+                  </div>
+                  <div class="button-row action-row">
+                    <button type="button" id="fetchBtn">Fetch</button>
+                  </div>
+                </section>
 
-              <section class="panel">
-                <h3>trackStatus</h3>
-                <p class="hint">TRACK_STATUS</p>
-                <label>Track Namespace: <input type="text" id="track-status-namespace" value="anon/vc/aa" /></label>
-                <label>Track Name: <input type="text" id="track-status-track" value="track" /></label>
-                <div class="button-row action-row">
-                  <button type="button" id="trackStatusBtn">Track status</button>
-                </div>
-              </section>
+                <section class="panel wide">
+                  <div class="panel-head">
+                    <h3>trackStatus</h3>
+                    <p class="hint">TRACK_STATUS</p>
+                  </div>
+                  <div class="field-grid">
+                    <label>Track Namespace <input type="text" id="track-status-namespace" value="anon/vc/aa" /></label>
+                    <label>Track Name <input type="text" id="track-status-track" value="track" /></label>
+                  </div>
+                  <div class="button-row action-row">
+                    <button type="button" id="trackStatusBtn">Track status</button>
+                  </div>
+                </section>
+              </div>
+            </section>
+          </div>
 
-              <section class="panel span-2">
-                <h3>Send status</h3>
-                <p id="send-status" class="hint"></p>
-              </section>
-            </div>
-          </section>
+          <aside class="workspace-side">
+            <section class="card stack">
+              <h2>Connection</h2>
+              <div id="urlPresets"></div>
+              <input type="url" name="url" id="url" aria-label="Relay URL" />
+              <div class="button-row">
+                <button type="button" id="connectBtn">Connect</button>
+                <button type="button" id="closeBtn">Close</button>
+              </div>
+            </section>
 
-          <section class="card span-2">
-            <h2>Received</h2>
-            <div id="received-text"></div>
-          </section>
-          <section class="card span-2">
-            <h2>Console</h2>
-            <p class="hint">info / warn / error を表示します。</p>
-            <div id="logPanel"></div>
-          </section>
+            <section class="card stack">
+              <h2>Last request</h2>
+              <p id="send-status" class="hint"></p>
+            </section>
+
+            <section class="card stack">
+              <h2>Received</h2>
+              <div id="received-text" class="feed" data-empty="受信したオブジェクトがここに並びます"></div>
+            </section>
+
+            <section class="card stack">
+              <div class="card-head">
+                <h2>Console</h2>
+                <span class="hint">info / warn / error</span>
+              </div>
+              <div id="logPanel"></div>
+            </section>
+          </aside>
         </form>
       </div>
     </div>

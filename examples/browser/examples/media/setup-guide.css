@@ -1,12 +1,16 @@
+/* The collapsible "how to use" guide of the examples that need a relay, a bot or a gateway running:
+   a route per setup, drawn as a flow of nodes, with the steps to bring it up. */
+
 .setup-toggle {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .setup-toggle > summary {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 12px;
+  align-items: center;
+  gap: 6px 10px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   list-style: none;
 }
@@ -16,14 +20,29 @@
 }
 
 .setup-toggle > summary::before {
-  content: '\25B8';
-  color: var(--accent);
-  font-size: 1.1rem;
-  transition: transform 0.15s;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  content: '\203A';
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  transition: transform 0.15s ease;
 }
 
 .setup-toggle[open] > summary::before {
   transform: rotate(90deg);
+}
+
+.setup-toggle > summary:hover::before {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .setup-toggle > summary h2 {
@@ -34,23 +53,33 @@
   margin-bottom: 14px;
 }
 
+.setup-toggle > .hint {
+  margin-bottom: 12px;
+}
+
 .setup-routes {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .setup-panel {
   min-width: 0;
   margin-bottom: 0;
-  padding: 14px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--surface-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+  transition: border-color 0.15s ease;
+}
+
+.setup-panel:hover,
+.setup-panel[open] {
+  border-color: var(--border-strong);
 }
 
 .setup-panel > summary h3 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1rem;
 }
 
 .setup-panel > summary {
@@ -62,41 +91,56 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: 6px;
 }
 
 .setup-node {
   display: inline-flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  background: var(--code-bg);
-  color: #173b36;
-  font-size: 0.72rem;
+  gap: 4px;
+  min-width: 64px;
+  padding: 7px 9px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 600;
   line-height: 1.2;
   text-align: center;
 }
 
 .setup-node svg {
-  width: 1.5rem;
-  height: 1.5rem;
-  stroke: currentColor;
+  width: 20px;
+  height: 20px;
+  stroke: var(--text-muted);
 }
 
 .setup-node small {
-  font-size: 0.62rem;
+  color: var(--text-subtle);
+  font-size: 0.6rem;
   font-weight: 500;
 }
 
+/* A node that runs in the cloud, against one on the reader's machine. */
 .setup-node-cloud {
-  background: #dff3e5;
+  border-color: var(--accent-border);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--accent);
+}
+
+.setup-node-cloud svg {
+  stroke: var(--accent);
 }
 
 .setup-node-local {
-  background: var(--code-bg);
+  background: var(--surface);
+}
+
+.setup-arrow {
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 .setup-panel > p {
@@ -107,29 +151,28 @@
   margin-top: 24px;
 }
 
-.setup-arrow {
-  color: var(--accent);
-}
-
-.setup-panel pre {
+.setup-panel pre,
+.setup-toggle pre {
   margin: 0;
   padding: 12px 14px;
+  overflow-x: auto;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: rgba(16, 42, 42, 0.04);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: 0.78rem;
-  line-height: 1.55;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.setup-panel .hint code {
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: rgba(15, 118, 110, 0.08);
+.setup-panel pre code,
+.setup-toggle pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: inherit;
 }
 
 .setup-panel .hint {
@@ -137,33 +180,71 @@
 }
 
 .setup-steps {
-  padding-left: 1.5rem;
+  margin: 16px 0 4px;
+  padding: 0;
+  counter-reset: setup-step;
+  list-style: none;
+}
+
+/* `<ol start="0">` numbers its first step 0. */
+.setup-steps[start='0'] {
+  counter-reset: setup-step -1;
 }
 
 .setup-steps > li {
-  padding-left: 0.4rem;
-  margin-bottom: 28px;
+  position: relative;
+  margin: 0;
+  padding: 0 0 22px 40px;
+  counter-increment: setup-step;
 }
 
-.setup-steps > li::marker {
-  color: var(--accent-strong);
+.setup-steps > li::before {
+  position: absolute;
+  top: -1px;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--accent-border);
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  content: counter(setup-step);
+  font-size: 0.75rem;
   font-weight: 700;
 }
 
+/* The line from one step's number to the next. */
+.setup-steps > li:not(:last-child)::after {
+  position: absolute;
+  top: 30px;
+  bottom: 4px;
+  left: 12.5px;
+  width: 1px;
+  background: var(--border-strong);
+  content: '';
+}
+
+.setup-steps > li:last-child {
+  padding-bottom: 4px;
+}
+
 .setup-steps h4 {
-  margin: 0 0 12px;
+  margin: 2px 0 10px;
 }
 
 .setup-choice {
-  margin-top: 14px;
-  padding: 14px;
+  margin-top: 12px;
+  padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
 }
 
 .setup-choice h5 {
   margin: 0 0 10px;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
 .setup-steps .hint {

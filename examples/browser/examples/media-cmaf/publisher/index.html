@@ -1,97 +1,112 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MOQT CMAF Publisher</title>
+    <title>Media CMAF Publisher · MoQT Playground</title>
     <link rel="stylesheet" href="../../../utils/theme.css" />
     <link rel="stylesheet" href="../../../utils/components.css" />
   </head>
-  <body>
+  <body data-title="Publisher" data-parent-title="Media CMAF" data-parent-href="../index.html">
     <div class="page">
       <header class="hero">
         <div>
-          <span class="pill">CMAF Publisher</span>
-          <h1>MoQT CMAF Publisher</h1>
-          <p>Publishes the camera with <code>createBroadcast()</code> and <code>cmaf: true</code>.</p>
+          <span class="pill">Media CMAF · Publisher</span>
+          <h1>カメラを CMAF トラック付きで配信</h1>
+          <p>
+            <code>createBroadcast()</code> に <code>cmaf: true</code> を渡し、LOC トラックと並べて CMAF
+            パッケージのトラックを Publish します。Relay に接続してから映像を取得し、Publish を押してください。
+          </p>
         </div>
       </header>
       <div id="app">
-        <form name="form" id="form" class="control-grid">
-          <section class="card stack">
-            <h2>Connection</h2>
-            <div id="urlPresets"></div>
-            <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="publisher-url-input" />
-            <div class="button-row">
-              <button type="button" id="connectBtn" data-testid="publisher-connect-button">Connect</button>
-              <button type="button" id="closeBtn" data-testid="publisher-close-button">Close</button>
-            </div>
-          </section>
-
-          <section class="card stack">
-            <h2>Status</h2>
-            <div class="status-list">
-              <div class="status-item">
-                <span class="status-label">Connection</span>
-                <span id="publisher-connection-status" class="status-value" data-testid="publisher-connection-status">
-                  Not connected
-                </span>
+        <form name="form" id="form" class="workspace">
+          <div class="workspace-main">
+            <section class="card">
+              <div class="card-head">
+                <h2>Preview</h2>
+                <span class="hint">送信中の映像</span>
               </div>
-              <div class="status-item">
-                <span class="status-label">Capture</span>
-                <span id="publisher-capture-status" class="status-value" data-testid="publisher-capture-status">
-                  Capture idle
-                </span>
-              </div>
-              <div class="status-item">
-                <span class="status-label">Publish</span>
-                <span id="publisher-send-status" class="status-value" data-testid="publisher-send-status">
-                  Not publishing
-                </span>
-              </div>
-            </div>
-          </section>
+              <div class="stage"><video id="video" autoplay muted inline></video></div>
+            </section>
 
-          <section class="card stack full">
-            <h3>Broadcast</h3>
-            <label
-              >Track Namespace:
-              <input
-                type="text"
-                name="publish-track-namespace"
-                id="publish-track-namespace"
-                value=""
-                data-testid="publisher-namespace-input"
-              />
-            </label>
-            <p class="hint">Published tracks: catalog, camera, camera_cmaf, camera_audio, camera_timeline</p>
-            <div class="field-row">
-              <label
-                >Keyframe Interval:
-                <select name="keyframe-interval">
-                  <option value="0.5">0.5s</option>
-                  <option value="1" selected>1s</option>
-                  <option value="2">2s</option>
-                </select>
-              </label>
-            </div>
-            <div class="button-row">
-              <button type="button" id="startGetUserMediaBtn" data-testid="publisher-get-user-media-button">
-                getUserMedia
-              </button>
-              <button type="button" id="publishBtn" data-testid="publisher-send-button">Publish</button>
-            </div>
-          </section>
+            <section class="card stack">
+              <div class="card-head">
+                <h2>Broadcast</h2>
+                <span class="hint">catalog, camera, camera_cmaf, camera_audio, camera_timeline を Publish します</span>
+              </div>
+              <div class="field-grid">
+                <label
+                  >Track Namespace
+                  <input
+                    type="text"
+                    name="publish-track-namespace"
+                    id="publish-track-namespace"
+                    value=""
+                    data-testid="publisher-namespace-input"
+                  />
+                </label>
+                <label
+                  >Keyframe Interval
+                  <select name="keyframe-interval">
+                    <option value="0.5">0.5s</option>
+                    <option value="1" selected>1s</option>
+                    <option value="2">2s</option>
+                  </select>
+                </label>
+              </div>
+              <div class="button-row">
+                <button type="button" id="startGetUserMediaBtn" data-testid="publisher-get-user-media-button">
+                  getUserMedia
+                </button>
+                <button type="button" id="publishBtn" data-testid="publisher-send-button">Publish</button>
+              </div>
+            </section>
 
-          <section class="card stack full">
-            <h2>Preview</h2>
-            <video id="video" autoplay muted inline></video>
-          </section>
-          <section class="card stack full">
-            <h2>Console</h2>
-            <p class="hint">info / warn / error を表示します。</p>
-            <div id="logPanel" data-testid="publisher-log-panel"></div>
-          </section>
+            <section class="card">
+              <div class="card-head">
+                <h2>Console</h2>
+                <span class="hint">info / warn / error を表示します</span>
+              </div>
+              <div id="logPanel" data-testid="publisher-log-panel"></div>
+            </section>
+          </div>
+
+          <aside class="workspace-side">
+            <section class="card stack">
+              <h2>Connection</h2>
+              <div id="urlPresets"></div>
+              <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="publisher-url-input" />
+              <div class="button-row">
+                <button type="button" id="connectBtn" data-testid="publisher-connect-button">Connect</button>
+                <button type="button" id="closeBtn" data-testid="publisher-close-button">Close</button>
+              </div>
+            </section>
+
+            <section class="card stack">
+              <h2>Status</h2>
+              <div class="status-list">
+                <div class="status-item">
+                  <span class="status-label">Connection</span>
+                  <span id="publisher-connection-status" class="status-value" data-testid="publisher-connection-status"
+                    >Not connected</span
+                  >
+                </div>
+                <div class="status-item">
+                  <span class="status-label">Capture</span>
+                  <span id="publisher-capture-status" class="status-value" data-testid="publisher-capture-status"
+                    >Capture idle</span
+                  >
+                </div>
+                <div class="status-item">
+                  <span class="status-label">Publish</span>
+                  <span id="publisher-send-status" class="status-value" data-testid="publisher-send-status"
+                    >Not publishing</span
+                  >
+                </div>
+              </div>
+            </section>
+          </aside>
         </form>
       </div>
     </div>
