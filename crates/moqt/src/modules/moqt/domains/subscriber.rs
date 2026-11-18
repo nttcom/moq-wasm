@@ -235,11 +235,7 @@ impl Subscriber {
                     track_alias = message.track_alias,
                     "SUBSCRIBE_OK reused an in-use track alias; closing session"
                 );
-                self.session.close_connection(
-                    &connection,
-                    code,
-                    "SUBSCRIBE_OK reused an in-use track alias",
-                );
+                connection.close_with_error(code, "SUBSCRIBE_OK reused an in-use track alias");
                 // The close ends the subscription; no UNSUBSCRIBE is needed.
                 response.accept();
                 return Err(RequestFailure::ProtocolViolation(

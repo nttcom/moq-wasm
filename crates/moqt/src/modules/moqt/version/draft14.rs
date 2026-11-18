@@ -661,7 +661,7 @@ async fn handle_late_response(
                     .notify(Notification::Unsubscribe(Unsubscribe { request_id }))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
+            _ => close_on_mismatched_late_response(connection, request_id, &response),
         },
         ResponseMessage::SubscribeNameSpaceOk(_) => match &action {
             LateResponseAction::UnsubscribeNamespace { namespace } => {
@@ -676,7 +676,7 @@ async fn handle_late_response(
                     })
                     .await
             }
-            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
+            _ => close_on_mismatched_late_response(connection, request_id, &response),
         },
         ResponseMessage::PublishNamespaceOk(_) => match &action {
             LateResponseAction::PublishNamespaceDone { namespace } => {
@@ -690,7 +690,7 @@ async fn handle_late_response(
                     ))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
+            _ => close_on_mismatched_late_response(connection, request_id, &response),
         },
         ResponseMessage::PublishOk(_) => match &action {
             LateResponseAction::PublishDone => {
@@ -710,7 +710,7 @@ async fn handle_late_response(
                     })
                     .await
             }
-            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
+            _ => close_on_mismatched_late_response(connection, request_id, &response),
         },
         ResponseMessage::FetchOk(_) => match &action {
             LateResponseAction::FetchCancel => {
@@ -722,11 +722,11 @@ async fn handle_late_response(
                     .notify(Notification::FetchCancel(FetchCancel::new(request_id)))
                     .await
             }
-            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
+            _ => close_on_mismatched_late_response(connection, request_id, &response),
         },
         ResponseMessage::TrackStatusOk(_) => match &action {
             LateResponseAction::Discard => discard_late_response(request_id, &response),
-            _ => close_on_mismatched_late_response(session, connection, request_id, &response),
+            _ => close_on_mismatched_late_response(connection, request_id, &response),
         },
         _ => discard_late_response(request_id, &response),
     };
@@ -757,7 +757,6 @@ fn discard_late_response(
 /// answers means the peer's request-id bookkeeping cannot be trusted, so
 /// close the session instead of guessing a withdrawal.
 fn close_on_mismatched_late_response(
-    session: &SessionContext,
     connection: &Connection,
     request_id: RequestId,
     response: &ResponseMessage,
@@ -767,8 +766,7 @@ fn close_on_mismatched_late_response(
         ?response,
         "Protocol violation: response type does not match the request; closing session"
     );
-    session.close_connection(
-        connection,
+    connection.close_with_error(
         TerminationErrorCode::ProtocolViolation,
         "response type does not match the request",
     );

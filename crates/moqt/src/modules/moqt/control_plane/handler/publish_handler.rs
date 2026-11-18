@@ -142,11 +142,9 @@ impl PublishHandler {
                 track_alias = self.track_alias,
                 "PUBLISH reused an in-use track alias; closing session"
             );
-            self.session_context.close_connection(
-                self.guard.connection(),
-                code,
-                "PUBLISH reused an in-use track alias",
-            );
+            self.guard
+                .connection()
+                .close_with_error(code, "PUBLISH reused an in-use track alias");
             return;
         }
         tracing::debug!(

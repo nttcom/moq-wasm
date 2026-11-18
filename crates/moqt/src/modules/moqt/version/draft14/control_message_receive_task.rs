@@ -76,8 +76,7 @@ impl ControlMessageReceiveTask {
                                 }
                                 Err(StreamReceiveError::Decode(error)) => {
                                     tracing::error!(%error, "Protocol violation: unknown control message type");
-                                    session.close_connection(
-                                        &connection,
+                                    connection.close_with_error(
                                         TerminationErrorCode::ProtocolViolation,
                                         "unknown control message type",
                                     );
@@ -112,7 +111,7 @@ impl ControlMessageReceiveTask {
                                             %reason,
                                             "Protocol violation: invalid Request ID"
                                         );
-                                        session.close_connection(&connection, code, reason);
+                                        connection.close_with_error(code, reason);
                                         break;
                                     }
                                 }
@@ -159,8 +158,7 @@ impl ControlMessageReceiveTask {
                                                 request_id,
                                                 "Protocol violation: response for unknown or already-completed Request ID; closing session"
                                             );
-                                            session.close_connection(
-                                                &connection,
+                                            connection.close_with_error(
                                                 TerminationErrorCode::ProtocolViolation,
                                                 "received response for unknown or already-completed Request ID",
                                             );
@@ -196,7 +194,7 @@ impl ControlMessageReceiveTask {
                 reason,
                 "Message for a Request ID that never existed; closing session"
             );
-            session.close_connection(connection, code, reason);
+            connection.close_with_error(code, reason);
             return DepacketizeResult::SessionClosed;
         }
         match received_message {
@@ -334,11 +332,7 @@ impl ControlMessageReceiveTask {
             ReceivedMessage::GoAway(go_away) => {
                 if let Err(reason) = connection.note_go_away_received(&go_away.new_session_uri) {
                     tracing::error!(%reason, "protocol violation");
-                    session.close_connection(
-                        connection,
-                        TerminationErrorCode::ProtocolViolation,
-                        reason,
-                    );
+                    connection.close_with_error(TerminationErrorCode::ProtocolViolation, reason);
                     return DepacketizeResult::SessionClosed;
                 }
                 let go_away_handler = GoAwayHandler::new(go_away);
@@ -349,11 +343,7 @@ impl ControlMessageReceiveTask {
                     .raise_peer_request_id_limit(max_request_id.request_id)
                 {
                     tracing::error!(%reason, "Protocol violation");
-                    session.close_connection(
-                        connection,
-                        TerminationErrorCode::ProtocolViolation,
-                        reason,
-                    );
+                    connection.close_with_error(TerminationErrorCode::ProtocolViolation, reason);
                     return DepacketizeResult::SessionClosed;
                 }
                 DepacketizeResult::Handled
@@ -386,8 +376,7 @@ impl ControlMessageReceiveTask {
                 tracing::error!(
                     "Protocol violation: SETUP received after the session was established"
                 );
-                session.close_connection(
-                    connection,
+                connection.close_with_error(
                     TerminationErrorCode::ProtocolViolation,
                     "SETUP received after the session was established",
                 );
@@ -395,8 +384,7 @@ impl ControlMessageReceiveTask {
             }
             ReceivedMessage::FatalError(reason) => {
                 tracing::error!(%reason, "Protocol violation: malformed control message payload");
-                session.close_connection(
-                    connection,
+                connection.close_with_error(
                     TerminationErrorCode::ProtocolViolation,
                     "malformed control message payload",
                 );
