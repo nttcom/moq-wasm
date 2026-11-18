@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGET = REPO_ROOT / "target" / "debug"
 APPS_FILE = "services/vts/apps.example.json"
 RELAY_APP_ID = "11111111-2222-3333-4444-555555555555"
-# The VTS verifies every `temp-` app with this secret, as it does the token mint's apps.
+# The VTS verifies every `temp-` app with this secret, the one the temporary-apps service signs with.
 TEMPORARY_APP_SECRET = "python-binding-temporary-app-secret"
 READY_TIMEOUT_SECONDS = 120
 

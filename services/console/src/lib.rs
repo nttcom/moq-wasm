@@ -4,6 +4,7 @@ mod identity;
 mod input;
 mod recordings;
 mod server;
+mod static_files;
 #[cfg(test)]
 mod test_support;
 mod usage;

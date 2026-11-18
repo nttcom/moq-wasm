@@ -1,12 +1,12 @@
 [project]
 name = "moq-system-one-bot"
 version = "0.1.0"
-description = "What the MoQ bots that call a System One service share: its client, status track, event timeline records, the first relay connection and turning pictures into JPEG"
+description = "What the MoQ bots that call a System One service share: its client, status track, event timeline records, the first relay connection, writing a transport's track from outside its pipeline and turning pictures into JPEG"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
     "moq-bot-rooms",
-    "moq-wasm[codecs]",
+    "moq-wasm[pipecat]",
 ]
 
 [dependency-groups]

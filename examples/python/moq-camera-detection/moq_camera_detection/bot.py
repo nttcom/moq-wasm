@@ -1,44 +1,36 @@
 import argparse
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import aclosing
 from functools import partial
 
 import aiohttp
 import moq_wasm
-from loguru import logger
 from moq_bot_rooms.identity_token import IdentityToken, add_identity_token_arguments, identity_token_from_arguments
 from moq_bot_rooms.relay import add_relay_arguments
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot.pipeline_track import PipelineTrack
 from moq_system_one_bot.relay import stay_connected
-from moq_system_one_bot.video import picture_to_jpeg
-from moq_wasm.codecs import decode_pictures
-from moq_wasm.media import CatalogTrack, RemoteBroadcast, create_broadcast, watch_broadcasts
+from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
+from pipecat.transports.base_transport import VideoInSourceParams
 from pipecat.workers.runner import WorkerRunner
 
 from moq_camera_detection.catalog import camera_video_track
-from moq_camera_detection.detector import CameraDetector, CameraPicture
-from moq_camera_detection.prompt import Prompt, parse_prompt
+from moq_camera_detection.detector import CAMERA, EVENT_TIMELINE_TRACK, PROMPT_TRACK, CameraDetector
 from moq_camera_detection.vision import SystemOneVisionClient
 
 DEFAULT_PORT = 8098
-# system-one-server answers one request at a time, and one camera already sends it a picture every
-# SAMPLE_INTERVAL_SECONDS.
+# system-one-server answers one request at a time, and one camera already asks it about a picture
+# every SAMPLE_INTERVAL_SECONDS.
 DEFAULT_MAX_ROOMS = 1
 DEMO_NAME = "moq-camera-detection"
-PROMPT_TRACK = "prompt"
-EVENT_TIMELINE_TRACK = "eventtimeline"
 STATUS_TRACK = "status"
 # The event timeline and the System One status are kept for FETCH as long as a room runs by default
 # (--max-room-seconds).
 RETENTION_SECONDS = 60 * 60
-RESUBSCRIBE_DELAY_SECONDS = 1.0
-SAMPLE_INTERVAL_SECONDS = 0.1
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,65 +52,6 @@ def room_namespace(room: BotRoom) -> list[str]:
     return [room.namespace_root, DEMO_NAME, room.room_id]
 
 
-class LatestPrompt:
-    def __init__(self):
-        self.prompt: Prompt | None = None
-
-    async def follow(self, prompts: AsyncIterator[moq_wasm.Object]):
-        async for prompt_object in prompts:
-            location = (prompt_object.group_id, prompt_object.object_id)
-            prompt = parse_prompt(prompt_object.payload, location)
-            if prompt is None:
-                logger.warning(f"ignoring an invalid prompt at {location}")
-                continue
-            logger.info(f"prompt {prompt.location}: {prompt.questions}")
-            self.prompt = prompt
-
-
-async def forward_pictures(
-    video: AsyncIterator[moq_wasm.Object], codec: str, latest_prompt: LatestPrompt, worker: PipelineWorker
-):
-    async for decoded in decode_pictures(video, codec, interval=SAMPLE_INTERVAL_SECONDS):
-        prompt = latest_prompt.prompt
-        if prompt is None:
-            continue
-        jpeg = await asyncio.to_thread(picture_to_jpeg, decoded.picture)
-        await worker.queue_frame(
-            CameraPicture(
-                jpeg=jpeg,
-                location=(decoded.location.group_id, decoded.location.object_id),
-                decoded_at=decoded.decoded_at,
-                prompt=prompt,
-            )
-        )
-
-
-async def video_track(camera: RemoteBroadcast) -> CatalogTrack:
-    """The camera's video track, from the catalog the relay holds for the page's other viewers or a
-    later one; retries while the catalog cannot be read."""
-    while True:
-        try:
-            async with aclosing(camera.catalogs()) as catalogs:
-                async for catalog in catalogs:
-                    track = camera_video_track(catalog)
-                    if track is not None:
-                        return track
-            logger.info("the catalog ended before it listed a video track")
-        except RuntimeError as error:
-            logger.info(f"cannot read the catalog: {error}")
-        await asyncio.sleep(RESUBSCRIBE_DELAY_SECONDS)
-
-
-async def forward_camera(worker: PipelineWorker, camera: RemoteBroadcast):
-    latest_prompt = LatestPrompt()
-    following = asyncio.create_task(latest_prompt.follow(camera.follow(PROMPT_TRACK)))
-    try:
-        track = await video_track(camera)
-        await forward_pictures(camera.follow(track.name), track.codec or "", latest_prompt, worker)
-    finally:
-        following.cancel()
-
-
 async def detect_in_session(
     args: argparse.Namespace,
     http: aiohttp.ClientSession,
@@ -126,34 +59,38 @@ async def detect_in_session(
     room: BotRoom,
     session: moq_wasm.Session,
 ) -> None:
-    """Returns once no page has published the room's camera for the grace period."""
-    namespace = room_namespace(room)
-    camera_namespace = [*namespace, "camera"]
-    async with create_broadcast(session, [*namespace, "detector"]) as detector:
-        timeline = detector.event_timeline(EVENT_TIMELINE_TRACK, retention_seconds=RETENTION_SECONDS)
-        status_track = detector.publish_track(STATUS_TRACK, retention_seconds=RETENTION_SECONDS)
-        status = SystemOneStatus()
-        vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
-        worker = PipelineWorker(
-            Pipeline([CameraDetector(vision, timeline)]),
-            enable_rtvi=False,
-            idle_timeout_secs=None,
-        )
-        # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
-        runner = WorkerRunner(handle_sigint=False)
-        await runner.add_workers(worker)
-        await detector.published()
-        await status.publish_on(status_track)
-        async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(runner.run())
-            await watch_broadcasts(
-                session,
-                namespace,
-                partial(forward_camera, worker),
-                filter=lambda published: published == camera_namespace,
-                empty_timeout=GRACE_SECONDS,
-            )
-            await runner.cancel()
+    """Returns once nothing has been published in the room for the grace period."""
+    transport = MoqWasmTransport(
+        session,
+        MoqWasmParams(
+            room=room_namespace(room),
+            participant_id="detector",
+            video_in_enabled=True,
+            video_in_sources={CAMERA: VideoInSourceParams(on_request_only=True)},
+            video_in_track=camera_video_track,
+            data_in_tracks=[PROMPT_TRACK],
+            event_timelines_out={EVENT_TIMELINE_TRACK: RETENTION_SECONDS},
+            data_out_tracks={STATUS_TRACK: RETENTION_SECONDS},
+            empty_timeout=GRACE_SECONDS,
+        ),
+    )
+    status = SystemOneStatus()
+    vision = SystemOneVisionClient(http, args.system_one_url, status, identity_token)
+    worker = PipelineWorker(
+        Pipeline([transport.input(), CameraDetector(vision), transport.output()]),
+        enable_rtvi=False,
+        idle_timeout_secs=None,
+    )
+    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    runner = WorkerRunner(handle_sigint=False)
+
+    @transport.event_handler("on_room_empty")
+    async def on_room_empty(_):
+        await runner.cancel()
+
+    await runner.add_workers(worker)
+    await status.publish_on(PipelineTrack(worker, STATUS_TRACK))
+    await runner.run()
 
 
 async def detect_in_room(

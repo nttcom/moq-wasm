@@ -1,13 +1,15 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from moq_chat_moderation.chat import MAX_LABELS, ChatMessage, Label
 
 
-def chat_object(body: object) -> SimpleNamespace:
-    return SimpleNamespace(group_id=1790000000000000, object_id=0, payload=json.dumps(body).encode())
+LOCATION = (1790000000000000, 0)
+
+
+def payload(body: object) -> bytes:
+    return json.dumps(body).encode()
 
 
 def test_chat_object_carries_its_text_and_labels_at_its_location():
@@ -15,7 +17,7 @@ def test_chat_object_carries_its_text_and_labels_at_its_location():
     body = {"text": "こんにちは", "labels": [{"name": "喜", "description": "喜んでいる、うれしい"}]}
 
     # Act
-    chat = ChatMessage.parse(chat_object(body))
+    chat = ChatMessage.parse(payload(body), LOCATION)
 
     # Assert
     assert (chat.text, chat.labels, chat.location) == (
@@ -27,7 +29,7 @@ def test_chat_object_carries_its_text_and_labels_at_its_location():
 
 def test_chat_without_labels_is_a_chat():
     # Act
-    chat = ChatMessage.parse(chat_object({"text": "hello", "labels": []}))
+    chat = ChatMessage.parse(payload({"text": "hello", "labels": []}), LOCATION)
 
     # Assert
     assert chat.labels == ()
@@ -49,10 +51,10 @@ def test_chat_without_labels_is_a_chat():
 def test_invalid_chat_is_rejected(body):
     # Act / Assert
     with pytest.raises(ValueError):
-        ChatMessage.parse(chat_object(body))
+        ChatMessage.parse(payload(body), LOCATION)
 
 
 def test_object_without_utf8_text_is_rejected():
     # Act / Assert
     with pytest.raises(ValueError):
-        ChatMessage.parse(SimpleNamespace(group_id=1, object_id=0, payload=b"\xff\xfe"))
+        ChatMessage.parse(b"\xff\xfe", LOCATION)

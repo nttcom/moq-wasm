@@ -38,15 +38,17 @@ Application and integration components (draft reference is normally not required
 | `services/onvif-ingest` | Bridge ingesting ONVIF camera streams into MoQT |
 | `services/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
-| `crates/client-telemetry` | The log and span records of the observability server's `/api/client-telemetry`, built from `tracing` by the wasm module and `moq-cli` |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
-| `crates/metadata-token` | The access token of the service account a Google Cloud workload runs as, read from the metadata server and cached until it expires; used by `app-registry` for Cloud Storage and by `live-translate` for the Agent Platform |
-| `crates/static-files` | Serves the built files of a web page from a directory, for `console`: path checks, content types and the cache hint of hashed assets |
-| `crates/http-server` | The HTTP/1 accept loop and JSON response helpers shared by the services' HTTP servers (`console`, `vts`, `token-mint`, `observability`, `live-translate`, `recorder`) |
+| `crates/job-launcher` | Starts a job without waiting for it: a child process locally or a Cloud Run Job execution with overridden arguments, used by `recorder` and `bots` |
+| `crates/http-server` | The HTTP/1 accept loop and JSON response helpers shared by the services' HTTP servers (`console`, `vts`, `temporary-apps`, `bots`, `observability`, `live-translate`, `recorder`) |
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
+| `crates/google-cloud` | The Google Cloud calls the services make as the workload's service account: its access token from the metadata server, cached until it expires, and the Cloud Storage requests conditional on an object's generation; used by `app-registry`, `recorder` and `live-translate` |
+| `crates/telemetry-otlp` | Shared `tracing` setup for the workspace binaries: stdout and OTLP traces, logs and metrics, and W3C trace context |
+| `crates/telemetry-report` | `telemetry`'s client log and span records built from `tracing`, for the clients without an OpenTelemetry SDK: the wasm module, the Python module and `moq-cli` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
 | `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
-| `services/token-mint` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under |
+| `services/temporary-apps` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under, and calls `bots` as their app server |
+| `services/bots` | Bot service: starts, stops and reports the bots of a room (`recorder`, the AI bots) for an app's server, and signs the tokens the bots join with |
 | `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
 | `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate`, or under the temporary app a streamer hands it the token of, with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
 | `examples/` | Usage examples and test clients |
@@ -123,6 +125,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
 | `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
+| `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
 | `track_alias` | The track alias on the session the log is about |
 | `forward` | The Forward State a message sets or a subscription is in |
 | `new_group_request` | The value of a NEW_GROUP_REQUEST: the largest Group ID its sender knows plus 1, or 0 |

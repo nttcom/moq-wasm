@@ -2,8 +2,8 @@
 
 Records an MSF broadcast from a MoQT relay into a fragmented MP4 file: it
 subscribes to the catalog, reads one LOC video and one LOC audio track, and
-muxes both with `mediapack`. `recorder serve` records whole rooms over an
-HTTP API.
+muxes both with `mediapack`. `recorder bot` records whole rooms that `bots`
+starts; `recorder serve` lists and replays them over an HTTP API.
 Design: [architecture document](../../docs/architecture/recorder/architecture.md).
 
 ## Recording one broadcast
@@ -47,21 +47,19 @@ cargo run -p recorder -- \
 
 ## Recording API
 
-`recorder serve` records whole rooms on request, for the meeting example.
-Each recording runs as a `recorder record` job and each composite as a
-`recorder composite` job; their state lives in the store next to the files.
-Locally (`make recorder-serve`):
+`bots` starts and stops room recordings ([its design](../../docs/architecture/bots/architecture.md)):
+each runs as a `recorder bot` job, and each composite as a `recorder composite`
+job. `recorder serve` lists and replays them; their state lives in the store
+next to the files. Locally (`make recorder-serve`):
 
 ```bash
 cargo run -p recorder -- serve \
   --relay https://127.0.0.1:4433 --insecure-skip-tls-verify --insecure-skip-auth \
-  --store file://$PWD/recordings/store/ --output-dir recordings/work --composite
+  --store file://$PWD/recordings/store/
 ```
 
 | Request | Answer |
 | --- | --- |
-| `POST /recordings` `{"namespace_prefix": "APP/research", "layout": "per-track", "composite": true, "format": "moq"}` | `201` with the recording. `composite: true` also makes `composite.mp4` (needs `--composite`); `"format": "moq"` (experimental) stores the objects with chat and transcript instead of MP4. `409` when the prefix is already recorded, `503` past `--max-recordings` |
-| `POST /recordings/{id}/stop` | `202`; the state turns `stopping`, then `finished` once every file is uploaded |
 | `GET /recordings/{id}` | `state` (`starting`, `recording`, `stopping`, `finished`, `failed`), each participant's namespace, and the `composite` state |
 | `GET /recordings?namespace_prefix=APP/research` | The recordings of that prefix |
 | `GET /apps/APP/recordings` | The app's MP4 recordings with their files, newest first (at most 100) |
@@ -72,13 +70,10 @@ cargo run -p recorder -- serve \
   moment it is published: its main source, and the screen share apart from
   it. The files go to `<store>/<app>/<recording id>/<namespace>/<track>/`,
   with `manifest.json` and `composite.mp4` in `<store>/<app>/<recording id>/`.
-- Every request needs `Authorization: Bearer <JWT>`, verified by the VTS:
-  `subscribe` grants viewing and replay, `publish` starting and stopping. The
-  room is recorded with the caller's token, so the anonymous app's rooms are
-  not recorded.
-- A recording ends when its token expires. With `--token-mint-url`, a
-  temporary app's token is renewed instead, so the recording outlives the
-  page that started it.
+- Every request needs `Authorization: Bearer <JWT>`, verified by the VTS,
+  whose `subscribe` claim covers the room. A replay presents the caller's
+  token; with `--temporary-apps-url`, a temporary app's token is renewed
+  there.
 - A replay is played by `examples/recording-player/` in the browser examples.
 - Compositing needs the GStreamer plugins listed in the
   [transcode README](../../crates/transcode/README.md#requirements).
@@ -89,15 +84,15 @@ cargo run -p recorder -- serve \
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
 | `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint; required unless `--insecure-skip-auth` |
 | `--insecure-skip-auth` | off | Accept every request without a token (local development only) |
-| `--token-mint-url` (`TOKEN_MINT_URL`) | — | Token mint renewing temporary apps' tokens |
-| `--max-recordings` | `4` | Rooms recorded at once |
+| `--temporary-apps-url` (`TEMPORARY_APPS_URL`) | — | Temporary-apps service renewing temporary apps' tokens |
+| `--max-replays` | `4` | Recordings replayed at once |
 | `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state |
-| `--output-dir` | `recordings` | Where a job keeps its files until they are uploaded |
-| `--composite` | off | Accept `composite: true` |
-| `--launcher` | `local` | `local` runs the jobs as child processes; `cloud-run` starts executions of `--record-job` and `--composite-job` |
-| `--max-recording-seconds` | `7200` | A recording stops by itself after this long |
-| `--empty-room-seconds` | `300` | A recording stops by itself once nobody has been recorded for this long |
-| `--segment-seconds`, `--max-video-height`, `--insecure-skip-tls-verify` | | As for a single recording |
+| `--relay`, `--insecure-skip-tls-verify` | | The relay a replay publishes through |
+
+`recorder bot` takes the job's settings (`--relay`, `--store`, `--output-dir`,
+`--segment-seconds`, `--max-video-height`, `--launcher` and `--composite-job`
+for the composite) and the ones `bots` adds; see the architecture document,
+"Started by `bots`".
 
 ## E2E
 

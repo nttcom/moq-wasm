@@ -13,26 +13,26 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 
 ## Examples
 
-| Page                                                              | Shows                                                                               |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `message`                                                         | Sending and receiving MoQT control messages by hand                                 |
-| `media`, `media-cmaf`                                             | Publisher and subscriber pages exchanging WebCodecs media, in LOC or CMAF packaging |
-| [`live-viewer`](examples/live-viewer/README.md)                   | Player for `live-ingest`, `moqtsink` and in-browser MP4 publishing, with rewind     |
-| [`meeting`](examples/meeting/README.md)                           | Multi-party video meeting                                                           |
-| [`live-translate`](examples/live-translate/README.md)             | Broadcast translated live by `services/live-translate`                              |
-| `onvif`                                                           | Remote control and monitoring of a PTZ camera through `services/onvif-ingest`       |
-| `remote-monitoring`                                               | Remote monitoring from a USB camera                                                 |
-| `moq-chat-moderation`, `moq-camera-detection`, `moq-ptz-tracking` | Pages backed by a pipecat bot, see [`examples/python`](../python)                   |
+| Page                                                                                    | Shows                                                                               |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `message`                                                                               | Sending and receiving MoQT control messages by hand                                 |
+| `media`, `media-cmaf`                                                                   | Publisher and subscriber pages exchanging WebCodecs media, in LOC or CMAF packaging |
+| [`live-viewer`](examples/live-viewer/README.md)                                         | Player for `live-ingest`, `moqtsink` and in-browser MP4 publishing, with rewind     |
+| [`meeting`](examples/meeting/README.md)                                                 | Multi-party video meeting                                                           |
+| [`live-translate`](examples/live-translate/README.md)                                   | Broadcast translated live by `services/live-translate`                              |
+| `onvif`                                                                                 | Remote control and monitoring of a PTZ camera through `services/onvif-ingest`       |
+| `remote-monitoring`                                                                     | Remote monitoring from a USB camera                                                 |
+| `moq-chat-moderation`, `moq-camera-detection`, `moq-ptz-tracking`, `moq-ai-voice-agent` | Pages backed by a pipecat bot, see [`examples/python`](../python)                   |
 
 ## Relay and authentication
 
 The tabs at the top right of the example list choose how every example
 connects; the choice is kept in localStorage.
 
-| Mode                                                    | Namespace root                 | Token                                                                                                                                                  |
-| ------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **一時トークン** (temporary), the default when deployed | `temp-…`, a new temporary app  | A one-hour token from `services/token-mint`, refreshed by the page. It stays in the address bar as `#jwt=<token>`, so a copied link joins the same app |
-| **Public**, the default on this machine                 | `anon`, which everyone can see | None                                                                                                                                                   |
+| Mode                                                    | Namespace root                 | Token                                                                                                                                                      |
+| ------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **一時トークン** (temporary), the default when deployed | `temp-…`, a new temporary app  | A one-hour token from `services/temporary-apps`, refreshed by the page. It stays in the address bar as `#jwt=<token>`, so a copied link joins the same app |
+| **Public**, the default on this machine                 | `anon`, which everyone can see | None                                                                                                                                                       |
 
 - `?access=public` opens one page as public without changing the stored mode.
 - `?jwt=<token>` connects with any app-scoped JWT (from the `auth-token` CLI
@@ -41,7 +41,7 @@ connects; the choice is kept in localStorage.
 - The bot-backed examples hand a temporary page's token to the bot service,
   so the bot joins the same app
   (`docs/architecture/ai-bots/on-demand-rooms.md`).
-- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?tokenMintUrl=`,
+- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`,
   `?botUrl=`) is used only when it names this machine or a host under
   `moqt.research.skyway.io`, since the page sends its token there.
 

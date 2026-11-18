@@ -106,7 +106,7 @@ TRACK_STATUS for `[app_id]` that carries the token (docs/architecture/relay/
 architecture.md "Token refresh"), and makes the token current whether or not
 the relay accepts it: a relay that refuses it keeps the connection's token
 until it expires, and the next connection presents the new one. Getting a later token is the caller's job: the module knows
-nothing of the token mint.
+nothing of the temporary-apps service.
 
 ### One event loop per session
 A session has one event receiver. The native `Session` wraps a

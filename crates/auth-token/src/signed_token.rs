@@ -39,6 +39,7 @@ pub enum ClaimError {
 pub enum Access {
     Publish,
     Subscribe,
+    Bots,
 }
 
 /// A token the VTS `POST /verify` found signed by its app's secret. The VTS
@@ -67,9 +68,13 @@ impl SignedToken {
         if !self.is_relay && exp.saturating_sub(iat) > policy.max_token_ttl.as_secs() {
             return Err(ClaimError::TtlTooLong);
         }
-        for claim in [&self.claims.publish, &self.claims.subscribe]
-            .into_iter()
-            .flatten()
+        for claim in [
+            &self.claims.publish,
+            &self.claims.subscribe,
+            &self.claims.bots,
+        ]
+        .into_iter()
+        .flatten()
         {
             if !claim.is_empty() && claim.split('/').any(str::is_empty) {
                 return Err(ClaimError::EmptyElement);
@@ -85,6 +90,7 @@ impl SignedToken {
         let claim = match access {
             Access::Publish => &self.claims.publish,
             Access::Subscribe => &self.claims.subscribe,
+            Access::Bots => &self.claims.bots,
         };
         let Some(claim) = claim else {
             return false;
@@ -121,6 +127,7 @@ mod tests {
                 app_id: "APP".to_string(),
                 publish: publish.map(str::to_string),
                 subscribe: Some("site1".to_string()),
+                bots: None,
                 iat: Some(iat),
                 exp: Some(exp),
                 relay_id: None,
@@ -231,6 +238,30 @@ mod tests {
         assert!(!token.covers(Access::Subscribe, "APP"));
         assert!(!token.covers(Access::Subscribe, "OTHER/site1"));
         assert!(!token.covers(Access::Publish, "APP/site1"));
+    }
+
+    #[test]
+    fn only_the_bots_claim_covers_bot_launches() {
+        // Arrange
+        let mut token = signed(false, NOW_SECS, NOW_SECS + 60, Some(""));
+        token.claims.bots = Some("site1".to_string());
+
+        // Act / Assert
+        assert!(token.covers(Access::Bots, "APP/site1"));
+        assert!(!token.covers(Access::Bots, "APP/site2"));
+        assert!(
+            !signed(false, NOW_SECS, NOW_SECS + 60, Some("")).covers(Access::Bots, "APP/site1")
+        );
+    }
+
+    #[test]
+    fn a_bots_path_with_an_empty_element_is_rejected() {
+        // Arrange
+        let mut token = signed(false, NOW_SECS, NOW_SECS + 60, None);
+        token.claims.bots = Some("site1/".to_string());
+
+        // Act / Assert
+        assert_eq!(check(&token), Err(ClaimError::EmptyElement));
     }
 
     #[test]

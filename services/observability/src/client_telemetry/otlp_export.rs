@@ -1,10 +1,10 @@
 use serde_json::{Map, Value, json};
 
-use super::report::{ClientLog, ClientReport, ClientSpan, PlayerStatValues};
 use crate::otlp::{
     Kind::{self, Counter, Gauge},
     Metrics, string_attribute, time_unix_nano,
 };
+use telemetry::client_report::{ClientLog, ClientReport, ClientSpan, PlayerStatValues};
 
 const SCOPE_NAME: &str = "client-telemetry";
 const SPAN_KIND_INTERNAL: u8 = 1;
@@ -263,10 +263,12 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{logs_request, metrics_request, traces_request};
-    use crate::client_telemetry::report::ClientReport;
+    use telemetry::client_report::ClientReport;
+
+    use crate::client_telemetry::report::parse_report;
 
     fn report(body: Value) -> ClientReport {
-        ClientReport::parse(body.to_string().as_bytes()).unwrap()
+        parse_report(body.to_string().as_bytes()).unwrap()
     }
 
     fn metric<'a>(request: &'a Value, name: &str) -> &'a Value {

@@ -202,8 +202,6 @@ recorder-serve:
 	cargo run -p recorder -- serve \
 		--relay $(RECORDER_MOQT_URL) \
 		--store $(RECORDER_STORE_URL) \
-		--output-dir recordings/work \
-		--composite \
 		--insecure-skip-auth \
 		$(RECORDER_TLS_FLAGS)
 

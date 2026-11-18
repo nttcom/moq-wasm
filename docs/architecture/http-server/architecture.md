@@ -8,7 +8,7 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 
 `http-server` is the HTTP/1 server part every HTTP service shares: `console`,
-`vts`, `token-mint`, `observability`, `live-translate` and `recorder`. Each
+`vts`, `temporary-apps`, `observability`, `live-translate` and `recorder`. Each
 service keeps its own routing, state and response headers; this crate only
 accepts connections, reads JSON request bodies and builds responses.
 
@@ -46,7 +46,7 @@ sequenceDiagram
 - Dropping `HttpServer` aborts the accept loop. Open connections are not
   tracked and run to their end.
 - Headers that only some services send (`Cache-Control: no-store` in
-  `console`, CORS in `observability`, `token-mint` and `recorder`) are added by
+  `console`, CORS in `observability`, `temporary-apps` and `recorder`) are added by
   the service, not here.
 
 ## Dependencies

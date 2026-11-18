@@ -206,7 +206,7 @@ bot's namespaces outlive the room until then.
 A page in temporary mode (examples/browser/README.md "Relay and
 authentication") runs under the namespace root of its own app, `temp-…`,
 instead of `anon`, and its bot must join the same app. The bot service does
-not hold the secret temporary tokens are signed with; only the token mint
+not hold the secret temporary tokens are signed with; only the temporary-apps service
 and the VTS do. The page therefore hands its token to the service, and the
 service keeps a token of its own alive with the issuer's `POST
 /tokens/refresh`.
@@ -253,8 +253,8 @@ service keeps a token of its own alive with the issuer's `POST
   `moq_wasm.TokenExpired` and the room ends with `failed`, which every page holding it sees. A bot cannot stay in an
   app without a valid token, and a page that is still there can start the
   room again with its own, fresher token.
-- **Configuration.** `--token-mint-url`, else the environment variable
-  `TOKEN_MINT_URL`, else the issuer next to the relay: `http://localhost:8083`
+- **Configuration.** `--temporary-apps-url`, else the environment variable
+  `TEMPORARY_APPS_URL`, else the issuer next to the relay: `http://localhost:8083`
   for a local relay and `https://token-mint.moqt.research.skyway.io`
   otherwise, the same rule the bot's telemetry follows.
 

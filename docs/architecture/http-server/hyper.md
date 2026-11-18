@@ -17,7 +17,7 @@ services share.
 
 ## Context
 
-`console`, `vts`, `token-mint`, `observability`, `live-translate` and
+`console`, `vts`, `temporary-apps`, `observability`, `live-translate` and
 `recorder` each copied the same accept loop and JSON response helpers on these
 three crates. Moving them into one crate moves the dependencies with them.
 

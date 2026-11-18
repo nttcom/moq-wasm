@@ -17,7 +17,7 @@ none runs. A language is translated by Gemini Live Translate only while
 someone subscribes to its track. Gemini is called on the Gemini Enterprise
 Agent Platform (`gemini/platform.rs`): the `global` location's Live API over a
 WebSocket with `Authorization: Bearer`, as the service account the Cloud Run
-runs as (`metadata-token`) or, outside Google Cloud, as that account
+runs as (`google-cloud`'s `MetadataToken`) or, outside Google Cloud, as that account
 impersonated through `gcloud` per connection
 (`LIVE_TRANSLATE_GCLOUD_IMPERSONATE`). `--echo` returns the
 source audio after each language's fixed delay instead of calling Gemini, which
@@ -56,7 +56,7 @@ The server listens before the relay is dialed, so the port is open as soon as
 the container is.
 
 `POST /sessions` with `Authorization: Bearer <token>` has the translator
-serve a temporary app (`services/token-mint`), the namespace root the
+serve a temporary app (`services/temporary-apps`), the namespace root the
 examples run under (`temporary_apps.rs`). An app is reached only with its own
 tokens, so the streamer's page hands one over and the translator opens a
 relay session of its own with it, watching `{appId}/live-translate`. With

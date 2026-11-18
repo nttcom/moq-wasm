@@ -26,12 +26,12 @@ import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
 
 const liveTranslateStreamerPath =
   "/moq-wasm/examples/live-translate/streamer/index.html";
-// The token mint signs a temporary app's token with this secret and the VTS
+// The temporary-apps service signs a temporary app's token with this secret and the VTS
 // verifies it with the same one.
 const temporaryAppSecret = "development-temporary-app-secret";
 // The ports the pages look for these services at on this machine
 // (utils/access.ts, examples/live-translate/liveTranslate.ts).
-const tokenMintPort = 8083;
+const temporaryAppsPort = 8083;
 const liveTranslatePort = 18090;
 const childProcesses = [];
 
@@ -54,15 +54,15 @@ async function main() {
   try {
     process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
     const vts = await startVts();
-    const tokenMint = spawnProcess("token-mint", "cargo", ["run", "-p", "token-mint"], {
+    const temporaryApps = spawnProcess("temporary-apps", "cargo", ["run", "-p", "temporary-apps"], {
       cwd: repoRoot,
       env: {
         ...process.env,
-        PORT: String(tokenMintPort),
-        TOKEN_MINT_SECRET: temporaryAppSecret,
+        PORT: String(temporaryAppsPort),
+        TEMPORARY_APPS_SECRET: temporaryAppSecret,
       },
     });
-    childProcesses.push(vts, tokenMint);
+    childProcesses.push(vts, temporaryApps);
     const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
       cwd: repoRoot,
       env: { ...process.env, ...nativeRelayEnv() },
@@ -87,7 +87,7 @@ async function main() {
     childProcesses.push(liveTranslate);
     await Promise.all([
       waitForOutput(liveTranslate, /waiting for broadcasts/, "live-translate", 600_000),
-      waitForHttpOk(`http://127.0.0.1:${tokenMintPort}/healthz`, 600_000),
+      waitForHttpOk(`http://127.0.0.1:${temporaryAppsPort}/healthz`, 600_000),
     ]);
 
     await runCommand(resolveCommandName("npm"), ["run", "e2e:live-translate"], {

@@ -219,7 +219,7 @@ mod tests {
     async fn the_request_that_dials_a_relay_closes_while_the_session_lives() {
         // Arrange
         let closed_spans = ClosedSpans::default();
-        let _default = telemetry::testing::set_default(
+        let _default = telemetry_otlp::testing::set_default(
             tracing_subscriber::registry().with(closed_spans.clone()),
         );
         let relay = spawn_relay_with_verifier(app_token(Some(""), Some(""))).await;

@@ -1,4 +1,3 @@
-import asyncio
 import json
 from dataclasses import dataclass
 
@@ -37,20 +36,3 @@ def parse_prompt(payload: bytes, location: Location) -> Target | None:
         raise ValueError("video is not a track name")
     return Target(unique, video_track, location)
 
-
-class LatestTarget:
-    def __init__(self):
-        self.target: Target | None = None
-        self._changed = asyncio.Event()
-
-    def set(self, target: Target | None) -> None:
-        self.target = target
-        self._changed.set()
-        self._changed = asyncio.Event()
-
-    async def changed(self) -> None:
-        await self._changed.wait()
-
-    async def leaves(self, video_track: str) -> None:
-        while self.target is not None and self.target.video_track == video_track:
-            await self.changed()

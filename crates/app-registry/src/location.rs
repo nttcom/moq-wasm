@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 
-use crate::cloud_storage::Endpoint;
+use google_cloud::Endpoint;
 
 const DEFAULT_OBJECT: &str = "registry.json";
 

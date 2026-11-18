@@ -1,0 +1,23 @@
+[package]
+name = "google-cloud"
+version = "0.1.0"
+edition = "2024"
+description = "The Google Cloud calls the services make themselves: the workload's access token from the metadata server and conditional Cloud Storage requests"
+
+[dependencies]
+anyhow = "1.0.102"
+http-body-util = { version = "0.1.4", optional = true }
+hyper = { version = "1.10.1", features = ["http1", "server"], optional = true }
+hyper-util = { version = "0.1.20", features = ["tokio"], optional = true }
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.52.3", features = ["sync"] }
+
+[features]
+testing = ["dep:http-body-util", "dep:hyper", "dep:hyper-util", "tokio/net", "tokio/rt"]
+
+[dev-dependencies]
+http-body-util = "0.1.4"
+hyper = { version = "1.10.1", features = ["http1", "server"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "time"] }

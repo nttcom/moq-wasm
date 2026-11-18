@@ -92,7 +92,7 @@ impl AppVerifier {
 
     async fn request_verification(&self, token: &str) -> Result<SignedToken, VerifyError> {
         let mut headers = HeaderMap::new();
-        telemetry::inject_trace_context(&tracing::Span::current(), &mut headers);
+        telemetry_otlp::inject_trace_context(&tracing::Span::current(), &mut headers);
         let response = self
             .http
             .post(&self.verify_url)

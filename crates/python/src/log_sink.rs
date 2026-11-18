@@ -10,15 +10,15 @@ use std::{
     time::Duration,
 };
 
-use client_telemetry::{
-    SpanRecordLayer, continue_trace_from_traceparent, current_scope, current_traceparent,
-    log_record, now_ms, random_u64, scoped,
-};
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
 use serde_json::json;
+use telemetry_report::{
+    ClientSpan, SpanRecordLayer, continue_trace_from_traceparent, current_scope,
+    current_traceparent, log_record, now_ms, random_u64, scoped,
+};
 use tracing::{Event, Subscriber, level_filters::LevelFilter};
 use tracing_subscriber::{
     Layer,
@@ -100,8 +100,8 @@ pub fn set_log_sink(level: &str, spans: bool) -> PyResult<()> {
         SpanRecordLayer {
             now_ms,
             random_byte: || random_u64() as u8,
-            emit: move |record: serde_json::Value, scope: Option<u64>| {
-                queue(&span_sender, "span", record.to_string(), token_of(scope));
+            emit: move |record: ClientSpan, scope: Option<u64>| {
+                queue(&span_sender, "span", record.to_json(), token_of(scope));
             },
         }
         .with_filter(LevelFilter::INFO)
@@ -177,11 +177,6 @@ struct LogLayer(mpsc::SyncSender<LogSinkRecord>);
 impl<S: Subscriber> Layer<S> for LogLayer {
     fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
         let token = token_of(current_scope());
-        queue(
-            &self.0,
-            "log",
-            log_record(event, now_ms()).to_string(),
-            token,
-        );
+        queue(&self.0, "log", log_record(event, now_ms()).to_json(), token);
     }
 }

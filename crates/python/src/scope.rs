@@ -1,9 +1,9 @@
 use std::future::Future;
 
-use client_telemetry::{in_scope, scoped};
 use pyo3::{conversion::IntoPyObject, prelude::*};
+use telemetry_report::{in_scope, scoped};
 
-/// The `client_telemetry` scope of one native session, which the log sink
+/// The `telemetry_report` scope of one native session, which the log sink
 /// maps to the session's token: what the session and the objects it returns
 /// record carries it.
 #[derive(Clone, Copy)]

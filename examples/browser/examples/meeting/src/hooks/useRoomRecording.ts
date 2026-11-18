@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { bearerToken } from '../../../../utils/access'
+import { bearerToken, temporaryAppToken, temporaryAppsUrl } from '../../../../utils/access'
+import { type RecordingLayout, type RecordingFormat, type Recorder, listRecordings } from '../recording/recorderApi'
 import {
-  type RecordingLayout,
-  type RecordingFormat,
-  type Recorder,
-  type RoomRecording,
+  type ActiveRecording,
+  type BotsApi,
   activeRecording,
-  listRecordings,
-  startRecording,
-  stopRecording
-} from '../recording/recorderApi'
+  latestRecorderBot,
+  startRecorderBot,
+  stopRecorderBot
+} from '../recording/recorderBot'
 
 const POLL_INTERVAL_MS = 5_000
 
@@ -26,7 +25,7 @@ export const RECORDING_CHOICES: {
   { id: 'per-track', layout: 'per-track', composite: false, label: 'Per Track in one file' }
 ]
 
-export function pendingRecordingLabel(active: RoomRecording | undefined): string | null {
+export function pendingRecordingLabel(active: ActiveRecording | undefined): string | null {
   switch (active?.state) {
     case 'starting':
       return 'Starting the recording'
@@ -47,7 +46,9 @@ export interface RecordingReplay {
 
 export interface RoomRecordingControls {
   /// The room's recording that still writes files, whoever started it.
-  active: RoomRecording | undefined
+  active: ActiveRecording | undefined
+  /// Only a temporary app's page starts and stops recordings; a registered app's server does so itself.
+  canRecord: boolean
   busy: boolean
   error: string | null
   /// Oldest first.
@@ -58,24 +59,33 @@ export interface RoomRecordingControls {
 }
 
 /// `null` until the recorder has answered once, so a recorder that is not
-/// running hides recording. `relayUrl` is the relay the player opens the
-/// recording through.
+/// running hides recording. The recorder lists the room's recordings; the
+/// recorder bot (recorderBot.ts) makes them. `relayUrl` is the relay the
+/// player opens the recording through.
 export function useRoomRecording(
   recorderUrl: string,
   relayUrl: string,
   namespacePrefix: string
 ): RoomRecordingControls | null {
   const [reachable, setReachable] = useState(false)
-  const [active, setActive] = useState<RoomRecording | undefined>()
+  const [active, setActive] = useState<ActiveRecording | undefined>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [replays, setReplays] = useState<RecordingReplay[]>([])
   const recorder = useMemo<Recorder>(() => ({ url: recorderUrl, token: bearerToken }), [recorderUrl])
+  const bots = useMemo<BotsApi>(() => ({ url: temporaryAppsUrl(), token: temporaryAppToken }), [])
 
   const refresh = useCallback(async () => {
+    if (bots.token()) {
+      try {
+        setActive(activeRecording(await latestRecorderBot(bots, namespacePrefix)))
+        setError(null)
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught))
+      }
+    }
     try {
       const recordings = await listRecordings(recorder, namespacePrefix)
-      setActive(activeRecording(recordings))
       setReplays(
         recordings
           // The recorder replays only the MoQ archive format.
@@ -89,11 +99,10 @@ export function useRoomRecording(
           }))
       )
       setReachable(true)
-      setError(null)
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [namespacePrefix, recorder, recorderUrl, relayUrl])
+  }, [bots, namespacePrefix, recorder, recorderUrl, relayUrl])
 
   useEffect(() => {
     void refresh()
@@ -101,38 +110,37 @@ export function useRoomRecording(
     return () => clearInterval(timer)
   }, [refresh])
 
-  const run = useCallback(
-    async (action: (recorder: Recorder) => Promise<RoomRecording>) => {
-      setBusy(true)
-      try {
-        const recording = await action(recorder)
-        setActive(activeRecording([recording]))
-        setError(null)
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : String(caught))
-      } finally {
-        setBusy(false)
-      }
-    },
-    [recorder]
-  )
+  const run = useCallback(async (action: () => Promise<ActiveRecording | undefined>) => {
+    setBusy(true)
+    try {
+      setActive(await action())
+      setError(null)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      setBusy(false)
+    }
+  }, [])
 
   const start = useCallback(
     (layout: RecordingLayout, composite: boolean, format: RecordingFormat = 'mp4') =>
-      run((recorder) => startRecording(recorder, namespacePrefix, layout, composite, format)),
-    [namespacePrefix, run]
+      run(async () => activeRecording(await startRecorderBot(bots, namespacePrefix, { layout, composite, format }))),
+    [bots, namespacePrefix, run]
   )
   const stop = useCallback(async () => {
     const id = active?.id
     if (id) {
-      await run((recorder) => stopRecording(recorder, id))
+      await run(async () => {
+        await stopRecorderBot(bots, id)
+        return { id, state: 'stopping' }
+      })
     }
-  }, [active?.id, run])
+  }, [active?.id, bots, run])
 
   if (!reachable) {
     return null
   }
-  return { active, busy, error, start, stop, replays }
+  return { active, canRecord: bots.token() !== undefined, busy, error, start, stop, replays }
 }
 
 function replayUrl(recorderUrl: string, relayUrl: string, id: string): string {

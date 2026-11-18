@@ -1,10 +1,9 @@
 import asyncio
 
 from loguru import logger
-from moq_wasm.codecs import OpusDecoder
 from moq_wasm.media import EventTimeline, RemoteBroadcast
+from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParticipantInput, MoqWasmTrack
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import UserAudioRawFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
@@ -16,8 +15,11 @@ from moq_meeting_transcriber.transcript import TranscriptWriter
 
 
 class Participant:
-    """Transcribes one participant of the room for as long as their catalog track lasts, each in a
-    pipeline of their own so that the voice activity detector hears one speaker."""
+    """Transcribes one participant of the room until cancelled, in a pipeline of their own so that
+    the voice activity detector hears one speaker. `MoqWasmParticipantInput` takes the Opus LOC
+    audio track with the lowest bitrate, the profile the Meeting's viewers take; the publisher
+    encodes a profile only while someone subscribes to it, so this starts no extra encoder in the
+    participant's browser."""
 
     def __init__(self, broadcast: RemoteBroadcast, recognizer: Recognizer, timeline: EventTimeline):
         self._broadcast = broadcast
@@ -26,30 +28,18 @@ class Participant:
         self._timeline = timeline
 
     async def run(self) -> None:
-        audio_track: str | None = None
-        transcribing: asyncio.Task | None = None
-        try:
-            async for catalog in self._broadcast.catalogs():
-                # The lowest bitrate is the profile the Meeting's viewers take. The publisher encodes a
-                # profile only while someone subscribes to it, so this starts no extra encoder in the
-                # participant's browser.
-                track = catalog.select(role="audio", packaging="loc", codec="opus", prefer="lowest_bitrate")
-                name = track.name if track else None
-                if name == audio_track:
-                    continue
-                if transcribing is not None:
-                    transcribing.cancel()
-                audio_track = name
-                transcribing = asyncio.create_task(self._transcribe(name)) if name else None
-                logger.info(f"{self._name}: transcribing {name}" if name else f"{self._name}: no audio track")
-        finally:
-            if transcribing is not None:
-                transcribing.cancel()
+        audio = MoqWasmParticipantInput(
+            self._broadcast, MoqWasmInputParams(audio_in_enabled=True, audio_in_sample_rate=SAMPLE_RATE)
+        )
 
-    async def _transcribe(self, track_name: str) -> None:
+        @audio.event_handler("on_track_subscribed")
+        async def on_track_subscribed(_, track: MoqWasmTrack):
+            logger.info(f"{self._name}: transcribing {track.name}")
+
         worker = PipelineWorker(
             Pipeline(
                 [
+                    audio,
                     VADProcessor(vad_analyzer=SileroVADAnalyzer()),
                     UtteranceSTTService(self._recognizer, self._name),
                     TranscriptWriter(self._timeline),
@@ -62,15 +52,8 @@ class Participant:
         runner = WorkerRunner(handle_sigint=False)
         await runner.add_workers(worker)
         running = asyncio.create_task(runner.run())
-        decoder = OpusDecoder(SAMPLE_RATE)
         try:
-            # A muted participant's audio track ends until they unmute.
-            async for audio_object in self._broadcast.follow(track_name):
-                pcm = decoder.decode(audio_object.payload)
-                if pcm:
-                    await worker.queue_frame(
-                        UserAudioRawFrame(user_id=self._name, audio=pcm, sample_rate=SAMPLE_RATE, num_channels=1)
-                    )
+            await asyncio.shield(running)
         finally:
             await runner.cancel()
             await running

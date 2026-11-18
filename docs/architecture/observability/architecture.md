@@ -26,7 +26,7 @@ Target scale: 3 relays, up to 100 clients.
 ```mermaid
 flowchart LR
   subgraph relay-a
-    C[StatsCollector] --> E[telemetry::EventLogger]
+    C[StatsCollector] --> E[telemetry_otlp::EventLogger]
   end
   E -- "OTLP gRPC log record<br/>relay.stats.snapshot" --> K[ClickStack collector]
   K -- INSERT --> L[(otel.otel_logs)]
@@ -337,7 +337,7 @@ between sessions, tracks and subscriptions; querying the snapshot JSON in
 
 The page reads the tables above, but HyperDX dashboards and alerts read
 `otel_metrics_*`. So the relay also records each snapshot's `process` values
-as OTLP gauges (`telemetry::relay_stats::ProcessGauges`), exported every 10 s
+as OTLP gauges (`telemetry_otlp::ProcessGauges`), exported every 10 s
 with resource `service.name=relay` and `relay.id`:
 
 | Metric | Unit | `process` field |
@@ -359,7 +359,8 @@ session would add a series, and their relations exist only in the snapshot.
 Clients (browser pages, `moq-cli`, the Python bots) cannot reach the
 collector, which listens only inside the VPC, so they post to the
 observability server behind its public load balancer, which converts the
-report to OTLP/JSON and forwards it (`client_telemetry`).
+report to OTLP/JSON and forwards it (`client_telemetry`). The body is
+`telemetry::client_report::ClientReport`.
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
   `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields, traceId?, spanId? }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.

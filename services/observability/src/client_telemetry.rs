@@ -8,7 +8,8 @@ use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::{HeaderMap, StatusCode, body::Incoming};
 
 use rate_limiter::{RateLimiter, client_address};
-use report::ClientReport;
+use report::parse_report;
+use telemetry::client_report::ClientReport;
 
 use crate::{
     ANONYMOUS_APP_ID,
@@ -105,7 +106,7 @@ impl ClientTelemetry {
             }
             Err(error) => return Err(Rejection::Invalid(anyhow::anyhow!(error))),
         };
-        let report = ClientReport::parse(&body).map_err(Rejection::Invalid)?;
+        let report = parse_report(&body).map_err(Rejection::Invalid)?;
         let app_id = self.app_id(report.token.as_deref()).await?;
         self.export(&report, &app_id).await
     }

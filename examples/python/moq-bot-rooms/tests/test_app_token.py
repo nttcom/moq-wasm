@@ -4,20 +4,20 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from moq_bot_rooms.app_token import (
-    CLOUD_TOKEN_MINT_URL,
-    LOCAL_TOKEN_MINT_URL,
+    CLOUD_TEMPORARY_APPS_URL,
+    LOCAL_TEMPORARY_APPS_URL,
     AppToken,
     IssuedToken,
-    TokenMint,
-    TokenMintUnavailable,
+    TemporaryApps,
+    TemporaryAppsUnavailable,
     TokenRejected,
-    token_mint_url,
+    temporary_apps_url,
 )
 from tests.helpers import FakeIssuer
 
 @pytest.fixture
 async def issuer_server():
-    """A token mint that answers `POST /tokens/refresh` with `answers[token]` as (status, body)."""
+    """A temporary-apps service that answers `POST /tokens/refresh` with `answers[token]` as (status, body)."""
     answers: dict[str, tuple[int, dict]] = {}
 
     async def refresh(request: web.Request) -> web.Response:
@@ -27,20 +27,20 @@ async def issuer_server():
     app = web.Application()
     app.router.add_post("/tokens/refresh", refresh)
     async with TestServer(app) as server, aiohttp.ClientSession() as http:
-        yield answers, TokenMint(http, str(server.make_url("")).rstrip("/"))
+        yield answers, TemporaryApps(http, str(server.make_url("")).rstrip("/"))
 
 
 @pytest.mark.parametrize(
     ("configured", "relay_url", "expected"),
     [
-        (None, "https://127.0.0.1:4433", LOCAL_TOKEN_MINT_URL),
-        (None, "https://relay-1.moqt.research.skyway.io", CLOUD_TOKEN_MINT_URL),
+        (None, "https://127.0.0.1:4433", LOCAL_TEMPORARY_APPS_URL),
+        (None, "https://relay-1.moqt.research.skyway.io", CLOUD_TEMPORARY_APPS_URL),
         ("http://issuer.example/", "https://127.0.0.1:4433", "http://issuer.example"),
     ],
 )
 def test_the_issuer_is_the_configured_one_or_the_one_next_to_the_relay(configured, relay_url, expected):
     # Act / Assert
-    assert token_mint_url(configured, relay_url) == expected
+    assert temporary_apps_url(configured, relay_url) == expected
 
 
 async def test_a_refresh_answers_the_token_and_its_app(issuer_server):
@@ -59,8 +59,8 @@ async def test_a_refresh_answers_the_token_and_its_app(issuer_server):
     ("answer", "error"),
     [
         ((401, {"error": "expired_token"}), TokenRejected),
-        ((500, {}), TokenMintUnavailable),
-        ((200, {"token": "new"}), TokenMintUnavailable),
+        ((500, {}), TemporaryAppsUnavailable),
+        ((200, {"token": "new"}), TemporaryAppsUnavailable),
     ],
 )
 async def test_a_refusal_and_a_broken_answer_are_told_apart(issuer_server, answer, error):
@@ -76,10 +76,10 @@ async def test_a_refusal_and_a_broken_answer_are_told_apart(issuer_server, answe
 async def test_an_issuer_that_is_not_listening_is_unavailable():
     # Arrange
     async with aiohttp.ClientSession() as http:
-        issuer = TokenMint(http, "http://127.0.0.1:9")
+        issuer = TemporaryApps(http, "http://127.0.0.1:9")
 
         # Act / Assert
-        with pytest.raises(TokenMintUnavailable):
+        with pytest.raises(TemporaryAppsUnavailable):
             await issuer.refresh("page-token")
 
 

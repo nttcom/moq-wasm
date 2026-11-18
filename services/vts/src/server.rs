@@ -51,7 +51,7 @@ async fn handle(request: Request<Incoming>, secrets: Arc<Secrets>) -> JsonRespon
         is_relay = tracing::field::Empty,
         outcome = tracing::field::Empty,
     );
-    telemetry::continue_trace_from(&span, &head.headers);
+    telemetry_otlp::continue_trace_from(&span, &head.headers);
     let response = async {
         match (head.method, head.uri.path()) {
             (Method::GET, "/healthz") => json_response(StatusCode::OK, &json!({ "status": "ok" })),

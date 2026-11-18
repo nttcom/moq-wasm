@@ -4,6 +4,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
+from moq_system_one_bot.pipeline_track import PipelineTrack
 from moq_wasm import TrackWriter
 
 # Cloud Run stops an idle System One service after about ten minutes, so a request after a longer pause
@@ -30,9 +31,9 @@ class SystemOneStatus:
         self._pending = 0
         self._state = READY
         self._since_ms = epoch_ms()
-        self._publication: TrackWriter | None = None
+        self._publication: TrackWriter | PipelineTrack | None = None
 
-    async def publish_on(self, publication: TrackWriter) -> None:
+    async def publish_on(self, publication: TrackWriter | PipelineTrack) -> None:
         self._publication = publication
         await self._write()
 

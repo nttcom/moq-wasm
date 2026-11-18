@@ -49,6 +49,9 @@ pub(crate) struct RoomConfig {
     pub(crate) options: BroadcastOptions,
     pub(crate) format: RecordingFormat,
     pub(crate) limits: RecordingLimits,
+    /// The namespace the recording publishes for the room to see it,
+    /// `<room>/bots/<type>`.
+    pub(crate) presence: String,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +169,10 @@ async fn follow_members(
         .subscriber()
         .subscribe_namespace(namespace_prefix.to_string(), NamespaceInterest::Namespaces)
         .await?;
+    session
+        .publisher()
+        .publish_namespace(config.presence.clone())
+        .await?;
     tracing::info!(prefix = namespace_prefix, "room recording started");
     let (member_stop_sender, member_stop) = watch::channel(false);
     let mut members: JoinSet<MemberFiles> = JoinSet::new();
@@ -212,7 +219,7 @@ async fn follow_members(
             SessionEvent::PublishNamespace(handler) => {
                 let namespace = handler.track_namespace.clone();
                 handler.ok().await?;
-                if is_recording_namespace(namespace_prefix, &namespace) {
+                if is_under(namespace_prefix, &namespace, "recordings") {
                     continue;
                 }
                 if namespace == format!("{namespace_prefix}/{TRANSCRIBER_MEMBER}")
@@ -228,6 +235,9 @@ async fn follow_members(
                             Arc::clone(status),
                         ));
                     }
+                    continue;
+                }
+                if is_under(namespace_prefix, &namespace, "bots") {
                     continue;
                 }
                 if !recorded.insert(namespace.clone()) {
@@ -296,10 +306,14 @@ fn member_finished(
     }
 }
 
-fn is_recording_namespace(prefix: &str, namespace: &str) -> bool {
+/// Whether `namespace` lies below the room's reserved `element`: `recordings`
+/// holds replayed recordings and `bots` the bots, neither of them a member.
+fn is_under(prefix: &str, namespace: &str, element: &str) -> bool {
     namespace
         .strip_prefix(prefix)
-        .and_then(|suffix| suffix.strip_prefix("/recordings/"))
+        .and_then(|suffix| suffix.strip_prefix('/'))
+        .and_then(|suffix| suffix.strip_prefix(element))
+        .and_then(|suffix| suffix.strip_prefix('/'))
         .is_some_and(|suffix| !suffix.is_empty())
 }
 
@@ -596,22 +610,26 @@ mod tests {
     const ORIGIN: Timestamp = Timestamp::from_micros(1_700_000_000_000_000);
 
     #[test]
-    fn excludes_replayed_recordings_but_not_a_participant_named_recordings() {
+    fn excludes_replayed_recordings_and_bots_but_not_a_participant_named_so() {
         // Arrange
         let prefix = "app/room";
 
         // Act / Assert
-        assert!(is_recording_namespace(
+        assert!(is_under(
             prefix,
-            "app/room/recordings/id/alice"
+            "app/room/recordings/id/alice",
+            "recordings"
         ));
-        assert!(!is_recording_namespace(prefix, "app/room/recordings"));
-        assert!(!is_recording_namespace(
+        assert!(is_under(prefix, "app/room/bots/recorder", "bots"));
+        assert!(!is_under(prefix, "app/room/recordings", "recordings"));
+        assert!(!is_under(prefix, "app/room/bots", "bots"));
+        assert!(!is_under(
             prefix,
-            "app/room/recordings-old/id"
+            "app/room/recordings-old/id",
+            "recordings"
         ));
-        assert!(!is_recording_namespace(prefix, "app/room2/recordings/id"));
-        assert!(!is_recording_namespace(prefix, "app/room/alice"));
+        assert!(!is_under(prefix, "app/room2/recordings/id", "recordings"));
+        assert!(!is_under(prefix, "app/room/alice", "recordings"));
     }
 
     fn recorded(path: &std::path::Path, origin_ms: u64) -> RecordedFile {

@@ -12,14 +12,11 @@ Accepted
 ## Context
 
 The relay sends snapshots as the JSON attribute of an OTLP log record, and
-the observability server decodes the ones it stored for `?at=` reads. Both
-already depend on `telemetry`, so its `relay_stats` module holds their shared
-format without a separate package.
+the observability server decodes the ones it stored for `?at=` reads. The
+`relay_stats` module of `telemetry` holds their shared format.
 
 ## Alternatives
 
-- Keep a separate snapshot crate. It preserves a smaller dependency set for
-  standalone consumers, but neither current consumer needs that separation.
 - Encode and decode fields manually. This duplicates Serde's field mapping
   and defaults, increasing the risk of breaking older snapshots.
 

@@ -78,7 +78,7 @@ async fn handle(request: Request<Incoming>, state: Arc<SessionServerState>) -> S
 }
 
 /// The pages are served from another origin, so every response allows any
-/// origin, as the token mint's do.
+/// origin, as the temporary-apps service's do.
 fn with_cors(mut response: ServerResponse) -> ServerResponse {
     let headers = response.headers_mut();
     headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));

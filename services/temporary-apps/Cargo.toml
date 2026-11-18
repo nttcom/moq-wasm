@@ -1,0 +1,20 @@
+[package]
+name = "temporary-apps"
+version = "0.1.0"
+edition = "2024"
+description = "Issues the tokens of temporary apps to anyone, so the examples run in a namespace of their own"
+
+[dependencies]
+anyhow = "1.0.102"
+auth-token = { path = "../../crates/auth-token" }
+http-body-util = "0.1.4"
+http-server = { path = "../../crates/http-server" }
+hyper = { version = "1.10.1", features = ["http1", "server"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+aws-lc-rs = "1.18.2"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1"
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tracing = "0.1.44"
+

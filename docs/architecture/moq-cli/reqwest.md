@@ -24,7 +24,7 @@ the observability server's public endpoint, as the browser pages do.
 
 ## Alternatives
 
-- `crates/telemetry` (OTLP export to the collector). Works only where the
+- `crates/telemetry-otlp` (OTLP export to the collector). Works only where the
   collector is reachable (docker compose, inside the VPC), not from a laptop
   to the deployed relays.
 - `hyper` directly. TLS, timeouts and connection reuse would be hand-written

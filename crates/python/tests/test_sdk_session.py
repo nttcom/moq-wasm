@@ -71,7 +71,7 @@ async def test_run_cancels_the_work_and_raises_once_the_token_expired():
     token = unsigned_token("temp-app", time.time() + 20)
 
     async def refresh(token: str) -> str:
-        raise RuntimeError("token mint unavailable")
+        raise RuntimeError("temporary-apps service unavailable")
 
     relay = FakeRelay()
     session = await open_session(relay, TokenKeeper(token, refresh), token)
@@ -88,7 +88,7 @@ async def test_run_raises_the_expiry_even_when_the_work_returned_because_of_it()
     token = unsigned_token("temp-app", time.time() + 20)
 
     async def refresh(token: str) -> str:
-        raise RuntimeError("token mint unavailable")
+        raise RuntimeError("temporary-apps service unavailable")
 
     relay = FakeRelay()
     session = await open_session(relay, TokenKeeper(token, refresh), token)

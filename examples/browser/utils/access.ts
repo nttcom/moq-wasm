@@ -1,5 +1,5 @@
 /// How the examples reach the relay: as the public anonymous app (namespace root `anon`, open to
-/// everyone), or as a temporary app of their own from the token mint (services/token-mint), whose
+/// everyone), or as a temporary app of their own from the temporary-apps service (services/temporary-apps), whose
 /// root only the people a page's link is shared with know. The choice is made on the example list and
 /// kept in localStorage, so every example follows it.
 
@@ -40,8 +40,8 @@ export const ACCESS_MODE_PARAM = 'access'
 /// A token is refreshed this long before it expires, so a reconnect never presents an expired one.
 const REFRESH_MARGIN_SECONDS = 5 * 60
 
-const TOKEN_MINT_URLS = {
-  param: 'tokenMintUrl',
+const TEMPORARY_APPS_URLS = {
+  param: 'temporaryAppsUrl',
   local: 'http://localhost:8083',
   cloud: 'https://token-mint.moqt.research.skyway.io'
 }
@@ -109,7 +109,7 @@ export function bearerToken(): string | undefined {
 }
 
 /// For a bot service (utils/botRoom.ts): the current temporary token, which it can keep refreshing on
-/// the token mint. A token given in the URL is not one the token mint refreshes, so it is not handed
+/// the temporary-apps service. A token given in the URL is not one the temporary-apps service refreshes, so it is not handed
 /// over.
 export function temporaryAppToken(): string | undefined {
   return access.kind === 'temporary' ? access.current().token : undefined
@@ -228,16 +228,20 @@ async function refresh(token: TemporaryToken): Promise<TemporaryToken> {
   return refreshed
 }
 
+/// The temporary-apps service, which also calls `bots` for a temporary app's pages.
+export function temporaryAppsUrl(): string {
+  return resolveServiceUrl(window.location.search, window.location.href, TEMPORARY_APPS_URLS)
+}
+
 async function callMint(path: string, body: unknown): Promise<TemporaryToken> {
-  const mintUrl = resolveServiceUrl(window.location.search, window.location.href, TOKEN_MINT_URLS)
-  const response = await fetch(`${mintUrl}${path}`, {
+  const response = await fetch(`${temporaryAppsUrl()}${path}`, {
     method: 'POST',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body)
   })
   const answer = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(answer.error ?? `token mint answered ${response.status}`)
+    throw new Error(answer.error ?? `temporary-apps service answered ${response.status}`)
   }
   return answer as TemporaryToken
 }
