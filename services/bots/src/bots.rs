@@ -17,6 +17,10 @@ use crate::{
 /// A bot that has not reported for this long is taken as gone; the recorder
 /// reports every 5 s.
 const HEARTBEAT_TIMEOUT_MS: u64 = 90_000;
+/// The same for a bot that has not reported yet: the first execution of a job
+/// after its image changed imports the image first, which took almost 2 min
+/// for the AI bots' image.
+const STARTUP_TIMEOUT_MS: u64 = 300_000;
 /// The environment variable a locally launched bot finds its key in.
 const BOT_KEY_ENV: &str = "BOTS_BOT_KEY";
 
@@ -361,7 +365,12 @@ impl Bots {
 }
 
 fn is_active(record: &BotRecord, now_ms: u64) -> bool {
-    !record.state.has_ended() && now_ms.saturating_sub(record.updated_at_ms) < HEARTBEAT_TIMEOUT_MS
+    let timeout_ms = if record.state == BotState::Starting {
+        STARTUP_TIMEOUT_MS
+    } else {
+        HEARTBEAT_TIMEOUT_MS
+    };
+    !record.state.has_ended() && now_ms.saturating_sub(record.updated_at_ms) < timeout_ms
 }
 
 fn random_hex() -> String {
@@ -458,7 +467,7 @@ mod tests {
         let after_finish = test.bots.start("app", "recorder", "app/a", None, NOW).await;
         let after_silence = test
             .bots
-            .start("app", "recorder", "app/b", None, NOW + HEARTBEAT_TIMEOUT_MS)
+            .start("app", "recorder", "app/b", None, NOW + STARTUP_TIMEOUT_MS)
             .await;
 
         // Assert
@@ -471,6 +480,16 @@ mod tests {
         // Arrange
         let test = test_bots();
         let bot = started(&test, "app/a").await;
+        test.bots
+            .heartbeat(
+                "recorder",
+                &bot.id,
+                Some(KEY),
+                heartbeat(BotState::Running),
+                NOW,
+            )
+            .await
+            .unwrap();
 
         // Act
         let latest = test
@@ -482,6 +501,31 @@ mod tests {
 
         // Assert
         assert_eq!((latest.id, latest.state), (bot.id, BotState::Failed));
+    }
+
+    #[tokio::test]
+    async fn a_bot_that_has_not_reported_yet_has_longer_to_start() {
+        // Arrange
+        let test = test_bots();
+        let bot = started(&test, "app/a").await;
+
+        // Act
+        let starting = test
+            .bots
+            .latest("recorder", "app/a", NOW + HEARTBEAT_TIMEOUT_MS)
+            .await
+            .unwrap()
+            .unwrap();
+        let silent = test
+            .bots
+            .latest("recorder", "app/a", NOW + STARTUP_TIMEOUT_MS)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Assert: an image import longer than the heartbeat timeout does not fail it; a start that never reports does
+        assert_eq!(starting.state, BotState::Starting);
+        assert_eq!((silent.id, silent.state), (bot.id, BotState::Failed));
     }
 
     #[tokio::test]
