@@ -26,14 +26,13 @@ switch (access.kind) {
   case 'given':
     describe(`URL のトークン（app ${access.namespaceRoot}）で接続します`)
     break
-  case 'unavailable': {
-    describe('URL を共有した相手だけが参加・視聴できます')
-    const reason = document.createElement('span')
-    reason.className = 'access-error'
-    reason.textContent = access.reason
-    status.replaceChildren(reason)
+  case 'unavailable':
+    // A red mark in place of the ⓘ, so the failure shows without taking room on the page.
+    description.dataset.tip = access.reason
+    description.setAttribute('aria-label', access.reason)
+    description.classList.add('danger')
+    description.replaceChildren(icon('circle-alert'))
     break
-  }
   case 'temporary': {
     describe('URL を共有した相手だけが参加・視聴できます')
     const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)

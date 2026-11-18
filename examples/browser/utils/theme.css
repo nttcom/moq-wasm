@@ -583,6 +583,19 @@ body:not(:has(> .app-shell))::before {
   margin-left: 4px;
 }
 
+/* A tip that reports a failure: a red mark, and a note edged in red. */
+.tip.danger,
+.tip.danger:hover,
+.tip.danger:focus-visible {
+  color: var(--danger);
+}
+
+.tip.danger:hover::after,
+.tip.danger:focus::after {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+
 /* A tip at the right end of a row opens leftward, so it stays on screen. */
 .tip.end:hover::after,
 .tip.end:focus::after {

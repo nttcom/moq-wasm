@@ -617,6 +617,18 @@
   >
     <path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" />
   </symbol>
+  <symbol
+    id="icon-circle-alert"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <circle cx="12" cy="12" r="10" />
+    <line x1="12" x2="12" y1="8" y2="12" />
+    <line x1="12" x2="12.01" y1="16" y2="16" />
+  </symbol>
   <!-- The playground's own mark, not a Lucide icon. -->
   <symbol
     id="icon-logo"

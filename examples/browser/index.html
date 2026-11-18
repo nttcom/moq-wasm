@@ -17,24 +17,24 @@
           ></span>
           <span class="app-brand-name">MoQT Playground</span>
         </a>
+        <div class="segmented version-switch" role="group" aria-label="MoQT draft">
+          <button type="button" data-moqt-version="draft-14" data-testid="version-draft-14">
+            <span class="draft-prefix">draft-</span>14
+          </button>
+          <button type="button" data-moqt-version="draft-18" data-testid="version-draft-18">
+            <span class="draft-prefix">draft-</span>18
+          </button>
+        </div>
         <div class="home-controls">
+          <span class="tip" id="access-description" tabindex="0" role="img"
+            ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+          ></span>
           <div class="segmented access-switch" role="group" aria-label="接続モード">
             <button type="button" data-access-mode="temporary" data-testid="access-temporary">
               <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-link" /></svg>一時トークン
             </button>
             <button type="button" data-access-mode="public" data-testid="access-public">
               <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-globe" /></svg>Public
-            </button>
-          </div>
-          <span class="tip end" id="access-description" tabindex="0" role="img"
-            ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
-          ></span>
-          <div class="segmented version-switch" role="group" aria-label="MoQT draft">
-            <button type="button" data-moqt-version="draft-14" data-testid="version-draft-14">
-              <span class="draft-prefix">draft-</span>14
-            </button>
-            <button type="button" data-moqt-version="draft-18" data-testid="version-draft-18">
-              <span class="draft-prefix">draft-</span>18
             </button>
           </div>
         </div>
@@ -79,8 +79,16 @@
               <div class="example-title"><h3>Message</h3></div>
               <p>SUBSCRIBE や FETCH などの MoQT 制御メッセージを 1 つずつ送り、Relay の応答を確かめる</p>
               <div class="example-foot">
-                <span class="tag">制御メッセージ</span
-                ><span class="example-open"
+                <span class="tag">制御メッセージ</span>
+                <div class="segmented access-switch" role="group" aria-label="接続モード">
+                  <button type="button" data-access-mode="temporary" data-testid="access-temporary">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-link" /></svg>一時トークン
+                  </button>
+                  <button type="button" data-access-mode="public" data-testid="access-public">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-globe" /></svg>Public
+                  </button>
+                </div>
+                <span class="example-open"
                   >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
                 ></span>
               </div>
