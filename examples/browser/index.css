@@ -286,18 +286,8 @@
   gap: 16px;
 }
 
-.grid.wide {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-/* Four cards read better as two rows of two than as three and one. */
-.grid.wide.pairs {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 @media (max-width: 1080px) {
-  .grid,
-  .grid.wide {
+  .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -305,11 +295,6 @@
 @media (max-width: 860px) {
   .home-hero {
     padding: 32px 0 20px;
-  }
-
-  .grid.wide,
-  .grid.wide.pairs {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -515,28 +500,108 @@
   display: inline-flex;
 }
 
-:root[data-access-mode='public'] .requires-token .example-open {
+:root[data-access-mode='public'] .requires-token .example-open,
+:root[data-access-mode='public'] .requires-token .example-row-go {
   display: none;
+}
+
+/* ---------- Groups ---------- */
+
+/* A use case: its main example large with a thumbnail, the examples around it as rows beside it. */
+.group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.example-rows {
+  display: grid;
+  gap: 12px;
+}
+
+.example.example-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px 10px 10px;
+}
+
+.example-row .example-thumb {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.example-row-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.example-row-text .badge {
+  justify-self: start;
+}
+
+.example-row-go {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.18s ease;
+}
+
+.example-row:hover .example-row-go {
+  transform: translateX(3px);
+}
+
+@media (max-width: 860px) {
+  .group {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .example.example-row {
+    grid-template-columns: 96px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
 }
 
 /* ---------- Thumbnails ---------- */
 
-/* A miniature of the example's own screen, drawn in CSS so it needs no image file. Like a video stage
-   it keeps its dark colors in both modes; positions and sizes are percentages of the 16:9 box. */
+/* A miniature of the example's own screen, drawn in CSS so it needs no image file. The thumbnails share
+   one quiet palette, shades of slate with one accent each, and like a video stage they stay dark in both
+   modes. Positions and sizes are percentages of the 16:9 box; text scales with its width. */
 .example-thumb {
+  --th-bg: #0b0e12;
+  --th-panel: #161b22;
+  --th-tile: #1b222b;
+  --th-figure: #3a4552;
+  --th-line: #2a323c;
+  --th-text: #c8d0d9;
+  --th-dim: #7b8695;
+  --th-accent: #2dd4bf;
+  --th-alert: #c25555;
   position: relative;
   display: block;
   overflow: hidden;
   aspect-ratio: 16 / 9;
   border-bottom: 1px solid var(--border);
-  background: #05070a;
-  color: #e8ecf1;
-  /* The card is the size container, so the text scales with the thumbnail. */
-  font-size: clamp(7px, 2.4cqi, 11px);
+  background: var(--th-bg);
+  color: var(--th-text);
   line-height: 1.3;
+  container-type: inline-size;
 }
 
-/* A person in a video tile: a head over shoulders, in `--c`. */
+.example-thumb > * {
+  font-size: clamp(5px, 2.6cqi, 11px);
+}
+
+/* A person in a video tile: a head over shoulders. */
 .th-person {
   position: absolute;
   bottom: -8%;
@@ -549,7 +614,7 @@
 .th-person::before,
 .th-person::after {
   position: absolute;
-  background: var(--c);
+  background: var(--th-figure);
   content: '';
 }
 
@@ -576,30 +641,36 @@
   grid-template-columns: 1fr 1fr;
   gap: 2.5%;
   padding: 6% 6% 17%;
-  background: radial-gradient(circle at 30% 0%, #10302c, #05070a 70%);
 }
 
 .th-tile {
   position: relative;
   overflow: hidden;
-  border-radius: 7px;
-  background: linear-gradient(160deg, var(--a), var(--b));
+  border-radius: 6px;
+  background: var(--th-tile);
 }
 
 .th-tile.speak {
-  box-shadow:
-    0 0 0 2px #2dd4bf,
-    0 0 16px rgba(45, 212, 191, 0.35);
+  box-shadow: 0 0 0 1.5px var(--th-accent);
 }
 
-.example-thumb .th-name {
+.th-tile.speak .th-person {
+  --th-figure: #2f5f5a;
+}
+
+.th-name,
+.th-badge,
+.th-rec,
+.th-cam-label {
   position: absolute;
+}
+
+.th-name {
   bottom: 5%;
   left: 4%;
   padding: 0 0.5em;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .th-bar {
@@ -607,29 +678,28 @@
   bottom: 4.5%;
   left: 50%;
   display: flex;
-  gap: 6px;
-  padding: 4px 7px;
+  gap: 5px;
+  padding: 3px 6px;
   border-radius: 999px;
-  background: rgba(18, 22, 28, 0.9);
-  box-shadow: 0 0 0 1px #2a323c;
+  background: var(--th-panel);
   transform: translateX(-50%);
 }
 
 .th-bar i {
-  width: 14px;
-  height: 14px;
+  width: 1.2em;
+  height: 1.2em;
   border-radius: 50%;
-  background: #2a323c;
+  background: var(--th-line);
 }
 
 .th-bar i.on {
-  background: #2dd4bf;
+  background: var(--th-accent);
 }
 
 .th-bar i.end {
-  width: 22px;
-  border-radius: 7px;
-  background: #ef4444;
+  width: 1.9em;
+  border-radius: 0.6em;
+  background: var(--th-alert);
 }
 
 /* Recording Player: the meeting played back on a timeline. */
@@ -644,7 +714,7 @@
   left: 6%;
   height: 8%;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.6);
+  background: var(--th-panel);
 }
 
 .th-timeline::before,
@@ -658,44 +728,60 @@
 
 .th-timeline::before {
   right: 3%;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--th-line);
 }
 
 .th-timeline::after {
   width: 45%;
-  background: #2dd4bf;
+  background: var(--th-accent);
 }
 
-.example-thumb .th-badge {
-  position: absolute;
+.th-badge {
   top: 6%;
   left: 4%;
-  padding: 0 0.5em;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
   font-weight: 700;
 }
 
-.th-badge::before {
+.th-badge::before,
+.th-rec::before {
   margin-right: 0.3em;
-  color: #ef4444;
+  color: var(--th-alert);
   content: '●';
 }
 
-/* Whiteboard: strokes and the cursors of two people drawing. */
+/* Whiteboard: strokes on a dark board and the cursors of two people drawing. */
 .th-board {
   width: 100%;
   height: 100%;
-  background: #f8fafc;
+  fill: none;
+  stroke-linecap: round;
+}
+
+.th-board .ink {
+  stroke: var(--th-accent);
+  stroke-width: 3;
+}
+
+.th-board .ink-2 {
+  stroke: var(--th-dim);
+  stroke-width: 3;
+}
+
+.th-board .cursor {
+  fill: var(--th-accent);
+}
+
+.th-board .cursor-2 {
+  fill: var(--th-text);
 }
 
 /* ONVIF: the street swinging past as the camera pans, and its field of view turning. */
-.th-cctv {
+.th-cctv,
+.th-cam {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: linear-gradient(180deg, #334155, #0f172a);
+  background: linear-gradient(180deg, #1f2731, var(--th-bg));
 }
 
 .th-street {
@@ -713,35 +799,27 @@
 .th-bldg {
   position: absolute;
   bottom: 0;
-  background: #0b1220;
-  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.15);
+  background: var(--th-tile);
+  box-shadow: inset 0 0 0 1px var(--th-line);
 }
 
-.example-thumb .th-rec,
-.example-thumb .th-cam-label {
-  position: absolute;
+.th-rec,
+.th-cam-label {
   top: 6%;
   left: 4%;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--th-dim);
   font-family: ui-monospace, monospace;
   font-weight: 700;
 }
 
-.th-rec::before {
-  margin-right: 0.3em;
-  color: #ef4444;
-  content: '●';
-}
-
-.example-thumb .th-ptz {
+.th-ptz {
   position: absolute;
   bottom: 7%;
   left: 4%;
   padding: 0.1em 0.5em;
   border-radius: 3px;
-  background: rgba(45, 212, 191, 0.2);
-  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.6);
-  color: #5eead4;
+  box-shadow: inset 0 0 0 1px var(--th-accent);
+  color: var(--th-accent);
   font-family: ui-monospace, monospace;
   font-weight: 700;
 }
@@ -755,28 +833,27 @@
 }
 
 .th-radar circle:first-child {
-  fill: rgba(5, 7, 10, 0.6);
-  stroke: rgba(255, 255, 255, 0.35);
+  fill: var(--th-panel);
+  stroke: var(--th-line);
 }
 
 .th-radar .was {
-  stroke: rgba(255, 255, 255, 0.5);
+  stroke: var(--th-dim);
   stroke-dasharray: 2 2;
 }
 
 .th-radar .now {
-  fill: rgba(45, 212, 191, 0.35);
-  stroke: #2dd4bf;
+  fill: rgba(45, 212, 191, 0.25);
+  stroke: var(--th-accent);
 }
 
 .th-radar .turn {
-  stroke: #5eead4;
+  stroke: var(--th-accent);
   stroke-width: 1.5;
-  marker-end: none;
 }
 
 .th-radar .cam {
-  fill: #2dd4bf;
+  fill: var(--th-accent);
 }
 
 /* Remote Monitoring: one camera large, three more beside it, as the page lays them out. */
@@ -787,19 +864,18 @@
   grid-template-columns: 1fr 27%;
   gap: 3%;
   padding: 4%;
-  background: #0b0e12;
 }
 
 .th-main,
 .th-side > span {
   position: relative;
   overflow: hidden;
-  border-radius: 5px;
-  background: linear-gradient(160deg, var(--a), var(--b));
+  border-radius: 4px;
+  background: var(--th-tile);
 }
 
 .th-main {
-  box-shadow: 0 0 0 1.5px #2dd4bf;
+  box-shadow: 0 0 0 1.5px var(--th-accent);
 }
 
 .th-side {
@@ -813,18 +889,18 @@
   font-size: 0.8em;
 }
 
-.example-thumb .th-live-dot {
+.th-live-dot {
   position: absolute;
   top: 6%;
   right: 4%;
   padding: 0 0.5em;
   border-radius: 3px;
-  background: #ef4444;
+  background: var(--th-alert);
   color: #fff;
   font-weight: 700;
 }
 
-/* Live Viewer: a stage show with the live badge, the seek bar and the chat beside it. */
+/* Live Viewer: a stage with the live badge, the seek bar and the chat beside it. */
 .th-live {
   position: absolute;
   inset: 0;
@@ -835,7 +911,7 @@
 .th-scene {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(180deg, #1e1b4b 0%, #6d28d9 46%, #f472b6 100%);
+  background: linear-gradient(180deg, #1f2731, var(--th-panel));
 }
 
 .th-stage {
@@ -843,18 +919,8 @@
   right: 0;
   bottom: 0;
   left: 0;
-  height: 30%;
-  background: #0b0820;
-}
-
-.th-beam {
-  position: absolute;
-  top: -10%;
-  width: 26%;
-  height: 90%;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent);
-  filter: blur(4px);
-  transform-origin: top;
+  height: 28%;
+  background: var(--th-bg);
 }
 
 .th-live-badge {
@@ -869,16 +935,16 @@
 .th-live-badge span {
   padding: 0 0.5em;
   border-radius: 3px;
-  color: #fff;
 }
 
 .th-live-badge b {
-  background: #ef4444;
+  background: var(--th-alert);
+  color: #fff;
   letter-spacing: 0.05em;
 }
 
 .th-live-badge span {
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.45);
 }
 
 .th-seek {
@@ -888,26 +954,17 @@
   left: 4%;
   height: 3px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.25);
+  background: var(--th-line);
 }
 
-.th-seek::before,
 .th-seek::after {
   position: absolute;
   left: 0;
+  width: 86%;
   height: 100%;
   border-radius: 2px;
+  background: var(--th-accent);
   content: '';
-}
-
-.th-seek::before {
-  width: 92%;
-  background: rgba(255, 255, 255, 0.45);
-}
-
-.th-seek::after {
-  width: 88%;
-  background: #ef4444;
 }
 
 .th-chat {
@@ -916,15 +973,15 @@
   justify-content: flex-end;
   gap: 5px;
   padding: 8px 6px;
-  border-left: 1px solid #232a33;
-  background: #0e1116;
+  border-left: 1px solid var(--th-line);
+  background: var(--th-panel);
 }
 
 .th-chat i {
   display: block;
-  height: 5px;
-  border-radius: 3px;
-  background: #2a323c;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--th-line);
 }
 
 .th-chat i:nth-child(odd) {
@@ -933,7 +990,7 @@
 
 .th-chat i.me {
   width: 60%;
-  background: rgba(45, 212, 191, 0.45);
+  background: rgba(45, 212, 191, 0.5);
 }
 
 /* Chat Moderation: a chat whose abusive message the moderator has taken down. */
@@ -945,7 +1002,6 @@
   justify-content: center;
   gap: 5%;
   padding: 0 6%;
-  background: #0e1116;
 }
 
 .th-msg {
@@ -954,12 +1010,12 @@
   gap: 0.6em;
   padding: 0.45em 0.7em;
   border-radius: 6px;
-  background: #171c23;
+  background: var(--th-panel);
   white-space: nowrap;
 }
 
 .th-msg b {
-  color: #5eead4;
+  color: var(--th-accent);
 }
 
 .th-msg em,
@@ -975,18 +1031,17 @@
 }
 
 .th-msg .ok {
-  background: rgba(52, 211, 153, 0.18);
-  color: #34d399;
+  color: var(--th-dim);
+  box-shadow: inset 0 0 0 1px var(--th-line);
 }
 
 .th-msg.removed {
-  background: rgba(248, 113, 113, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(194, 85, 85, 0.5);
 }
 
 .th-msg.removed b,
 .th-msg.removed s {
-  color: #6b7684;
+  color: var(--th-dim);
 }
 
 .th-msg.removed s {
@@ -994,33 +1049,26 @@
 }
 
 .th-msg .ng {
-  background: #ef4444;
+  background: var(--th-alert);
   color: #fff;
 }
 
-.example-thumb .th-input {
+.th-input {
   margin-top: 2%;
   padding: 0.45em 0.7em;
   border-radius: 6px;
-  box-shadow: inset 0 0 0 1px #2a323c;
-  color: #6b7684;
+  box-shadow: inset 0 0 0 1px var(--th-line);
+  color: var(--th-dim);
 }
 
 /* Camera Detection and PTZ Tracking: a camera view with boxes the bot drew. */
-.th-cam {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  background: linear-gradient(180deg, var(--a), var(--b));
-}
-
 .th-table {
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
   height: 20%;
-  background: #3f2a1d;
+  background: var(--th-tile);
 }
 
 .th-cup {
@@ -1034,24 +1082,22 @@
 }
 
 .th-cup .body {
-  fill: #f8fafc;
-  stroke: #cbd5e1;
-  stroke-width: 1.5;
+  fill: var(--th-text);
 }
 
 .th-cup .handle {
-  stroke: #f8fafc;
+  stroke: var(--th-text);
   stroke-width: 3;
 }
 
 .th-cup .steam {
-  stroke: rgba(255, 255, 255, 0.5);
+  stroke: var(--th-dim);
   stroke-width: 1.5;
 }
 
 .th-box {
   position: absolute;
-  border: 1.5px solid #2dd4bf;
+  border: 1.5px solid var(--th-accent);
   border-radius: 2px;
 }
 
@@ -1065,7 +1111,7 @@
   left: -1.5px;
   padding: 0 0.35em;
   border-radius: 2px 2px 0 0;
-  background: #2dd4bf;
+  background: var(--th-accent);
   color: #04201c;
   white-space: nowrap;
 }
@@ -1075,19 +1121,19 @@
   inset: 0;
   width: 100%;
   height: 100%;
-  stroke: #2dd4bf;
+  stroke: var(--th-accent);
   stroke-width: 1.5;
 }
 
 /* Live Translate: the streamer speaks English and the viewer hears it in Japanese. */
-.example-thumb .th-speech {
+.th-speech {
   position: absolute;
   top: 16%;
   left: 46%;
   padding: 0.35em 0.7em;
   border-radius: 8px 8px 8px 2px;
-  background: #f8fafc;
-  color: #0f172a;
+  background: var(--th-text);
+  color: var(--th-bg);
   font-weight: 600;
 }
 
@@ -1098,19 +1144,20 @@
   display: flex;
   gap: 3px;
   align-items: center;
-  color: #fff;
+  color: var(--th-dim);
 }
 
 .th-langs i {
-  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px var(--th-line);
 }
 
 .th-langs i.on {
-  background: #2dd4bf;
+  background: var(--th-accent);
+  box-shadow: none;
   color: #04201c;
 }
 
-.example-thumb .th-hear {
+.th-hear {
   position: absolute;
   right: 4%;
   bottom: 8%;
@@ -1119,8 +1166,7 @@
   align-items: center;
   padding: 0.35em 0.7em;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
+  background: var(--th-panel);
   font-weight: 600;
 }
 
@@ -1128,7 +1174,7 @@
   width: 1.3em;
   height: 1.3em;
   fill: none;
-  stroke: #5eead4;
+  stroke: var(--th-accent);
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -1147,10 +1193,6 @@
   color: var(--text-muted);
   font-size: 0.7rem;
   font-weight: 600;
-}
-
-.example:has(> .example-thumb) {
-  container-type: inline-size;
 }
 
 .chip {

@@ -52,19 +52,280 @@
 
       <div class="toolbar">
         <div class="filters" role="group" aria-label="カテゴリで絞り込む">
-          <button type="button" data-filter="all" aria-pressed="true">すべて<span class="count">15</span></button>
+          <button type="button" data-filter="all" aria-pressed="true">すべて<span class="count"></span></button>
+          <button type="button" data-filter="meeting" aria-pressed="false">Web 会議<span class="count"></span></button>
+          <button type="button" data-filter="monitoring" aria-pressed="false">
+            遠隔監視<span class="count"></span>
+          </button>
+          <button type="button" data-filter="live" aria-pressed="false">ライブ配信<span class="count"></span></button>
+          <button type="button" data-filter="ai" aria-pressed="false">AI 連携<span class="count"></span></button>
           <button type="button" data-filter="low-level" aria-pressed="false">
-            低レベル API<span class="count">4</span>
+            低レベル API<span class="count"></span>
           </button>
-          <button type="button" data-filter="usecase" aria-pressed="false">
-            ユースケース<span class="count">6</span>
-          </button>
-          <button type="button" data-filter="ai" aria-pressed="false">AI 連携<span class="count">4</span></button>
           <button type="button" data-filter="operations" aria-pressed="false">
-            運用ツール<span class="count">1</span>
+            運用ツール<span class="count"></span>
           </button>
         </div>
       </div>
+      <section class="section" id="meeting" data-section="meeting" aria-labelledby="meeting-heading">
+        <div class="section-heading">
+          <h2 id="meeting-heading">Web 会議</h2>
+        </div>
+        <div class="group">
+          <a class="example featured" href="examples/meeting/index.html">
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-meet"
+                ><span class="th-tile speak"><span class="th-person"></span><span class="th-name">Aiko</span></span
+                ><span class="th-tile"><span class="th-person"></span><span class="th-name">Ben</span></span
+                ><span class="th-tile"><span class="th-person"></span><span class="th-name">Chen</span></span
+                ><span class="th-tile"><span class="th-person"></span><span class="th-name">Dana</span></span></span
+              ><span class="th-bar"><i class="on"></i><i class="on"></i><i></i><i class="end"></i></span>
+            </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
+            <div class="example-body">
+              <div class="example-title"><h3>Meeting</h3></div>
+              <p>多人数の映像・音声会議。画面共有やチャットにも対応する</p>
+              <div class="example-foot">
+                <span class="tag">映像・音声</span><span class="tag">画面共有</span><span class="tag">チャット</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
+          </a>
+          <div class="example-rows">
+            <a class="example example-row requires-token" href="examples/recording-player/index.html">
+              <div class="example-thumb" aria-hidden="true">
+                <span class="th-meet th-replay"
+                  ><span class="th-tile"><span class="th-person"></span></span
+                  ><span class="th-tile"><span class="th-person"></span></span></span
+                ><span class="th-timeline"></span><span class="th-badge">REC</span>
+              </div>
+              <div class="example-row-text">
+                <h3>Recording Player</h3>
+                <p>Meeting の録画を、Recorder が FETCH で再配信して再生する</p>
+                <span class="badge warning requires-token-note">一時トークンで利用できます</span>
+              </div>
+              <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
+            </a>
+            <a class="example example-row" href="examples/whiteboard/index.html">
+              <div class="example-thumb" aria-hidden="true">
+                <svg class="th-board" viewBox="0 0 160 90">
+                  <path class="ink" d="M20 60 C40 20, 60 20, 70 50 S100 80, 120 30" />
+                  <path class="ink-2" d="M30 25 l25 0" />
+                  <circle class="ink-2" cx="118" cy="62" r="12" />
+                  <path class="cursor" d="M122 30 l6 10 -4 0 2 5 -2 1 -2 -5 -3 3z" />
+                  <path class="cursor-2" d="M55 62 l6 10 -4 0 2 5 -2 1 -2 -5 -3 3z" />
+                </svg>
+              </div>
+              <div class="example-row-text">
+                <h3>Whiteboard</h3>
+                <p>多人数で描くホワイトボード。途中から参加しても再現する</p>
+              </div>
+              <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="monitoring" data-section="monitoring" aria-labelledby="monitoring-heading">
+        <div class="section-heading">
+          <h2 id="monitoring-heading">遠隔監視</h2>
+        </div>
+        <div class="group">
+          <a class="example featured" href="examples/remote-monitoring/index.html">
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-monitor"
+                ><span class="th-main"
+                  ><span class="th-cam-label">CAM 1</span><span class="th-live-dot">LIVE</span
+                  ><span class="th-person" style="width: 26%; left: 40%"></span></span
+                ><span class="th-side"
+                  ><span><span class="th-cam-label">CAM 2</span></span
+                  ><span><span class="th-cam-label">CAM 3</span></span
+                  ><span><span class="th-cam-label">CAM 4</span></span></span
+                ></span
+              >
+            </div>
+            <p class="example-flow">
+              <span class="chip">USB Camera</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">MoQ Publisher</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
+            <div class="example-body">
+              <div class="example-title"><h3>Remote Monitoring</h3></div>
+              <p>USB カメラの映像を Rust CLI から配信し、ブラウザで遠隔監視する</p>
+              <div class="example-foot">
+                <span class="tag">USB カメラ</span><span class="tag">Rust CLI</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
+          </a>
+          <div class="example-rows">
+            <a class="example example-row" href="examples/onvif/index.html">
+              <div class="example-thumb" aria-hidden="true">
+                <span class="th-cctv"
+                  ><span class="th-street ghost"
+                    ><span class="th-bldg" style="left: 8%; width: 18%; height: 55%"></span
+                    ><span class="th-bldg" style="left: 30%; width: 24%; height: 40%"></span
+                    ><span class="th-bldg" style="left: 58%; width: 14%; height: 65%"></span></span
+                  ><span class="th-street"
+                    ><span class="th-bldg" style="left: 8%; width: 18%; height: 55%"></span
+                    ><span class="th-bldg" style="left: 30%; width: 24%; height: 40%"></span
+                    ><span class="th-bldg" style="left: 58%; width: 14%; height: 65%"></span></span
+                  ><span class="th-rec">CAM-01</span><span class="th-ptz">PAN ← 35°</span
+                  ><svg class="th-radar" viewBox="0 0 40 40">
+                    <circle cx="20" cy="20" r="18" />
+                    <path class="was" d="M20 20 L31 4 A18 18 0 0 1 37 15 Z" />
+                    <path class="now" d="M20 20 L9 4 A18 18 0 0 1 24 2.4 Z" />
+                    <path class="turn" d="M30 10 Q24 5 17 6" />
+                    <circle class="cam" cx="20" cy="20" r="2.5" /></svg
+                ></span>
+              </div>
+              <div class="example-row-text">
+                <h3>ONVIF</h3>
+                <p>PTZ カメラを MoQ Gateway 経由で遠隔操作・遠隔監視する</p>
+              </div>
+              <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="live" data-section="live" aria-labelledby="live-heading">
+        <div class="section-heading">
+          <h2 id="live-heading">ライブ配信</h2>
+        </div>
+        <div class="group">
+          <a class="example featured" href="examples/live-viewer/index.html">
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-live"
+                ><span class="th-scene"
+                  ><span class="th-stage"></span><span class="th-person" style="width: 22%; bottom: 14%"></span
+                  ><span class="th-live-badge"><b>LIVE</b><span>遅延 0.4 秒</span></span
+                  ><span class="th-seek"></span></span
+                ><span class="th-chat"><i></i><i></i><i class="me"></i><i></i><i></i><i></i></span
+              ></span>
+            </div>
+            <p class="example-flow">
+              <span class="chip">OBS / ffmpeg</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">moqtsink</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
+            <div class="example-body">
+              <div class="example-title"><h3>Live Viewer</h3></div>
+              <p>OBS や ffmpeg の RTMP / SRT 配信を MoQ に変換し、ライブで視聴する</p>
+              <div class="example-foot">
+                <span class="tag">RTMP / SRT</span><span class="tag">gstreamer</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
+          </a>
+          <div class="example-rows">
+            <a class="example example-row" href="examples/live-translate/streamer/index.html">
+              <div class="example-thumb" aria-hidden="true">
+                <span class="th-cam"
+                  ><span class="th-person" style="width: 34%; left: 30%"></span
+                  ><span class="th-speech">Hello everyone!</span
+                  ><span class="th-langs"><i>EN</i><span>→</span><i class="on">JA</i></span
+                  ><span class="th-hear"
+                    ><svg viewBox="0 0 24 24">
+                      <path
+                        d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"
+                      /></svg
+                    >みなさん、こんにちは！</span
+                  ></span
+                >
+              </div>
+              <div class="example-row-text">
+                <h3>Live Translate</h3>
+                <p>配信の音声を Gemini Live Translate で視聴者の言語に翻訳して届ける</p>
+              </div>
+              <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="ai" data-section="ai" aria-labelledby="ai-heading">
+        <div class="section-heading">
+          <h2 id="ai-heading">AI 連携</h2>
+        </div>
+        <div class="group">
+          <a class="example featured" href="examples/moq-camera-detection/index.html">
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-cam"
+                ><span class="th-person" style="width: 40%; left: 38%"></span><span class="th-table"></span
+                ><svg class="th-cup" viewBox="0 0 40 40">
+                  <path class="steam" d="M15 8 q-3 -4 0 -7 M22 8 q-3 -4 0 -7" />
+                  <path class="body" d="M8 12 h24 l-3 22 a3 3 0 0 1 -3 2.6 h-12 a3 3 0 0 1 -3 -2.6 z" />
+                  <path class="handle" d="M31 16 h3 a5 5 0 0 1 0 10 h-4" /></svg
+                ><span class="th-box" style="left: 22%; top: 18%; width: 32%; height: 82%"><b>人 0.94</b></span
+                ><span class="th-box" style="left: 65%; top: 44%; width: 19%; height: 38%"
+                  ><b>カップ 0.88</b></span
+                ></span
+              >
+            </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">d1-2B</span>
+            </p>
+            <div class="example-body">
+              <div class="example-title"><h3>Camera Detection</h3></div>
+              <p>カメラ映像についての質問に、AI が映像を見て答える</p>
+              <div class="example-foot">
+                <span class="tag">pipecat</span><span class="tag">映像</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
+          </a>
+          <div class="example-rows">
+            <a class="example example-row" href="examples/moq-chat-moderation/index.html">
+              <div class="example-thumb" aria-hidden="true">
+                <span class="th-chatlog"
+                  ><span class="th-msg"><b>alice</b>Great stream today!<em class="ok">OK</em></span
+                  ><span class="th-msg removed"
+                    ><b>troll42</b><s>You are all idiots</s><em class="ng">Removed by moderator</em></span
+                  ><span class="th-msg"><b>carol</b>When is the next one?<em class="ok">OK</em></span
+                  ><span class="th-input">Send a message…</span></span
+                >
+              </div>
+              <div class="example-row-text">
+                <h3>Chat Moderation</h3>
+                <p>チャットの発言を AI が読み、暴言を取り除く</p>
+              </div>
+              <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
+            </a>
+            <a class="example example-row" href="examples/moq-ptz-tracking/index.html">
+              <div class="example-thumb" aria-hidden="true">
+                <span class="th-cam"
+                  ><span class="th-person" style="width: 34%; left: 58%"></span
+                  ><span class="th-box dashed" style="left: 44%; top: 14%; width: 28%; height: 80%"><b>追従中</b></span
+                  ><svg class="th-cross" viewBox="0 0 160 90"><path d="M80 37v16M72 45h16" /></svg
+                ></span>
+              </div>
+              <div class="example-row-text">
+                <h3>PTZ Tracking</h3>
+                <p>指定した対象を AI が見つけ、PTZ カメラで画面に収め続ける</p>
+              </div>
+              <svg class="example-row-go" aria-hidden="true"><use href="/icons.svg#icon-arrow-right" /></svg>
+            </a>
+          </div>
+        </div>
+      </section>
 
       <section class="section" id="low-level" data-section="low-level" aria-labelledby="low-level-heading">
         <div class="section-heading">
@@ -134,333 +395,11 @@
         </div>
       </section>
 
-      <section class="section" id="usecases" data-section="usecase" aria-labelledby="usecases-heading">
-        <div class="section-heading">
-          <h2 id="usecases-heading">ユースケース</h2>
-        </div>
-        <div class="grid wide">
-          <a class="example" href="examples/meeting/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-meet"
-                ><span class="th-tile speak" style="--a: #134e4a; --b: #042f2e"
-                  ><span class="th-person" style="--c: #5eead4"></span><span class="th-name">Aiko</span></span
-                ><span class="th-tile" style="--a: #1e3a8a; --b: #0b1533"
-                  ><span class="th-person" style="--c: #93c5fd"></span><span class="th-name">Ben</span></span
-                ><span class="th-tile" style="--a: #4c1d95; --b: #1a0b3a"
-                  ><span class="th-person" style="--c: #c4b5fd"></span><span class="th-name">Chen</span></span
-                ><span class="th-tile" style="--a: #7c2d12; --b: #2a0f05"
-                  ><span class="th-person" style="--c: #fdba74"></span><span class="th-name">Dana</span></span
-                ></span
-              ><span class="th-bar"><i class="on"></i><i class="on"></i><i></i><i class="end"></i></span>
-            </div>
-            <p class="example-flow">
-              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">Browser<span class="chip-count">×N</span></span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Meeting</h3></div>
-              <p>多人数の映像・音声会議。画面共有やチャットにも対応する</p>
-              <div class="example-foot">
-                <span class="tag">映像・音声</span><span class="tag">画面共有</span><span class="tag">チャット</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example requires-token" href="examples/recording-player/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-meet th-replay"
-                ><span class="th-tile" style="--a: #1e3a8a; --b: #0b1533"
-                  ><span class="th-person" style="--c: #93c5fd"></span></span
-                ><span class="th-tile" style="--a: #4c1d95; --b: #1a0b3a"
-                  ><span class="th-person" style="--c: #c4b5fd"></span></span></span
-              ><span class="th-timeline"></span><span class="th-badge">REC</span>
-            </div>
-            <p class="example-flow">
-              <span class="chip relay">Object Store</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">Recorder</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">Browser</span>
-            </p>
-            <div class="example-body">
-              <div class="example-title">
-                <h3>Recording Player</h3>
-                <span class="badge">Meeting の録画</span>
-              </div>
-              <p>Meeting で録画した MoQ アーカイブを、Recorder が FETCH で再配信して再生する</p>
-              <div class="example-foot">
-                <span class="tag">録画</span><span class="tag">FETCH</span
-                ><span class="badge warning requires-token-note">一時トークンで利用できます</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/whiteboard/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <svg class="th-board" viewBox="0 0 160 90">
-                <path
-                  d="M20 60 C40 20, 60 20, 70 50 S100 80, 120 30"
-                  fill="none"
-                  stroke="#0f766e"
-                  stroke-width="3"
-                  stroke-linecap="round"
-                />
-                <path d="M30 25 l25 0" stroke="#db2777" stroke-width="3" stroke-linecap="round" />
-                <circle cx="118" cy="62" r="12" fill="none" stroke="#2563eb" stroke-width="3" />
-                <path d="M122 30 l6 10 -4 0 2 5 -2 1 -2 -5 -3 3z" fill="#db2777" />
-                <path d="M55 62 l6 10 -4 0 2 5 -2 1 -2 -5 -3 3z" fill="#2563eb" />
-              </svg>
-            </div>
-            <p class="example-flow">
-              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">Browser<span class="chip-count">×N</span></span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Whiteboard</h3></div>
-              <p>多人数で描くホワイトボード。途中から参加してもボードを再現する</p>
-              <div class="example-foot">
-                <span class="tag">途中参加</span><span class="tag">データトラック</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/onvif/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-cctv"
-                ><span class="th-street ghost"
-                  ><span class="th-bldg" style="left: 8%; width: 18%; height: 55%"></span
-                  ><span class="th-bldg" style="left: 30%; width: 24%; height: 40%"></span
-                  ><span class="th-bldg" style="left: 58%; width: 14%; height: 65%"></span></span
-                ><span class="th-street"
-                  ><span class="th-bldg" style="left: 8%; width: 18%; height: 55%"></span
-                  ><span class="th-bldg" style="left: 30%; width: 24%; height: 40%"></span
-                  ><span class="th-bldg" style="left: 58%; width: 14%; height: 65%"></span></span
-                ><span class="th-rec">CAM-01</span><span class="th-ptz">PAN ← 35°</span
-                ><svg class="th-radar" viewBox="0 0 40 40">
-                  <circle cx="20" cy="20" r="18" />
-                  <path class="was" d="M20 20 L31 4 A18 18 0 0 1 37 15 Z" />
-                  <path class="now" d="M20 20 L9 4 A18 18 0 0 1 24 2.4 Z" />
-                  <path class="turn" d="M30 10 Q24 5 17 6" />
-                  <circle class="cam" cx="20" cy="20" r="2.5" /></svg
-              ></span>
-            </div>
-            <p class="example-flow">
-              <span class="chip">PTZ Camera</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">MoQ Gateway</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">Browser</span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>ONVIF</h3></div>
-              <p>PTZ カメラを MoQ Gateway 経由で遠隔制御・遠隔監視する</p>
-              <div class="example-foot">
-                <span class="tag">ONVIF</span><span class="tag">PTZ 制御</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/remote-monitoring/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-monitor"
-                ><span class="th-main" style="--a: #334155; --b: #0f172a"
-                  ><span class="th-cam-label">CAM 1</span><span class="th-live-dot">LIVE</span
-                  ><span class="th-person" style="--c: #020617; width: 26%; left: 40%"></span></span
-                ><span class="th-side"
-                  ><span style="--a: #1e3a8a; --b: #0b1533"><span class="th-cam-label">CAM 2</span></span
-                  ><span style="--a: #14532d; --b: #052e16"><span class="th-cam-label">CAM 3</span></span
-                  ><span style="--a: #3f3f46; --b: #18181b"><span class="th-cam-label">CAM 4</span></span></span
-                ></span
-              >
-            </div>
-            <p class="example-flow">
-              <span class="chip">USB Camera</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">MoQ Publisher</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">Browser<span class="chip-count">×N</span></span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Remote Monitoring</h3></div>
-              <p>USB カメラの映像を Rust CLI から配信し、ブラウザで遠隔監視する</p>
-              <div class="example-foot">
-                <span class="tag">USB カメラ</span><span class="tag">Rust CLI</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/live-viewer/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-live"
-                ><span class="th-scene"
-                  ><span class="th-beam" style="left: 14%; transform: rotate(-14deg)"></span
-                  ><span class="th-beam" style="left: 60%; transform: rotate(14deg)"></span
-                  ><span class="th-stage"></span
-                  ><span class="th-person" style="--c: #0b0820; width: 22%; bottom: 16%"></span
-                  ><span class="th-live-badge"><b>LIVE</b><span>遅延 0.4 秒</span></span
-                  ><span class="th-seek"></span></span
-                ><span class="th-chat"><i></i><i></i><i class="me"></i><i></i><i></i><i></i></span
-              ></span>
-            </div>
-            <p class="example-flow">
-              <span class="chip">OBS / ffmpeg</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">moqtsink</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">Browser<span class="chip-count">×N</span></span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Live Viewer</h3></div>
-              <p>OBS や ffmpeg の RTMP / SRT 配信を MoQ に変換し、ライブで視聴する</p>
-              <div class="example-foot">
-                <span class="tag">RTMP / SRT</span><span class="tag">gstreamer</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-        </div>
-      </section>
-
-      <section class="section" id="ai" data-section="ai" aria-labelledby="ai-heading">
-        <div class="section-heading">
-          <h2 id="ai-heading">AI 連携</h2>
-        </div>
-        <div class="grid wide pairs">
-          <a class="example" href="examples/moq-chat-moderation/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-chatlog"
-                ><span class="th-msg"><b>alice</b>Great stream today!<em class="ok">OK</em></span
-                ><span class="th-msg removed"
-                  ><b>troll42</b><s>You are all idiots</s><em class="ng">Removed by moderator</em></span
-                ><span class="th-msg"><b>carol</b>When is the next one?<em class="ok">OK</em></span
-                ><span class="th-input">Send a message…</span></span
-              >
-            </div>
-            <p class="example-flow">
-              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">d1-2B</span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Chat Moderation</h3></div>
-              <p>チャットの発言を AI が読み、内容をラベル判定する</p>
-              <div class="example-foot">
-                <span class="tag">pipecat</span><span class="tag">テキスト</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/moq-camera-detection/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-cam" style="--a: #475569; --b: #1e293b"
-                ><span class="th-person" style="--c: #0f172a; width: 40%; left: 38%"></span
-                ><span class="th-table"></span
-                ><svg class="th-cup" viewBox="0 0 40 40">
-                  <path class="steam" d="M15 8 q-3 -4 0 -7 M22 8 q-3 -4 0 -7" />
-                  <path class="body" d="M8 12 h24 l-3 22 a3 3 0 0 1 -3 2.6 h-12 a3 3 0 0 1 -3 -2.6 z" />
-                  <path class="handle" d="M31 16 h3 a5 5 0 0 1 0 10 h-4" /></svg
-                ><span class="th-box" style="left: 22%; top: 18%; width: 32%; height: 82%"><b>人 0.94</b></span
-                ><span class="th-box" style="left: 65%; top: 44%; width: 19%; height: 38%"
-                  ><b>カップ 0.88</b></span
-                ></span
-              >
-            </div>
-            <p class="example-flow">
-              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">d1-2B</span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Camera Detection</h3></div>
-              <p>カメラ映像についての質問に、AI が映像を見て答える</p>
-              <div class="example-foot">
-                <span class="tag">pipecat</span><span class="tag">映像</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/moq-ptz-tracking/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-cam" style="--a: #334155; --b: #0f172a"
-                ><span class="th-person" style="--c: #020617; width: 34%; left: 58%"></span
-                ><span class="th-box dashed" style="left: 44%; top: 14%; width: 28%; height: 80%"><b>追従中</b></span
-                ><svg class="th-cross" viewBox="0 0 160 90"><path d="M80 37v16M72 45h16" /></svg
-              ></span>
-            </div>
-            <p class="example-flow">
-              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">+</span
-              ><span class="chip">PTZ Camera</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
-              ><span class="chip relay">d1-2B</span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>PTZ Tracking</h3></div>
-              <p>指定した対象を AI が見つけ、PTZ カメラで画面に収め続ける</p>
-              <div class="example-foot">
-                <span class="tag">pipecat</span><span class="tag">PTZ 制御</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-          <a class="example" href="examples/live-translate/streamer/index.html">
-            <div class="example-thumb" aria-hidden="true">
-              <span class="th-cam" style="--a: #1e3a8a; --b: #0b1533"
-                ><span class="th-person" style="--c: #93c5fd; width: 34%; left: 30%"></span
-                ><span class="th-speech">Hello everyone!</span
-                ><span class="th-langs"><i>EN</i><span>→</span><i class="on">JA</i></span
-                ><span class="th-hear"
-                  ><svg viewBox="0 0 24 24">
-                    <path
-                      d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"
-                    /></svg
-                  >みなさん、こんにちは！</span
-                ></span
-              >
-            </div>
-            <p class="example-flow">
-              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">⇄</span
-              ><span class="chip">live-translate</span><span class="chip-link" aria-hidden="true">→</span
-              ><span class="chip">Browser<span class="chip-count">×N</span></span>
-            </p>
-            <div class="example-body">
-              <div class="example-title"><h3>Live Translate</h3></div>
-              <p>配信の音声を Gemini Live Translate で視聴者の言語に翻訳して届ける</p>
-              <div class="example-foot">
-                <span class="tag">音声翻訳</span><span class="tag">字幕</span
-                ><span class="example-open"
-                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
-                ></span>
-              </div>
-            </div>
-          </a>
-        </div>
-      </section>
-
       <section class="section" id="operations" data-section="operations" aria-labelledby="operations-heading">
         <div class="section-heading">
           <h2 id="operations-heading">運用ツール</h2>
         </div>
-        <div class="grid wide">
+        <div class="grid">
           <a class="example span-all" href="examples/observability/index.html">
             <div class="example-thumb" aria-hidden="true">
               <svg class="th-globe" viewBox="0 0 400 225">
