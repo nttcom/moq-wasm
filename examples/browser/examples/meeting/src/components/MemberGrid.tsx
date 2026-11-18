@@ -21,7 +21,7 @@ import {
   type VideoEncodingSettings
 } from '../types/videoEncoding'
 
-const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-blue-50'
+const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-teal-50'
 
 interface MemberGridProps {
   localMember: LocalMember
@@ -294,7 +294,7 @@ export function MemberGrid({
                 onSelectTrack={(role, trackName) => onSelectTrack(detailsMember.id, role, trackName)}
               />
               <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
-                <div className="text-sm font-semibold text-blue-100">Playout</div>
+                <div className="text-sm font-semibold text-teal-100">Playout</div>
                 <PlayoutControls
                   value={playoutSettings.get(detailsMember.id)}
                   onChange={(settings) => onChangePlayoutSettings(detailsMember.id, settings)}
@@ -318,7 +318,7 @@ function FilmstripButton({ open, onClick }: { open: boolean; onClick: () => void
       title={label}
       data-testid="filmstrip-button"
       onClick={onClick}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-800 text-slate-200 transition hover:bg-slate-700 hover:text-white"
+      className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-zinc-800 text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
     >
       {open ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
     </button>
@@ -367,14 +367,14 @@ function DeviceModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
       <div
-        className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-2xl bg-slate-900 p-6 text-white shadow-2xl`}
+        className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-2xl bg-zinc-900 p-6 text-white shadow-2xl`}
       >
         <div className="mb-4 flex items-center justify-between">
           <h4 className="text-lg font-semibold">{title}</h4>
           <button
             onClick={onClose}
             data-testid="modal-close-button"
-            className="rounded-md bg-white/10 px-3 py-1 text-sm text-blue-100 transition hover:bg-white/20"
+            className="rounded-md bg-white/10 px-3 py-1 text-sm text-teal-100 transition hover:bg-white/20"
           >
             Close
           </button>
@@ -390,7 +390,7 @@ function OptionSelect<T extends { id: string; label: string }>({
   options,
   value,
   onChange,
-  className = 'flex flex-col gap-1 text-xs text-blue-100'
+  className = 'flex flex-col gap-1 text-xs text-teal-100'
 }: {
   label: string
   options: T[]
@@ -412,7 +412,7 @@ function OptionSelect<T extends { id: string; label: string }>({
         }}
       >
         {options.map((option) => (
-          <option key={option.id} value={option.id} className="bg-slate-900 text-white">
+          <option key={option.id} value={option.id} className="bg-zinc-900 text-white">
             {option.label}
           </option>
         ))}
@@ -484,8 +484,8 @@ function RemoteCatalogSubscribePanel({
   return (
     <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-blue-100">Catalogs</span>
-        <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-blue-300">
+        <span className="text-sm font-semibold text-teal-100">Catalogs</span>
+        <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-teal-300">
           {formatCatalogStatus(view)}
         </span>
       </div>
@@ -536,8 +536,8 @@ function TrackSubscribeRow({
   return (
     <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-blue-100">{title}</span>
-        <span data-testid={statusTestId} className="text-[11px] text-blue-300">
+        <span className="text-xs font-semibold text-teal-100">{title}</span>
+        <span data-testid={statusTestId} className="text-[11px] text-teal-300">
           {statusText}
         </span>
       </div>
@@ -547,21 +547,21 @@ function TrackSubscribeRow({
           disabled={disabled}
           data-testid={selectTestId}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full min-w-0 rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white outline-none focus:border-blue-300 focus:ring-1 focus:ring-blue-300 disabled:opacity-60"
+          className="w-full min-w-0 rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white outline-none focus:border-teal-300 focus:ring-1 focus:ring-teal-300 disabled:opacity-60"
         >
           {tracks.length === 0 ? (
-            <option value="" className="bg-slate-900 text-white">
+            <option value="" className="bg-zinc-900 text-white">
               No tracks
             </option>
           ) : (
             <>
               {auto !== undefined && (
-                <option value={AUTO_TRACK_SELECTION} className="bg-slate-900 text-white">
+                <option value={AUTO_TRACK_SELECTION} className="bg-zinc-900 text-white">
                   {`Auto (${tracks.find((track) => track.name === selected)?.label ?? selected})`}
                 </option>
               )}
               {tracks.map((track) => (
-                <option key={track.name} value={track.name} className="bg-slate-900 text-white">
+                <option key={track.name} value={track.name} className="bg-zinc-900 text-white">
                   {formatCatalogTrackLabel(role, track)}
                 </option>
               ))}

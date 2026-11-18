@@ -38,7 +38,7 @@ export function DebugBar({ connState, relayUrl, cameras, reviewingCamera, review
 
       {/* cameras row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-blue-400 w-24 shrink-0">CAMERAS</span>
+        <span className="text-teal-400 w-24 shrink-0">CAMERAS</span>
         {cameras.length > 0 ? (
           cameras.map((id) => (
             <span

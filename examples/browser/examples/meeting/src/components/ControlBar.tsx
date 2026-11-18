@@ -49,7 +49,7 @@ interface ControlBarProps {
 
 export function ControlBar(props: ControlBarProps) {
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-slate-950/90 px-4 py-3">
+    <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-zinc-950/90 px-4 py-3">
       <div className="flex items-center gap-2">
         <BarButton label="Show stats" onClick={props.onOpenStats}>
           <BarChart3 className="h-5 w-5" />
@@ -159,14 +159,14 @@ function DeviceToggle({
 }) {
   const menu = useMenu()
   return (
-    <div ref={menu.ref} className="relative flex items-center rounded-full bg-slate-800">
+    <div ref={menu.ref} className="relative flex items-center rounded-full bg-zinc-800">
       <button
         type="button"
         aria-label={`${label} options`}
         title={`${label} options`}
         data-testid={testId}
         onClick={menu.toggle}
-        className="inline-flex h-12 w-8 items-center justify-center rounded-l-full pl-1 text-slate-300 transition hover:text-white"
+        className="inline-flex h-12 w-8 items-center justify-center rounded-l-full pl-1 text-zinc-300 transition hover:text-white"
       >
         <ChevronUp className="h-4 w-4" />
       </button>
@@ -367,7 +367,7 @@ function MenuPanel({ align, children }: { align: 'left' | 'right'; children: Rea
   return (
     <div
       role="menu"
-      className={`absolute bottom-14 z-20 w-64 rounded-lg border border-white/10 bg-slate-900 p-1 shadow-lg ${
+      className={`absolute bottom-14 z-20 w-64 rounded-lg border border-white/10 bg-zinc-900 p-1 shadow-lg ${
         align === 'left' ? 'left-0' : 'right-0'
       }`}
     >
@@ -377,12 +377,12 @@ function MenuPanel({ align, children }: { align: 'left' | 'right'; children: Rea
 }
 
 function MenuHeading({ children }: { children: ReactNode }) {
-  return <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-400">{children}</div>
+  return <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">{children}</div>
 }
 
 function MenuNote({ testId, children }: { testId?: string; children: ReactNode }) {
   return (
-    <p data-testid={testId} className="px-3 py-2 text-xs text-slate-400">
+    <p data-testid={testId} className="px-3 py-2 text-xs text-zinc-400">
       {children}
     </p>
   )
@@ -414,7 +414,7 @@ function MenuItem({
       aria-checked={checked}
       disabled={disabled}
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
     >
       {checked !== undefined && <Check className={`h-4 w-4 shrink-0 ${checked ? '' : 'invisible'}`} />}
       <span className="flex min-w-0 items-center gap-2 truncate">{children}</span>
@@ -442,8 +442,8 @@ function BarButton({
   const tone = off
     ? 'bg-red-600 hover:bg-red-700'
     : active
-      ? 'bg-blue-600 hover:bg-blue-700'
-      : 'bg-slate-700 hover:bg-slate-600'
+      ? 'bg-teal-600 hover:bg-teal-700'
+      : 'bg-zinc-700 hover:bg-zinc-600'
   return (
     <button
       type="button"
