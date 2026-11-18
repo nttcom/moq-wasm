@@ -438,8 +438,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   releases the profile with `release_participant_video` when the target
   leaves it; it writes its event timeline and status on the first and the
   camera's commands on the second.
-- Chat moderation runs on the media layer. It records each verdict at the
-  Location of the chat message it judged.
+- Chat moderation runs on `MoqWasmTransport` without media: it reads the
+  chat page's `chat` from `data_in_tracks` and appends each verdict, at the
+  message's Location, to `event_timelines_out`.
 
 ### Publishing media: `_native.MediaBroadcast`
 The browser SDK encodes with WebCodecs and hands the encoded samples to

@@ -794,8 +794,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "moq-bot-rooms" },
     { name = "moq-system-one-bot" },
-    { name = "moq-wasm" },
-    { name = "pipecat-ai" },
+    { name = "moq-wasm", extra = ["pipecat"] },
 ]
 
 [package.dev-dependencies]
@@ -809,8 +808,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
     { name = "moq-system-one-bot", editable = "../moq-system-one-bot" },
-    { name = "moq-wasm", directory = "../../../crates/python" },
-    { name = "pipecat-ai", specifier = ">=1.12" },
+    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
 ]
 
 [package.metadata.requires-dev]
