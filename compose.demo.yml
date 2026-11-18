@@ -2,6 +2,25 @@
 #   docker compose -f compose.demo.yml up                          # meeting
 #   docker compose -f compose.demo.yml --profile live up           # live streaming
 #   docker compose -f compose.demo.yml --profile voice-agent up    # AI voice agent
+#   docker compose -f compose.demo.yml --profile monitoring up     # remote monitoring
+x-camera: &camera
+  image: moqt-moq-cli:local
+  build:
+    context: .
+    dockerfile: examples/rust/moq-cli/Dockerfile
+  profiles:
+    - monitoring
+  command:
+    - /bin/sh
+    - -c
+    - >-
+      ffmpeg -loglevel error -re -f lavfi -i "$$PATTERN=size=1280x720:rate=30"
+      -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p -g 60 -f h264 - |
+      moq-cli publish --relay moqt://relay:4433 --namespace "anon/demo/$$CAM" --insecure --no-telemetry
+  restart: on-failure
+  depends_on:
+    - relay
+
 services:
   browser:
     image: moqt-browser-examples:local
@@ -112,3 +131,21 @@ services:
       - ./services/vts/apps.example.json:/etc/vts/apps.json:ro
     depends_on:
       - relay
+
+  camera-1:
+    <<: *camera
+    environment:
+      CAM: cam01
+      PATTERN: testsrc2
+
+  camera-2:
+    <<: *camera
+    environment:
+      CAM: cam02
+      PATTERN: smptehdbars
+
+  camera-3:
+    <<: *camera
+    environment:
+      CAM: cam03
+      PATTERN: testsrc
