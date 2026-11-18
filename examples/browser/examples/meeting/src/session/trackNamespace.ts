@@ -32,6 +32,6 @@ export function isTranscriberNamespace(trackNamespace: string[] | undefined, roo
   return trackNamespace?.join('/') === buildTranscriberNamespace(roomName).join('/')
 }
 
-/// The transcriber serves rooms of the anonymous app and of a temporary app, whose token the page hands
-/// it (docs/architecture/ai-bots/meeting-transcriber.md "Rooms it serves").
-export const TRANSCRIBER_AVAILABLE = access.kind === 'public' || access.kind === 'temporary'
+/// Only a temporary app's page can start the transcriber: it goes through the temporary-apps service
+/// (docs/architecture/bots/architecture.md "Temporary apps").
+export const TRANSCRIBER_AVAILABLE = access.kind === 'temporary'

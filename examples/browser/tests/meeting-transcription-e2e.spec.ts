@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { type Browser, expect, test } from '@playwright/test'
 import {
   arrangeMeetingClient,
   getMemberCard,
@@ -8,12 +8,13 @@ import {
 } from './meeting-e2e-arrange'
 import { FAKE_ASR_TEXT, startFakeAsr } from './fake-asr'
 
-// Set by tests/browser-e2e/run-meeting-transcription-e2e.mjs, with speech on every page's fake microphone.
-const BOT_URL = process.env.MEETING_TRANSCRIPTION_E2E_BOT_URL!
+// Set by tests/browser-e2e/run-meeting-transcription-e2e.mjs, with speech on every page's fake microphone. The
+// pages start the transcriber through this temporary-apps service, which calls the bot service.
+const TEMPORARY_APPS_URL = process.env.MEETING_TRANSCRIPTION_E2E_TEMPORARY_APPS_URL!
 // The bot's `--asr granite-speech-5-2b=http://127.0.0.1:<port>` points here; the test serves it.
 const ASR_PORT = Number(process.env.MEETING_TRANSCRIPTION_E2E_ASR_PORT)
-// The bot connects and loads Whisper when a page asks for it.
-const BOT_JOIN_TIMEOUT_MS = 90_000
+// The bot service starts the bot's process, which connects and loads Whisper.
+const BOT_JOIN_TIMEOUT_MS = 120_000
 // Speech is transcribed once the VAD closes an utterance.
 const TRANSCRIPT_TIMEOUT_MS = 60_000
 
@@ -25,8 +26,19 @@ async function expectCaptionsShown(model: MeetingClientPageModel, shown: boolean
   await model.page.keyboard.press('Escape')
 }
 
-async function joinWithCaptionsOn(browser: import('@playwright/test').Browser, room: string, user: string) {
-  const client = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+/// A new temporary app, whose token every page of a test joins with.
+async function newTemporaryApp(): Promise<string> {
+  const response = await fetch(`${TEMPORARY_APPS_URL}/tokens`, { method: 'POST' })
+  expect(response.ok).toBe(true)
+  return ((await response.json()) as { token: string }).token
+}
+
+function arrangeAppClient(browser: Browser, token: string) {
+  return arrangeMeetingClient(browser, { params: { temporaryAppsUrl: TEMPORARY_APPS_URL }, fragment: `jwt=${token}` })
+}
+
+async function joinWithCaptionsOn(browser: Browser, token: string, room: string, user: string) {
+  const client = await arrangeAppClient(browser, token)
   await joinRoom(client.page, room, user, 'a')
   await client.page.page.getByTestId('activities-button').click()
   await client.page.page.getByTestId('captions-whisper').click()
@@ -40,15 +52,16 @@ async function openTranscript(model: MeetingClientPageModel) {
 }
 
 test('captions bring the transcriber, reach a late joiner and stay until someone stops them', async ({ browser }) => {
-  // Arrange: alice speaks; a room name with a space reaches the bot through the URL
+  // Arrange: alice speaks; a room name with a space reaches the bot in its namespace
   const room = `captions room ${Date.now() % 100_000}`
-  const alice = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+  const token = await newTemporaryApp()
+  const alice = await arrangeAppClient(browser, token)
   await joinRoom(alice.page, room, 'alice', 'a')
   await alice.page.toggleMicrophoneButton.click()
   await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('マイクをオフ', { timeout: 15_000 })
 
   // Act
-  const bob = await joinWithCaptionsOn(browser, room, 'bob')
+  const bob = await joinWithCaptionsOn(browser, token, room, 'bob')
 
   // Assert: everyone sees that the room is transcribed, and bob reads alice
   await expect(bob.page.page.getByTestId('transcriber-badge')).toBeVisible({ timeout: BOT_JOIN_TIMEOUT_MS })
@@ -83,7 +96,7 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   const saidBefore = await bobRecords.count()
 
   // Act: carol joins while alice is muted, so only the joining FETCH can bring alice's records
-  const carol = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+  const carol = await arrangeAppClient(browser, token)
   await joinRoom(carol.page, room, 'carol', 'a')
 
   // Assert: carol gets every record bob saw before she joined
@@ -118,10 +131,8 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   await carol.page.page.getByTestId('activities-button').click()
   await carol.page.page.getByTestId('captions-stop').click()
 
-  // Assert: the transcriber leaves at once rather than after the grace period, on every page
-  await expect(alice.page.page.getByTestId('transcriber-badge')).toBeHidden({ timeout: 10_000 })
-  await alice.page.page.getByTestId('activities-button').click()
-  await expect(alice.page.page.getByTestId('captions-error')).toHaveText('stopped by a participant')
+  // Assert: the transcriber leaves at its next heartbeat rather than after the grace period, on every page
+  await expect(alice.page.page.getByTestId('transcriber-badge')).toBeHidden({ timeout: 15_000 })
   await expect(carol.page.page.getByTestId('transcriber-badge')).toBeHidden()
 
   for (const client of [carol, alice]) {
@@ -137,7 +148,8 @@ test('a GPU recognizer that is starting is announced, then its text reaches the 
   const asr = await startFakeAsr(ASR_PORT)
   asr.unhealthyFor(8_000)
   const room = `granite room ${Date.now() % 100_000}`
-  const alice = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+  const token = await newTemporaryApp()
+  const alice = await arrangeAppClient(browser, token)
   await joinRoom(alice.page, room, 'alice', 'a')
   const badge = alice.page.page.getByTestId('transcriber-badge')
 
@@ -155,7 +167,7 @@ test('a GPU recognizer that is starting is announced, then its text reaches the 
   await expect(aliceRecords).toHaveCount(1)
 
   // Act
-  const bob = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
+  const bob = await arrangeAppClient(browser, token)
   await joinRoom(bob.page, room, 'bob', 'a')
   await bob.page.toggleMicrophoneButton.click()
   await expect(bob.page.toggleMicrophoneButton).toHaveAccessibleName('マイクをオフ', { timeout: 15_000 })

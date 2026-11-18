@@ -15,6 +15,8 @@ export interface ArrangeMeetingClientOptions {
   viewport?: { width: number; height: number }
   // The camera sends no frame for this long after it is turned on, as a real one warming up.
   cameraWarmupMs?: number
+  // The page URL's fragment, such as `jwt=<token>` to join a temporary app.
+  fragment?: string
 }
 
 const E2E_VIDEO_WIDTH = 160
@@ -26,7 +28,12 @@ let meetingClientCounter = 0
 const FORWARDED_CONSOLE_TEXT_PATTERN =
   /\[meeting\]\[publisher\]\[video\]|\[meeting\]\[catalog\]|\[meeting\]\[chat\]|Failed|Error|Camera capture started|SUBSCRIBE|PUBLISH_NAMESPACE/
 
-async function openMeetingPage(page: Page, jwt: string | undefined, extra: Record<string, string>): Promise<void> {
+async function openMeetingPage(
+  page: Page,
+  jwt: string | undefined,
+  extra: Record<string, string>,
+  fragment: string | undefined
+): Promise<void> {
   const params = new URLSearchParams({
     e2eVideoWidth: String(E2E_VIDEO_WIDTH),
     e2eVideoHeight: String(E2E_VIDEO_HEIGHT),
@@ -39,7 +46,8 @@ async function openMeetingPage(page: Page, jwt: string | undefined, extra: Recor
   if (jwt) {
     params.set('jwt', jwt)
   }
-  await page.goto(`${MEETING_INDEX_PATH}?${params.toString()}`, { waitUntil: 'domcontentloaded' })
+  const hash = fragment ? `#${fragment}` : ''
+  await page.goto(`${MEETING_INDEX_PATH}?${params.toString()}${hash}`, { waitUntil: 'domcontentloaded' })
 }
 
 function forwardFilteredPageConsole(page: Page, label: string): void {
@@ -121,7 +129,7 @@ function withholdCameraFrames(warmupMs: number): void {
 
 export async function arrangeMeetingClient(
   browser: Browser,
-  { jwt = MEETING_JWT, params = {}, viewport, cameraWarmupMs }: ArrangeMeetingClientOptions = {}
+  { jwt = MEETING_JWT, params = {}, viewport, cameraWarmupMs, fragment }: ArrangeMeetingClientOptions = {}
 ) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
@@ -134,7 +142,7 @@ export async function arrangeMeetingClient(
   const rawPage = await context.newPage()
   const label = `meeting-client-${++meetingClientCounter}`
   forwardFilteredPageConsole(rawPage, label)
-  await openMeetingPage(rawPage, jwt, params)
+  await openMeetingPage(rawPage, jwt, params, fragment)
   return {
     context,
     page: createMeetingClientPageModel(rawPage)

@@ -7,8 +7,10 @@ Accepted
 2026-10-20
 
 ## Scope
-A new pipecat bot `examples/python/moq-meeting-transcriber`, the Meeting page
-(`examples/browser/examples/meeting`), and a small change to `moq-bot-rooms`.
+A new pipecat bot `examples/python/moq-meeting-transcriber`, which the bot
+service starts as the bot type `transcriber`
+(see [the bots design](../bots/architecture.md)), and the Meeting page
+(`examples/browser/examples/meeting`).
 The bot reaches the relay through this repository's Python bindings
 (`crates/python`, see [its design](../python/architecture.md)).
 
@@ -37,8 +39,7 @@ is built on moq-rs, does not fit a meeting either:
   object header.
 
 ## Decision
-A page asks the transcriber to join its room over HTTP, as the other bots are
-started (see [on-demand-rooms.md](on-demand-rooms.md)). The bot subscribes to
+A page asks the bot service to start the transcriber in its room. The bot subscribes to
 the audio of every participant in the room, transcribes each one in its own
 pipeline, and publishes the text on one event timeline track that the pages
 in the room read.
@@ -46,10 +47,10 @@ in the room read.
 ```mermaid
 sequenceDiagram
     participant A as Page (alice, asked for captions)
-    participant S as Transcriber service
+    participant S as Transcriber bot
     participant R as Relay
     participant B as Page (bob)
-    A->>S: GET /rooms/{room} (event-stream, held open)
+    A->>S: POST /bots/transcriber (through temporary-apps and bots)
     S->>R: connect, SUBSCRIBE_NAMESPACE {root}/{room}/
     R->>S: PUBLISH_NAMESPACE {root}/{room}/alice, .../bob
     S->>R: PUBLISH_NAMESPACE {root}/{room}/bots/transcriber
@@ -63,43 +64,26 @@ sequenceDiagram
 ```
 
 ### Rooms it serves
-The transcriber serves rooms of the anonymous app, whose namespace root is
-`anon`, and rooms of a temporary app, whose page hands the service its token
-(see "Temporary apps" in [on-demand-rooms.md](on-demand-rooms.md)). A page that
-joined with `?jwt=` hides the captions button: the bot can refresh only the
-temporary-apps service's tokens, so a room of a registered app would outlive the bot's
-token.
+The page starts the transcriber through the temporary-apps service, the app
+server of temporary apps (see "Temporary apps" in
+[the bots design](../bots/architecture.md)), so the captions button shows only
+in a temporary app's room. A registered app's server can start it in its own
+rooms through `bots`.
 
 ### Starting and stopping
 The Meeting page gains a captions button in the bottom bar. Choosing a model
-from it opens `GET {transcriberUrl}/rooms/{room}` as an event stream and
-keeps it open. While the transcriber is in the room, every other page in the
-room opens the same request with the model the transcriber's status names, so
-one page leaving does not take the captions from the others. Leave or closing
-the tab closes the page's request and tells the service the page left. The bot
-runs while at least one page in the room holds the request, and leaves at once
-when the last one leaves this way. Stop transcription in the button's menu
-asks for confirmation, then sends `POST /rooms/{room}/stop`, which ends the
-room for every page. It stops
-30 s after the last request closes without word, or 30 s after the room's last participant withdraws their
-namespace, since Cloud Run does not tell the server that a page went away
-(see [on-demand-rooms.md](on-demand-rooms.md)). The limits of `moq-bot-rooms`
-apply (`--max-rooms`,
-`--max-room-seconds`, `--open-hours`, `--allowed-origin`). A page shows the
-`full`, `closed`, `expired`, `failed` and `stopped` events next to the button
-and does not hold the transcriber again until the transcriber has left the
-room or the user picks a model.
+from it sends `POST /bots/transcriber` with the room as `namespace_prefix` and
+the model as the option `asr`; `bots` launches one bot per room, and answers
+`409` while the room runs one. The bot joins the room with the token `bots`
+signs for it and sends a heartbeat every 5 s. Until the bot's namespace
+appears, the page asks `bots` for the room's latest transcriber every 5 s and
+shows `transcriber failed to start` if it failed.
 
-The page finds the service with `resolveServiceUrl`
-(`examples/browser/utils/serviceUrl.ts`), as the other bot pages do: a local
-relay means `http://127.0.0.1:8100`, any other relay the deployed service, and
-`?transcriberUrl=` on this machine or under `moqt.research.skyway.io` overrides
-both.
-
-`moq-bot-rooms` accepts room IDs of `[a-z0-9-]{1,32}`, which a Meeting room
-name need not match. `serve_rooms` takes the pattern as a parameter, and the
-transcriber passes one that accepts any single namespace element of up to 64
-characters without `/`.
+The bot ends by itself 30 s after the room's last participant withdraws their
+namespace, counted from its start too, and at the hour `bots` allows it. Stop
+transcription in the button's menu asks for confirmation, then sends
+`DELETE /bots/transcriber/{id}`, which the bot learns at its next heartbeat;
+it then leaves the room for every page.
 
 ### What the bot subscribes to
 - `SUBSCRIBE_NAMESPACE {root}/{room}/` finds the participants as they publish
@@ -140,9 +124,8 @@ recognizers:
 - `whisper`: all pipelines share one faster-whisper model, so memory does not
   grow with the number of speakers, and transcribe one segment at a time.
   pipecat's `WhisperSTTService` loads a model per instance, so the bot holds
-  the model itself. It loads after the server starts listening, so a cold
-  start answers a room request at once and a room of a GPU recognizer does not
-  wait for it; a `whisper` room is `starting` until it has loaded.
+  the model itself. It loads only in a `whisper` room, while the bot joins it,
+  and the room is `starting` until it has loaded.
 - A call takes about as long for a short segment as for a long one, since
   Whisper's encoder always reads a 30 s window: on Cloud Run's 4 vCPU,
   `medium` took about 6 s per segment, and a speaker who paused more often
@@ -187,13 +170,12 @@ recognizers:
   whole utterance, so a caption follows the end of the utterance.
 
 ### Choosing the speech recognizer
-The page sends its choice with the room request,
-`GET /rooms/{room}?asr=qwen3-asr`. `moq-bot-rooms` hands the query to the bot
-of a new room; the bot accepts its CPU recognizers and the names it was started with
-(`--asr qwen3-asr=<service URL>`, once per GPU service), and refuses anything else, so a request
-cannot point the bot at another server. A room runs with the choice of the
-request that started it; later requests join the running room whatever they
-ask for.
+The page sends its choice as the launch's option, `{"asr": "qwen3-asr"}`, which
+`bots` hands to the bot in `--options`. The bot accepts its CPU recognizers and
+the names the bot type's arguments name (`--asr qwen3-asr=<service URL>`, once
+per GPU service), and fails on anything else, so a request cannot point the
+bot at another server. A room runs with the choice of the launch that started
+it.
 
 The bot publishes a `status` track next to `transcript`: one object per group
 holding `{"asr": <name>, "state": "starting" | "ready"}`. A GPU service that
@@ -249,7 +231,8 @@ collide with it. The track is `transcript`, an MSF event timeline
 ## Consequences
 
 ### Positive
-- Transcription runs only while a page in the room holds the request.
+- Transcription runs only while the room has participants, and any page in the
+  room can stop it.
 - Audio stays inside the deployment: the model runs in the bot.
 
 ### Negative
@@ -257,6 +240,9 @@ collide with it. The track is `transcript`, an MSF event timeline
   `qwen3-asr`, and a few seconds with `whisper` on Cloud Run's CPUs. Every
   model transcribes whole utterances, so there are no partial results.
 - CPU cost grows with the speech in the room.
+- Each room starts its own bot, a Cloud Run Job execution, and a `whisper`
+  room loads its own model, so captions start later than with a service whose
+  model is already loaded.
 - A participant cannot opt out of being transcribed; the header badge only
   tells them.
 
