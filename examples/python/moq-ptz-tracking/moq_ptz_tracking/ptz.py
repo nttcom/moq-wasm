@@ -4,9 +4,8 @@ import json
 import math
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
-from moq_wasm import TrackWriter
 
 from moq_ptz_tracking.vision import Box
 
@@ -52,15 +51,19 @@ class PtzCalibration:
         return round(offset / per_second, 2)
 
 
+class CommandWriter(Protocol):
+    async def write(self, payload: bytes, *, new_group: bool = False) -> None: ...
+
+
 class PtzCommands:
     """Writes onvif-ingest's command track: one group per move, holding a ContinuousMove and a Stop
     JSON object for each axis it turns, or one sweep. Groups travel on separate streams, so only objects in one
     group reach onvif-ingest in order and a Stop never overtakes the next ContinuousMove."""
 
     def __init__(self):
-        self._publication: TrackWriter | None = None
+        self._publication: CommandWriter | None = None
 
-    def publish_on(self, publication: TrackWriter) -> None:
+    def publish_on(self, publication: CommandWriter) -> None:
         self._publication = publication
 
     async def sweep(self, heading: "Heading") -> "Sweep":
