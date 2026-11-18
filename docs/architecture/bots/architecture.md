@@ -128,7 +128,7 @@ The job is launched with its bot id and nothing secret. It calls
 `POST /bots/{type}/{id}/token` and `POST /bots/{type}/{id}/heartbeat` with a Google ID token
 for the bot service's URL, from the metadata server of the job's service
 account. `bots` verifies the ID token (RS256 against Google's published keys,
-`aud`, `exp`, and `email` equal to the configured job service account) and
+`aud`, `exp`, and `email` one of the configured job service accounts) and
 answers only for a bot that is running. With `--launcher local`, `bots`
 passes the child process a random per-bot key in its environment instead,
 never in its arguments, so the whole flow runs on one machine without Google
@@ -252,7 +252,8 @@ The service reads `PORT` (8098), `BOTS_PUBLIC_URL` (the URL bots call back,
 and the audience of their ID tokens), `BOTS_VTS_URL`, `BOTS_STORE_URL`,
 `BOTS_REGISTRY_FILE` or `BOTS_REGISTRY_BUCKET` (with
 `BOTS_REGISTRY_OBJECT`), `BOTS_TEMPORARY_APP_SECRET`, and
-`BOTS_JOB_SERVICE_ACCOUNT`, without which only locally launched bots can
+`BOTS_JOB_SERVICE_ACCOUNT`, the comma-separated service accounts the bot
+types' jobs run as, without which only locally launched bots can
 authenticate. `BOTS_INSECURE_SKIP_AUTH=true`, for a relay without
 authorization only (local development and the E2E tests), accepts every
 request for the app its room starts with, reads no registry, and answers a

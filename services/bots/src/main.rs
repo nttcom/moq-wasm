@@ -69,11 +69,16 @@ async fn main() -> anyhow::Result<()> {
         );
         (Some(signer), LaunchAuth::new(required("BOTS_VTS_URL")?))
     };
-    let id_tokens = non_empty_env("BOTS_JOB_SERVICE_ACCOUNT").map(|service_account| {
+    let id_tokens = non_empty_env("BOTS_JOB_SERVICE_ACCOUNT").map(|service_accounts| {
         IdTokenVerifier::new(
             non_empty_env("BOTS_GOOGLE_CERTS_URL").unwrap_or_else(|| GOOGLE_CERTS_URL.to_owned()),
             public_url.clone(),
-            service_account,
+            service_accounts
+                .split(',')
+                .map(str::trim)
+                .filter(|account| !account.is_empty())
+                .map(str::to_owned)
+                .collect(),
         )
     });
     let bots = Bots::new(types, store, signer, id_tokens, public_url);
