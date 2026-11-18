@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -75,32 +76,52 @@ class ClientTelemetry:
 
     def flush(self, timeout: float = REQUEST_TIMEOUT_SECONDS) -> None:
         """Sends one report per token, each waiting `timeout` seconds at most. A failed report's
-        records are dropped, not retried."""
+        records are dropped, not retried; the failure, including the `url` callable raising, is
+        logged, not raised."""
         with self._lock:
             batches, self._batches = self._batches, {}
-        url = self._options.url if isinstance(self._options.url, str) else self._options.url()
+        if not batches:
+            return
+        try:
+            url = self._options.url if isinstance(self._options.url, str) else self._options.url()
+        except Exception:
+            logger.exception("telemetry url failed; %d reports dropped", len(batches))
+            return
         endpoint = f"{url.rstrip('/')}/api/client-telemetry"
         for batch_token, (logs, spans) in batches.items():
-            token = None if batch_token in self._rejected_tokens else batch_token
-            report = {
-                "service": SERVICE,
-                "token": token,
-                "clientId": self.client_id,
-                "page": self._options.page,
-                "logs": logs,
-                "spans": spans,
-            }
-            status = self._send(endpoint, json.dumps(report).encode(), timeout)
-            if status == 401 and token is not None:
-                # Sent without it from now on, so the server takes the records as anonymous
-                # instead of dropping them.
-                self._rejected_tokens.add(token)
+            try:
+                self._send_batch(endpoint, batch_token, logs, spans, timeout)
+            except Exception:
+                logger.exception("telemetry report dropped")
+
+    def _send_batch(self, endpoint: str, batch_token: str | None, logs: list, spans: list, timeout: float) -> None:
+        token = None if batch_token in self._rejected_tokens else batch_token
+        report = {
+            "service": SERVICE,
+            "token": token,
+            "clientId": self.client_id,
+            "page": self._options.page,
+            "logs": logs,
+            "spans": spans,
+        }
+        status = self._send(endpoint, json.dumps(report, default=str).encode(), timeout)
+        if status == 401 and token is not None:
+            # Sent without it from now on, so the server takes the records as anonymous instead
+            # of dropping them.
+            self._rejected_tokens.add(token)
 
     def run(self, stopped: threading.Event) -> None:
-        """Flushes every 10 s until `stopped` is set, then once more with the exit timeout."""
-        while not stopped.wait(FLUSH_INTERVAL_SECONDS):
-            self.flush()
-        self.flush(EXIT_REQUEST_TIMEOUT_SECONDS)
+        """Flushes every 10 s until `stopped` is set, then once more with the exit timeout. A flush
+        that raises, as when a `logging` handler fails to log a failed report, is printed to stderr,
+        and the next flush goes on."""
+        while True:
+            stopping = stopped.wait(FLUSH_INTERVAL_SECONDS)
+            try:
+                self.flush(EXIT_REQUEST_TIMEOUT_SECONDS if stopping else REQUEST_TIMEOUT_SECONDS)
+            except Exception:
+                traceback.print_exc()
+            if stopping:
+                return
 
     def _keep(self, kind: int, record: dict, token: str | None) -> None:
         if self._options.redact is not None:

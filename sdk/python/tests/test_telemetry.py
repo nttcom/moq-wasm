@@ -1,7 +1,9 @@
 import json
+from collections.abc import Callable
 
 from moq_wasm import TelemetryOptions
 from moq_wasm._telemetry import MAX_RECORDS, ClientTelemetry
+from tests.failing_logging import failing_handler
 
 
 class Sent:
@@ -96,3 +98,73 @@ def test_a_flush_without_records_sends_nothing():
 
     # Assert
     assert sent.reports == []
+
+
+def url_failing_once() -> Callable[[], str]:
+    """A `url` callable that raises at its first call and returns the server's origin after."""
+    answers: list[Exception | str] = [RuntimeError("config service down"), "http://observability"]
+
+    def url() -> str:
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return url
+
+
+class Ticks:
+    """Stands in for `run`'s stop event: each wait runs the next action, and the wait that runs the
+    last one stops the loop."""
+
+    def __init__(self, *actions: Callable[[], None]):
+        self.actions = list(actions)
+
+    def wait(self, timeout: float) -> bool:
+        self.actions.pop(0)()
+        return not self.actions
+
+
+def test_a_failing_url_drops_one_flush_and_the_next_one_is_sent():
+    # Arrange: the url callable fails once
+    sent = Sent()
+    telemetry = ClientTelemetry(TelemetryOptions(url=url_failing_once(), page="bot"), sent)
+    telemetry.log(log("lost"), None)
+
+    # Act
+    telemetry.flush()
+    telemetry.log(log("kept"), None)
+    telemetry.flush()
+
+    # Assert
+    assert [report["logs"][0]["message"] for _, report in sent.reports] == ["kept"]
+
+
+def test_reporting_goes_on_after_logging_a_failed_report_fails(capsys):
+    # Arrange: the url callable fails at the first flush, and the handler that would log it raises
+    sent = Sent()
+    telemetry = ClientTelemetry(TelemetryOptions(url=url_failing_once(), page="bot"), sent)
+    telemetry.log(log("lost"), None)
+    ticks = Ticks(lambda: None, lambda: telemetry.log(log("kept"), None))
+
+    # Act
+    with failing_handler("moq_wasm"):
+        telemetry.run(ticks)
+
+    # Assert: the failure is printed to stderr, and the final flush still sends
+    assert "handler failed" in capsys.readouterr().err
+    assert [report["logs"][0]["message"] for _, report in sent.reports] == ["kept"]
+
+
+def test_a_field_json_cannot_hold_is_sent_as_its_string():
+    # Arrange: the redactor leaves an object in the fields
+    sent = Sent()
+    options = TelemetryOptions(url="http://observability", page="bot", redact=lambda fields: {"at": object})
+    telemetry = ClientTelemetry(options, sent)
+    telemetry.log(log("SUBSCRIBE sent"), None)
+
+    # Act
+    telemetry.flush()
+
+    # Assert
+    assert sent.reports[0][1]["logs"][0]["fields"] == {"at": str(object)}
