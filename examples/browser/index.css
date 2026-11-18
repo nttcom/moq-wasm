@@ -160,6 +160,11 @@
     display: none;
   }
 
+  .app-shell .segmented button {
+    padding: 0 6px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
 }
 
 /* The temporary app's link and its expiry, above the categories. */
