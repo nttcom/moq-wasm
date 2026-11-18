@@ -21,6 +21,10 @@ struct Args {
     #[arg(long)]
     subscribe: Option<String>,
 
+    /// Namespace path under the appId the token may start, stop and list bots in; "" grants the whole app
+    #[arg(long)]
+    bots: Option<String>,
+
     /// Token lifetime, e.g. 30m, 12h, 365d
     #[arg(long, default_value = "12h", value_parser = parse_lifetime)]
     ttl: Duration,
@@ -38,6 +42,7 @@ fn main() -> anyhow::Result<()> {
         .with_context(|| format!("set {SECRET_ENV} to the app's secret"))?;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let claims = Claims {
+        bots: args.bots,
         relay_id: args.relay_id,
         ..Claims::issued(args.app_id, args.publish, args.subscribe, now, args.ttl)
     };

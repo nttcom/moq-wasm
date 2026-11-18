@@ -162,6 +162,7 @@ mod tests {
         let claims = Claims {
             app_id: app_id.to_string(),
             publish: Some(String::new()),
+            bots: None,
             subscribe: Some(String::new()),
             iat: None,
             exp,
