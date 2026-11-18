@@ -1,30 +1,174 @@
 @import 'tailwindcss';
 
+/* Colors come from utils/theme.css; the stage stays dark in both modes, like any video player. */
 @layer components {
+  .player-app {
+    height: calc(100dvh - var(--shell-height) - 1px);
+    min-height: 480px;
+    color: var(--text);
+  }
+
+  .player-bar,
+  .player-controls {
+    border-color: var(--border);
+    background: var(--surface);
+  }
+
+  .player-bar {
+    border-bottom-width: 1px;
+  }
+
+  .player-controls {
+    border-top-width: 1px;
+  }
+
+  .player-muted {
+    color: var(--text-muted);
+  }
+
+  .player-subtle {
+    color: var(--text-subtle);
+  }
+
+  .player-error {
+    color: var(--danger);
+  }
+
+  .player-stage {
+    background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
+  }
+
+  .player-overlay {
+    background: rgba(5, 7, 10, 0.72);
+    backdrop-filter: blur(6px);
+  }
+
+  .open-card {
+    padding: 28px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    color: var(--text);
+  }
+
+  .field-label {
+    display: grid;
+    gap: 6px;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 550;
+  }
+
   .field {
-    @apply h-11 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 text-base text-white placeholder:text-zinc-500 focus:border-teal-400 focus:outline-none;
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface-sunken);
+    color: var(--text);
+    font-size: 0.9rem;
+    font-weight: 400;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+
+  .field::placeholder {
+    color: var(--text-subtle);
+  }
+
+  .field:focus {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  .primary-button {
+    height: 42px;
+    border-radius: var(--radius-md);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .primary-button:hover {
+    background: var(--accent-hover);
+  }
+
+  .primary-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 
   .round-button {
-    @apply inline-flex h-12 w-12 shrink-0 cursor-pointer items-center justify-center rounded-full text-white transition hover:brightness-125 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:brightness-100;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--surface-raised);
+    color: var(--text);
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .round-button:hover {
+    background: var(--surface-hover);
+  }
+
+  .round-button.primary,
+  .round-button[aria-pressed='true'] {
+    border-color: transparent;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .round-button.primary:hover,
+  .round-button[aria-pressed='true']:hover {
+    background: var(--accent-hover);
+  }
+
+  .round-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
   }
 
   .round-button svg:not([fill]) {
-    @apply fill-none stroke-current stroke-2;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 
-  .sidebar-tab {
-    @apply cursor-pointer rounded-md px-3 py-1 text-sm font-semibold text-zinc-400 transition hover:text-white aria-selected:bg-white/15 aria-selected:text-white;
+  .player-sidebar {
+    border-left: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .player-sidebar-head {
+    border-bottom: 1px solid var(--border);
   }
 
   .event-list {
-    @apply mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1;
+    @apply mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1;
   }
 
   .event-list:empty::before {
-    @apply text-teal-100;
+    display: block;
+    padding: 32px 8px;
+    color: var(--text-subtle);
+    font-size: 0.875rem;
+    text-align: center;
   }
 
   #chat:empty::before {
@@ -35,11 +179,56 @@
     content: 'Nothing transcribed at this point.';
   }
 
+  .event-item {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-subtle);
+  }
+
+  .event-item-head {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+
+  .event-item-head > :first-child {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .event-item-text {
+    margin-top: 4px;
+    color: var(--text);
+    font-size: 0.9rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .avatar {
+    background: linear-gradient(135deg, #2dd4bf, #0f766e);
+    color: #04201c;
+  }
+
   .source > .live-player-picture {
     @apply h-full object-contain;
   }
 
   #seek {
-    accent-color: var(--color-teal-500);
+    accent-color: var(--accent);
+  }
+
+  /* A narrow window gives the stage the full width: the sidebar slides over it instead, below the
+     open dialog. */
+  @media (max-width: 860px) {
+    .player-sidebar {
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 5;
+      width: min(20rem, 85%);
+      box-shadow: var(--shadow-lg);
+    }
   }
 }

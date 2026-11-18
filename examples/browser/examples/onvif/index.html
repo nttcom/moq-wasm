@@ -1,535 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ONVIF over MoQ</title>
+    <title>Onvif · MoQT Playground</title>
     <link rel="stylesheet" href="../../utils/theme.css" />
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
-
-      :root {
-        --bg: #0b0d10;
-        --bg-2: #11151a;
-        --card: rgba(255, 255, 255, 0.08);
-        --card-strong: rgba(255, 255, 255, 0.12);
-        --border: rgba(255, 255, 255, 0.14);
-        --accent: #2dd4bf;
-        --accent-2: #5eead4;
-        --text: #e9eef0;
-        --muted: #9aa6ad;
-        --shadow: 0 30px 60px rgba(7, 12, 18, 0.45);
-        --radius: 18px;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        font-family: 'Space Grotesk', sans-serif;
-        background:
-          radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.08), transparent 60%),
-          radial-gradient(1200px 700px at 90% -20%, rgba(224, 122, 95, 0.06), transparent 55%),
-          linear-gradient(160deg, var(--bg), var(--bg-2));
-        color: var(--text);
-        min-height: 100vh;
-      }
-
-      .page {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 32px 24px 56px;
-        position: relative;
-      }
-
-      .hero {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-bottom: 28px;
-      }
-
-      .hero > div {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
-
-      .eyebrow {
-        color: var(--accent-2);
-        text-transform: uppercase;
-        letter-spacing: 0.3em;
-        font-size: 12px;
-      }
-
-      .hero h1 {
-        font-size: clamp(28px, 4vw, 44px);
-        margin: 0;
-      }
-
-      .hero p {
-        margin: 0;
-        color: var(--muted);
-        max-width: 620px;
-      }
-
-      .card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: var(--radius);
-        padding: 20px;
-        box-shadow: var(--shadow);
-        backdrop-filter: blur(12px);
-      }
-
-      .card-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 16px;
-      }
-
-      .status {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 12px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--muted);
-        font-size: 12px;
-        white-space: nowrap;
-      }
-
-      .status span {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--accent);
-        display: inline-block;
-      }
-
-      form {
-        display: grid;
-        gap: 12px;
-      }
-
-      label {
-        display: grid;
-        gap: 6px;
-        font-size: 13px;
-        color: var(--muted);
-      }
-
-      input,
-      textarea {
-        background: var(--card-strong);
-        border: 1px solid transparent;
-        color: var(--text);
-        padding: 10px 12px;
-        border-radius: 12px;
-        font-size: 14px;
-      }
-
-      input:focus,
-      textarea:focus {
-        outline: none;
-        border-color: var(--accent-2);
-        box-shadow: 0 0 0 3px rgba(46, 196, 182, 0.2);
-      }
-
-      button {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        border: none;
-        color: #1a1208;
-        padding: 10px 16px;
-        border-radius: 999px;
-        font-weight: 700;
-        cursor: pointer;
-        transition:
-          transform 0.2s ease,
-          box-shadow 0.2s ease;
-      }
-
-      button.secondary {
-        background: rgba(255, 255, 255, 0.1);
-        color: var(--text);
-        border: 1px solid var(--border);
-      }
-
-      button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
-      }
-
-      .commands {
-        display: grid;
-        gap: 16px;
-      }
-
-      .command {
-        background: rgba(8, 12, 18, 0.6);
-        border-radius: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        padding: 16px;
-        display: grid;
-        gap: 12px;
-      }
-
-      .command-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .command-title {
-        font-size: 16px;
-        font-weight: 700;
-      }
-
-      .command-inputs {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 10px;
-      }
-
-      .command-inputs label {
-        font-size: 12px;
-      }
-
-      .command-inputs input {
-        width: 100%;
-        min-width: 0;
-      }
-
-      .command-header button {
-        width: auto;
-      }
-
-      [hidden] {
-        display: none !important;
-      }
-
-      .modal {
-        width: min(640px, 100%);
-        padding: 0;
-        border: none;
-        background: transparent;
-        color: inherit;
-      }
-
-      .modal::backdrop {
-        background: rgba(5, 8, 12, 0.7);
-      }
-
-      .modal-content {
-        max-height: 85vh;
-        overflow: auto;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        padding: 24px;
-        box-shadow: var(--shadow);
-        display: grid;
-        gap: 16px;
-      }
-
-      .modal-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-      }
-
-      .muted {
-        color: var(--muted);
-        font-size: 13px;
-      }
-
-      .setup-toggle summary {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 6px 12px;
-        cursor: pointer;
-        list-style: none;
-      }
-
-      .setup-toggle summary::-webkit-details-marker {
-        display: none;
-      }
-
-      .setup-toggle summary::before {
-        content: '\25B8';
-        color: var(--accent-2);
-        font-size: 18px;
-        transition: transform 0.15s;
-      }
-
-      .setup-toggle[open] summary::before {
-        transform: rotate(90deg);
-      }
-
-      .setup-toggle[open] summary {
-        margin-bottom: 16px;
-      }
-
-      .setup-split {
-        display: grid;
-        gap: 12px;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      /* Subgrid rows keep the heading, the note and the commands level across the
-         two relays even when one note wraps to a second line. */
-      .setup-panel {
-        display: grid;
-        grid-row: span 3;
-        grid-template-rows: subgrid;
-        gap: 10px;
-        padding: 14px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 16px;
-        background: rgba(8, 12, 18, 0.6);
-      }
-
-      .setup-panel-head {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-      }
-
-      .setup-relay-url {
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: rgba(46, 196, 182, 0.14);
-        color: var(--accent-2);
-        font-family: 'SFMono-Regular', Menlo, monospace;
-        font-size: 12px;
-      }
-
-      .setup-panel pre {
-        margin: 0;
-        padding: 12px 14px;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        background: rgba(0, 0, 0, 0.3);
-        font-family: 'SFMono-Regular', Menlo, monospace;
-        font-size: 12.5px;
-        line-height: 1.55;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-      }
-
-      .setup-panel .muted code {
-        padding: 1px 6px;
-        border-radius: 6px;
-        background: rgba(255, 255, 255, 0.1);
-        font-size: 0.9em;
-      }
-
-      .connect-card {
-        max-width: 560px;
-        margin: 0 auto;
-      }
-
-      .live-view {
-        display: grid;
-        gap: 20px;
-      }
-
-      .connect-card #connect-btn {
-        width: 100%;
-        padding: 14px 16px;
-        font-size: 15px;
-      }
-
-      .connect-error {
-        padding: 10px 14px;
-        border-radius: 12px;
-        background: rgba(255, 99, 71, 0.14);
-        color: #ffb4a6;
-        font-size: 13px;
-      }
-
-      .live-actions {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .live-actions button {
-        width: auto;
-        padding: 8px 14px;
-      }
-
-      .layout {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 360px;
-        gap: 20px;
-        align-items: start;
-      }
-
-      .stack {
-        display: grid;
-        gap: 16px;
-      }
-
-      .stack > .card-header {
-        margin-bottom: 0;
-      }
-
-      .relay-picker {
-        --relay-picker-accent: var(--accent-2);
-      }
-
-      .segmented {
-        display: inline-flex;
-        padding: 4px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.08);
-      }
-
-      .segmented-wide {
-        display: flex;
-      }
-
-      .segmented-wide button {
-        flex: 1;
-      }
-
-      .segmented button {
-        width: auto;
-        padding: 6px 14px;
-        background: transparent;
-        color: var(--muted);
-        font-size: 13px;
-        font-weight: 600;
-      }
-
-      .segmented button:hover {
-        transform: none;
-        box-shadow: none;
-        color: var(--text);
-      }
-
-      .segmented button[aria-selected='true'] {
-        background: rgba(255, 255, 255, 0.16);
-        color: var(--text);
-      }
-
-      .icon-btn {
-        width: 42px;
-        height: 42px;
-        flex-shrink: 0;
-        padding: 0;
-        font-size: 18px;
-      }
-
-      .ptz-controls {
-        margin: 0;
-        padding: 0;
-        border: none;
-        min-width: 0;
-      }
-
-      .ptz-controls:disabled {
-        opacity: 0.45;
-      }
-
-      .pad {
-        display: grid;
-        grid-template-columns: repeat(3, 64px);
-        grid-template-rows: repeat(3, 64px);
-        gap: 8px;
-        justify-content: center;
-      }
-
-      .pad-up,
-      .pad-down {
-        grid-column: 2;
-      }
-
-      .pad-left {
-        grid-column: 1;
-      }
-
-      button.pad-btn {
-        width: auto;
-        height: 100%;
-        padding: 0;
-        border-radius: 16px;
-        border: 1px solid var(--border);
-        background: rgba(255, 255, 255, 0.08);
-        color: var(--text);
-        font-size: 20px;
-        touch-action: none;
-        user-select: none;
-        -webkit-user-select: none;
-      }
-
-      button.pad-btn:hover {
-        transform: none;
-        background: rgba(255, 255, 255, 0.14);
-      }
-
-      button.pad-btn:active {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        color: #1a1208;
-        box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.3);
-      }
-
-      button.pad-home {
-        border-radius: 50%;
-        font-size: 22px;
-      }
-
-      .video-card #stage {
-        border-radius: 12px;
-        overflow: hidden;
-        margin-bottom: 12px;
-      }
-
-      @media (max-width: 960px) {
-        .layout {
-          grid-template-columns: 1fr;
-        }
-
-        .setup-split {
-          grid-template-columns: 1fr;
-        }
-      }
-
-      @media (max-width: 720px) {
-        .page {
-          padding: 24px 16px 48px;
-        }
-
-        .hero {
-          margin-bottom: 20px;
-        }
-
-        button {
-          width: 100%;
-        }
-      }
-    </style>
+    <link rel="stylesheet" href="../../utils/components.css" />
+    <link rel="stylesheet" href="./onvif.css" />
   </head>
-  <body>
+  <body data-title="Onvif">
     <div class="page">
       <header class="hero">
         <div>
-          <div class="eyebrow">MoQ + ONVIF</div>
-          <h1>Remote PTZ + RTSP over Media over QUIC</h1>
+          <span class="pill">Use case · Onvif</span>
+          <h1>PTZ カメラを MoQT で遠隔操作</h1>
           <p>
-            Publish ONVIF control commands and subscribe to RTSP video over MoQ. The browser view shows the decoded
-            stream while controls push PTZ moves through the same namespace.
+            ONVIF カメラの RTSP 映像を MoQ Gateway が MoQT
+            で配信し、ブラウザで視聴します。パン・チルト・ズームの操作は同じ namespace の command
+            トラックでカメラへ届きます。
           </p>
         </div>
       </header>
@@ -538,8 +26,8 @@
         <div class="card stack connect-card">
           <div class="card-header">
             <div>
-              <div class="command-title">Connect</div>
-              <div class="muted">Choose the relay the camera publishes to.</div>
+              <h2>Connect</h2>
+              <div class="muted">カメラの映像を配信している Relay を選びます</div>
             </div>
             <button
               id="settings-btn"
@@ -564,7 +52,7 @@
           <div class="card video-card">
             <div class="card-header">
               <div>
-                <div class="command-title">Live Video</div>
+                <h2>Live Video</h2>
                 <div class="muted"><span id="live-relay"></span> · <span id="playback-status">Playback idle</span></div>
               </div>
               <div class="live-actions">
@@ -578,10 +66,10 @@
 
           <div class="card stack">
             <div class="card-header">
-              <div class="command-title">PTZ</div>
+              <h2>PTZ</h2>
               <div class="status" id="command-state"><span></span>waiting for camera</div>
             </div>
-            <div id="ptz-tabs" class="segmented segmented-wide" role="tablist">
+            <div id="ptz-tabs" class="segmented segmented-wide" role="tablist" aria-label="PTZ の操作方法">
               <button type="button" role="tab" data-tab="controller" aria-selected="true">Controller</button>
               <button type="button" role="tab" data-tab="commands" aria-selected="false">Commands</button>
             </div>
@@ -600,10 +88,10 @@
                     &#9660;
                   </button>
                 </div>
-                <div class="muted">Hold a button to move; release to stop.</div>
+                <div class="muted pad-hint">押している間だけ動き、離すと止まります</div>
               </div>
               <div id="ptz-panel-commands" class="stack" role="tabpanel" hidden>
-                <div class="muted">Each command sends one JSON object to the ONVIF bridge.</div>
+                <div class="muted">各コマンドは 1 つの JSON オブジェクトとして ONVIF bridge へ送られます</div>
                 <div id="command-grid" class="commands"></div>
               </div>
             </fieldset>
@@ -612,7 +100,7 @@
 
         <details class="card setup-toggle">
           <summary>
-            <div class="command-title">映像送信の開始方法</div>
+            <h2>映像送信の開始方法</h2>
             <span class="muted">映像が表示されないときは、別ターミナルで ONVIF カメラの映像を配信します。</span>
           </summary>
           <div class="setup-split">
@@ -653,11 +141,11 @@ make chrome</code></pre>
       <div class="modal-content">
         <div class="modal-header">
           <div>
-            <div class="command-title">Advanced Settings</div>
-            <div class="muted">Tune namespaces and the command track.</div>
+            <h2>Advanced Settings</h2>
+            <div class="muted">namespace と command トラックを変更します</div>
           </div>
           <form method="dialog">
-            <button class="secondary">Close</button>
+            <button class="secondary">閉じる</button>
           </form>
         </div>
         <label>

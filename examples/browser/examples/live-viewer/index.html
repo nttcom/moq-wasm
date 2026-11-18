@@ -1,28 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoQT Live Viewer</title>
+    <title>Live Viewer · MoQT Playground</title>
     <link rel="stylesheet" href="../../utils/theme.css" />
     <link rel="stylesheet" href="../../utils/components.css" />
     <link rel="stylesheet" href="../media/setup-guide.css" />
     <link rel="stylesheet" href="./viewer.css" />
   </head>
-  <body>
+  <body data-title="Live Viewer">
     <div class="page">
       <header class="hero">
         <div>
-          <span class="pill">Live Viewer</span>
-          <h1>MoQT Live Viewer</h1>
+          <span class="pill">Use case · Live Viewer</span>
+          <h1>ライブ配信を MoQT で視聴</h1>
           <p>
-            RTMP / SRT から live-ingest bridge が配信した映像や、ブラウザから配信した MP4
-            を、画質を切り替えながら視聴します。
+            OBS や ffmpeg の RTMP / SRT を live-ingest bridge が MoQT に変換した配信や、ブラウザから配信した MP4
+            を、画質を切り替えながら低遅延で視聴します。受信している group や再生バッファもその場で確かめられます。
           </p>
         </div>
       </header>
       <div id="app">
-        <details class="card setup-toggle full">
+        <details class="card setup-toggle">
           <summary>
             <h2>配信の開始方法</h2>
             <span class="hint">視聴する前に、別ターミナルで配信を開始します。</span>
@@ -216,189 +216,205 @@ make chrome</code></pre>
             </details>
           </div>
         </details>
-        <div class="control-grid subscriber-grid">
-          <section class="card stack full">
-            <h2>Stream</h2>
-            <div id="urlPresets"></div>
-            <input type="url" id="url" aria-label="Relay URL" data-testid="live-viewer-url-input" />
-            <label for="namespace"
-              >Track Namespace:
-              <input type="text" id="namespace" value="anon/live/test" data-testid="live-viewer-namespace-input" />
-            </label>
-            <p class="hint">RTMP は <code>app/stream</code>、SRT は stream ID がそのまま namespace になります。</p>
-            <div class="button-row">
-              <button type="button" id="watchBtn" data-testid="live-viewer-watch-button">Watch</button>
-              <button type="button" id="stopBtn" data-testid="live-viewer-stop-button">Stop</button>
-            </div>
-            <span
-              id="connection-status"
-              class="status-dot"
-              data-state="idle"
-              data-testid="live-viewer-connection-status"
-              >Not connected</span
-            >
-          </section>
-
-          <section class="card stack full">
-            <h2>MP4 Publish</h2>
-            <div class="field-row publish-row">
-              <label for="mp4-file"
-                >MP4 file
-                <input type="file" id="mp4-file" accept="video/mp4,.mp4" data-testid="live-viewer-mp4-file-input" />
-              </label>
-              <label for="mp4-loop" class="publish-loop"
-                ><input type="checkbox" id="mp4-loop" checked data-testid="live-viewer-mp4-loop-input" />Loop</label
-              >
-              <div class="button-row">
-                <button type="button" id="publishBtn" data-testid="live-viewer-publish-button">Publish</button>
-                <button type="button" id="stopPublishBtn" data-testid="live-viewer-stop-publish-button">Stop</button>
-              </div>
-            </div>
-            <span id="publish-status" class="status-dot" data-state="idle" data-testid="live-viewer-publish-status"
-              >Publish idle</span
-            >
-            <p class="hint">
-              H.264 と AAC / MP3 の MP4 を、上の Relay URL と namespace へブラウザから配信します。配信中に Watch
-              を押すと視聴できます。
-            </p>
-            <div id="publish-live" class="publish-live" style="display: none">
-              <div class="publish-preview">
-                <canvas id="publish-preview" data-testid="live-viewer-publish-preview"></canvas>
-                <span id="publish-latency" data-testid="live-viewer-publish-latency">-</span>
-              </div>
-              <div class="publish-streams" data-testid="live-viewer-publish-streams">
-                <div class="card-title-row">
-                  <h3>Publish Streams</h3>
-                  <span id="publish-stream-stats" class="stream-meta" data-testid="live-viewer-publish-stream-stats"
-                    >-</span
-                  >
+        <div class="workspace">
+          <div class="workspace-main">
+            <section class="card stack">
+              <div class="card-title-row">
+                <h2>Playback</h2>
+                <div class="playback-meta">
+                  <span id="video-stats" data-testid="live-viewer-video-stats">-</span>
                 </div>
-                <svg
-                  id="publish-stream-monitor"
-                  class="stream-monitor"
-                  role="img"
-                  aria-label="Subgroup streams the MP4 publisher sends per track"
-                  data-testid="live-viewer-publish-stream-monitor"
-                ></svg>
               </div>
-            </div>
-          </section>
-
-          <section class="card stack full">
-            <div class="card-title-row">
-              <h2>Playback</h2>
-              <div class="playback-meta">
-                <span id="video-stats" data-testid="live-viewer-video-stats">-</span>
+              <div class="viewer-status">
+                <span
+                  id="playback-status"
+                  class="status-dot"
+                  data-state="idle"
+                  data-testid="live-viewer-playback-status"
+                  >Playback idle</span
+                >
+                <span id="rewind-status" class="status-dot" data-state="ok" data-testid="live-viewer-rewind-status"
+                  >Live</span
+                >
+                <span id="catalog-status" class="status-dot" data-state="idle" data-testid="live-viewer-catalog-status"
+                  >Catalog not loaded yet</span
+                >
               </div>
-            </div>
-            <div class="viewer-status">
-              <span id="playback-status" class="status-dot" data-state="idle" data-testid="live-viewer-playback-status"
-                >Playback idle</span
-              >
-              <span id="rewind-status" class="status-dot" data-state="ok" data-testid="live-viewer-rewind-status"
-                >Live</span
-              >
-              <span id="catalog-status" class="status-dot" data-state="idle" data-testid="live-viewer-catalog-status"
-                >Catalog not loaded yet</span
-              >
-            </div>
-            <div class="media-grid">
-              <div class="playback-panel">
-                <div id="stage" class="viewer-stage">
-                  <div id="delivery-overlay" class="viewer-delivery" data-testid="live-viewer-delivery-overlay">
-                    <svg
-                      id="delivery-grid"
-                      class="viewer-delivery-grid"
-                      role="img"
-                      aria-label="Received objects from the playing frame onward"
-                      data-testid="live-viewer-delivery-grid"
-                    ></svg>
-                    <svg
-                      id="delivery-grid-review"
-                      class="viewer-delivery-grid viewer-delivery-grid-review"
-                      role="img"
-                      aria-label="Received objects of the reviewed FETCH from the playing frame onward"
-                      style="display: none"
-                      data-testid="live-viewer-delivery-grid-review"
-                    ></svg>
+              <div class="media-grid">
+                <div class="playback-panel">
+                  <div id="stage" class="viewer-stage">
+                    <div id="delivery-overlay" class="viewer-delivery" data-testid="live-viewer-delivery-overlay">
+                      <svg
+                        id="delivery-grid"
+                        class="viewer-delivery-grid"
+                        role="img"
+                        aria-label="Received objects from the playing frame onward"
+                        data-testid="live-viewer-delivery-grid"
+                      ></svg>
+                      <svg
+                        id="delivery-grid-review"
+                        class="viewer-delivery-grid viewer-delivery-grid-review"
+                        role="img"
+                        aria-label="Received objects of the reviewed FETCH from the playing frame onward"
+                        style="display: none"
+                        data-testid="live-viewer-delivery-grid-review"
+                      ></svg>
+                    </div>
+                    <button
+                      type="button"
+                      id="deliveryToggleBtn"
+                      class="viewer-button viewer-delivery-toggle"
+                      aria-pressed="true"
+                      aria-label="Toggle delivery grid"
+                      title="受信状況の表示 / 非表示"
+                      data-testid="live-viewer-delivery-toggle-button"
+                    >
+                      &#x25A6;
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    id="deliveryToggleBtn"
-                    class="viewer-button viewer-delivery-toggle"
-                    aria-pressed="true"
-                    aria-label="Toggle delivery grid"
-                    title="受信状況の表示 / 非表示"
-                    data-testid="live-viewer-delivery-toggle-button"
-                  >
-                    &#x25A6;
-                  </button>
-                </div>
-                <div class="subscribe-streams">
-                  <div class="card-title-row">
-                    <h3>Subscribe Streams</h3>
-                    <span id="stream-stats" class="stream-meta" data-testid="live-viewer-stream-stats">-</span>
-                  </div>
-                  <div class="stream-graph">
-                    <div class="stream-controls">
-                      <label for="stream-window"
-                        >Window (s)
-                        <input
-                          id="stream-window"
-                          type="number"
-                          min="1"
-                          max="120"
-                          value="10"
-                          data-testid="live-viewer-stream-window-input"
-                        />
-                      </label>
-                      <label for="stream-gops"
-                        >GOPs
-                        <input
-                          id="stream-gops"
-                          type="number"
-                          min="1"
-                          max="30"
-                          value="5"
-                          data-testid="live-viewer-stream-gops-input"
-                        />
-                      </label>
+                  <div class="subscribe-streams">
+                    <div class="card-title-row">
+                      <h3>Subscribe Streams</h3>
+                      <span id="stream-stats" class="stream-meta" data-testid="live-viewer-stream-stats">-</span>
+                    </div>
+                    <div class="stream-graph">
+                      <div class="stream-controls">
+                        <label for="stream-window"
+                          >Window (s)
+                          <input
+                            id="stream-window"
+                            type="number"
+                            min="1"
+                            max="120"
+                            value="10"
+                            data-testid="live-viewer-stream-window-input"
+                          />
+                        </label>
+                        <label for="stream-gops"
+                          >GOPs
+                          <input
+                            id="stream-gops"
+                            type="number"
+                            min="1"
+                            max="30"
+                            value="5"
+                            data-testid="live-viewer-stream-gops-input"
+                          />
+                        </label>
+                      </div>
+                      <svg
+                        id="stream-monitor"
+                        class="stream-monitor"
+                        role="img"
+                        aria-label="Subgroup streams per track"
+                        data-testid="live-viewer-stream-monitor"
+                      ></svg>
                     </div>
                     <svg
-                      id="stream-monitor"
-                      class="stream-monitor"
+                      id="stream-monitor-review"
+                      class="stream-monitor stream-monitor-review"
                       role="img"
-                      aria-label="Subgroup streams per track"
-                      data-testid="live-viewer-stream-monitor"
+                      aria-label="FETCH streams of the review, on their own time axis"
+                      style="display: none"
+                      data-testid="live-viewer-stream-monitor-review"
                     ></svg>
+                    <p class="hint">
+                      track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
+                    </p>
                   </div>
-                  <svg
-                    id="stream-monitor-review"
-                    class="stream-monitor stream-monitor-review"
-                    role="img"
-                    aria-label="FETCH streams of the review, on their own time axis"
-                    style="display: none"
-                    data-testid="live-viewer-stream-monitor-review"
-                  ></svg>
-                  <p class="hint">
-                    track ごとに直近 N 個の group(subgroup stream)を横棒で示します。右端が開いている棒は受信中です
+                  <p class="hint" id="seek-hint">
+                    配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
+                    映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑
+                    が 5 秒）。&#x26F6; で全画面になります。
+                    <code>--transcode</code> で live-ingest を起動すると画質が自動で切り替わり、歯車で固定できます。
                   </p>
                 </div>
-                <p class="hint" id="seek-hint">
-                  配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
-                  映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が
-                  5 秒）。&#x26F6; で全画面になります。
-                  <code>--transcode</code> で live-ingest を起動すると画質が自動で切り替わり、歯車で固定できます。
-                </p>
               </div>
-            </div>
-            <div id="playback-charts" class="playback-charts" data-testid="live-viewer-playback-charts"></div>
-          </section>
+              <div id="playback-charts" class="playback-charts" data-testid="live-viewer-playback-charts"></div>
+            </section>
 
-          <section class="card stack full">
-            <h2>Console</h2>
-            <div id="logPanel" data-testid="live-viewer-log-panel"></div>
-          </section>
+            <section class="card">
+              <div class="card-head">
+                <h2>Console</h2>
+                <span class="hint">info / warn / error を表示します</span>
+              </div>
+              <div id="logPanel" data-testid="live-viewer-log-panel"></div>
+            </section>
+          </div>
+          <aside class="workspace-side">
+            <section class="card stack">
+              <div class="card-head">
+                <h2>Stream</h2>
+                <span class="hint">視聴する Relay と namespace</span>
+              </div>
+              <div id="urlPresets"></div>
+              <input type="url" id="url" aria-label="Relay URL" data-testid="live-viewer-url-input" />
+              <label for="namespace"
+                >Track Namespace
+                <input type="text" id="namespace" value="anon/live/test" data-testid="live-viewer-namespace-input" />
+              </label>
+              <p class="hint">RTMP は <code>app/stream</code>、SRT は stream ID がそのまま namespace になります。</p>
+              <div class="button-row">
+                <button type="button" id="watchBtn" data-testid="live-viewer-watch-button">Watch</button>
+                <button type="button" id="stopBtn" data-testid="live-viewer-stop-button">Stop</button>
+              </div>
+              <span
+                id="connection-status"
+                class="status-dot"
+                data-state="idle"
+                data-testid="live-viewer-connection-status"
+                >Not connected</span
+              >
+            </section>
+
+            <section class="card stack">
+              <div class="card-head">
+                <h2>MP4 Publish</h2>
+                <span class="hint">ブラウザから配信</span>
+              </div>
+              <p class="hint">
+                H.264 と AAC / MP3 の MP4 を、Stream の Relay URL と namespace へ配信します。配信中に Watch
+                を押すと視聴できます。
+              </p>
+              <div class="field-row publish-row">
+                <label for="mp4-file"
+                  >MP4 file
+                  <input type="file" id="mp4-file" accept="video/mp4,.mp4" data-testid="live-viewer-mp4-file-input" />
+                </label>
+                <label for="mp4-loop" class="publish-loop"
+                  ><input type="checkbox" id="mp4-loop" checked data-testid="live-viewer-mp4-loop-input" />Loop</label
+                >
+                <div class="button-row">
+                  <button type="button" id="publishBtn" data-testid="live-viewer-publish-button">Publish</button>
+                  <button type="button" id="stopPublishBtn" data-testid="live-viewer-stop-publish-button">Stop</button>
+                </div>
+              </div>
+              <span id="publish-status" class="status-dot" data-state="idle" data-testid="live-viewer-publish-status"
+                >Publish idle</span
+              >
+              <div id="publish-live" class="publish-live" style="display: none">
+                <div class="publish-preview">
+                  <canvas id="publish-preview" data-testid="live-viewer-publish-preview"></canvas>
+                  <span id="publish-latency" data-testid="live-viewer-publish-latency">-</span>
+                </div>
+                <div class="publish-streams" data-testid="live-viewer-publish-streams">
+                  <div class="card-title-row">
+                    <h3>Publish Streams</h3>
+                    <span id="publish-stream-stats" class="stream-meta" data-testid="live-viewer-publish-stream-stats"
+                      >-</span
+                    >
+                  </div>
+                  <svg
+                    id="publish-stream-monitor"
+                    class="stream-monitor"
+                    role="img"
+                    aria-label="Subgroup streams the MP4 publisher sends per track"
+                    data-testid="live-viewer-publish-stream-monitor"
+                  ></svg>
+                </div>
+              </div>
+            </section>
+          </aside>
         </div>
       </div>
     </div>

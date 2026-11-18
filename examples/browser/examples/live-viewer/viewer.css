@@ -1,17 +1,18 @@
 .stream-monitor {
   display: block;
   width: 100%;
-  background: #f4f6f8;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
 }
 
 .stream-label {
   font-size: 12px;
-  fill: #4b5563;
+  fill: var(--text-muted);
 }
 
 .stream-baseline {
-  stroke: #d1d5db;
+  stroke: var(--border-strong);
   stroke-width: 1;
 }
 
@@ -35,13 +36,13 @@
 }
 
 .stream-tick {
-  stroke: #e5e7eb;
+  stroke: var(--border);
   stroke-width: 1;
 }
 
 .stream-axis {
   font-size: 11px;
-  fill: #6b7280;
+  fill: var(--text-subtle);
 }
 
 .stream-playhead {
@@ -135,11 +136,10 @@
   flex: 0 0 auto;
 }
 
+/* The publish card sits in the narrow side column, so its preview stacks above its streams. */
 .publish-live {
   display: grid;
-  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
+  gap: 12px;
 }
 
 .publish-preview {
@@ -152,15 +152,16 @@
   width: 100%;
   aspect-ratio: 16 / 9;
   object-fit: contain;
-  border-radius: 8px;
-  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #05070a;
 }
 
 .publish-preview span,
 .publish-streams .stream-meta {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.85rem;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .publish-streams,
@@ -192,7 +193,7 @@
   gap: 4px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .stream-controls label input[type='number'] {
@@ -214,8 +215,8 @@
   --series-2: #eb6834;
   --series-3: #1baf7a;
   --series-4: #eda100;
-  --chart-surface: #ffffff;
-  --chart-grid: #e3ebe8;
+  --chart-surface: var(--surface-sunken);
+  --chart-grid: var(--border);
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
@@ -225,7 +226,7 @@
   margin: 0;
   padding: 10px 12px 6px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--chart-surface);
 }
 
@@ -242,11 +243,11 @@
 }
 
 .playback-chart-title {
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .playback-chart-value {
-  color: var(--ink);
+  color: var(--text);
   font-family: var(--font-mono);
   font-weight: 600;
 }
@@ -255,7 +256,7 @@
   display: flex;
   gap: 10px;
   margin-left: auto;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
 .playback-chart-legend span {
@@ -276,7 +277,7 @@
 }
 
 .playback-chart-tick {
-  fill: var(--muted);
+  fill: var(--text-muted);
   font-size: 10px;
   font-family: var(--font-mono);
   text-anchor: end;
@@ -296,7 +297,7 @@
 }
 
 .playback-chart-label {
-  fill: var(--muted);
+  fill: var(--text-muted);
   font-size: 11px;
 }
 
@@ -306,17 +307,111 @@
 }
 
 .playback-chart-crosshair {
-  stroke: var(--muted);
+  stroke: var(--text-muted);
   stroke-width: 1;
 }
 
 .playback-chart-tooltip {
-  fill: var(--ink);
+  fill: var(--text);
   opacity: 0.9;
 }
 
 .playback-chart-tooltip-text {
-  fill: #ffffff;
+  fill: var(--bg);
   font-size: 11px;
   font-family: var(--font-mono);
+}
+
+/* The side column holds the publish preview too, so it can be taller than the window: let it scroll
+   with the page. */
+.workspace-side {
+  position: static;
+}
+
+.viewer-status {
+  padding: 2px 0;
+}
+
+/* Before Watch the stage keeps the shape of the video it will show. */
+.viewer-stage {
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
+}
+
+.viewer-stage > .live-player-picture {
+  border: 0;
+  border-radius: 0;
+}
+
+/* Nothing plays until a picture has a source: a video with src, or the shown canvas. */
+.viewer-stage:not(:has(video[src], canvas.live-player-picture:not([hidden]))) {
+  aspect-ratio: 16 / 9;
+}
+
+.viewer-stage:not(:has(video[src], canvas.live-player-picture:not([hidden]))) > video.live-player-picture {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  opacity: 0;
+}
+
+.viewer-stage:not(:has(video[src], canvas.live-player-picture:not([hidden])))::before {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #6b7684;
+  content: 'Watch を押すと再生が始まります';
+  font-size: 0.875rem;
+}
+
+.publish-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.publish-row > label:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.publish-row input[type='file'] {
+  width: 100%;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+.publish-row input[type='file']::file-selector-button {
+  margin-right: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.publish-row input[type='file']::file-selector-button:hover {
+  background: var(--surface-hover);
+}
+
+.publish-row > label {
+  flex: none;
+}
+
+.publish-row > .publish-loop {
+  font-weight: 500;
+}
+
+/* The playback card already frames the stage, so the panel inside it does not frame it again. */
+.playback-panel {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
 }

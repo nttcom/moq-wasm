@@ -89,7 +89,7 @@ function updateStatus(id: 'status' | 'command-state', label: string, ok: boolean
   pill.innerHTML = `<span></span>${label}`
   const dot = pill.querySelector('span')
   if (dot instanceof HTMLElement) {
-    dot.style.background = ok ? '#2ec4b6' : '#ff9f1c'
+    dot.style.background = ok ? 'var(--success)' : 'var(--warning)'
   }
 }
 

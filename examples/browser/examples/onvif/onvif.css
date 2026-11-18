@@ -1,0 +1,418 @@
+/* The Onvif example's own parts; the shared ones come from utils/components.css. */
+
+[hidden] {
+  display: none !important;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.card-header h2 {
+  margin: 0 0 2px;
+}
+
+.card > .card-header {
+  margin-bottom: 16px;
+}
+
+.stack {
+  height: auto;
+}
+
+.stack > .card-header {
+  margin-bottom: 0;
+}
+
+/* ---------- Connect ---------- */
+
+.connect-card {
+  max-width: 560px;
+  margin: 24px auto 0;
+  padding: 24px;
+  box-shadow: var(--shadow-lg);
+}
+
+.connect-card #connect-btn {
+  width: 100%;
+  min-height: 42px;
+}
+
+.connect-error {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.8125rem;
+}
+
+.icon-btn {
+  width: var(--control-height);
+  padding: 0;
+  font-size: 1.05rem;
+}
+
+/* ---------- Live view ---------- */
+
+.live-view {
+  display: grid;
+  gap: 16px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  align-items: start;
+  gap: 16px;
+}
+
+.live-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.status span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+}
+
+.video-card #stage {
+  overflow: hidden;
+  margin-bottom: 10px;
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
+}
+
+.video-card #stage > .live-player-picture {
+  border: 0;
+  border-radius: 0;
+}
+
+/* Until a picture has a source the stage keeps the shape of the video it will show. */
+.video-card #stage:not(:has(video[src], canvas.live-player-picture:not([hidden]))) {
+  aspect-ratio: 16 / 9;
+}
+
+.video-card #stage:not(:has(video[src], canvas.live-player-picture:not([hidden]))) > video.live-player-picture {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  opacity: 0;
+}
+
+.video-card #stage:not(:has(video[src], canvas.live-player-picture:not([hidden])))::before {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #6b7684;
+  content: 'カメラの映像を待っています';
+  font-size: 0.875rem;
+}
+
+.video-card #video-stats {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+/* ---------- PTZ ---------- */
+
+.segmented-wide {
+  display: flex;
+}
+
+.segmented-wide button {
+  flex: 1;
+}
+
+.ptz-controls {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.ptz-controls:disabled {
+  opacity: 0.45;
+}
+
+.pad {
+  display: grid;
+  grid-template-columns: repeat(3, 64px);
+  grid-template-rows: repeat(3, 64px);
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 0 4px;
+}
+
+.pad-up,
+.pad-down {
+  grid-column: 2;
+}
+
+.pad-left {
+  grid-column: 1;
+}
+
+.pad-hint {
+  text-align: center;
+}
+
+button.pad-btn {
+  height: 100%;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
+  font-size: 1.1rem;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button.pad-btn:hover {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
+}
+
+button.pad-btn:active {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: var(--focus-ring);
+  color: var(--on-accent);
+  transform: none;
+}
+
+button.pad-home {
+  border-radius: 50%;
+  font-size: 1.3rem;
+}
+
+.commands {
+  display: grid;
+  gap: 10px;
+}
+
+.command {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.command-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.command-title {
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.command-header button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 0.8125rem;
+}
+
+.command-inputs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.command-inputs label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.command-inputs input {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 8px;
+}
+
+/* ---------- Setup guide ---------- */
+
+.setup-toggle summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.setup-toggle summary::-webkit-details-marker {
+  display: none;
+}
+
+.setup-toggle summary::before {
+  color: var(--accent);
+  content: '\25B8';
+  transition: transform 0.15s;
+}
+
+.setup-toggle[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.setup-toggle summary h2 {
+  margin: 0;
+}
+
+.setup-toggle[open] summary {
+  margin-bottom: 16px;
+}
+
+.setup-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* Subgrid rows keep the heading, the note and the commands level across the
+   two relays even when one note wraps to a second line. */
+.setup-panel {
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.setup-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.setup-panel :not(pre) > code.setup-relay-url {
+  padding: 2px 10px;
+  border-color: var(--accent-border);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
+.setup-panel pre {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Settings dialog ---------- */
+
+.modal {
+  width: min(560px, calc(100% - 32px));
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.modal::backdrop {
+  background: rgba(5, 7, 10, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  display: grid;
+  gap: 16px;
+  max-height: 85vh;
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-header h2 {
+  margin: 0 0 2px;
+}
+
+.modal-content > label {
+  display: grid;
+  gap: 6px;
+}
+
+.modal-content > label input {
+  max-width: none;
+}
+
+@media (max-width: 560px) {
+  .live-actions {
+    width: 100%;
+  }
+
+  .live-actions .status {
+    margin-right: auto;
+  }
+}
+
+@media (max-width: 960px) {
+  .layout,
+  .setup-split {
+    grid-template-columns: 1fr;
+  }
+}
