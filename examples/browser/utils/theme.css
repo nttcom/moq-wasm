@@ -515,3 +515,69 @@ body:not(:has(> .app-shell))::before {
     max-width: none;
   }
 }
+
+/* ---------- Icons and tips ---------- */
+
+/* An icon from public/icons.svg: `<svg class="icon"><use href="/icons.svg#icon-play" /></svg>`, or
+   icon() from utils/icon.ts in script. It takes the text color and the text's size. */
+.icon {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  fill: none;
+  stroke: currentColor;
+  vertical-align: -0.2em;
+}
+
+/* An explanation kept out of the page until asked for: an ⓘ that shows `data-tip` on hover or focus.
+   `<span class="tip" tabindex="0" role="img" aria-label="…" data-tip="…">` with an info icon inside. */
+.tip {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--text-subtle);
+  cursor: help;
+  vertical-align: middle;
+}
+
+.tip:hover,
+.tip:focus-visible {
+  color: var(--text);
+}
+
+.tip:hover::after,
+.tip:focus::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 60;
+  width: max-content;
+  max-width: min(20rem, 80vw);
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  content: attr(data-tip);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.6;
+  text-align: left;
+  text-transform: none;
+  transform: translateX(-50%);
+  white-space: pre-line;
+}
+
+/* A tip at the right end of a row opens leftward, so it stays on screen. */
+.tip.end:hover::after,
+.tip.end:focus::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
