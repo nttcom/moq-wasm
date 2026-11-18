@@ -1,10 +1,10 @@
 # moq-bot-rooms
 
-MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通で使う HTTP サーバーです。
+ブラウザのデモから Python bot をルーム単位で起動する共通 HTTP サーバーです。
 ページが `GET /rooms/{room}` のイベントストリームを開いている間だけ、そのルームの bot を relay につなぎます。
 設計は [AI demo bots started per room, on demand](../../../docs/architecture/ai-bots/on-demand-rooms.md) にあります。
 
-- 同じルームを開いたページは 1 つの bot を共有します。最後のページが離れてから 30 秒たつと bot を止めます。
+- 同じルームを開いたページは 1 つの bot を共有します。最後のページとの接続が切れてから 30 秒たつと bot を止めます。音声エージェントと Meeting の書き起こし bot は、参加者のいない状態が 30 秒続いたときにも退出します。
 - `POST /rooms/{room}/leave?member={ID}` はそのページの保持をすぐ外し、`POST /rooms/{room}/stop?member={ID}` はルームの bot を全ページについて止めます。`{ID}` はストリームの最初の `member` イベントで届きます。
 - ルーム ID は既定で `[a-z0-9-]` の 1〜32 文字で、namespace の 1 要素になります。
 - 一時アプリのページは要求に `Authorization: Bearer <トークン>` を付けます。サーバーはトークンを `temporary-apps` で更新し、その `appId` をルームの namespace root にします。トークンのない要求は `anon` のルームです。

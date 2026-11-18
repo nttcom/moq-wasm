@@ -40,16 +40,13 @@ curl -N "http://127.0.0.1:8100/rooms/<ルーム名>"   # 開いている間、bo
 ```
 
 - bot は `http://127.0.0.1:8100` で待ち受けます。初回はモデルをダウンロードし、`moq-wasm` のビルドに Rust のツールチェーンが要ります。
-- リクエストが閉じてから、または参加者が全員いなくなってから 30 秒たつと、bot はルームを抜けます。
 
 ## オプション
 
-[moq-bot-rooms](../moq-bot-rooms/README.md) のオプションに加えて次があります。
+接続先・TLS・退出条件は [moq-bot-rooms](../moq-bot-rooms/README.md) を参照してください。
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
-| `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
-| `--insecure` | なし | relay の証明書を検証しない |
 | `--model` | `small` | `whisper` で使う faster-whisper のモデル |
 | `--asr NAME=URL` | なし | OpenAI 互換の API を持つ音声認識サービス。ページは `?asr=NAME` で選ぶ。複数指定できる |
 | `--gcloud-auth` / `--metadata-auth` | なし | `--asr` のサービスに ID トークンを付ける。手元では `gcloud`、Cloud Run ではメタデータサーバーから取る |

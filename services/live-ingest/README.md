@@ -6,10 +6,16 @@ Design: [architecture](../../docs/architecture/live-ingest/architecture.md).
 
 ## Run
 
+Run each command in a separate terminal from the workspace root:
+
 ```shell
 make relay
 make live-ingest
+make ffmpeg-srt
 ```
+
+In [Live Viewer](../../examples/browser/examples/live-viewer/README.md), select the local relay,
+enter `anon/live/test` and press **Watch** to see the test pattern.
 
 | Input | Listens on | Namespace |
 | --- | --- | --- |
@@ -28,14 +34,12 @@ Tokenless publishers may only use `anon/**`.
 
 ## Send a test stream
 
-All of these publish `anon/live/test`; watch it with the
-[Live Viewer](../../examples/browser/examples/live-viewer/README.md).
+These sources publish to `anon/live/test`.
 
 | Command | Source |
 | --- | --- |
 | `make ffmpeg-rtmp` | Test pattern and 1 kHz tone over RTMP |
-| `make ffmpeg-srt` | The same over SRT |
-| `make ffmpeg-rtp` | The same over RTP; writes `assets/rtp.sdp`, so start it before `make live-ingest-rtp` |
+| `make ffmpeg-rtp` | Test pattern and tone over RTP; writes `assets/rtp.sdp`, so start it before `make live-ingest-rtp` |
 | `make ffmpeg-srt-bbb-local` | Big Buck Bunny, looped, to `localhost:9000` |
 | `make ffmpeg-srt-bbb-remote` | Big Buck Bunny to `relay-1.moqt.research.skyway.io:9000`; no local bridge or relay needed |
 
@@ -53,18 +57,4 @@ first use. Big Buck Bunny is (c) 2008 Blender Foundation | www.bigbuckbunny.org,
   sample as it enters the publisher and as it is sent to the relay; the Live
   Viewer's delivery check reads this log.
 
-## CLI
-
-```shell
-cargo run -p live-ingest -- \
-  --rtmp-addr 0.0.0.0:1935 \
-  --srt-addr 0.0.0.0:9000 \
-  [--rtp-sdp assets/rtp.sdp --rtp-namespace anon/live/test] \
-  --moqt-url https://127.0.0.1:4433 \
-  [--insecure-skip-tls-verify] [--transcode] [--stats]
-```
-
-`--rtp-sdp` enables RTP input from an SDP file as FFmpeg writes it with
-`-sdp_file`; H.264, AAC, Opus and G.711 A-law streams are bridged.
-`--insecure-skip-tls-verify` is for a local relay with a self-signed
-certificate only.
+For all CLI options, run `cargo run -p live-ingest -- --help`.
