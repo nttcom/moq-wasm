@@ -2,14 +2,13 @@ use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use anyhow::Context;
 use http_body_util::Full;
-use http_server::{HttpServer, empty_response, error_response, json_response};
+use http_server::{
+    HttpServer, allow_any_origin, empty_response, error_response, json_response, query_params,
+};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{
-        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        ACCESS_CONTROL_MAX_AGE, HeaderValue,
-    },
+    header::{ACCESS_CONTROL_MAX_AGE, HeaderValue},
 };
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -56,24 +55,12 @@ impl ApiServer {
 
 type JsonResponse = Response<Full<Bytes>>;
 
-fn query_params(request: &Request<Incoming>) -> HashMap<String, String> {
-    request
-        .uri()
-        .query()
-        .map(|query| {
-            reqwest::Url::parse(&format!("http://query/?{query}"))
-                .map(|url| url.query_pairs().into_owned().collect())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default()
-}
-
 async fn handle(request: Request<Incoming>, peer: IpAddr, state: Arc<ApiState>) -> JsonResponse {
-    let mut response = route(request, peer, &state).await;
-    response
-        .headers_mut()
-        .insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    response
+    allow_any_origin(
+        route(request, peer, &state).await,
+        "GET, POST",
+        "authorization",
+    )
 }
 
 async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> JsonResponse {
@@ -95,7 +82,7 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
             return error_response(status, code);
         }
     };
-    let params = query_params(&request);
+    let params = query_params(request.uri().query());
     let response = match request.uri().path() {
         "/api/snapshots" => snapshots(state, &params, &app_id).await,
         "/api/series" => series(state, &params, app_id).await,
@@ -111,16 +98,9 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
 /// A page sends its token in `Authorization`, which needs a CORS preflight.
 fn preflight() -> JsonResponse {
     let mut response = empty_response(StatusCode::NO_CONTENT);
-    let headers = response.headers_mut();
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST"),
-    );
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("authorization"),
-    );
-    headers.insert(ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
+    response
+        .headers_mut()
+        .insert(ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("600"));
     response
 }
 

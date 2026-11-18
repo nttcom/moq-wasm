@@ -1115,8 +1115,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "http-body-util",
+ "http-server",
  "hyper",
- "hyper-util",
  "reqwest",
  "serde",
  "tokio",
@@ -1335,6 +1335,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

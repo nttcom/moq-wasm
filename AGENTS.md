@@ -40,9 +40,9 @@ Application and integration components (draft reference is normally not required
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
 | `crates/job-launcher` | Starts a job without waiting for it: a child process locally or a Cloud Run Job execution with overridden arguments, used by `recorder` and `bots` |
-| `crates/http-server` | The HTTP/1 accept loop and JSON response helpers shared by the services' HTTP servers (`console`, `vts`, `temporary-apps`, `bots`, `observability`, `live-translate`, `recorder`) |
+| `crates/http-server` | The HTTP/1 accept loop and the JSON, bearer token, query string and any-origin CORS helpers shared by the services' HTTP servers (`console`, `vts`, `temporary-apps`, `bots`, `observability`, `live-translate`, `recorder`) |
 | `crates/telemetry` | Shared `tracing` setup (stdout and OTLP traces and logs) and the relay snapshot format in `relay_stats` |
-| `crates/google-cloud` | The Google Cloud calls the services make as the workload's service account: its access token from the metadata server, cached until it expires, and the Cloud Storage requests conditional on an object's generation; used by `app-registry`, `recorder` and `live-translate` |
+| `crates/google-cloud` | The Google Cloud calls the services make as the workload's service account: its access token from the metadata server, cached until it expires, its ID token, and the Cloud Storage requests conditional on an object's generation; used by `app-registry`, `recorder`, `job-launcher`, `bots` and `live-translate` |
 | `crates/telemetry-otlp` | Shared `tracing` setup for the workspace binaries: stdout and OTLP traces, logs and metrics, and W3C trace context |
 | `crates/telemetry-report` | `telemetry`'s client log and span records built from `tracing`, for the clients without an OpenTelemetry SDK: the wasm module, the Python module and `moq-cli` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |

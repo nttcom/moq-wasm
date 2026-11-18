@@ -5,14 +5,14 @@ use std::{
 };
 
 use http_body_util::Full;
-use http_server::{HttpServer, empty_response, error_response, json_response, read_json};
+use http_server::{
+    HttpServer, allow_any_origin, bearer_token, empty_response, error_response, json_response,
+    read_json,
+};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{
-        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        AUTHORIZATION, CONTENT_TYPE, HeaderValue,
-    },
+    header::{CONTENT_TYPE, HeaderValue},
     http::request::Parts,
 };
 use serde::Deserialize;
@@ -97,7 +97,7 @@ async fn handle(
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
-    with_cors(response)
+    allow_any_origin(response, "GET, POST, DELETE", "content-type, authorization")
 }
 
 fn issue(state: &ServerState, client: IpAddr) -> JsonResponse {
@@ -152,11 +152,7 @@ async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incomin
     if !proxy.allows(bot_type) {
         return error_response(StatusCode::NOT_FOUND, "not_found");
     }
-    let page_token = head
-        .headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "));
+    let page_token = bearer_token(&head.headers);
     let app_id = match page_token.map(|token| state.issuer.verify(token, unix_now())) {
         Some(Ok(app_id)) => app_id,
         Some(Err(RefreshError::Internal(error))) => return internal_error(&error),
@@ -235,20 +231,6 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-fn with_cors(mut response: JsonResponse) -> JsonResponse {
-    let headers = response.headers_mut();
-    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, DELETE"),
-    );
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("content-type, authorization"),
-    );
-    response
-}
-
 fn internal_error(error: &anyhow::Error) -> JsonResponse {
     tracing::error!(
         error = format!("{error:#}"),
@@ -262,6 +244,7 @@ mod tests {
     use std::time::Duration;
 
     use auth_token::{sign_token, verify_signature};
+    use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION};
 
     use super::*;
 

@@ -6,7 +6,7 @@ use std::{
 
 use app_registry::{App, RegistryStore};
 use http_body_util::Full;
-use http_server::HttpServer;
+use http_server::{HttpServer, query_params};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -332,13 +332,8 @@ async fn recording_file(
 ) -> Result<JsonResponse, Refusal> {
     let caller = authenticate(headers, state).await?;
     let recorder = state.recorder.as_ref().ok_or(RECORDER_UNAVAILABLE)?;
-    let name = Url::parse(&format!("http://query/?{}", query.unwrap_or_default()))
-        .ok()
-        .and_then(|url| {
-            url.query_pairs()
-                .find(|(key, _)| key == "name")
-                .map(|(_, name)| name.into_owned())
-        })
+    let name = query_params(query)
+        .remove("name")
         .ok_or(Refusal(StatusCode::BAD_REQUEST, "no_name"))?;
     let token = app_read_token(&caller, app_id, state).await?;
     match recorder.file_url(&token, id, &name).await {

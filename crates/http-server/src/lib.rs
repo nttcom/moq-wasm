@@ -1,10 +1,16 @@
-use std::{convert::Infallible, error::Error, future::Future, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap, convert::Infallible, error::Error, future::Future, net::SocketAddr,
+    sync::Arc,
+};
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
-    Request, Response, StatusCode,
+    HeaderMap, Request, Response, StatusCode,
     body::{Body, Bytes, Incoming},
-    header::{CONTENT_TYPE, HeaderValue},
+    header::{
+        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+        AUTHORIZATION, CONTENT_TYPE, HeaderValue,
+    },
     server::conn::http1,
     service::service_fn,
 };
@@ -84,6 +90,44 @@ pub fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::default());
     *response.status_mut() = status;
     response
+}
+
+/// `methods` and `headers` are comma-separated lists; panics if either is not
+/// a valid header value.
+pub fn allow_any_origin<B>(
+    mut response: Response<B>,
+    methods: &'static str,
+    headers: &'static str,
+) -> Response<B> {
+    let response_headers = response.headers_mut();
+    response_headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    response_headers.insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static(methods),
+    );
+    response_headers.insert(
+        ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static(headers),
+    );
+    response
+}
+
+/// A name given twice keeps its last value.
+pub fn query_params(query: Option<&str>) -> HashMap<String, String> {
+    url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+        .into_owned()
+        .collect()
+}
+
+/// `None` when the `Authorization` header is absent, is not UTF-8, is not
+/// `Bearer`, or has an empty token.
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .filter(|token| !token.is_empty())
 }
 
 pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
@@ -173,6 +217,69 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(response.headers().is_empty());
         assert_eq!(body_of(response).await, "");
+    }
+
+    #[test]
+    fn any_origin_is_allowed_the_given_methods_and_headers() {
+        // Act
+        let response = allow_any_origin(
+            empty_response(StatusCode::NO_CONTENT),
+            "GET, POST",
+            "authorization",
+        );
+
+        // Assert
+        let headers = response.headers();
+        assert_eq!(headers[ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(headers[ACCESS_CONTROL_ALLOW_METHODS], "GET, POST");
+        assert_eq!(headers[ACCESS_CONTROL_ALLOW_HEADERS], "authorization");
+    }
+
+    #[test]
+    fn query_params_are_decoded() {
+        // Act
+        let params = query_params(Some("name=a%2Fb+c&empty=&name=last"));
+
+        // Assert
+        assert_eq!(
+            params,
+            HashMap::from([
+                ("name".to_string(), "last".to_string()),
+                ("empty".to_string(), String::new()),
+            ])
+        );
+    }
+
+    #[test]
+    fn no_query_has_no_params() {
+        // Act / Assert
+        assert!(query_params(None).is_empty());
+    }
+
+    fn authorization(value: &str) -> HeaderMap {
+        HeaderMap::from_iter([(AUTHORIZATION, HeaderValue::from_str(value).unwrap())])
+    }
+
+    #[test]
+    fn a_bearer_token_is_read_from_the_authorization_header() {
+        // Act / Assert
+        assert_eq!(bearer_token(&authorization("Bearer jwt")), Some("jwt"));
+    }
+
+    #[test]
+    fn an_absent_empty_or_other_scheme_authorization_has_no_bearer_token() {
+        // Arrange
+        let headers = [
+            HeaderMap::new(),
+            authorization("Bearer "),
+            authorization("Basic dXNlcg=="),
+        ];
+
+        // Act
+        let tokens: Vec<_> = headers.iter().map(bearer_token).collect();
+
+        // Assert
+        assert_eq!(tokens, [None, None, None]);
     }
 
     #[tokio::test]
