@@ -65,7 +65,7 @@ export function PictureFrame({ element, shown, placeholder }: PictureFrameProps)
     <div className="relative h-full w-full overflow-hidden bg-black">
       <div ref={frameRef} className="h-full w-full" />
       {!shown && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-zinc-800 text-sm text-zinc-300">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-neutral-900 text-sm text-neutral-400">
           {placeholder}
         </div>
       )}

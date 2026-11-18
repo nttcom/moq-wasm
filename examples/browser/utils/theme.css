@@ -1,0 +1,568 @@
+/* The design tokens and base elements every page of the playground shares. The temporary mode
+   (the default) is dark and the public mode light, so a reader always sees which app a page uses:
+   utils/access.ts sets data-access-mode on <html>. */
+
+:root {
+  color-scheme: dark;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --bg: #0f1318;
+  --bg-subtle: #13181e;
+  --surface: #181e25;
+  --surface-raised: #1e252e;
+  --surface-sunken: #0c1014;
+  --surface-hover: #252d37;
+  --border: #2a323c;
+  --border-strong: #3a4451;
+  --text: #e8ecf1;
+  --text-muted: #9aa5b1;
+  --text-subtle: #7b8695;
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: rgba(45, 212, 191, 0.12);
+  --accent-border: rgba(45, 212, 191, 0.4);
+  --on-accent: #04201c;
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.12);
+  --focus-ring: 0 0 0 3px rgba(45, 212, 191, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 10px 28px -12px rgba(0, 0, 0, 0.75);
+  --shadow-lg: 0 24px 48px -20px rgba(0, 0, 0, 0.8);
+  --glow: radial-gradient(60rem 28rem at 15% -10%, rgba(45, 212, 191, 0.09), transparent 65%);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --control-height: 36px;
+  /* The app shell's height, its bottom border included. */
+  --shell-height: 57px;
+  --content-width: 1200px;
+
+  /* Read by utils/relayPicker.css. */
+  --relay-picker-accent: var(--accent);
+}
+
+:root[data-access-mode='public'] {
+  color-scheme: light;
+  --bg: #f6f8f8;
+  --bg-subtle: #eef3f2;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f5f4;
+  --surface-hover: #f3f7f6;
+  --border: #e0e7e5;
+  --border-strong: #c9d4d1;
+  --text: #0f1f1e;
+  --text-muted: #55666a;
+  --text-subtle: #62706d;
+  --accent: #0f766e;
+  --accent-hover: #0b5f58;
+  --accent-soft: rgba(15, 118, 110, 0.08);
+  --accent-border: rgba(15, 118, 110, 0.35);
+  --on-accent: #ffffff;
+  --danger: #b91c1c;
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --warning: #b45309;
+  --warning-soft: rgba(180, 83, 9, 0.08);
+  --success: #15803d;
+  --success-soft: rgba(21, 128, 61, 0.08);
+  --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.22);
+  --shadow-sm: 0 1px 2px rgba(15, 31, 30, 0.06);
+  --shadow-md: 0 8px 24px -12px rgba(15, 31, 30, 0.18);
+  --shadow-lg: 0 24px 48px -24px rgba(15, 31, 30, 0.22);
+  --glow: radial-gradient(60rem 28rem at 15% -10%, rgba(15, 118, 110, 0.08), transparent 65%);
+}
+
+/* Element defaults sit in the base layer, so the Tailwind utilities of the React examples override them. */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--glow), var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--accent-hover);
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+  }
+
+  :not(pre) > code {
+    padding: 0.1em 0.4em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  [hidden] {
+    display: none !important;
+  }
+}
+
+/* ---------- App shell: the bar at the top of every page ---------- */
+
+/* Holds the bar's place until utils/shell.ts inserts it, so the page does not shift down. */
+body:not(:has(> .app-shell))::before {
+  display: block;
+  height: var(--shell-height);
+  content: '';
+}
+
+.app-shell {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+}
+
+.app-shell-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: var(--content-width);
+  height: calc(var(--shell-height) - 1px);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.app-shell-inner.wide {
+  max-width: none;
+}
+
+.app-brand {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.app-brand:hover {
+  color: var(--text);
+}
+
+.app-logo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #2dd4bf, #0f766e);
+  color: #04201c;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.app-logo svg {
+  width: 16px;
+  height: 16px;
+  stroke: currentColor;
+}
+
+.app-breadcrumb {
+  display: flex;
+  flex: 1 1 8rem;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.app-breadcrumb ol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-breadcrumb li {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+/* Only the current page's name shortens when the bar runs out of room. */
+.app-breadcrumb li:last-child {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.app-breadcrumb li + li::before {
+  color: var(--text-subtle);
+  content: '/';
+}
+
+.app-breadcrumb a {
+  color: var(--text-muted);
+}
+
+.app-breadcrumb a:hover {
+  color: var(--text);
+}
+
+.app-breadcrumb [aria-current='page'] {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.app-shell-end {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .app-shell-inner {
+    gap: 10px;
+    padding: 0 16px;
+  }
+
+  .app-shell-end {
+    max-width: 75%;
+  }
+
+  .access-bar.temporary b {
+    display: none;
+  }
+
+  .app-brand-name,
+  .app-breadcrumb li:first-child {
+    display: none;
+  }
+
+  .app-breadcrumb li:nth-child(2)::before {
+    content: none;
+  }
+}
+
+/* ---------- Segmented control ---------- */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.segmented button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.segmented button[aria-selected='true'],
+.segmented button[aria-pressed='true'] {
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 0 0 1px var(--border-strong);
+  color: var(--text);
+}
+
+/* ---------- Badges and status ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.badge.warning {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* ---------- Access status (utils/accessBar.ts) ---------- */
+
+.access-bar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.access-bar b {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.access-bar > span:not(.tip) {
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access-bar.unavailable {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.access-bar.unavailable b {
+  color: var(--danger);
+}
+
+.access-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+}
+
+.access-bar.temporary .access-dot,
+.access-bar.given .access-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.access-bar.public .access-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
+}
+
+.access-bar.unavailable .access-dot {
+  background: var(--danger);
+}
+
+.access-bar button {
+  flex: none;
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.access-bar button:hover {
+  background: var(--surface-hover);
+}
+
+@media (max-width: 960px) {
+  .access-bar .access-detail {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .access-bar.temporary > span:not(.tip, .access-dot) {
+    display: none;
+  }
+}
+
+/* The page's own title names it, so the narrowest bar keeps only the way back and the chip. */
+@media (max-width: 360px) {
+  .app-breadcrumb {
+    display: none;
+  }
+
+  .app-shell-end {
+    max-width: none;
+  }
+}
+
+/* ---------- Icons and tips ---------- */
+
+/* An icon from public/icons.svg: `<svg class="icon"><use href="/icons.svg#icon-play" /></svg>`, or
+   icon() from utils/icon.ts in script. It takes the text color and the text's size. */
+.icon {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  fill: none;
+  stroke: currentColor;
+  vertical-align: -0.2em;
+}
+
+/* An explanation kept out of the page until asked for: an ⓘ that shows `data-tip` on hover or focus.
+   `<span class="tip" tabindex="0" role="img" aria-label="…" data-tip="…">` with an info icon inside. */
+.tip {
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--text-subtle);
+  cursor: help;
+  vertical-align: middle;
+}
+
+.tip:hover,
+.tip:focus-visible {
+  color: var(--text);
+}
+
+.tip:hover::after,
+.tip:focus::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 60;
+  width: max-content;
+  max-width: min(20rem, 80vw);
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  content: attr(data-tip);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.6;
+  text-align: left;
+  text-transform: none;
+  transform: translateX(-50%);
+  white-space: pre-line;
+}
+
+/* Beside a heading's or label's words, the mark keeps a little space from them. */
+:is(h1, h2, h3, h4, label, legend, summary) > .tip {
+  margin-left: 4px;
+}
+
+/* A tip that warns: an amber mark, and a note edged in amber. */
+.tip.warning,
+.tip.warning:hover,
+.tip.warning:focus-visible {
+  color: var(--warning);
+}
+
+.tip.warning:hover::after,
+.tip.warning:focus::after {
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+}
+
+/* A tip that reports a failure: a red mark, and a note edged in red. */
+.tip.danger,
+.tip.danger:hover,
+.tip.danger:focus-visible {
+  color: var(--danger);
+}
+
+.tip.danger:hover::after,
+.tip.danger:focus::after {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+
+/* A tip at the right end of a row opens leftward, so it stays on screen. */
+.tip.end:hover::after,
+.tip.end:focus::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}

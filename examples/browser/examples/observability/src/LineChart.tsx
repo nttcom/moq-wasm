@@ -123,7 +123,7 @@ export function LineChart({ title, unit, lines, fromMs, toMs, hoverMs, onHover, 
               key={`${line.label}-${index}`}
               points={points}
               fill="none"
-              stroke={line.color}
+              style={{ stroke: line.color }}
               strokeWidth={1.5}
             />
           ))

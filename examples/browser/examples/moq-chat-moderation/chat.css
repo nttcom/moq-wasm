@@ -1,24 +1,8 @@
-.chat-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 760px) {
-  .chat-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.chat-side {
-  display: grid;
-  gap: 20px;
-}
-
 .card h2 {
   margin: 0;
 }
+
+/* ---------- Labels ---------- */
 
 .label-list {
   display: grid;
@@ -27,55 +11,95 @@
 
 .label-row {
   display: grid;
-  grid-template-columns: 5em 1fr auto;
-  gap: 8px;
+  grid-template-columns: 4.5em minmax(0, 1fr) auto;
+  gap: 6px;
   align-items: center;
+}
+
+.label-row input {
+  min-width: 0;
+  max-width: none;
+  font-size: 0.85rem;
+}
+
+/* ---------- Chat ---------- */
+
+.chat-card {
+  display: flex;
+  flex-direction: column;
+  height: min(72vh, 720px);
+  min-height: 420px;
 }
 
 .chat-messages {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 8px;
-  min-height: 320px;
-  max-height: 60vh;
-  margin: 0;
-  padding: 0;
+  margin: 0 0 14px;
+  padding: 12px;
   overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
   list-style: none;
+}
+
+.chat-messages:empty {
+  display: grid;
+  place-items: center;
+}
+
+.chat-messages:empty::before {
+  color: var(--text-subtle);
+  content: 'メッセージはまだありません';
+  font-size: 0.875rem;
+  text-align: center;
 }
 
 .chat-message {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--surface-solid);
+  border-radius: var(--radius-md);
+  background: var(--surface);
   cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.chat-message:hover {
+  border-color: var(--accent-border);
 }
 
 .chat-message[data-verdict='removed'] {
-  background: #f3f4f6;
+  border-style: dashed;
+  background: var(--surface-sunken);
 }
 
 .chat-message[data-verdict='removed'] .chat-text {
-  color: var(--muted);
+  color: var(--text-subtle);
   font-style: italic;
 }
 
 .chat-text {
   flex: 1;
+  min-width: 12em;
   overflow-wrap: anywhere;
 }
 
 .chat-label {
   flex: none;
-  padding: 2px 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
   border-radius: 999px;
-  font-size: 0.75rem;
-  color: var(--muted);
-  background: #f3f4f6;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.72rem;
 }
 
 .chat-chips {
@@ -85,11 +109,13 @@
 }
 
 .chat-chip {
-  padding: 2px 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--accent-border);
   border-radius: 999px;
-  font-size: 0.75rem;
-  color: #fff;
-  background: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 .chat-message[data-verdict='ok'] .chat-label,
@@ -104,37 +130,28 @@
 
 .chat-form input {
   flex: 1;
+  max-width: none;
 }
 
-.chat-sidebar {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(360px, 100vw);
-  padding: 20px 22px;
-  overflow-y: auto;
-  border-left: 1px solid var(--border);
-  background: var(--surface-solid);
-  box-shadow: var(--shadow);
-}
+/* ---------- Verdict drawer ---------- */
 
+/* The judgment of a clicked message, a card in the side column so it covers none of the controls. */
 .chat-sidebar[hidden] {
   display: none;
 }
 
 .sidebar-text {
   margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
   overflow-wrap: anywhere;
 }
 
 .label-scores {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -143,10 +160,12 @@
 .label-score {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 2px 8px;
+  gap: 4px 8px;
+  font-size: 0.875rem;
 }
 
 .label-score meter {
   grid-column: 1 / -1;
   width: 100%;
+  height: 8px;
 }

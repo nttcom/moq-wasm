@@ -3,30 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Media CMAF Examples</title>
-    <link rel="stylesheet" href="../media/media.css" />
+    <title>Media CMAF · MoQT Playground</title>
+    <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
   </head>
-  <body>
-    <div class="page">
-      <header class="hero">
-        <div>
-          <span class="pill">Media CMAF</span>
-          <h1>MoQT Media CMAF Examples</h1>
-          <p>Publish a broadcast with CMAF tracks next to its LOC tracks, and play them through MSE.</p>
+  <body data-title="Media CMAF">
+    <main class="page">
+      <div>
+        <div class="choice-grid">
+          <a class="card link-card choice" href="./publisher/index.html">
+            <span class="choice-icon" aria-hidden="true"
+              ><svg><use href="/icons.svg#icon-film" /></svg
+            ></span>
+            <h2>Publisher</h2>
+            <p>LOC と CMAF のトラックを並べて Publish</p>
+          </a>
+          <a class="card link-card choice" href="./subscriber/index.html">
+            <span class="choice-icon" aria-hidden="true"
+              ><svg><use href="/icons.svg#icon-monitor" /></svg
+            ></span>
+            <h2>Subscriber</h2>
+            <p>CMAF の映像を MSE で再生</p>
+          </a>
         </div>
-      </header>
-      <main class="control-grid">
-        <a class="card link-card" href="./publisher/index.html">
-          <h2>Publisher</h2>
-          <p>Publish the camera with <code>cmaf: true</code>.</p>
-        </a>
-        <a class="card link-card" href="./subscriber/index.html">
-          <h2>Subscriber</h2>
-          <p>Play the CMAF video with <code>LivePlayer</code>.</p>
-        </a>
-      </main>
-    </div>
+        <ol class="steps" aria-label="使い方">
+          <li>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg> <b>Publisher</b> で
+              Publish</span
+            >
+          </li>
+          <li>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg>
+              <b>Track Namespace</b> をコピー</span
+            >
+          </li>
+          <li>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg> <b>Subscriber</b> で
+              Subscribe</span
+            >
+          </li>
+        </ol>
+      </div>
+    </main>
     <script type="module" src="../../utils/preserveQueryLinks.js"></script>
-    <script type="module" src="../../utils/accessBar.ts"></script>
+    <script type="module" src="../../utils/shell.ts"></script>
   </body>
 </html>

@@ -166,12 +166,12 @@ export async function enableMedia(model: MeetingClientPageModel, { camera = true
   if (camera) {
     await expect(model.toggleCameraButton).toBeEnabled({ timeout: 30_000 })
     await model.toggleCameraButton.click()
-    await expect(model.toggleCameraButton).toHaveAccessibleName('Turn camera off', { timeout: 15_000 })
+    await expect(model.toggleCameraButton).toHaveAccessibleName('カメラをオフ', { timeout: 15_000 })
   }
 
   await expect(model.toggleMicrophoneButton).toBeEnabled({ timeout: 30_000 })
   await model.toggleMicrophoneButton.click()
-  await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
+  await expect(model.toggleMicrophoneButton).toHaveAccessibleName('マイクをオフ', { timeout: 15_000 })
 }
 
 // Share this client's own tab, which the Playwright config picks without a dialog.

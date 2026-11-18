@@ -146,10 +146,10 @@ function magentaness([red, green, blue]: [number, number, number]): number {
 async function muteAndUnmute(model: MeetingClientPageModel): Promise<void> {
   for (const seconds of MUTE_SECONDS) {
     await model.toggleMicrophoneButton.click()
-    await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone on')
+    await expect(model.toggleMicrophoneButton).toHaveAccessibleName('マイクをオン')
     await sleep(seconds * 1_000)
     await model.toggleMicrophoneButton.click()
-    await expect(model.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off')
+    await expect(model.toggleMicrophoneButton).toHaveAccessibleName('マイクをオフ')
     await sleep(UNMUTED_SECONDS * 1_000)
   }
 }

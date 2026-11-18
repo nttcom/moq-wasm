@@ -101,7 +101,7 @@ function showPlaying(value: boolean): void {
 
 function avatar(name: string, size: string): HTMLElement {
   const chip = document.createElement('span')
-  chip.className = `flex shrink-0 items-center justify-center rounded-full bg-teal-600 font-semibold text-white ${size}`
+  chip.className = `avatar flex shrink-0 items-center justify-center rounded-full font-semibold ${size}`
   chip.textContent = name.slice(0, 1).toUpperCase()
   chip.title = name
   return chip
@@ -215,7 +215,7 @@ function tileFor(current: OpenedRecording, participant: string, content: string)
   }
   const tile = document.createElement('div')
   tile.className =
-    'group relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-800 ring-2 ring-white/5 transition'
+    'group relative aspect-video w-full overflow-hidden rounded-xl bg-[#11151b] ring-2 ring-white/5 transition'
   tile.dataset.participant = participant
   tile.dataset.content = content
   const placeholder = document.createElement('div')
@@ -419,11 +419,11 @@ function renderParticipants(current: OpenedRecording): void {
     return
   }
   chips.dataset.participants = participants.join('\n')
-  element('participants').textContent = `${participants.length} participants`
+  element('participants').textContent = `参加者 ${participants.length} 人`
   chips.replaceChildren(
     ...participants.map((name) => {
       const chip = avatar(name, 'h-6 w-6 text-[11px]')
-      chip.classList.add('ring-2', 'ring-zinc-950')
+      chip.classList.add('ring-2', 'ring-[var(--surface)]')
       return chip
     })
   )
@@ -439,18 +439,17 @@ function renderEvents(current: OpenedRecording, at: number): void {
     list.replaceChildren(
       ...visible.map((event) => {
         const item = document.createElement('li')
-        item.className = 'rounded-xl border border-white/10 bg-gray-900/70 px-4 py-3'
+        item.className = 'event-item'
         item.dataset.timeUs = String(event.at)
         const heading = document.createElement('div')
-        heading.className = 'flex items-center justify-between text-sm text-teal-200'
+        heading.className = 'event-item-head flex items-center justify-between'
         const speaker = document.createElement('span')
-        speaker.className = 'font-semibold'
         speaker.textContent = event.speaker
         const time = document.createElement('span')
         time.textContent = new Date(current.recording.startedAtMs + event.at / 1000).toLocaleTimeString()
         heading.append(speaker, time)
         const text = document.createElement('p')
-        text.className = 'mt-2 whitespace-pre-wrap break-words text-base text-white'
+        text.className = 'event-item-text'
         text.textContent = event.text
         item.append(heading, text)
         return item

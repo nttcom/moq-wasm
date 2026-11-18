@@ -3,24 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoQ Camera Detection</title>
-    <link rel="stylesheet" href="../media/media.css" />
+    <title>Camera Detection · MoQT Playground</title>
+    <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
     <link rel="stylesheet" href="../media/setup-guide.css" />
     <link rel="stylesheet" href="./camera.css" />
   </head>
-  <body>
+  <body data-title="Camera Detection">
     <main class="page">
-      <header class="hero">
-        <div>
-          <h1>MoQ Camera Detection</h1>
-          <p>カメラ映像についての質問に、pipecat の bot が d1-2B で答え、探すものを枠で示す</p>
-        </div>
-      </header>
       <details class="card setup-toggle">
         <summary>
           <h2>使い方</h2>
         </summary>
-        <p class="hint">Cloud Run の d1-2B は停止後の最初の判定に時間がかかります</p>
+        <p class="hint">停止後の最初の判定は時間がかかります</p>
         <div class="setup-routes">
           <details class="setup-panel setup-toggle">
             <summary>
@@ -51,7 +46,7 @@
             <ol class="setup-steps">
               <li>
                 <h4>カメラを配信する</h4>
-                <p class="hint">Relay URL は既定の Cloud relay-1 のまま Join します</p>
+                <p class="hint">Cloud relay-1 のまま Join</p>
               </li>
             </ol>
           </details>
@@ -83,22 +78,18 @@
             </summary>
             <ol class="setup-steps" start="0">
               <li>
-                <h4>d1-2B を Cloud Run にデプロイする</h4>
-                <p class="hint">
+                <h4>
                   <a
                     href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/system-one-on-cloud-run.md"
                     target="_blank"
                     rel="noopener"
-                    >https://github.com/nttcom/moq-wasm/blob/master/examples/python/system-one-on-cloud-run.md</a
-                  >
-                </p>
+                    >d1-2B を Cloud Run にデプロイ
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-link" /></svg
+                  ></a>
+                </h4>
               </li>
               <li>
-                <h4>relay を起動する</h4>
-                <p class="hint">
-                  ローカルの relay を選んだページは、手元の bot にルームの bot を頼みます。各コマンドは別々の
-                  ターミナルで実行します
-                </p>
+                <h4>relay を起動</h4>
                 <pre><code>make relay</code></pre>
               </li>
               <li>
@@ -107,58 +98,84 @@
 uv run python -m moq_camera_detection.bot --insecure \
   --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
   --gcloud-auth</code></pre>
-                <p class="hint">gcloud のアカウントに roles/run.invoker が必要です</p>
               </li>
               <li>
                 <h4>カメラを配信する</h4>
-                <p class="hint">
-                  <code>make chrome</code> で起動した Chrome でこのページを開き、Local relay-a を選んで Join します
-                </p>
+                <p class="hint">Local relay-a で Join</p>
+                <pre><code>make chrome</code></pre>
               </li>
             </ol>
           </details>
         </div>
       </details>
-      <div class="camera-layout">
-        <section class="card stack">
-          <h2>Relay</h2>
-          <div id="urlPresets"></div>
-          <input type="url" id="url" aria-label="Relay URL" data-testid="camera-detection-url-input" />
-          <div class="button-row">
-            <button type="button" id="joinBtn" data-testid="camera-detection-join-button">Join</button>
-            <button type="button" id="leaveBtn" data-testid="camera-detection-leave-button" disabled>Leave</button>
-          </div>
-          <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
-          <span id="detector-status" class="status-dot" data-state="idle">bot 未接続</span>
-          <span id="bot-room" class="status-dot" data-state="review"></span>
-          <span
-            id="system-one-status"
-            class="status-dot"
-            data-state="review"
-            data-testid="camera-detection-system-one-status"
-          ></span>
-        </section>
-        <section class="card stack">
-          <h2>Camera</h2>
-          <form id="promptForm" class="prompt-form" novalidate>
-            <span>質問</span>
-            <div id="questions" class="question-list"></div>
-            <div class="button-row">
-              <button type="button" id="addQuestionBtn" data-testid="camera-detection-add-question-button">
-                ＋ 質問
-              </button>
-              <button type="submit" data-testid="camera-detection-apply-button">適用</button>
+      <div class="workspace">
+        <div class="workspace-main">
+          <section class="card">
+            <div class="card-head">
+              <h2>カメラ</h2>
             </div>
-          </form>
-          <ul id="verdicts" class="camera-verdicts"></ul>
-          <div class="camera-stage">
-            <video id="preview" class="camera-preview" autoplay muted playsinline></video>
-            <div id="boxes" class="box-overlay"></div>
-          </div>
-        </section>
+            <ul id="verdicts" class="camera-verdicts"></ul>
+            <div class="camera-stage" data-placeholder="Join すると映像が映ります">
+              <video id="preview" class="camera-preview" autoplay muted playsinline></video>
+              <div id="boxes" class="box-overlay"></div>
+            </div>
+          </section>
+          <section class="card">
+            <div class="card-head">
+              <h2>
+                質問
+                <span
+                  class="tip"
+                  tabindex="0"
+                  role="img"
+                  aria-label="「適用」を押すと bot が新しい質問で答え直します"
+                  data-tip="「適用」を押すと bot が新しい質問で答え直します"
+                  ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                ></span>
+              </h2>
+            </div>
+            <form id="promptForm" class="prompt-form" novalidate>
+              <div id="questions" class="question-list"></div>
+              <div class="button-row">
+                <button type="submit" data-testid="camera-detection-apply-button">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-check" /></svg>適用
+                </button>
+                <button type="button" id="addQuestionBtn" data-testid="camera-detection-add-question-button">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plus" /></svg>質問を追加
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+        <aside class="workspace-side">
+          <section class="card stack">
+            <h2>接続</h2>
+            <div id="urlPresets"></div>
+            <input type="url" id="url" aria-label="Relay URL" data-testid="camera-detection-url-input" />
+            <div class="button-row">
+              <button type="button" id="joinBtn" data-testid="camera-detection-join-button">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-in" /></svg>Join
+              </button>
+              <button type="button" id="leaveBtn" data-testid="camera-detection-leave-button" disabled>
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-out" /></svg>Leave
+              </button>
+            </div>
+            <div class="status-list">
+              <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
+              <span id="detector-status" class="status-dot" data-state="idle">bot 未接続</span>
+              <span id="bot-room" class="status-dot" data-state="review"></span>
+              <span
+                id="system-one-status"
+                class="status-dot"
+                data-state="review"
+                data-testid="camera-detection-system-one-status"
+              ></span>
+            </div>
+          </section>
+        </aside>
       </div>
     </main>
     <script type="module" src="./main.ts"></script>
-    <script type="module" src="../../utils/accessBar.ts"></script>
+    <script type="module" src="../../utils/shell.ts"></script>
   </body>
 </html>

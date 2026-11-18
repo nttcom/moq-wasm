@@ -280,6 +280,7 @@ test('a paused viewer steps through still frames and resumes from the last one',
     await expect(viewer.connectionStatus).toContainText('Connected:')
     await expect(viewer.playbackStatus).toContainText('Playing video', { timeout: FIRST_VIDEO_TIMEOUT_MS })
     await expect.poll(async () => rewindableSeconds(viewer), { timeout: 30_000 }).toBeGreaterThan(3)
+    await viewer.seekbar.hover()
     await viewer.playPauseButton.click()
     await expect(viewer.playPauseButton).toHaveAttribute('aria-pressed', 'true')
 

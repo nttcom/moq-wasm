@@ -5,6 +5,7 @@ import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
 import { LOAD_BALANCED_RELAY_PRESET, relayUrlFromQuery } from '../../utils/relayPresets'
 import { createRelayPicker } from '../../utils/relayPicker'
+import { icon } from '../../utils/icon'
 import { element, getErrorMessage, parseTrackNamespace } from '../../utils/page'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
@@ -70,6 +71,7 @@ let activeMove: string | null = null
 function renderPlayer(): void {
   const { catalogStatus, playbackStatus, rewindStatus } = player.state
   element('playback-status').textContent = `${playbackStatus.text} · ${rewindStatus.text} · ${catalogStatus.text}`
+  stage.toggleAttribute('data-started', player.state.started)
   controls.render()
 }
 
@@ -89,7 +91,7 @@ function updateStatus(id: 'status' | 'command-state', label: string, ok: boolean
   pill.innerHTML = `<span></span>${label}`
   const dot = pill.querySelector('span')
   if (dot instanceof HTMLElement) {
-    dot.style.background = ok ? '#2ec4b6' : '#ff9f1c'
+    dot.style.background = ok ? 'var(--success)' : 'var(--warning)'
   }
 }
 
@@ -172,7 +174,7 @@ function buildCommandUI(): void {
 
     const button = document.createElement('button')
     button.type = 'button'
-    button.textContent = 'Send'
+    button.append(icon('send'), 'Send')
     button.addEventListener('click', () => sendCommand(command.type, row))
 
     header.append(title, button)
@@ -307,9 +309,10 @@ async function disconnect(): Promise<void> {
 }
 
 const connectButton = element<HTMLButtonElement>('connect-btn')
+const connectLabel = element('connect-label')
 connectButton.addEventListener('click', async () => {
   connectButton.disabled = true
-  connectButton.textContent = 'Connecting…'
+  connectLabel.textContent = 'Connecting…'
   try {
     await connect()
   } catch (err) {
@@ -322,7 +325,7 @@ connectButton.addEventListener('click', async () => {
     }
   } finally {
     connectButton.disabled = false
-    connectButton.textContent = 'Connect'
+    connectLabel.textContent = 'Connect'
   }
 })
 

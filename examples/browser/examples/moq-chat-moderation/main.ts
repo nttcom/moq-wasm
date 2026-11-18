@@ -1,6 +1,7 @@
 import type { TrackWriter } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
 import { pageRoomId } from '../../utils/botRoom'
+import { icon } from '../../utils/icon'
 import { onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
@@ -92,7 +93,10 @@ function addLabelRow({ name, description }: Label): HTMLInputElement {
   const descriptionInput = labelInput(description, MAX_LABEL_DESCRIPTION_CHARS, 'ラベルの説明')
   const remove = document.createElement('button')
   remove.type = 'button'
-  remove.textContent = '削除'
+  remove.className = 'remove'
+  remove.setAttribute('aria-label', '削除')
+  remove.title = '削除'
+  remove.append(icon('trash'))
   remove.dataset.testid = 'chat-moderation-remove-label-button'
   remove.addEventListener('click', () => {
     row.remove()

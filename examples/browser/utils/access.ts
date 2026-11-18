@@ -37,6 +37,8 @@ export const TOKEN_FRAGMENT = 'jwt'
 /// `?access=public` opens a page as the public app. It is not stored, so the examples opened after
 /// it keep the mode their reader chose.
 export const ACCESS_MODE_PARAM = 'access'
+
+export const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
 /// A token is refreshed this long before it expires, so a reconnect never presents an expired one.
 const REFRESH_MARGIN_SECONDS = 5 * 60
 

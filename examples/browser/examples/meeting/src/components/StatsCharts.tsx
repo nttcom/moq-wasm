@@ -51,16 +51,16 @@ const AV_OFFSET_SCALE: ChartScale = {
 }
 
 const SERIES_COLOR_CLASSES = [
-  'text-cyan-300',
-  'text-orange-300',
-  'text-emerald-300',
-  'text-fuchsia-300',
-  'text-yellow-300',
-  'text-sky-300',
-  'text-rose-300',
-  'text-lime-300',
-  'text-violet-300',
-  'text-amber-300'
+  'text-chart-cyan',
+  'text-chart-orange',
+  'text-chart-emerald',
+  'text-chart-fuchsia',
+  'text-chart-yellow',
+  'text-chart-sky',
+  'text-chart-rose',
+  'text-chart-lime',
+  'text-chart-violet',
+  'text-chart-amber'
 ]
 
 const primaryStats = (sample: RemoteStatsSample) => sample.camera ?? sample.screenshare
@@ -71,32 +71,34 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
     title: 'Video Bitrate (kbps)',
     scale: VIDEO_BITRATE_SCALE,
     series: [
-      { label: 'Camera', accessor: (sample) => sample.camera?.receivedKbps, colorClass: 'text-cyan-300' },
-      { label: 'Screen', accessor: (sample) => sample.screenshare?.receivedKbps, colorClass: 'text-orange-300' }
+      { label: 'Camera', accessor: (sample) => sample.camera?.receivedKbps, colorClass: 'text-chart-cyan' },
+      { label: 'Screen', accessor: (sample) => sample.screenshare?.receivedKbps, colorClass: 'text-chart-orange' }
     ]
   },
   {
     key: 'audio-bitrate',
     title: 'Audio Bitrate (kbps)',
     scale: AUDIO_BITRATE_SCALE,
-    series: [{ label: 'Audio', accessor: (sample) => sample.camera?.receivedAudioKbps, colorClass: 'text-emerald-300' }]
+    series: [
+      { label: 'Audio', accessor: (sample) => sample.camera?.receivedAudioKbps, colorClass: 'text-chart-emerald' }
+    ]
   },
   {
     key: 'playout-buffer',
     title: 'Playout Buffer (ms)',
     scale: PLAYOUT_SCALE,
     series: [
-      { label: 'Buffer', accessor: (sample) => primaryStats(sample)?.bufferMs, colorClass: 'text-emerald-300' },
-      { label: 'Target', accessor: (sample) => primaryStats(sample)?.targetBufferMs, colorClass: 'text-orange-300' },
+      { label: 'Buffer', accessor: (sample) => primaryStats(sample)?.bufferMs, colorClass: 'text-chart-emerald' },
+      { label: 'Target', accessor: (sample) => primaryStats(sample)?.targetBufferMs, colorClass: 'text-chart-orange' },
       {
         label: 'Output latency',
         accessor: (sample) => primaryStats(sample)?.outputLatencyMs,
-        colorClass: 'text-sky-300'
+        colorClass: 'text-chart-sky'
       },
       {
         label: 'Jitter (p95)',
         accessor: (sample) => primaryStats(sample)?.arrivalSpreadMs,
-        colorClass: 'text-rose-300'
+        colorClass: 'text-chart-rose'
       }
     ]
   },
@@ -108,7 +110,7 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
       {
         label: 'Pub to sub delay',
         accessor: (sample) => primaryStats(sample)?.viewerDelayMs,
-        colorClass: 'text-cyan-300'
+        colorClass: 'text-chart-cyan'
       }
     ]
   },
@@ -117,7 +119,7 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
     title: 'A/V Offset (video − audio, ms)',
     scale: AV_OFFSET_SCALE,
     series: [
-      { label: 'Offset', accessor: (sample) => primaryStats(sample)?.syncOffsetMs, colorClass: 'text-violet-300' }
+      { label: 'Offset', accessor: (sample) => primaryStats(sample)?.syncOffsetMs, colorClass: 'text-chart-violet' }
     ]
   }
 ]
@@ -266,7 +268,9 @@ function StatsChartList({ charts, emptyMessage }: { charts: StatsChart[]; emptyM
 
   if (!visibleCharts.length) {
     return (
-      <div className="rounded-md border border-white/10 bg-white/[0.03] p-4 text-xs text-teal-200">{emptyMessage}</div>
+      <div className="rounded-lg border border-dashed border-line-strong bg-subtle p-6 text-center text-xs text-muted">
+        {emptyMessage}
+      </div>
     )
   }
 
@@ -344,9 +348,9 @@ function MetricChart({
   }
 
   return (
-    <section className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+    <section className="rounded-lg border border-line bg-surface p-3 shadow-sm">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-xs font-semibold text-teal-100">{title}</h4>
+        <h4 className="text-xs font-semibold text-fg">{title}</h4>
         <div className="flex flex-wrap items-center gap-2 text-[10px]">
           {series.map((entry) => {
             const hidden = hiddenSeriesKeys.has(entry.key)
@@ -355,8 +359,8 @@ function MetricChart({
                 key={entry.key}
                 type="button"
                 onClick={() => onToggleSeries(entry.key)}
-                className={`inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-teal-100/90 transition ${
-                  hidden ? 'border-white/10 opacity-40' : 'border-white/20 bg-white/[0.04]'
+                className={`inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-fg transition ${
+                  hidden ? 'border-line opacity-40' : 'border-line-strong bg-fg/[0.04]'
                 }`}
                 title={hidden ? 'Show series' : 'Hide series'}
               >
@@ -368,7 +372,7 @@ function MetricChart({
         </div>
       </div>
       {hasRenderableSeries ? (
-        <div className={`relative ${CHART_HEIGHT_CLASS} rounded bg-black/20`}>
+        <div className={`relative ${CHART_HEIGHT_CLASS} rounded-md bg-sunken`}>
           <svg
             viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}
             preserveAspectRatio="none"
@@ -412,7 +416,7 @@ function MetricChart({
           {tickValues.map((tick) => (
             <span
               key={`${title}-tick-label-${tick}`}
-              className="absolute left-1.5 -translate-y-full text-xs leading-none text-teal-200/75"
+              className="absolute left-1.5 -translate-y-full text-xs leading-none text-faint"
               style={{ top: `${(Math.max(2.5, toChartY(tick) - 0.6) / CHART_VIEWBOX_HEIGHT) * 100}%` }}
             >
               {formatTickLabel(tick, scale.unit)}
@@ -421,7 +425,7 @@ function MetricChart({
         </div>
       ) : (
         <div
-          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded bg-black/20 text-xs text-teal-200`}
+          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded-md bg-sunken text-xs text-muted`}
         >
           No data
         </div>

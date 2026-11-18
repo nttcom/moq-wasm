@@ -54,11 +54,11 @@ export function NamespacePanel({ spanMs, toMs, live, onPick, onClose }: Props) {
     <section
       className="namespace-panel"
       style={{ width: NAMESPACE_PANEL_WIDTH }}
-      aria-label="Published Track Namespaces"
+      aria-label="Publish された Track Namespace"
     >
       <div className="panel-head">
         <b>Namespaces</b>
-        <button className="close" aria-label="Close namespaces" onClick={onClose}>
+        <button className="close" aria-label="Namespace 一覧を閉じる" onClick={onClose}>
           ×
         </button>
       </div>
@@ -70,7 +70,7 @@ export function NamespacePanel({ spanMs, toMs, live, onPick, onClose }: Props) {
       </div>
       <input
         className="panel-search"
-        placeholder="search, e.g. room1"
+        placeholder="検索（例: room1）"
         value={search}
         onChange={(event) => setSearch(event.target.value)}
       />
@@ -91,7 +91,7 @@ export function NamespacePanel({ spanMs, toMs, live, onPick, onClose }: Props) {
             </button>
           )
         })}
-        {result && rows.length === 0 && <div className="note">No namespace was published in this range</div>}
+        {result && rows.length === 0 && <div className="note">この期間に Publish された Namespace はありません</div>}
       </div>
     </section>
   )

@@ -41,6 +41,7 @@ async function startBroadcast(): Promise<void> {
       video: { width: { ideal: 1280 }, height: { ideal: 720 } }
     })
     element<HTMLVideoElement>('preview').srcObject = mediaStream
+    element<HTMLElement>('preview-stage').dataset.started = ''
     session = await MoqSession.connect(url, connectOptions())
     const namespace = broadcastNamespace(broadcastId)
     broadcast = await createBroadcast(session, namespace, {
@@ -76,6 +77,7 @@ async function stopBroadcast(): Promise<void> {
     track.stop()
   }
   mediaStream = undefined
+  delete element<HTMLElement>('preview-stage').dataset.started
   if (stopped) {
     setStatusText('streamer-status', 'Stopped')
   }
@@ -88,12 +90,14 @@ function showViewerLink(url: string): void {
   element<HTMLElement>('viewer-link-section').hidden = false
 }
 
+/// Shows the copied state in the button's `.label` only, so its icon stays.
 async function copyText(button: HTMLButtonElement, text: string): Promise<void> {
-  const label = (button.dataset.label ??= button.textContent ?? '')
+  const labelElement = button.querySelector('.label') ?? button
+  const label = (button.dataset.label ??= labelElement.textContent ?? '')
   try {
     await navigator.clipboard.writeText(text)
-    button.textContent = 'コピーしました'
-    setTimeout(() => (button.textContent = label), COPIED_LABEL_MS)
+    labelElement.textContent = 'コピーしました'
+    setTimeout(() => (labelElement.textContent = label), COPIED_LABEL_MS)
   } catch (error) {
     setStatusText('streamer-status', `Copy failed: ${getErrorMessage(error)}`)
   }

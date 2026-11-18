@@ -35,23 +35,34 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
   const visible = cameraIds.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   return (
-    <div className="flex flex-col gap-2.5 w-[200px]">
-      <p className="font-mono text-xs text-center text-zinc-500">カメラ（クリックでメインへ）</p>
-      {visible.map((id) => (
-        <PreviewCamera key={id} cameraId={id} host={hostOf(id)} onStage={id === stageId} onClick={() => onSelect(id)} />
-      ))}
-      {/* Empty slots keep the pager where it is on a last page that is not full. */}
-      {pageCount > 1 &&
-        Array.from({ length: PAGE_SIZE - visible.length }, (_, slot) => (
-          <div key={slot} className="aspect-video w-full" />
+    <div className="flex w-full flex-col gap-2.5 rounded-xl border border-line bg-surface p-3 shadow-sm">
+      <p className="text-sm font-semibold text-fg">カメラ</p>
+      {/* Under the stage: two thumbnails a row on a phone, four from sm. Beside it from lg: one column. */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-1">
+        {visible.map((id) => (
+          <PreviewCamera
+            key={id}
+            cameraId={id}
+            host={hostOf(id)}
+            onStage={id === stageId}
+            onClick={() => onSelect(id)}
+          />
         ))}
-      {cameraIds.length === 0 && <p className="font-mono text-xs text-center text-zinc-600">なし</p>}
+        {/* Empty slots keep the pager where it is on a last page that is not full. */}
+        {pageCount > 1 &&
+          Array.from({ length: PAGE_SIZE - visible.length }, (_, slot) => (
+            <div key={slot} className="hidden aspect-video w-full lg:block" />
+          ))}
+      </div>
+      {cameraIds.length === 0 && (
+        <p className="rounded-md border border-dashed border-line-strong py-6 text-center text-xs text-faint">なし</p>
+      )}
       {pageCount > 1 && (
-        <div className="flex items-center justify-between font-mono text-xs text-zinc-400">
+        <div className="flex items-center justify-between text-xs text-muted">
           <button
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={page === 0}
-            className="disabled:opacity-30"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-line hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
           >
             ◀
           </button>
@@ -61,7 +72,7 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
           <button
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             disabled={page === pageCount - 1}
-            className="disabled:opacity-30"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-line hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
           >
             ▶
           </button>

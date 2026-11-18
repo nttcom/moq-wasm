@@ -144,6 +144,7 @@ function renderPlayer(): void {
   setStatus('catalog-status', state.catalogStatus.text, state.catalogStatus.state)
   setStatus('playback-status', state.playbackStatus.text, state.playbackStatus.state)
   setStatus('rewind-status', state.rewindStatus.text, state.rewindStatus.state)
+  stage.toggleAttribute('data-started', state.started)
   controls.render()
 }
 

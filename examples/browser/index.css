@@ -1,0 +1,1760 @@
+/* The example list. Colors come from utils/theme.css. */
+
+/* The page's heading, for screen readers; the top bar's brand names the page on screen. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.home {
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+/* ---------- Top bar controls ---------- */
+
+/* The access mode switch, at the end of the top bar. */
+/* Links to the SDK docs, before the draft switch. */
+.docs-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.docs-nav a {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.docs-nav .icon {
+  margin-right: 6px;
+}
+
+.docs-nav a:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.home-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* The ⓘ's text shown open under the top bar's end on a first visit; its button closes it. */
+.tip-note {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: min(22rem, calc(100vw - 32px));
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.tip-note.warning {
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+}
+
+.tip-note.danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+
+.tip-note span {
+  flex: 1;
+}
+
+.tip-note button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tip-note button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* While the note is open, the ⓘ's hover text would repeat it. */
+.tip.open:hover::after,
+.tip.open:focus::after {
+  content: none;
+}
+
+/* The draft's prefix and number read as one word. */
+.version-switch button {
+  gap: 0;
+}
+
+@media (max-width: 560px) {
+  .home-controls {
+    gap: 4px;
+  }
+
+  .docs-nav {
+    gap: 0;
+  }
+
+  .docs-nav a {
+    padding: 0 6px;
+  }
+
+  .docs-nav .icon,
+  .docs-suffix,
+  .access-switch .icon {
+    display: none;
+  }
+
+  .app-shell-inner {
+    gap: 6px;
+  }
+
+  .app-shell .segmented button {
+    padding: 0 8px;
+  }
+
+  .draft-prefix {
+    display: none;
+  }
+
+  .access-status {
+    border-radius: var(--radius-lg);
+  }
+}
+
+/* Below 360px the top bar has no room for the docs links beside the switches. */
+@media (max-width: 360px) {
+  .docs-nav {
+    display: none;
+  }
+
+  .app-shell .segmented button {
+    padding: 0 6px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+}
+
+/* The temporary app's link and its expiry, above the categories. */
+.access-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 24px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.access-status:empty {
+  display: none;
+}
+
+.access-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.access-status button:hover {
+  background: var(--surface-hover);
+}
+
+/* ---------- Toolbar ---------- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.filters button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.filters button[aria-pressed='true'] {
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--bg);
+}
+
+.filters .count {
+  color: var(--text-subtle);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.filters button[aria-pressed='true'] .count {
+  color: inherit;
+  opacity: 0.8;
+}
+
+/* ---------- Sections ---------- */
+
+.section {
+  display: grid;
+  gap: 20px;
+  padding-top: 64px;
+  scroll-margin-top: calc(var(--shell-height) + 64px);
+}
+
+/* The heading sits on a hairline across the section with a short accent bar under its start. */
+.section-heading {
+  position: relative;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+}
+
+.section-heading::after {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 40px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  content: '';
+}
+
+.section-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.section-heading p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1080px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .home {
+    padding: 0 16px 64px;
+  }
+
+  .toolbar {
+    margin-top: 16px;
+  }
+
+  .filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 0 -16px;
+    padding: 0 16px 2px;
+    scrollbar-width: none;
+  }
+
+  .filters button {
+    flex: none;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Example card ---------- */
+
+/* Depth reads as lightness on the dark theme: the page, the card and the hovered card each a step
+   lighter, with the shadow falling on the page below and a faint highlight on the card's top edge. */
+.example {
+  --card-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 24px -10px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --card-shadow-hover:
+    0 1px 2px rgba(0, 0, 0, 0.5), 0 18px 36px -12px rgba(0, 0, 0, 0.95), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--card-shadow);
+  color: var(--text);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+:root:not([data-access-mode='public']) .example:hover {
+  background: var(--surface-hover);
+}
+
+:root[data-access-mode='public'] .example {
+  --card-shadow:
+    0 1px 3px rgba(15, 31, 30, 0.1), 0 4px 10px -2px rgba(15, 31, 30, 0.08), 0 14px 32px -12px rgba(15, 31, 30, 0.3);
+  --card-shadow-hover:
+    0 2px 6px rgba(15, 31, 30, 0.12), 0 8px 16px -4px rgba(15, 31, 30, 0.1), 0 24px 44px -16px rgba(15, 31, 30, 0.38);
+}
+
+.example:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--card-shadow-hover);
+  color: var(--text);
+  transform: translateY(-2px);
+}
+
+.example:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.example-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 18px 16px;
+}
+
+.example-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-bottom: 6px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+}
+
+.example-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--accent);
+}
+
+.example-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.example h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.example p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.example-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 10px;
+}
+
+.tag {
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+}
+
+.example-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.example-open svg {
+  width: 15px;
+  height: 15px;
+  stroke: currentColor;
+  transition: transform 0.18s ease;
+}
+
+.example:hover .example-open svg {
+  transform: translateX(3px);
+}
+
+/* A wide card puts its thumbnail beside the text. */
+.example.span-all {
+  grid-column: 1 / -1;
+  flex-direction: row-reverse;
+}
+
+.example.span-all .example-thumb {
+  flex: 1.3;
+  border-bottom: 0;
+  border-left: 1px solid var(--border);
+}
+
+.example.span-all .example-body {
+  flex: 1;
+  justify-content: center;
+  padding: 28px;
+}
+
+@media (max-width: 860px) {
+  .example.span-all {
+    flex-direction: column;
+  }
+
+  .example.span-all .example-thumb {
+    flex: none;
+    border-bottom: 1px solid var(--border);
+    border-left: 0;
+  }
+}
+
+/* The recorder records only rooms with a token, so the public app has no recording to play. */
+.requires-token-note {
+  display: none;
+}
+
+:root[data-access-mode='public'] .requires-token {
+  cursor: not-allowed;
+}
+
+:root[data-access-mode='public'] .requires-token:hover {
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+  transform: none;
+}
+
+:root[data-access-mode='public'] .requires-token .example-thumb,
+:root[data-access-mode='public'] .requires-token h3,
+:root[data-access-mode='public'] .requires-token p,
+:root[data-access-mode='public'] .requires-token .tag {
+  opacity: 0.5;
+}
+
+:root[data-access-mode='public'] .requires-token .requires-token-note {
+  display: inline-flex;
+}
+
+:root[data-access-mode='public'] .requires-token .example-open,
+:root[data-access-mode='public'] .requires-token .example-row-go {
+  display: none;
+}
+
+/* ---------- Groups ---------- */
+
+/* A use case: its main example large with a thumbnail, the examples around it as rows beside it. */
+.group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.example-rows {
+  display: grid;
+  gap: 12px;
+}
+
+.example.example-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px 10px 10px;
+}
+
+.example-row .example-thumb {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.example-row-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.example-row-text .badge {
+  justify-self: start;
+}
+
+.example-row-go {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.18s ease;
+}
+
+.example-row:hover .example-row-go {
+  transform: translateX(3px);
+}
+
+@media (max-width: 860px) {
+  .section {
+    padding-top: 44px;
+  }
+
+  .group {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  .example.example-row {
+    grid-template-columns: 96px minmax(0, 1fr) auto;
+    gap: 10px;
+  }
+}
+
+/* ---------- Thumbnails ---------- */
+
+/* A miniature of the example's own screen, drawn in CSS so it needs no image file. The thumbnails share
+   one quiet palette, shades of slate with one accent each, and like a video stage they stay dark in both
+   modes. Positions and sizes are percentages of the 16:9 box; text scales with its width. */
+.example-thumb {
+  --th-bg: #0b0e12;
+  --th-panel: #161b22;
+  --th-tile: #1b222b;
+  --th-figure: #3a4552;
+  --th-line: #2a323c;
+  --th-text: #c8d0d9;
+  --th-dim: #7b8695;
+  --th-accent: #2dd4bf;
+  --th-alert: #c25555;
+  --th-success: #34d399;
+  --th-raise: #1f2731;
+  --th-floor: #141920;
+  --th-glass: #26313d;
+  --th-figure-on: #2f5f5a;
+  --th-on-accent: #04201c;
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-bottom: 1px solid var(--border);
+  background: var(--th-bg);
+  color: var(--th-text);
+  line-height: 1.3;
+  container-type: inline-size;
+}
+
+/* On the dark theme the thumbnails sit a step darker than the card, a screen set into it. */
+:root:not([data-access-mode='public']) .example-thumb {
+  --th-bg: #11161c;
+  --th-panel: #181e26;
+  --th-tile: #212832;
+  --th-figure: #46525f;
+  --th-line: #303a46;
+  --th-raise: #232b36;
+  --th-floor: #151a21;
+  --th-glass: #2c3542;
+}
+
+.example-thumb > * {
+  font-size: clamp(5px, 2.6cqi, 11px);
+}
+
+/* A person in a video tile: a head over shoulders. */
+.th-person {
+  position: absolute;
+  bottom: -8%;
+  left: 50%;
+  width: 46%;
+  aspect-ratio: 1;
+  transform: translateX(-50%);
+}
+
+.th-person::before,
+.th-person::after {
+  position: absolute;
+  background: var(--th-figure);
+  content: '';
+}
+
+.th-person::before {
+  top: 6%;
+  left: 31%;
+  width: 38%;
+  height: 38%;
+  border-radius: 50%;
+}
+
+.th-person::after {
+  top: 50%;
+  left: 8%;
+  width: 84%;
+  height: 62%;
+  border-radius: 48% 48% 10% 10%;
+}
+
+.th-meet {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.5%;
+  padding: 6% 6% 17%;
+}
+
+.th-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--th-tile);
+}
+
+/* In a tile the person follows the tile's height, so wide tiles do not make them larger. */
+.th-tile .th-person {
+  width: auto;
+  height: 64%;
+}
+
+.th-tile.speak {
+  box-shadow: 0 0 0 1.5px var(--th-success);
+}
+
+.th-tile.speak .th-person {
+  --th-figure: var(--th-figure-on);
+}
+
+.th-name,
+.th-badge,
+.th-rec,
+.th-cam-label {
+  position: absolute;
+}
+
+.th-name {
+  bottom: 5%;
+  left: 4%;
+  padding: 0 0.5em;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+
+/* Meeting: the room header, the gallery and the control bar, laid out as the page lays them out. */
+.th-call {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.th-call svg {
+  width: 1.3em;
+  height: 1.3em;
+  fill: currentColor;
+}
+
+.th-call svg .line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.th-call-head,
+.th-call-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0 3.5%;
+  background: var(--th-panel);
+}
+
+.th-call-head {
+  height: 13%;
+  border-bottom: 1px solid var(--th-line);
+}
+
+.th-call-icon {
+  display: grid;
+  place-items: center;
+  width: 1.9em;
+  height: 1.9em;
+  border-radius: 4px;
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--th-accent);
+}
+
+.th-call-icon svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.th-call-count {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-left: auto;
+  color: var(--th-dim);
+}
+
+.th-call-chips {
+  margin-left: 0.4em;
+  display: flex;
+}
+
+.th-call-chips i {
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  margin-left: -0.4em;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--th-panel);
+  background: var(--th-accent);
+  color: var(--th-bg);
+  font-size: 0.8em;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.th-call-chips i:first-child {
+  box-shadow: 0 0 0 1.5px var(--th-success);
+}
+
+.th-call .th-meet {
+  position: relative;
+  flex: 1;
+  padding: 2.5% 14%;
+}
+
+.th-initial {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 2.6em;
+  height: 2.6em;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #14b8a6, #115e59);
+  color: #fff;
+  font-size: 1.1em;
+  font-weight: 600;
+  transform: translate(-50%, -50%);
+}
+
+.th-call-bar {
+  justify-content: space-between;
+  height: 17%;
+  border-top: 1px solid var(--th-line);
+}
+
+.th-call-group {
+  display: flex;
+  gap: 0.5em;
+}
+
+.th-call-group i {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.4em;
+  height: 2.4em;
+  border-radius: 50%;
+  background: var(--th-tile);
+  color: var(--th-text);
+}
+
+.th-call-group i.on {
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--th-accent);
+}
+
+.th-call-group i.leave {
+  width: 4em;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+}
+
+.th-call-group i.unread::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: #dc2626;
+  content: '';
+}
+
+/* Recording Player: the meeting played back on a timeline. */
+.th-meet.th-replay {
+  padding: 8% 16% 24%;
+}
+
+.th-timeline {
+  position: absolute;
+  right: 6%;
+  bottom: 7%;
+  left: 6%;
+  height: 8%;
+  border-radius: 4px;
+  background: var(--th-panel);
+}
+
+.th-timeline::before,
+.th-timeline::after {
+  position: absolute;
+  top: 45%;
+  left: 3%;
+  height: 2px;
+  content: '';
+}
+
+.th-timeline::before {
+  right: 3%;
+  background: var(--th-line);
+}
+
+.th-timeline::after {
+  width: 45%;
+  background: var(--th-accent);
+}
+
+.th-badge {
+  top: 6%;
+  left: 4%;
+  font-weight: 700;
+}
+
+.th-badge::before,
+.th-rec::before {
+  margin-right: 0.3em;
+  color: var(--th-alert);
+  content: '●';
+}
+
+/* Whiteboard: the page's tool bar over a white board, with a drawing two people are adding to. */
+.th-board {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.th-board .bar {
+  fill: var(--th-panel);
+}
+
+.th-board .tool {
+  fill: var(--th-tile);
+}
+
+.th-board .tool.on {
+  fill: rgba(45, 212, 191, 0.25);
+}
+
+.th-board .tool-icon {
+  stroke: var(--th-accent);
+  stroke-width: 1.6;
+}
+
+.th-board .tool-icon-2 {
+  stroke: var(--th-dim);
+  stroke-width: 0.8;
+}
+
+.th-board .swatch {
+  fill: #0f766e;
+  stroke: var(--th-text);
+  stroke-width: 0.6;
+}
+
+.th-board .slider {
+  stroke: var(--th-line);
+  stroke-width: 1.2;
+}
+
+.th-board .knob {
+  fill: var(--th-text);
+}
+
+.th-board .paper {
+  fill: #ffffff;
+}
+
+.th-board .ink,
+.th-board .ink-2,
+.th-board .ink-3,
+.th-board .ink-4 {
+  stroke-width: 1.6;
+}
+
+.th-board .ink {
+  stroke: #0f766e;
+}
+
+.th-board .ink-2 {
+  stroke: #c98a1a;
+}
+
+.th-board .ink-3 {
+  stroke: #3f8f5f;
+}
+
+.th-board .ink-4 {
+  stroke: #94a3b8;
+}
+
+.th-board .cursor,
+.th-board .tag {
+  fill: #0f766e;
+}
+
+.th-board .cursor-2,
+.th-board .tag-2 {
+  fill: #475569;
+}
+
+.th-board .cursor,
+.th-board .cursor-2 {
+  stroke: #fff;
+  stroke-width: 0.6;
+}
+
+.th-board .tag-text {
+  fill: #fff;
+  font-size: 3.6px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+/* ONVIF: the street swinging past as the camera pans, and its field of view turning. */
+.th-cctv,
+.th-cam {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--th-raise), var(--th-bg));
+}
+
+.th-street {
+  position: absolute;
+  inset: 0;
+  transform: translateX(-14%);
+}
+
+.th-street.ghost {
+  filter: blur(1.5px);
+  opacity: 0.3;
+  transform: translateX(4%);
+}
+
+.th-bldg {
+  position: absolute;
+  bottom: 0;
+  background: var(--th-tile);
+  box-shadow: inset 0 0 0 1px var(--th-line);
+}
+
+.th-rec,
+.th-cam-label {
+  top: 6%;
+  left: 4%;
+  color: var(--th-dim);
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+}
+
+.th-ptz {
+  position: absolute;
+  bottom: 7%;
+  left: 4%;
+  padding: 0.1em 0.5em;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--th-accent);
+  color: var(--th-accent);
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+}
+
+.th-radar {
+  position: absolute;
+  right: 4%;
+  bottom: 7%;
+  width: 26%;
+  fill: none;
+}
+
+.th-radar circle:first-child {
+  fill: var(--th-panel);
+  stroke: var(--th-line);
+}
+
+.th-radar .was {
+  stroke: var(--th-dim);
+  stroke-dasharray: 2 2;
+}
+
+.th-radar .now {
+  fill: rgba(45, 212, 191, 0.25);
+  stroke: var(--th-accent);
+}
+
+.th-radar .turn {
+  stroke: var(--th-accent);
+  stroke-width: 1.5;
+}
+
+.th-radar .cam {
+  fill: var(--th-accent);
+}
+
+/* Remote Monitoring: one camera large, three more beside it, as the page lays them out. */
+.th-monitor {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 27%;
+  gap: 3%;
+  padding: 4%;
+}
+
+.th-main,
+.th-side > span {
+  position: relative;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--th-tile);
+}
+
+.th-main {
+  box-shadow: 0 0 0 1.5px var(--th-accent);
+}
+
+.th-side {
+  display: grid;
+  grid-template-rows: repeat(3, 1fr);
+  gap: 8%;
+}
+
+.th-side .th-cam-label {
+  top: 8%;
+  font-size: 0.8em;
+}
+
+.th-live-dot {
+  position: absolute;
+  top: 6%;
+  right: 4%;
+  padding: 0 0.5em;
+  border-radius: 3px;
+  background: var(--th-alert);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* A security camera's view: wall, floor and doorway lines in the slate palette. */
+.th-cctv-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.th-cctv-scene .wall {
+  fill: var(--th-raise);
+}
+
+.th-cctv-scene .floor {
+  fill: var(--th-floor);
+}
+
+.th-cctv-scene .edge {
+  fill: none;
+  stroke: var(--th-line);
+  stroke-width: 1.2;
+}
+
+.th-cctv-scene .frame,
+.th-cctv-scene .desk,
+.th-cctv-scene .box {
+  fill: var(--th-tile);
+  stroke: var(--th-line);
+}
+
+.th-cctv-scene .glass {
+  fill: var(--th-glass);
+}
+
+.th-cctv-scene .sign {
+  fill: var(--th-dim);
+}
+
+.th-cctv-scene .plant {
+  fill: var(--th-figure-on);
+}
+
+.th-cctv-scene .arm {
+  stroke: var(--th-text);
+  stroke-width: 2.4;
+}
+
+.th-cctv-scene .stripe {
+  fill: none;
+  stroke: var(--th-alert);
+  stroke-width: 2.4;
+}
+
+.th-cctv-scene .figure {
+  fill: var(--th-figure);
+}
+
+.th-cctv-scene .figure.far {
+  fill: var(--th-figure-on);
+}
+
+.th-time {
+  position: absolute;
+  bottom: 5%;
+  left: 4%;
+  color: var(--th-text);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+}
+
+/* Live Viewer: a video page, the player with its controls, the channel row under it and the live chat. */
+.th-tube {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 1fr 28%;
+  gap: 3%;
+  padding: 4%;
+}
+
+.th-tube-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5%;
+  min-width: 0;
+}
+
+.th-tube-video {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--th-raise), var(--th-panel));
+}
+
+.th-tube-light {
+  position: absolute;
+  top: -10%;
+  width: 22%;
+  height: 80%;
+  background: radial-gradient(ellipse at top, rgba(45, 212, 191, 0.18), transparent 70%);
+}
+
+.th-stage {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 26%;
+  background: var(--th-bg);
+}
+
+.th-tube-controls {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 0 3% 2%;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.6), transparent);
+  color: #fff;
+}
+
+.th-tube-progress {
+  display: block;
+  height: 2px;
+  margin-bottom: 3%;
+  background: var(--th-accent);
+}
+
+.th-tube-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+}
+
+.th-tube-row svg {
+  width: 1.3em;
+  height: 1.3em;
+  fill: currentColor;
+}
+
+.th-tube-row svg .line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+.th-tube-live {
+  font-weight: 700;
+}
+
+.th-tube-live::before {
+  margin-right: 0.3em;
+  color: var(--th-alert);
+  content: '●';
+}
+
+.th-tube-spacer {
+  flex: 1;
+}
+
+.th-tube-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  white-space: nowrap;
+}
+
+.th-avatar {
+  flex: none;
+  width: 2em;
+  height: 2em;
+  border-radius: 50%;
+  background: var(--th-figure);
+}
+
+.th-tube-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.th-tube-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.th-tube-title small {
+  color: var(--th-dim);
+  font-size: 0.85em;
+}
+
+.th-follow {
+  margin-left: auto;
+  padding: 0.2em 0.8em;
+  border-radius: 999px;
+  background: var(--th-accent);
+  color: var(--th-bg);
+  font-weight: 700;
+}
+
+.th-tube-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 6%;
+  overflow: hidden;
+  padding: 6% 7%;
+  border-radius: 4px;
+  background: var(--th-panel);
+}
+
+.th-tube-chat-head {
+  padding-bottom: 4%;
+  border-bottom: 1px solid var(--th-line);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.th-tube-msg {
+  display: flex;
+  gap: 0.4em;
+}
+
+.th-tube-msg .th-avatar {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+.th-tube-msg > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.th-tube-msg b,
+.th-tube-msg em {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.th-tube-msg b {
+  background: var(--th-dim);
+}
+
+.th-tube-msg em {
+  background: var(--th-line);
+}
+
+/* AI Voice Agent: the speaker's voice as a waveform, and the spoken question with the AI's answer. */
+.th-voice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6%;
+  padding: 0 8%;
+}
+
+.th-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3%;
+  height: 26%;
+}
+
+.th-wave i {
+  width: 3%;
+  border-radius: 999px;
+  background: var(--th-accent);
+}
+
+.th-bubble {
+  max-width: 70%;
+  padding: 0.35em 0.8em;
+  border-radius: 0.9em;
+  white-space: nowrap;
+}
+
+.th-bubble.me {
+  align-self: flex-end;
+  background: rgba(45, 212, 191, 0.2);
+}
+
+.th-bubble.ai {
+  align-self: flex-start;
+  background: var(--th-panel);
+}
+
+/* Chat Moderation: a chat whose abusive message the moderator has taken down. */
+.th-chatlog {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5%;
+  padding: 0 6%;
+}
+
+.th-msg {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0.45em 0.7em;
+  border-radius: 6px;
+  background: var(--th-panel);
+  white-space: nowrap;
+}
+
+.th-msg b {
+  color: var(--th-accent);
+}
+
+.th-msg em,
+.th-langs i {
+  padding: 0 0.45em;
+  border-radius: 3px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.th-msg em {
+  margin-left: auto;
+}
+
+.th-msg .ok {
+  color: var(--th-dim);
+  box-shadow: inset 0 0 0 1px var(--th-line);
+}
+
+.th-msg.removed {
+  box-shadow: inset 0 0 0 1px rgba(194, 85, 85, 0.5);
+}
+
+.th-msg.removed b,
+.th-msg.removed s {
+  color: var(--th-dim);
+}
+
+.th-msg.removed s {
+  filter: blur(1.2px);
+}
+
+.th-msg .ng {
+  background: var(--th-alert);
+  color: #fff;
+}
+
+.th-input {
+  margin-top: 2%;
+  padding: 0.45em 0.7em;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--th-line);
+  color: var(--th-dim);
+}
+
+/* Camera Detection and PTZ Tracking: a camera view with boxes the bot drew. */
+.th-table {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 20%;
+  background: var(--th-tile);
+}
+
+.th-cup {
+  position: absolute;
+  bottom: 18%;
+  left: 67%;
+  width: 14%;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.th-cup .body {
+  fill: var(--th-text);
+}
+
+.th-cup .handle {
+  stroke: var(--th-text);
+  stroke-width: 3;
+}
+
+.th-cup .steam {
+  stroke: var(--th-dim);
+  stroke-width: 1.5;
+}
+
+.th-box {
+  position: absolute;
+  border: 1.5px solid var(--th-accent);
+  border-radius: 2px;
+}
+
+.th-box.dashed {
+  border-style: dashed;
+}
+
+.th-box b {
+  position: absolute;
+  top: -1.4em;
+  left: -1.5px;
+  padding: 0 0.35em;
+  border-radius: 2px 2px 0 0;
+  background: var(--th-accent);
+  color: var(--th-on-accent);
+  white-space: nowrap;
+}
+
+.th-cross {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  stroke: var(--th-accent);
+  stroke-width: 1.5;
+}
+
+/* Live Translate: the streamer speaks English and the viewer hears it in Japanese. */
+.th-speech {
+  position: absolute;
+  top: 16%;
+  left: 46%;
+  padding: 0.35em 0.7em;
+  border-radius: 8px 8px 8px 2px;
+  background: var(--th-text);
+  color: var(--th-bg);
+  font-weight: 600;
+}
+
+.th-langs {
+  position: absolute;
+  top: 6%;
+  right: 4%;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  color: var(--th-dim);
+}
+
+.th-langs i {
+  box-shadow: inset 0 0 0 1px var(--th-line);
+}
+
+.th-langs i.on {
+  background: var(--th-accent);
+  box-shadow: none;
+  color: var(--th-on-accent);
+}
+
+.th-hear {
+  position: absolute;
+  right: 4%;
+  bottom: 8%;
+  display: flex;
+  gap: 0.4em;
+  align-items: center;
+  padding: 0.35em 0.7em;
+  border-radius: 6px;
+  background: var(--th-panel);
+  font-weight: 600;
+}
+
+.th-hear svg {
+  width: 1.3em;
+  height: 1.3em;
+  fill: none;
+  stroke: var(--th-accent);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Observability: relays around the globe, the links between them carrying traffic. */
+.th-globe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 50% 50%, #0b1a24, #04070c 70%);
+}
+
+.th-globe .stars {
+  fill: rgba(255, 255, 255, 0.55);
+}
+
+.th-globe .land {
+  fill: url(#th-globe-dots);
+}
+
+.th-globe .grid {
+  fill: none;
+  stroke: rgba(94, 234, 212, 0.14);
+  stroke-width: 0.6;
+}
+
+.th-globe .rim {
+  fill: none;
+  stroke: rgba(94, 234, 212, 0.45);
+  stroke-width: 0.8;
+}
+
+.th-globe .arcs,
+.th-globe .flows,
+.th-globe .client-links {
+  fill: none;
+  stroke-linecap: round;
+}
+
+.th-globe .arcs {
+  stroke: rgba(45, 212, 191, 0.35);
+  stroke-width: 1.2;
+}
+
+/* Traffic: dashes running along each link. */
+.th-globe .flows {
+  stroke: #5eead4;
+  stroke-width: 1.6;
+  stroke-dasharray: 3 14;
+  animation: th-flow 2.4s linear infinite;
+}
+
+.th-globe .client-links {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-width: 0.7;
+  stroke-dasharray: 1.5 2;
+}
+
+.th-globe .clients {
+  fill: #e2e8f0;
+}
+
+.th-globe .relays {
+  fill: #2dd4bf;
+}
+
+.th-globe .relays .halo {
+  fill: rgba(45, 212, 191, 0.25);
+}
+
+.th-globe .relays text {
+  fill: #ccfbf1;
+  font:
+    700 8px ui-monospace,
+    monospace;
+  letter-spacing: 0.04em;
+}
+
+@keyframes th-flow {
+  to {
+    stroke-dashoffset: -17;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th-globe .flows {
+    animation: none;
+  }
+}
+
+.example-thumb .th-metrics {
+  position: absolute;
+  top: 6%;
+  left: 3%;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.35em 0.7em;
+  border-radius: 6px;
+  background: rgba(5, 7, 10, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(45, 212, 191, 0.3);
+  color: #9aa5b1;
+}
+
+.th-metrics b {
+  color: #e8ecf1;
+}
+
+.th-metrics i {
+  width: 1px;
+  height: 0.9em;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ---------- Motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .example,
+  .example-open svg {
+    transition: none;
+  }
+}
