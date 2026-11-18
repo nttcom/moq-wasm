@@ -21,6 +21,64 @@
   gap: 8px 12px;
 }
 
+.relay-picker-summary {
+  display: flex;
+  flex: 1 1 12rem;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: 0.875rem;
+}
+
+.relay-picker-summary b {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.relay-picker-summary code {
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.65;
+}
+
+.relay-picker .relay-picker-toggle {
+  width: auto;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transform: none;
+}
+
+.relay-picker .relay-picker-toggle:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  transform: none;
+}
+
+.relay-picker-body {
+  display: grid;
+  gap: 10px;
+}
+
+.relay-picker-body[hidden] {
+  display: none;
+}
+
+.relay-picker-body > .relay-picker-tabs {
+  justify-self: start;
+}
+
 .relay-picker-title {
   font-size: 0.875rem;
   font-weight: 600;
