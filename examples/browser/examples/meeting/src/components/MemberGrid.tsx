@@ -1,7 +1,7 @@
 import { LocalMember, RemoteMember } from '../types/member'
 import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
-import { ReactNode, useEffect, useRef, useState } from 'react'
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
@@ -366,8 +366,9 @@ function DeviceModal({
 }) {
   const maxWidthClass = size === 'wide' ? 'max-w-6xl' : 'max-w-md'
   const dialogRef = useRef<HTMLDialogElement>(null)
-  // A modal <dialog> moves focus into itself, keeps it there, closes on Escape and gives focus back.
-  useEffect(() => {
+  // A modal <dialog> moves focus into itself, keeps it there, closes on Escape and gives focus back. The
+  // layout effect's cleanup closes it while it is still in the document, which focus return needs.
+  useLayoutEffect(() => {
     const dialog = dialogRef.current
     dialog?.showModal()
     return () => dialog?.close()

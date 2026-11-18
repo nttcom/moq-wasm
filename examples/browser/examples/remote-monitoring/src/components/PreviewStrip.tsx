@@ -40,7 +40,7 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
         <p className="text-sm font-semibold text-fg">カメラ</p>
         <p className="text-[11px] text-faint">クリックでメインへ</p>
       </div>
-      {/* Two thumbnails a row below lg, where the strip sits under the stage; one column beside it. */}
+      {/* Under the stage: two thumbnails a row on a phone, four from sm. Beside it from lg: one column. */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-1">
         {visible.map((id) => (
           <PreviewCamera

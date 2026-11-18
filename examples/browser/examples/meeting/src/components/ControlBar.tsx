@@ -49,7 +49,7 @@ interface ControlBarProps {
 
 export function ControlBar(props: ControlBarProps) {
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-line bg-surface px-4 py-3">
+    <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 border-t border-line bg-surface px-4 py-3 sm:justify-between">
       <div className="flex items-center gap-2">
         <BarButton label="統計を表示" onClick={props.onOpenStats}>
           <BarChart3 className="h-5 w-5" />
