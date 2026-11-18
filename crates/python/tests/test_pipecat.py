@@ -2,12 +2,13 @@ import asyncio
 import json
 import time
 import uuid
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import moq_wasm
-from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoEncoder
+from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoEncoder, decode_pictures
 from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat._participant import ReceiveOptions
@@ -111,6 +112,32 @@ def test_the_video_encoder_opens_with_a_keyframe_and_makes_one_on_request(codec)
         return packet.startswith(b"\x00\x00\x00\x01\x67") if codec == "H264" else packet[0] & 1 == 0
 
     assert [is_keyframe(packet) for packet in (*first, *second, *requested)] == [True, False, True]
+
+
+async def test_decoded_pictures_carry_the_location_of_their_object_and_are_thinned_out_by_the_interval():
+    # Arrange: two groups of three pictures; the second group is joined at its second object
+    encoder = VideoEncoder("H264", *SIZE, 30)
+
+    def group(values) -> list[bytes]:
+        encoder.request_keyframe()
+        return [b"".join(encoder.encode(picture(value), SIZE, "RGB")) for value in values]
+
+    first, second = group((0, 10, 20)), group((30, 40, 50))
+
+    async def objects():
+        for object_id, payload in enumerate(first):
+            yield SimpleNamespace(group_id=0, object_id=object_id, payload=payload)
+        for object_id, payload in list(enumerate(second))[1:]:
+            yield SimpleNamespace(group_id=1, object_id=object_id, payload=payload)
+
+    # Act
+    every = [decoded async for decoded in decode_pictures(objects(), "avc1.42e01f")]
+    thinned = [decoded async for decoded in decode_pictures(objects(), "avc1.42e01f", interval=60)]
+
+    # Assert: a group joined without its keyframe decodes to nothing
+    assert [(d.location.group_id, d.location.object_id) for d in every] == [(0, 0), (0, 1), (0, 2)]
+    assert [(d.location.group_id, d.location.object_id) for d in thinned] == [(0, 0)]
+    assert every[0].picture.width == SIZE[0]
 
 
 def test_a_video_codec_other_than_h264_and_vp8_is_refused():

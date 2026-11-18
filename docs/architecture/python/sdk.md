@@ -91,7 +91,7 @@ transcriber does.
 flowchart TB
     subgraph moq_wasm
         pipecat["moq_wasm.pipecat<br/>MoqWasmTransport"]
-        codecs["moq_wasm.codecs<br/>OpusDecoder · OpusEncoder · VideoDecoder · VideoEncoder (PyAV)"]
+        codecs["moq_wasm.codecs<br/>OpusDecoder · OpusEncoder · VideoDecoder · VideoEncoder · decode_pictures (PyAV)"]
         media["moq_wasm.media<br/>watch_broadcasts · RemoteBroadcast · create_broadcast · Catalog · EventTimeline"]
         core["moq_wasm<br/>connect · Session"]
         native["moq_wasm._native<br/>(PyO3, crates/python/src)"]
@@ -378,7 +378,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
   PyAV). `MoqWasmTransport` does it with PyAV through `moq_wasm.codecs`,
   which a bot running its own pipeline (one per participant, or with the
-  location of each picture) uses too.
+  location of each picture) uses too. `decode_pictures` turns a video
+  track's objects into pictures with the `Location` of each, a decoder for
+  each group and at most one every `interval` seconds.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
@@ -393,7 +395,8 @@ transport's frames do not carry:
   participant for it.
 - Chat moderation, camera detection and PTZ tracking record each verdict at
   the Location of the chat message or picture it judged, and follow tracks of
-  their own (`prompt`, `chat`) next to the media.
+  their own (`prompt`, `chat`) next to the media. Camera detection and PTZ
+  tracking take their pictures from `decode_pictures`.
 
 ### Publishing media: `_native.MediaBroadcast`
 The browser SDK encodes with WebCodecs and hands the encoded samples to
