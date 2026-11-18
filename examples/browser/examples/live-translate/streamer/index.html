@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="./streamer.css" />
   </head>
   <body data-title="Live Translate · 配信">
-    <div class="page">
+    <main class="page">
       <header class="hero">
         <div>
           <span class="pill">AI 連携 · Live Translate</span>
@@ -27,7 +27,7 @@
               <h2>プレビュー</h2>
               <span class="hint">配信中のカメラ映像</span>
             </div>
-            <div class="stage">
+            <div id="preview-stage" class="stage" data-placeholder="「配信開始」を押すとカメラの映像がここに映ります">
               <video id="preview" autoplay muted playsinline></video>
             </div>
           </section>
@@ -69,7 +69,7 @@
           </section>
         </aside>
       </div>
-    </div>
+    </main>
     <script type="module" src="./main.ts"></script>
     <script type="module" src="../../../utils/shell.ts"></script>
   </body>

@@ -59,6 +59,7 @@ setUpSystemOneBotPage({
       audio: false
     })
     preview.srcObject = mediaStream
+    preview.parentElement!.dataset.started = ''
   },
   onConnect: async (session) => {
     const broadcast = await createBroadcast(session, CAMERA_NAMESPACE)
@@ -93,6 +94,7 @@ setUpSystemOneBotPage({
     }
     mediaStream = undefined
     preview.srcObject = null
+    delete preview.parentElement!.dataset.started
     showVerdicts(undefined)
   }
 })
@@ -127,6 +129,7 @@ function addQuestionRow(question: Question): void {
   choices.value = question.type === 'choice' ? question.choices.join(', ') : ''
   const remove = document.createElement('button')
   remove.type = 'button'
+  remove.className = 'remove'
   remove.textContent = '削除'
   remove.dataset.testid = 'camera-detection-remove-question-button'
   remove.addEventListener('click', () => {

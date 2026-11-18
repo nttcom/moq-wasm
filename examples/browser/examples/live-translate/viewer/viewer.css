@@ -44,11 +44,6 @@
   pointer-events: auto;
 }
 
-/* `hidden` must win over the flex display above. */
-.viewer-overlay[hidden] {
-  display: none;
-}
-
 .viewer-overlay-center {
   flex-direction: column;
   align-items: center;
@@ -129,8 +124,9 @@
 }
 
 .viewer-language[aria-pressed='true'] {
-  background: var(--accent);
   border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 /* The switch takes between one and six seconds; the line shows it is under way. */
@@ -171,10 +167,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--border);
-}
-
-.viewer-stats[hidden] {
-  display: none;
 }
 
 .viewer-stats > div {
@@ -259,8 +251,4 @@
     0 0 6px rgba(0, 0, 0, 0.9),
     0 2px 2px rgba(0, 0, 0, 0.8);
   pointer-events: none;
-}
-
-.viewer-captions[hidden] {
-  display: none;
 }

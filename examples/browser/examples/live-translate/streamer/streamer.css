@@ -31,8 +31,3 @@
   font-family: var(--font-mono);
   font-size: 0.8125rem;
 }
-
-/* `.stack` sets a display that would otherwise win over `hidden`. */
-#viewer-link-section[hidden] {
-  display: none;
-}

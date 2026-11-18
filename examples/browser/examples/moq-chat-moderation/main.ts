@@ -92,6 +92,7 @@ function addLabelRow({ name, description }: Label): HTMLInputElement {
   const descriptionInput = labelInput(description, MAX_LABEL_DESCRIPTION_CHARS, 'ラベルの説明')
   const remove = document.createElement('button')
   remove.type = 'button'
+  remove.className = 'remove'
   remove.textContent = '削除'
   remove.dataset.testid = 'chat-moderation-remove-label-button'
   remove.addEventListener('click', () => {

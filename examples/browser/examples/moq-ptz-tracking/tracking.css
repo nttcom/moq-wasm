@@ -29,34 +29,14 @@
   max-width: none;
 }
 
-.target-row button {
-  min-height: 30px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-subtle);
-  font-size: 0.8rem;
-}
-
-.target-row button:hover {
-  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.add-row {
-  justify-self: start;
-  width: fit-content;
-}
-
 .tracking-stage {
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-md);
 }
 
-/* Before the player mounts, the stage keeps the shape of the video it will show. */
-.tracking-stage:not(:has(> :not(.box-overlay))) {
+/* Until the first frame shows, the stage keeps the shape of the video it will show. */
+.tracking-stage:not([data-started]) {
   aspect-ratio: 16 / 9;
   border: 1px solid var(--border);
   background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;

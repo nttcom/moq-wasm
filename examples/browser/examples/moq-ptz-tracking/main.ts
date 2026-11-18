@@ -29,11 +29,15 @@ startPageTelemetry(
   () => element<HTMLInputElement>('url').value.trim(),
   () => playerSamples(player)
 )
+const stage = element<HTMLDivElement>('stage')
 const player = new LivePlayer({
-  container: element('stage'),
+  container: stage,
   callbacks: {
     onStateChange: followSelectedVideoTrack,
-    onLiveFrame: renderViewerDelay,
+    onLiveFrame: () => {
+      stage.dataset.started = ''
+      renderViewerDelay()
+    },
     onLog: (level, message) => {
       reportLog(level, 'moq-ptz-tracking', message)
       console[level](`[moq-ptz-tracking] ${message}`)
@@ -81,6 +85,7 @@ setUpSystemOneBotPage({
   },
   onReset: async () => {
     await player.stop()
+    delete stage.dataset.started
     viewerDelayLabel.textContent = ''
     promptWriter = undefined
     promptGroupId = undefined
@@ -113,6 +118,7 @@ function addTargetRow(value: string): HTMLInputElement {
   input.dataset.testid = 'ptz-tracking-target-input'
   const remove = document.createElement('button')
   remove.type = 'button'
+  remove.className = 'remove'
   remove.textContent = '削除'
   remove.dataset.testid = 'ptz-tracking-remove-target-button'
   remove.addEventListener('click', () => {

@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="../../utils/components.css" />
     <link rel="stylesheet" href="./whiteboard.css" />
   </head>
-  <body data-title="Whiteboard">
+  <body data-title="Whiteboard" data-shell="wide">
     <main class="page">
       <header class="hero">
         <div>
@@ -38,7 +38,7 @@
       </section>
 
       <section class="card board-card">
-        <div class="toolbar" role="toolbar" aria-label="描画ツール">
+        <div class="toolbar" role="group" aria-label="描画ツール">
           <div class="tool-group">
             <button type="button" data-tool="pen" aria-pressed="true">ペン</button>
             <button type="button" data-tool="eraser" aria-pressed="false" data-testid="whiteboard-eraser-button">

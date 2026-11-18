@@ -22,26 +22,6 @@
   font-size: 0.85rem;
 }
 
-.label-row button {
-  min-height: 30px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-subtle);
-  font-size: 0.8rem;
-}
-
-.label-row button:hover {
-  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.add-row {
-  justify-self: start;
-  width: fit-content;
-}
-
 /* ---------- Chat ---------- */
 
 .chat-card {
@@ -171,10 +151,6 @@
   background: var(--surface-raised);
   box-shadow: var(--shadow-lg);
   animation: drawer-in 0.18s ease-out;
-}
-
-.chat-sidebar[hidden] {
-  display: none;
 }
 
 @keyframes drawer-in {

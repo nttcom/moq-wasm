@@ -128,11 +128,11 @@ uv run python -m moq_camera_detection.bot --insecure \
         <div class="workspace-main">
           <section class="card">
             <div class="card-head">
-              <h2>Camera</h2>
+              <h2>カメラ</h2>
               <span class="hint">bot が見ている映像と検出結果</span>
             </div>
             <ul id="verdicts" class="camera-verdicts"></ul>
-            <div class="camera-stage">
+            <div class="camera-stage" data-placeholder="接続するとカメラの映像がここに映ります">
               <video id="preview" class="camera-preview" autoplay muted playsinline></video>
               <div id="boxes" class="box-overlay"></div>
             </div>

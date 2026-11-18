@@ -54,24 +54,9 @@
   max-width: none;
 }
 
-.question-row input[hidden] {
-  display: block;
-  visibility: hidden;
-}
-
-.question-row button {
-  min-height: 30px;
-  padding: 0 8px;
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-subtle);
-  font-size: 0.8rem;
-}
-
-.question-row button:hover {
-  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
-  background: var(--danger-soft);
-  color: var(--danger);
+/* The last column even when a question kind hides the input before it. */
+.question-row > button {
+  grid-column: -2;
 }
 
 @media (max-width: 560px) {
@@ -82,10 +67,6 @@
   .question-row select,
   .question-row input {
     grid-column: 1 / -1;
-  }
-
-  .question-row input[hidden] {
-    display: none;
   }
 }
 

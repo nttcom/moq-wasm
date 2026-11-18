@@ -41,6 +41,7 @@ async function startBroadcast(): Promise<void> {
       video: { width: { ideal: 1280 }, height: { ideal: 720 } }
     })
     element<HTMLVideoElement>('preview').srcObject = mediaStream
+    element<HTMLElement>('preview-stage').dataset.started = ''
     session = await MoqSession.connect(url, connectOptions())
     const namespace = broadcastNamespace(broadcastId)
     broadcast = await createBroadcast(session, namespace, {
@@ -76,6 +77,7 @@ async function stopBroadcast(): Promise<void> {
     track.stop()
   }
   mediaStream = undefined
+  delete element<HTMLElement>('preview-stage').dataset.started
   if (stopped) {
     setStatusText('streamer-status', 'Stopped')
   }
