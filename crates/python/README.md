@@ -103,6 +103,20 @@ Every other broadcast one level under `room` is a participant: its audio comes
 in as `UserAudioRawFrame` and its video as `UserImageRawFrame`, with the
 participant id as `user_id`. The transport has the events of `MOQTransport`.
 
+To run a pipeline per participant, such as one whose voice activity detector
+must hear one speaker, follow the room with `watch_broadcasts` and give each
+pipeline a `MoqWasmParticipantInput`:
+
+```python
+from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParticipantInput
+
+async def on_participant(remote):  # cancelled when the participant leaves
+    input = MoqWasmParticipantInput(remote, MoqWasmInputParams(audio_in_enabled=True))
+    await PipelineRunner().run(PipelineTask(Pipeline([input, vad, stt, writer])))
+
+await session.run(watch_broadcasts(session, ["app", "room"], on_participant))
+```
+
 ## Install
 
 Each release is a `python-sdk-v<version>` GitHub Release with abi3 wheels for

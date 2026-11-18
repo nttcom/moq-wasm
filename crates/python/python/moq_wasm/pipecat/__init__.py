@@ -3,16 +3,20 @@
 
 from moq_wasm.pipecat._participant import MoqWasmTrack
 from moq_wasm.pipecat._transport import (
+    MoqWasmInputParams,
     MoqWasmInputTransport,
     MoqWasmOutputTransport,
     MoqWasmParams,
+    MoqWasmParticipantInput,
     MoqWasmTransport,
 )
 
 __all__ = [
+    "MoqWasmInputParams",
     "MoqWasmInputTransport",
     "MoqWasmOutputTransport",
     "MoqWasmParams",
+    "MoqWasmParticipantInput",
     "MoqWasmTrack",
     "MoqWasmTransport",
 ]
