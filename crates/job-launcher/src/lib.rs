@@ -22,13 +22,17 @@ pub enum JobLauncher {
 }
 
 impl JobLauncher {
+    /// `local_env` is set on a local child only: a Cloud Run execution's
+    /// overrides are visible to whoever can view the execution, so they never
+    /// carry it.
     /// Fails when the child process cannot be spawned, the metadata server
     /// does not answer, or the Cloud Run Admin API refuses the execution.
-    pub async fn launch(&self, args: Vec<String>) -> Result<()> {
+    pub async fn launch(&self, args: Vec<String>, local_env: Vec<(String, String)>) -> Result<()> {
         match self {
             Self::Local { program } => {
                 let mut child = tokio::process::Command::new(program)
                     .args(&args)
+                    .envs(local_env)
                     .spawn()
                     .with_context(|| format!("cannot start {}", program.display()))?;
                 tokio::spawn(async move {

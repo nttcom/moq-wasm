@@ -83,7 +83,7 @@ impl Launcher {
             Job::Record => &self.record,
             Job::Composite => &self.composite,
         };
-        launcher.launch(command).await?;
+        launcher.launch(command, Vec::new()).await?;
         tracing::info!(mode = job.mode(), "job launched");
         Ok(())
     }

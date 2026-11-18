@@ -317,6 +317,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "bots"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "app-registry",
+ "auth-token",
+ "aws-lc-rs",
+ "base64 0.23.1",
+ "bytes",
+ "google-cloud",
+ "http-body-util",
+ "http-server",
+ "hyper",
+ "job-launcher",
+ "object_store",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "telemetry-otlp",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "broadcast"
 version = "0.1.0"
 dependencies = [
