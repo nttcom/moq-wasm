@@ -240,8 +240,11 @@ from type name to entry:
 
 `launcher` is `{"kind": "local", "program": <path>}` for development.
 Every bot gets the same token claims (above), so they are not configured.
-Limits per app and opening hours, which the AI bots have today, are added
-with the AI bots. A request for a type not in the file is `400`.
+Limits per app are added with the AI bots. Opening hours, which the AI bots
+have today, are not: a bot runs only while its room has a member, for its type's
+longest run at most, and the deployment's daily cost limit, which stops every
+paid workload once reached, bounds what bots spend around the clock. A request
+for a type not in the file is `400`.
 
 A bot is started with the type's `args` followed by `--bot-type`, `--bot-id`,
 `--bots-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
@@ -281,9 +284,12 @@ bot's token call with `null`, so the bot joins with no token.
   arguments.
 - Bots are visible as bots, to the relay through their own token and to the
   room through `bots/<type>`.
-- Limits, opening hours and usage are counted in one place.
+- Limits and usage are counted in one place.
 
 ### Negative
+- Bots run at night and on weekends too. A day whose spending reaches the
+  daily cost limit stops the bots, the recordings and the GPU models together
+  until the next day.
 - A registered app needs a server to start bots. A page alone cannot.
 - `bots` reads every app's secret, as the VTS does, and signs with them, as
   the console does. It becomes the third service trusted with them.
