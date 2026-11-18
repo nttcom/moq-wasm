@@ -1,6 +1,18 @@
 # tests
 
-Relay E2E scenarios. Each directory holds a client crate and a `run.sh` that
+From the repository root:
+
+```shell
+make test               # Rust unit tests
+make browser-e2e-media  # Browser publish/subscribe
+```
+
+## Relay E2E
+
+To inspect the two-relay setup locally, run `docker compose up -d`. The
+relays on ports 4433 and 4434 share a VTS and a Redis route registry.
+
+Each scenario directory holds a client crate and a `run.sh` that
 starts the relays with Docker Compose, runs the client and tears the stack
 down.
 

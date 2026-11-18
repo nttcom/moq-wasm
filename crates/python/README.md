@@ -1,189 +1,53 @@
-# python
+# moq-wasm for Python
 
-`moq-wasm`, the Python SDK of this repository's MoQT implementation, imported
-as `moq_wasm`. The PyO3 module `moq_wasm._native` (`src/`), built with
-maturin, binds the `moqt` and `broadcast` crates; the package around it is in
-`python/`. See [the design](../../docs/architecture/python/sdk.md) and
-[`_native.pyi`](python/moq_wasm/_native.pyi).
-
-It has three layers, each built on the one before:
-
-| Module | Use it for |
-| --- | --- |
-| `moq_wasm` | A session to a relay and raw MoQT tracks, with the method names of the browser SDK's `MoqSession` |
-| `moq_wasm.media` | MSF broadcasts: following participants' catalogs and tracks, publishing encoded media |
-| `moq_wasm.pipecat` | `MoqWasmTransport`, in place of pipecat's `MOQTransport` |
-| `moq_wasm.codecs` | PyAV's Opus, H.264 and VP8 encoders and decoders, which the transport uses, for a bot that runs its own pipeline |
-
-## Session
-
-```python
-import moq_wasm
-
-async with moq_wasm.connect(
-    "https://relay.example.com",
-    token=token,
-    refresh_token=refresh,  # takes the current JWT, returns a later one of the same app
-) as session:
-    writer = await session.publish_track(["app", "chat"], "messages", retention_seconds=30)
-    await writer.write(b"hello", new_group=True)
-
-    async for message in await session.subscribe(["app", "chat"], "messages"):
-        print(message.payload)
-```
-
-The native session, shared with the browser SDK, follows GOAWAY and replaces
-a lost connection for up to 60 s, carrying its subscriptions and namespaces
-over. When it cannot, the session ends. It refreshes the token five minutes
-before it expires. `session.run(work)` awaits `work` and cancels it once the
-session ends, raising what ended it: `ConnectionLost` when the connection
-could not be replaced, `TokenExpired` when no refresh came in time,
-`SessionClosed` after `close()`.
-
-`connect` takes `moqt://` (raw QUIC) and `https://` (WebTransport) URLs and
-offers draft-18, then draft-14; `versions=["draft-14"]` names the drafts to
-offer instead.
-
-## Media
-
-Follow every broadcast one level under a room:
-
-```python
-from moq_wasm.media import watch_broadcasts
-
-async def on_participant(remote):  # a task per broadcast, cancelled when it is withdrawn
-    async for catalog in remote.catalogs():
-        audio = catalog.select(role="audio", packaging="loc", codec="opus")
-        if audio is not None:
-            async for frame in remote.follow(audio.name):
-                handle_opus(frame.payload)
-
-await session.run(watch_broadcasts(session, ["app", "room"], on_participant))
-```
-
-Publish encoded video and audio with their MSF catalog, as the browser SDK
-does:
-
-```python
-from moq_wasm.media import create_broadcast
-
-async with create_broadcast(session, ["app", "room", "camera"]) as broadcast:
-    media = broadcast.add_media_source(label="camera")  # before the first await
-    media.configure_video("avc1.42e01f")  # H.264 Annex B
-    media.configure_audio("opus", 48_000, 1)
-    for packet in encoded_video():
-        media.push_video(packet.data, packet.timestamp_micros)
-```
-
-`await media.keyframe_request()` returns when a viewer asks for a new group;
-answer it with a keyframe. `broadcast.publish_track` and
-`broadcast.event_timeline` add tracks of your own to the broadcast.
-
-## pipecat
-
-```python
-from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
-
-transport = MoqWasmTransport(
-    session,
-    MoqWasmParams(
-        room=["app", "room"],
-        participant_id="bot",
-        audio_in_enabled=True,
-        audio_out_enabled=True,
-        video_in_enabled=True,
-        video_in_sources={"camera": VideoInSourceParams(framerate=10)},
-        video_out_enabled=True,  # H.264 unless video_out_codec="VP8"
-    ),
-)
-pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
-await session.run(PipelineRunner().run(PipelineTask(pipeline)))
-```
-
-Every other broadcast one level under `room` is a participant: its audio comes
-in as `UserAudioRawFrame` and its video as `UserImageRawFrame`, with the
-participant id as `user_id`. The transport has the events of `MOQTransport`.
-
-Video follows pipecat's API: `video_in_enabled=True` with
-`video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}`
-receives a participant's camera only for the `UserImageRequestFrame`s a
-processor pushes upstream, and each `UserImageRawFrame` carries the `Location`
-of its object in `metadata["location"]`. `data_in_tracks` pushes the objects of
-other tracks, such as a prompt, as `InputTransportMessageFrame`s, and an
-`OutputTransportMessageFrame` carrying a `MoqWasmEventRecord` or
-`MoqWasmTrackObject` writes one of `event_timelines_out` or `data_out_tracks`.
-The camera detection bot in `examples/python` runs this way.
-
-To run a pipeline per participant, such as one whose voice activity detector
-must hear one speaker, follow the room with `watch_broadcasts` and give each
-pipeline a `MoqWasmParticipantInput`:
-
-```python
-from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParticipantInput
-
-async def on_participant(remote):  # cancelled when the participant leaves
-    input = MoqWasmParticipantInput(remote, MoqWasmInputParams(audio_in_enabled=True))
-    await PipelineRunner().run(PipelineTask(Pipeline([input, vad, stt, writer])))
-
-await session.run(watch_broadcasts(session, ["app", "room"], on_participant))
-```
+Send a message through a MoQT relay and read it back in a second session.
 
 ## Install
 
-Each release is a `python-sdk-v<version>` GitHub Release with abi3 wheels for
-Python 3.11 and later on Linux x86_64 and aarch64 (glibc 2.28 or later) and
-macOS arm64; the package is not on PyPI. Its release page is a list of links
-pip and uv read, so they pick the wheel of the platform they run on. With uv,
-declare it as an explicit index used only for `moq-wasm`:
-
-```toml
-[project]
-dependencies = ["moq-wasm[pipecat]==0.0.1"]
-
-[tool.uv.sources]
-moq-wasm = { index = "moq-wasm" }
-
-[[tool.uv.index]]
-name = "moq-wasm"
-url = "https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1"
-format = "flat"
-explicit = true
-```
-
-`uv lock` records the wheels of all three platforms. With pip:
+In a Python 3.11+ virtual environment, install the wheel for Linux
+(x86_64 or aarch64, glibc 2.28+) or macOS (Apple silicon):
 
 ```shell
-pip install "moq-wasm[pipecat]==0.0.1" \
+python -m pip install "moq-wasm==0.0.1" \
   --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1
 ```
 
-Pin the version, or pip takes a newer `moq-wasm` from PyPI if one appears.
+## Send and receive a message
 
-The wheel carries no codec of its own. The `codecs` extra adds PyAV for
-`moq_wasm.codecs`, and the `pipecat` extra adds pipecat with it; leave both
-out when you only use `moq_wasm` and `moq_wasm.media`.
+Save this as `hello.py`. It uses the public demo relay and picks a fresh
+namespace on each run. Subscribe before writing because a live subscription
+receives new messages.
 
-### From the sources
+```python
+import asyncio
+from uuid import uuid4
 
-On another platform, or for a change not yet released, depend on this
-directory; the bots in `examples/python` do:
+from moq_wasm import connect
 
-```toml
-[tool.uv.sources]
-moq-wasm = { path = "../../../crates/python" }
+RELAY = "https://relay-1.moqt.research.skyway.io:443"
+
+
+async def main():
+    namespace = ["anon", uuid4().hex]
+    async with connect(RELAY) as publisher, connect(RELAY) as subscriber:
+        writer = await publisher.publish_track(namespace, "messages")
+        await publisher.announce(namespace)
+        messages = await subscriber.subscribe(namespace, "messages")
+        await writer.write(b"hello", new_group=True)
+        print((await anext(messages)).payload.decode())
+
+
+asyncio.run(main())
 ```
 
-uv builds the module with maturin, which needs this repository's Rust
-toolchain. After an uncommitted change to the `moqt` crate, or in a git
-worktree, run `uv sync --reinstall-package moq-wasm`.
+Run `python hello.py`. It prints `hello` and closes both sessions.
 
-The changes of each release are in [CHANGELOG.md](CHANGELOG.md).
+## Media and bots
 
-## Test
+- [Media API](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/media.html) — follow room broadcasts or publish encoded audio and video.
+- [Codec helpers](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/codecs.html) — install `moq-wasm[codecs]` for Opus, H.264 and VP8.
+- [Pipecat transport](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/pipecat.html) — install `moq-wasm[pipecat]` to build a bot. The [voice agent example](https://github.com/nttcom/moq-wasm/tree/master/examples/python/moq-ai-voice-agent) includes a working pipeline and uv configuration.
 
-```shell
-uv run pytest
-```
-
-The tests start a relay and a VTS from this workspace on free ports. The
-GOAWAY test also needs Docker for Redis.
+For source builds and SDK internals, see the [package design](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/python/sdk.md#package)
+and [native type signatures](https://github.com/nttcom/moq-wasm/blob/master/crates/python/python/moq_wasm/_native.pyi).
+See the [changelog](https://github.com/nttcom/moq-wasm/blob/master/crates/python/CHANGELOG.md) for release notes.
