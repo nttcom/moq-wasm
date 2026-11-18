@@ -209,8 +209,8 @@
 
 .section {
   display: grid;
-  gap: 18px;
-  padding-top: 36px;
+  gap: 20px;
+  padding-top: 64px;
   scroll-margin-top: calc(var(--shell-height) + 64px);
 }
 
@@ -508,6 +508,10 @@
 }
 
 @media (max-width: 860px) {
+  .section {
+    padding-top: 44px;
+  }
+
   .group {
     grid-template-columns: 1fr;
   }
