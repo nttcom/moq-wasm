@@ -10,9 +10,9 @@ from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
+from moq_system_one_bot.pipeline_track import PipelineTrack
 from moq_system_one_bot.relay import stay_connected
-from moq_wasm.pipecat import MoqWasmParams, MoqWasmTrackObject, MoqWasmTransport
-from pipecat.frames.frames import OutputTransportMessageFrame
+from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.transports.base_transport import VideoInSourceParams
@@ -52,16 +52,6 @@ def room_namespace(room: BotRoom) -> list[str]:
     return [room.namespace_root, DEMO_NAME, room.room_id]
 
 
-class StatusTrack:
-    """Writes the System One status on the transport's status track, through the pipeline."""
-
-    def __init__(self, worker: PipelineWorker):
-        self._worker = worker
-
-    async def write(self, payload: bytes, *, new_group: bool = False) -> None:
-        await self._worker.queue_frame(OutputTransportMessageFrame(message=MoqWasmTrackObject(STATUS_TRACK, payload, new_group)))
-
-
 async def detect_in_session(
     args: argparse.Namespace,
     http: aiohttp.ClientSession,
@@ -99,7 +89,7 @@ async def detect_in_session(
         await runner.cancel()
 
     await runner.add_workers(worker)
-    await status.publish_on(StatusTrack(worker))
+    await status.publish_on(PipelineTrack(worker, STATUS_TRACK))
     await runner.run()
 
 

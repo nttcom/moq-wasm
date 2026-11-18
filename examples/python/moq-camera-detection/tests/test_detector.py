@@ -12,7 +12,8 @@ from pipecat.frames.frames import (
 )
 from pipecat.tests.utils import SleepFrame, run_test
 
-from moq_camera_detection.detector import EVENT_TIMELINE_TRACK, CameraDetector, _rgb_to_jpeg
+from moq_camera_detection.detector import EVENT_TIMELINE_TRACK, CameraDetector
+from moq_system_one_bot.video import rgb_to_jpeg
 from moq_camera_detection.prompt import Prompt
 from tests.helpers import StubVision
 
@@ -89,7 +90,7 @@ async def test_pictures_are_asked_for_only_once_a_prompt_came():
 async def test_an_answer_returned_after_a_newer_one_is_not_recorded():
     # Act
     down, _ = await run_test(
-        CameraDetector(LateFirstAnswerVision(_rgb_to_jpeg(camera_picture((0, 0)).image, SIZE))),
+        CameraDetector(LateFirstAnswerVision(rgb_to_jpeg(camera_picture((0, 0)).image, SIZE))),
         frames_to_send=[prompt_message(), camera_picture((44, 0)), camera_picture((44, 1), 10), SleepFrame(0.1)],
     )
 
