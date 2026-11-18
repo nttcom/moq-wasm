@@ -1,6 +1,6 @@
 # [S] Report a refused room watch in `MoqWasmTransport` through `on_error`
 
-Next: in `crates/python/python/moq_wasm/pipecat/_room.py:101`, wrap the `watch_broadcasts` task so a `RuntimeError` reaches `self._sink.event("on_error", ...)` and the log.
+Next: in `crates/python/python/moq_wasm/pipecat/_room.py:96`, wrap the `watch_broadcasts` task so a `RuntimeError` reaches `self._sink.event("on_error", ...)` and the log.
 
 ## Goal
 
