@@ -33,8 +33,8 @@ An empty value counts as unset and selects the default.
 | `RELAY_DRAIN_TIMEOUT_SECS` | `30` | On Ctrl+C or SIGTERM, how long clients get to leave after GOAWAY |
 | `AUTH_VTS_URL` | required | VTS verify endpoint, e.g. `http://vts:8081/verify` |
 | `AUTH_RELAY_TOKEN` | required | JWT this relay presents to other relays, signed with `--relay-id` set to its `RELAY_ID` |
-| `AUTH_MAX_TOKEN_TTL_SECONDS` | `3600` | Longest client token lifetime accepted |
-| `AUTH_CLOCK_LEEWAY_SECONDS` | `5` | Tolerance when checking `iat` / `exp` |
+| `AUTH_MAX_TOKEN_TTL_SECONDS` | `86400` | Longest client token lifetime accepted |
+| `AUTH_CLOCK_LEEWAY_SECONDS` | `60` | Tolerance when checking `iat` / `exp` |
 | `RELAY_CACHE_TTL_SECS` | `60` | How long objects stay in memory |
 | `RELAY_DISK_CACHE_DIR` | unset | Directory keeping the payloads from client publishers up to 1 hour; unset caches in memory only |
 | `RELAY_DISK_CACHE_BYTES` | `10737418240` (10 GiB) | Cap on the disk cache; the oldest segments go first |
