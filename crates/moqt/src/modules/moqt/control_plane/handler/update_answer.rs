@@ -1,11 +1,11 @@
 use std::{
-    sync::{Arc, Mutex, PoisonError, Weak},
+    sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 
 use tokio::sync::oneshot;
 
-use crate::modules::executor;
+use crate::modules::{executor, extensions::mutex::lock};
 
 /// The answer to a draft-18 REQUEST_UPDATE, shared by the handler's clones.
 /// Dropping every clone drops the sender, which the request stream reads as
@@ -63,7 +63,7 @@ impl<T> UpdateAnswerSlot<T> {
     }
 
     pub(crate) fn answer(&self, answer: T) -> SlotOutcome {
-        let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut slot = lock(&self.0);
         if matches!(*slot, AnswerSlot::TimedOut) {
             return SlotOutcome::TimedOut;
         }
@@ -101,7 +101,7 @@ impl<T> UpdateAnswerReceiver<T> {
             return answer.map_or(DueAnswer::Dropped, DueAnswer::Answered);
         }
         if let Some(slot) = self.slot.upgrade() {
-            let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut slot = lock(&slot);
             if matches!(*slot, AnswerSlot::Waiting(_)) {
                 *slot = AnswerSlot::TimedOut;
                 return DueAnswer::TimedOut;
