@@ -41,26 +41,11 @@ pub struct CompositeInput {
     pub loudness: Option<Loudness>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CompositeSettings {
-    pub width: u32,
-    pub height: u32,
-    pub framerate: u32,
-    pub video_bitrate_kbps: u32,
-    pub audio_bitrate_kbps: u32,
-}
-
-impl Default for CompositeSettings {
-    fn default() -> Self {
-        Self {
-            width: 1280,
-            height: 720,
-            framerate: 15,
-            video_bitrate_kbps: 2_000,
-            audio_bitrate_kbps: 128,
-        }
-    }
-}
+const WIDTH: u32 = 1280;
+const HEIGHT: u32 = 720;
+const FRAMERATE: u32 = 15;
+const VIDEO_BITRATE_KBPS: u32 = 2_000;
+const AUDIO_BITRATE_KBPS: u64 = 128;
 
 enum Message {
     Error(anyhow::Error),
@@ -83,18 +68,9 @@ pub struct Compositor {
 }
 
 impl Compositor {
-    /// Fails when no input carries media or the settings cannot be encoded.
-    /// Blocks while it reads each source up to its first sample; a source
-    /// without samples is treated as `None`.
-    pub fn start(
-        mut inputs: Vec<CompositeInput>,
-        settings: CompositeSettings,
-        output: &Path,
-    ) -> Result<Self> {
-        ensure!(
-            settings.width >= 2 && settings.height >= 2 && settings.framerate > 0,
-            "invalid composite settings {settings:?}"
-        );
+    /// Fails when no input carries media. Blocks while it reads each source
+    /// up to its first sample; a source without samples is treated as `None`.
+    pub fn start(mut inputs: Vec<CompositeInput>, output: &Path) -> Result<Self> {
         for input in &mut inputs {
             for events in [&mut input.video, &mut input.screen_share, &mut input.audio] {
                 *events = events.take().map(with_samples).transpose()?.flatten();
@@ -128,7 +104,6 @@ impl Compositor {
         let pipeline = gst::parse::launch(&pipeline_description(
             video_sources.len(),
             audio_sources.len(),
-            &settings,
         ))
         .context("build composite pipeline")?
         .downcast::<gst::Pipeline>()
@@ -154,12 +129,12 @@ impl Compositor {
                     source: *source,
                 })
                 .collect();
-            layout::install(&compositor, pictures, speakers, settings)?;
+            layout::install(&compositor, pictures, speakers)?;
         }
         let (message_sender, message_receiver) = mpsc::unbounded_channel();
         forward_bus_messages(&pipeline, message_sender.clone())?;
 
-        let last_frame_duration = gst::ClockTime::SECOND / u64::from(settings.framerate);
+        let last_frame_duration = gst::ClockTime::SECOND / u64::from(FRAMERATE);
         let mut feeders = Vec::new();
         for (index, ((source, events), frames)) in video_sources.into_iter().zip(frames).enumerate()
         {
@@ -216,11 +191,7 @@ impl Drop for Compositor {
     }
 }
 
-fn pipeline_description(
-    video_count: usize,
-    audio_count: usize,
-    settings: &CompositeSettings,
-) -> String {
+fn pipeline_description(video_count: usize, audio_count: usize) -> String {
     let source = source_properties();
     let mut description = String::from("mp4mux name=mux faststart=true ! filesink name=sink ");
     if video_count > 0 {
@@ -230,8 +201,8 @@ fn pipeline_description(
         }
         description.push_str(&format!(
             "! video/x-raw,format=I420,width={},height={},framerate={}/1 ! \
-             x264enc speed-preset=veryfast bitrate={} ! h264parse ! queue ! mux. ",
-            settings.width, settings.height, settings.framerate, settings.video_bitrate_kbps
+             x264enc speed-preset=veryfast bitrate={VIDEO_BITRATE_KBPS} ! h264parse ! queue ! mux. ",
+            WIDTH, HEIGHT, FRAMERATE
         ));
         for index in 0..video_count {
             description.push_str(&format!(
@@ -243,7 +214,7 @@ fn pipeline_description(
         description.push_str(&format!(
             "audiomixer name=mix ! {OUTPUT_AUDIO_CAPS} ! audioconvert ! audioresample ! \
              avenc_aac bitrate={} ! aacparse ! queue ! mux. ",
-            u64::from(settings.audio_bitrate_kbps) * 1_000
+            AUDIO_BITRATE_KBPS * 1_000
         ));
         for index in 0..audio_count {
             description.push_str(&format!(
@@ -465,13 +436,6 @@ mod tests {
         transcode_54p,
     };
 
-    const SETTINGS: CompositeSettings = CompositeSettings {
-        width: 320,
-        height: 180,
-        framerate: 15,
-        video_bitrate_kbps: 200,
-        audio_bitrate_kbps: 64,
-    };
     const TIMEOUT: Duration = Duration::from_secs(60);
 
     fn video_events() -> Vec<MediaEvent> {
@@ -492,14 +456,12 @@ mod tests {
             })
             .max()
             .unwrap();
-        last.saturating_add(Timestamp::from_micros(
-            1_000_000 / u64::from(SETTINGS.framerate),
-        ))
+        last.saturating_add(Timestamp::from_micros(1_000_000 / u64::from(FRAMERATE)))
     }
 
     async fn composite(inputs: Vec<CompositeInput>, name: &str) -> Mp4Index {
         let output = output_path(name);
-        let mut compositor = Compositor::start(inputs, SETTINGS, &output).unwrap();
+        let mut compositor = Compositor::start(inputs, &output).unwrap();
         tokio::time::timeout(TIMEOUT, compositor.finished())
             .await
             .expect("compositor did not finish")
@@ -546,7 +508,7 @@ mod tests {
             .unwrap()
             .sequence_parameter_set()
             .unwrap();
-        assert_eq!((sps.width, sps.height), (SETTINGS.width, SETTINGS.height));
+        assert_eq!((sps.width, sps.height), (WIDTH, HEIGHT));
     }
 
     #[tokio::test]
@@ -777,6 +739,6 @@ mod tests {
         let inputs = vec![CompositeInput::default()];
 
         // Act / Assert
-        assert!(Compositor::start(inputs, SETTINGS, &output_path("empty")).is_err());
+        assert!(Compositor::start(inputs, &output_path("empty")).is_err());
     }
 }

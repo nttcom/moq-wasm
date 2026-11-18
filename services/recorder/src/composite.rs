@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use mediapack::{MediaEvent, StreamSet, Timestamp, mp4::Demuxer};
-use transcode::{CompositeInput, CompositeSettings, Compositor, EventSource, Loudness};
+use transcode::{CompositeInput, Compositor, EventSource, Loudness};
 
 use crate::recording::RecordedFile;
 
@@ -66,10 +66,8 @@ pub(crate) async fn composite_room(members: &[MemberFiles], output: &Path) -> Re
         });
     }
     let output = output.to_path_buf();
-    let mut compositor = tokio::task::spawn_blocking(move || {
-        Compositor::start(inputs, CompositeSettings::default(), &output)
-    })
-    .await??;
+    let mut compositor =
+        tokio::task::spawn_blocking(move || Compositor::start(inputs, &output)).await??;
     compositor.finished().await?;
     Ok(origin)
 }

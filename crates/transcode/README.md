@@ -45,7 +45,7 @@ the left, the other videos in a strip on the right, on a black background.
 Their audio is mixed into one stereo AAC track.
 
 ```rust
-use transcode::{CompositeInput, CompositeSettings, Compositor, Loudness};
+use transcode::{CompositeInput, Compositor, Loudness};
 
 let loudness = Loudness::measure(audio_events_again)?; // blocks; decodes the audio once more
 let inputs = vec![CompositeInput {
@@ -54,10 +54,11 @@ let inputs = vec![CompositeInput {
     audio: Some(audio_events),
     loudness: Some(loudness),
 }];
-let mut compositor = Compositor::start(inputs, CompositeSettings::default(), &output_path)?;
+let mut compositor = Compositor::start(inputs, &output_path)?;
 compositor.finished().await?;                  // dropping the compositor cancels
 ```
 
+- The output is 1280x720 at 15 fps, H.264 at 2 Mbps and AAC at 128 kbps.
 - Each `EventSource` yields a config event, then samples already on the
   shared timeline. An input without video only joins the audio mix.
 - The active speaker is picked from `Loudness`, the RMS level per 100 ms: the
