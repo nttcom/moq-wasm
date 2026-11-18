@@ -33,18 +33,14 @@ pub(crate) enum TokenRenewal {
 impl TokenRenewal {
     /// `None` keeps `current`.
     async fn next(&self, current: &str) -> Result<Option<String>> {
+        let renews_near_expiry = !matches!(self, Self::File(_));
+        if renews_near_expiry && !expires_within(current, REFRESH_MARGIN, now_ms() / 1000) {
+            return Ok(None);
+        }
         let token = match self {
             Self::File(path) => read_token_file(path).await?,
-            Self::Issuer(url) => {
-                if !expires_within(current, REFRESH_MARGIN, now_ms() / 1000) {
-                    return Ok(None);
-                }
-                refresh_at_issuer(url, current).await?
-            }
+            Self::Issuer(url) => refresh_at_issuer(url, current).await?,
             Self::Bots(bots) => {
-                if !expires_within(current, REFRESH_MARGIN, now_ms() / 1000) {
-                    return Ok(None);
-                }
                 // A `bots` without authorization signs none, and the relay asks for none.
                 match bots.token().await? {
                     Some(token) => token,
