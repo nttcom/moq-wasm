@@ -45,7 +45,11 @@ impl TokenRenewal {
                 if !expires_within(current, REFRESH_MARGIN, now_ms() / 1000) {
                     return Ok(None);
                 }
-                bots.token().await?
+                // A `bots` without authorization signs none, and the relay asks for none.
+                match bots.token().await? {
+                    Some(token) => token,
+                    None => return Ok(None),
+                }
             }
         };
         Ok((token != current).then_some(token))
