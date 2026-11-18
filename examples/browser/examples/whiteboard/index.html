@@ -14,7 +14,7 @@
         <div>
           <span class="pill">ユースケース · Whiteboard</span>
           <h1>みんなで描けるホワイトボード</h1>
-          <p>描いた線を MoQT で共有します。途中から参加した人にも、それまでのボードをそのまま再現します。</p>
+          <p>途中から参加しても、それまでのボードを再現します。</p>
         </div>
       </header>
 
@@ -29,8 +29,12 @@
             <code id="room"></code>
           </div>
           <div class="button-row">
-            <button type="button" id="joinBtn" data-testid="whiteboard-join-button">参加</button>
-            <button type="button" id="leaveBtn" data-testid="whiteboard-leave-button" disabled>退出</button>
+            <button type="button" id="joinBtn" data-testid="whiteboard-join-button">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-in" /></svg>参加
+            </button>
+            <button type="button" id="leaveBtn" data-testid="whiteboard-leave-button" disabled>
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-out" /></svg>退出
+            </button>
           </div>
           <p class="hint" id="status" data-testid="whiteboard-status">未接続</p>
           <ul id="participants" class="participants" data-testid="whiteboard-participants"></ul>
@@ -40,9 +44,11 @@
       <section class="card board-card">
         <div class="toolbar" role="group" aria-label="描画ツール">
           <div class="tool-group">
-            <button type="button" data-tool="pen" aria-pressed="true">ペン</button>
+            <button type="button" data-tool="pen" aria-pressed="true">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-pencil" /></svg>ペン
+            </button>
             <button type="button" data-tool="eraser" aria-pressed="false" data-testid="whiteboard-eraser-button">
-              消しゴム
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-eraser" /></svg>消しゴム
             </button>
           </div>
           <span class="toolbar-divider" aria-hidden="true"></span>
@@ -50,7 +56,7 @@
           <label class="inline-field">太さ<input type="range" id="width" min="1" max="24" value="4" /></label>
           <span class="toolbar-divider" aria-hidden="true"></span>
           <button type="button" id="clearBtn" class="danger" data-testid="whiteboard-clear-button" disabled>
-            全消去
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-trash" /></svg>全消去
           </button>
           <span class="hint stroke-count" id="strokeCount" data-testid="whiteboard-stroke-count" data-count="0"
             >0 ストローク</span

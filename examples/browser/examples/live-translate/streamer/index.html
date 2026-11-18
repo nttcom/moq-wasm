@@ -14,10 +14,7 @@
         <div>
           <span class="pill">AI 連携 · Live Translate</span>
           <h1>話した言葉を、視聴者の言語で届ける</h1>
-          <p>
-            カメラとマイクを配信すると、live-translate が Gemini Live Translate
-            で音声を翻訳し、視聴者は好きな言語の音声と字幕で見られます。配信を始めると視聴リンクが表示されます。
-          </p>
+          <p>視聴者は好きな言語の音声と字幕で見られます。</p>
         </div>
       </header>
       <div id="app" class="workspace">
@@ -25,9 +22,8 @@
           <section class="card">
             <div class="card-head">
               <h2>プレビュー</h2>
-              <span class="hint">配信中のカメラ映像</span>
             </div>
-            <div id="preview-stage" class="stage" data-placeholder="「配信開始」を押すとカメラの映像がここに映ります">
+            <div id="preview-stage" class="stage" data-placeholder="配信開始で映像が映ります">
               <video id="preview" autoplay muted playsinline></video>
             </div>
           </section>
@@ -47,23 +43,38 @@
                   class="secondary compact-button"
                   data-testid="streamer-copy-broadcast-id"
                 >
-                  コピー
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg
+                  ><span class="label">コピー</span>
                 </button>
               </div>
             </div>
             <div class="button-row">
-              <button type="button" id="startBtn" data-testid="streamer-start-button">配信開始</button>
-              <button type="button" id="stopBtn">停止</button>
+              <button type="button" id="startBtn" data-testid="streamer-start-button">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg>配信開始
+              </button>
+              <button type="button" id="stopBtn">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-square" /></svg>停止
+              </button>
             </div>
             <p id="streamer-status" class="hint" data-testid="streamer-status"></p>
           </section>
           <section id="viewer-link-section" class="card stack viewer-link-card" hidden>
-            <h2>視聴リンク</h2>
-            <p class="hint">このリンクを視聴者に共有します</p>
+            <h2>
+              視聴リンク
+              <span
+                class="tip"
+                tabindex="0"
+                role="img"
+                aria-label="このリンクを視聴者に共有します"
+                data-tip="このリンクを視聴者に共有します"
+                ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+              ></span>
+            </h2>
             <a id="viewer-link" target="_blank" rel="noopener" data-testid="streamer-viewer-link"></a>
             <div class="button-row">
               <button type="button" id="copyViewerLinkBtn" data-testid="streamer-copy-viewer-link">
-                リンクをコピー
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg
+                ><span class="label">リンクをコピー</span>
               </button>
             </div>
           </section>

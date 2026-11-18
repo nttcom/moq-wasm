@@ -90,12 +90,14 @@ function showViewerLink(url: string): void {
   element<HTMLElement>('viewer-link-section').hidden = false
 }
 
+/// Words the copy in the button's `.label`, so its icon stays.
 async function copyText(button: HTMLButtonElement, text: string): Promise<void> {
-  const label = (button.dataset.label ??= button.textContent ?? '')
+  const labelElement = button.querySelector('.label') ?? button
+  const label = (button.dataset.label ??= labelElement.textContent ?? '')
   try {
     await navigator.clipboard.writeText(text)
-    button.textContent = 'コピーしました'
-    setTimeout(() => (button.textContent = label), COPIED_LABEL_MS)
+    labelElement.textContent = 'コピーしました'
+    setTimeout(() => (labelElement.textContent = label), COPIED_LABEL_MS)
   } catch (error) {
     setStatusText('streamer-status', `Copy failed: ${getErrorMessage(error)}`)
   }

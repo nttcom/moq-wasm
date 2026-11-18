@@ -3,6 +3,7 @@ import { withNamespaceRoot } from '../../utils/access'
 import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
+import { icon } from '../../utils/icon'
 import { element, setStatus } from '../../utils/page'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
@@ -119,7 +120,9 @@ function addTargetRow(value: string): HTMLInputElement {
   const remove = document.createElement('button')
   remove.type = 'button'
   remove.className = 'remove'
-  remove.textContent = '削除'
+  remove.setAttribute('aria-label', '削除')
+  remove.title = '削除'
+  remove.append(icon('trash'))
   remove.dataset.testid = 'ptz-tracking-remove-target-button'
   remove.addEventListener('click', () => {
     row.remove()

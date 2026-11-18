@@ -2,6 +2,7 @@ import type { TrackWriter } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
 import { createBroadcast } from 'moq-wasm/media'
 import { pageRoomId } from '../../utils/botRoom'
+import { icon } from '../../utils/icon'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
@@ -130,7 +131,9 @@ function addQuestionRow(question: Question): void {
   const remove = document.createElement('button')
   remove.type = 'button'
   remove.className = 'remove'
-  remove.textContent = '削除'
+  remove.setAttribute('aria-label', '削除')
+  remove.title = '削除'
+  remove.append(icon('trash'))
   remove.dataset.testid = 'camera-detection-remove-question-button'
   remove.addEventListener('click', () => {
     row.remove()

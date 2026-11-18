@@ -52,7 +52,7 @@
 
 .chat-messages:empty::before {
   color: var(--text-subtle);
-  content: 'まだメッセージはありません。参加して最初のメッセージを送りましょう';
+  content: 'メッセージはまだありません';
   font-size: 0.875rem;
   text-align: center;
 }

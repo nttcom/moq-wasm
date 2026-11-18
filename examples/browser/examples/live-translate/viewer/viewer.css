@@ -52,6 +52,9 @@
 }
 
 .viewer-watch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   height: 52px;
   padding: 0 32px;
   border: 0;
@@ -198,6 +201,9 @@
 }
 
 .viewer-details > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 0;
   cursor: pointer;
   font-size: 0.925rem;
@@ -211,7 +217,6 @@
 
 .viewer-details > summary::before {
   display: inline-block;
-  margin-right: 8px;
   color: var(--text-subtle);
   content: '›';
   transition: transform 0.15s ease;
