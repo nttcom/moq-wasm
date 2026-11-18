@@ -193,7 +193,9 @@ impl Bots {
                 .map_err(StartError::Internal)?;
             return Err(StartError::Internal(error));
         }
-        Ok(view(&record, now_ms))
+        self.view(&record, now_ms)
+            .await
+            .map_err(StartError::Internal)
     }
 
     /// The room's latest bot of `bot_type`.
@@ -206,11 +208,37 @@ impl Bots {
         let Some(holder) = self.store.room_holder(bot_type, namespace_prefix).await? else {
             return Ok(None);
         };
-        Ok(self
-            .store
-            .read(&holder.id)
-            .await?
-            .map(|record| view(&record, now_ms)))
+        let Some(record) = self.store.read(&holder.id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(self.view(&record, now_ms).await?))
+    }
+
+    /// The bot as the app server sees it: a bot asked to stop shows as
+    /// stopping before its next heartbeat says so, and one that stopped
+    /// reporting as failed.
+    pub(crate) async fn view(&self, record: &BotRecord, now_ms: u64) -> Result<BotView> {
+        let (state, error) = if record.state.has_ended() {
+            (record.state, record.error.clone())
+        } else if !is_active(record, now_ms) {
+            (
+                BotState::Failed,
+                Some("the bot stopped reporting".to_string()),
+            )
+        } else if self.store.stop_requested(&record.id).await? {
+            (BotState::Stopping, None)
+        } else {
+            (record.state, record.error.clone())
+        };
+        Ok(BotView {
+            id: record.id.clone(),
+            bot_type: record.bot_type.clone(),
+            namespace_prefix: record.namespace_prefix.clone(),
+            state,
+            error,
+            created_at_ms: record.created_at_ms,
+            updated_at_ms: record.updated_at_ms,
+        })
     }
 
     /// `None` for an id of another type.
@@ -329,27 +357,6 @@ impl Bots {
 
 fn is_active(record: &BotRecord, now_ms: u64) -> bool {
     !record.state.has_ended() && now_ms.saturating_sub(record.updated_at_ms) < HEARTBEAT_TIMEOUT_MS
-}
-
-/// A bot that stopped reporting shows as failed.
-pub(crate) fn view(record: &BotRecord, now_ms: u64) -> BotView {
-    let (state, error) = if record.state.has_ended() || is_active(record, now_ms) {
-        (record.state, record.error.clone())
-    } else {
-        (
-            BotState::Failed,
-            Some("the bot stopped reporting".to_string()),
-        )
-    };
-    BotView {
-        id: record.id.clone(),
-        bot_type: record.bot_type.clone(),
-        namespace_prefix: record.namespace_prefix.clone(),
-        state,
-        error,
-        created_at_ms: record.created_at_ms,
-        updated_at_ms: record.updated_at_ms,
-    }
 }
 
 fn random_hex() -> String {
@@ -542,6 +549,20 @@ mod tests {
             test.bots.token("recorder", &ended.id, Some(KEY), NOW).await,
             Err(BotError::Ended)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_bot_asked_to_stop_shows_as_stopping_before_its_heartbeat() {
+        // Arrange
+        let test = test_bots();
+        let bot = started(&test, "app/a").await;
+
+        // Act
+        test.bots.stop(&bot.id).await.unwrap();
+
+        // Assert
+        let latest = test.bots.latest("recorder", "app/a", NOW).await.unwrap();
+        assert_eq!(latest.unwrap().state, BotState::Stopping);
     }
 
     #[tokio::test]

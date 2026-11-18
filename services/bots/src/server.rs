@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
-    bots::{BotError, Bots, Heartbeat, StartError, view},
+    bots::{BotError, Bots, Heartbeat, StartError},
     launch_auth::{LaunchAuth, Rejection, bearer_token},
     store::BotRecord,
 };
@@ -177,7 +177,10 @@ async fn latest(
 
 async fn show(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
     match authorized_record(state, headers, bot_type, id).await {
-        Ok(record) => json_response(StatusCode::OK, &view(&record, now_ms())),
+        Ok(record) => match state.bots.view(&record, now_ms()).await {
+            Ok(bot) => json_response(StatusCode::OK, &bot),
+            Err(error) => internal(&error),
+        },
         Err((status, error)) => error_response(status, error),
     }
 }
