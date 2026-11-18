@@ -26,10 +26,6 @@ impl MediaTimelineRecord {
     pub fn location(&self) -> (u64, u64) {
         self.1
     }
-
-    pub fn encoded_at_ms(&self) -> u64 {
-        self.2
-    }
 }
 
 #[cfg(test)]
@@ -55,12 +51,8 @@ mod tests {
 
         // Assert
         assert_eq!(
-            (
-                record.presentation_time_ms(),
-                record.location(),
-                record.encoded_at_ms()
-            ),
-            (2002, (7, 3), 1_759_924_160_383)
+            (record.presentation_time_ms(), record.location()),
+            (2002, (7, 3))
         );
     }
 

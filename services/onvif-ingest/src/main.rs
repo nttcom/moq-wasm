@@ -1,6 +1,5 @@
 mod app_config;
 mod arrival_clamp;
-mod cli;
 mod command_subscriber;
 mod onvif_client;
 mod onvif_profile_list;
@@ -35,9 +34,22 @@ const RTSP_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Bridge ONVIF PTZ and RTSP media over MoQ")]
-struct MoqtArgs {
-    #[command(flatten)]
-    onvif: cli::Args,
+pub(crate) struct MoqtArgs {
+    /// IP address or hostname of the camera
+    #[arg(long)]
+    pub(crate) ip: String,
+
+    /// Username for RTSP/ONVIF authentication
+    #[arg(long)]
+    pub(crate) username: String,
+
+    /// Password for RTSP/ONVIF authentication
+    #[arg(long)]
+    pub(crate) password: String,
+
+    /// Timeout in milliseconds
+    #[arg(long, default_value_t = 3000)]
+    pub(crate) timeout_ms: u64,
 
     /// MoQ relay URL (e.g. https://localhost:4433 for WebTransport, moqt://localhost:4433 for QUIC)
     #[arg(long)]
@@ -106,7 +118,7 @@ async fn main() -> Result<()> {
         ..Default::default()
     })?;
     let args = MoqtArgs::parse();
-    let target = app_config::Target::from_args(&args.onvif)?;
+    let target = app_config::Target::from_args(&args)?;
     let publish_namespace = parse_namespace(&args.publish_namespace);
     if publish_namespace.is_empty() {
         bail!("publish namespace is required");

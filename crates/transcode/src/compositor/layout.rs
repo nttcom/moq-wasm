@@ -6,7 +6,7 @@ use std::{
 use anyhow::{Context, Result};
 use gstreamer::{self as gst, prelude::*};
 
-use super::{CompositeSettings, speaker::Speakers};
+use super::{HEIGHT, WIDTH, speaker::Speakers};
 
 type Span = (gst::ClockTime, gst::ClockTime);
 
@@ -83,7 +83,6 @@ pub(super) fn install(
     compositor: &gst::Element,
     pictures: Vec<Picture>,
     speakers: Speakers,
-    settings: CompositeSettings,
 ) -> Result<()> {
     let sources: Vec<Source> = pictures.iter().map(|picture| picture.source).collect();
     let tiles = pictures
@@ -119,7 +118,7 @@ pub(super) fn install(
         let previous_focus = shown.as_ref().map(|stage| stage.focus);
         let stage = Stage::choose(&sources, &visible, speakers.at(start), previous_focus);
         if *shown != stage {
-            arrange(&tiles, stage.as_ref(), &settings);
+            arrange(&tiles, stage.as_ref());
             *shown = stage;
         }
         None
@@ -127,8 +126,8 @@ pub(super) fn install(
     Ok(())
 }
 
-fn arrange(tiles: &[Tile], stage: Option<&Stage>, settings: &CompositeSettings) {
-    let rects = stage.map(|stage| stage.rects(settings)).unwrap_or_default();
+fn arrange(tiles: &[Tile], stage: Option<&Stage>) {
+    let rects = stage.map(Stage::rects).unwrap_or_default();
     for (index, tile) in tiles.iter().enumerate() {
         let Some((_, rect)) = rects.iter().find(|(shown, _)| *shown == index) else {
             tile.pad.set_property("alpha", 0.0f64);
@@ -192,30 +191,29 @@ impl Stage {
     }
 
     /// Sizes are even so tile edges fall on 4:2:0 chroma sample boundaries.
-    fn rects(&self, settings: &CompositeSettings) -> Vec<(usize, Rect)> {
+    fn rects(&self) -> Vec<(usize, Rect)> {
         if self.strip.is_empty() {
             return vec![(
                 self.focus,
                 Rect {
                     x: 0,
                     y: 0,
-                    width: settings.width,
-                    height: settings.height,
+                    width: WIDTH,
+                    height: HEIGHT,
                 },
             )];
         }
-        let strip_width = (settings.width / STRIP_FRACTION) & !1;
-        let tile_height =
-            (strip_width * 9 / 16).min(settings.height / self.strip.len() as u32) & !1;
+        let strip_width = (WIDTH / STRIP_FRACTION) & !1;
+        let tile_height = (strip_width * 9 / 16).min(HEIGHT / self.strip.len() as u32) & !1;
         let focus = Rect {
             x: 0,
             y: 0,
-            width: settings.width - strip_width,
-            height: settings.height,
+            width: WIDTH - strip_width,
+            height: HEIGHT,
         };
         let strip = self.strip.iter().enumerate().map(|(slot, tile)| {
             let rect = Rect {
-                x: settings.width - strip_width,
+                x: WIDTH - strip_width,
                 y: slot as u32 * tile_height,
                 width: strip_width,
                 height: tile_height,
@@ -285,7 +283,7 @@ mod tests {
         // Assert
         assert_eq!(stage, staged(1, &[0, 2]));
         assert_eq!(
-            stage.rects(&CompositeSettings::default()),
+            stage.rects(),
             [
                 (1, rect(0, 0, 1024, 720)),
                 (0, rect(1024, 0, 256, 144)),
@@ -369,10 +367,7 @@ mod tests {
         let stage = staged(0, &[]);
 
         // Act / Assert
-        assert_eq!(
-            stage.rects(&CompositeSettings::default()),
-            [(0, rect(0, 0, 1280, 720))]
-        );
+        assert_eq!(stage.rects(), [(0, rect(0, 0, 1280, 720))]);
     }
 
     #[test]
@@ -381,7 +376,7 @@ mod tests {
         let stage = staged(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
 
         // Act
-        let rects = stage.rects(&CompositeSettings::default());
+        let rects = stage.rects();
 
         // Assert
         assert_eq!(rects[1], (1, rect(1024, 0, 256, 90)));

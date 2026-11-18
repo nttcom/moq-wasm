@@ -1,7 +1,6 @@
 use crate::{h264::AvcDecoderConfigurationRecord, parameter_sets};
 
 pub type ParameterSetTracker = parameter_sets::ParameterSetTracker<AvcDecoderConfigurationRecord>;
-pub type TrackedAccessUnit = parameter_sets::TrackedAccessUnit<AvcDecoderConfigurationRecord>;
 
 #[cfg(test)]
 mod tests {

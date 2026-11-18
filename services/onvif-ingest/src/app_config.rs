@@ -1,4 +1,4 @@
-use crate::cli::Args;
+use crate::MoqtArgs;
 use anyhow::{bail, Result};
 use std::time::Duration;
 
@@ -14,7 +14,7 @@ pub(crate) struct Target {
 }
 
 impl Target {
-    pub(crate) fn from_args(args: &Args) -> Result<Self> {
+    pub(crate) fn from_args(args: &MoqtArgs) -> Result<Self> {
         let host = args.ip.trim().to_string();
         if host.is_empty() {
             bail!("ip is required");

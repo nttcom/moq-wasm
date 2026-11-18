@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_requests};
+use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text};
 use roxmltree::Document;
 pub(crate) struct ServiceEndpoints {
     pub(crate) media_endpoint: String,
@@ -34,8 +34,8 @@ fn parse_services(body: &str) -> (Option<String>, Option<String>) {
         .descendants()
         .filter(|node| node.has_tag_name("Service"))
     {
-        let namespace = child_text(service, "Namespace");
-        let xaddr = child_text(service, "XAddr");
+        let namespace = find_text(service, "Namespace");
+        let xaddr = find_text(service, "XAddr");
         if let (Some(ns), Some(addr)) = (namespace, xaddr) {
             if ns.contains("media/wsdl") {
                 media = Some(addr.clone());
@@ -54,16 +54,10 @@ fn parse_capabilities(body: &str) -> (Option<String>, Option<String>) {
     let media = doc
         .descendants()
         .find(|node| node.has_tag_name("Media"))
-        .and_then(|node| child_text(node, "XAddr"));
+        .and_then(|node| find_text(node, "XAddr"));
     let ptz = doc
         .descendants()
         .find(|node| node.has_tag_name("PTZ"))
-        .and_then(|node| child_text(node, "XAddr"));
+        .and_then(|node| find_text(node, "XAddr"));
     (media, ptz)
-}
-fn child_text(node: roxmltree::Node, name: &str) -> Option<String> {
-    node.children()
-        .find(|child| child.is_element() && child.has_tag_name(name))
-        .and_then(|child| child.text())
-        .map(|text| text.trim().to_string())
 }
