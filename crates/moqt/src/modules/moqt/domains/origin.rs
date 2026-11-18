@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::future::join_all;
-use tokio::sync::{Mutex, Notify, mpsc};
+use tokio::sync::{Mutex, MutexGuard, Notify, mpsc};
 
 use crate::modules::moqt::control_plane::error_codes::{PublishDoneCode, RequestErrorCode};
 
@@ -102,9 +102,10 @@ pub enum WriteOutcome {
 pub struct Origin {
     state: Arc<Mutex<OriginState>>,
     /// Makes `publish` calls run one at a time while `state` is not held across
-    /// the PUBLISH_OK wait, so two calls cannot both send PUBLISH. `release`
-    /// waits on it for a request it does not know yet, and `end_track` for a
-    /// PUBLISH in flight. Taken before `state`, never while holding it.
+    /// the PUBLISH_OK wait, so two calls cannot both send PUBLISH.
+    /// `lock_state_knowing` waits on it for a request `state` does not know
+    /// yet, and `end_track` for a PUBLISH in flight. Taken before `state`,
+    /// never while holding it.
     publishing: Arc<Mutex<()>>,
 }
 
@@ -563,7 +564,7 @@ impl Origin {
             session_key(&handler.session_context),
             handler.subscription_request_id(),
         );
-        let mut state = self.state.lock().await;
+        let mut state = self.lock_state_knowing(request).await;
         let Some(key) = state
             .subscriptions
             .get(&request)
@@ -656,6 +657,19 @@ impl Origin {
             .any(|(session, _)| *session == key)
     }
 
+    /// Locks `state` once it knows `request`, or once no `publish` is in
+    /// flight: the peer can act on its PUBLISH_OK (UNSUBSCRIBE,
+    /// REQUEST_UPDATE) before `publish` registers the request.
+    async fn lock_state_knowing(&self, request: RequestKey) -> MutexGuard<'_, OriginState> {
+        let state = self.state.lock().await;
+        if state.subscriptions.contains_key(&request) {
+            return state;
+        }
+        drop(state);
+        let _publishing = self.publishing.lock().await;
+        self.state.lock().await
+    }
+
     /// Returns the released track's `(namespace, name)`; its numbering and
     /// cache are kept.
     pub async fn release(&self, handler: &UnsubscribeHandler) -> Option<(String, String)> {
@@ -663,14 +677,7 @@ impl Origin {
             session_key(&handler.session_context),
             handler.subscribe_id(),
         );
-        let mut state = self.state.lock().await;
-        if !state.subscriptions.contains_key(&request) {
-            // The peer can UNSUBSCRIBE right after its PUBLISH_OK, before
-            // `publish` registers the request; wait for that `publish` to finish.
-            drop(state);
-            let _publishing = self.publishing.lock().await;
-            state = self.state.lock().await;
-        }
+        let mut state = self.lock_state_knowing(request).await;
         let key = state.subscriptions.remove(&request)?.track;
         let mut released = None;
         if let Some(track) = state.tracks.get_mut(&key) {
@@ -1066,7 +1073,7 @@ async fn send_placed(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{pin::pin, time::Duration};
 
     use bytes::Bytes;
 
@@ -1365,6 +1372,57 @@ mod tests {
                 (received.group_id, received.object_id),
                 (FIRST_GROUP_ID + 1, 0)
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_update_handled_before_publish_registers_its_request_is_applied() {
+        for version in DRAFTS {
+            // Arrange: the peer accepts the PUBLISH while `publish` is not polled
+            let peers = origin_with_track("origin-early-update", RETENTION, version).await;
+            let origin = &peers.origin;
+            let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+            origin
+                .publish_on_demand(NAMESPACE, TRACK, demand_sender)
+                .await
+                .unwrap();
+            let mut published = pin!(origin.publish(&peers.client, NAMESPACE, TRACK));
+            let handler = tokio::select! {
+                _ = &mut published => panic!("publish returned before PUBLISH_OK"),
+                event = peers.server.receive_event() => {
+                    let Ok(SessionEvent::Publish(handler)) = event else {
+                        panic!("expected PUBLISH from the client");
+                    };
+                    handler
+                }
+            };
+            let accepted = handler
+                .ok(128, FilterType::LargestObject, false)
+                .await
+                .unwrap();
+            handler.accept_data_receiver().await;
+
+            // Act
+            let subscriber = peers.server.subscriber();
+            let (updated, published) = within(async {
+                tokio::join!(subscriber.update_forward(&accepted, true), async {
+                    let event = peers.client.receive_event().await.unwrap();
+                    assert!(matches!(event, SessionEvent::SubscribeUpdate(_)));
+                    let (_, published) = tokio::join!(origin.handle(event), &mut published);
+                    published
+                })
+            })
+            .await;
+
+            // Assert
+            updated.unwrap();
+            published.unwrap();
+            let demand = |wanted| TrackDemand {
+                track_name: TRACK.to_string(),
+                wanted,
+            };
+            assert_eq!(demand_receiver.try_recv(), Ok(demand(false)));
+            assert_eq!(demand_receiver.try_recv(), Ok(demand(true)));
         }
     }
 
