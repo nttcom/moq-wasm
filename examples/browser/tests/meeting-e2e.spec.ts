@@ -488,7 +488,7 @@ async function arrangeTileSizeRoom(browser: Browser, roomPrefix: string) {
     await enableMedia(carol.page)
     const bobVideo = getMemberVideo(alice.page.page, 'bob')
     await expect.poll(async () => videoWidth(bobVideo), { timeout: 30_000 }).toBe(640)
-    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-success/, { timeout: 20_000 })
     return { viewer: alice.page.page, bobVideo, close }
   } catch (error) {
     await close()
@@ -563,7 +563,7 @@ test('a member who starts the camera into a filmstrip tile plays on the low rend
     await joinRoom(alice.page, roomName, 'alice', 'a')
     await joinRoom(carol.page, roomName, 'carol', 'a')
     await enableMedia(carol.page)
-    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    await expect(alice.page.page.getByTestId('member-chip-carol')).toHaveClass(/ring-success/, { timeout: 20_000 })
     await alice.page.page.getByTestId('stage-view-button').click()
     await joinRoom(bob.page, roomName, 'bob', 'a')
     const widths = await recordVideoWidths(alice.page.page, 'bob')
@@ -618,7 +618,7 @@ test('closing the filmstrip unsubscribes the video of the members it hid', async
     await subscribeMedia(alice.page.page, 'bob')
     await expectTrackStatus(alice.page.page, 'video', 'carol', 'Subscribed', 60_000)
     // Assert: the beeps of bob's fake microphone carry voice activity in their LOC Audio Level
-    await expect(alice.page.page.getByTestId('member-chip-bob')).toHaveClass(/ring-emerald-400/, { timeout: 20_000 })
+    await expect(alice.page.page.getByTestId('member-chip-bob')).toHaveClass(/ring-success/, { timeout: 20_000 })
     await alice.page.page.getByTestId('stage-view-button').click()
 
     // Act
