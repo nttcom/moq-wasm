@@ -32,8 +32,7 @@
     "api:check": "api-extractor run --config api-extractor.core.json && api-extractor run --config api-extractor.media.json && api-extractor run --config api-extractor.recording.json",
     "api:update": "api-extractor run --local --config api-extractor.core.json && api-extractor run --local --config api-extractor.media.json && api-extractor run --local --config api-extractor.recording.json",
     "test": "playwright test --config playwright.unit.config.ts",
-    "check:pack": "node scripts/check-pack.mjs",
-    "docs": "typedoc"
+    "check:pack": "node scripts/check-pack.mjs"
   },
   "files": [
     "dist",
@@ -45,7 +44,6 @@
   "devDependencies": {
     "@microsoft/api-extractor": "^7.60.1",
     "oxlint": "^1.93.0",
-    "oxlint-tsgolint": "^7.0.2007",
-    "typedoc": "^0.28.20"
+    "oxlint-tsgolint": "^7.0.2007"
   }
 }

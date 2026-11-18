@@ -3,9 +3,6 @@
   "private": true,
   "workspaces": ["crates/wasm/js", "examples/browser"],
   "overrides": {
-    "minimatch": "^11.0.1",
-    "typedoc": {
-      "minimatch": "^10.2.6"
-    }
+    "minimatch": "^11.0.1"
   }
 }
