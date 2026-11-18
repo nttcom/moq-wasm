@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
+use google_cloud::{CloudStorageBucket, Endpoint};
 use object_store::{
     ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutPayload,
     gcp::GoogleCloudStorageBuilder,
@@ -11,10 +12,11 @@ use serde_json::Value;
 use url::Url;
 
 use crate::{
-    cloud_storage::CloudStorageBucket,
     manifest::MANIFEST_NAME,
     room_state::{CompositeState, RoomRecord},
 };
+
+const CLOUD_STORAGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The store a recording service keeps its recordings in, and the objects
 /// through which the API and the jobs share their state. Every object but a
@@ -67,7 +69,11 @@ impl RecordingStore {
                         .build()?,
                 );
                 (
-                    Some(Arc::new(CloudStorageBucket::new(bucket)?)),
+                    Some(Arc::new(CloudStorageBucket::new(
+                        Endpoint::CloudStorage,
+                        bucket,
+                        CLOUD_STORAGE_TIMEOUT,
+                    )?)),
                     Some(signer),
                 )
             }
@@ -301,8 +307,11 @@ impl RecordingStore {
         let (Some(bucket), Some(generation)) = (&self.cloud_storage, generation) else {
             return delete_if_present(&self.store, &key).await;
         };
+        let generation = generation
+            .parse()
+            .with_context(|| format!("the generation of {key} is not a number"))?;
         bucket
-            .delete_if_generation_matches(key.as_ref(), &generation)
+            .delete_if_generation_matches(key.as_ref(), generation)
             .await
             .with_context(|| format!("cannot delete {key}"))
     }

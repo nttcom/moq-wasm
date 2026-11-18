@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use metadata_token::MetadataToken;
+use google_cloud::MetadataToken;
 use tokio::process::Command;
 
 const MODEL_ID: &str = "gemini-3.5-live-translate-preview";
