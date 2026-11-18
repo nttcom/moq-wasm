@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoQ AI Voice Agent</title>
+    <link rel="stylesheet" href="../media/media.css" />
+    <link rel="stylesheet" href="../media/setup-guide.css" />
+    <link rel="stylesheet" href="./voice-agent.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <h1>MoQ AI Voice Agent</h1>
+          <p>マイクで話しかけると、pipecat の bot が Gemini で聞き取り、考え、声で答える</p>
+        </div>
+      </header>
+      <details class="card setup-toggle">
+        <summary>
+          <h2>使い方</h2>
+        </summary>
+        <div class="setup-routes">
+          <details class="setup-panel setup-toggle" open>
+            <summary>
+              <h3 class="setup-flow">
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-monitor" /></svg>Browser<small>Mic</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-server" /></svg>Relay<small>MoQT</small></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-local"
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-workflow" /></svg>pipecat bot<small
+                    >Python</small
+                  ></span
+                >
+                <span class="setup-arrow" aria-hidden="true">↔</span>
+                <span class="setup-node setup-node-cloud"
+                  ><svg aria-hidden="true"><use href="/icons.svg#icon-brain-circuit" /></svg>Gemini<small
+                    >STT / LLM / TTS</small
+                  ></span
+                >
+              </h3>
+            </summary>
+            <ol class="setup-steps">
+              <li>
+                <h4>pipecat bot を起動する</h4>
+                <p class="hint">
+                  Gemini API キーを Google AI Studio で取得します。relay は Cloud relay-1 か、<code>make relay</code>
+                  で起動したローカルの relay です
+                </p>
+                <pre><code>cd examples/python/moq-ai-voice-agent
+GOOGLE_API_KEY=&lt;API キー&gt; uv run python -m moq_ai_voice_agent.bot \
+  --relay-url https://relay-1.moqt.research.skyway.io:443</code></pre>
+              </li>
+              <li>
+                <h4>話しかける</h4>
+                <p class="hint">
+                  手元の bot を Cloud relay で使うときは、このページの URL に
+                  <code>?botUrl=http://127.0.0.1:8101</code> を付けて開き、Join します
+                </p>
+              </li>
+            </ol>
+          </details>
+        </div>
+      </details>
+      <div class="voice-agent-layout">
+        <section class="card stack">
+          <h2>Relay</h2>
+          <div id="urlPresets"></div>
+          <input type="url" id="url" aria-label="Relay URL" data-testid="voice-agent-url-input" />
+          <div class="button-row">
+            <button type="button" id="joinBtn" data-testid="voice-agent-join-button">Join</button>
+            <button type="button" id="leaveBtn" data-testid="voice-agent-leave-button" disabled>Leave</button>
+            <button type="button" id="muteBtn" data-testid="voice-agent-mute-button" disabled>ミュート</button>
+          </div>
+          <span id="connection-status" class="status-dot" data-state="idle">未接続</span>
+          <span id="bot-status" class="status-dot" data-state="idle" data-testid="voice-agent-bot-status"
+            >bot 未接続</span
+          >
+          <span id="bot-room" class="status-dot" data-state="review"></span>
+        </section>
+        <section class="card stack">
+          <h2>会話</h2>
+          <ol id="transcript" class="voice-agent-transcript" data-testid="voice-agent-transcript"></ol>
+          <p id="transcript-empty" class="hint">Join して話しかけると、ここに会話が表示されます</p>
+          <div id="bot-player" hidden></div>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+    <script type="module" src="../../utils/accessBar.ts"></script>
+  </body>
+</html>
