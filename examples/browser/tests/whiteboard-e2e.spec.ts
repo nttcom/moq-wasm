@@ -12,7 +12,10 @@ async function joinRoom(page: Page, room: string): Promise<void> {
 
 /// `y` is in [0, 1] of the board's height.
 async function drawLine(page: Page, y: number): Promise<void> {
-  const box = (await page.getByTestId('whiteboard-canvas').boundingBox())!
+  const canvas = page.getByTestId('whiteboard-canvas')
+  // page.mouse acts only within the viewport, and the board starts below the connection card.
+  await canvas.scrollIntoViewIfNeeded()
+  const box = (await canvas.boundingBox())!
   await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * y)
   await page.mouse.down()
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * y, { steps: 10 })
