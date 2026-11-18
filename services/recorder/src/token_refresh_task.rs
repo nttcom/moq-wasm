@@ -8,22 +8,26 @@ use anyhow::{Context, Result, bail};
 use moqt::{AuthorizationToken, Session};
 use serde_json::Value;
 
-use crate::state_sync_task::now_ms;
+use crate::{bots_client::BotsClient, state_sync_task::now_ms};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
 /// token refresh; it reads neither the namespace `[app id]` nor this name.
 const REFRESH_TRACK_NAME: &str = "update_auth_token";
-/// A temporary app's token is renewed this long before it expires.
-const ISSUER_REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
+/// A token from `temporary-apps` or `bots` is renewed this long before it expires.
+const REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
 
 /// Where the next token comes from.
+#[derive(Clone)]
 pub(crate) enum TokenRenewal {
     /// Whatever the file holds, re-read on every poll.
     File(PathBuf),
     /// A temporary app's token, renewed by `POST /tokens/refresh` on the
     /// temporary-apps service at this URL shortly before it expires.
     Issuer(String),
+    /// The token `bots` signs for the recording it started, renewed shortly
+    /// before it expires.
+    Bots(Arc<BotsClient>),
 }
 
 impl TokenRenewal {
@@ -32,10 +36,16 @@ impl TokenRenewal {
         let token = match self {
             Self::File(path) => read_token_file(path).await?,
             Self::Issuer(url) => {
-                if !expires_within(current, ISSUER_REFRESH_MARGIN, now_ms() / 1000) {
+                if !expires_within(current, REFRESH_MARGIN, now_ms() / 1000) {
                     return Ok(None);
                 }
                 refresh_at_issuer(url, current).await?
+            }
+            Self::Bots(bots) => {
+                if !expires_within(current, REFRESH_MARGIN, now_ms() / 1000) {
+                    return Ok(None);
+                }
+                bots.token().await?
             }
         };
         Ok((token != current).then_some(token))

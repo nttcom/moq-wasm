@@ -11,14 +11,13 @@ use moqt::{
 use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal};
 
 /// The token a recording or a replay presents to the relay: the one the
-/// caller of the API sent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// caller of the API sent, or the one `bots` signed for the recording.
+#[derive(Clone)]
 pub(crate) struct ServiceToken {
     /// `None` only on a server started with `--insecure-skip-auth`.
     pub(crate) token: Option<String>,
-    /// The temporary-apps service that renews `token`, a temporary app's. Any other token
-    /// is not renewed, and the relay ends the session when it expires.
-    pub(crate) issuer_url: Option<String>,
+    /// Without it the relay ends the session when `token` expires.
+    pub(crate) renewal: Option<TokenRenewal>,
 }
 
 /// The session follows the relay's GOAWAY by itself, so a recording outlives
@@ -59,12 +58,12 @@ impl RelayConnection {
         namespace: &str,
         token: &ServiceToken,
     ) -> Result<Self> {
-        let ServiceToken { token, issuer_url } = token.clone();
+        let ServiceToken { token, renewal } = token.clone();
         let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
-        if let (Some(issuer_url), Some(token)) = (issuer_url, token) {
+        if let (Some(renewal), Some(token)) = (renewal, token) {
             connection._token_refresh = Some(TokenRefreshTask::run(
                 connection.session.clone(),
-                TokenRenewal::Issuer(issuer_url),
+                renewal,
                 namespace.split('/').next().unwrap_or_default().to_string(),
                 token,
             ));

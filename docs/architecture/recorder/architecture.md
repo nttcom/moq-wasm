@@ -282,7 +282,10 @@ segment, and a network stall would hold up the recording.
 ## Recording API
 
 The room watcher ignores namespaces under `<room>/recordings/<id>/` so that
-replayed recordings do not become participants of a new recording.
+replayed recordings do not become participants of a new recording, and
+those under `<room>/bots/`, which are bots, the recorder's own presence among
+them; of these only an MoQ recording reads `<room>/bots/transcriber`, as a
+transcript.
 `recorder serve` is an HTTP API (`api_server::ApiServer` on
 `http_server::HttpServer`, see [hyper.md](hyper.md)) that keeps no recording in its own memory or process.
 Every room recording runs as a `recorder record` job and every composite as a
@@ -646,11 +649,40 @@ The recording's JSON carries `composite` (`null` when not requested) with
 `state` `waiting` (until the composite job reports), `composing`, `done`,
 `skipped` (the recording failed) or `failed`, and `error`.
 
+## Started by `bots`
+
+`recorder bot` records a room as the bot `bots` started
+(docs/architecture/bots/architecture.md), which is how the bot service's
+`recorder` type runs: its arguments are `bot`, the job's own settings (the
+relay, the store, the launcher) and the ones `bots` adds, `--bot-id`,
+`--bots-url`, `--namespace-prefix`, `--grace-seconds` (the empty room
+timeout), `--max-seconds` and `--options` (`layout`, `composite` and
+`format`, as `POST /recordings` takes them).
+
+- `bots_client::BotsClient` calls `bots` back with the key in
+  `BOTS_BOT_KEY` when the job was launched locally, and otherwise with the
+  Google ID token of the job's service account for the bots URL
+  (`google_cloud::identity_token`).
+- The job takes its first token from `POST /bots/{id}/token`, and
+  `TokenRenewal::Bots` renews it there five minutes before it expires. The
+  token subscribes to the room and publishes only `<room>/bots/recorder`, which
+  the recording announces so the room sees it.
+- It writes a new recording to the store as `recorder serve` would, so the
+  read API lists and serves it alike, but takes no room lock: `bots` holds the
+  room.
+- `StateSyncTask` also sends each state it writes to `POST /bots/{id}/heartbeat`
+  and stops the recording when the answer asks it to, as it does for a stop
+  request in the store. The final state is reported once the recording
+  ends; a job that fails before recording reports `failed` with the error.
+- The record job and the bot job share `record_job::record_room`, which takes
+  the recording as a `RecordingJob`.
+
 ## Token refresh
 A `TokenRefreshTask` polls a `TokenRenewal` every 10 s: `File` re-reads a token
-file (`--auth-token-file`), and `Issuer` asks the temporary-apps service's
+file (`--auth-token-file`), `Issuer` asks the temporary-apps service's
 `POST /tokens/refresh` for a new token once the current one expires within
-five minutes, keeping the current one when the mint refuses or is unreachable.
+five minutes, and `Bots` asks `bots` the same way, keeping the current one
+when the mint or `bots` refuses or is unreachable.
 It sends a changed token with the relay's in-session refresh convention: a
 TRACK_STATUS for namespace `[app id]` and track `update_auth_token` carrying
 the token as its AUTHORIZATION TOKEN (see the relay architecture document,

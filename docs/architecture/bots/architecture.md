@@ -231,7 +231,7 @@ the file `BOTS_TYPES_FILE` names, from type name to entry:
 {
   "recorder": {
     "launcher": { "kind": "cloud-run", "job": "projects/<p>/locations/<r>/jobs/<job>" },
-    "args": ["record"],
+    "args": ["bot"],
     "grace_seconds": 300,
     "max_seconds": 7200,
     "max_running": 5

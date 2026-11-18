@@ -19,6 +19,44 @@ impl RecordingFormat {
     }
 }
 
+/// How a room is recorded, as `POST /recordings` or `bots`' `options` ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RecordingOptions {
+    pub(crate) layout: Layout,
+    pub(crate) composite: bool,
+    pub(crate) format: RecordingFormat,
+}
+
+impl RecordingOptions {
+    /// `layout` (`combined` by default), `composite` (`false`) and `format`
+    /// (`mp4`) of a JSON object; the error names the field that is invalid.
+    pub(crate) fn from_json(body: &Value) -> Result<Self, &'static str> {
+        let layout = match body.get("layout").and_then(Value::as_str) {
+            None => Layout::Combined,
+            Some(name) => {
+                Layout::from_str(name, false).map_err(|_| "layout must be combined or per-track")?
+            }
+        };
+        let composite = match body.get("composite") {
+            None => false,
+            Some(Value::Bool(composite)) => *composite,
+            Some(_) => return Err("composite must be a boolean"),
+        };
+        let format = match body.get("format") {
+            None => RecordingFormat::Mp4,
+            Some(Value::String(name)) => {
+                RecordingFormat::from_str(name, false).map_err(|_| "format must be mp4 or moq")?
+            }
+            Some(_) => return Err("format must be mp4 or moq"),
+        };
+        Ok(Self {
+            layout,
+            composite,
+            format,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RoomState {
     /// Requested; the recording job has not connected yet.
@@ -188,6 +226,24 @@ fn string(value: &Value, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_options_default_to_a_combined_mp4_without_composite() {
+        // Act
+        let defaults = RecordingOptions::from_json(&json!({})).unwrap();
+        let invalid = RecordingOptions::from_json(&json!({ "format": "webm" }));
+
+        // Assert
+        assert_eq!(
+            defaults,
+            RecordingOptions {
+                layout: Layout::Combined,
+                composite: false,
+                format: RecordingFormat::Mp4,
+            }
+        );
+        assert_eq!(invalid, Err("format must be mp4 or moq"));
+    }
 
     #[test]
     fn a_record_reads_back_what_it_wrote() {
