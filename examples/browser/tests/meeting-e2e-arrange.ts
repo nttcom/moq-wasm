@@ -57,6 +57,7 @@ function createMeetingClientPageModel(page: Page) {
     page,
     roomNameInput: page.getByTestId('join-room-name-input'),
     userNameInput: page.getByTestId('join-user-name-input'),
+    relayPickerToggle: page.getByTestId('relay-picker-toggle'),
     localRelayTab: page.getByTestId('relay-tab-local'),
     relayARadio: page.getByTestId('join-relay-a-radio'),
     relayBRadio: page.getByTestId('join-relay-b-radio'),
@@ -149,6 +150,7 @@ export async function joinRoom(
 ): Promise<void> {
   await model.roomNameInput.fill(roomName)
   await model.userNameInput.fill(userName)
+  await model.relayPickerToggle.click()
   await model.localRelayTab.click()
   if (relay === 'b') {
     await model.relayBRadio.click()

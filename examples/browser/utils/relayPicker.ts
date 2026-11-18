@@ -16,11 +16,15 @@ export type RelayPicker = {
   select(url: string): void
 }
 
-/** Switching tabs selects the tab's first relay, so `onChange` also runs on a tab switch. */
+/**
+ * `extra` (such as a URL input) is shown below the options while the picker is open. Switching tabs
+ * selects the tab's first relay, so `onChange` also runs on a tab switch.
+ */
 export function createRelayPicker(
   container: HTMLElement,
   initialUrl: string,
-  onChange: (url: string) => void
+  onChange: (url: string) => void,
+  extra?: HTMLElement
 ): RelayPicker {
   const localPresets = buildLocalRelayPresets()
   const tabOf = (url: string): RelayTab | undefined => {
@@ -51,18 +55,51 @@ export function createRelayPicker(
       selectedUrl = value === 'cloud' ? LOAD_BALANCED_RELAY_PRESET.value : localPresets[0].value
       onChange(selectedUrl)
       render()
+      renderSummary()
     })
     return { value, button }
   })
   tablist.append(...tabButtons.map(({ button }) => button))
-  head.append(title, tablist)
+
+  const summary = document.createElement('span')
+  summary.className = 'relay-picker-summary'
+  const toggle = document.createElement('button')
+  toggle.type = 'button'
+  toggle.className = 'relay-picker-toggle'
+  toggle.dataset.testid = 'relay-picker-toggle'
+  head.append(title, summary, toggle)
 
   const panel = document.createElement('div')
   panel.className = 'relay-picker-options'
   panel.setAttribute('role', 'tabpanel')
 
+  const body = document.createElement('div')
+  body.className = 'relay-picker-body'
+  body.append(tablist, panel, ...(extra ? [extra] : []))
+
+  let open = false
+  const setOpen = (value: boolean) => {
+    open = value
+    body.hidden = !open
+    toggle.textContent = open ? '閉じる' : '変更'
+    toggle.setAttribute('aria-expanded', String(open))
+  }
+  toggle.addEventListener('click', () => setOpen(!open))
+  setOpen(false)
+
   container.classList.add('relay-picker')
-  container.replaceChildren(head, panel)
+  container.replaceChildren(head, body)
+
+  function renderSummary(): void {
+    const preset = [LOAD_BALANCED_RELAY_PRESET, ...CLOUD_RELAY_PRESETS, ...localPresets].find(
+      (candidate) => candidate.value === selectedUrl
+    )
+    const name = document.createElement('b')
+    name.textContent = preset?.label ?? 'Custom'
+    const url = document.createElement('code')
+    url.textContent = selectedUrl
+    summary.replaceChildren(name, url)
+  }
 
   function option(preset: RelayPreset, variant: 'default' | 'child' | 'plain'): HTMLLabelElement {
     const label = document.createElement('label')
@@ -77,6 +114,7 @@ export function createRelayPicker(
     radio.addEventListener('change', () => {
       selectedUrl = preset.value
       onChange(selectedUrl)
+      renderSummary()
     })
 
     const name = document.createElement('span')
@@ -114,24 +152,31 @@ export function createRelayPicker(
   }
 
   render()
+  renderSummary()
   return {
     select(url: string) {
       selectedUrl = url
       tab = tabOf(url) ?? tab
       render()
+      renderSummary()
     }
   }
 }
 
 /**
- * Renders the relay picker into `presets` and syncs it with `input`: picking a relay fills
- * `input`, and typing a URL checks its preset. The `relayUrl` query parameter overrides
+ * Renders the relay picker into `presets`, with `input` moved under its options, and syncs the two:
+ * picking a relay fills `input`, and typing a URL checks its preset. The `relayUrl` query parameter overrides
  * the input's initial value.
  */
 export function setUpRelayUrlControls(input: HTMLInputElement, presets: HTMLElement): void {
   input.value = relayUrlFromQuery() ?? (input.value.trim() || LOAD_BALANCED_RELAY_PRESET.value)
-  const picker = createRelayPicker(presets, input.value, (url) => {
-    input.value = url
-  })
+  const picker = createRelayPicker(
+    presets,
+    input.value,
+    (url) => {
+      input.value = url
+    },
+    input
+  )
   input.addEventListener('input', () => picker.select(input.value.trim()))
 }
