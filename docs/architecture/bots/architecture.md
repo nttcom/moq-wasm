@@ -181,7 +181,9 @@ delete, so one room runs at most one bot of each type and any number of
 instances answer alike. The object is written by `bots` alone, from the
 launch request and from the bot's heartbeats (`starting`, `running`,
 `stopping`, `finished`, `failed`). A bot that has not sent a heartbeat for
-90 s is reported `failed` and its lock is released. The recorder keeps its own recording state (members, files,
+90 s, or 5 min before its first one, is reported `failed` and its lock is
+released: the first execution of a job after its image changed imports the
+image before the bot starts, which took almost 2 min for the AI bots' image. The recorder keeps its own recording state (members, files,
 composite) in its store for `recorder serve`'s read API.
 
 ### API
