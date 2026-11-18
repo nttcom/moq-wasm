@@ -15,8 +15,9 @@ use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
-    bots::{BotError, Bots, Heartbeat, StartError},
+    bots::{BotError, Bots, Heartbeat, StartError, view},
     launch_auth::{LaunchAuth, Rejection, bearer_token},
+    store::BotRecord,
 };
 
 type JsonResponse = Response<Full<Bytes>>;
@@ -32,8 +33,6 @@ struct ServerState {
 
 #[derive(Deserialize)]
 struct StartRequest {
-    #[serde(rename = "type")]
-    bot_type: String,
     namespace_prefix: String,
     #[serde(default)]
     options: Option<Value>,
@@ -66,12 +65,23 @@ async fn handle(request: Request<Incoming>, state: Arc<ServerState>) -> JsonResp
             (&Method::GET, ["healthz"]) => {
                 json_response(StatusCode::OK, &json!({ "status": "ok" }))
             }
-            (&Method::POST, ["bots"]) => start(&state, &head.headers, body).await,
-            (&Method::GET, ["bots"]) => list(&state, &head.headers, head.uri.query()).await,
-            (&Method::DELETE, ["bots", id]) => stop(&state, &head.headers, id).await,
-            (&Method::POST, ["bots", id, "token"]) => token(&state, &head.headers, id).await,
-            (&Method::POST, ["bots", id, "heartbeat"]) => {
-                heartbeat(&state, &head.headers, id, body).await
+            (&Method::POST, ["bots", bot_type]) => {
+                start(&state, &head.headers, bot_type, body).await
+            }
+            (&Method::GET, ["bots", bot_type]) => {
+                latest(&state, &head.headers, bot_type, head.uri.query()).await
+            }
+            (&Method::GET, ["bots", bot_type, id]) => {
+                show(&state, &head.headers, bot_type, id).await
+            }
+            (&Method::DELETE, ["bots", bot_type, id]) => {
+                stop(&state, &head.headers, bot_type, id).await
+            }
+            (&Method::POST, ["bots", bot_type, id, "token"]) => {
+                token(&state, &head.headers, bot_type, id).await
+            }
+            (&Method::POST, ["bots", bot_type, id, "heartbeat"]) => {
+                heartbeat(&state, &head.headers, bot_type, id, body).await
             }
             _ => error_response(StatusCode::NOT_FOUND, "not_found"),
         }
@@ -82,7 +92,12 @@ async fn handle(request: Request<Incoming>, state: Arc<ServerState>) -> JsonResp
     response
 }
 
-async fn start(state: &ServerState, headers: &HeaderMap, body: Incoming) -> JsonResponse {
+async fn start(
+    state: &ServerState,
+    headers: &HeaderMap,
+    bot_type: &str,
+    body: Incoming,
+) -> JsonResponse {
     let Some(request) = read_json::<StartRequest, _>(body).await else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
@@ -95,7 +110,7 @@ async fn start(state: &ServerState, headers: &HeaderMap, body: Incoming) -> Json
         .bots
         .start(
             &launch.app_id,
-            &request.bot_type,
+            bot_type,
             prefix,
             request.options.as_ref(),
             now_ms(),
@@ -112,14 +127,14 @@ async fn start(state: &ServerState, headers: &HeaderMap, body: Incoming) -> Json
             );
             return json_response(StatusCode::CREATED, &bot);
         }
-        Err(StartError::UnknownType) => (StatusCode::BAD_REQUEST, "unknown_type"),
+        Err(StartError::UnknownType) => (StatusCode::NOT_FOUND, "not_found"),
         Err(StartError::InvalidRoom) => (StatusCode::BAD_REQUEST, "invalid_room"),
         Err(StartError::Conflict) => (StatusCode::CONFLICT, "conflict"),
         Err(StartError::Full) => (StatusCode::SERVICE_UNAVAILABLE, "full"),
         Err(StartError::Internal(error)) => {
             tracing::error!(
                 error = format!("{error:#}"),
-                bot_type = %request.bot_type,
+                bot_type,
                 app_id = %launch.app_id,
                 track_namespace_prefix = prefix,
                 "bot launch failed"
@@ -129,7 +144,7 @@ async fn start(state: &ServerState, headers: &HeaderMap, body: Incoming) -> Json
     };
     tracing::info!(
         error,
-        bot_type = %request.bot_type,
+        bot_type,
         app_id = %launch.app_id,
         track_namespace_prefix = prefix,
         "bot launch refused"
@@ -137,7 +152,12 @@ async fn start(state: &ServerState, headers: &HeaderMap, body: Incoming) -> Json
     error_response(status, error)
 }
 
-async fn list(state: &ServerState, headers: &HeaderMap, query: Option<&str>) -> JsonResponse {
+async fn latest(
+    state: &ServerState,
+    headers: &HeaderMap,
+    bot_type: &str,
+    query: Option<&str>,
+) -> JsonResponse {
     let Some(prefix) = query.and_then(|query| {
         url::form_urlencoded::parse(query.as_bytes())
             .find(|(key, _)| key == "namespace_prefix")
@@ -148,25 +168,25 @@ async fn list(state: &ServerState, headers: &HeaderMap, query: Option<&str>) -> 
     if let Err(rejection) = state.launch_auth.authorize(headers, &prefix).await {
         return refused(rejection, &prefix);
     }
-    match state.bots.list(&prefix, now_ms()).await {
-        Ok(bots) => json_response(StatusCode::OK, &json!({ "bots": bots })),
+    match state.bots.latest(bot_type, &prefix, now_ms()).await {
+        Ok(Some(bot)) => json_response(StatusCode::OK, &bot),
+        Ok(None) => error_response(StatusCode::NOT_FOUND, "not_found"),
         Err(error) => internal(&error),
     }
 }
 
-async fn stop(state: &ServerState, headers: &HeaderMap, id: &str) -> JsonResponse {
-    let record = match state.bots.record(id).await {
-        Ok(Some(record)) => record,
-        Ok(None) => return error_response(StatusCode::NOT_FOUND, "not_found"),
-        Err(error) => return internal(&error),
-    };
-    if let Err(rejection) = state
-        .launch_auth
-        .authorize(headers, &record.namespace_prefix)
-        .await
-    {
-        return refused(rejection, &record.namespace_prefix);
+async fn show(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
+    match authorized_record(state, headers, bot_type, id).await {
+        Ok(record) => json_response(StatusCode::OK, &view(&record, now_ms())),
+        Err((status, error)) => error_response(status, error),
     }
+}
+
+async fn stop(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
+    let record = match authorized_record(state, headers, bot_type, id).await {
+        Ok(record) => record,
+        Err((status, error)) => return error_response(status, error),
+    };
     match state.bots.stop(id).await {
         Ok(()) => {
             tracing::info!(
@@ -182,8 +202,41 @@ async fn stop(state: &ServerState, headers: &HeaderMap, id: &str) -> JsonRespons
     }
 }
 
-async fn token(state: &ServerState, headers: &HeaderMap, id: &str) -> JsonResponse {
-    match state.bots.token(id, bearer_token(headers), now_ms()).await {
+/// The bot, when the launch token covers its room; otherwise the refusal,
+/// already logged.
+async fn authorized_record(
+    state: &ServerState,
+    headers: &HeaderMap,
+    bot_type: &str,
+    id: &str,
+) -> Result<BotRecord, (StatusCode, &'static str)> {
+    let record = match state.bots.record(bot_type, id).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return Err((StatusCode::NOT_FOUND, "not_found")),
+        Err(error) => {
+            tracing::error!(error = format!("{error:#}"), "bots request failed");
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal_error"));
+        }
+    };
+    match state
+        .launch_auth
+        .authorize(headers, &record.namespace_prefix)
+        .await
+    {
+        Ok(_) => Ok(record),
+        Err(rejection) => {
+            log_refusal(&rejection, &record.namespace_prefix);
+            Err((rejection.status, rejection.error))
+        }
+    }
+}
+
+async fn token(state: &ServerState, headers: &HeaderMap, bot_type: &str, id: &str) -> JsonResponse {
+    match state
+        .bots
+        .token(bot_type, id, bearer_token(headers), now_ms())
+        .await
+    {
         Ok(token) => {
             tracing::info!(bot_id = id, "bot token issued");
             json_response(StatusCode::OK, &json!({ "token": token }))
@@ -195,6 +248,7 @@ async fn token(state: &ServerState, headers: &HeaderMap, id: &str) -> JsonRespon
 async fn heartbeat(
     state: &ServerState,
     headers: &HeaderMap,
+    bot_type: &str,
     id: &str,
     body: Incoming,
 ) -> JsonResponse {
@@ -204,7 +258,7 @@ async fn heartbeat(
     let reported = heartbeat.state;
     match state
         .bots
-        .heartbeat(id, bearer_token(headers), heartbeat, now_ms())
+        .heartbeat(bot_type, id, bearer_token(headers), heartbeat, now_ms())
         .await
     {
         Ok(stop) => {
@@ -231,12 +285,16 @@ fn bot_error(error: BotError, id: &str) -> JsonResponse {
 }
 
 fn refused(rejection: Rejection, prefix: &str) -> JsonResponse {
+    log_refusal(&rejection, prefix);
+    error_response(rejection.status, rejection.error)
+}
+
+fn log_refusal(rejection: &Rejection, prefix: &str) {
     tracing::info!(
         error = rejection.error,
         track_namespace_prefix = prefix,
         "launch token refused"
     );
-    error_response(rejection.status, rejection.error)
 }
 
 fn internal(error: &anyhow::Error) -> JsonResponse {
@@ -259,7 +317,7 @@ mod tests {
     use crate::test_support::{fake_vts, test_bots};
 
     #[tokio::test]
-    async fn an_app_server_starts_lists_and_stops_a_bot() {
+    async fn an_app_server_starts_finds_and_stops_a_bot_of_a_type() {
         // Arrange
         let vts = fake_vts().await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -269,9 +327,9 @@ mod tests {
 
         // Act
         let started: Value = client
-            .post(format!("{base}/bots"))
+            .post(format!("{base}/bots/recorder"))
             .bearer_auth("launch-token")
-            .json(&json!({ "type": "recorder", "namespace_prefix": "app/room" }))
+            .json(&json!({ "namespace_prefix": "app/room" }))
             .send()
             .await
             .unwrap()
@@ -279,8 +337,8 @@ mod tests {
             .await
             .unwrap();
         let id = started["id"].as_str().unwrap();
-        let listed: Value = client
-            .get(format!("{base}/bots?namespace_prefix=app%2Froom"))
+        let latest: Value = client
+            .get(format!("{base}/bots/recorder?namespace_prefix=app%2Froom"))
             .bearer_auth("launch-token")
             .send()
             .await
@@ -288,22 +346,39 @@ mod tests {
             .json()
             .await
             .unwrap();
+        let shown: Value = client
+            .get(format!("{base}/bots/recorder/{id}"))
+            .bearer_auth("launch-token")
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let unknown_type = client
+            .post(format!("{base}/bots/chat"))
+            .bearer_auth("launch-token")
+            .json(&json!({ "namespace_prefix": "app/room" }))
+            .send()
+            .await
+            .unwrap()
+            .status();
         let stopped = client
-            .delete(format!("{base}/bots/{id}"))
+            .delete(format!("{base}/bots/recorder/{id}"))
             .bearer_auth("launch-token")
             .send()
             .await
             .unwrap()
             .status();
         let unauthenticated = client
-            .post(format!("{base}/bots"))
-            .json(&json!({ "type": "recorder", "namespace_prefix": "app/other" }))
+            .post(format!("{base}/bots/recorder"))
+            .json(&json!({ "namespace_prefix": "app/other" }))
             .send()
             .await
             .unwrap()
             .status();
         let launch_token_as_bot = client
-            .post(format!("{base}/bots/{id}/token"))
+            .post(format!("{base}/bots/recorder/{id}/token"))
             .bearer_auth("launch-token")
             .send()
             .await
@@ -312,7 +387,9 @@ mod tests {
 
         // Assert
         assert_eq!(started["state"], "starting");
-        assert_eq!(listed["bots"][0]["id"], id);
+        assert_eq!(latest["id"], id);
+        assert_eq!(shown["id"], id);
+        assert_eq!(unknown_type, StatusCode::NOT_FOUND);
         assert_eq!(stopped, StatusCode::ACCEPTED);
         assert_eq!(unauthenticated, StatusCode::UNAUTHORIZED);
         assert_eq!(launch_token_as_bot, StatusCode::UNAUTHORIZED);

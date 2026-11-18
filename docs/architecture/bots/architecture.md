@@ -63,22 +63,22 @@ sequenceDiagram
     participant R as Relay
     P->>A: start the recorder in room X (the app's own API)
     Note over A: decides; signs a launch token for X with the app secret
-    A->>B: POST /bots {type: recorder, namespace_prefix: X} + launch token
+    A->>B: POST /bots/recorder {namespace_prefix: X} + launch token
     B->>V: POST /verify
     V-->>B: appId, claims
     B->>B: take the (type, room) lock, write the bot as starting
     B->>J: launch (bot id only)
-    J->>B: POST /bots/{id}/token (job identity)
+    J->>B: POST /bots/recorder/{id}/token (job identity)
     B-->>J: bot token for X, signed with the app secret
     J->>R: connect, SUBSCRIBE_NAMESPACE X, PUBLISH_NAMESPACE X/bots/recorder
     R->>P: PUBLISH_NAMESPACE X/bots/recorder (the page shows REC)
     loop every 30 s
-        J->>B: POST /bots/{id}/heartbeat
+        J->>B: POST /bots/recorder/{id}/heartbeat
         B-->>J: {stop: false}
     end
     Note over J: no human member for the grace period
     J->>R: close session
-    J->>B: POST /bots/{id}/heartbeat {state: finished}
+    J->>B: POST /bots/recorder/{id}/heartbeat {state: finished}
 ```
 
 ### Roles
@@ -125,7 +125,7 @@ refuses to sign for a bot that is no longer running.
 
 ### How a bot proves it is the bot
 The job is launched with its bot id and nothing secret. It calls
-`POST /bots/{id}/token` and `POST /bots/{id}/heartbeat` with a Google ID token
+`POST /bots/{type}/{id}/token` and `POST /bots/{type}/{id}/heartbeat` with a Google ID token
 for the bot service's URL, from the metadata server of the job's service
 account. `bots` verifies the ID token (RS256 against Google's published keys,
 `aud`, `exp`, and `email` equal to the configured job service account) and
@@ -160,7 +160,7 @@ recording:
 | recorder | 300 s | 2 h |
 | AI bots | 30 s | 1 h |
 
-A bot also ends on `DELETE /bots/{id}` (the next heartbeat answers
+A bot also ends on `DELETE /bots/{type}/{id}` (the next heartbeat answers
 `{stop: true}`), at its longest run, and on SIGTERM. Since only publishers are
 visible to a bot, a room of listeners who publish nothing counts as empty.
 
@@ -189,14 +189,18 @@ composite) in its store for `recorder serve`'s read API.
 
 | Route | Caller | Answer |
 | --- | --- | --- |
-| `POST /bots` `{type, namespace_prefix, options}` | app server | `201 {id}`; `409` if the room runs that type; `503` at a limit |
-| `GET /bots?namespace_prefix=` | app server | the room's bots and their states |
-| `DELETE /bots/{id}` | app server | `202`; the bot stops at its next heartbeat |
-| `POST /bots/{id}/token` | bot | a bot token |
-| `POST /bots/{id}/heartbeat` `{state, …}` | bot | `{stop}` |
+| `POST /bots/{type}` `{namespace_prefix, options}` | app server | `201` the bot; `409` if the room runs that type; `503` at a limit |
+| `GET /bots/{type}?namespace_prefix=` | app server | the room's latest bot of that type |
+| `GET /bots/{type}/{id}` | app server | the bot |
+| `DELETE /bots/{type}/{id}` | app server | `202`; the bot stops at its next heartbeat |
+| `POST /bots/{type}/{id}/token` | bot | a bot token |
+| `POST /bots/{type}/{id}/heartbeat` `{state, …}` | bot | `{stop}` |
 
-The app server's routes require a launch token whose `bots` claim covers the
-prefix, judged with `SignedToken::covers`. `options` are the type's own
+The type is in the path because each type takes options of its own; a type
+not in the types file, or an id of another type, is `404`. The app comes
+from the launch token's `appId`, not the path. The app server's routes
+require a launch token whose `bots` claim covers the prefix, judged with
+`SignedToken::covers`. `options` are the type's own
 (the recorder's `layout`, `composite`, `format`); the relay URL, the store and
 the type's limits are server settings, so a request cannot point a bot at
 another relay or bucket. Nothing is called from a browser, so the service
@@ -208,7 +212,7 @@ tokens is the app. The temporary-apps service, which holds the temporary app sec
 becomes the app server of all of them, so `bots` handles a temporary app the
 same way as a registered one:
 
-- The temporary-apps service gains `POST /bots`, `GET /bots` and `DELETE /bots/{id}`,
+- The temporary-apps service gains the same `/bots/{type}` routes,
   which a page calls with its own token as `Authorization: Bearer`. The mint
   verifies the token as `POST /tokens/refresh` does (signed by it, temporary,
   not expired), signs a launch token whose `bots` claim is the page's
@@ -240,7 +244,7 @@ Every bot gets the same token claims (above), so they are not configured.
 Limits per app and opening hours, which the AI bots have today, are added
 with the AI bots. A request for a type not in the file is `400`.
 
-A bot is started with the type's `args` followed by `--bot-id`,
+A bot is started with the type's `args` followed by `--bot-type`, `--bot-id`,
 `--bots-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
 when the request has them, `--options <JSON>`. A locally launched bot also
 finds its key in `BOTS_BOT_KEY`.
@@ -261,7 +265,7 @@ authenticate.
 | `id_token.rs` | `IdTokenVerifier`: Google ID tokens, verified with RS256 against Google's keys (fetched again for an unknown key id) and checked for issuer, audience, expiry and service account. |
 | `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
 | `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |
-| `bots.rs` | `Bots`: start (room holder, `max_running`, launch), list, stop, and the bot's own token and heartbeat calls, authenticated by its key or its ID token. |
+| `bots.rs` | `Bots`: start (room holder, `max_running`, launch), the room's latest bot of a type, stop, and the bot's own token and heartbeat calls, authenticated by its key or its ID token. |
 | `server.rs` | `BotsServer`: the HTTP routes on `http_server::HttpServer`, each in a `bots.request` span that continues the caller's trace. |
 
 ## Consequences
@@ -292,7 +296,7 @@ authenticate.
 2. `bots` with the recorder as its only type; `recorder record` takes its bot
    id, fetches its token and reports heartbeats; the recorder publishes
    `bots/recorder`.
-3. Temporary-apps service `POST /bots`; the Meeting starts and stops the recorder through
+3. Temporary-apps service `/bots/{type}`; the Meeting starts and stops the recorder through
    it and shows REC from `bots/recorder`.
 4. Remove start and stop from `recorder serve`, with `--token` and
    `--temporary-apps-url` of `recorder record`.

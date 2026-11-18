@@ -16,7 +16,7 @@ dependencies of `bots`. `server.rs` takes `hyper::Request<Incoming>` from
 
 ## Context
 
-`bots` serves six routes with JSON bodies, as the VTS and the token mint do.
+`bots` serves six routes with JSON bodies, as the VTS and `temporary-apps` do.
 
 ## Alternatives
 

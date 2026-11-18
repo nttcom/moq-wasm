@@ -162,6 +162,8 @@ impl Bots {
             .map_err(StartError::Internal)?;
         let mut args = kind.args.clone();
         args.extend([
+            "--bot-type".to_string(),
+            bot_type.to_string(),
             "--bot-id".to_string(),
             id.clone(),
             "--bots-url".to_string(),
@@ -194,22 +196,30 @@ impl Bots {
         Ok(view(&record, now_ms))
     }
 
-    /// The latest bot of each type in the room.
-    pub(crate) async fn list(&self, namespace_prefix: &str, now_ms: u64) -> Result<Vec<BotView>> {
-        let mut bots = Vec::new();
-        for bot_type in self.types.names() {
-            let Some(holder) = self.store.room_holder(bot_type, namespace_prefix).await? else {
-                continue;
-            };
-            if let Some(record) = self.store.read(&holder.id).await? {
-                bots.push(view(&record, now_ms));
-            }
-        }
-        Ok(bots)
+    /// The room's latest bot of `bot_type`.
+    pub(crate) async fn latest(
+        &self,
+        bot_type: &str,
+        namespace_prefix: &str,
+        now_ms: u64,
+    ) -> Result<Option<BotView>> {
+        let Some(holder) = self.store.room_holder(bot_type, namespace_prefix).await? else {
+            return Ok(None);
+        };
+        Ok(self
+            .store
+            .read(&holder.id)
+            .await?
+            .map(|record| view(&record, now_ms)))
     }
 
-    pub(crate) async fn record(&self, id: &str) -> Result<Option<BotRecord>> {
-        self.store.read(id).await
+    /// `None` for an id of another type.
+    pub(crate) async fn record(&self, bot_type: &str, id: &str) -> Result<Option<BotRecord>> {
+        Ok(self
+            .store
+            .read(id)
+            .await?
+            .filter(|record| record.bot_type == bot_type))
     }
 
     /// The bot stops at its next heartbeat.
@@ -220,11 +230,12 @@ impl Bots {
     /// A new token for the bot to join its room with.
     pub(crate) async fn token(
         &self,
+        bot_type: &str,
         id: &str,
         bearer: Option<&str>,
         now_ms: u64,
     ) -> Result<String, BotError> {
-        let record = self.authenticated(id, bearer, now_ms).await?;
+        let record = self.authenticated(bot_type, id, bearer, now_ms).await?;
         if !is_active(&record, now_ms) {
             return Err(BotError::Ended);
         }
@@ -243,12 +254,13 @@ impl Bots {
     /// asked or it reached its type's longest run.
     pub(crate) async fn heartbeat(
         &self,
+        bot_type: &str,
         id: &str,
         bearer: Option<&str>,
         heartbeat: Heartbeat,
         now_ms: u64,
     ) -> Result<bool, BotError> {
-        let record = self.authenticated(id, bearer, now_ms).await?;
+        let record = self.authenticated(bot_type, id, bearer, now_ms).await?;
         if !is_active(&record, now_ms) {
             return Err(BotError::Ended);
         }
@@ -271,11 +283,12 @@ impl Bots {
 
     async fn authenticated(
         &self,
+        bot_type: &str,
         id: &str,
         bearer: Option<&str>,
         now_ms: u64,
     ) -> Result<BotRecord, BotError> {
-        let record = self.store.read(id).await?.ok_or(BotError::NotFound)?;
+        let record = self.record(bot_type, id).await?.ok_or(BotError::NotFound)?;
         let bearer = bearer.ok_or(BotError::Unauthorized)?;
         let authentic = match (&record.key_sha256, &self.id_tokens) {
             (Some(key_sha256), _) => {
@@ -319,7 +332,7 @@ fn is_active(record: &BotRecord, now_ms: u64) -> bool {
 }
 
 /// A bot that stopped reporting shows as failed.
-fn view(record: &BotRecord, now_ms: u64) -> BotView {
+pub(crate) fn view(record: &BotRecord, now_ms: u64) -> BotView {
     let (state, error) = if record.state.has_ended() || is_active(record, now_ms) {
         (record.state, record.error.clone())
     } else {
@@ -419,7 +432,13 @@ mod tests {
         let finished = started(&test, "app/a").await;
         started(&test, "app/b").await;
         test.bots
-            .heartbeat(&finished.id, Some(KEY), heartbeat(BotState::Finished), NOW)
+            .heartbeat(
+                "recorder",
+                &finished.id,
+                Some(KEY),
+                heartbeat(BotState::Finished),
+                NOW,
+            )
             .await
             .unwrap();
 
@@ -436,24 +455,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_silent_bot_is_listed_as_failed() {
+    async fn a_silent_bot_shows_as_failed() {
         // Arrange
         let test = test_bots();
         let bot = started(&test, "app/a").await;
 
         // Act
-        let listed = test
+        let latest = test
             .bots
-            .list("app/a", NOW + HEARTBEAT_TIMEOUT_MS)
+            .latest("recorder", "app/a", NOW + HEARTBEAT_TIMEOUT_MS)
             .await
+            .unwrap()
             .unwrap();
 
         // Assert
-        assert_eq!(listed.len(), 1);
-        assert_eq!(
-            (listed[0].id.as_str(), listed[0].state),
-            (bot.id.as_str(), BotState::Failed)
-        );
+        assert_eq!((latest.id, latest.state), (bot.id, BotState::Failed));
     }
 
     #[tokio::test]
@@ -463,7 +479,11 @@ mod tests {
         let bot = started(&test, "app/a").await;
 
         // Act
-        let token = test.bots.token(&bot.id, Some(KEY), NOW).await.unwrap();
+        let token = test
+            .bots
+            .token("recorder", &bot.id, Some(KEY), NOW)
+            .await
+            .unwrap();
 
         // Assert
         verify_signature(&token, "app-secret").unwrap();
@@ -473,31 +493,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_bot_is_found_only_under_its_own_type() {
+        // Arrange
+        let test = test_bots();
+        let bot = started(&test, "app/a").await;
+
+        // Act
+        let other_type = test.bots.token("chat", &bot.id, Some(KEY), NOW).await;
+
+        // Assert
+        assert!(matches!(other_type, Err(BotError::NotFound)));
+        assert!(test.bots.record("chat", &bot.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
     async fn a_wrong_key_an_unknown_bot_or_an_ended_one_gets_no_token() {
         // Arrange
         let test = test_bots();
         let bot = started(&test, "app/a").await;
         let ended = started(&test, "app/b").await;
         test.bots
-            .heartbeat(&ended.id, Some(KEY), heartbeat(BotState::Failed), NOW)
+            .heartbeat(
+                "recorder",
+                &ended.id,
+                Some(KEY),
+                heartbeat(BotState::Failed),
+                NOW,
+            )
             .await
             .unwrap();
 
         // Act / Assert
         assert!(matches!(
-            test.bots.token(&bot.id, Some("other"), NOW).await,
+            test.bots
+                .token("recorder", &bot.id, Some("other"), NOW)
+                .await,
             Err(BotError::Unauthorized)
         ));
         assert!(matches!(
-            test.bots.token(&bot.id, None, NOW).await,
+            test.bots.token("recorder", &bot.id, None, NOW).await,
             Err(BotError::Unauthorized)
         ));
         assert!(matches!(
-            test.bots.token("missing", Some(KEY), NOW).await,
+            test.bots.token("recorder", "missing", Some(KEY), NOW).await,
             Err(BotError::NotFound)
         ));
         assert!(matches!(
-            test.bots.token(&ended.id, Some(KEY), NOW).await,
+            test.bots.token("recorder", &ended.id, Some(KEY), NOW).await,
             Err(BotError::Ended)
         ));
     }
@@ -513,12 +555,19 @@ mod tests {
         // Act
         let stop_requested = test
             .bots
-            .heartbeat(&stopped.id, Some(KEY), heartbeat(BotState::Running), NOW)
+            .heartbeat(
+                "recorder",
+                &stopped.id,
+                Some(KEY),
+                heartbeat(BotState::Running),
+                NOW,
+            )
             .await
             .unwrap();
         let before_max = test
             .bots
             .heartbeat(
+                "recorder",
                 &long.id,
                 Some(KEY),
                 heartbeat(BotState::Running),
@@ -529,6 +578,7 @@ mod tests {
         let at_max = test
             .bots
             .heartbeat(
+                "recorder",
                 &long.id,
                 Some(KEY),
                 heartbeat(BotState::Running),
@@ -539,7 +589,11 @@ mod tests {
 
         // Assert
         assert!(stop_requested && !before_max && at_max);
-        let listed = test.bots.list("app/b", NOW + 60_000).await.unwrap();
-        assert_eq!(listed[0].state, BotState::Running);
+        let latest = test
+            .bots
+            .latest("recorder", "app/b", NOW + 60_000)
+            .await
+            .unwrap();
+        assert_eq!(latest.unwrap().state, BotState::Running);
     }
 }

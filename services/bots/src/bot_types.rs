@@ -85,10 +85,6 @@ impl BotTypes {
     pub(crate) fn get(&self, name: &str) -> Option<&BotType> {
         self.0.get(name)
     }
-
-    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
-        self.0.keys().map(String::as_str)
-    }
 }
 
 #[cfg(test)]
@@ -118,7 +114,6 @@ mod tests {
         assert_eq!(recorder.args, ["record"]);
         assert_eq!(recorder.grace, Duration::from_secs(300));
         assert!(types.get("chat").unwrap().is_local());
-        assert_eq!(types.names().collect::<Vec<_>>(), ["chat", "recorder"]);
     }
 
     #[test]
