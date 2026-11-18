@@ -1,23 +1,10 @@
-.tracking-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 760px) {
-  .tracking-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
 .card h2 {
   margin: 0;
 }
 
 .target-form {
   display: grid;
-  gap: 8px;
+  gap: 12px;
 }
 
 .target-list {
@@ -27,39 +14,82 @@
 
 .target-row {
   display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
   align-items: center;
-  padding-left: 8px;
-  border-left: 6px solid var(--box-color);
+  padding: 6px 6px 6px 10px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--box-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.target-row input {
+  min-width: 0;
+  max-width: none;
+}
+
+.target-row button {
+  min-height: 30px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+}
+
+.target-row button:hover {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.add-row {
+  justify-self: start;
+  width: fit-content;
 }
 
 .tracking-stage {
   position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+/* Before the player mounts, the stage keeps the shape of the video it will show. */
+.tracking-stage:not(:has(> :not(.box-overlay))) {
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--border);
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
 }
 
 .tracking-result {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
+  margin-bottom: 12px;
 }
 
 .position-badge {
-  padding: 6px 14px;
+  padding: 3px 12px;
+  border: 1px solid var(--border);
   border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.85rem;
   font-weight: 600;
-  color: var(--muted);
-  background: #f3f4f6;
 }
 
 .position-badge[data-position='answer'] {
-  color: #fff;
-  background: #16a34a;
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .position-badge[data-position='unknown'] {
-  color: #92400e;
-  background: #fef3c7;
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 
 .setup-flow.setup-hub {

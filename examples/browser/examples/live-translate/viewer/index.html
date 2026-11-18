@@ -3,16 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Live Translate Viewer</title>
+    <title>Live Translate 視聴 · MoQT Playground</title>
     <link rel="stylesheet" href="../../../utils/theme.css" />
     <link rel="stylesheet" href="../../../utils/components.css" />
     <link rel="stylesheet" href="./viewer.css" />
   </head>
-  <body>
+  <body data-title="Live Translate · 視聴">
     <div class="page viewer-page">
       <header class="viewer-header">
-        <span class="pill">Live Translate</span>
-        <span id="broadcast-title" class="viewer-title" data-testid="viewer-title">配信を見る</span>
+        <span class="pill">AI 連携 · Live Translate</span>
+        <h1 id="broadcast-title" class="viewer-title" data-testid="viewer-title">配信を見る</h1>
+        <p class="hint">音声の言語は再生中に画面下から切り替えられます</p>
       </header>
 
       <section class="viewer-stage-frame">
@@ -42,7 +43,7 @@
             元の音声も小さく重ねる（デバッグ）
           </label>
           <div class="button-row">
-            <button type="button" id="stopBtn">視聴をやめる</button>
+            <button type="button" id="stopBtn" class="secondary">視聴をやめる</button>
           </div>
         </div>
       </details>

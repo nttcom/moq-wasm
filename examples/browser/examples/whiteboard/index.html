@@ -3,18 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Whiteboard</title>
+    <title>Whiteboard · MoQT Playground</title>
     <link rel="stylesheet" href="../../utils/theme.css" />
     <link rel="stylesheet" href="../../utils/components.css" />
     <link rel="stylesheet" href="./whiteboard.css" />
   </head>
-  <body>
+  <body data-title="Whiteboard">
     <main class="page">
       <header class="hero">
         <div>
-          <span class="pill">Whiteboard</span>
-          <h1>Whiteboard</h1>
-          <p>描いた線を MoQT で共有し、途中参加した人にもボードを再現する</p>
+          <span class="pill">ユースケース · Whiteboard</span>
+          <h1>みんなで描けるホワイトボード</h1>
+          <p>描いた線を MoQT で共有します。途中から参加した人にも、それまでのボードをそのまま再現します。</p>
         </div>
       </header>
 
@@ -23,8 +23,11 @@
           <div id="urlPresets"></div>
           <input type="url" id="url" aria-label="Relay URL" />
         </div>
-        <div class="connection-room stack">
-          <p class="hint">ルーム: <code id="room"></code></p>
+        <div class="connection-room">
+          <div class="room-row">
+            <span class="status-label">ルーム</span>
+            <code id="room"></code>
+          </div>
           <div class="button-row">
             <button type="button" id="joinBtn" data-testid="whiteboard-join-button">参加</button>
             <button type="button" id="leaveBtn" data-testid="whiteboard-leave-button" disabled>退出</button>
@@ -34,15 +37,21 @@
         </div>
       </section>
 
-      <section class="card stack board-card">
-        <div class="toolbar">
-          <button type="button" data-tool="pen" aria-pressed="true">ペン</button>
-          <button type="button" data-tool="eraser" aria-pressed="false" data-testid="whiteboard-eraser-button">
-            消しゴム
-          </button>
+      <section class="card board-card">
+        <div class="toolbar" role="toolbar" aria-label="描画ツール">
+          <div class="tool-group">
+            <button type="button" data-tool="pen" aria-pressed="true">ペン</button>
+            <button type="button" data-tool="eraser" aria-pressed="false" data-testid="whiteboard-eraser-button">
+              消しゴム
+            </button>
+          </div>
+          <span class="toolbar-divider" aria-hidden="true"></span>
           <label class="inline-field">色<input type="color" id="color" value="#0f766e" /></label>
           <label class="inline-field">太さ<input type="range" id="width" min="1" max="24" value="4" /></label>
-          <button type="button" id="clearBtn" data-testid="whiteboard-clear-button" disabled>全消去</button>
+          <span class="toolbar-divider" aria-hidden="true"></span>
+          <button type="button" id="clearBtn" class="danger" data-testid="whiteboard-clear-button" disabled>
+            全消去
+          </button>
           <span class="hint stroke-count" id="strokeCount" data-testid="whiteboard-stroke-count" data-count="0"
             >0 ストローク</span
           >

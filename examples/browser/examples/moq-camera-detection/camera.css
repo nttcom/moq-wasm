@@ -1,22 +1,14 @@
-.camera-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 760px) {
-  .camera-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
 .card h2 {
   margin: 0;
 }
 
+/* Capped so the questions below stay within reach on a short window. */
 .camera-stage {
   position: relative;
+  max-width: calc(62vh * 4 / 3);
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius-md);
 }
 
 /* The encoder scales the whole camera frame to 4:3, so filling the same shape keeps the
@@ -25,8 +17,9 @@
   display: block;
   width: 100%;
   aspect-ratio: 4 / 3;
-  border-radius: 12px;
-  background: #111827;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: #05070a;
   object-fit: fill;
 }
 
@@ -36,13 +29,29 @@
   gap: 8px;
 }
 
+.prompt-form {
+  gap: 14px;
+}
+
 .question-row {
   display: grid;
-  grid-template-columns: auto 1fr 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  padding-left: 8px;
-  border-left: 6px solid var(--box-color);
+  padding: 8px 8px 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--box-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-subtle);
+}
+
+.question-row select {
+  width: auto;
+}
+
+.question-row input {
+  min-width: 0;
+  max-width: none;
 }
 
 .question-row input[hidden] {
@@ -50,30 +59,70 @@
   visibility: hidden;
 }
 
+.question-row button {
+  min-height: 30px;
+  padding: 0 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-subtle);
+  font-size: 0.8rem;
+}
+
+.question-row button:hover {
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@media (max-width: 560px) {
+  .question-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .question-row select,
+  .question-row input {
+    grid-column: 1 / -1;
+  }
+
+  .question-row input[hidden] {
+    display: none;
+  }
+}
+
 .camera-verdicts {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0;
+  margin: 0 0 12px;
   padding: 0;
   list-style: none;
 }
 
+.camera-verdicts:empty {
+  display: none;
+}
+
 .verdict-badge {
-  padding: 6px 14px;
-  border-left: 6px solid var(--box-color);
-  border-radius: 999px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--box-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.875rem;
   font-weight: 600;
-  color: var(--muted);
-  background: #f3f4f6;
 }
 
 .verdict-badge[data-verdict='answer'] {
-  color: #fff;
-  background: #16a34a;
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  border-left-color: var(--box-color);
+  background: var(--success-soft);
+  color: var(--success);
 }
 
 .verdict-badge[data-verdict='unknown'] {
-  color: #92400e;
-  background: #fef3c7;
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  border-left-color: var(--box-color);
+  background: var(--warning-soft);
+  color: var(--warning);
 }
