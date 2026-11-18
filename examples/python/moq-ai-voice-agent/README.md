@@ -44,16 +44,13 @@ GOOGLE_API_KEY=<API キー> uv run python -m moq_ai_voice_agent.bot --insecure
 - Cloud relay を使うときは bot を `--relay-url https://relay-1.moqt.research.skyway.io:443` で起動し、ページを `?botUrl=http://127.0.0.1:8101` 付きで開きます。
 - Vertex AI で動かすときは、`GOOGLE_API_KEY` の代わりに `--vertex-project <プロジェクト ID>` を付けます。手元では `gcloud auth application-default login` の認証情報を使います。
 - bot は `http://127.0.0.1:8101` で待ち受けます。`moq-wasm` のビルドに Rust のツールチェーンが要ります。
-- リクエストが閉じてから、または参加者が全員いなくなってから 30 秒たつと、bot はルームを抜けます。
 
 ## オプション
 
-[moq-bot-rooms](../moq-bot-rooms/README.md) のオプションに加えて次があります。
+接続先・TLS・退出条件は [moq-bot-rooms](../moq-bot-rooms/README.md) を参照してください。
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
-| `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
-| `--insecure` | なし | relay の証明書を検証しない |
 | `--max-rooms` | `4` | 同時に動かすルームの数 |
 | `--vertex-project` | なし | Gemini をこのプロジェクトの Vertex AI で呼ぶ。なければ Gemini API を `GOOGLE_API_KEY` で呼ぶ |
 

@@ -16,6 +16,26 @@ turn them back. All five formats carry H.264/AAC; LoC and `mp4::Fmp4Muxer`
 also carry H.265, VP8, VP9 and AV1. MPEG-TS, FLV and fMP4 convert in either
 direction through `Transmuxer`.
 
+## Usage
+
+Convert the test fixture from MPEG-TS to fragmented MP4 from the workspace root:
+
+```shell
+cargo run -p mediapack --example transmux -- mpegts fmp4 crates/mediapack/fixtures/testsrc.ts out.mp4
+```
+
+With the streaming API, write the bytes from both `push()` and `finish()`.
+The fMP4 muxer holds the last video sample until it can determine its duration.
+
+```rust
+use std::io::Write;
+use mediapack::{InputFormat, OutputFormat, Transmuxer};
+
+let mut muxer = Transmuxer::new(InputFormat::MpegTs, OutputFormat::Fmp4);
+output.write_all(&muxer.push(&ts_bytes)?)?;
+output.write_all(&muxer.finish()?)?;
+```
+
 | Event | Meaning |
 | --- | --- |
 | `Streams` | Which tracks the container announces |
@@ -30,9 +50,6 @@ Timestamps are `Timestamp` values in microseconds.
 
 | Module | Contents |
 | --- | --- |
-| `mpegts`, `flv`, `mp4` | Demuxers and muxers; `mp4::Fmp4TrackMuxer` writes one track with its init segment apart (draft-ietf-moq-cmsf-01 §3.1/§3.3) |
-| `loc` | `Muxer`, `Demuxer` and the transport-independent `LocObject` with typed extensions |
-| `rtp` | `Demuxer` / `Muxer` over RTP datagrams, the H.264, AAC, G.711 A-law and Opus payload formats, and `sdp::SessionDescription` |
 | `h264`, `hevc` | NAL unit types, SPS parsing, Annex-B/AVCC conversion |
 | `elementary_stream` | `ElementaryStreamDemuxer`: splits a raw Annex-B stream into access units; `h264::ElementaryStreamDemuxer` reads H.264 |
 | `parameter_sets` | `ParameterSetTracker`: reports a changed configuration and completes a keyframe that lacks its parameter sets |
@@ -40,29 +57,10 @@ Timestamps are `Timestamp` values in microseconds.
 | `aac` | AudioSpecificConfig and ADTS parsing |
 | `transmux` | `Transmuxer` (push API) and `transmux()` (Read/Write API) |
 
-## Usage
+## Format notes
 
-```rust
-use mediapack::{InputFormat, MediaEvent, OutputFormat, Transmuxer, mpegts};
-
-let mut demuxer = mpegts::Demuxer::new();
-for event in demuxer.push(&ts_bytes)? {
-    if let MediaEvent::Video(sample) = event {
-        publish(sample.data, sample.is_keyframe, sample.pts);
-    }
-}
-
-let mut transmuxer = Transmuxer::new(InputFormat::MpegTs, OutputFormat::Fmp4);
-let fragment_bytes = transmuxer.push(&ts_bytes)?;
-```
-
-```shell
-cargo run -p mediapack --example transmux -- mpegts fmp4 in.ts out.mp4
-```
-
-- **fMP4**: the muxer holds back one video sample to know each sample's
-  duration, so call `finish()` to flush the last one. The demuxer reads
-  fragmented H.264/AAC only, not unfragmented MP4.
+- **fMP4**: the demuxer reads fragmented H.264/AAC. `mp4::Fmp4TrackMuxer` writes
+  one track with a separate init segment.
 - **LoC** carries objects, not a byte stream, so `loc::Muxer` and
   `loc::Demuxer` sit outside the transmux API. Route video and audio to
   separate tracks and give the demuxer the codec from the catalog
