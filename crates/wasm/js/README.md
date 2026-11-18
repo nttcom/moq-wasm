@@ -41,12 +41,12 @@ version may change it.
 ## Installing
 
 The package is not on the npm registry. Each release attaches its tarball to
-the GitHub Release `sdk-v<version>`; put its URL in `package.json`:
+the GitHub Release `js-sdk-v<version>`; put its URL in `package.json`:
 
 ```json
 {
   "dependencies": {
-    "moq-wasm": "https://github.com/nttcom/moq-wasm/releases/download/sdk-v0.3.0/moq-wasm-0.3.0.tgz"
+    "moq-wasm": "https://github.com/nttcom/moq-wasm/releases/download/js-sdk-v0.6.0/moq-wasm-0.6.0.tgz"
   }
 }
 ```
@@ -394,6 +394,6 @@ npm --prefix crates/wasm/js run build       # dist/ and types/
 npm --prefix crates/wasm/js run check:pack  # builds a new Vite project from the tarball
 ```
 
-To release, follow `.agents/skills/release-sdk/SKILL.md`: a `sdk-v<version>`
+To release, follow `.agents/skills/release-sdk/SKILL.md`: a `js-sdk-v<version>`
 tag makes `.github/workflows/sdk-release.yml` attach the tarball to a GitHub
 Release.

@@ -1202,7 +1202,7 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
 ```json
 {
   "dependencies": {
-    "moq-wasm": "https://github.com/<owner>/<repo>/releases/download/sdk-v0.1.0/moq-wasm-0.1.0.tgz"
+    "moq-wasm": "https://github.com/<owner>/<repo>/releases/download/js-sdk-v0.1.0/moq-wasm-0.1.0.tgz"
   }
 }
 ```
@@ -1214,8 +1214,8 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
    の節を集めて作る（`.agents/skills/release-sdk/SKILL.md`）。並行する PR が同じ
    `CHANGELOG.md` に書くと衝突するので、PR は `CHANGELOG.md` を変えず、載せる英文を
    PR の本文に書く。
-2. `sdk-v<version>` の tag を push する。crate とは別に版を刻むので、tag には `sdk-`
-   を付ける。
+2. `js-sdk-v<version>` の tag を push する。crate や Python SDK とは別に版を刻むので、
+   tag には `js-sdk-` を付ける。
 3. CI がその tag で wasm と TS をビルドし、`npm pack` の tarball を作り、同じ名前の
    GitHub Release に添付する。changelog の該当部分を Release の本文にする。
 
