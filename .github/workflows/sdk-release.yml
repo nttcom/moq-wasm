@@ -4,7 +4,7 @@ name: SDK release
 on:
   push:
     tags:
-      - "sdk-v*"
+      - "js-sdk-v*"
 
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
       - name: Check the tag names the package version
         run: |
           version=$(node -p "require('./crates/wasm/js/package.json').version")
-          if [ "${GITHUB_REF_NAME}" != "sdk-v${version}" ]; then
+          if [ "${GITHUB_REF_NAME}" != "js-sdk-v${version}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not name the package version ${version}"
             exit 1
           fi
@@ -55,4 +55,4 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" "${RUNNER_TEMP}/moq-wasm-${VERSION}.tgz" \
             --verify-tag \
-            --title "moq-wasm ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"
+            --title "moq-wasm (JS) ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"

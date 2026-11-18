@@ -22,7 +22,7 @@ transport）は `docs/architecture/python/sdk.md` で設計する。
 
 | 言語 | 入口 | 状態 |
 | --- | --- | --- |
-| JS | `moq-wasm` の `MoqSession` | SDK として完成した。0.1.0 を tag `sdk-v0.1.0` の GitHub Release で配っている |
+| JS | `moq-wasm` の `MoqSession` | SDK として完成した。tag `js-sdk-v<version>` の GitHub Release で配っている |
 | Python | `crates/python`（PyO3 + maturin、配布名 `moq-wasm`、モジュール `moq_wasm._native`、abi3-py311） | Meeting の transcriber と AI bot が要るものだけがある。`fetch`、`track_status`、トークン、購読のオプションが無い。bot は path 依存で、利用者は Rust でビルドする |
 | Rust | `crates/moqt` | 制御メッセージ単位の API（`Session`、`Subscriber`、`Publisher`、`publish::Origin`、`namespace::NamespaceWatchers`）。`README.md` は commit を指す git 依存を案内している |
 
@@ -247,12 +247,12 @@ class RequestError(Exception):
 ある。
 
 ### tag の名前
-言語ごとに版を刻むので、Python と Rust の tag には言語を付ける。JS は今の
-`sdk-v*` を続ける。
+言語ごとに版を刻むので、tag には言語を付ける。JS は `sdk-v*` で 0.6.0 まで出した後、
+`js-sdk-v*` に改め、0.6.0 だけを `js-sdk-v0.6.0` として出し直した。
 
 | 言語 | tag | Release に付けるもの |
 | --- | --- | --- |
-| JS | `sdk-v<version>`（今のまま） | `npm pack` の tarball |
+| JS | `js-sdk-v<version>` | `npm pack` の tarball |
 | Python | `python-sdk-v<version>` | wheel |
 | Rust | `rust-v<version>` | なし（tag そのものが依存先） |
 
