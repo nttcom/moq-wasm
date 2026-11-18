@@ -535,6 +535,7 @@
   --th-dim: #7b8695;
   --th-accent: #2dd4bf;
   --th-alert: #c25555;
+  --th-success: #34d399;
   position: relative;
   display: block;
   overflow: hidden;
@@ -606,7 +607,7 @@
 }
 
 .th-tile.speak {
-  box-shadow: 0 0 0 1.5px var(--th-accent);
+  box-shadow: 0 0 0 1.5px var(--th-success);
 }
 
 .th-tile.speak .th-person {
@@ -628,33 +629,155 @@
   background: rgba(0, 0, 0, 0.5);
 }
 
-.th-bar {
+/* Meeting: the room header, the gallery and the control bar, laid out as the page lays them out. */
+.th-call {
   position: absolute;
-  bottom: 4.5%;
-  left: 50%;
+  inset: 0;
   display: flex;
-  gap: 5px;
-  padding: 3px 6px;
-  border-radius: 999px;
+  flex-direction: column;
+}
+
+.th-call svg {
+  width: 1.3em;
+  height: 1.3em;
+  fill: currentColor;
+}
+
+.th-call svg .line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.th-call-head,
+.th-call-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.6em;
+  padding: 0 3.5%;
   background: var(--th-panel);
-  transform: translateX(-50%);
 }
 
-.th-bar i {
-  width: 1.2em;
-  height: 1.2em;
-  border-radius: 50%;
-  background: var(--th-line);
+.th-call-head {
+  height: 13%;
+  border-bottom: 1px solid var(--th-line);
 }
 
-.th-bar i.on {
-  background: var(--th-accent);
-}
-
-.th-bar i.end {
+.th-call-icon {
+  display: grid;
+  place-items: center;
   width: 1.9em;
-  border-radius: 0.6em;
-  background: var(--th-alert);
+  height: 1.9em;
+  border-radius: 4px;
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--th-accent);
+}
+
+.th-call-icon svg {
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.th-call-count {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+  margin-left: auto;
+  color: var(--th-dim);
+}
+
+.th-call-chips {
+  margin-left: 0.4em;
+  display: flex;
+}
+
+.th-call-chips i {
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  margin-left: -0.4em;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px var(--th-panel);
+  background: var(--th-accent);
+  color: var(--th-bg);
+  font-size: 0.8em;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.th-call-chips i:first-child {
+  box-shadow: 0 0 0 1.5px var(--th-success);
+}
+
+.th-call .th-meet {
+  position: relative;
+  flex: 1;
+  padding: 2.5% 14%;
+}
+
+.th-initial {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  place-items: center;
+  width: 2.6em;
+  height: 2.6em;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #14b8a6, #115e59);
+  color: #fff;
+  font-size: 1.1em;
+  font-weight: 600;
+  transform: translate(-50%, -50%);
+}
+
+.th-call-bar {
+  justify-content: space-between;
+  height: 17%;
+  border-top: 1px solid var(--th-line);
+}
+
+.th-call-group {
+  display: flex;
+  gap: 0.5em;
+}
+
+.th-call-group i {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 2.4em;
+  height: 2.4em;
+  border-radius: 50%;
+  background: var(--th-tile);
+  color: var(--th-text);
+}
+
+.th-call-group i.on {
+  background: rgba(45, 212, 191, 0.15);
+  color: var(--th-accent);
+}
+
+.th-call-group i.leave {
+  width: 4em;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+}
+
+.th-call-group i.unread::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0.6em;
+  height: 0.6em;
+  border-radius: 50%;
+  background: #dc2626;
+  content: '';
 }
 
 /* Recording Player: the meeting played back on a timeline. */
