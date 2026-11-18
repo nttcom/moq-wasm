@@ -1,7 +1,7 @@
 # Design: a bot service that launches bots into rooms
 
 ## Status
-Proposed
+Accepted
 
 ## Date
 2026-11-18
@@ -220,10 +220,49 @@ same way as a registered one:
   What changes is that the decision and its limits sit in a server.
 
 ### Configuration
-Bot types live in a file `bots` reads at startup: for each type, the
-launcher and its job, the grace period, the longest run, the token claims and
-the limits (`max_running` overall and per app, the opening hours the AI bots
-use today). A request for a type not in the file is `400`.
+Bot types live in a JSON file `bots` reads at startup (`BOTS_TYPES_FILE`),
+from type name to entry:
+
+```json
+{
+  "recorder": {
+    "launcher": { "kind": "cloud-run", "job": "projects/<p>/locations/<r>/jobs/<job>" },
+    "args": ["record"],
+    "grace_seconds": 300,
+    "max_seconds": 7200,
+    "max_running": 5
+  }
+}
+```
+
+`launcher` is `{"kind": "local", "program": <path>}` for development.
+Every bot gets the same token claims (above), so they are not configured.
+Limits per app and opening hours, which the AI bots have today, are added
+with the AI bots. A request for a type not in the file is `400`.
+
+A bot is started with the type's `args` followed by `--bot-id`,
+`--bots-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
+when the request has them, `--options <JSON>`. A locally launched bot also
+finds its key in `BOTS_BOT_KEY`.
+
+The service reads `PORT` (8098), `BOTS_PUBLIC_URL` (the URL bots call back,
+and the audience of their ID tokens), `BOTS_VTS_URL`, `BOTS_STORE_URL`,
+`BOTS_REGISTRY_FILE` or `BOTS_REGISTRY_BUCKET` (with
+`BOTS_REGISTRY_OBJECT`), `BOTS_TEMPORARY_APP_SECRET`, and
+`BOTS_JOB_SERVICE_ACCOUNT`, without which only locally launched bots can
+authenticate.
+
+## Modules
+
+| Module | Responsibility |
+| --- | --- |
+| `bot_types.rs` | `BotTypes`: the types file, each type's `JobLauncher`, arguments, grace period, longest run and `max_running`. |
+| `launch_auth.rs` | `LaunchAuth`: sends the bearer token to the VTS and requires a launch token of at most 5 minutes, not a relay's, whose `bots` claim covers the room. |
+| `id_token.rs` | `IdTokenVerifier`: Google ID tokens, verified with RS256 against Google's keys (fetched again for an unknown key id) and checked for issuer, audience, expiry and service account. |
+| `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
+| `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |
+| `bots.rs` | `Bots`: start (room holder, `max_running`, launch), list, stop, and the bot's own token and heartbeat calls, authenticated by its key or its ID token. |
+| `server.rs` | `BotsServer`: the HTTP routes on `http_server::HttpServer`, each in a `bots.request` span that continues the caller's trace. |
 
 ## Consequences
 
