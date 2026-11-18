@@ -1,38 +1,25 @@
 #!/usr/bin/env node
 
-import {
-  registerSignalHandlers,
-  runCommand,
-  spawnProcess,
-  spawnViteServer,
-  terminateProcess,
-  waitForOutput,
-} from "./process.mjs";
+import { runCommand } from "./process.mjs";
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
-  repoRoot,
   resolveCommandName,
 } from "../../scripts/dev-env.mjs";
 import {
   assertE2EPrerequisites,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
-  getDefaultWebPort,
   jsDir,
   mediaIndexPath,
   startTcpProxy,
-  waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
-
-const childProcesses = [];
+import { startRelayAndPage } from "./relay-dev.mjs";
 
 async function main() {
   ensureLinuxEnvironment();
   assertE2EPrerequisites();
 
-  const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const namespace = process.env.MEDIA_E2E_NAMESPACE ?? `anon/e2e/${Date.now()}`;
   const throughTcpProxy = process.argv.includes("--through-tcp-proxy");
@@ -40,30 +27,12 @@ async function main() {
   let expectedTransport = "webtransport";
   let proxy = null;
 
-  const cleanup = async () => {
-    proxy?.close();
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
-  };
-
-  registerSignalHandlers(cleanup);
+  const { cleanup, ready } = startRelayAndPage(mediaIndexPath, {
+    onCleanup: () => proxy?.close(),
+  });
 
   try {
-    const vts = await startVts();
-    childProcesses.push(vts);
-    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
-      cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayEnv() },
-    });
-    const vite = spawnViteServer(webPort);
-
-    childProcesses.push(server, vite);
-
-    await Promise.all([
-      waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${mediaIndexPath}`, 120_000),
-    ]);
+    await ready;
 
     if (throughTcpProxy) {
       proxy = await startTcpProxy(Number(new URL(moqtUrl).port));
