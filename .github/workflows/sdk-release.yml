@@ -55,4 +55,4 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" "${RUNNER_TEMP}/moq-wasm-${VERSION}.tgz" \
             --verify-tag \
-            --title "moq-wasm ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"
+            --title "moq-wasm (JS) ${VERSION}" --notes-file "${RUNNER_TEMP}/notes.md"
