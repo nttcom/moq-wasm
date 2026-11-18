@@ -1,25 +1,36 @@
 .access-bar {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.4rem 1rem;
-  margin: 0 0 1rem;
-  padding: 0.6rem 1rem;
-  border-radius: 0.7rem;
+  gap: 0.3rem 0.7rem;
+  max-width: 100%;
+  padding: 0.35rem 0.5rem 0.35rem 0.8rem;
+  border-radius: 999px;
   font-family: 'Hiragino Sans', 'Noto Sans JP', sans-serif;
-  font-size: 0.85rem;
-  line-height: 1.5;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.hero:has(> .access-bar) > :first-child {
+  flex: 1 1 20rem;
+  min-width: 0;
+}
+
+.hero > .access-bar {
+  margin-left: auto;
+  align-self: flex-start;
 }
 
 body > .access-bar {
-  margin: 0.75rem;
+  display: flex;
+  justify-content: flex-end;
+  border-radius: 0;
 }
 
 .access-bar.public {
   border: 1px solid #e3e6ec;
   background: #ffffff;
   color: #1f2937;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .access-bar.temporary,
@@ -35,24 +46,65 @@ body > .access-bar {
   color: #fde8e8;
 }
 
+body > .access-bar.public,
+body > .access-bar.temporary,
+body > .access-bar.given {
+  border-width: 0 0 1px;
+}
+
 .access-bar b {
   font-weight: 700;
 }
 
 .access-bar code {
-  padding: 0.1rem 0.45rem;
+  padding: 0.05rem 0.4rem;
   border-radius: 0.35rem;
   background: rgba(127, 127, 127, 0.2);
 }
 
+.access-info {
+  position: relative;
+  cursor: help;
+  opacity: 0.75;
+}
+
+.access-info:hover,
+.access-info:focus-visible {
+  opacity: 1;
+}
+
+.access-info:hover::after,
+.access-info:focus::after {
+  content: attr(data-note);
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 10;
+  width: 20rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.6rem;
+  background: #1f2430;
+  color: #eceef3;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  font-weight: 400;
+  line-height: 1.6;
+  white-space: normal;
+}
+
 .access-bar button {
-  margin-left: auto;
-  padding: 0.3rem 0.8rem;
+  padding: 0.2rem 0.75rem;
   border: 0;
-  border-radius: 0.45rem;
+  border-radius: 999px;
+  min-height: 0;
   background: #eceef3;
   color: #111318;
+  box-shadow: none;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+}
+
+.access-bar.public button {
+  background: #1f2937;
+  color: #fff;
 }

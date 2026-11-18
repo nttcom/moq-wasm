@@ -67,6 +67,11 @@
       }
 
       .hero {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
         margin-bottom: 20px;
       }
 
@@ -322,9 +327,11 @@
   <body>
     <div class="page">
       <header class="hero">
-        <span class="pill">Message</span>
-        <h1>MoQT Message Test</h1>
-        <p>Each MoqSession request can be sent one at a time from one screen.</p>
+        <div>
+          <span class="pill">Message</span>
+          <h1>MoQT Message Test</h1>
+          <p>Each MoqSession request can be sent one at a time from one screen.</p>
+        </div>
       </header>
 
       <div id="app">
