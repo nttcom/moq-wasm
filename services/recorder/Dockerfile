@@ -35,4 +35,4 @@ COPY --from=builder /workspace/target/release/recorder /usr/local/bin/
 EXPOSE 8096
 USER nonroot:nonroot
 ENTRYPOINT ["/usr/local/bin/recorder"]
-CMD ["serve", "--listen", "0.0.0.0:8096", "--output-dir", "/recordings"]
+CMD ["serve", "--listen", "0.0.0.0:8096"]

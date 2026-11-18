@@ -6,19 +6,15 @@ use tokio::{
     signal::unix::{SignalKind, signal},
 };
 
-use crate::{
-    ServeArgs, api_server::ApiServer, launcher::Launcher, recordings::Recordings,
-    store::RecordingStore,
-};
+use crate::{ServeArgs, api_server::ApiServer, recordings::Recordings, store::RecordingStore};
 
 /// Serves the recording API until SIGINT or SIGTERM. The recordings run as
-/// jobs of their own and go on after the server exits.
+/// jobs `bots` starts and go on after the server exits.
 pub(crate) async fn serve(mut args: ServeArgs) -> Result<()> {
     let store = RecordingStore::open(&args.store)?;
-    let launcher = Launcher::from_args(&args.launcher)?;
     let listen = args.listen;
     let allowed_origins = std::mem::take(&mut args.allowed_origins);
-    let recordings = Arc::new(Recordings::new(args, store, launcher));
+    let recordings = Arc::new(Recordings::new(args, store));
     let listener = TcpListener::bind(listen)
         .await
         .with_context(|| format!("cannot listen on {listen}"))?;

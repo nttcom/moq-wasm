@@ -14,7 +14,7 @@ use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal};
 /// caller of the API sent, or the one `bots` signed for the recording.
 #[derive(Clone)]
 pub(crate) struct ServiceToken {
-    /// `None` only on a server started with `--insecure-skip-auth`.
+    /// `None` only with `--insecure-skip-auth` or a `bots` without authorization.
     pub(crate) token: Option<String>,
     /// Without it the relay ends the session when `token` expires.
     pub(crate) renewal: Option<TokenRenewal>,

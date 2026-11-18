@@ -49,9 +49,9 @@ pub(crate) struct RoomConfig {
     pub(crate) options: BroadcastOptions,
     pub(crate) format: RecordingFormat,
     pub(crate) limits: RecordingLimits,
-    /// The namespace a recording started by `bots` publishes for the room to
-    /// see it, `<room>/bots/<type>`.
-    pub(crate) presence: Option<String>,
+    /// The namespace the recording publishes for the room to see it,
+    /// `<room>/bots/<type>`.
+    pub(crate) presence: String,
 }
 
 #[derive(Debug, Clone)]
@@ -169,12 +169,10 @@ async fn follow_members(
         .subscriber()
         .subscribe_namespace(namespace_prefix.to_string(), NamespaceInterest::Namespaces)
         .await?;
-    if let Some(presence) = &config.presence {
-        session
-            .publisher()
-            .publish_namespace(presence.clone())
-            .await?;
-    }
+    session
+        .publisher()
+        .publish_namespace(config.presence.clone())
+        .await?;
     tracing::info!(prefix = namespace_prefix, "room recording started");
     let (member_stop_sender, member_stop) = watch::channel(false);
     let mut members: JoinSet<MemberFiles> = JoinSet::new();

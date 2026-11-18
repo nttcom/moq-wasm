@@ -1,6 +1,5 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use job_launcher::JobLauncher;
 use mediapack::{
     AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample,
     loc::{self, LocObject},
@@ -16,13 +15,8 @@ use tokio::sync::mpsc;
 use object_store::{ObjectStoreExt, PutPayload};
 
 use crate::{
-    LauncherArgs, LimitArgs, RoomArgs, ServeArgs,
-    archive_chunks::ChunkWriter,
-    archive_reader::StoredRecording,
-    archive_receiver::Event,
-    launcher::{Launcher, LauncherKind},
-    pipeline::capture_timestamp,
-    recordings::Recordings,
+    ServeArgs, archive_chunks::ChunkWriter, archive_reader::StoredRecording,
+    archive_receiver::Event, pipeline::capture_timestamp, recordings::Recordings,
     store::RecordingStore,
 };
 
@@ -348,41 +342,22 @@ pub(crate) fn transcript_record(m_ms: u64, speaker: &str) -> serde_json::Value {
 
 pub(crate) const TEMPORARY_APPS_URL: &str = "http://temporary-apps.invalid";
 
-/// A recording API over an in-memory store, whose jobs exit at once, that
-/// accepts every request and renews temporary apps' tokens at
-/// `TEMPORARY_APPS_URL`.
-pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
+/// A recording API over an in-memory store that accepts every request and
+/// renews temporary apps' tokens at `TEMPORARY_APPS_URL`.
+pub(crate) fn recordings(max_replays: usize) -> Recordings {
     let store_url = url::Url::parse("memory:///").unwrap();
     let config = ServeArgs {
         listen: "127.0.0.1:0".parse().unwrap(),
         allowed_origins: Vec::new(),
         auth_vts_url: None,
         insecure_skip_auth: true,
-        max_recordings,
-        composite,
+        max_replays,
         temporary_apps_url: Some(TEMPORARY_APPS_URL.to_string()),
         store: store_url.clone(),
-        output_dir: std::env::temp_dir(),
-        room: RoomArgs {
-            relay: "moqt://127.0.0.1:1".to_string(),
-            segment_seconds: None,
-            max_video_height: 720,
-            insecure_skip_tls_verify: false,
-        },
-        limits: LimitArgs {
-            max_recording_seconds: 7200,
-            empty_room_seconds: 300,
-        },
-        launcher: LauncherArgs {
-            launcher: LauncherKind::Local,
-            record_job: None,
-            composite_job: None,
-        },
+        relay: "moqt://127.0.0.1:1".to_string(),
+        insecure_skip_tls_verify: false,
     };
-    let launcher = Launcher::both(JobLauncher::Local {
-        program: std::path::PathBuf::from("/usr/bin/true"),
-    });
-    Recordings::new(config, RecordingStore::open(&store_url).unwrap(), launcher)
+    Recordings::new(config, RecordingStore::open(&store_url).unwrap())
 }
 
 /// A publisher that serves the tracks registered with `origin` to the one

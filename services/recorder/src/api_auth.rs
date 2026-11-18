@@ -16,13 +16,12 @@ pub(crate) struct AuthError {
     pub(crate) message: &'static str,
 }
 
-/// Requires a bearer token the VTS verifies whose `publish` claim (`write`)
-/// or `subscribe` claim covers `namespace`.
+/// Requires a bearer token the VTS verifies whose `subscribe` claim covers
+/// `namespace`.
 pub(crate) async fn authorize(
     headers: &HeaderMap,
     vts: &str,
     namespace: &str,
-    write: bool,
 ) -> Result<(), AuthError> {
     if headers.get(AUTHORIZATION).is_none() {
         return Err(rejected(
@@ -62,7 +61,7 @@ pub(crate) async fn authorize(
             "invalid token verification response",
         )
     })?;
-    check_claims(&verified, namespace, write, SystemTime::now())
+    check_claims(&verified, namespace, SystemTime::now())
 }
 
 pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -74,24 +73,14 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
-fn check_claims(
-    verified: &SignedToken,
-    namespace: &str,
-    write: bool,
-    now: SystemTime,
-) -> Result<(), AuthError> {
+fn check_claims(verified: &SignedToken, namespace: &str, now: SystemTime) -> Result<(), AuthError> {
     verified
         .check(ClaimPolicy::default(), now)
         .map_err(|error| match error {
             ClaimError::EmptyElement => rejected(StatusCode::FORBIDDEN, DENIED),
             _ => rejected(StatusCode::UNAUTHORIZED, "token lifetime is invalid"),
         })?;
-    let access = if write {
-        Access::Publish
-    } else {
-        Access::Subscribe
-    };
-    if verified.covers(access, namespace) {
+    if verified.covers(Access::Subscribe, namespace) {
         Ok(())
     } else {
         Err(rejected(StatusCode::FORBIDDEN, DENIED))
@@ -133,14 +122,14 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            authorize(&HeaderMap::new(), &url, "anon/room", false)
+            authorize(&HeaderMap::new(), &url, "anon/room")
                 .await
                 .unwrap_err()
                 .status,
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            authorize(&headers, &url, "APP/room", false)
+            authorize(&headers, &url, "APP/room")
                 .await
                 .unwrap_err()
                 .status,
@@ -148,7 +137,7 @@ mod tests {
         );
         server.await.unwrap();
         assert_eq!(
-            authorize(&headers, &url, "APP/room", false)
+            authorize(&headers, &url, "APP/room")
                 .await
                 .unwrap_err()
                 .status,
@@ -163,16 +152,15 @@ mod tests {
         let mut verified: SignedToken = serde_json::from_value(json!({ "appId": "APP", "isRelay": false, "claims": { "appId": "APP", "subscribe": "room", "iat": 90, "exp": 150 } })).unwrap();
 
         // Act / Assert
-        assert!(check_claims(&verified, "APP/room", false, at(100)).is_ok());
-        assert!(check_claims(&verified, "APP/room/recordings/id", false, at(100)).is_ok());
-        assert!(check_claims(&verified, "APP/room2", false, at(100)).is_err());
-        assert!(check_claims(&verified, "OTHER/room", false, at(100)).is_err());
-        assert!(check_claims(&verified, "APP/room", true, at(100)).is_err());
+        assert!(check_claims(&verified, "APP/room", at(100)).is_ok());
+        assert!(check_claims(&verified, "APP/room/recordings/id", at(100)).is_ok());
+        assert!(check_claims(&verified, "APP/room2", at(100)).is_err());
+        assert!(check_claims(&verified, "OTHER/room", at(100)).is_err());
         verified.claims.exp = Some(99);
-        assert!(check_claims(&verified, "APP/room", false, at(100)).is_ok());
+        assert!(check_claims(&verified, "APP/room", at(100)).is_ok());
         verified.claims.exp = Some(40);
         assert_eq!(
-            check_claims(&verified, "APP/room", false, at(100))
+            check_claims(&verified, "APP/room", at(100))
                 .unwrap_err()
                 .status,
             StatusCode::UNAUTHORIZED

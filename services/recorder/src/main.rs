@@ -34,19 +34,19 @@ mod track_selection;
 mod upload_task;
 mod vod;
 
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 
-use crate::{launcher::LauncherKind, recording::Layout, room_recording::RecordingLimits};
+use crate::{launcher::LauncherKind, recording::Layout};
 
 #[derive(Parser, Debug)]
 #[command(
     author,
     version,
     about = "Record an MSF broadcast from a MoQT relay into fragmented MP4",
-    after_help = "`recorder serve` serves an HTTP API that starts and stops room recordings; see `recorder serve --help`."
+    after_help = "`recorder serve` serves an HTTP API that lists and replays room recordings; see `recorder serve --help`."
 )]
 pub(crate) struct Args {
     /// MoQT relay URL (`moqt://` for QUIC, `https://` for WebTransport)
@@ -147,78 +147,33 @@ pub(crate) struct ServeArgs {
     )]
     pub(crate) auth_vts_url: Option<String>,
 
-    /// Accept every request without verifying its token, and record with the
+    /// Accept every request without verifying its token, and replay with the
     /// token it carries or none (INSECURE, local development only)
     #[arg(long, conflicts_with = "auth_vts_url")]
     pub(crate) insecure_skip_auth: bool,
 
-    /// Rooms that may be recorded at once
+    /// Recordings that may be replayed at once
     #[arg(long, default_value_t = 4)]
-    pub(crate) max_recordings: usize,
+    pub(crate) max_replays: usize,
 
     /// Object store holding the recordings and their state, e.g.
     /// gs://bucket/prefix or file:///directory
     #[arg(long, env = "RECORDER_STORE_URL", value_name = "URL")]
     pub(crate) store: url::Url,
 
-    /// Directory the jobs write the files to until they are uploaded
-    #[arg(long, default_value = "recordings")]
-    pub(crate) output_dir: PathBuf,
-
-    /// Accept `"composite": true`, which composites a room into one MP4 once
-    /// its recording has ended
-    #[arg(long)]
-    pub(crate) composite: bool,
-
-    /// Temporary-apps service that renews temporary app tokens: a recording or replay of
+    /// Temporary-apps service that renews temporary app tokens: a replay of
     /// a temporary app's room (`temp-…` root) renews the caller's token there
     /// instead of ending when it expires
     #[arg(long, env = "TEMPORARY_APPS_URL")]
     pub(crate) temporary_apps_url: Option<String>,
 
-    #[command(flatten)]
-    pub(crate) room: RoomArgs,
+    /// MoQT relay URL a replay publishes through
+    #[arg(long, env = "MOQT_URL")]
+    pub(crate) relay: String,
 
-    #[command(flatten)]
-    pub(crate) limits: LimitArgs,
-
-    #[command(flatten)]
-    pub(crate) launcher: LauncherArgs,
-}
-
-/// Record one room that `recorder serve` was asked to record, then exit
-#[derive(Parser, Debug)]
-#[command(name = "recorder record", bin_name = "recorder record", version)]
-pub(crate) struct RecordArgs {
-    /// Id of the recording; the store holds its state and its room
+    /// Skip TLS certificate verification (INSECURE, local development only)
     #[arg(long)]
-    pub(crate) id: String,
-
-    /// Object store holding the recordings and their state, e.g.
-    /// gs://bucket/prefix or file:///directory
-    #[arg(long, env = "RECORDER_STORE_URL", value_name = "URL")]
-    pub(crate) store: url::Url,
-
-    /// Directory the files are written to until they are uploaded
-    #[arg(long, default_value = "recordings")]
-    pub(crate) output_dir: PathBuf,
-
-    /// Token of the caller who asked for the recording, presented to the relay
-    #[arg(long)]
-    pub(crate) token: Option<String>,
-
-    /// Temporary-apps service that renews `--token` when it is a temporary app's
-    #[arg(long, requires = "token")]
-    pub(crate) temporary_apps_url: Option<String>,
-
-    #[command(flatten)]
-    pub(crate) room: RoomArgs,
-
-    #[command(flatten)]
-    pub(crate) limits: LimitArgs,
-
-    #[command(flatten)]
-    pub(crate) launcher: LauncherArgs,
+    pub(crate) insecure_skip_tls_verify: bool,
 }
 
 /// Record a room as the bot `bots` started, then exit
@@ -251,8 +206,7 @@ pub(crate) struct BotArgs {
     #[arg(long, value_name = "SECONDS")]
     pub(crate) max_seconds: u64,
 
-    /// `layout`, `composite` and `format` as `POST /recordings` takes them,
-    /// in a JSON object
+    /// `layout`, `composite` and `format` of the recording, as a JSON object
     #[arg(long, value_name = "JSON")]
     pub(crate) options: Option<String>,
 
@@ -290,11 +244,10 @@ pub(crate) struct CompositeArgs {
     pub(crate) work_dir: PathBuf,
 }
 
-/// How a room is recorded: what `recorder serve` passes on to every
-/// recording.
+/// How a room is recorded: the settings of a `recorder bot` job.
 #[derive(clap::Args, Debug, Clone)]
 pub(crate) struct RoomArgs {
-    /// MoQT relay URL every recording connects to
+    /// MoQT relay URL the recording connects to
     #[arg(long, env = "MOQT_URL")]
     pub(crate) relay: String,
 
@@ -312,89 +265,17 @@ pub(crate) struct RoomArgs {
     pub(crate) insecure_skip_tls_verify: bool,
 }
 
-/// When `recorder serve`'s recordings stop by themselves.
-#[derive(clap::Args, Debug, Clone)]
-pub(crate) struct LimitArgs {
-    /// Stop a recording after this many seconds
-    #[arg(long, value_name = "SECONDS", default_value_t = 7200)]
-    pub(crate) max_recording_seconds: u64,
-
-    /// Stop a recording once no participant has been in the room for this
-    /// many seconds, counted from the start too
-    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
-    pub(crate) empty_room_seconds: u64,
-}
-
-impl LimitArgs {
-    pub(crate) fn limits(&self) -> RecordingLimits {
-        RecordingLimits {
-            max_duration: Duration::from_secs(self.max_recording_seconds),
-            empty_room_timeout: Duration::from_secs(self.empty_room_seconds),
-        }
-    }
-
-    pub(crate) fn to_args(&self) -> Vec<String> {
-        vec![
-            "--max-recording-seconds".to_string(),
-            self.max_recording_seconds.to_string(),
-            "--empty-room-seconds".to_string(),
-            self.empty_room_seconds.to_string(),
-        ]
-    }
-}
-
-impl RoomArgs {
-    pub(crate) fn to_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "--relay".to_string(),
-            self.relay.clone(),
-            "--max-video-height".to_string(),
-            self.max_video_height.to_string(),
-        ];
-        if let Some(seconds) = self.segment_seconds {
-            args.extend(["--segment-seconds".to_string(), seconds.to_string()]);
-        }
-        if self.insecure_skip_tls_verify {
-            args.push("--insecure-skip-tls-verify".to_string());
-        }
-        args
-    }
-}
-
-/// Where the recording and composite jobs run.
+/// Where the composite job runs.
 #[derive(clap::Args, Debug, Clone)]
 pub(crate) struct LauncherArgs {
-    /// Run the jobs as child processes of this binary or as Cloud Run Jobs
+    /// Run the composite job as a child process of this binary or as a Cloud Run Job
     #[arg(long, value_enum, default_value_t = LauncherKind::Local)]
     pub(crate) launcher: LauncherKind,
 
-    /// Cloud Run Job running `recorder record`, as
+    /// Cloud Run Job running `recorder composite`, as
     /// projects/<project>/locations/<region>/jobs/<job>
-    #[arg(long, env = "RECORDER_RECORD_JOB")]
-    pub(crate) record_job: Option<String>,
-
-    /// Cloud Run Job running `recorder composite`, named like --record-job
     #[arg(long, env = "RECORDER_COMPOSITE_JOB")]
     pub(crate) composite_job: Option<String>,
-}
-
-impl LauncherArgs {
-    pub(crate) fn to_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "--launcher".to_string(),
-            self.launcher
-                .to_possible_value()
-                .map(|value| value.get_name().to_string())
-                .unwrap_or_default(),
-        ];
-        if let Some(job) = &self.record_job {
-            args.extend(["--record-job".to_string(), job.clone()]);
-        }
-        if let Some(job) = &self.composite_job {
-            args.extend(["--composite-job".to_string(), job.clone()]);
-        }
-        args
-    }
 }
 
 #[tokio::main]
@@ -420,7 +301,6 @@ async fn main() -> Result<()> {
     let mode_args = || std::env::args_os().skip(1);
     match mode.as_ref().and_then(|mode| mode.to_str()) {
         Some("serve") => serve::serve(ServeArgs::parse_from(mode_args())).await,
-        Some("record") => record_job::run(RecordArgs::parse_from(mode_args())).await,
         Some("bot") => bot_job::run(BotArgs::parse_from(mode_args())).await,
         Some("composite") => composite_job::run(CompositeArgs::parse_from(mode_args())).await,
         _ => recorder::run(Args::parse()).await,
