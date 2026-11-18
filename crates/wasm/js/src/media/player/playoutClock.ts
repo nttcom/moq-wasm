@@ -6,12 +6,9 @@ export type PlayoutOrigin = { captureMicros: number; atMs: number }
 
 export class PlayoutClock {
   private origin: PlayoutOrigin | undefined
-  private originListener: ((origin: PlayoutOrigin | undefined) => void) | undefined
 
-  /// Called whenever the mapping from capture time to local time changes.
-  setOriginListener(listener: (origin: PlayoutOrigin | undefined) => void): void {
-    this.originListener = listener
-  }
+  /// `originListener` is called whenever the mapping from capture time to local time changes.
+  constructor(private readonly originListener?: (origin: PlayoutOrigin | undefined) => void) {}
 
   private originChanged(): void {
     this.originListener?.(this.origin && { ...this.origin })
