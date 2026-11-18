@@ -51,10 +51,10 @@
     </style>
   </head>
   <body data-title="Message">
-    <div class="page">
+    <main class="page">
       <header class="hero">
         <div>
-          <span class="pill">Message · 低レベル API</span>
+          <span class="pill">低レベル API · Message</span>
           <h1>MoQT の制御メッセージを 1 つずつ送る</h1>
           <p>
             <code>MoqSession</code> のリクエストを画面から 1 つずつ送り、Relay
@@ -208,7 +208,7 @@
 
           <aside class="workspace-side">
             <section class="card stack">
-              <h2>Connection</h2>
+              <h2>接続</h2>
               <div id="urlPresets"></div>
               <input type="url" name="url" id="url" aria-label="Relay URL" />
               <div class="button-row">
@@ -218,18 +218,18 @@
             </section>
 
             <section class="card stack">
-              <h2>Last request</h2>
+              <h2>最後のリクエスト</h2>
               <p id="send-status" class="hint"></p>
             </section>
 
             <section class="card stack">
-              <h2>Received</h2>
+              <h2>受信したオブジェクト</h2>
               <div id="received-text" class="feed" data-empty="受信したオブジェクトがここに並びます"></div>
             </section>
 
             <section class="card stack">
               <div class="card-head">
-                <h2>Console</h2>
+                <h2>コンソール</h2>
                 <span class="hint">info / warn / error</span>
               </div>
               <div id="logPanel"></div>
@@ -237,7 +237,7 @@
           </aside>
         </form>
       </div>
-    </div>
+    </main>
 
     <script type="module" src="../../utils/consolePanel.ts"></script>
     <script type="module" src="./main.ts"></script>

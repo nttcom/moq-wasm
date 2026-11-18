@@ -8,8 +8,9 @@ import { playerSamples, startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
+const stage = element<HTMLDivElement>('stage')
 const player = new LivePlayer({
-  container: element<HTMLDivElement>('stage'),
+  container: stage,
   callbacks: {
     onStateChange: renderPlayer,
     onLiveFrame: renderStats,
@@ -27,6 +28,9 @@ startPageTelemetry(
 const catalogPicker = setUpCatalogPicker(() => session, form)
 
 function renderPlayer(): void {
+  if (!player.state.started) {
+    delete stage.dataset.started
+  }
   const { started, playbackStatus } = player.state
   if (started) {
     setStatusText('subscriber-playback-status', playbackStatus.text)
@@ -34,6 +38,7 @@ function renderPlayer(): void {
 }
 
 function renderStats(): void {
+  stage.dataset.started = ''
   const stats = player.stats()
   setStatusText(
     'subscriber-receive-status',

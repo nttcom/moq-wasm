@@ -7,8 +7,9 @@ import { playerSamples, startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
+const stage = element<HTMLDivElement>('stage')
 const player = new LivePlayer({
-  container: element<HTMLDivElement>('stage'),
+  container: stage,
   callbacks: {
     onStateChange: renderPlayer,
     onLiveFrame: renderStats,
@@ -25,6 +26,9 @@ startPageTelemetry(
 )
 
 function renderPlayer(): void {
+  if (!player.state.started) {
+    delete stage.dataset.started
+  }
   const { started, catalogStatus, playbackStatus } = player.state
   setStatusText('catalog-track-status', catalogStatus.text)
   if (started) {
@@ -33,6 +37,7 @@ function renderPlayer(): void {
 }
 
 function renderStats(): void {
+  stage.dataset.started = ''
   const stats = player.stats()
   element('playout-stats').textContent =
     stats.bufferMs === undefined && stats.frameSize === undefined ? 'Waiting for media' : formatLiveStats(stats)

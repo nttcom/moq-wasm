@@ -6,12 +6,13 @@
     <title>Media CMAF Subscriber · MoQT Playground</title>
     <link rel="stylesheet" href="../../../utils/theme.css" />
     <link rel="stylesheet" href="../../../utils/components.css" />
+    <link rel="stylesheet" href="../../media/media.css" />
   </head>
   <body data-title="Subscriber" data-parent-title="Media CMAF" data-parent-href="../index.html">
-    <div class="page">
+    <main class="page">
       <header class="hero">
         <div>
-          <span class="pill">Media CMAF · Subscriber</span>
+          <span class="pill">低レベル API · Media CMAF Subscriber</span>
           <h1>CMAF の映像を MSE で再生</h1>
           <p>
             <code>LivePlayer</code> がブロードキャストの CMAF トラックを Media Source Extensions
@@ -24,15 +25,21 @@
           <div class="workspace-main">
             <section class="card">
               <div class="card-head">
-                <h2>Playback</h2>
-                <span class="hint" id="playout-stats" data-testid="subscriber-playout-stats">Waiting for media</span>
+                <h2>再生</h2>
+                <span class="hint">受信中の映像と再生統計</span>
               </div>
-              <div id="stage" class="stage" data-testid="subscriber-stage"></div>
+              <div
+                id="stage"
+                class="stage"
+                data-testid="subscriber-stage"
+                data-placeholder="Subscribe すると映像がここに表示されます"
+              ></div>
+              <p class="playback-stats" id="playout-stats" data-testid="subscriber-playout-stats">Waiting for media</p>
             </section>
 
             <section class="card stack">
               <div class="card-head">
-                <h2>Subscribe</h2>
+                <h2>購読</h2>
                 <span class="hint">catalog を読み、CMAF の映像を MSE で再生します</span>
               </div>
               <label
@@ -54,7 +61,7 @@
 
             <section class="card">
               <div class="card-head">
-                <h2>Console</h2>
+                <h2>コンソール</h2>
                 <span class="hint">info / warn / error を表示します</span>
               </div>
               <div id="logPanel" data-testid="subscriber-log-panel"></div>
@@ -63,7 +70,7 @@
 
           <aside class="workspace-side">
             <section class="card stack">
-              <h2>Connection</h2>
+              <h2>接続</h2>
               <div id="urlPresets"></div>
               <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="subscriber-url-input" />
               <div class="button-row">
@@ -73,10 +80,10 @@
             </section>
 
             <section class="card stack">
-              <h2>Status</h2>
+              <h2>ステータス</h2>
               <div class="status-list">
                 <div class="status-item">
-                  <span class="status-label">Connection</span>
+                  <span class="status-label">接続</span>
                   <span
                     id="subscriber-connection-status"
                     class="status-value"
@@ -91,7 +98,7 @@
                   >
                 </div>
                 <div class="status-item">
-                  <span class="status-label">Playback</span>
+                  <span class="status-label">再生</span>
                   <span id="subscriber-playback-status" class="status-value" data-testid="subscriber-playback-status"
                     >Playback idle</span
                   >
@@ -101,7 +108,7 @@
           </aside>
         </form>
       </div>
-    </div>
+    </main>
 
     <script type="module" src="../../../utils/consolePanel.ts"></script>
     <script type="module" src="./main.ts"></script>
