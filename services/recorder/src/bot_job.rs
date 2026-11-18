@@ -84,8 +84,10 @@ async fn prepare(args: BotArgs, bots: &Arc<BotsClient>) -> Result<RecordingJob> 
             empty_room_timeout: Duration::from_secs(args.grace_seconds),
         },
         token: ServiceToken {
-            token: Some(token),
-            renewal: Some(TokenRenewal::Bots(Arc::clone(bots))),
+            renewal: token
+                .is_some()
+                .then(|| TokenRenewal::Bots(Arc::clone(bots))),
+            token,
         },
         output_dir: args.output_dir,
         bots: Some(Arc::clone(bots)),

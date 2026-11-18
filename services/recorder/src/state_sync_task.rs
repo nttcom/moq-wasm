@@ -65,6 +65,17 @@ impl StateSyncTask {
                         ),
                     }
                 }
+                // Every poll, so a stop through `bots` takes effect within it.
+                if let Some(bots) = &bots {
+                    let state = bot_state(&lock(&status).state);
+                    match bots.heartbeat(state, None).await {
+                        Ok(true) => request_stop(&status, &stop_sender, "bots"),
+                        Ok(false) => {}
+                        Err(error) => {
+                            tracing::warn!(error = format!("{error:#}"), "cannot report to bots")
+                        }
+                    }
+                }
                 let current = with_status(&record, &lock(&status));
                 let due = written.as_ref().is_none_or(|(last, at)| {
                     !same_progress(last, &current) || at.elapsed() >= HEARTBEAT_INTERVAL
@@ -76,22 +87,12 @@ impl StateSyncTask {
                     updated_at_ms: now_ms(),
                     ..current
                 };
-                let state = bot_state(&current.state);
                 match store.write_state(&current).await {
                     Ok(()) => written = Some((current, Instant::now())),
                     Err(error) => tracing::warn!(
                         error = format!("{error:#}"),
                         "cannot write the recording state"
                     ),
-                }
-                if let Some(bots) = &bots {
-                    match bots.heartbeat(state, None).await {
-                        Ok(true) => request_stop(&status, &stop_sender, "bots"),
-                        Ok(false) => {}
-                        Err(error) => {
-                            tracing::warn!(error = format!("{error:#}"), "cannot report to bots")
-                        }
-                    }
                 }
             }
         });

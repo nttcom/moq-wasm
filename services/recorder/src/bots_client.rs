@@ -65,17 +65,19 @@ impl BotsClient {
         &self.bot_type
     }
 
-    /// A new token for the relay. Fails when `bots` refuses, as it does once
-    /// the bot has ended.
-    pub(crate) async fn token(&self) -> Result<String> {
+    /// A new token for the relay; `None` from a `bots` without authorization,
+    /// whose bots join with no token. Fails when `bots` refuses, as it does
+    /// once the bot has ended.
+    pub(crate) async fn token(&self) -> Result<Option<String>> {
         let (status, body) = self.post("token", None).await?;
         if !status.is_success() {
             bail!("bots answered {status}: {}", body["error"]);
         }
-        body["token"]
-            .as_str()
-            .map(str::to_string)
-            .context("bots answered without a token")
+        match &body["token"] {
+            Value::String(token) => Ok(Some(token.clone())),
+            Value::Null => Ok(None),
+            _ => bail!("bots answered without a token"),
+        }
     }
 
     /// `true` when `bots` asks the bot to stop, or takes it as ended.
@@ -169,7 +171,7 @@ mod tests {
         let stop = client.heartbeat(BotState::Running, None).await.unwrap();
 
         // Assert
-        assert_eq!(token, "jwt");
+        assert_eq!(token.as_deref(), Some("jwt"));
         assert!(stop);
         assert_eq!(
             *calls.lock().unwrap(),

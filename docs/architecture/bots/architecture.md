@@ -72,7 +72,7 @@ sequenceDiagram
     B-->>J: bot token for X, signed with the app secret
     J->>R: connect, SUBSCRIBE_NAMESPACE X, PUBLISH_NAMESPACE X/bots/recorder
     R->>P: PUBLISH_NAMESPACE X/bots/recorder (the page shows REC)
-    loop every 30 s
+    loop every few seconds
         J->>B: POST /bots/recorder/{id}/heartbeat
         B-->>J: {stop: false}
     end
