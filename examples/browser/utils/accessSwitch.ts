@@ -72,7 +72,8 @@ function openNote(): void {
     if (access.kind !== 'unavailable') {
       localStorage.setItem(NOTE_CLOSED_KEY, '1')
     }
-    description.focus()
+    // Focus goes to the chosen mode, not the ⓘ, whose focus would show the same text again.
+    document.querySelector<HTMLButtonElement>('.access-switch [aria-pressed="true"]')?.focus()
   })
   note.append(text, close)
   description.classList.add('open')
