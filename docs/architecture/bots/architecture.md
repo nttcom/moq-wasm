@@ -224,8 +224,8 @@ same way as a registered one:
   What changes is that the decision and its limits sit in a server.
 
 ### Configuration
-Bot types live in a JSON file `bots` reads at startup (`BOTS_TYPES_FILE`),
-from type name to entry:
+Bot types are a JSON object `bots` reads at startup, from `BOTS_TYPES` or
+the file `BOTS_TYPES_FILE` names, from type name to entry:
 
 ```json
 {
