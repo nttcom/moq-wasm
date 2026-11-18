@@ -11,7 +11,7 @@ Accepted
 ## What
 
 Add `reqwest` (with the `rustls` feature, no default features) as a direct
-dependency of `moq-cli`. `telemetry/report_task.rs` uses it to `POST` the
+dependency of `moq-cli`. `telemetry.rs` uses it to `POST` the
 CLI's logs to the observability server's `/api/client-telemetry` every 10 s
 and once more on exit.
 
