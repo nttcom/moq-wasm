@@ -1,45 +1,28 @@
-.voice-agent-layout {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(320px, 2fr);
-  gap: 20px;
-  align-items: start;
-}
-
-@media (max-width: 760px) {
-  .voice-agent-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.card h2 {
-  margin: 0;
-}
-
 .voice-agent-transcript {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  max-height: 60vh;
   margin: 0;
   padding: 0;
-  list-style: none;
-  max-height: 60vh;
   overflow-y: auto;
+  list-style: none;
 }
 
 .voice-agent-turn {
   max-width: 80%;
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius-md);
   line-height: 1.5;
   white-space: pre-wrap;
 }
 
 .voice-agent-turn[data-role='user'] {
   align-self: flex-end;
-  background: #dbeafe;
+  background: var(--accent-soft);
 }
 
 .voice-agent-turn[data-role='assistant'] {
   align-self: flex-start;
-  background: #f3f4f6;
+  background: var(--surface-sunken);
 }
