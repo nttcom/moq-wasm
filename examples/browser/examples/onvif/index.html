@@ -45,9 +45,15 @@
 
       .hero {
         display: flex;
-        flex-direction: column;
+        flex-wrap: wrap;
         gap: 10px;
         margin-bottom: 28px;
+      }
+
+      .hero > div {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
 
       .eyebrow {
@@ -517,12 +523,14 @@
   <body>
     <div class="page">
       <header class="hero">
-        <div class="eyebrow">MoQ + ONVIF</div>
-        <h1>Remote PTZ + RTSP over Media over QUIC</h1>
-        <p>
-          Publish ONVIF control commands and subscribe to RTSP video over MoQ. The browser view shows the decoded stream
-          while controls push PTZ moves through the same namespace.
-        </p>
+        <div>
+          <div class="eyebrow">MoQ + ONVIF</div>
+          <h1>Remote PTZ + RTSP over Media over QUIC</h1>
+          <p>
+            Publish ONVIF control commands and subscribe to RTSP video over MoQ. The browser view shows the decoded
+            stream while controls push PTZ moves through the same namespace.
+          </p>
+        </div>
       </header>
 
       <section id="connect-view">

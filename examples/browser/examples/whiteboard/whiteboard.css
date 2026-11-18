@@ -1,31 +1,5 @@
-/* The access bar that utils/accessBar.ts inserts after the hero sits to its right. */
 .page {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
-  gap: 18px;
-  align-items: start;
   max-width: 1600px;
-}
-
-.page > * {
-  grid-column: 1 / -1;
-}
-
-.page > .hero {
-  grid-column: 1;
-  margin: 0;
-}
-
-.page > .access-bar {
-  grid-column: 2;
-  margin: 0;
-}
-
-@media (max-width: 820px) {
-  .page > .hero,
-  .page > .access-bar {
-    grid-column: 1 / -1;
-  }
 }
 
 .connection {
@@ -115,4 +89,8 @@
 .board.disabled {
   cursor: not-allowed;
   opacity: 0.7;
+}
+
+.board-card {
+  margin-top: 18px;
 }
