@@ -47,8 +47,8 @@ Application and integration components (draft reference is normally not required
 | `crates/telemetry-report` | `telemetry`'s client log and span records built from `tracing`, for the clients without an OpenTelemetry SDK: the wasm module, the Python module and `moq-cli` |
 | `services/observability` | Fills ClickHouse tables from the relays' OTLP stats snapshots and serves them over HTTP |
 | `services/vts` | Verify Token Service: verifies client JWTs for the relay over HTTP |
+| `services/temporary-apps` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under, and calls `bots` as their app server |
 | `services/bots` | Bot service: starts, stops and reports the bots of a room (`recorder`, the AI bots) for an app's server, and signs the tokens the bots join with |
-| `services/temporary-apps` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under |
 | `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
 | `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate`, or under the temporary app a streamer hands it the token of, with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
 | `examples/` | Usage examples and test clients |

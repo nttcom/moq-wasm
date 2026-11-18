@@ -21,10 +21,38 @@ app is revoked.
 
 | Module | Responsibility |
 | --- | --- |
-| `issuer.rs` | `TemporaryApps`: `issue` signs `Claims::issued` for a new `temp-<32 hex>` app with `publish` and `subscribe` `""` and a one-hour lifetime; `refresh` verifies the token with the secret, requires a temporary `appId` and an `exp` after now, and signs a new hour for the same app. A failed refresh is a `RefreshError`. |
+| `issuer.rs` | `TemporaryApps`: `issue` signs `Claims::issued` for a new `temp-<32 hex>` app with `publish` and `subscribe` `""` and a one-hour lifetime; `refresh` verifies the token with the secret, requires a temporary `appId` and an `exp` after now, and signs a new hour for the same app. A failed refresh is a `RefreshError`. `verify` is the check `refresh` makes, and `sign_launch` signs the one-minute launch token `bots` takes from an app server, with `bots` `""` and no `publish` or `subscribe`. |
+| `bot_proxy.rs` | `BotProxy`: the bot types a temporary app may reach, the launch limit per client address, and the call to `bots` with a launch token. |
 | `rate_limit.rs` | `RateLimit`: fixed windows per client address, counted in this process. |
-| `server.rs` | `TemporaryAppsServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`). |
-| `main.rs` | Reads `TEMPORARY_APPS_SECRET`, `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` and `PORT`, and serves until terminated. |
+| `server.rs` | `TemporaryAppsServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, the app server routes of `bots` (`POST`/`GET /bots/{type}`, `GET`/`DELETE /bots/{type}/{id}`), `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`). |
+| `main.rs` | Reads `TEMPORARY_APPS_SECRET`, `TEMPORARY_APPS_TRUSTED_PROXY_HOPS`, `TEMPORARY_APPS_BOTS_URL`, `TEMPORARY_APPS_BOT_TYPES` and `PORT`, and serves until terminated. |
+
+## Bots
+
+The service is the app server of every temporary app
+(docs/architecture/bots/architecture.md "Temporary apps"): a page that wants
+a bot in its room calls the `/bots` routes here with its own token, and the
+call goes on to `bots` with a launch token for the page's app.
+
+```mermaid
+sequenceDiagram
+    participant P as Page
+    participant T as temporary-apps
+    participant B as bots
+    P->>T: POST /bots/recorder {namespace_prefix} + page token
+    T->>T: verify the page token (as a refresh does), launch limit
+    T->>B: POST /bots/recorder {namespace_prefix} + launch token for the app
+    B-->>T: 201 the bot
+    T-->>P: 201 the bot
+```
+
+- The app is the page token's `appId`; `bots` refuses a room outside it,
+  since the launch token's `bots` claim covers that app only.
+- A type outside `TEMPORARY_APPS_BOT_TYPES`, and the routes the bots
+  themselves call (`/token`, `/heartbeat`), are `404` here.
+- `POST` counts against 10 calls per client address per hour, in fixed windows
+  of this process like `POST /tokens`.
+- Without `TEMPORARY_APPS_BOTS_URL` every `/bots` route is `404`.
 
 ## Invariants
 
@@ -45,7 +73,8 @@ app is revoked.
 ## Operational notes
 
 - `temporary token issued` / `temporary token refreshed` are logged at INFO
-  with the `app_id`; refusals at INFO with `error`. A signing failure is an
+  with the `app_id`, as is `bot request forwarded` with its `bot_type`;
+  refusals at INFO with `error`. A signing failure is an
   ERROR. Tokens never reach logs or spans.
 - Every request runs in a `temporary_apps.request` span that continues the
   caller's trace and records the `app_id` it answered for.
