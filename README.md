@@ -62,6 +62,16 @@ Agent**, join and talk to the agent: only the page of a temporary app starts
 the bot. `MOQT_FAKE_MEDIA=0` gives the page your microphone instead of Chrome's
 test tone.
 
+### Remote monitoring
+
+```shell
+docker compose -f compose.demo.yml --profile monitoring up
+make chrome BROWSER_EXAMPLE_PATH='/moq-wasm/examples/remote-monitoring/index.html?location=demo'
+```
+
+Press **接続**. Three cameras, each an ffmpeg test pattern published with
+`moq-cli`, appear under the location `demo`.
+
 ### Observability
 
 Add `-f compose.observability.yml` to any demo, in `up` and in `down`:
