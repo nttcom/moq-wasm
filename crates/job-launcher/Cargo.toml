@@ -1,0 +1,12 @@
+[package]
+name = "job-launcher"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+google-cloud = { path = "../google-cloud" }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+serde_json = "1"
+tokio = { version = "1.52.3", features = ["process", "rt"] }
+tracing = "0.1"

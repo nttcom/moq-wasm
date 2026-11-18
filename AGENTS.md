@@ -39,6 +39,7 @@ Application and integration components (draft reference is normally not required
 | `services/recorder` | Records an MSF broadcast from a relay into a fragmented MP4 file |
 | `crates/auth-token` | The client JWT: its claims, read by `relay` from the VTS, their HS256 signing and verification, used by `vts` and `console`, and a CLI (`cli` feature) that signs one |
 | `crates/app-registry` | Registry of apps whose secrets sign client JWTs: one JSON document in Cloud Storage or a local file, written conditionally on its generation |
+| `crates/job-launcher` | Starts a job without waiting for it: a child process locally or a Cloud Run Job execution with overridden arguments, used by `recorder` |
 | `crates/google-cloud` | The Google Cloud calls the services make as the workload's service account: its access token from the metadata server, cached until it expires, and the Cloud Storage requests conditional on an object's generation; used by `app-registry`, `recorder` and `live-translate` |
 | `crates/http-server` | The HTTP/1 accept loop and JSON response helpers shared by the services' HTTP servers (`console`, `vts`, `temporary-apps`, `observability`, `live-translate`, `recorder`) |
 | `crates/telemetry` | The records the observability server reads, shared by their producers: the relay snapshot in `relay_stats` and the client report in `client_report` |
