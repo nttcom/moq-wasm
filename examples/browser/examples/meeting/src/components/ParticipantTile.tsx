@@ -35,8 +35,8 @@ export function ParticipantTile({
   return (
     <div
       data-testid={testId}
-      className={`group relative h-full w-full overflow-hidden rounded-xl bg-zinc-800 ring-2 transition ${
-        speaking ? 'ring-emerald-400' : 'ring-white/5'
+      className={`group relative h-full w-full overflow-hidden rounded-lg bg-gradient-to-b from-neutral-800 to-neutral-900 shadow-sm transition ${
+        speaking ? 'ring-3 ring-success' : 'ring-1 ring-line'
       }`}
     >
       {picture !== undefined ? (
@@ -44,7 +44,7 @@ export function ParticipantTile({
       ) : stream ? (
         <MediaStreamVideo stream={stream} muted fill />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-zinc-800">{avatar}</div>
+        <div className="flex h-full w-full items-center justify-center">{avatar}</div>
       )}
       {caption && (
         <div
@@ -54,7 +54,7 @@ export function ParticipantTile({
           {caption}
         </div>
       )}
-      <div className="pointer-events-none absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/60 px-2 py-0.5 text-xs font-medium text-white">
+      <div className="pointer-events-none absolute bottom-2 left-2 max-w-[70%] truncate rounded-md bg-black/60 px-2 py-0.5 text-xs font-medium text-white backdrop-blur-sm">
         {label ? `${name} · ${label}` : name}
       </div>
       {onOpenDetails && (
@@ -80,7 +80,7 @@ export function ParticipantTile({
 
 function Avatar({ name }: { name: string }) {
   return (
-    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-teal-600 text-2xl font-semibold text-white">
+    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-teal-500 to-teal-800 text-2xl font-semibold text-white shadow-md ring-4 ring-white/5">
       {name.slice(0, 1).toUpperCase()}
     </div>
   )

@@ -1,53 +1,68 @@
-:root {
-  color-scheme: dark;
-  --bg: #141414;
-  --panel: #1c1c1c;
-  --line: #2e2e2e;
-  --text: #e8e8e6;
-  --muted: #9a9a96;
-  --ok: #5dcaa5;
-  --warn: #ef9f27;
-  --bad: #e24b4a;
-  --up: #888780;
-  --focus: #85b7eb;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font:
-    13px/1.4 -apple-system,
-    'Helvetica Neue',
-    sans-serif;
-}
-
+/* The dashboard's colors, on the tokens of utils/theme.css so it follows the access mode. */
 .app {
-  height: 100vh;
+  --panel: var(--surface);
+  --panel-raised: var(--surface-raised);
+  --line: var(--border);
+  --line-strong: var(--border-strong);
+  --muted: var(--text-muted);
+  --ok: var(--success);
+  --warn: #f59e0b;
+  --bad: #ef4444;
+  --up: var(--text-subtle);
+  --focus: #60a5fa;
+  --canvas-dot: color-mix(in srgb, var(--text-subtle) 28%, transparent);
+  --node-fill: var(--surface-raised);
+  --node-stroke: var(--border-strong);
+  --overlay: color-mix(in srgb, var(--bg) 94%, transparent);
+
   display: flex;
   flex-direction: column;
+  height: calc(100dvh - var(--shell-height));
+  font-size: 13px;
+  line-height: 1.4;
 }
 
-header {
+:root[data-access-mode='public'] .app {
+  --focus: #2563eb;
+  --warn: #d97706;
+  --bad: #dc2626;
+}
+
+.app button,
+.app input {
+  font: inherit;
+}
+
+.app > header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 16px;
-  padding: 12px 20px;
+  gap: 10px 14px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
 
-header h1 {
-  font-size: 15px;
-  font-weight: 500;
+.app > header h1 {
   margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.app > header .divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
 }
 
 .app-badge {
+  padding: 2px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface-sunken);
   color: var(--muted);
+  font-size: 12px;
 }
 
 .app-badge b {
@@ -64,16 +79,19 @@ header h1 {
 }
 
 .filter input {
-  background: #2a2a2a;
+  width: 140px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-sunken);
   color: var(--text);
-  border: 1px solid #3a3a3a;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font: inherit;
 }
 
-.filter input {
-  width: 150px;
+.filter input:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .filter input.active {
@@ -89,8 +107,14 @@ header h1 {
   padding: 0 2px;
 }
 
+.timeline {
+  margin-left: auto;
+}
+
 .timeline input {
-  width: 180px;
+  width: 120px;
+  min-width: 60px;
+  flex: 0 1 120px;
   accent-color: var(--focus);
 }
 
@@ -104,7 +128,7 @@ header h1 {
   font: inherit;
   cursor: pointer;
   padding: 0;
-  min-width: 118px;
+  min-width: 96px;
 }
 
 .live i {
@@ -143,12 +167,13 @@ header h1 {
 }
 
 .banner {
-  padding: 6px 20px;
-  background: #3a1d1d;
-  color: #f7c1c1;
+  padding: 8px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
-main {
+.app > main {
   position: relative;
   flex: 1;
   min-height: 0;
@@ -164,7 +189,8 @@ main {
   display: block;
   cursor: grab;
   touch-action: none;
-  background-image: radial-gradient(#262626 1px, transparent 1px);
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--canvas-dot) 1px, transparent 1px);
   background-size: 18px 18px;
 }
 
@@ -179,12 +205,13 @@ main {
 }
 
 .environment {
-  fill: #1f1f1f;
-  stroke: #333;
+  fill: var(--bg-subtle);
+  stroke: var(--line-strong);
 }
 
 .pill {
-  fill: #3a3a3a;
+  fill: var(--surface-hover);
+  stroke: var(--line-strong);
 }
 
 .environment.sel {
@@ -197,7 +224,7 @@ main {
 }
 
 .mesh-label:hover .pill {
-  fill: #4a4a4a;
+  fill: var(--border-strong);
 }
 
 .mesh-label.sel .pill {
@@ -211,8 +238,8 @@ main {
 }
 
 .node .box {
-  fill: #252525;
-  stroke: #4a4a4a;
+  fill: var(--node-fill);
+  stroke: var(--node-stroke);
 }
 
 .node.sel .box {
@@ -225,17 +252,17 @@ main {
 }
 
 .relay .box {
-  fill: #2b2b2b;
-  stroke: #555;
+  fill: var(--node-fill);
+  stroke: color-mix(in srgb, var(--accent) 45%, var(--node-stroke));
 }
 
 .relay .unit {
-  fill: #1e1e1e;
-  stroke: #4a4a4a;
+  fill: var(--surface-sunken);
+  stroke: var(--node-stroke);
 }
 
 .relay .vent {
-  stroke: #444;
+  stroke: var(--node-stroke);
 }
 
 .relay .led {
@@ -252,7 +279,7 @@ main {
 }
 
 .relay .led-off {
-  fill: #555;
+  fill: var(--border-strong);
 }
 
 @keyframes blink {
@@ -347,10 +374,11 @@ main {
   right: 16px;
   display: flex;
   flex-direction: column;
-  border: 1px solid #3a3a3a;
-  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
   overflow: hidden;
   background: var(--panel);
+  box-shadow: var(--shadow-md);
 }
 
 .zoom button {
@@ -364,11 +392,11 @@ main {
 }
 
 .zoom button + button {
-  border-top: 1px solid #3a3a3a;
+  border-top: 1px solid var(--line);
 }
 
 .zoom button:hover {
-  background: #2a2a2a;
+  background: var(--surface-hover);
 }
 
 .legend {
@@ -377,6 +405,10 @@ main {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--overlay);
   font-size: 11px;
   color: var(--muted);
   pointer-events: none;
@@ -417,8 +449,10 @@ main {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(20, 20, 20, 0.97);
-  border-top: 1px solid #3a3a3a;
+  background: var(--overlay);
+  border-top: 1px solid var(--line-strong);
+  box-shadow: 0 -12px 32px -16px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
   display: flex;
   flex-direction: column;
 }
@@ -437,7 +471,7 @@ main {
   width: 40px;
   height: 3px;
   border-radius: 2px;
-  background: #4a4a4a;
+  background: var(--border-strong);
 }
 
 .drawer-grip:hover::before {
@@ -466,6 +500,10 @@ main {
   gap: 2px;
 }
 
+.timeline .ranges button {
+  padding: 2px 6px;
+}
+
 .ranges button,
 .drawer-head .close {
   background: none;
@@ -477,9 +515,14 @@ main {
   cursor: pointer;
 }
 
+.ranges button:hover {
+  color: var(--text);
+}
+
 .ranges button.on {
-  border-color: #3a3a3a;
-  background: #2a2a2a;
+  border-color: var(--line-strong);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-sm);
   color: var(--text);
 }
 
@@ -523,8 +566,8 @@ main {
 }
 
 .tabs button.on {
-  border-color: #3a3a3a;
-  background: #2a2a2a;
+  border-color: var(--line-strong);
+  background: var(--surface-raised);
   color: var(--text);
 }
 
@@ -548,7 +591,8 @@ main {
 .chart {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
+  box-shadow: var(--shadow-sm);
   padding: 8px 10px 6px;
 }
 
@@ -609,7 +653,7 @@ main {
 }
 
 .timeline .step:hover {
-  border-color: #3a3a3a;
+  border-color: var(--line-strong);
   color: var(--text);
 }
 
@@ -636,17 +680,24 @@ main {
 }
 
 .panel-toggle {
-  background: #2a2a2a;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
   color: var(--text);
-  border: 1px solid #3a3a3a;
-  border-radius: 6px;
-  padding: 3px 10px;
-  font: inherit;
+  font-weight: 600;
   cursor: pointer;
 }
 
+.panel-toggle:hover {
+  background: var(--surface-hover);
+}
+
 .panel-toggle.on {
-  border-color: var(--focus);
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .namespace-panel {
@@ -657,8 +708,10 @@ main {
   z-index: 2;
   display: flex;
   flex-direction: column;
-  background: rgba(20, 20, 20, 0.97);
-  border-right: 1px solid #3a3a3a;
+  background: var(--overlay);
+  border-right: 1px solid var(--line-strong);
+  box-shadow: 12px 0 32px -16px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
 }
 
 .panel-head {
@@ -686,13 +739,19 @@ main {
 }
 
 .panel-search {
+  height: 32px;
   margin: 0 16px 8px;
-  background: #2a2a2a;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-sunken);
   color: var(--text);
-  border: 1px solid #3a3a3a;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font: inherit;
+}
+
+.panel-search:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .panel-rows {
@@ -721,8 +780,8 @@ main {
 }
 
 .namespace-row:hover {
-  background: #232323;
-  border-color: #3a3a3a;
+  background: var(--surface-hover);
+  border-color: var(--line);
 }
 
 .namespace-name {

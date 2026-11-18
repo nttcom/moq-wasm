@@ -51,16 +51,16 @@ const AV_OFFSET_SCALE: ChartScale = {
 }
 
 const SERIES_COLOR_CLASSES = [
-  'text-cyan-300',
-  'text-orange-300',
-  'text-emerald-300',
-  'text-fuchsia-300',
-  'text-yellow-300',
-  'text-sky-300',
-  'text-rose-300',
-  'text-lime-300',
-  'text-violet-300',
-  'text-amber-300'
+  'text-cyan-500',
+  'text-orange-500',
+  'text-emerald-500',
+  'text-fuchsia-500',
+  'text-yellow-500',
+  'text-sky-500',
+  'text-rose-500',
+  'text-lime-500',
+  'text-violet-500',
+  'text-amber-500'
 ]
 
 const primaryStats = (sample: RemoteStatsSample) => sample.camera ?? sample.screenshare
@@ -266,7 +266,9 @@ function StatsChartList({ charts, emptyMessage }: { charts: StatsChart[]; emptyM
 
   if (!visibleCharts.length) {
     return (
-      <div className="rounded-md border border-white/10 bg-white/[0.03] p-4 text-xs text-teal-200">{emptyMessage}</div>
+      <div className="rounded-lg border border-dashed border-line-strong bg-subtle p-6 text-center text-xs text-muted">
+        {emptyMessage}
+      </div>
     )
   }
 
@@ -344,9 +346,9 @@ function MetricChart({
   }
 
   return (
-    <section className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+    <section className="rounded-lg border border-line bg-surface p-3 shadow-sm">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-xs font-semibold text-teal-100">{title}</h4>
+        <h4 className="text-xs font-semibold text-fg">{title}</h4>
         <div className="flex flex-wrap items-center gap-2 text-[10px]">
           {series.map((entry) => {
             const hidden = hiddenSeriesKeys.has(entry.key)
@@ -355,8 +357,8 @@ function MetricChart({
                 key={entry.key}
                 type="button"
                 onClick={() => onToggleSeries(entry.key)}
-                className={`inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-teal-100/90 transition ${
-                  hidden ? 'border-white/10 opacity-40' : 'border-white/20 bg-white/[0.04]'
+                className={`inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-fg transition ${
+                  hidden ? 'border-line opacity-40' : 'border-line-strong bg-fg/[0.04]'
                 }`}
                 title={hidden ? 'Show series' : 'Hide series'}
               >
@@ -368,7 +370,7 @@ function MetricChart({
         </div>
       </div>
       {hasRenderableSeries ? (
-        <div className={`relative ${CHART_HEIGHT_CLASS} rounded bg-black/20`}>
+        <div className={`relative ${CHART_HEIGHT_CLASS} rounded-md bg-sunken`}>
           <svg
             viewBox={`0 0 ${CHART_VIEWBOX_WIDTH} ${CHART_VIEWBOX_HEIGHT}`}
             preserveAspectRatio="none"
@@ -412,7 +414,7 @@ function MetricChart({
           {tickValues.map((tick) => (
             <span
               key={`${title}-tick-label-${tick}`}
-              className="absolute left-1.5 -translate-y-full text-xs leading-none text-teal-200/75"
+              className="absolute left-1.5 -translate-y-full text-xs leading-none text-faint"
               style={{ top: `${(Math.max(2.5, toChartY(tick) - 0.6) / CHART_VIEWBOX_HEIGHT) * 100}%` }}
             >
               {formatTickLabel(tick, scale.unit)}
@@ -421,7 +423,7 @@ function MetricChart({
         </div>
       ) : (
         <div
-          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded bg-black/20 text-xs text-teal-200`}
+          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded-md bg-sunken text-xs text-muted`}
         >
           No data
         </div>

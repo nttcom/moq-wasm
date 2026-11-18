@@ -35,8 +35,11 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
   const visible = cameraIds.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
 
   return (
-    <div className="flex flex-col gap-2.5 w-[200px]">
-      <p className="font-mono text-xs text-center text-zinc-500">カメラ（クリックでメインへ）</p>
+    <div className="flex w-full flex-col gap-2.5 rounded-xl border border-line bg-surface p-3 shadow-sm">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-sm font-semibold text-fg">カメラ</p>
+        <p className="text-[11px] text-faint">クリックでメインへ</p>
+      </div>
       {visible.map((id) => (
         <PreviewCamera key={id} cameraId={id} host={hostOf(id)} onStage={id === stageId} onClick={() => onSelect(id)} />
       ))}
@@ -45,13 +48,15 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
         Array.from({ length: PAGE_SIZE - visible.length }, (_, slot) => (
           <div key={slot} className="aspect-video w-full" />
         ))}
-      {cameraIds.length === 0 && <p className="font-mono text-xs text-center text-zinc-600">なし</p>}
+      {cameraIds.length === 0 && (
+        <p className="rounded-md border border-dashed border-line-strong py-6 text-center text-xs text-faint">なし</p>
+      )}
       {pageCount > 1 && (
-        <div className="flex items-center justify-between font-mono text-xs text-zinc-400">
+        <div className="flex items-center justify-between text-xs text-muted">
           <button
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={page === 0}
-            className="disabled:opacity-30"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-line hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
           >
             ◀
           </button>
@@ -61,7 +66,7 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
           <button
             onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
             disabled={page === pageCount - 1}
-            className="disabled:opacity-30"
+            className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-md border border-line hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30"
           >
             ▶
           </button>

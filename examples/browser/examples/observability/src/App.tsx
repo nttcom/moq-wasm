@@ -199,6 +199,7 @@ export default function App() {
         <span className="app-badge" title={appTitle}>
           App <b>{shortAppId(access.namespaceRoot)}</b>
         </span>
+        <span className="divider" aria-hidden="true" />
         <label className="filter">
           Track Namespace
           <input

@@ -21,22 +21,24 @@ export function GetUserMediaForm({
   const matchedPreset = resolutionOptions.find((opt) => opt.width === settings.width && opt.height === settings.height)
 
   return (
-    <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
+    <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-white">getUserMedia settings</div>
+        <div className="text-sm font-semibold text-fg">getUserMedia settings</div>
         <button
           type="button"
           onClick={onApply}
           disabled={disabled}
-          className={`rounded-md px-3 py-1 text-sm font-semibold transition ${
-            disabled ? 'bg-white/10 text-white/60' : 'bg-teal-500 text-white hover:bg-teal-600'
+          className={`h-8 rounded-md px-3 text-sm font-semibold transition ${
+            disabled
+              ? 'cursor-not-allowed bg-hover text-faint'
+              : 'cursor-pointer bg-accent text-on-accent hover:bg-accent-hover'
           }`}
         >
           Apply & getUserMedia
         </button>
       </div>
-      <p className="text-xs text-teal-100/80">Configure capture before starting.</p>
-      <div className="grid grid-cols-2 gap-3 text-sm text-teal-50">
+      <p className="text-xs text-muted">Configure capture before starting.</p>
+      <div className="grid grid-cols-2 gap-3 text-sm text-fg">
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -63,7 +65,7 @@ export function GetUserMediaForm({
                 onChange({ width: next.width, height: next.height })
               }
             }}
-            className="w-40 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-teal-400"
+            className="w-40 rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-sm text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25"
           >
             {resolutionOptions.map((opt) => (
               <option key={opt.id} value={opt.id}>
@@ -82,7 +84,7 @@ export function GetUserMediaForm({
               max={7680}
               value={settings.width}
               onChange={(e) => onChange({ width: Number(e.target.value) || settings.width })}
-              className="w-24 rounded-md bg-white/10 px-2 py-1 text-right text-white outline-none ring-1 ring-white/10 focus:ring-teal-400"
+              className="w-24 rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-right text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25"
             />
           </label>
           <label className="flex items-center justify-between gap-2">
@@ -93,7 +95,7 @@ export function GetUserMediaForm({
               max={4320}
               value={settings.height}
               onChange={(e) => onChange({ height: Number(e.target.value) || settings.height })}
-              className="w-24 rounded-md bg-white/10 px-2 py-1 text-right text-white outline-none ring-1 ring-white/10 focus:ring-teal-400"
+              className="w-24 rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-right text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25"
             />
           </label>
         </div>
@@ -105,11 +107,11 @@ export function GetUserMediaForm({
             max={120}
             value={settings.frameRate}
             onChange={(e) => onChange({ frameRate: Number(e.target.value) || settings.frameRate })}
-            className="w-24 rounded-md bg-white/10 px-2 py-1 text-right text-white outline-none ring-1 ring-white/10 focus:ring-teal-400"
+            className="w-24 rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-right text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25"
           />
         </label>
       </div>
-      <div className="grid grid-cols-1 gap-2 text-sm text-teal-50">
+      <div className="grid grid-cols-1 gap-2 text-sm text-fg">
         <label className="flex items-center justify-between gap-2">
           <span>Echo cancellation</span>
           <input

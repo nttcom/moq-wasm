@@ -30,7 +30,7 @@ export function TransportControls({
         variant="outline"
         onClick={onReturnToLive}
         disabled={disabled}
-        className="ml-auto border-green-600 text-green-600 hover:bg-green-50"
+        className="ml-auto border-success/50 text-success hover:bg-success-soft"
       >
         ⤓ LIVE 復帰
       </Button>

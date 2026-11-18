@@ -24,15 +24,15 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
   return (
     <div
       className={cn(
-        'relative flex flex-col justify-end overflow-hidden rounded-lg cursor-pointer select-none',
+        'relative flex flex-col justify-end overflow-hidden rounded-xl cursor-pointer select-none shadow-md',
         'aspect-video w-full',
-        isReview ? 'ring-2 ring-amber-500' : 'ring-1 ring-zinc-700'
+        isReview ? 'ring-2 ring-amber-400' : 'ring-1 ring-line'
       )}
       onClick={onClick}
     >
       {/* video feed */}
       <div
-        className="absolute inset-0 bg-zinc-900"
+        className="absolute inset-0 bg-neutral-950"
         style={{
           backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,.03) 0 9px, transparent 9px 18px)'
         }}
@@ -40,7 +40,7 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
         {host && <PlayerHost host={host} />}
         {!cameraId && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <span className="font-mono text-sm text-zinc-500">
+            <span className="text-sm text-neutral-400">
               {connState === 'connected' ? 'カメラを待っています' : '接続するとカメラが現れます'}
             </span>
           </div>
@@ -49,13 +49,13 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
 
       {/* banners */}
       {isUnhealthy && cameraId && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 font-mono text-white">
-          <span className="text-base">⚠ 接続が切れました</span>
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 text-white backdrop-blur-[2px]">
+          <span className="text-base font-medium">⚠ 接続が切れました</span>
         </div>
       )}
       {lost && !isUnhealthy && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 font-mono text-white">
-          <span className="text-base">カメラが切断しました。他のカメラを選んでください</span>
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60 text-white backdrop-blur-[2px]">
+          <span className="text-base font-medium">カメラが切断しました。他のカメラを選んでください</span>
         </div>
       )}
 
@@ -63,13 +63,13 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
       {cameraId && !lost && (
         <div className="absolute top-3 left-3 z-10">
           {isReview ? (
-            <span className="flex items-center gap-1.5 rounded-md border border-amber-500 bg-amber-500/10 px-2.5 py-1 font-mono text-xs font-bold text-amber-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="flex items-center gap-1.5 rounded-md border border-amber-400/60 bg-black/55 px-2.5 py-1 font-mono text-xs font-bold text-amber-300 backdrop-blur-sm">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-300 animate-pulse" />
               REVIEW
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 rounded-md border border-green-500 bg-green-500/10 px-2.5 py-1 font-mono text-xs font-bold text-green-400">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span className="flex items-center gap-1.5 rounded-md border border-emerald-400/60 bg-black/55 px-2.5 py-1 font-mono text-xs font-bold text-emerald-300 backdrop-blur-sm">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 animate-pulse" />
               LIVE
             </span>
           )}
@@ -78,15 +78,15 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
 
       {/* click hint */}
       {!isReview && cameraId && !lost && (
-        <div className="absolute bottom-11 right-3 z-10 font-mono text-xs text-zinc-500 bg-zinc-900/70 rounded px-2 py-0.5">
+        <div className="absolute bottom-11 right-3 z-10 rounded bg-black/55 px-2 py-0.5 text-xs text-white/80 backdrop-blur-sm">
           クリックか ↓ で過去を見る
         </div>
       )}
 
       {/* meta row */}
-      <div className="relative z-10 flex items-center justify-between px-3 py-2.5 bg-gradient-to-t from-zinc-900/90 to-transparent">
-        <span className="text-sm text-white">{cameraId ?? ''}</span>
-        <span className="font-mono text-xs text-zinc-400">{cameraId ? timestamp : ''}</span>
+      <div className="relative z-10 flex items-center justify-between px-3 py-2.5 bg-gradient-to-t from-black/80 to-transparent">
+        <span className="text-sm font-medium text-white">{cameraId ?? ''}</span>
+        <span className="font-mono text-xs text-white/70">{cameraId ? timestamp : ''}</span>
       </div>
     </div>
   )

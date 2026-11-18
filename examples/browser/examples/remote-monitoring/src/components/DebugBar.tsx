@@ -15,63 +15,61 @@ const connLabel: Record<ConnState, string> = {
 }
 
 const connDotClass: Record<ConnState, string> = {
-  connected: 'bg-green-500',
-  closed: 'bg-red-500'
+  connected: 'bg-success',
+  closed: 'bg-danger'
 }
 
 const connTextClass: Record<ConnState, string> = {
-  connected: 'text-green-400',
-  closed: 'text-red-400'
+  connected: 'text-success',
+  closed: 'text-danger'
 }
 
 export function DebugBar({ connState, relayUrl, cameras, reviewingCamera, reviewStatus }: Props) {
   const isUnhealthy = connState !== 'connected'
 
   return (
-    <div className="mt-4 rounded-xl bg-zinc-900 px-4 py-3 font-mono text-sm text-zinc-200 space-y-1.5">
+    <div className="mt-auto space-y-2 rounded-xl border border-line bg-surface px-4 py-3 font-mono text-[13px] text-fg shadow-sm">
       {/* connection row */}
       <div className="flex items-center gap-2">
         <span className={cn('h-2.5 w-2.5 rounded-full', connDotClass[connState])} />
         <span className={cn('font-semibold', connTextClass[connState])}>{connLabel[connState]}</span>
-        <span className="text-zinc-500">— {relayUrl}</span>
+        <span className="text-faint">— {relayUrl}</span>
       </div>
 
       {/* cameras row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-teal-400 w-24 shrink-0">CAMERAS</span>
+        <span className="w-24 shrink-0 text-[11px] font-semibold tracking-[0.08em] text-faint">CAMERAS</span>
         {cameras.length > 0 ? (
           cameras.map((id) => (
             <span
               key={id}
               className={cn(
                 'rounded-full border px-2 py-0.5 text-xs',
-                isUnhealthy
-                  ? 'border-zinc-700 text-zinc-600 line-through opacity-50'
-                  : 'border-green-800 text-green-400'
+                isUnhealthy ? 'border-line-strong text-faint line-through opacity-50' : 'border-success/40 text-success'
               )}
             >
               {id}
             </span>
           ))
         ) : (
-          <span className="text-zinc-600">—</span>
+          <span className="text-faint">—</span>
         )}
       </div>
 
       {/* review row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-amber-400 w-24 shrink-0">REVIEW</span>
+        <span className="w-24 shrink-0 text-[11px] font-semibold tracking-[0.08em] text-faint">REVIEW</span>
         {reviewingCamera && reviewStatus ? (
           <span
             className={cn(
               'rounded-full border px-2 py-0.5 text-xs',
-              isUnhealthy ? 'border-zinc-700 text-zinc-600 line-through opacity-50' : 'border-amber-800 text-amber-400'
+              isUnhealthy ? 'border-line-strong text-faint line-through opacity-50' : 'border-warning/40 text-warning'
             )}
           >
             {reviewingCamera} [ {reviewStatus} ]
           </span>
         ) : (
-          <span className="text-zinc-600">—</span>
+          <span className="text-faint">—</span>
         )}
       </div>
     </div>

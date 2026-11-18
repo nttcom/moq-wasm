@@ -249,7 +249,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
   }, [chatSubscribeBackoff, chatSubscribeRetryTick, room.remoteMembers])
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-white">
+    <div className="flex h-[calc(100dvh-var(--shell-height))] flex-col bg-canvas text-fg">
       <RoomHeader
         roomName={roomName}
         recording={recording?.active?.state}
@@ -325,7 +325,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
       {notice && (
         <div
           role="status"
-          className="pointer-events-none fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-white/10 bg-zinc-900 px-4 py-2 text-sm shadow-lg"
+          className="pointer-events-none fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-line-strong bg-raised px-4 py-2 text-sm text-fg shadow-lg"
         >
           {notice}
         </div>

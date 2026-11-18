@@ -1,4 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
+import { Cctv, Plus } from 'lucide-react'
 import type { LivePlayerState } from 'moq-wasm/media'
 import { CameraId, MonitorMode } from '../types/monitoring'
 import { StageCamera } from './StageCamera'
@@ -170,30 +171,38 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const publisherHref = pageHref({ mode: 'publisher', location, relay: relayUrl })
 
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-950 text-zinc-100 p-4 gap-4">
+    <div className="mx-auto flex min-h-[calc(100dvh-var(--shell-height))] w-full max-w-[1600px] flex-col gap-4 px-4 py-5 text-fg sm:px-6">
       {/* header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold">MoQT 遠隔監視</h1>
-          <span className="font-mono text-sm text-zinc-400">{location}</span>
-          <a href={publisherHref} className="text-xs text-zinc-500 hover:text-zinc-300 font-mono underline">
-            この location にカメラを追加 →
-          </a>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent-line bg-accent-soft text-accent">
+            <Cctv className="h-[18px] w-[18px]" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">Remote Monitoring</p>
+            <h1 className="text-lg font-bold leading-tight tracking-tight">MoQT 遠隔監視</h1>
+          </div>
+          <span className="rounded-full border border-line-strong bg-sunken px-2.5 py-0.5 font-mono text-xs text-muted">
+            location: {location}
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          {(connStatus === 'idle' || connStatus === 'error') && (
-            <Button onClick={handleConnect} className="bg-teal-600 hover:bg-teal-700 text-white">
-              接続
-            </Button>
-          )}
+          <a
+            href={publisherHref}
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-raised px-3 text-sm font-semibold text-fg transition hover:bg-hover"
+          >
+            <Plus className="h-4 w-4" />
+            この location にカメラを追加
+          </a>
+          {(connStatus === 'idle' || connStatus === 'error') && <Button onClick={handleConnect}>接続</Button>}
           {connStatus === 'connecting' && (
             <Button disabled variant="outline">
               接続中…
             </Button>
           )}
           {connStatus === 'connected' && (
-            <span className="flex items-center gap-1.5 font-mono text-sm text-green-400">
-              <span className="h-2 w-2 rounded-full bg-green-500" />
+            <span className="inline-flex h-9 items-center gap-2 rounded-md border border-success/40 bg-success-soft px-3 text-sm font-semibold text-success">
+              <span className="h-2 w-2 rounded-full bg-success shadow-[0_0_0_3px] shadow-success/25" />
               接続済み
             </span>
           )}
@@ -202,22 +211,32 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
 
       {/* config form (idle/error only) */}
       {(connStatus === 'idle' || connStatus === 'error') && (
-        <div className="rounded-xl bg-zinc-900 px-4 py-4 space-y-3">
+        <div className="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-sm">
           <RelayUrlField value={relayUrl} onChange={setRelayUrl} />
-          {error && <p className="text-red-400 text-xs font-mono">⚠ {error}</p>}
+          {error && (
+            <p className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 font-mono text-xs text-danger">
+              {error}
+            </p>
+          )}
         </div>
       )}
 
       {/* hint */}
       {cameras.length > 0 && (
-        <p className="text-xs text-zinc-500">
-          ← → でメインのカメラを切替。メインをクリックか ↓ で REVIEW（← → でコマ送り、↑ で LIVE
-          に戻る）。右のカメラをクリックでもメインに出せる。
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          <span>
+            <Kbd>←</Kbd> <Kbd>→</Kbd> メインのカメラを切替
+          </span>
+          <span>
+            メインをクリックか <Kbd>↓</Kbd> で REVIEW（<Kbd>←</Kbd> <Kbd>→</Kbd> でコマ送り、<Kbd>↑</Kbd> で LIVE
+            に戻る）
+          </span>
+          <span>右のカメラをクリックでもメインに出せる</span>
         </p>
       )}
 
       {/* main grid */}
-      <div className="grid gap-4 items-start grid-cols-[1fr_200px]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
         {/* stage */}
         <div>
           <StageCamera
@@ -230,7 +249,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
             onClick={enterReview}
           />
           {mode === 'review' && stageState && (
-            <div className="mt-3 space-y-2">
+            <div className="mt-3 space-y-3 rounded-xl border border-line bg-surface p-4 shadow-sm">
               {stageState.seek.seekable && thumbSeconds !== undefined && (
                 <SeekBar
                   replayableStartSeconds={stageState.seek.replayableStartSeconds}
@@ -267,5 +286,13 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
         reviewStatus={stageState?.rewindStatus.text ?? null}
       />
     </div>
+  )
+}
+
+function Kbd({ children }: { children: string }) {
+  return (
+    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-line-strong bg-raised px-1 font-sans text-[11px] text-fg shadow-sm">
+      {children}
+    </kbd>
   )
 }

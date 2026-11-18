@@ -9,8 +9,9 @@ import { type Topology } from './topology'
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
 const MIN_HEIGHT = 160
-const PALETTE = ['#85B7EB', '#5DCAA5', '#EF9F27', '#ED93B1', '#AFA9EC']
-const TOTAL_COLOR = '#e8e8e6'
+// Mid tones, legible on the light and the dark surface alike; the total follows the text color.
+const PALETTE = ['#3b82f6', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6']
+const TOTAL_COLOR = 'var(--text)'
 
 function withTotal(lines: ChartLine[], totalLabel: string | undefined): ChartLine[] {
   if (!totalLabel || lines.length < 2) return lines

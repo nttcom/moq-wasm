@@ -30,32 +30,33 @@ export function SeekBar({ replayableStartSeconds, liveEdgeSeconds, playheadSecon
     <div className="space-y-2 font-mono text-xs select-none">
       <div>
         <div className="flex justify-between items-baseline mb-1.5">
-          <span className="text-zinc-500">
+          <span className="text-faint">
             遡れる範囲：{formatBehindLive(totalSeconds)} 〜 LIVE
             {onJump && (
-              <span className="text-zinc-600 ml-2" style={{ fontSize: '10px' }}>
+              <span className="text-faint ml-2" style={{ fontSize: '10px' }}>
                 クリック＝ジャンプ
               </span>
             )}
           </span>
-          <span className="text-amber-400 font-bold">遅れ {formatBehindLive(behindSeconds)}</span>
+          <span className="text-warning font-bold">遅れ {formatBehindLive(behindSeconds)}</span>
         </div>
         <div
-          className={`relative h-11 rounded-lg overflow-hidden bg-zinc-800 ${onJump ? 'cursor-pointer' : 'cursor-default'}`}
+          className={`relative h-11 rounded-lg overflow-hidden border border-line bg-sunken ${onJump ? 'cursor-pointer' : 'cursor-default'}`}
           onClick={handleUpperClick}
         >
           <div
             className="absolute inset-0"
             style={{
-              background: 'repeating-linear-gradient(90deg, rgba(47,108,168,.12) 0 7px, rgba(47,108,168,.04) 7px 14px)'
+              background:
+                'repeating-linear-gradient(90deg, color-mix(in srgb, var(--accent) 16%, transparent) 0 7px, color-mix(in srgb, var(--accent) 5%, transparent) 7px 14px)'
             }}
           />
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-20"
+            className="absolute top-0 bottom-0 w-0.5 bg-warning z-20"
             style={{ left: `${currentPct}%`, transform: 'translateX(-50%)' }}
           />
-          <div className="absolute top-0 bottom-0 right-0 w-0.5 bg-green-500 z-20" />
-          <span className="absolute top-1.5 right-1.5 text-green-400 font-bold z-20" style={{ fontSize: '9px' }}>
+          <div className="absolute top-0 bottom-0 right-0 w-0.5 bg-success z-20" />
+          <span className="absolute top-1.5 right-1.5 text-success font-bold z-20" style={{ fontSize: '9px' }}>
             LIVE
           </span>
         </div>

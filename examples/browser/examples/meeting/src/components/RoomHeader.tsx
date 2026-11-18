@@ -1,3 +1,4 @@
+import { Users, Video } from 'lucide-react'
 import type { RecordingState } from '../recording/recorderApi'
 
 export type HeaderMember = { id: string; name: string; speaking: boolean; states: Record<string, string> }
@@ -16,14 +17,17 @@ interface RoomHeaderProps {
 /// Every remote member appears here, on the stage or not.
 export function RoomHeader({ roomName, members, recording, transcribing, transcriberStarting }: RoomHeaderProps) {
   return (
-    <header className="flex items-center gap-3 border-b border-white/15 bg-zinc-900 px-4 py-2 text-sm">
-      <h1 className="font-semibold" data-testid="room-name">
+    <header className="flex min-h-12 items-center gap-3 border-b border-line bg-surface px-4 py-2 text-sm">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
+        <Video className="h-4 w-4" />
+      </span>
+      <h1 className="truncate font-semibold text-fg" data-testid="room-name">
         {roomName}
       </h1>
       {recording === 'starting' && (
         <span
           data-testid="recording-badge"
-          className="rounded bg-zinc-700 px-2 py-0.5 text-xs font-semibold text-zinc-200"
+          className="rounded-full border border-line-strong bg-sunken px-2 py-0.5 text-xs font-semibold text-muted"
         >
           Starting
         </span>
@@ -31,7 +35,7 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
       {(recording === 'recording' || recording === 'stopping') && (
         <span
           data-testid="recording-badge"
-          className="flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-semibold"
+          className="flex items-center gap-1.5 rounded-full bg-red-600 px-2 py-0.5 text-xs font-semibold text-white"
         >
           <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
           REC
@@ -41,21 +45,24 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
         <span
           data-testid="transcriber-badge"
           title="Speech in this room is transcribed"
-          className="rounded bg-zinc-700 px-2 py-0.5 text-xs font-semibold text-zinc-200"
+          className="rounded-full border border-line-strong bg-sunken px-2 py-0.5 text-xs font-semibold text-muted"
         >
           {transcriberStarting ? 'CC starting' : 'CC'}
         </span>
       )}
-      <span className="text-zinc-400">{members.length + 1} participants</span>
-      <div className="flex -space-x-1">
+      <span className="ml-auto flex items-center gap-1.5 text-muted">
+        <Users className="h-4 w-4" />
+        {members.length + 1} participants
+      </span>
+      <div className="flex -space-x-1.5">
         {members.map((member) => (
           <span
             key={member.id}
             title={member.name}
             data-testid={`member-chip-${member.name}`}
             {...member.states}
-            className={`flex h-6 w-6 items-center justify-center rounded-full bg-teal-600 text-[11px] font-semibold ring-2 ${
-              member.speaking ? 'ring-emerald-400' : 'ring-zinc-950'
+            className={`flex h-7 w-7 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-on-accent ring-2 ${
+              member.speaking ? 'ring-success' : 'ring-surface'
             }`}
           >
             {member.name.slice(0, 1).toUpperCase()}

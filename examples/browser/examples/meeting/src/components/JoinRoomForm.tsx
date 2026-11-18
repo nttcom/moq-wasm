@@ -1,4 +1,5 @@
 import { useState, FormEvent, ChangeEvent } from 'react'
+import { Gauge, MonitorUp, Users, Video } from 'lucide-react'
 import { LOAD_BALANCED_RELAY_PRESET } from '../../../../utils/relayPresets'
 import { Button } from '../../../../lib/ui/button'
 import { Input } from '../../../../lib/ui/input'
@@ -11,8 +12,13 @@ interface JoinRoomFormProps {
   connecting: boolean
 }
 
-const INPUT_CLASS_NAME =
-  'h-12 border-white/10 bg-zinc-800 text-base text-white placeholder:text-zinc-500 ring-offset-zinc-900 focus-visible:ring-teal-500'
+const INPUT_CLASS_NAME = 'h-11 text-[15px]'
+
+const FEATURES = [
+  { icon: Users, text: '同じルーム名の参加者と映像・音声でつながる' },
+  { icon: MonitorUp, text: '画面共有・チャット・録画・字幕に対応' },
+  { icon: Gauge, text: '受信統計と再生バッファをその場で確認' }
+]
 
 export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProps) {
   const [roomName, setRoomName] = useState('')
@@ -27,46 +33,64 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-6 text-white">
-      <div className="w-full max-w-xl space-y-8 rounded-2xl bg-zinc-900 p-8 ring-1 ring-white/10">
-        <div className="space-y-2">
-          <h1 className="text-3xl font-semibold">Join Meeting Room</h1>
-          <p className="text-zinc-400">Enter your details to join the meeting</p>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-6">
+    <div className="flex min-h-[calc(100dvh-var(--shell-height))] items-center justify-center px-4 py-10 sm:px-6">
+      <div className="grid w-full max-w-4xl overflow-hidden rounded-xl border border-line bg-surface shadow-lg md:grid-cols-[1fr_1.1fr]">
+        <section className="flex flex-col gap-6 border-b border-line bg-subtle p-8 md:border-b-0 md:border-r">
+          <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-accent-line bg-accent-soft text-accent">
+            <Video className="h-5 w-5" />
+          </span>
           <div className="space-y-2">
-            <Label htmlFor="roomName" className="text-zinc-300">
-              Room Name
-            </Label>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-accent">MoQT Meeting</p>
+            <h1 className="text-2xl font-bold tracking-tight text-fg">ルームに参加する</h1>
+            <p className="text-sm leading-relaxed text-muted">
+              MoQT の Relay を経由して、多人数の映像・音声会議をブラウザだけで試せます。
+            </p>
+          </div>
+          <ul className="space-y-3">
+            {FEATURES.map(({ icon: Icon, text }) => (
+              <li key={text} className="flex items-start gap-3 text-sm text-muted">
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+                {text}
+              </li>
+            ))}
+          </ul>
+        </section>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-5 p-8">
+          <div className="space-y-2">
+            <Label htmlFor="roomName">Room Name</Label>
             <Input
               type="text"
               id="roomName"
               data-testid="join-room-name-input"
               value={roomName}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setRoomName(e.target.value)}
-              placeholder="Enter room name"
+              placeholder="例: weekly-sync"
+              autoComplete="off"
               required
               className={INPUT_CLASS_NAME}
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="userName" className="text-zinc-300">
-              User Name
-            </Label>
+            <Label htmlFor="userName">User Name</Label>
             <Input
               type="text"
               id="userName"
               data-testid="join-user-name-input"
               value={userName}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setUserName(e.target.value)}
-              placeholder="Enter your name"
+              placeholder="ほかの参加者に表示される名前"
+              autoComplete="nickname"
               required
               className={INPUT_CLASS_NAME}
             />
           </div>
-          <RelayPicker value={relayUrl} onChange={setRelayUrl} className="text-zinc-300" />
+          <RelayPicker value={relayUrl} onChange={setRelayUrl} className="text-fg" />
           {joinError && (
-            <p className="text-sm text-red-400" data-testid="join-error">
+            <p
+              className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-sm text-danger"
+              data-testid="join-error"
+              role="alert"
+            >
               {joinError.message}
             </p>
           )}
@@ -74,7 +98,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
             type="submit"
             size="lg"
             data-testid="join-submit-button"
-            className="h-12 w-full rounded-full bg-teal-600 text-base font-semibold text-white hover:bg-teal-700"
+            className="mt-1 w-full"
             disabled={!roomName.trim() || !userName.trim() || connecting}
           >
             {connecting ? 'Connecting...' : 'Join Room'}

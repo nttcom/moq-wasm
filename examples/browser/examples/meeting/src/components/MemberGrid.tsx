@@ -2,7 +2,7 @@ import { LocalMember, RemoteMember } from '../types/member'
 import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import { ReactNode, useEffect, useState } from 'react'
-import { PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
 import { ControlBar } from './ControlBar'
@@ -21,7 +21,7 @@ import {
   type VideoEncodingSettings
 } from '../types/videoEncoding'
 
-const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-teal-50'
+const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-fg'
 
 interface MemberGridProps {
   localMember: LocalMember
@@ -253,8 +253,8 @@ export function MemberGrid({
               microphoneBusy={microphoneBusy}
               resolutionOptions={VIDEO_RESOLUTION_OPTIONS}
             />
-            <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
-              <div className="text-sm font-semibold text-white">Video encoder hardware acceleration</div>
+            <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
+              <div className="text-sm font-semibold text-fg">Video encoder hardware acceleration</div>
               <OptionSelect
                 label="Camera"
                 className={DEVICE_MODAL_FIELD_CLASS}
@@ -293,8 +293,8 @@ export function MemberGrid({
                 view={remoteViews.get(detailsMember.id)}
                 onSelectTrack={(role, trackName) => onSelectTrack(detailsMember.id, role, trackName)}
               />
-              <div className="space-y-3 rounded-md border border-white/10 bg-white/5 p-3">
-                <div className="text-sm font-semibold text-teal-100">Playout</div>
+              <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
+                <div className="text-sm font-semibold text-fg">Playout</div>
                 <PlayoutControls
                   value={playoutSettings.get(detailsMember.id)}
                   onChange={(settings) => onChangePlayoutSettings(detailsMember.id, settings)}
@@ -318,7 +318,7 @@ function FilmstripButton({ open, onClick }: { open: boolean; onClick: () => void
       title={label}
       data-testid="filmstrip-button"
       onClick={onClick}
-      className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-zinc-800 text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+      className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md border border-line bg-surface text-muted transition hover:bg-hover hover:text-fg"
     >
       {open ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
     </button>
@@ -365,17 +365,22 @@ function DeviceModal({
 }) {
   const maxWidthClass = size === 'wide' ? 'max-w-6xl' : 'max-w-md'
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm">
       <div
-        className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-2xl bg-zinc-900 p-6 text-white shadow-2xl`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-xl border border-line-strong bg-surface p-6 text-fg shadow-2xl`}
       >
-        <div className="mb-4 flex items-center justify-between">
-          <h4 className="text-lg font-semibold">{title}</h4>
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <h4 className="text-lg font-semibold tracking-tight">{title}</h4>
           <button
+            type="button"
             onClick={onClose}
             data-testid="modal-close-button"
-            className="rounded-md bg-white/10 px-3 py-1 text-sm text-teal-100 transition hover:bg-white/20"
+            className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-line-strong bg-raised px-3 text-sm font-medium text-fg transition hover:bg-hover"
           >
+            <X className="h-4 w-4" />
             Close
           </button>
         </div>
@@ -390,7 +395,7 @@ function OptionSelect<T extends { id: string; label: string }>({
   options,
   value,
   onChange,
-  className = 'flex flex-col gap-1 text-xs text-teal-100'
+  className = 'flex flex-col gap-1 text-xs text-fg'
 }: {
   label: string
   options: T[]
@@ -402,7 +407,7 @@ function OptionSelect<T extends { id: string; label: string }>({
     <label className={className}>
       <span>{label}</span>
       <select
-        className="rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white"
+        className="rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-sm text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25"
         value={value}
         onChange={(event) => {
           const option = options.find((entry) => entry.id === event.target.value)
@@ -412,7 +417,7 @@ function OptionSelect<T extends { id: string; label: string }>({
         }}
       >
         {options.map((option) => (
-          <option key={option.id} value={option.id} className="bg-zinc-900 text-white">
+          <option key={option.id} value={option.id} className="bg-surface text-fg">
             {option.label}
           </option>
         ))}
@@ -482,10 +487,10 @@ function RemoteCatalogSubscribePanel({
     (row) => row.role === 'chat' || row.tracks.length > 0 || row.subscribed
   )
   return (
-    <div className="space-y-2 rounded-md border border-white/10 bg-white/5 p-3">
+    <div className="space-y-2 rounded-lg border border-line bg-subtle p-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-sm font-semibold text-teal-100">Catalogs</span>
-        <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-teal-300">
+        <span className="text-sm font-semibold text-fg">Catalogs</span>
+        <span data-testid={`catalog-status-${memberName}`} className="text-[11px] text-accent">
           {formatCatalogStatus(view)}
         </span>
       </div>
@@ -534,10 +539,10 @@ function TrackSubscribeRow({
   onChange: (trackName: string) => void
 }) {
   return (
-    <div className="space-y-1 rounded-md border border-white/10 bg-white/[0.03] p-2">
+    <div className="space-y-1 rounded-md border border-line bg-surface p-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-semibold text-teal-100">{title}</span>
-        <span data-testid={statusTestId} className="text-[11px] text-teal-300">
+        <span className="text-xs font-semibold text-fg">{title}</span>
+        <span data-testid={statusTestId} className="text-[11px] text-accent">
           {statusText}
         </span>
       </div>
@@ -547,21 +552,21 @@ function TrackSubscribeRow({
           disabled={disabled}
           data-testid={selectTestId}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full min-w-0 rounded border border-white/10 bg-white/10 px-2 py-1 text-sm text-white outline-none focus:border-teal-300 focus:ring-1 focus:ring-teal-300 disabled:opacity-60"
+          className="w-full min-w-0 rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-sm text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25 disabled:opacity-60"
         >
           {tracks.length === 0 ? (
-            <option value="" className="bg-zinc-900 text-white">
+            <option value="" className="bg-surface text-fg">
               No tracks
             </option>
           ) : (
             <>
               {auto !== undefined && (
-                <option value={AUTO_TRACK_SELECTION} className="bg-zinc-900 text-white">
+                <option value={AUTO_TRACK_SELECTION} className="bg-surface text-fg">
                   {`Auto (${tracks.find((track) => track.name === selected)?.label ?? selected})`}
                 </option>
               )}
               {tracks.map((track) => (
-                <option key={track.name} value={track.name} className="bg-zinc-900 text-white">
+                <option key={track.name} value={track.name} className="bg-surface text-fg">
                   {formatCatalogTrackLabel(role, track)}
                 </option>
               ))}

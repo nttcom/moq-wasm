@@ -49,7 +49,7 @@ interface ControlBarProps {
 
 export function ControlBar(props: ControlBarProps) {
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-zinc-950/90 px-4 py-3">
+    <div className="flex items-center justify-between gap-3 border-t border-line bg-surface px-4 py-3">
       <div className="flex items-center gap-2">
         <BarButton label="Show stats" onClick={props.onOpenStats}>
           <BarChart3 className="h-5 w-5" />
@@ -104,7 +104,7 @@ export function ControlBar(props: ControlBarProps) {
           type="button"
           data-testid="room-leave-button"
           onClick={props.onLeave}
-          className="inline-flex h-12 items-center gap-2 rounded-full bg-red-600 px-5 text-sm font-semibold text-white transition hover:bg-red-700"
+          className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-full bg-red-600 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
         >
           <PhoneOff className="h-5 w-5" />
           Leave
@@ -129,7 +129,7 @@ export function ControlBar(props: ControlBarProps) {
         >
           <MessageSquare className="h-5 w-5" />
           {props.unreadChatMessageCount > 0 && (
-            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-xs font-semibold">
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-xs font-semibold text-white ring-2 ring-surface">
               {props.unreadChatMessageCount}
             </span>
           )}
@@ -159,14 +159,14 @@ function DeviceToggle({
 }) {
   const menu = useMenu()
   return (
-    <div ref={menu.ref} className="relative flex items-center rounded-full bg-zinc-800">
+    <div ref={menu.ref} className="relative flex items-center rounded-full bg-sunken ring-1 ring-inset ring-line">
       <button
         type="button"
         aria-label={`${label} options`}
         title={`${label} options`}
         data-testid={testId}
         onClick={menu.toggle}
-        className="inline-flex h-12 w-8 items-center justify-center rounded-l-full pl-1 text-zinc-300 transition hover:text-white"
+        className="inline-flex h-11 w-8 cursor-pointer items-center justify-center rounded-l-full pl-1 text-muted transition hover:text-fg"
       >
         <ChevronUp className="h-4 w-4" />
       </button>
@@ -219,7 +219,9 @@ function ActivitiesButton({
     <div ref={menu.ref} className="relative">
       <BarButton label="Activities" testId="activities-button" active={menu.open} onClick={menu.toggle}>
         <Shapes className="h-5 w-5" />
-        {recordingLive && <span className="absolute right-0 top-0 h-3 w-3 rounded-full bg-red-600" />}
+        {recordingLive && (
+          <span className="absolute right-0 top-0 h-3 w-3 rounded-full bg-red-600 ring-2 ring-surface" />
+        )}
       </BarButton>
       {menu.open && (
         <MenuPanel align="right">
@@ -275,7 +277,7 @@ function RecordSection({ recording, onChoose }: { recording: RoomRecordingContro
             void recording.stop()
           }}
         >
-          <CircleStop className="h-4 w-4 text-red-400" />
+          <CircleStop className="h-4 w-4 text-danger" />
           {pending ?? 'Stop recording'}
         </MenuItem>
       ) : (
@@ -367,7 +369,7 @@ function MenuPanel({ align, children }: { align: 'left' | 'right'; children: Rea
   return (
     <div
       role="menu"
-      className={`absolute bottom-14 z-20 w-64 rounded-lg border border-white/10 bg-zinc-900 p-1 shadow-lg ${
+      className={`absolute bottom-14 z-20 w-64 rounded-lg border border-line-strong bg-raised p-1 text-fg shadow-lg ${
         align === 'left' ? 'left-0' : 'right-0'
       }`}
     >
@@ -377,19 +379,19 @@ function MenuPanel({ align, children }: { align: 'left' | 'right'; children: Rea
 }
 
 function MenuHeading({ children }: { children: ReactNode }) {
-  return <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-zinc-400">{children}</div>
+  return <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted">{children}</div>
 }
 
 function MenuNote({ testId, children }: { testId?: string; children: ReactNode }) {
   return (
-    <p data-testid={testId} className="px-3 py-2 text-xs text-zinc-400">
+    <p data-testid={testId} className="px-3 py-2 text-xs text-muted">
       {children}
     </p>
   )
 }
 
 function MenuDivider() {
-  return <div className="my-1 border-t border-white/10" />
+  return <div className="my-1 border-t border-line" />
 }
 
 function MenuItem({
@@ -414,7 +416,7 @@ function MenuItem({
       aria-checked={checked}
       disabled={disabled}
       onClick={onClick}
-      className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+      className="flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-left text-sm hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
     >
       {checked !== undefined && <Check className={`h-4 w-4 shrink-0 ${checked ? '' : 'invisible'}`} />}
       <span className="flex min-w-0 items-center gap-2 truncate">{children}</span>
@@ -440,10 +442,10 @@ function BarButton({
   children: ReactNode
 }) {
   const tone = off
-    ? 'bg-red-600 hover:bg-red-700'
+    ? 'bg-red-600 text-white hover:bg-red-700'
     : active
-      ? 'bg-teal-600 hover:bg-teal-700'
-      : 'bg-zinc-700 hover:bg-zinc-600'
+      ? 'bg-accent text-on-accent hover:bg-accent-hover'
+      : 'bg-hover text-fg ring-1 ring-inset ring-line-strong hover:bg-line'
   return (
     <button
       type="button"
@@ -452,7 +454,7 @@ function BarButton({
       data-testid={testId}
       onClick={onClick}
       disabled={disabled}
-      className={`relative inline-flex h-12 w-12 items-center justify-center rounded-full text-white transition ${tone} ${
+      className={`relative inline-flex h-11 w-11 cursor-pointer items-center justify-center rounded-full transition ${tone} ${
         disabled ? 'cursor-not-allowed opacity-60' : ''
       }`}
     >
