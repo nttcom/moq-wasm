@@ -45,10 +45,7 @@ async fn main() -> anyhow::Result<()> {
         .context("PORT must be a port number")?;
     let required = |name: &str| non_empty_env(name).with_context(|| format!("{name} must be set"));
     let public_url = required("BOTS_PUBLIC_URL")?;
-    let types_file = required("BOTS_TYPES_FILE")?;
-    let types_text = tokio::fs::read_to_string(&types_file)
-        .await
-        .with_context(|| format!("cannot read {types_file}"))?;
+    let types_text = required("BOTS_TYPES")?;
     let metadata_token = Arc::new(MetadataToken::new(reqwest::Client::new()));
     let types = BotTypes::parse(&types_text, &metadata_token)?;
     let store = BotStore::open(&required("BOTS_STORE_URL")?.parse()?)?;
