@@ -103,6 +103,16 @@ Every other broadcast one level under `room` is a participant: its audio comes
 in as `UserAudioRawFrame` and its video as `UserImageRawFrame`, with the
 participant id as `user_id`. The transport has the events of `MOQTransport`.
 
+Video follows pipecat's API: `video_in_enabled=True` with
+`video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}`
+receives a participant's camera only for the `UserImageRequestFrame`s a
+processor pushes upstream, and each `UserImageRawFrame` carries the `Location`
+of its object in `metadata["location"]`. `data_in_tracks` pushes the objects of
+other tracks, such as a prompt, as `InputTransportMessageFrame`s, and an
+`OutputTransportMessageFrame` carrying a `MoqWasmEventRecord` or
+`MoqWasmTrackObject` writes one of `event_timelines_out` or `data_out_tracks`.
+The camera detection bot in `examples/python` runs this way.
+
 To run a pipeline per participant, such as one whose voice activity detector
 must hear one speaker, follow the room with `watch_broadcasts` and give each
 pipeline a `MoqWasmParticipantInput`:

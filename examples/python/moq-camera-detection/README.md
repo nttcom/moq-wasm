@@ -11,7 +11,7 @@ sequenceDiagram
     participant D as d1-2B (Cloud Run)
     B->>R: prompt（質問）、catalog、camera（H.264）
     R->>P: 全オブジェクト
-    P->>P: H.264 をデコードし、0.1 秒ごとに 1 枚 JPEG に
+    P->>P: 0.1 秒ごとに UserImageRequestFrame で 1 枚もらい（MoqWasmTransport が H.264 を復号）、JPEG に
     P->>D: /v1/systemone 画像 + 全質問
     D-->>P: 選んだ選択肢、枠
     P->>R: eventtimeline
