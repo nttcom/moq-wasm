@@ -1,9 +1,9 @@
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 use google_cloud::MetadataToken;
-use serde_json::json;
+use job_launcher::JobLauncher;
 
 use crate::LauncherArgs;
 
@@ -32,101 +32,59 @@ impl Job {
 }
 
 /// Starts `recorder record` and `recorder composite` without waiting for
-/// them: as a child process locally, or as a Cloud Run Job execution whose
-/// container arguments are replaced by the given ones.
+/// them.
 #[derive(Clone)]
-pub(crate) enum Launcher {
-    Local {
-        program: PathBuf,
-    },
-    CloudRun {
-        /// `projects/<project>/locations/<region>/jobs/<job>`
-        record_job: String,
-        composite_job: String,
-        client: reqwest::Client,
-        metadata_token: Arc<MetadataToken>,
-    },
+pub(crate) struct Launcher {
+    record: JobLauncher,
+    composite: JobLauncher,
 }
 
 impl Launcher {
     pub(crate) fn from_args(args: &LauncherArgs) -> Result<Self> {
         Ok(match args.launcher {
-            LauncherKind::Local => Self::Local {
-                program: std::env::current_exe().context("cannot find the recorder binary")?,
-            },
-            LauncherKind::CloudRun => Self::CloudRun {
-                record_job: args
-                    .record_job
-                    .clone()
-                    .context("--launcher cloud-run needs --record-job")?,
-                composite_job: args
-                    .composite_job
-                    .clone()
-                    .context("--launcher cloud-run needs --composite-job")?,
-                client: reqwest::Client::new(),
-                metadata_token: Arc::new(MetadataToken::new(reqwest::Client::new())),
-            },
+            LauncherKind::Local => {
+                let local = JobLauncher::Local {
+                    program: std::env::current_exe().context("cannot find the recorder binary")?,
+                };
+                Self::both(local)
+            }
+            LauncherKind::CloudRun => {
+                let client = reqwest::Client::new();
+                let metadata_token = Arc::new(MetadataToken::new(client.clone()));
+                let cloud_run = |job: &Option<String>, flag: &str| {
+                    Ok::<_, anyhow::Error>(JobLauncher::CloudRun {
+                        job: job
+                            .clone()
+                            .with_context(|| format!("--launcher cloud-run needs {flag}"))?,
+                        client: client.clone(),
+                        metadata_token: Arc::clone(&metadata_token),
+                    })
+                };
+                Self {
+                    record: cloud_run(&args.record_job, "--record-job")?,
+                    composite: cloud_run(&args.composite_job, "--composite-job")?,
+                }
+            }
         })
+    }
+
+    pub(crate) fn both(launcher: JobLauncher) -> Self {
+        Self {
+            record: launcher.clone(),
+            composite: launcher,
+        }
     }
 
     /// `args` are the job's arguments after its mode.
     pub(crate) async fn launch(&self, job: Job, args: Vec<String>) -> Result<()> {
         let mut command = vec![job.mode().to_string()];
         command.extend(args);
-        match self {
-            Self::Local { program } => {
-                let mut child = tokio::process::Command::new(program)
-                    .args(&command)
-                    .spawn()
-                    .with_context(|| format!("cannot start {}", program.display()))?;
-                tokio::spawn(async move {
-                    match child.wait().await {
-                        Ok(status) => tracing::info!(mode = job.mode(), %status, "job exited"),
-                        Err(error) => {
-                            tracing::warn!(mode = job.mode(), %error, "cannot wait for the job")
-                        }
-                    }
-                });
-            }
-            Self::CloudRun {
-                record_job,
-                composite_job,
-                client,
-                metadata_token,
-            } => {
-                let name = match job {
-                    Job::Record => record_job,
-                    Job::Composite => composite_job,
-                };
-                let token = metadata_token
-                    .bearer_token()
-                    .await
-                    .context("cannot get a token from the metadata server")?;
-                run_cloud_run_job(client, &token, name, command).await?;
-            }
-        }
+        let launcher = match job {
+            Job::Record => &self.record,
+            Job::Composite => &self.composite,
+        };
+        launcher.launch(command).await?;
         tracing::info!(mode = job.mode(), "job launched");
         Ok(())
     }
-}
-
-async fn run_cloud_run_job(
-    client: &reqwest::Client,
-    token: &str,
-    job: &str,
-    args: Vec<String>,
-) -> Result<()> {
-    let response = client
-        .post(format!("https://run.googleapis.com/v2/{job}:run"))
-        .bearer_auth(token)
-        .json(&json!({ "overrides": { "containerOverrides": [{ "args": args }] } }))
-        .send()
-        .await
-        .with_context(|| format!("cannot run {job}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!("running {job} answered {status}: {body}");
-    }
-    Ok(())
 }

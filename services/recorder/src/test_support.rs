@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use job_launcher::JobLauncher;
 use mediapack::{
     AudioConfig, AudioSample, MediaEvent, Timestamp, VideoSample,
     loc::{self, LocObject},
@@ -376,9 +377,9 @@ pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
             composite_job: None,
         },
     };
-    let launcher = Launcher::Local {
+    let launcher = Launcher::both(JobLauncher::Local {
         program: std::path::PathBuf::from("/usr/bin/true"),
-    };
+    });
     Recordings::new(config, RecordingStore::open(&store_url).unwrap(), launcher)
 }
 

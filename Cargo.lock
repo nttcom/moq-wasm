@@ -1646,6 +1646,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "job-launcher"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "google-cloud",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "jobserver"
 version = "0.1.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2795,6 +2807,7 @@ dependencies = [
  "http-server",
  "hyper",
  "hyper-util",
+ "job-launcher",
  "mediapack",
  "moqt",
  "msf",
