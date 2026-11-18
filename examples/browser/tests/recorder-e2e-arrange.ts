@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -102,28 +102,24 @@ async function startRecorderServe() {
   const dir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
   const storeDir = join(dir, 'store')
   const storeUrl = pathToFileURL(storeDir).href + '/'
-  const typesFile = join(dir, 'bot-types.json')
-  writeFileSync(
-    typesFile,
-    JSON.stringify({
-      recorder: {
-        launcher: { kind: 'local', program: RECORDER_BINARY },
-        args: [
-          'bot',
-          '--relay',
-          liveViewerE2EConfig.moqtUrl,
-          '--insecure-skip-tls-verify',
-          '--store',
-          storeUrl,
-          '--output-dir',
-          join(dir, 'work')
-        ],
-        grace_seconds: 300,
-        max_seconds: 7200,
-        max_running: 8
-      }
-    })
-  )
+  const botTypes = JSON.stringify({
+    recorder: {
+      launcher: { kind: 'local', program: RECORDER_BINARY },
+      args: [
+        'bot',
+        '--relay',
+        liveViewerE2EConfig.moqtUrl,
+        '--insecure-skip-tls-verify',
+        '--store',
+        storeUrl,
+        '--output-dir',
+        join(dir, 'work')
+      ],
+      grace_seconds: 300,
+      max_seconds: 7200,
+      max_running: 8
+    }
+  })
   // The jobs inherit the environment; GStreamer's ERROR lines name the element behind a failed composite.
   const env = { GST_DEBUG: '*:1', ...process.env, RUST_LOG: 'info' }
   const recorder = spawn(
@@ -149,7 +145,7 @@ async function startRecorderServe() {
       ...env,
       PORT: String(BOTS_PORT),
       BOTS_PUBLIC_URL: botsUrl,
-      BOTS_TYPES_FILE: typesFile,
+      BOTS_TYPES: botTypes,
       BOTS_STORE_URL: pathToFileURL(join(dir, 'bots')).href + '/',
       BOTS_INSECURE_SKIP_AUTH: 'true'
     },
