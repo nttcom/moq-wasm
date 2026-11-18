@@ -23,11 +23,10 @@ pub struct QUICConnectionCreator {
 
 impl QUICConnectionCreator {
     fn create_client(
-        port_num: u16,
         crypto: rustls::ClientConfig,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        let mut endpoint = client_endpoint(port_num)?;
+        let mut endpoint = client_endpoint()?;
         endpoint.set_default_client_config(quic_client_config(crypto, protocols.quic_alpn_list())?);
         tracing::debug!(local_addr = ?endpoint.local_addr()?, "QUIC client endpoint ready");
         Ok(QUICConnectionCreator {
@@ -40,11 +39,10 @@ impl QUICConnectionCreator {
 #[async_trait]
 impl TransportConnectionCreator for QUICConnectionCreator {
     fn client(
-        port_num: u16,
         verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verification)?, protocols)
+        Self::create_client(client_crypto(verification)?, protocols)
     }
 
     fn server(
@@ -150,7 +148,6 @@ mod tests {
         // Arrange
         let server: QUICConnectionCreator = server_transport_creator("quic-bidi-streams");
         let client = QUICConnectionCreator::client(
-            0,
             &CertificateVerification::Disabled,
             application_protocols(DEFAULT_VERSIONS).unwrap(),
         )

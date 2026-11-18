@@ -420,7 +420,7 @@ mod tests {
     };
 
     async fn silent_quic_peer(port: u16, alpn: &str) -> quinn::Connection {
-        let endpoint = client_endpoint(0).unwrap();
+        let endpoint = client_endpoint().unwrap();
         let config = quic_client_config(
             client_crypto(&CertificateVerification::Disabled).unwrap(),
             vec![alpn.as_bytes().to_vec()],

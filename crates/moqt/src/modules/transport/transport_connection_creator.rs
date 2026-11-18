@@ -21,7 +21,6 @@ pub(crate) trait TransportConnectionCreator: MaybeSend + MaybeSync + 'static {
     const WEB_SOCKET_HEAD_START: Option<Duration> = None;
 
     fn client(
-        port_num: u16,
         verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self>

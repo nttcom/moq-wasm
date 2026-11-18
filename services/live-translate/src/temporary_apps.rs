@@ -79,7 +79,6 @@ impl TemporaryApps {
 
     async fn connect(&self, app_id: &str, token: &str) -> Result<RootTranslation> {
         let config = ClientConfig {
-            port: 0,
             certificate_verification: CertificateVerification::native_roots_or_disabled(
                 !self.insecure,
             ),

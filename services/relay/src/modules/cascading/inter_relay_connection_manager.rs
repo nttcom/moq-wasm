@@ -132,7 +132,6 @@ impl InterRelayConnectionManager {
                 authorization_token: Some(self.client_config.relay_token.clone().into()),
                 follow_go_away: false,
                 versions: self.client_config.versions.clone(),
-                ..moqt::ClientConfig::default()
             })
         })?;
         let session = tokio::time::timeout(CONNECT_TIMEOUT, async {

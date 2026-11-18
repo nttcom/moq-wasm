@@ -30,7 +30,6 @@ impl TransportConnectionCreator for BrowserConnectionCreator {
     const WEB_SOCKET_HEAD_START: Option<Duration> = Some(WEB_TRANSPORT_HEDGE);
 
     fn client(
-        _port_num: u16,
         verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
