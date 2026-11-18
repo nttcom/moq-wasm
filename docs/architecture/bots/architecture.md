@@ -1,0 +1,291 @@
+# Design: a bot service that launches bots into rooms
+
+## Status
+Proposed
+
+## Date
+2026-11-18
+
+## Scope
+A new service `services/bots` that starts, stops and reports the bots of a
+room, and the changes it brings to:
+
+- `services/recorder`: `recorder record` becomes a bot; `recorder serve` keeps
+  the recordings' read API (lists, files, replay, VOD) and loses start and stop.
+- The Python bots (`examples/python/moq-*`) and `moq-bot-rooms`, which this
+  replaces as the way a bot is started.
+- `services/token-mint`, which becomes the app server of temporary apps.
+- `crates/auth-token`, which gains the claim a launch request carries.
+
+## Context
+Two services start a bot for a room today, each in its own way:
+
+- `recorder serve` takes `POST /recordings` with the page's client JWT as
+  `Authorization: Bearer`, checks through the VTS that its `publish` claim
+  covers the room, and launches `recorder record` as a Cloud Run Job with the
+  token in its arguments (`--token`). The recording presents that token to the
+  relay (docs/architecture/recorder/architecture.md "Recording API").
+- `moq-bot-rooms` runs a bot per room while a page holds `GET /rooms/{room}`
+  open, and validates a temporary app's token by refreshing it on the token
+  mint (docs/architecture/ai-bots/on-demand-rooms.md).
+
+The shape has four problems:
+
+1. **The end user decides.** Any page whose token covers the room can start a
+   recording or a bot. Whether a room is recorded, and whether a job that
+   costs money runs, is the app operator's call, and a page can be edited.
+2. **The bot holds the user's credential.** The recording presents the page's
+   token, `publish` included, although it only subscribes. The token sits in
+   the Cloud Run execution's overrides, readable by anyone who can view the
+   project, and in the process list of a local launch.
+3. **The bot's lifetime is the token's.** Only a temporary app's token can be
+   renewed (on the token mint). A registered app's token comes from its own
+   backend, which the recorder cannot ask, so a recording ends at the token's
+   `exp`.
+4. **The relay cannot tell the bot from the user.** Both present the same
+   token.
+
+## Decision
+A launch is a server-to-server call. The browser asks its app's server; the
+app's server decides and calls the bot service with a short-lived *launch
+token* signed with the app's secret. The bot service launches the bot, and
+the bot joins the room with a *bot token* the bot service signs for it,
+scoped to what that bot needs. For temporary apps, which have no server of
+their own, the token mint plays the app server.
+
+```mermaid
+sequenceDiagram
+    participant P as Page
+    participant A as App server (token mint for a temporary app)
+    participant B as bots
+    participant V as VTS
+    participant J as Bot (Cloud Run Job)
+    participant R as Relay
+    P->>A: start the recorder in room X (the app's own API)
+    Note over A: decides; signs a launch token for X with the app secret
+    A->>B: POST /bots {type: recorder, namespace_prefix: X} + launch token
+    B->>V: POST /verify
+    V-->>B: appId, claims
+    B->>B: take the (type, room) lock, write the bot as starting
+    B->>J: launch (bot id only)
+    J->>B: POST /bots/{id}/token (job identity)
+    B-->>J: bot token for X, signed with the app secret
+    J->>R: connect, SUBSCRIBE_NAMESPACE X, PUBLISH_NAMESPACE X/bots/recorder
+    R->>P: PUBLISH_NAMESPACE X/bots/recorder (the page shows REC)
+    loop every 30 s
+        J->>B: POST /bots/{id}/heartbeat
+        B-->>J: {stop: false}
+    end
+    Note over J: no human member for the grace period
+    J->>R: close session
+    J->>B: POST /bots/{id}/heartbeat {state: finished}
+```
+
+### Roles
+
+| Party | Holds | Does |
+| --- | --- | --- |
+| App server | its app's secret | decides who may start a bot, signs launch tokens |
+| Token mint | the temporary app secret | the app server of every temporary app (below) |
+| `bots` | read access to the registry, the temporary app secret | verifies launch tokens through the VTS, launches bots, signs bot tokens, keeps bot state |
+| Bot | its bot id and the job's own identity | joins the room with its bot token, reports its state, ends itself |
+
+A bot never sees an app secret, a launch token or a user's token.
+
+### The launch token
+A JWT of the existing shape (`auth_token::Claims`) signed with the app's
+secret, with one new claim:
+
+| Claim | Meaning |
+| --- | --- |
+| `bots` | Relative namespace path under which the token may start, stop and read bots; `""` is the whole app root; absent means not allowed |
+
+A launch token carries no `publish` or `subscribe`, so the relay grants it
+nothing, and a client token carries no `bots`, so a page's token cannot start
+a bot even if a page sends one. `bots` judges `iat` and `exp` with its own
+`ClaimPolicy`: a launch token lives at most 5 minutes. A relay app
+(`isRelay`) cannot start bots.
+
+### The bot token
+`bots` signs a client token for the room's app (`Claims::issued`) with the
+app's secret, read from the registry through `app-registry` on every
+signature, as the VTS reads it on every verification, so a rotated secret or a
+deleted app takes effect at the next renewal. A temporary app's token is
+signed with the temporary app secret. The claims are the bot type's:
+
+| Type | `subscribe` | `publish` |
+| --- | --- | --- |
+| recorder | the room | `<room>/bots/recorder` (its presence) |
+| AI bots | the room | `<room>/bots/<type>` |
+
+A bot token lives 1 hour. Five minutes before it expires the bot asks for the
+next one and sends it to the relay with the relay's in-session refresh, as
+`TokenRefreshTask` and `moq_wasm.connect`'s `refresh_token` already do. `bots`
+refuses to sign for a bot that is no longer running.
+
+### How a bot proves it is the bot
+The job is launched with its bot id and nothing secret. It calls
+`POST /bots/{id}/token` and `POST /bots/{id}/heartbeat` with a Google ID token
+for the bot service's URL, from the metadata server of the job's service
+account. `bots` verifies the ID token (RS256 against Google's published keys,
+`aud`, `exp`, and `email` equal to the configured job service account) and
+answers only for a bot that is running. With `--launcher local`, `bots`
+passes the child process a random per-bot key in its environment instead,
+never in its arguments, so the whole flow runs on one machine without Google
+credentials. The URL of Google's keys is a setting, so the unit tests verify
+ID tokens signed with a test key against that key's JWKS.
+
+### Bots in the room
+A bot publishes its presence as `<room>/bots/<type>`, the namespace the
+Meeting transcriber already uses. Under a two-element room prefix
+(`<app>/<room>`) that is four elements, which the Meeting's member logic never
+reads as a member and no user name collides with. A page learns that a bot
+joined from its PUBLISH_NAMESPACE and that it left from its
+PUBLISH_NAMESPACE_DONE, so the Meeting shows REC from the room itself rather
+than from polling `recorder serve`.
+
+A **human member** is a namespace under the room that is not under one of the
+reserved elements `bots` and `recordings` (the recorder's replays).
+
+### When a bot ends
+Every bot ends by itself once the room has had no human member for its type's
+grace period, counted from its start too. This generalises what both bots
+already do: the recorder's `AutoStop` (`--empty-room-seconds`) and the Python
+bots' "unpublished for the grace period". The grace period differs by type
+because a room that empties for a reload or a break should not split a
+recording:
+
+| Type | Grace period | Longest run |
+| --- | --- | --- |
+| recorder | 300 s | 2 h |
+| AI bots | 30 s | 1 h |
+
+A bot also ends on `DELETE /bots/{id}` (the next heartbeat answers
+`{stop: true}`), at its longest run, and on SIGTERM. Since only publishers are
+visible to a bot, a room of listeners who publish nothing counts as empty.
+
+### Launchers
+Each bot type names its launcher. The first and only one is a Cloud Run Job
+execution with overridden arguments, moved from `recorder::launcher`, with the
+same local child-process variant for development. The recorder's composite
+job keeps launching through the same code, which therefore moves to a crate
+both use instead of being copied. A type that needs to start faster than a
+job (an AI bot joining a live meeting) can get another launcher later without
+changing the API.
+
+### State
+`bots` keeps no state in memory. As `recorder serve` does, it keeps one small
+JSON object per bot in a store (`gs://` or `file://`), and a lock per
+`(type, room)` taken with `PutMode::Create` and released with a conditional
+delete, so one room runs at most one bot of each type and any number of
+instances answer alike. The object is written by `bots` alone, from the
+launch request and from the bot's heartbeats (`starting`, `running`,
+`stopping`, `finished`, `failed`). A bot that has not sent a heartbeat for
+90 s is reported `failed` and its lock is released, as the recorder does
+today. The recorder keeps its own recording state (members, files,
+composite) in its store for `recorder serve`'s read API.
+
+### API
+
+| Route | Caller | Answer |
+| --- | --- | --- |
+| `POST /bots` `{type, namespace_prefix, options}` | app server | `201 {id}`; `409` if the room runs that type; `503` at a limit |
+| `GET /bots?namespace_prefix=` | app server | the room's bots and their states |
+| `DELETE /bots/{id}` | app server | `202`; the bot stops at its next heartbeat |
+| `POST /bots/{id}/token` | bot | a bot token |
+| `POST /bots/{id}/heartbeat` `{state, …}` | bot | `{stop}` |
+
+The app server's routes require a launch token whose `bots` claim covers the
+prefix, judged with `SignedToken::covers`. `options` are the type's own
+(the recorder's `layout`, `composite`, `format`); the relay URL, the store and
+the type's limits are server settings, so a request cannot point a bot at
+another relay or bucket. Nothing is called from a browser, so the service
+answers no CORS.
+
+### Temporary apps
+A temporary app has no operator and no server: whoever holds one of its
+tokens is the app. The token mint, which holds the temporary app secret,
+becomes the app server of all of them, so `bots` handles a temporary app the
+same way as a registered one:
+
+- The token mint gains `POST /bots`, `GET /bots` and `DELETE /bots/{id}`,
+  which a page calls with its own token as `Authorization: Bearer`. The mint
+  verifies the token as `POST /tokens/refresh` does (signed by it, temporary,
+  not expired), signs a launch token whose `bots` claim is the page's
+  `publish` claim, and forwards the request.
+- What a temporary app may start is the token mint's policy: the bot types it
+  allows (`TOKEN_MINT_BOT_TYPES`) and a rate limit per client address, the
+  same fixed windows as `POST /tokens`.
+- Anyone can create a temporary app, so anyone can still start a bot in one.
+  What changes is that the decision and its limits sit in a server.
+
+### Configuration
+Bot types live in a file `bots` reads at startup: for each type, the
+launcher and its job, the grace period, the longest run, the token claims and
+the limits (`max_running` overall and per app, the opening hours the AI bots
+use today). A request for a type not in the file is `400`.
+
+## Consequences
+
+### Positive
+- The app operator decides when a room is recorded or gets a bot, and every
+  launch is authorised the same way.
+- A bot holds only a token scoped to its job, renewed for as long as it runs,
+  for a registered app as for a temporary one. No token is in a job's
+  arguments.
+- Bots are visible as bots, to the relay through their own token and to the
+  room through `bots/<type>`.
+- Limits, opening hours and usage are counted in one place.
+
+### Negative
+- A registered app needs a server to start bots. A page alone cannot.
+- `bots` reads every app's secret, as the VTS does, and signs with them, as
+  the console does. It becomes the third service trusted with them.
+- Verifying Google ID tokens is new code (JWK parsing and RS256 with
+  `aws-lc-rs`, already a dependency of `auth-token`).
+- An AI bot started as a Cloud Run Job waits for the execution to start,
+  about 12 s for the recorder, longer than a request to a warm service.
+- The pages change twice: the recorder's start moves from `recorder serve` to
+  the token mint, and the AI bot pages drop the held event stream.
+
+## Rollout
+1. `auth-token`: the `bots` claim.
+2. `bots` with the recorder as its only type; `recorder record` takes its bot
+   id, fetches its token and reports heartbeats; the recorder publishes
+   `bots/recorder`.
+3. Token mint `POST /bots`; the Meeting starts and stops the recorder through
+   it and shows REC from `bots/recorder`.
+4. Remove start and stop from `recorder serve`, with `--token` and
+   `--token-mint-url` of `recorder record`.
+5. The AI bots, one at a time: a `run` entry point that serves one room,
+   their presence under `<room>/bots/<type>`, the common end rule, and their
+   pages through the token mint. `moq-bot-rooms` goes away with the last one.
+
+## Alternatives Considered
+
+### Keep forwarding the page's token
+The current shape. It needs no app server, but leaves all four problems
+above.
+
+### Let the bot join with the launch token
+The bot would need no token from `bots`, but it cannot renew a token it did
+not sign, so the app server would sign long-lived tokens, and one token would
+both authorise a launch and admit to the relay.
+
+### Let the job read the registry and sign its own token
+It needs no renewal endpoint, but every job's service account reads every
+app's secret, and the bot types written in Python would carry the signing
+code too.
+
+### Hand the job a renewal key in its arguments or in the store
+It avoids verifying Google ID tokens, but the key sits where the token sits
+today (the execution's overrides) or needs the job to read `bots`' store.
+
+### Call `bots` from the page for temporary apps
+It leaves the token mint unchanged, but `bots` would keep a second,
+browser-facing way in, with CORS and token-mint refreshes, for one kind of
+app.
+
+## Open Questions
+- Whether a registered app may also opt in to starting bots from its pages'
+  own tokens, for apps without a server. Left out until an app asks.
