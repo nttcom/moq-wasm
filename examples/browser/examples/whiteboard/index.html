@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Whiteboard</title>
     <link rel="stylesheet" href="../media/media.css" />
-    <link rel="stylesheet" href="../media/setup-guide.css" />
     <link rel="stylesheet" href="./whiteboard.css" />
   </head>
   <body>
@@ -14,57 +13,41 @@
         <div>
           <span class="pill">Whiteboard</span>
           <h1>Whiteboard</h1>
-          <p>参加者が描いた線を MoQT のトラックで共有し、後から参加した人にもボードを再現する</p>
+          <p>描いた線を MoQT で共有し、途中参加した人にもボードを再現する</p>
         </div>
       </header>
 
-      <details class="card setup-toggle">
-        <summary><h2>使い方</h2></summary>
-        <ol class="usage">
-          <li>Relay を選んで「参加」を押します。同じルーム ID の URL を開いた人と同じボードに描けます</li>
-          <li>
-            各参加者は自分のトラックに操作を 1
-            オブジェクトずつ書きます。グループはボード全体のスナップショットから始まります
-          </li>
-          <li>
-            後から参加した人は、参加者全員のトラックを今のグループの先頭から読み (joining
-            FETCH)、届いたスナップショットと操作をすべてマージします。
-            参加者が退出すると、残った全員が新しいスナップショットから次のグループを始めるので、退出した人の線も残ります
-          </li>
-        </ol>
-      </details>
-
-      <div class="board-layout">
-        <section class="card stack">
-          <h2>Connection</h2>
+      <section class="card connection">
+        <div class="connection-relay">
           <div id="urlPresets"></div>
           <input type="url" id="url" aria-label="Relay URL" />
+        </div>
+        <div class="connection-room stack">
           <p class="hint">ルーム: <code id="room"></code></p>
           <div class="button-row">
             <button type="button" id="joinBtn" data-testid="whiteboard-join-button">参加</button>
             <button type="button" id="leaveBtn" data-testid="whiteboard-leave-button" disabled>退出</button>
           </div>
           <p class="hint" id="status" data-testid="whiteboard-status">未接続</p>
-          <h2>参加者</h2>
           <ul id="participants" class="participants" data-testid="whiteboard-participants"></ul>
-        </section>
+        </div>
+      </section>
 
-        <section class="card stack">
-          <div class="toolbar">
-            <button type="button" data-tool="pen" aria-pressed="true">ペン</button>
-            <button type="button" data-tool="eraser" aria-pressed="false" data-testid="whiteboard-eraser-button">
-              消しゴム
-            </button>
-            <label class="inline-field">色<input type="color" id="color" value="#0f766e" /></label>
-            <label class="inline-field">太さ<input type="range" id="width" min="1" max="24" value="4" /></label>
-            <button type="button" id="clearBtn" data-testid="whiteboard-clear-button" disabled>全消去</button>
-            <span class="hint stroke-count" id="strokeCount" data-testid="whiteboard-stroke-count" data-count="0"
-              >0 ストローク</span
-            >
-          </div>
-          <canvas id="board" class="board" data-testid="whiteboard-canvas"></canvas>
-        </section>
-      </div>
+      <section class="card stack board-card">
+        <div class="toolbar">
+          <button type="button" data-tool="pen" aria-pressed="true">ペン</button>
+          <button type="button" data-tool="eraser" aria-pressed="false" data-testid="whiteboard-eraser-button">
+            消しゴム
+          </button>
+          <label class="inline-field">色<input type="color" id="color" value="#0f766e" /></label>
+          <label class="inline-field">太さ<input type="range" id="width" min="1" max="24" value="4" /></label>
+          <button type="button" id="clearBtn" data-testid="whiteboard-clear-button" disabled>全消去</button>
+          <span class="hint stroke-count" id="strokeCount" data-testid="whiteboard-stroke-count" data-count="0"
+            >0 ストローク</span
+          >
+        </div>
+        <canvas id="board" class="board" data-testid="whiteboard-canvas"></canvas>
+      </section>
     </main>
 
     <script type="module" src="./main.ts"></script>
