@@ -8,7 +8,7 @@ import {
 } from 'moq-wasm/media'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
 import { pageRoomId } from '../../utils/roomId'
-import { botNamespace, startRoomBot } from '../../utils/roomBots'
+import { botNamespace, sameNamespace, startRoomBot } from '../../utils/roomBots'
 import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { randomName } from '../../utils/randomName'
@@ -161,8 +161,4 @@ function showTurn(turn: TranscriptTurn): void {
 
 function setBotStatus(joined: boolean): void {
   setStatus('bot-status', joined ? 'bot 接続済み' : 'bot 未接続', joined ? 'ok' : 'idle')
-}
-
-function sameNamespace(left: string[], right: string[]): boolean {
-  return left.join('/') === right.join('/')
 }

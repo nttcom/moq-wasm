@@ -27,6 +27,10 @@ export function botNamespace(room: string[], botType: string): string[] {
   return [...room, 'bots', botType]
 }
 
+export function sameNamespace(left: string[], right: string[]): boolean {
+  return left.join('/') === right.join('/')
+}
+
 /// The room's latest bot of `type`, or `undefined` if it never had one or the temporary-apps service
 /// has no `bots`.
 export async function latestBot(type: string, namespacePrefix: string): Promise<RoomBot | undefined> {

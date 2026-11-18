@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { latestBot, startBot, stopBot } from '../../../../utils/roomBots'
 import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
-import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
+import { TRANSCRIBER_AVAILABLE, TRANSCRIBER_BOT_TYPE } from '../session/trackNamespace'
 
-const TRANSCRIBER_BOT_TYPE = 'transcriber'
 /// How often a page that started the transcriber asks `bots` whether it failed before joining the room.
 const STARTING_POLL_INTERVAL_MS = 5_000
 
