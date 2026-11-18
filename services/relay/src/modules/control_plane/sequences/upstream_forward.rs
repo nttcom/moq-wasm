@@ -1,3 +1,5 @@
+use moqt::TransportSendError;
+
 use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     directory::InMemoryLocalPubSubDirectory,
@@ -34,6 +36,15 @@ impl UpstreamForward {
                 forward,
                 "upstream Forward State updated"
             ),
+            Err(error) if publisher_left(&error) => tracing::debug!(
+                %error,
+                publisher_session_id,
+                track_namespace = %track_key.track_namespace,
+                track_name = %track_key.track_name,
+                request_id = subscription.request_id(),
+                forward,
+                "publisher left before its upstream Forward State was updated"
+            ),
             Err(error) => tracing::warn!(
                 %error,
                 publisher_session_id,
@@ -45,6 +56,13 @@ impl UpstreamForward {
             ),
         }
     }
+}
+
+fn publisher_left(error: &anyhow::Error) -> bool {
+    matches!(
+        TransportSendError::in_chain(error),
+        Some(TransportSendError::ConnectionLost { .. } | TransportSendError::SessionError { .. })
+    )
 }
 
 #[cfg(test)]
@@ -286,5 +304,18 @@ mod tests {
         // Assert
         assert!(published_forward);
         assert!(!updated);
+    }
+
+    #[test]
+    fn only_a_closed_publisher_session_counts_as_the_publisher_leaving() {
+        // Arrange
+        let closed = anyhow::Error::new(moqt::TransportSendError::SessionError {
+            reason: "webtransport error: closed".to_string(),
+        });
+        let other = anyhow::anyhow!("session not found");
+
+        // Act / Assert
+        assert!(super::publisher_left(&closed));
+        assert!(!super::publisher_left(&other));
     }
 }
