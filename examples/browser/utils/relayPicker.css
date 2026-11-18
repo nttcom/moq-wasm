@@ -78,10 +78,6 @@
   gap: 10px;
 }
 
-.relay-picker-body[hidden] {
-  display: none;
-}
-
 .relay-picker-body > .relay-picker-tabs {
   justify-self: start;
 }
@@ -92,7 +88,7 @@
   padding: 1px 6px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--relay-picker-accent-color) 14%, transparent);
-  color: var(--relay-picker-accent-color);
+  color: color-mix(in srgb, var(--relay-picker-accent-color) 80%, currentColor);
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.06em;

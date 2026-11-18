@@ -1,9 +1,7 @@
-/* The layout and form elements of the examples written in plain HTML, on the tokens of utils/theme.css.
-   The React examples style themselves with Tailwind instead: unlayered element rules here would
-   override its utilities. */
-
-/* The components layer sits above theme.css's base layer, and every page or SDK stylesheet, being
-   unlayered, overrides it whatever its specificity. */
+/* The layout and form elements of the examples written in plain HTML, on the tokens of utils/theme.css;
+   the React examples style themselves with Tailwind instead. The components layer sits above
+   theme.css's base layer, and every page or SDK stylesheet, being unlayered, overrides it whatever its
+   specificity. */
 @layer components {
   /* ---------- Page layout ---------- */
 
@@ -621,10 +619,6 @@
   }
 
   @media (max-width: 960px) {
-    .workspace {
-      grid-template-columns: 1fr;
-    }
-
     /* On a narrow screen the columns become one list, and only the side's first card, which connects,
        moves above the main column. */
     .workspace {
@@ -771,14 +765,9 @@
 
   /* A checkbox beside its label. */
   .inline-toggle {
-    display: flex;
+    display: inline-flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px 16px;
-  }
-
-  .inline-toggle {
-    display: inline-flex;
     gap: 8px;
     margin: 0;
     font-weight: 500;
@@ -864,7 +853,7 @@
     height: 22px;
     border-radius: 50%;
     background: var(--accent-soft);
-    color: var(--accent);
+    color: var(--accent-hover);
     font-size: 0.72rem;
     font-weight: 700;
   }

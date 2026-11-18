@@ -229,10 +229,16 @@ body:not(:has(> .app-shell))::before {
 
 .app-breadcrumb li {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
-  min-width: 0;
   white-space: nowrap;
+}
+
+/* Only the current page's name shortens when the bar runs out of room. */
+.app-breadcrumb li:last-child {
+  flex: 0 1 auto;
+  min-width: 0;
 }
 
 .app-breadcrumb li + li::before {
@@ -369,6 +375,7 @@ body:not(:has(> .app-shell))::before {
 /* ---------- Access status (utils/accessBar.ts) ---------- */
 
 .access-bar {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -430,7 +437,6 @@ body:not(:has(> .app-shell))::before {
 }
 
 .access-info {
-  position: relative;
   display: grid;
   flex: none;
   place-items: center;
@@ -446,11 +452,12 @@ body:not(:has(> .app-shell))::before {
   color: var(--text);
 }
 
+/* The note hangs from the chip's right edge, which stays on screen at any width. */
 .access-info:hover::after,
 .access-info:focus::after {
   position: absolute;
-  top: calc(100% + 10px);
-  right: -8px;
+  top: calc(100% + 8px);
+  right: 0;
   z-index: 60;
   width: min(20rem, 80vw);
   padding: 10px 12px;
@@ -495,5 +502,16 @@ body:not(:has(> .app-shell))::before {
 @media (max-width: 480px) {
   .access-bar.temporary > span:not(.access-info, .access-dot) {
     display: none;
+  }
+}
+
+/* The page's own title names it, so the narrowest bar keeps only the way back and the chip. */
+@media (max-width: 360px) {
+  .app-breadcrumb {
+    display: none;
+  }
+
+  .app-shell-end {
+    max-width: none;
   }
 }

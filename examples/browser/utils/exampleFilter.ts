@@ -53,7 +53,14 @@ function apply(): void {
   empty.hidden = shown > 0
 }
 
-document.getElementById('example-count')!.textContent = String(document.querySelectorAll('.example').length)
+// The counts follow the cards, so adding an example updates them.
+const cards = [...document.querySelectorAll<HTMLElement>('.example')]
+document.getElementById('example-count')!.textContent = String(cards.length)
+for (const button of buttons) {
+  const filter = button.dataset.filter
+  const count = filter === 'all' ? cards.length : cards.filter((card) => card.dataset.category === filter).length
+  button.querySelector('.count')!.textContent = String(count)
+}
 
 // The recorder records only rooms with a token, so the public app has no recording to play. The mode
 // is read from <html>, set before the first paint, so the list works while a token is still being issued.

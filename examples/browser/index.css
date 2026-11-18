@@ -347,10 +347,6 @@
   scroll-margin-top: calc(var(--shell-height) + 64px);
 }
 
-.section[hidden] {
-  display: none;
-}
-
 .section-heading {
   display: flex;
   flex-wrap: wrap;
@@ -452,10 +448,6 @@
     border-color 0.18s ease,
     box-shadow 0.18s ease,
     transform 0.18s ease;
-}
-
-.example[hidden] {
-  display: none;
 }
 
 .example:hover {
@@ -634,10 +626,6 @@
   padding: 64px 16px;
   color: var(--text-muted);
   text-align: center;
-}
-
-.empty[hidden] {
-  display: none;
 }
 
 .empty button {
