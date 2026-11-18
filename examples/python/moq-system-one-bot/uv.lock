@@ -452,7 +452,7 @@ dev = [
 
 [[package]]
 name = "moq-wasm"
-version = "0.1.0"
+version = "0.0.1"
 source = { directory = "../../../crates/python" }
 
 [package.optional-dependencies]
