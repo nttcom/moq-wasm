@@ -1,8 +1,9 @@
-export type TranscriptTurn = { role: 'user' | 'assistant'; text: string }
+/// `turn` names an answer of the bot: its records carry the answer so far, each replacing the last.
+export type TranscriptTurn = { role: 'user' | 'assistant'; text: string; turn?: number }
 
 /// The turns of one object of the bot's transcript: draft-ietf-moq-msf-02 §8.2 makes each object a
-/// JSON array of records, each `{"T": milliseconds, "data": {"role", "text"}}`. Anything else is
-/// skipped.
+/// JSON array of records, each `{"T": milliseconds, "data": {"role", "text", "turn"?}}`. Anything
+/// else is skipped.
 export function transcriptTurns(payload: Uint8Array): TranscriptTurn[] {
   let records: unknown
   try {
@@ -14,11 +15,12 @@ export function transcriptTurns(payload: Uint8Array): TranscriptTurn[] {
     return []
   }
   return records.flatMap((record) => {
-    const data = (record as { data?: { role?: unknown; text?: unknown } } | null)?.data
+    const data = (record as { data?: { role?: unknown; text?: unknown; turn?: unknown } } | null)?.data
     const role = data?.role
     const text = data?.text
-    return (role === 'user' || role === 'assistant') && typeof text === 'string' && text.length > 0
-      ? [{ role, text }]
-      : []
+    if ((role !== 'user' && role !== 'assistant') || typeof text !== 'string' || text.length === 0) {
+      return []
+    }
+    return [Number.isInteger(data?.turn) ? { role, text, turn: data?.turn as number } : { role, text }]
   })
 }

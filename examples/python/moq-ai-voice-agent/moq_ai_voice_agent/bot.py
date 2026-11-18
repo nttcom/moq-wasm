@@ -75,7 +75,8 @@ def voice_pipeline(
     aggregators = LLMContextAggregatorPair(
         LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
     )
-    transcript.write_transcript(aggregators, timeline)
+    transcript.write_user_turns(aggregators.user(), timeline)
+    answer = transcript.AnswerTranscript(timeline)
     return Pipeline(
         [
             transport.input(),
@@ -84,7 +85,9 @@ def voice_pipeline(
             aggregators.user(),
             llm,
             tts,
+            answer.synthesized,
             transport.output(),
+            answer.spoken,
             aggregators.assistant(),
         ]
     )

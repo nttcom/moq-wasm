@@ -150,13 +150,21 @@ async function followTranscript(joined: MoqSession): Promise<void> {
   }
 }
 
+/// A record of an answer already shown replaces its text; any other record adds a bubble.
 function showTurn(turn: TranscriptTurn): void {
-  const item = document.createElement('li')
+  const key = turn.turn === undefined ? undefined : `${turn.role}-${turn.turn}`
+  const shown = key ? transcriptList.querySelector<HTMLLIElement>(`[data-turn="${key}"]`) : null
+  const item = shown ?? document.createElement('li')
   item.className = 'voice-agent-turn'
   item.dataset.role = turn.role
   item.dataset.testid = 'voice-agent-turn'
+  if (key) {
+    item.dataset.turn = key
+  }
   item.textContent = turn.text
-  transcriptList.append(item)
+  if (!shown) {
+    transcriptList.append(item)
+  }
   transcriptEmpty.hidden = true
   item.scrollIntoView({ block: 'nearest' })
 }

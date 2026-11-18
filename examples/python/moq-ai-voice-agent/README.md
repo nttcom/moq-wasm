@@ -61,7 +61,7 @@ GOOGLE_API_KEY=<API キー> uv run python -m moq_ai_voice_agent.bot --insecure
 | --- | --- | --- |
 | `anon/moq-ai-voice-agent/{room}/{user}` | `catalog`、`mic_audio` | ページが publish するマイク |
 | `anon/moq-ai-voice-agent/{room}/gemini/voice` | `catalog`、`audio` | bot の声 |
-| `anon/moq-ai-voice-agent/{room}/gemini/transcript` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"T": ms, "data": {"role": "user" か "assistant", "text"}}` |
+| `anon/moq-ai-voice-agent/{room}/gemini/transcript` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"T": ms, "data": {"role": "user" か "assistant", "text", "turn"}}`。bot の返答は、TTS が 1 文合成するごとにそこまでの全文を送る。同じ返答のレコードは同じ `turn`（最初のレコードの ms）を持つ |
 
 ## テスト
 
