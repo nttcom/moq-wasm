@@ -17,11 +17,6 @@
       </header>
       <div id="app">
         <form name="form" id="form" class="control-grid">
-          <section class="card stack full">
-            <h2>Console</h2>
-            <p class="hint">info / warn / error を表示します。</p>
-            <div id="logPanel" data-testid="publisher-log-panel"></div>
-          </section>
           <section class="card stack">
             <h2>Connection</h2>
             <div id="urlPresets"></div>
@@ -88,6 +83,11 @@
           <section class="card stack full">
             <h2>Preview</h2>
             <video id="video" autoplay muted inline data-testid="publisher-video"></video>
+          </section>
+          <section class="card stack full">
+            <h2>Console</h2>
+            <p class="hint">info / warn / error を表示します。</p>
+            <div id="logPanel" data-testid="publisher-log-panel"></div>
           </section>
         </form>
       </div>
