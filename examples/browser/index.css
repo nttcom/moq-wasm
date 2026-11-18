@@ -573,20 +573,16 @@
   container-type: inline-size;
 }
 
-/* On the dark theme the card and the page are as dark as the stage, so the thumbnails take a lighter
-   slate to stand apart from them. */
+/* On the dark theme the thumbnails sit a step darker than the card, a screen set into it. */
 :root:not([data-access-mode='public']) .example-thumb {
-  --th-bg: #232b36;
-  --th-panel: #2b3441;
-  --th-tile: #343e4c;
-  --th-figure: #56636f;
-  --th-line: #424d5b;
-  --th-text: #d5dbe2;
-  --th-dim: #8d98a6;
-  --th-raise: #2e3846;
-  --th-floor: #1d242d;
-  --th-glass: #3a4655;
-  --th-figure-on: #2f6b64;
+  --th-bg: #11161c;
+  --th-panel: #181e26;
+  --th-tile: #212832;
+  --th-figure: #46525f;
+  --th-line: #303a46;
+  --th-raise: #232b36;
+  --th-floor: #151a21;
+  --th-glass: #2c3542;
 }
 
 .example-thumb > * {
