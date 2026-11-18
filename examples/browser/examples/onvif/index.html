@@ -14,21 +14,14 @@
         <div>
           <span class="pill">ユースケース · ONVIF</span>
           <h1>PTZ カメラを MoQT で遠隔操作</h1>
-          <p>
-            ONVIF カメラの RTSP 映像を MoQ Gateway が MoQT
-            で配信し、ブラウザで視聴します。パン・チルト・ズームの操作は同じ namespace の command
-            トラックでカメラへ届きます。
-          </p>
+          <p>ONVIF カメラの映像を見ながら、パン・チルト・ズームを操作します。</p>
         </div>
       </header>
 
       <section id="connect-view">
         <div class="card stack connect-card">
           <div class="card-header">
-            <div>
-              <h2>Connect</h2>
-              <div class="muted">カメラの映像を配信している Relay を選びます</div>
-            </div>
+            <h2>Connect</h2>
             <button
               id="settings-btn"
               class="secondary icon-btn"
@@ -38,12 +31,15 @@
               title="Advanced settings"
               aria-label="Advanced settings"
             >
-              &#9881;
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-settings" /></svg>
             </button>
           </div>
           <div id="relay-picker"></div>
           <div id="connect-error" class="connect-error" role="alert" hidden></div>
-          <button id="connect-btn" type="button">Connect</button>
+          <button id="connect-btn" type="button">
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plug" /></svg
+            ><span id="connect-label">Connect</span>
+          </button>
         </div>
       </section>
 
@@ -57,7 +53,9 @@
               </div>
               <div class="live-actions">
                 <div class="status" id="status"><span></span>disconnected</div>
-                <button id="disconnect-btn" class="secondary" type="button">Disconnect</button>
+                <button id="disconnect-btn" class="secondary" type="button">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-unplug" /></svg>Disconnect
+                </button>
               </div>
             </div>
             <div id="stage"></div>
@@ -66,7 +64,17 @@
 
           <div class="card stack">
             <div class="card-header">
-              <h2>PTZ</h2>
+              <h2>
+                PTZ
+                <span
+                  class="tip"
+                  tabindex="0"
+                  role="img"
+                  aria-label="Controller: 押している間だけ動き、離すと止まります。Commands: 各コマンドを 1 つの JSON として ONVIF bridge へ送ります"
+                  data-tip="Controller: 押している間だけ動き、離すと止まります。Commands: 各コマンドを 1 つの JSON として ONVIF bridge へ送ります"
+                  ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                ></span>
+              </h2>
               <div class="status" id="command-state"><span></span>waiting for camera</div>
             </div>
             <div id="ptz-tabs" class="segmented segmented-wide" role="tablist" aria-label="PTZ の操作方法">
@@ -88,10 +96,8 @@
                     &#9660;
                   </button>
                 </div>
-                <div class="muted pad-hint">押している間だけ動き、離すと止まります</div>
               </div>
               <div id="ptz-panel-commands" class="stack" role="tabpanel" hidden>
-                <div class="muted">各コマンドは 1 つの JSON オブジェクトとして ONVIF bridge へ送られます</div>
                 <div id="command-grid" class="commands"></div>
               </div>
             </fieldset>
@@ -101,7 +107,14 @@
         <details class="card setup-toggle">
           <summary>
             <h2>映像送信の開始方法</h2>
-            <span class="muted">映像が表示されないときは、別ターミナルで ONVIF カメラの映像を配信します。</span>
+            <span
+              class="tip"
+              tabindex="0"
+              role="img"
+              aria-label="映像が出ないときは、別ターミナルで ONVIF カメラの映像を配信します。ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定します"
+              data-tip="映像が出ないときは、別ターミナルで ONVIF カメラの映像を配信します。ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定します"
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+            ></span>
           </summary>
           <div class="setup-split">
             <div class="setup-panel">
@@ -109,10 +122,8 @@
                 <div class="command-title">クラウドRelay利用</div>
                 <code class="setup-relay-url">https://relay-1.moqt.research.skyway.io:443</code>
               </div>
-              <div class="muted"><code>make relay</code> は不要です。トークンなしで配信できます。</div>
               <pre><code>RELAY=https://relay-1.moqt.research.skyway.io:443
 
-# ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定しておく
 ONVIF_MOQT_URL=$RELAY make onvif
 make browser</code></pre>
             </div>
@@ -121,16 +132,11 @@ make browser</code></pre>
                 <div class="command-title">ローカルRelay利用</div>
                 <code class="setup-relay-url">https://127.0.0.1:4433</code>
               </div>
-              <div class="muted">
-                <code>make relay</code> で relay を起動します。自己署名証明書なので Chrome は
-                <code>make chrome</code> で開きます。
-              </div>
               <pre><code>make relay
 
-# ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD は .env に設定しておく
 make onvif
 make browser
-make chrome</code></pre>
+make chrome  # 自己署名証明書を許可して開く</code></pre>
             </div>
           </div>
         </details>
@@ -140,12 +146,11 @@ make chrome</code></pre>
     <dialog id="settings-modal" class="modal" closedby="any">
       <div class="modal-content">
         <div class="modal-header">
-          <div>
-            <h2>Advanced Settings</h2>
-            <div class="muted">namespace と command トラックを変更します</div>
-          </div>
+          <h2>Advanced Settings</h2>
           <form method="dialog">
-            <button class="secondary">閉じる</button>
+            <button class="secondary">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-x" /></svg>閉じる
+            </button>
           </form>
         </div>
         <label>

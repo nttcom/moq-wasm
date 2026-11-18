@@ -36,9 +36,16 @@
               <div class="space-y-2">
                 <span class="badge accent">Meeting の録画</span>
                 <h2 class="text-2xl font-bold tracking-tight">録画を開く</h2>
-                <p class="player-muted text-sm leading-relaxed">
-                  合成せずに MoQ のまま保存した会議を、そのときの画面のまま再生します。Recorder が録画を FETCH で Relay
-                  に再配信します。
+                <p class="player-muted text-sm">
+                  会議をその時の画面のまま再生
+                  <span
+                    class="tip"
+                    tabindex="0"
+                    role="img"
+                    aria-label="合成せず MoQ のまま保存した会議を、Recorder が FETCH で Relay に再配信します"
+                    data-tip="合成せず MoQ のまま保存した会議を、Recorder が FETCH で Relay に再配信します"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                  ></span>
                 </p>
               </div>
               <label class="field-label">
@@ -58,7 +65,9 @@
                 <input id="token" type="password" autocomplete="off" class="field" />
               </label>
               <p id="open-error" class="player-error hidden text-sm"></p>
-              <button id="load" class="primary-button w-full">再生する</button>
+              <button id="load" class="primary-button w-full">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>再生する
+              </button>
             </form>
           </div>
         </main>

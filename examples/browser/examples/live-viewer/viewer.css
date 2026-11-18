@@ -376,6 +376,12 @@
   align-items: stretch;
 }
 
+.field-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .publish-row > label:first-child {
   display: grid;
   gap: 6px;

@@ -191,10 +191,6 @@
   grid-column: 1;
 }
 
-.pad-hint {
-  text-align: center;
-}
-
 button.pad-btn {
   height: 100%;
   padding: 0;

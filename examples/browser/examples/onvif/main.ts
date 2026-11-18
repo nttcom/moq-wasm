@@ -5,6 +5,7 @@ import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
 import { LOAD_BALANCED_RELAY_PRESET, relayUrlFromQuery } from '../../utils/relayPresets'
 import { createRelayPicker } from '../../utils/relayPicker'
+import { icon } from '../../utils/icon'
 import { element, getErrorMessage, parseTrackNamespace } from '../../utils/page'
 import 'moq-wasm/media/player.css'
 import 'moq-wasm/media/controls.css'
@@ -173,7 +174,7 @@ function buildCommandUI(): void {
 
     const button = document.createElement('button')
     button.type = 'button'
-    button.textContent = 'Send'
+    button.append(icon('send'), 'Send')
     button.addEventListener('click', () => sendCommand(command.type, row))
 
     header.append(title, button)
@@ -308,9 +309,10 @@ async function disconnect(): Promise<void> {
 }
 
 const connectButton = element<HTMLButtonElement>('connect-btn')
+const connectLabel = element('connect-label')
 connectButton.addEventListener('click', async () => {
   connectButton.disabled = true
-  connectButton.textContent = 'Connecting…'
+  connectLabel.textContent = 'Connecting…'
   try {
     await connect()
   } catch (err) {
@@ -323,7 +325,7 @@ connectButton.addEventListener('click', async () => {
     }
   } finally {
     connectButton.disabled = false
-    connectButton.textContent = 'Connect'
+    connectLabel.textContent = 'Connect'
   }
 })
 
