@@ -13,10 +13,7 @@
         <div>
           <span class="pill">低レベル API · Media</span>
           <h1>映像と音声を MSF ブロードキャストで送受信</h1>
-          <p>
-            Publisher がカメラとマイクを MSF の catalog と LOC トラックとして Publish し、Subscriber が catalog
-            からトラックを選んで再生します。2 つのタブで開き、同じ Track Namespace を使ってください。
-          </p>
+          <p>2 つのタブで Publisher と Subscriber を開きます</p>
         </div>
       </header>
       <div>
@@ -26,33 +23,34 @@
               ><svg><use href="/icons.svg#icon-video" /></svg
             ></span>
             <h2>Publisher</h2>
-            <p>カメラ・マイク・画面共有を <code>createBroadcast()</code> で Publish します。</p>
-            <ul>
-              <li>catalog / video / audio / video_timeline / chat を Publish</li>
-              <li>映像のミュートと画面共有への切り替え</li>
-            </ul>
+            <p>カメラ・マイク・画面共有を Publish</p>
           </a>
           <a class="card link-card choice" href="./subscriber/index.html">
             <span class="choice-icon" aria-hidden="true"
               ><svg><use href="/icons.svg#icon-monitor" /></svg
             ></span>
             <h2>Subscriber</h2>
-            <p>catalog を Subscribe してトラックを選び、<code>LivePlayer</code> で再生します。</p>
-            <ul>
-              <li>catalog から映像・音声トラックを選択</li>
-              <li>受信状況と再生統計を表示</li>
-            </ul>
+            <p>catalog からトラックを選んで再生</p>
           </a>
         </div>
         <ol class="steps" aria-label="使い方">
           <li>
-            <span><b>Publisher</b> で Relay に接続し、getUserMedia のあと Publish します</span>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg> <b>Publisher</b> で
+              Publish</span
+            >
           </li>
           <li>
-            <span>表示された <b>Track Namespace</b> をコピーします</span>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg>
+              <b>Track Namespace</b> をコピー</span
+            >
           </li>
           <li>
-            <span><b>Subscriber</b> に貼り付け、catalog とトラックを Subscribe します</span>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg> <b>Subscriber</b> で
+              Subscribe</span
+            >
           </li>
         </ol>
       </div>

@@ -13,6 +13,11 @@
   line-height: 1.7;
 }
 
+.usage .icon {
+  margin-right: 6px;
+  color: var(--accent);
+}
+
 .usage li::marker {
   color: var(--accent);
   font-weight: 700;

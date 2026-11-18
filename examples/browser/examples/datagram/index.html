@@ -15,10 +15,7 @@
         <div>
           <span class="pill">低レベル API · Datagram</span>
           <h1>Stream と Datagram の届き方を比べる</h1>
-          <p>
-            同じカーソル位置と送信時刻を subgroup ストリームと datagram の 2 トラックで流し、Relay
-            から届いた位置と遅延を左右に並べます。パケットロスを入れると、再送の有無による違いが見えます。
-          </p>
+          <p>同じカーソルを subgroup ストリームと datagram で流して比べる</p>
         </div>
       </header>
 
@@ -26,25 +23,40 @@
         <summary><h2>使い方</h2></summary>
         <ol class="usage">
           <li>
-            Relay を選んで「開始」を押します。このページが 2 トラックを publish し、relay 経由で自分で subscribe します
-          </li>
-          <li>パッドの上でマウスを動かします。「自動で動かす」を有効にすると円を描いて動きます</li>
-          <li>
-            輪がこのページの今のカーソル、塗りの点が relay
-            から届いた位置です。遅延は送信時刻と受信時刻の差で、同じページの時計なので片道の時間です
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>「開始」で 2 トラックを
+            Publish / Subscribe
           </li>
           <li>
-            差を見るにはパケットロスを入れます。macOS は Network Link Conditioner、Linux は
-            <code>sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms</code>
-            を使います。ストリームは再送を待って止まり、datagram は欠けるだけで遅れません
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-crosshair" /></svg
+            >パッドの上でカーソルを動かす
+          </li>
+          <li>
+            <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-zap" /></svg>パケットロスを入れて比べる
+            <span
+              class="tip"
+              tabindex="0"
+              role="img"
+              aria-label="macOS は Network Link Conditioner、Linux は sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms。ストリームは再送を待って止まり、datagram は欠けるだけで遅れません"
+              data-tip="macOS は Network Link Conditioner、Linux は sudo tc qdisc add dev &lt;dev&gt; root netem loss 5% delay 30ms。ストリームは再送を待って止まり、datagram は欠けるだけで遅れません"
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+            ></span>
           </li>
         </ol>
       </details>
 
       <section class="card">
         <div class="card-head">
-          <h2>接続</h2>
-          <span class="hint">このページが 2 トラックを Publish し、Relay 経由で自分で Subscribe します</span>
+          <h2>
+            接続
+            <span
+              class="tip"
+              tabindex="0"
+              role="img"
+              aria-label="このページが 2 トラックを Publish し、Relay 経由で自分で Subscribe します"
+              data-tip="このページが 2 トラックを Publish し、Relay 経由で自分で Subscribe します"
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+            ></span>
+          </h2>
         </div>
         <div class="controls">
           <div class="relay">
@@ -53,9 +65,11 @@
           </div>
           <div class="actions">
             <div class="button-row">
-              <button type="button" id="startBtn" data-testid="datagram-start-button">開始</button>
+              <button type="button" id="startBtn" data-testid="datagram-start-button">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>開始
+              </button>
               <button type="button" id="stopBtn" class="danger" data-testid="datagram-stop-button" disabled>
-                停止
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-square" /></svg>停止
               </button>
             </div>
             <label class="inline-toggle"><input type="checkbox" id="autoMove" checked />自動で動かす</label>

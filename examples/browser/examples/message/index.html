@@ -56,11 +56,7 @@
         <div>
           <span class="pill">低レベル API · Message</span>
           <h1>MoQT の制御メッセージを 1 つずつ送る</h1>
-          <p>
-            <code>MoqSession</code> のリクエストを画面から 1 つずつ送り、Relay
-            の応答と受信したオブジェクトを確かめます。2 つのタブで開くと、片方で Publish したトラックをもう片方で
-            Subscribe できます。
-          </p>
+          <p>2 つのタブで開き、片方の Publish をもう片方で Subscribe</p>
         </div>
       </header>
 
@@ -70,34 +66,59 @@
             <section class="card">
               <div class="card-head">
                 <h2>Namespace</h2>
-                <span class="hint">Track Namespace の告知と購読</span>
               </div>
               <div class="message-grid">
                 <section class="panel">
                   <div class="panel-head">
-                    <h3>announce</h3>
-                    <p class="hint">PUBLISH_NAMESPACE。PUBLISH_NAMESPACE_DONE で取り下げます</p>
+                    <h3>
+                      announce
+                      <span
+                        class="tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="PUBLISH_NAMESPACE を送り、Withdraw で PUBLISH_NAMESPACE_DONE を送ります"
+                        data-tip="PUBLISH_NAMESPACE を送り、Withdraw で PUBLISH_NAMESPACE_DONE を送ります"
+                        ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                      ></span>
+                    </h3>
                   </div>
                   <label class="stacked"
                     >Track Namespace <input type="text" id="announce-namespace" value="anon/vc/aa"
                   /></label>
                   <div class="button-row action-row">
-                    <button type="button" id="announceBtn">Announce</button>
-                    <button type="button" id="withdrawBtn">Withdraw</button>
+                    <button type="button" id="announceBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg>Announce
+                    </button>
+                    <button type="button" id="withdrawBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-x" /></svg>Withdraw
+                    </button>
                   </div>
                 </section>
 
                 <section class="panel">
                   <div class="panel-head">
-                    <h3>watchNamespaces</h3>
-                    <p class="hint">SUBSCRIBE_NAMESPACE。UNSUBSCRIBE_NAMESPACE で止めます</p>
+                    <h3>
+                      watchNamespaces
+                      <span
+                        class="tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="SUBSCRIBE_NAMESPACE を送り、Stop で UNSUBSCRIBE_NAMESPACE を送ります"
+                        data-tip="SUBSCRIBE_NAMESPACE を送り、Stop で UNSUBSCRIBE_NAMESPACE を送ります"
+                        ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                      ></span>
+                    </h3>
                   </div>
                   <label class="stacked"
                     >Track Namespace Prefix <input type="text" id="watch-prefix" value="anon/vc"
                   /></label>
                   <div class="button-row action-row">
-                    <button type="button" id="watchBtn">Watch</button>
-                    <button type="button" id="unwatchBtn">Stop</button>
+                    <button type="button" id="watchBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-eye" /></svg>Watch
+                    </button>
+                    <button type="button" id="unwatchBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-square" /></svg>Stop
+                    </button>
                   </div>
                 </section>
               </div>
@@ -106,14 +127,20 @@
             <section class="card">
               <div class="card-head">
                 <h2>Publish</h2>
-                <span class="hint">トラックを用意してオブジェクトを書き込む</span>
               </div>
               <section class="panel">
                 <div class="panel-head">
-                  <h3>publishTrack</h3>
-                  <p class="hint">
-                    トラックへの SUBSCRIBE / FETCH / TRACK_STATUS に応答します。チェックすると PUBLISH も送ります
-                  </p>
+                  <h3>
+                    publishTrack
+                    <span
+                      class="tip"
+                      tabindex="0"
+                      role="img"
+                      aria-label="トラックへの SUBSCRIBE / FETCH / TRACK_STATUS に応答します。チェックすると PUBLISH も送ります"
+                      data-tip="トラックへの SUBSCRIBE / FETCH / TRACK_STATUS に応答します。チェックすると PUBLISH も送ります"
+                      ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                    ></span>
+                  </h3>
                 </div>
                 <div class="field-grid">
                   <label>Track Namespace <input type="text" id="publish-namespace" value="anon/vc/aa" /></label>
@@ -121,7 +148,9 @@
                   <label>Retention (ms) <input type="text" id="publish-retention" value="60000" /></label>
                 </div>
                 <div class="button-row action-row">
-                  <button type="button" id="publishTrackBtn">Publish track</button>
+                  <button type="button" id="publishTrackBtn">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-upload" /></svg>Publish track
+                  </button>
                   <label class="inline-toggle"><input type="checkbox" id="publish-publish" /> Send PUBLISH</label>
                 </div>
                 <hr class="divider" />
@@ -129,8 +158,12 @@
                   <label>Payload <input type="text" id="write-payload" value="hello" /></label>
                 </div>
                 <div class="button-row action-row">
-                  <button type="button" id="writeBtn">write</button>
-                  <button type="button" id="writeGroupBtn">writeGroup</button>
+                  <button type="button" id="writeBtn">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-pencil" /></svg>write
+                  </button>
+                  <button type="button" id="writeGroupBtn">
+                    <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plus" /></svg>writeGroup
+                  </button>
                   <label class="inline-toggle"><input type="checkbox" id="write-new-group" checked /> New group</label>
                 </div>
               </section>
@@ -139,13 +172,21 @@
             <section class="card">
               <div class="card-head">
                 <h2>Subscribe</h2>
-                <span class="hint">トラックを購読・取得する</span>
               </div>
               <div class="message-grid">
                 <section class="panel wide">
                   <div class="panel-head">
-                    <h3>subscribe</h3>
-                    <p class="hint">SUBSCRIBE。forward は SUBSCRIBE_UPDATE で切り替え、UNSUBSCRIBE で終えます</p>
+                    <h3>
+                      subscribe
+                      <span
+                        class="tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="Set forward は SUBSCRIBE_UPDATE、Unsubscribe は UNSUBSCRIBE を送ります"
+                        data-tip="Set forward は SUBSCRIBE_UPDATE、Unsubscribe は UNSUBSCRIBE を送ります"
+                        ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                      ></span>
+                    </h3>
                   </div>
                   <div class="field-grid">
                     <label>Track Namespace <input type="text" id="subscribe-namespace" value="anon/vc/aa" /></label>
@@ -160,9 +201,15 @@
                     <label>Subscriber Priority <input type="text" id="subscribe-priority" value="128" /></label>
                   </div>
                   <div class="button-row action-row">
-                    <button type="button" id="subscribeBtn">Subscribe</button>
-                    <button type="button" id="setForwardBtn">Set forward</button>
-                    <button type="button" id="unsubscribeBtn">Unsubscribe</button>
+                    <button type="button" id="subscribeBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>Subscribe
+                    </button>
+                    <button type="button" id="setForwardBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-refresh-cw" /></svg>Set forward
+                    </button>
+                    <button type="button" id="unsubscribeBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-square" /></svg>Unsubscribe
+                    </button>
                     <label class="inline-toggle"
                       ><input type="checkbox" id="subscribe-forward" checked /> Forward</label
                     >
@@ -171,8 +218,17 @@
 
                 <section class="panel wide">
                   <div class="panel-head">
-                    <h3>fetch</h3>
-                    <p class="hint">FETCH。End Object 0 は End Group 全体を指します</p>
+                    <h3>
+                      fetch
+                      <span
+                        class="tip"
+                        tabindex="0"
+                        role="img"
+                        aria-label="End Object 0 は End Group 全体を指します"
+                        data-tip="End Object 0 は End Group 全体を指します"
+                        ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                      ></span>
+                    </h3>
                   </div>
                   <div class="field-grid">
                     <label>Track Namespace <input type="text" id="fetch-namespace" value="anon/vc/aa" /></label>
@@ -185,21 +241,24 @@
                     <label>End Object <input type="text" id="fetch-end-object" value="0" /></label>
                   </div>
                   <div class="button-row action-row">
-                    <button type="button" id="fetchBtn">Fetch</button>
+                    <button type="button" id="fetchBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-download" /></svg>Fetch
+                    </button>
                   </div>
                 </section>
 
                 <section class="panel wide">
                   <div class="panel-head">
                     <h3>trackStatus</h3>
-                    <p class="hint">TRACK_STATUS</p>
                   </div>
                   <div class="field-grid">
                     <label>Track Namespace <input type="text" id="track-status-namespace" value="anon/vc/aa" /></label>
                     <label>Track Name <input type="text" id="track-status-track" value="track" /></label>
                   </div>
                   <div class="button-row action-row">
-                    <button type="button" id="trackStatusBtn">Track status</button>
+                    <button type="button" id="trackStatusBtn">
+                      <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-search" /></svg>Track status
+                    </button>
                   </div>
                 </section>
               </div>
@@ -212,8 +271,12 @@
               <div id="urlPresets"></div>
               <input type="url" name="url" id="url" aria-label="Relay URL" />
               <div class="button-row">
-                <button type="button" id="connectBtn">Connect</button>
-                <button type="button" id="closeBtn">Close</button>
+                <button type="button" id="connectBtn">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plug" /></svg>Connect
+                </button>
+                <button type="button" id="closeBtn">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-unplug" /></svg>Close
+                </button>
               </div>
             </section>
 
@@ -230,7 +293,6 @@
             <section class="card stack">
               <div class="card-head">
                 <h2>コンソール</h2>
-                <span class="hint">info / warn / error</span>
               </div>
               <div id="logPanel"></div>
             </section>

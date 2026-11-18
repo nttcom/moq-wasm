@@ -14,10 +14,7 @@
         <div>
           <span class="pill">低レベル API · Media CMAF Subscriber</span>
           <h1>CMAF の映像を MSE で再生</h1>
-          <p>
-            <code>LivePlayer</code> がブロードキャストの CMAF トラックを Media Source Extensions
-            に流して再生します。Publisher と同じ Track Namespace を入力してください。
-          </p>
+          <p>CMAF の映像を Media Source Extensions で再生</p>
         </div>
       </header>
       <div id="app">
@@ -26,13 +23,12 @@
             <section class="card">
               <div class="card-head">
                 <h2>再生</h2>
-                <span class="hint">受信中の映像と再生統計</span>
               </div>
               <div
                 id="stage"
                 class="stage"
                 data-testid="subscriber-stage"
-                data-placeholder="Subscribe すると映像がここに表示されます"
+                data-placeholder="Subscribe するとここに映ります"
               ></div>
               <p class="playback-stats" id="playout-stats" data-testid="subscriber-playout-stats">Waiting for media</p>
             </section>
@@ -40,7 +36,6 @@
             <section class="card stack">
               <div class="card-head">
                 <h2>購読</h2>
-                <span class="hint">catalog を読み、CMAF の映像を MSE で再生します</span>
               </div>
               <label
                 >Track Namespace
@@ -54,7 +49,7 @@
               </label>
               <div class="button-row">
                 <button type="button" id="sendSubscribeBtn" data-testid="subscriber-track-subscribe-button">
-                  Subscribe
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg>Subscribe
                 </button>
               </div>
             </section>
@@ -62,7 +57,6 @@
             <section class="card">
               <div class="card-head">
                 <h2>コンソール</h2>
-                <span class="hint">info / warn / error を表示します</span>
               </div>
               <div id="logPanel" data-testid="subscriber-log-panel"></div>
             </section>
@@ -74,8 +68,12 @@
               <div id="urlPresets"></div>
               <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="subscriber-url-input" />
               <div class="button-row">
-                <button type="button" id="connectBtn" data-testid="subscriber-connect-button">Connect</button>
-                <button type="button" id="closeBtn">Close</button>
+                <button type="button" id="connectBtn" data-testid="subscriber-connect-button">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plug" /></svg>Connect
+                </button>
+                <button type="button" id="closeBtn">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-unplug" /></svg>Close
+                </button>
               </div>
             </section>
 
@@ -83,7 +81,9 @@
               <h2>ステータス</h2>
               <div class="status-list">
                 <div class="status-item">
-                  <span class="status-label">接続</span>
+                  <span class="status-label"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plug" /></svg> 接続</span
+                  >
                   <span
                     id="subscriber-connection-status"
                     class="status-value"
@@ -92,13 +92,17 @@
                   >
                 </div>
                 <div class="status-item">
-                  <span class="status-label">Catalog</span>
+                  <span class="status-label"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-list" /></svg> Catalog</span
+                  >
                   <span id="catalog-track-status" class="status-value" data-testid="subscriber-catalog-status"
                     >Catalog not loaded yet</span
                   >
                 </div>
                 <div class="status-item">
-                  <span class="status-label">再生</span>
+                  <span class="status-label"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg> 再生</span
+                  >
                   <span id="subscriber-playback-status" class="status-value" data-testid="subscriber-playback-status"
                     >Playback idle</span
                   >

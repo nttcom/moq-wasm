@@ -13,10 +13,7 @@
         <div>
           <span class="pill">低レベル API · Media CMAF</span>
           <h1>CMAF トラックを MSE で再生</h1>
-          <p>
-            LOC トラックと並べて CMAF パッケージのトラックを Publish し、Subscriber は Media Source Extensions
-            で再生します。2 つのタブで開き、同じ Track Namespace を使ってください。
-          </p>
+          <p>2 つのタブで Publisher と Subscriber を開きます</p>
         </div>
       </header>
       <div>
@@ -26,33 +23,34 @@
               ><svg><use href="/icons.svg#icon-film" /></svg
             ></span>
             <h2>Publisher</h2>
-            <p>カメラを <code>createBroadcast()</code> の <code>cmaf: true</code> で Publish します。</p>
-            <ul>
-              <li>camera と camera_cmaf を同じ catalog に並べる</li>
-              <li>キーフレーム間隔を 0.5 / 1 / 2 秒から選択</li>
-            </ul>
+            <p>LOC と CMAF のトラックを並べて Publish</p>
           </a>
           <a class="card link-card choice" href="./subscriber/index.html">
             <span class="choice-icon" aria-hidden="true"
               ><svg><use href="/icons.svg#icon-monitor" /></svg
             ></span>
             <h2>Subscriber</h2>
-            <p>CMAF の映像を <code>LivePlayer</code> で MSE に流して再生します。</p>
-            <ul>
-              <li>catalog の CMAF トラックを Subscribe</li>
-              <li>再生統計を表示</li>
-            </ul>
+            <p>CMAF の映像を MSE で再生</p>
           </a>
         </div>
         <ol class="steps" aria-label="使い方">
           <li>
-            <span><b>Publisher</b> で Relay に接続し、getUserMedia のあと Publish します</span>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg> <b>Publisher</b> で
+              Publish</span
+            >
           </li>
           <li>
-            <span>表示された <b>Track Namespace</b> をコピーします</span>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg>
+              <b>Track Namespace</b> をコピー</span
+            >
           </li>
           <li>
-            <span><b>Subscriber</b> に貼り付けて Subscribe します</span>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg> <b>Subscriber</b> で
+              Subscribe</span
+            >
           </li>
         </ol>
       </div>

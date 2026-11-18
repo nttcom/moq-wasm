@@ -13,10 +13,7 @@
         <div>
           <span class="pill">低レベル API · Media CMAF Publisher</span>
           <h1>カメラを CMAF トラック付きで配信</h1>
-          <p>
-            <code>createBroadcast()</code> に <code>cmaf: true</code> を渡し、LOC トラックと並べて CMAF
-            パッケージのトラックを Publish します。Relay に接続してから映像を取得し、Publish を押してください。
-          </p>
+          <p><code>cmaf: true</code> で LOC と CMAF のトラックを並べて Publish</p>
         </div>
       </header>
       <div id="app">
@@ -25,21 +22,25 @@
             <section class="card">
               <div class="card-head">
                 <h2>プレビュー</h2>
-                <span class="hint">送信中の映像</span>
               </div>
-              <div
-                class="stage"
-                id="preview-stage"
-                data-placeholder="getUserMedia でカメラを取得するとプレビューが表示されます"
-              >
+              <div class="stage" id="preview-stage" data-placeholder="カメラを取得するとここに映ります">
                 <video id="video" autoplay muted playsinline></video>
               </div>
             </section>
 
             <section class="card stack">
               <div class="card-head">
-                <h2>配信設定</h2>
-                <span class="hint">catalog, camera, camera_cmaf, camera_audio, camera_timeline を Publish します</span>
+                <h2>
+                  配信設定
+                  <span
+                    class="tip"
+                    tabindex="0"
+                    role="img"
+                    aria-label="catalog / camera / camera_cmaf / camera_audio / camera_timeline を Publish します"
+                    data-tip="catalog / camera / camera_cmaf / camera_audio / camera_timeline を Publish します"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+                  ></span>
+                </h2>
               </div>
               <div class="field-grid">
                 <label
@@ -68,10 +69,10 @@
                   id="startGetUserMediaBtn"
                   data-testid="publisher-get-user-media-button"
                 >
-                  getUserMedia
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-camera" /></svg>getUserMedia
                 </button>
                 <button type="button" id="publishBtn" class="primary" data-testid="publisher-send-button">
-                  Publish
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg>Publish
                 </button>
               </div>
             </section>
@@ -79,7 +80,6 @@
             <section class="card">
               <div class="card-head">
                 <h2>コンソール</h2>
-                <span class="hint">info / warn / error を表示します</span>
               </div>
               <div id="logPanel" data-testid="publisher-log-panel"></div>
             </section>
@@ -91,8 +91,12 @@
               <div id="urlPresets"></div>
               <input type="url" name="url" id="url" aria-label="Relay URL" data-testid="publisher-url-input" />
               <div class="button-row">
-                <button type="button" id="connectBtn" data-testid="publisher-connect-button">Connect</button>
-                <button type="button" id="closeBtn" data-testid="publisher-close-button">Close</button>
+                <button type="button" id="connectBtn" data-testid="publisher-connect-button">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plug" /></svg>Connect
+                </button>
+                <button type="button" id="closeBtn" data-testid="publisher-close-button">
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-unplug" /></svg>Close
+                </button>
               </div>
             </section>
 
@@ -100,19 +104,25 @@
               <h2>ステータス</h2>
               <div class="status-list">
                 <div class="status-item">
-                  <span class="status-label">接続</span>
+                  <span class="status-label"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plug" /></svg> 接続</span
+                  >
                   <span id="publisher-connection-status" class="status-value" data-testid="publisher-connection-status"
                     >Not connected</span
                   >
                 </div>
                 <div class="status-item">
-                  <span class="status-label">キャプチャ</span>
+                  <span class="status-label"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-camera" /></svg> キャプチャ</span
+                  >
                   <span id="publisher-capture-status" class="status-value" data-testid="publisher-capture-status"
                     >Capture idle</span
                   >
                 </div>
                 <div class="status-item">
-                  <span class="status-label">Publish</span>
+                  <span class="status-label"
+                    ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg> Publish</span
+                  >
                   <span id="publisher-send-status" class="status-value" data-testid="publisher-send-status"
                     >Not publishing</span
                   >
