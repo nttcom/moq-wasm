@@ -54,7 +54,7 @@
   max-width: none;
 }
 
-/* The last column even when a question kind hides the input before it. */
+/* Stays in the last column even when a question kind hides the input before it. */
 .question-row > button {
   grid-column: -2;
 }

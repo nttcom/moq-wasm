@@ -108,7 +108,7 @@
   background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
 }
 
-/* The SDK's controls size their own buttons; drop the page defaults they leave unset. */
+/* The SDK's controls do not set min-height or font-weight, so the page's button defaults would apply. */
 .video-card #stage :is(button, select, input) {
   min-height: 0;
   font-weight: 400;

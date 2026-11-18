@@ -123,7 +123,7 @@
   font-weight: 500;
 }
 
-/* A node that runs in the cloud, against one on the reader's machine. */
+/* A node in the cloud, as opposed to one on the reader's machine. */
 .setup-node-cloud {
   border-color: var(--accent-border);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));

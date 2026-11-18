@@ -320,7 +320,6 @@
     color: var(--danger);
   }
 
-  /* Adds a row to a list. */
   .add-row {
     justify-self: start;
     width: fit-content;

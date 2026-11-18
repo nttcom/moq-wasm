@@ -26,7 +26,6 @@ startPageTelemetry(
 )
 
 function renderPlayer(): void {
-  // CMAF plays through MSE without onLiveFrame, so the player's own state names a started stage.
   stage.toggleAttribute('data-started', player.state.started)
   const { started, catalogStatus, playbackStatus } = player.state
   setStatusText('catalog-track-status', catalogStatus.text)

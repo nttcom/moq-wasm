@@ -2,9 +2,9 @@ import { type Access, access } from './access'
 import { icon } from './icon'
 import { temporaryStatus } from './temporaryStatus'
 
-/// The chip at the end of the app shell that shows which namespace root the page uses and who can see it.
 const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
 
+/// The chip at the end of the app shell that shows which namespace root the page uses and who can see it.
 export function createAccessBar(): HTMLElement {
   const bar = document.createElement('aside')
   bar.setAttribute('role', 'note')

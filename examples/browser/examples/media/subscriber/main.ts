@@ -28,7 +28,6 @@ startPageTelemetry(
 const catalogPicker = setUpCatalogPicker(() => session, form)
 
 function renderPlayer(): void {
-  // CMAF plays through MSE without onLiveFrame, so the player's own state names a started stage.
   stage.toggleAttribute('data-started', player.state.started)
   const { started, playbackStatus } = player.state
   if (started) {

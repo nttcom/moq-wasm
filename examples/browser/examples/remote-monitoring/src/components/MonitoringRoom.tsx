@@ -32,7 +32,6 @@ function stepsForwardWithinReview({ mode, seek }: LivePlayerState): boolean {
 }
 const MICROS_PER_SECOND = 1_000_000
 
-/// The keys of the stage, shown in the title's tip.
 const KEYBOARD_NOTE =
   '← → メインのカメラを切替\n↓ またはメインをクリックで REVIEW（← → でコマ送り、↑ で LIVE）\n右のカメラをクリックでメインに表示'
 

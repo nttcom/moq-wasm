@@ -2,8 +2,9 @@ import { ACCESS_MODE_PARAM, type AccessMode, access, accessMode, startNewTempora
 import { icon } from './icon'
 import { temporaryStatus } from './temporaryStatus'
 
-/// The example list's mode switch in the top bar. A change is stored and the page reloads, so `access`
-/// is resolved again for the new mode, issuing a temporary app if there is none.
+// The example list's mode switch in the top bar. A change is stored and the page reloads, so access is
+// resolved again for the new mode.
+
 const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
 /// Set once a reader has closed the note, so it opens by itself only on their first visit.
 const NOTE_CLOSED_KEY = 'moqt.accessNoteClosed'
@@ -49,8 +50,7 @@ switch (access.kind) {
   }
 }
 
-// A first visit shows what the mode means without a hover, and a failed token shows why on every visit,
-// until the note's close button is pressed.
+// The note opens without a hover on a first visit, and on every visit while the token has failed.
 if (access.kind === 'unavailable' || localStorage.getItem(NOTE_CLOSED_KEY) === null) {
   openNote()
 }
@@ -83,7 +83,6 @@ function openNote(): void {
   description.parentElement!.append(note)
 }
 
-/// Colors the ⓘ as a warning or a failure and swaps its icon to match.
 function tone(name: 'warning' | 'danger', iconName: string): void {
   description.classList.add(name)
   description.replaceChildren(icon(iconName))

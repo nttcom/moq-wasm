@@ -16,9 +16,9 @@
   padding: 0 24px 80px;
 }
 
-/* ---------- Hero ---------- */
+/* ---------- Top bar controls ---------- */
 
-/* The access mode switch, at the end of the top bar; the draft switch sits beside the brand. */
+/* The access mode switch, at the end of the top bar. */
 .home-controls {
   position: relative;
   display: flex;

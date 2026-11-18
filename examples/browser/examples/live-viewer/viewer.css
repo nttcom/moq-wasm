@@ -337,7 +337,7 @@
   background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
 }
 
-/* The SDK's controls size their own buttons; drop the page defaults they leave unset. */
+/* The SDK's controls do not set min-height or font-weight, so the page's button defaults would apply. */
 #stage.viewer-stage :is(button, select, input) {
   min-height: 0;
   font-weight: 400;
@@ -427,7 +427,7 @@
   background: none;
 }
 
-/* Statistics change every frame; below the stage, wrapping onto a reserved second line, they leave it still. */
+/* Two reserved lines, so per-frame statistics that wrap never move the stage. */
 .viewer-stats {
   min-height: calc(1.5em * 2);
   margin: 0;

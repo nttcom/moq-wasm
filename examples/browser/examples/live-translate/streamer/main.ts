@@ -90,7 +90,7 @@ function showViewerLink(url: string): void {
   element<HTMLElement>('viewer-link-section').hidden = false
 }
 
-/// Words the copy in the button's `.label`, so its icon stays.
+/// Shows the copied state in the button's `.label` only, so its icon stays.
 async function copyText(button: HTMLButtonElement, text: string): Promise<void> {
   const labelElement = button.querySelector('.label') ?? button
   const label = (button.dataset.label ??= labelElement.textContent ?? '')

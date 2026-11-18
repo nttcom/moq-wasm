@@ -370,8 +370,8 @@ function DeviceModal({
 }) {
   const maxWidthClass = size === 'wide' ? 'max-w-6xl' : 'max-w-md'
   const dialogRef = useRef<HTMLDialogElement>(null)
-  // A modal <dialog> moves focus into itself, keeps it there, closes on Escape and gives focus back. The
-  // layout effect's cleanup closes it while it is still in the document, which focus return needs.
+  // showModal() traps focus, handles Escape and returns focus on close. Closing in the layout effect's
+  // cleanup runs while the dialog is still in the document, which returning focus needs.
   useLayoutEffect(() => {
     const dialog = dialogRef.current
     dialog?.showModal()
