@@ -260,7 +260,8 @@ impl MediaSource {
                 match command {
                     RenditionCommand::Event(event) => {
                         if let Err(error) = track.push(event).await {
-                            tracing::warn!(%error, %track_namespace, %track_name, "rendition push failed");
+                            tracing::warn!(%error, %track_namespace, %track_name, "rendition publishing stopped");
+                            return;
                         }
                     }
                     RenditionCommand::Remove(done_sender) => {
