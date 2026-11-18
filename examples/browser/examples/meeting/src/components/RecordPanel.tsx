@@ -7,7 +7,7 @@ export function RecordPanel({ recording }: { recording: RoomRecordingControls | 
   }
   return (
     <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
-      <RecordControls recording={recording} />
+      {recording.canRecord && <RecordControls recording={recording} />}
       <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Recordings</div>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {recording.replays.length === 0 ? (

@@ -1,18 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { type RoomRecording, activeRecording, resolveRecorderUrl } from './recorderApi'
-
-function recording(id: string, state: RoomRecording['state']): RoomRecording {
-  return {
-    id,
-    namespace_prefix: 'anon/room',
-    layout: 'combined',
-    format: 'mp4',
-    state,
-    error: null,
-    members: [],
-    composite: null
-  }
-}
+import { resolveRecorderUrl } from './recorderApi'
 
 test('a configured recorder wins over the local default', () => {
   // Act / Assert
@@ -27,11 +14,4 @@ test('a local relay implies the local recorder and any other one the deployed re
   expect(resolveRecorderUrl('', 'https://relay-1.moqt.research.skyway.io:443')).toBe(
     'https://recorder.moqt.research.skyway.io'
   )
-})
-
-test('only a recording that is about to write files or still writes them is active', () => {
-  // Act / Assert
-  expect(activeRecording([recording('a', 'finished'), recording('b', 'starting')])?.id).toBe('b')
-  expect(activeRecording([recording('a', 'finished'), recording('b', 'stopping')])?.id).toBe('b')
-  expect(activeRecording([recording('a', 'finished'), recording('b', 'failed')])).toBeUndefined()
 })

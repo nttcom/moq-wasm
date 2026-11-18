@@ -1,4 +1,4 @@
-import type { RecordingState } from '../recording/recorderApi'
+import type { ActiveRecording } from '../recording/recorderBot'
 
 export type HeaderMember = { id: string; name: string; speaking: boolean; states: Record<string, string> }
 
@@ -6,7 +6,7 @@ interface RoomHeaderProps {
   roomName: string
   members: HeaderMember[]
   /// The state of the room's active recording, if any.
-  recording: RecordingState | undefined
+  recording: ActiveRecording['state'] | undefined
   /// Whether the transcriber bot is in the room.
   transcribing: boolean
   /// Whether the transcriber's recognizer is still starting.
