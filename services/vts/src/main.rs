@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
+use telemetry_otlp::non_empty_env;
 use tokio::{
     net::TcpListener,
     signal::unix::{SignalKind, signal},
@@ -18,17 +19,13 @@ async fn main() -> anyhow::Result<()> {
         ..Default::default()
     })?;
 
-    let port: u16 = std::env::var("VTS_PORT")
-        .ok()
-        .filter(|value| !value.is_empty())
+    let port: u16 = non_empty_env("VTS_PORT")
         .unwrap_or_else(|| "8081".to_owned())
         .parse()
         .context("VTS_PORT must be a port number")?;
 
     let registry = Registry::load(RegistryStore::new(registry_location()?)?).await?;
-    let temporary_app_secret = std::env::var("VTS_TEMPORARY_APP_SECRET")
-        .ok()
-        .filter(|secret| !secret.is_empty());
+    let temporary_app_secret = non_empty_env("VTS_TEMPORARY_APP_SECRET");
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     let _server = VtsServer::run(
