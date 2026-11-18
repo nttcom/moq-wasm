@@ -309,7 +309,7 @@ transport = MoqWasmTransport(
         audio_in_enabled=True,
         audio_out_enabled=True,
         video_in_enabled=True,
-        video_in_max_fps=10,
+        video_in_sources={"camera": VideoInSourceParams(framerate=10)},
         video_out_enabled=True,
         video_out_codec="H264",
         video_out_width=1280,
@@ -354,9 +354,13 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   each picture is pushed as an RGB `UserImageRawFrame` with the source in
   `transport_source` and the `Location` of its object in
   `metadata["location"]`, so a bot records a verdict at the picture it
-  judged. `video_in_sources` sets each source's framerate or
-  `on_request_only`; without it, `video_in_enabled` receives `"camera"` at
-  most `video_in_max_fps` times a second.
+  judged. As in pipecat, `video_in_enabled` receives the sources
+  `video_in_sources` lists, each at its framerate or `on_request_only`, as
+  each participant joins, and others only when asked for.
+  `capture_participant_video` starts one. `release_participant_video`,
+  which pipecat's API does not have, stops one: PTZ tracking releases its
+  profile when the viewer clears the target, because onvif-ingest serves only
+  the profile its first subscriber picks.
 - **Image requests.** A `UserImageRequestFrame` pushed upstream is answered
   by the next picture of its `user_id` and `video_source` (`"camera"` when
   unset), with the request in `request`, as pipecat's Daily and SmallWebRTC
@@ -365,6 +369,11 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   the room, one who left or a track that failed, gets `{"error": ...}`
   through its `result_callback`. A bot that judges pictures slower than
   they arrive asks for one when it is ready instead of thinning a stream.
+- **Two transports.** A bot in two rooms runs a transport for each in one
+  pipeline. The input that receives video answers image requests and keeps
+  them, and an input without video passes them upstream. pipecat's output
+  passes every transport message on, so the other output writes the ones for
+  its tracks; an urgent one it does not write is passed on as well.
 - **Data tracks.** The objects of `data_in_tracks` (a camera page's
   `prompt`, a chat) are pushed as `InputTransportMessageFrame`s carrying a
   `MoqWasmTrackMessage` (participant id, track, payload, `Location`), as
@@ -423,10 +432,14 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `MoqWasmParticipantInput`, so that its voice activity detector hears one
   speaker, and publishes under `{root}/{room}/bots/transcriber`, two levels
   down, so the Meeting lists no participant for it.
-- Chat moderation and PTZ tracking run on the media layer and
-  `moq_wasm.codecs`. They record each verdict at the Location of the chat
-  message or picture it judged; PTZ tracking takes its pictures from
-  `decode_pictures` and subscribes to the camera only while a target is set.
+- PTZ tracking runs a transport for the page's room and one for
+  onvif-ingest's in one pipeline. It reads the viewer's prompt from the
+  first, asks the second for pictures of the profile the prompt names, and
+  releases the profile with `release_participant_video` when the target
+  leaves it; it writes its event timeline and status on the first and the
+  camera's commands on the second.
+- Chat moderation runs on the media layer. It records each verdict at the
+  Location of the chat message it judged.
 
 ### Publishing media: `_native.MediaBroadcast`
 The browser SDK encodes with WebCodecs and hands the encoded samples to

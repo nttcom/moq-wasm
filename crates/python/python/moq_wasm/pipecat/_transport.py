@@ -16,7 +16,7 @@ from pipecat.frames.frames import (
     UserImageRawFrame,
     UserImageRequestFrame,
 )
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import BaseTransport, TransportParams
@@ -40,21 +40,18 @@ logger = logging.getLogger("moq_wasm")
 class MoqWasmInputParams(TransportParams):
     """`TransportParams` with how a participant's broadcast is received.
 
-    A video source of `video_in_sources` names a track of each participant's catalog: `"camera"`
-    is the track `video_in_track` picks (by default the decodable LOC video track with the lowest
-    bitrate); any other source is the video track of that name. Without `video_in_sources`,
-    `video_in_enabled` receives `"camera"` at `video_in_max_fps`.
+    A video source names a track of each participant's catalog: `"camera"` is the track
+    `video_in_track` picks (by default the decodable LOC video track with the lowest bitrate); any
+    other source is the video track of that name. As in pipecat, `video_in_enabled` receives the
+    sources `video_in_sources` lists as each participant joins, and others only when asked for, by
+    `MoqWasmTransport.capture_participant_video` or a `UserImageRequestFrame`.
 
     Parameters:
-        video_in_max_fps: How many pictures a second, at most, `"camera"` yields when
-            `video_in_sources` is empty.
-        video_in_track: Picks the `"camera"` video track of a participant's catalog; by default
-            the LOC video track with the lowest bitrate that PyAV decodes.
+        video_in_track: Picks the `"camera"` video track of a participant's catalog.
         data_in_tracks: Tracks of each participant whose objects are pushed as
             `InputTransportMessageFrame`s carrying a `MoqWasmTrackMessage`.
     """
 
-    video_in_max_fps: float = 10.0
     video_in_track: Callable[[Catalog], CatalogTrack | None] | None = None
     data_in_tracks: list[str] = []
 
@@ -83,20 +80,15 @@ class MoqWasmParams(MoqWasmInputParams):
 
 
 def _receive_options(params: MoqWasmInputParams) -> ReceiveOptions:
-    if not params.video_in_enabled:
-        sources = {}
-    elif params.video_in_sources:
-        sources = {
-            name: None if source.on_request_only else source.framerate
-            for name, source in params.video_in_sources.items()
-        }
-    else:
-        sources = {CAMERA_SOURCE: params.video_in_max_fps}
+    sources = {
+        name: None if source.on_request_only else source.framerate for name, source in params.video_in_sources.items()
+    }
     return ReceiveOptions(
         audio_in=params.audio_in_enabled,
         video_sources=sources,
         video_in_track=params.video_in_track,
         data_tracks=list(params.data_in_tracks),
+        video_in=params.video_in_enabled,
     )
 
 
@@ -142,9 +134,13 @@ class _ReceivingInput(BaseInputTransport):
         return True
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, UserImageRequestFrame):
+        # An input with video answers image requests and does not pass them on; one without video
+        # passes them upstream, to the other transport's input in a two-transport pipeline.
+        if isinstance(frame, UserImageRequestFrame) and self._params.video_in_enabled:
+            await FrameProcessor.process_frame(self, frame, direction)
             await self.request_image(frame)
+            return
+        await super().process_frame(frame, direction)
 
 
 class MoqWasmInputTransport(_ReceivingInput):
@@ -258,8 +254,11 @@ class MoqWasmOutputTransport(BaseOutputTransport):
         return True
 
     async def send_message(self, frame: OutputTransportMessageFrame | OutputTransportMessageUrgentFrame):
-        if not await self._room.write_message(frame.message):
-            logger.warning("transport message not written: %r", frame.message)
+        # pipecat passes a non-urgent message on by itself; an urgent one this transport does not write
+        # goes on to the next processor, such as another transport's output.
+        written = await self._room.write_message(frame.message)
+        if not written and isinstance(frame, OutputTransportMessageUrgentFrame):
+            await self.push_frame(frame)
 
 
 class MoqWasmTransport(BaseTransport):
@@ -307,6 +306,25 @@ class MoqWasmTransport(BaseTransport):
             "on_room_empty",
         ):
             self._register_event_handler(event)
+
+    async def capture_participant_video(
+        self,
+        participant_id: str,
+        framerate: int | None = 30,
+        video_source: str = CAMERA_SOURCE,
+        *,
+        on_request_only: bool = False,
+    ):
+        """Receives a video source of a participant in the room at `framerate` pictures a second, or
+        every picture when it is None, or only for image requests with `on_request_only`."""
+        rate = None if on_request_only else (framerate or float("inf"))
+        await self._room.capture(participant_id, video_source, rate)
+
+    async def release_participant_video(self, participant_id: str, video_source: str = CAMERA_SOURCE):
+        """Stops receiving a video source of a participant, for a publisher that serves one profile to
+        all its subscribers, such as onvif-ingest; the image requests waiting on it get an error. Not
+        part of pipecat's API."""
+        await self._room.release(participant_id, video_source)
 
     def input(self) -> MoqWasmInputTransport:
         if self._input is None:

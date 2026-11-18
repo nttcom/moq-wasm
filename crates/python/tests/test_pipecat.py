@@ -14,8 +14,16 @@ from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipa
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
 from moq_wasm.pipecat._participant import ParticipantReceiver, ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
-from pipecat.frames.frames import ErrorFrame, UserAudioRawFrame, UserImageRawFrame, UserImageRequestFrame
+from pipecat.frames.frames import (
+    ErrorFrame,
+    OutputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
+    UserAudioRawFrame,
+    UserImageRawFrame,
+    UserImageRequestFrame,
+)
 from pipecat.transports.base_transport import VideoInSourceParams
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.tests.utils import SleepFrame, run_test
 
 from tests.fake_native import STAY_OPEN, FakeRelay, open_session
@@ -79,16 +87,17 @@ class RecordingSink:
 AUDIO_CATALOG = catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True})
 
 
-def receive_options(audio_in: bool = False, video_in: bool = False, **overrides) -> ReceiveOptions:
-    sources = {"camera": 1000.0} if video_in else {}
-    return ReceiveOptions(**{**dict(audio_in=audio_in, video_sources=sources, video_in_track=None), **overrides})
+def receive_options(audio_in: bool = False, camera: bool = False, **overrides) -> ReceiveOptions:
+    sources = {"camera": 1000.0} if camera else {}
+    options = dict(audio_in=audio_in, video_sources=sources, video_in_track=None, video_in=camera)
+    return ReceiveOptions(**{**options, **overrides})
 
 
 def room_options(audio_in: bool = False, video_in: bool = False, **overrides) -> RoomOptions:
     options = dict(
         room=ROOM,
         participant_id="bot",
-        receive=receive_options(audio_in=audio_in, video_in=video_in),
+        receive=receive_options(audio_in=audio_in, camera=video_in),
         audio_out=False,
         video_out=False,
         video_out_codec="H264",
@@ -312,7 +321,11 @@ async def test_a_participant_inputs_failed_track_goes_upstream_as_a_non_fatal_er
     native.tracks["video"] = [[b"frame"]]
     participant_input = MoqWasmParticipantInput(
         RemoteBroadcast(session, [*ROOM, "alice"]),
-        MoqWasmInputParams(video_in_enabled=True, video_in_track=lambda catalog: catalog.tracks[0]),
+        MoqWasmInputParams(
+            video_in_enabled=True,
+            video_in_sources={"camera": VideoInSourceParams(framerate=30)},
+            video_in_track=lambda catalog: catalog.tracks[0],
+        ),
     )
 
     # Act
@@ -364,7 +377,7 @@ async def test_an_image_request_for_a_source_not_received_starts_receiving_that_
     native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
     native.tracks["video"] = [[*video_frames(2), STAY_OPEN]]
     sink = RecordingSink()
-    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(), sink)
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_in=True), sink)
     running = asyncio.create_task(receiver.run())
     await asyncio.sleep(0.1)
 
@@ -388,7 +401,7 @@ async def test_a_request_for_someone_not_in_the_room_and_one_waiting_when_the_pa
     sink = RecordingSink()
     room = Room(session, room_options(video_in=True), sink)
     await room.start("input")
-    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "bob"]), receive_options(video_in=True), sink)
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "bob"]), receive_options(camera=True), sink)
     waiting = UserImageRequestFrame(user_id="bob")
 
     # Act: bob's catalog has no video track, and bob leaves
@@ -432,6 +445,53 @@ async def test_requests_waiting_on_a_failed_track_or_made_after_the_participant_
     await session.close()
 
 
+async def test_a_captured_source_passes_pictures_until_it_is_released():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[*video_frames(2), STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.05)
+
+    # Act
+    await receiver.capture("video", 1000.0)
+    await within(sink.received.wait())
+    waiting = UserImageRequestFrame(user_id="alice", video_source="video")
+    await receiver.request_image(waiting)
+    await receiver.release("video")
+    await asyncio.sleep(0.05)
+
+    # Assert: the live track sends no more pictures, so the request waits until the release
+    assert sink.pictures[0].video_source == "video"
+    assert sink.unanswered == [(waiting, "video of alice released")]
+    assert native.subscriptions[-1].closed
+    running.cancel()
+    await session.close()
+
+
+async def test_an_input_without_video_passes_image_requests_on_and_an_output_passes_on_messages_it_does_not_write():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, data_out_tracks={"status": 60}))
+    request = UserImageRequestFrame(user_id="camera")
+    message = OutputTransportMessageFrame(message=MoqWasmTrackObject("command", b"stop"))
+    urgent = OutputTransportMessageUrgentFrame(message=MoqWasmTrackObject("command", b"stop"))
+
+    # Act
+    _, up = await within(run_test(transport.input(), frames_to_send=[request], frames_to_send_direction=FrameDirection.UPSTREAM))
+    down, _ = await within(run_test(transport.output(), frames_to_send=[message, urgent, SleepFrame(0.1)]))
+
+    # Assert
+    assert request in up
+    assert down.count(message) == 1 and down.count(urgent) == 1
+    await session.close()
+
+
 async def test_a_data_track_reaches_the_sink_as_messages_with_their_location():
     # Arrange
     relay = FakeRelay()
@@ -447,7 +507,8 @@ async def test_a_data_track_reaches_the_sink_as_messages_with_their_location():
     await within(sink.received.wait())
     await asyncio.sleep(0.05)
 
-    # Assert
+    # Assert: a participant only data tracks are read from may publish no catalog
+    assert ("subscribe_current_group", "catalog") not in native.calls
     assert [(m.participant_id, m.track, m.payload, m.location.object_id) for m in sink.messages] == [
         ("alice", "prompt", b"first", 0),
         ("alice", "prompt", b"second", 1),
@@ -477,6 +538,29 @@ async def test_transport_messages_write_the_bots_tracks_and_event_timelines():
     assert native.writers["status"].objects == [(b"ready", True)]
     assert [json.loads(payload) for payload, _ in native.writers["events"].objects] == [[], [{"L": [1, 2], "data": {"answer": "yes"}}]]
     await room.stop("output")
+    await session.close()
+
+
+async def test_a_transport_with_video_but_no_listed_source_follows_the_room_for_requests():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[*video_frames(2), STAY_OPEN]]
+    sink = RecordingSink()
+    room = Room(session, room_options(receive=receive_options(video_in=True)), sink)
+    await room.start("input")
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.1)
+
+    # Act
+    await room.request_image(UserImageRequestFrame(user_id="alice"))
+    await within(sink.received.wait())
+
+    # Assert
+    assert sink.pictures[0].request.user_id == "alice"
+    await room.stop("input")
     await session.close()
 
 
