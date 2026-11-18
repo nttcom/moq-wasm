@@ -574,6 +574,11 @@ body:not(:has(> .app-shell))::before {
   white-space: pre-line;
 }
 
+/* Beside a heading's or label's words, the mark keeps a little space from them. */
+:is(h1, h2, h3, h4, label, legend, summary, .setting-label) > .tip {
+  margin-left: 4px;
+}
+
 /* A tip at the right end of a row opens leftward, so it stays on screen. */
 .tip.end:hover::after,
 .tip.end:focus::after {

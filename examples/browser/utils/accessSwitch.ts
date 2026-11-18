@@ -1,4 +1,5 @@
 import { ACCESS_MODE_PARAM, type AccessMode, access, accessMode, startNewTemporaryApp, writeAccessMode } from './access'
+import { icon } from './icon'
 import { temporaryStatus } from './temporaryStatus'
 
 /// The example list's mode tabs. A change is stored and the page reloads, so `access` is resolved
@@ -19,18 +20,16 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.access-switch [
 
 switch (access.kind) {
   case 'public':
-    description.textContent =
-      '誰でも視聴できる anon namespace を全員で共有します。送信したメディアは公開されます。機密情報やプライバシーに関わる情報は入力しないでください。'
+    description.textContent = '送信したメディアは誰でも視聴できます'
     break
   case 'given':
-    description.textContent = `URL のトークン（app ${access.namespaceRoot}）で Example を使います。`
+    description.textContent = `URL のトークン（app ${access.namespaceRoot}）で接続します`
     break
   case 'unavailable':
     description.textContent = access.reason
     break
   case 'temporary': {
-    description.textContent =
-      '検証用の一時トークンを使用します。URL 及びトークンを共有すると参加・視聴が可能になります。検証用の認証認可機能であるため、機密情報やプライバシーに関わる情報は入力しないでください。'
+    description.textContent = 'URL を共有した相手だけが参加・視聴できます'
     const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)
     const renew = button('トークンを作り直す', async () => {
       await startNewTemporaryApp()
@@ -53,7 +52,7 @@ function reloadWithoutToken(): void {
 function button(label: string, onClick: () => Promise<void>): HTMLButtonElement {
   const element = document.createElement('button')
   element.type = 'button'
-  element.textContent = label
+  element.append(icon('refresh-cw'), label)
   element.addEventListener('click', () => void onClick())
   return element
 }

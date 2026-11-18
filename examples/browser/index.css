@@ -149,6 +149,8 @@
 }
 
 .setting-label {
+  display: inline-flex;
+  align-items: center;
   color: var(--text-subtle);
   font-size: 0.75rem;
   font-weight: 600;
@@ -190,6 +192,9 @@
 }
 
 .access-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);

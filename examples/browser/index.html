@@ -31,10 +31,7 @@
         <div>
           <span class="home-eyebrow"><span class="badge accent">MoQT</span>Media over QUIC Transport</span>
           <h1>MoQT を、<em>ブラウザで</em>試す。</h1>
-          <p class="home-lead">
-            低遅延配信プロトコル MoQT の Relay とブラウザ SDK <code>moq-wasm</code> で動く Example
-            集です。制御メッセージの送受信から会議・ライブ配信・遠隔監視・AI 連携まで、実際に動かして確かめられます。
-          </p>
+          <p class="home-lead"><code>moq-wasm</code> で動く MoQT の Example 集。ブラウザだけで試せます。</p>
           <dl class="home-stats">
             <div>
               <dt>Examples</dt>
@@ -57,7 +54,16 @@
             <span class="badge">これから開く Example に適用</span>
           </div>
           <div class="setting">
-            <span class="setting-label" id="access-mode-label">接続モード</span>
+            <span class="setting-label"
+              ><span id="access-mode-label">接続モード</span
+              ><span
+                class="tip"
+                tabindex="0"
+                role="img"
+                aria-label="検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください"
+                data-tip="検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください"
+                ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg></span
+            ></span>
             <div class="segmented access-switch" role="group" aria-labelledby="access-mode-label">
               <button type="button" data-access-mode="temporary" data-testid="access-temporary">一時トークン</button>
               <button type="button" data-access-mode="public" data-testid="access-public">Public</button>
@@ -99,7 +105,6 @@
       <section class="section" id="low-level" data-section="low-level" aria-labelledby="low-level-heading">
         <div class="section-heading">
           <h2 id="low-level-heading">低レベル API</h2>
-          <p>moq-wasm の API を直接呼び、MoQT のメッセージとデータの流れを確かめる</p>
         </div>
         <div class="grid">
           <a class="example" href="examples/message/index.html" data-category="low-level">
@@ -168,7 +173,6 @@
       <section class="section" id="usecases" data-section="usecase" aria-labelledby="usecases-heading">
         <div class="section-heading">
           <h2 id="usecases-heading">ユースケース</h2>
-          <p>会議、ライブ配信、遠隔監視など、MoQT で組み立てたアプリケーション</p>
         </div>
         <div class="grid wide">
           <a class="example" href="examples/meeting/index.html" data-category="usecase">
@@ -345,7 +349,6 @@
       <section class="section" id="ai" data-section="ai" aria-labelledby="ai-heading">
         <div class="section-heading">
           <h2 id="ai-heading">AI 連携</h2>
-          <p>pipecat のボットが Relay に参加し、映像・音声・チャットを AI で処理する</p>
         </div>
         <div class="grid wide">
           <a class="example" href="examples/moq-chat-moderation/index.html" data-category="ai">
@@ -471,7 +474,6 @@
       <section class="section" id="operations" data-section="operations" aria-labelledby="operations-heading">
         <div class="section-heading">
           <h2 id="operations-heading">運用ツール</h2>
-          <p>Relay とクライアントの状態を可視化する</p>
         </div>
         <div class="grid wide">
           <a class="example span-all" href="examples/observability/index.html" data-category="operations">
@@ -576,7 +578,6 @@
 
       <footer class="home-footer">
         <span>MoQT Playground — moq-wasm の Example 集</span>
-        <span>検証用の環境です。機密情報やプライバシーに関わる情報は入力しないでください</span>
       </footer>
     </main>
     <script type="module" src="./utils/preserveQueryLinks.js"></script>
