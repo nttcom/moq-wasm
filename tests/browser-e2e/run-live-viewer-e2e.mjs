@@ -65,11 +65,12 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
-    // The recorder specs run target/debug/recorder.
+    // The recorder specs run target/debug/recorder and target/debug/bots.
     const [relayBinary, liveIngestBinary] = buildBinaries([
       "relay",
       "live-ingest",
       "recorder",
+      "bots",
     ]);
     const vts = await startVts();
     childProcesses.push(vts);
