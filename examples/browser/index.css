@@ -10,10 +10,66 @@
 
 /* The access mode switch, at the end of the top bar; the draft switch sits beside the brand. */
 .home-controls {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+/* The ⓘ's text shown open under the top bar's end on a first visit; its button closes it. */
+.tip-note {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: min(22rem, calc(100vw - 32px));
+  padding: 10px 8px 10px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.tip-note.danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger);
+}
+
+.tip-note span {
+  flex: 1;
+}
+
+.tip-note button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tip-note button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* While the note is open, the ⓘ's hover text would repeat it. */
+.tip.open:hover::after,
+.tip.open:focus::after {
+  content: none;
 }
 
 /* The draft's prefix and number read as one word. */

@@ -5,6 +5,8 @@ import { temporaryStatus } from './temporaryStatus'
 /// The example list's mode switch in the top bar. A change is stored and the page reloads, so `access`
 /// is resolved again for the new mode, issuing a temporary app if there is none.
 const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
+/// Set once a reader has closed the note, so it opens by itself only on their first visit.
+const NOTE_CLOSED_KEY = 'moqt.accessNoteClosed'
 const description = document.getElementById('access-description')!
 const status = document.getElementById('access-status')!
 
@@ -44,6 +46,37 @@ switch (access.kind) {
       '今開いている会議はそのまま続きます。これから開く Example は、今の共有リンクや録画とは別の場所になります'
     status.replaceChildren(...shown, renew)
   }
+}
+
+// A first visit shows what the mode means without a hover, and a failed token shows why on every visit,
+// until the note's close button is pressed.
+if (access.kind === 'unavailable' || localStorage.getItem(NOTE_CLOSED_KEY) === null) {
+  openNote()
+}
+
+/// Shows the ⓘ's text as an open note under the top bar's end, with a button that closes it.
+function openNote(): void {
+  const note = document.createElement('div')
+  note.className = description.classList.contains('danger') ? 'tip-note danger' : 'tip-note'
+  note.setAttribute('role', 'note')
+  const text = document.createElement('span')
+  text.textContent = description.dataset.tip ?? ''
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.setAttribute('aria-label', '閉じる')
+  close.title = '閉じる'
+  close.append(icon('x'))
+  close.addEventListener('click', () => {
+    note.remove()
+    description.classList.remove('open')
+    if (access.kind !== 'unavailable') {
+      localStorage.setItem(NOTE_CLOSED_KEY, '1')
+    }
+    description.focus()
+  })
+  note.append(text, close)
+  description.classList.add('open')
+  description.parentElement!.append(note)
 }
 
 /// Puts what the mode means, and the caution every mode shares, in the ⓘ beside the switch.
