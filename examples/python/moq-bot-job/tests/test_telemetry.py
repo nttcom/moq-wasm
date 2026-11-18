@@ -2,7 +2,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from loguru import logger
 
-from moq_bot_rooms.telemetry import report_logs, telemetry_endpoint
+from moq_bot_job.telemetry import report_logs, telemetry_endpoint
 
 
 def test_a_local_relay_reports_to_the_local_server():

@@ -13,8 +13,8 @@ from enum import StrEnum
 import aiohttp
 from loguru import logger
 
-from moq_bot_rooms.identity_token import IdentityToken, metadata_identity_token
-from moq_bot_rooms.telemetry import add_telemetry_arguments, report_logs, telemetry_endpoint
+from moq_bot_job.identity_token import IdentityToken, metadata_identity_token
+from moq_bot_job.telemetry import add_telemetry_arguments, report_logs, telemetry_endpoint
 
 BOT_KEY_ENV = "BOTS_BOT_KEY"
 # A stop the app asked for is learnt at the next heartbeat.

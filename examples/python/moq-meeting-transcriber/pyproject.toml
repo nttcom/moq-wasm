@@ -5,7 +5,7 @@ description = "pipecat bot that transcribes every participant of a MoQ Meeting r
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
-    "moq-bot-rooms",
+    "moq-bot-job",
     "faster-whisper~=1.2.1",
     "moq-wasm[pipecat]",
     "pipecat-ai[silero]>=1.12",
@@ -27,7 +27,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 override-dependencies = ["pillow>=13"]
 
 [tool.uv.sources]
-moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
+moq-bot-job = { path = "../moq-bot-job", editable = true }
 moq-wasm = { path = "../../../crates/python" }
 # PyPI's Linux torch carries the CUDA libraries, several GB that a bot on the CPU never loads.
 torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }

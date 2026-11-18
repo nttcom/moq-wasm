@@ -6,8 +6,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from moq_bot_rooms import bot_job
-from moq_bot_rooms.bot_job import BotJob, Bots, add_bot_job_arguments, bot_job_from_arguments, run_bot_job
+from moq_bot_job import bot_job
+from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, bot_job_from_arguments, run_bot_job
 
 
 class FakeBotsService:

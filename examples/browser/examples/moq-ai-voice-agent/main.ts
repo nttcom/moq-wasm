@@ -7,7 +7,7 @@ import {
   watchBroadcasts
 } from 'moq-wasm/media'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
-import { pageRoomId } from '../../utils/botRoom'
+import { pageRoomId } from '../../utils/roomId'
 import { botNamespace, startRoomBot } from '../../utils/roomBots'
 import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'

@@ -38,11 +38,11 @@ connects; the choice is kept in localStorage.
 - `?jwt=<token>` connects with any app-scoped JWT (from the `auth-token` CLI
   or the console). The root becomes the token's appId; the token is never
   refreshed.
-- The bot-backed examples hand a temporary page's token to the bot service,
-  so the bot joins the same app
-  (`docs/architecture/ai-bots/on-demand-rooms.md`).
-- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`,
-  `?botUrl=`) is used only when it names this machine or a host under
+- The bot-backed examples start their bot through the temporary-apps service,
+  which starts it on the bot service in the page's app, so only a temporary
+  app's page has a bot (`docs/architecture/bots/architecture.md`).
+- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`)
+  is used only when it names this machine or a host under
   `moqt.research.skyway.io`, since the page sends its token there.
 
 ## Safari

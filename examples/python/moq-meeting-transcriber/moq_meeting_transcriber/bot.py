@@ -6,9 +6,9 @@ import aiohttp
 import moq_wasm
 from faster_whisper import WhisperModel
 from loguru import logger
-from moq_bot_rooms.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
-from moq_bot_rooms.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_bot_rooms.relay import add_relay_arguments
+from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
+from moq_bot_job.identity_token import add_identity_token_arguments, identity_token_from_arguments
+from moq_bot_job.relay import add_relay_arguments
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
 from moq_meeting_transcriber.granite import SharedGranite

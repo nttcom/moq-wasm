@@ -43,7 +43,7 @@ System One の URL は `gcloud run services describe moqt-system-one --region as
 ```
 
 - bot は `moq-wasm` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
-- 起動のオプションは [moq-bot-rooms](../moq-bot-rooms/README.md) の「bot サービスから起動される bot」にあります。
+- 起動のオプションは [moq-bot-job](../moq-bot-job/README.md) の「bot サービスから起動される bot」にあります。
 
 ## トラック
 

@@ -311,7 +311,8 @@ bot's token call with `null`, so the bot joins with no token.
    `--temporary-apps-url` of `recorder record`.
 5. The AI bots, one at a time: a `run` entry point that serves one room,
    their presence under `<room>/bots/<type>`, the common end rule, and their
-   pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one.
+   pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one;
+   what the bots keep of it (their calls to `bots`, ID tokens, telemetry) becomes `moq-bot-job`.
 
 ## Alternatives Considered
 

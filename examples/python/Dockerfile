@@ -20,9 +20,9 @@ RUN pip uninstall -y setuptools
 WORKDIR /workspace/examples/python
 RUN ln -s /workspace/examples/python /app
 # Copy only what each bot needs: a developer's checkout keeps an untracked .env next to them.
-# The bots install moq-bot-rooms and moq-system-one-bot from source, so both are copied before uv sync.
-COPY examples/python/moq-bot-rooms/pyproject.toml moq-bot-rooms/
-COPY examples/python/moq-bot-rooms/moq_bot_rooms moq-bot-rooms/moq_bot_rooms
+# The bots install moq-bot-job and moq-system-one-bot from source, so both are copied before uv sync.
+COPY examples/python/moq-bot-job/pyproject.toml moq-bot-job/
+COPY examples/python/moq-bot-job/moq_bot_job moq-bot-job/moq_bot_job
 COPY examples/python/moq-system-one-bot/pyproject.toml moq-system-one-bot/
 COPY examples/python/moq-system-one-bot/moq_system_one_bot moq-system-one-bot/moq_system_one_bot
 COPY examples/python/moq-chat-moderation/pyproject.toml examples/python/moq-chat-moderation/uv.lock moq-chat-moderation/

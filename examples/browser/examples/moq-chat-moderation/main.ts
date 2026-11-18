@@ -1,6 +1,6 @@
 import type { TrackWriter } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
-import { pageRoomId } from '../../utils/botRoom'
+import { pageRoomId } from '../../utils/roomId'
 import { icon } from '../../utils/icon'
 import { onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'

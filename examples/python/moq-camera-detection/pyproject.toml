@@ -5,7 +5,7 @@ description = "pipecat bot that judges whether a person is visible in MoQ camera
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",
-    "moq-bot-rooms",
+    "moq-bot-job",
     "moq-system-one-bot",
     "moq-wasm[pipecat]",
 ]
@@ -23,7 +23,7 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24"]
 override-dependencies = ["pillow>=13"]
 
 [tool.uv.sources]
-moq-bot-rooms = { path = "../moq-bot-rooms", editable = true }
+moq-bot-job = { path = "../moq-bot-job", editable = true }
 moq-system-one-bot = { path = "../moq-system-one-bot", editable = true }
 moq-wasm = { path = "../../../crates/python" }
 

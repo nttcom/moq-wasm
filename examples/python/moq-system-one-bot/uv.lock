@@ -760,9 +760,9 @@ wheels = [
 ]
 
 [[package]]
-name = "moq-bot-rooms"
+name = "moq-bot-job"
 version = "0.1.0"
-source = { editable = "../moq-bot-rooms" }
+source = { editable = "../moq-bot-job" }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
@@ -786,7 +786,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
-    { name = "moq-bot-rooms" },
+    { name = "moq-bot-job" },
     { name = "moq-wasm", extra = ["pipecat"] },
 ]
 
@@ -799,7 +799,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
-    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moq-bot-job", editable = "../moq-bot-job" },
     { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
 ]
 
@@ -835,6 +835,7 @@ provides-extras = ["codecs", "pipecat"]
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = ">=14" },
+    { name = "pdoc", specifier = ">=16" },
     { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },

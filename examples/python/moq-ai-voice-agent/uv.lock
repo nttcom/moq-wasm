@@ -1246,7 +1246,7 @@ name = "moq-ai-voice-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "moq-bot-rooms" },
+    { name = "moq-bot-job" },
     { name = "moq-system-one-bot" },
     { name = "moq-wasm", extra = ["pipecat"] },
     { name = "pipecat-ai", extra = ["google"] },
@@ -1260,7 +1260,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moq-bot-job", editable = "../moq-bot-job" },
     { name = "moq-system-one-bot", editable = "../moq-system-one-bot" },
     { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
     { name = "pipecat-ai", extras = ["google", "silero"], specifier = ">=1.13" },
@@ -1273,9 +1273,9 @@ dev = [
 ]
 
 [[package]]
-name = "moq-bot-rooms"
+name = "moq-bot-job"
 version = "0.1.0"
-source = { editable = "../moq-bot-rooms" }
+source = { editable = "../moq-bot-job" }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
@@ -1299,14 +1299,14 @@ version = "0.1.0"
 source = { editable = "../moq-system-one-bot" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "moq-bot-rooms" },
+    { name = "moq-bot-job" },
     { name = "moq-wasm", extra = ["pipecat"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
-    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moq-bot-job", editable = "../moq-bot-job" },
     { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
 ]
 

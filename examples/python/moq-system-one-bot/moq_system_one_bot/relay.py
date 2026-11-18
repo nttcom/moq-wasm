@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 
 import moq_wasm
 from loguru import logger
-from moq_bot_rooms.bot_job import Bots
+from moq_bot_job.bot_job import Bots
 
 RECONNECT_DELAY_SECONDS = 2.0
 

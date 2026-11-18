@@ -1164,9 +1164,9 @@ wheels = [
 ]
 
 [[package]]
-name = "moq-bot-rooms"
+name = "moq-bot-job"
 version = "0.1.0"
-source = { editable = "../moq-bot-rooms" }
+source = { editable = "../moq-bot-job" }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
@@ -1191,7 +1191,7 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "faster-whisper" },
-    { name = "moq-bot-rooms" },
+    { name = "moq-bot-job" },
     { name = "moq-wasm", extra = ["pipecat"] },
     { name = "pipecat-ai" },
     { name = "torch", version = "2.14.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
@@ -1211,7 +1211,7 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "faster-whisper", specifier = "~=1.2.1" },
-    { name = "moq-bot-rooms", editable = "../moq-bot-rooms" },
+    { name = "moq-bot-job", editable = "../moq-bot-job" },
     { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
     { name = "pipecat-ai", extras = ["silero"], specifier = ">=1.12" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.11" },
@@ -1253,6 +1253,7 @@ provides-extras = ["codecs", "pipecat"]
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = ">=14" },
+    { name = "pdoc", specifier = ">=16" },
     { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },

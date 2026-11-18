@@ -1,6 +1,6 @@
 import aiohttp
 
-from moq_bot_rooms.identity_token import metadata_identity_token
+from moq_bot_job.identity_token import metadata_identity_token
 
 SERVICE_URL = "https://qwen3-asr.example.run.app/v1/audio/transcriptions"
 
