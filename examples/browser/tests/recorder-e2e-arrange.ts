@@ -10,9 +10,7 @@ import {
   type RecordingFormat,
   type RoomRecording,
   type Recorder,
-  listRecordings,
-  startRecording,
-  stopRecording
+  listRecordings
 } from '../examples/meeting/src/recording/recorderApi'
 import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 
@@ -153,7 +151,11 @@ async function startRecorderServe() {
       composite = false,
       format: RecordingFormat = 'mp4'
     ): Promise<RoomRecording> {
-      const recording = await startRecording(api, namespacePrefix, layout, composite, format)
+      const recording = await recorderRequest<RoomRecording>(api, '/recordings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ namespace_prefix: namespacePrefix, layout, composite, format })
+      })
       const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
       while ((await current(recording))?.state === 'starting') {
         if (Date.now() > deadline) {
@@ -165,7 +167,7 @@ async function startRecorderServe() {
     },
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
-      await stopRecording(api, recording.id)
+      await recorderRequest(api, `/recordings/${encodeURIComponent(recording.id)}/stop`, { method: 'POST' })
       const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
       for (;;) {
         const state = (await current(recording))?.state
@@ -310,4 +312,15 @@ function packetTimes(path: string, stream: 'v' | 'a'): number[] {
 
 function largestGap(times: number[]): number {
   return times.slice(1).reduce((largest, time, index) => Math.max(largest, time - times[index]), 0)
+}
+
+/// `recorder serve`'s own start and stop, which the Meeting no longer calls: it starts a recorder bot
+/// through `bots`.
+async function recorderRequest<T>(recorder: Recorder, path: string, init: RequestInit): Promise<T> {
+  const response = await fetch(`${recorder.url}${path}`, init)
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    throw new Error(body.error ?? `recorder answered ${response.status}`)
+  }
+  return body as T
 }

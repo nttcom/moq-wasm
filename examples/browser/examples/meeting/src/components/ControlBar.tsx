@@ -226,8 +226,12 @@ function ActivitiesButton({
           {recording && (
             <>
               <ReplaySection recording={recording} onChoose={menu.close} />
-              <MenuDivider />
-              <RecordSection recording={recording} onChoose={menu.close} />
+              {recording.canRecord && (
+                <>
+                  <MenuDivider />
+                  <RecordSection recording={recording} onChoose={menu.close} />
+                </>
+              )}
             </>
           )}
           {recording && captions && <MenuDivider />}
