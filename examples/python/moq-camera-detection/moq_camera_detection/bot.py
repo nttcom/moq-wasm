@@ -1,6 +1,5 @@
 import argparse
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from functools import partial
@@ -16,7 +15,7 @@ from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.relay import stay_connected
 from moq_system_one_bot.video import picture_to_jpeg
-from moq_wasm.codecs import VideoDecoder
+from moq_wasm.codecs import decode_pictures
 from moq_wasm.media import CatalogTrack, RemoteBroadcast, create_broadcast, watch_broadcasts
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
@@ -79,29 +78,19 @@ class LatestPrompt:
 async def forward_pictures(
     video: AsyncIterator[moq_wasm.Object], codec: str, latest_prompt: LatestPrompt, worker: PipelineWorker
 ):
-    next_sample_at = 0.0
-    decoder: VideoDecoder | None = None
-    group_id: int | None = None
-    async for video_object in video:
-        # Each group starts at a keyframe, so each gets a fresh decoder. A group joined in the middle
-        # has no keyframe and decodes to nothing.
-        if video_object.group_id != group_id:
-            decoder = VideoDecoder(codec)
-            group_id = video_object.group_id
-        picture = await asyncio.to_thread(decoder.decode, video_object.payload)
-        decoded_at = time.monotonic()
+    async for decoded in decode_pictures(video, codec, interval=SAMPLE_INTERVAL_SECONDS):
         prompt = latest_prompt.prompt
-        if picture is not None and prompt is not None and decoded_at >= next_sample_at:
-            next_sample_at = decoded_at + SAMPLE_INTERVAL_SECONDS
-            jpeg = await asyncio.to_thread(picture_to_jpeg, picture)
-            await worker.queue_frame(
-                CameraPicture(
-                    jpeg=jpeg,
-                    location=(video_object.group_id, video_object.object_id),
-                    decoded_at=decoded_at,
-                    prompt=prompt,
-                )
+        if prompt is None:
+            continue
+        jpeg = await asyncio.to_thread(picture_to_jpeg, decoded.picture)
+        await worker.queue_frame(
+            CameraPicture(
+                jpeg=jpeg,
+                location=(decoded.location.group_id, decoded.location.object_id),
+                decoded_at=decoded.decoded_at,
+                prompt=prompt,
             )
+        )
 
 
 async def video_track(camera: RemoteBroadcast) -> CatalogTrack:
