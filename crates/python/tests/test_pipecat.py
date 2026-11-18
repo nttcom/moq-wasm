@@ -13,7 +13,7 @@ from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat._participant import ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
-from pipecat.frames.frames import UserAudioRawFrame
+from pipecat.frames.frames import ErrorFrame, UserAudioRawFrame
 from pipecat.tests.utils import SleepFrame, run_test
 
 from tests.fake_native import STAY_OPEN, FakeRelay, open_session
@@ -282,6 +282,28 @@ async def test_a_participant_input_pushes_only_its_participants_audio_and_publis
     assert subscribed == [MoqWasmTrack("alice", "audio", "audio")]
     assert not native.media_broadcasts
     assert not [call for call in native.calls if call[0] in ("announce", "watch_namespaces", "publish_track")]
+    await session.close()
+
+
+async def test_a_participant_inputs_failed_track_goes_upstream_as_a_non_fatal_error_frame():
+    # Arrange: a video track no decoder takes
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[catalog_payload({"name": "video", "role": "video", "packaging": "loc", "codec": "xyz1", "bitrate": 1000000, "framerate": 30, "isLive": True}), STAY_OPEN]]
+    native.tracks["video"] = [[b"frame"]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(video_in_enabled=True, video_in_track=lambda catalog: catalog.tracks[0]),
+    )
+
+    # Act
+    _, up = await within(run_test(participant_input, frames_to_send=[SleepFrame(0.5)]))
+
+    # Assert
+    errors = [frame for frame in up if isinstance(frame, ErrorFrame)]
+    assert len(errors) == 1 and "receiving video of alice failed" in errors[0].error
+    assert participant_input.is_usable
     await session.close()
 
 

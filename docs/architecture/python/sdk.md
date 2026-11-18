@@ -368,8 +368,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   speaker, so a bot may run a pipeline per participant.
   `MoqWasmParticipantInput(broadcast, MoqWasmInputParams(...))` is the input
   of one `RemoteBroadcast`: it picks, decodes and pushes the tracks as the
-  transport's input does, with the same `on_track_subscribed` and
-  `on_error`, and publishes nothing. The bot follows the room with
+  transport's input does, with the same `on_track_subscribed`, and publishes
+  nothing. A failed track is pushed upstream as a non-fatal `ErrorFrame`, the
+  way pipecat processors report errors: `on_error` belongs to pipecat's
+  `FrameProcessor`. The bot follows the room with
   `watch_broadcasts`, starts a pipeline in each handler task (cancelled when
   the participant leaves), and publishes with `create_broadcast`.
   `MoqWasmParams` extends `MoqWasmInputParams` with the room.
@@ -386,14 +388,13 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   transcript stream.
 
 ### The bots in this repository
-The bots under `examples/python/` run on the media layer and
-`moq_wasm.codecs`, not on `MoqWasmTransport`, because each needs what the
-transport's frames do not carry:
-- The Meeting transcriber runs a pipeline per participant, so that its voice
-  activity detector hears one speaker, and publishes under
-  `{root}/{room}/bots/transcriber`, two levels down, so the Meeting lists no
-  participant for it.
-- Chat moderation, camera detection and PTZ tracking record each verdict at
+The bots under `examples/python/` do not run on `MoqWasmTransport`:
+- The Meeting transcriber runs a pipeline per participant on
+  `MoqWasmParticipantInput`, so that its voice activity detector hears one
+  speaker, and publishes under `{root}/{room}/bots/transcriber`, two levels
+  down, so the Meeting lists no participant for it.
+- Chat moderation, camera detection and PTZ tracking run on the media layer
+  and `moq_wasm.codecs`. They record each verdict at
   the Location of the chat message or picture it judged, and follow tracks of
   their own (`prompt`, `chat`) next to the media. Camera detection and PTZ
   tracking take their pictures from `decode_pictures`.
