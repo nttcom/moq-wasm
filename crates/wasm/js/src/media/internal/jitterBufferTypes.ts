@@ -15,3 +15,11 @@ export type SubgroupWorkerMessage = {
   /// The catalog codec of the track the object came from.
   codec?: string
 }
+
+export type AudioCatalogMessage = {
+  type: 'catalog'
+  codec?: string
+  sampleRate?: number
+  channels?: number
+  descriptionBase64?: string
+}

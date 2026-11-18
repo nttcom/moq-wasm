@@ -1,6 +1,6 @@
 import { latencyMsFromCaptureMicros } from '../internal/clock'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
-import type { SubgroupWorkerMessage } from '../internal/jitterBufferTypes'
+import type { AudioCatalogMessage, SubgroupWorkerMessage } from '../internal/jitterBufferTypes'
 import type { BufferPolicy } from './jitterBuffer'
 import { LivePlayout } from './livePlayout'
 import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from './livePictureSink'
@@ -18,14 +18,6 @@ export type LocObject = Pick<
   ReceivedObject,
   'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus' | 'locHeader'
 >
-
-type AudioCatalogMessage = {
-  type: 'catalog'
-  codec?: string
-  sampleRate?: number
-  channels?: number
-  descriptionBase64?: string
-}
 
 export type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void

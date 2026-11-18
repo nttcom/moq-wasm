@@ -1,6 +1,6 @@
 import { alawToAudioData, isPcmAlawCodec } from '../alaw'
 import { GroupOrderGate } from '../groupOrderGate'
-import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { AudioCatalogMessage, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
 import { workerLog } from '../../../core/log'
@@ -52,9 +52,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 }
 
 type AudioWorkerMessage =
-  | SubgroupWorkerMessage
-  | { type: 'catalog'; codec?: string; sampleRate?: number; channels?: number; descriptionBase64?: string }
-  | { type: 'timeline'; captureMicros?: number; handOverAtUnixMs?: number }
+  SubgroupWorkerMessage | AudioCatalogMessage | { type: 'timeline'; captureMicros?: number; handOverAtUnixMs?: number }
 
 self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
   const data = event.data
