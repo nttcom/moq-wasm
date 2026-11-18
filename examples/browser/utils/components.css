@@ -826,6 +826,12 @@
   object-fit: contain;
 }
 
+/* The picture is positioned to fill the stage, so it would paint over the SDK's controls that come before
+   it; they are lifted above it. */
+#stage.player-stage > :not(video, canvas) {
+  z-index: 1;
+}
+
 /* The page's main.ts sets data-started while the player runs; until then the stage says what to do. */
 #stage.player-stage:not([data-started])::before {
   position: absolute;
