@@ -1,0 +1,40 @@
+# Adds observability to a demo of compose.demo.yml: the relay and the VTS export OTLP to ClickStack,
+# the Observability example reads the observability server, and HyperDX is on http://localhost:8080.
+#   docker compose -f compose.demo.yml -f compose.observability.yml [--profile <profile>] up
+services:
+  relay:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://clickstack-otel-collector:4317
+
+  vts:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://clickstack-otel-collector:4317
+
+  observability:
+    extends:
+      file: docker-compose.yml
+      service: observability
+
+  clickhouse:
+    extends:
+      file: docker-compose.yml
+      service: clickhouse
+
+  clickstack-otel-collector:
+    extends:
+      file: docker-compose.yml
+      service: clickstack-otel-collector
+
+  clickstack-mongo:
+    extends:
+      file: docker-compose.yml
+      service: clickstack-mongo
+
+  hyperdx:
+    extends:
+      file: docker-compose.yml
+      service: hyperdx
+
+volumes:
+  clickhouse-data:
+  clickstack-mongo-data:
