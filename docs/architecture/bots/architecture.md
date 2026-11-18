@@ -240,9 +240,9 @@ from type name to entry:
 
 `launcher` is `{"kind": "local", "program": <path>}` for development.
 Every bot gets the same token claims (above), so they are not configured.
-Limits per app are added with the AI bots. Opening hours, which the AI bots
-have today, are not: a bot runs only while its room has a member, for its type's
-longest run at most, and the deployment's daily cost limit, which stops every
+There are no limits per app and no opening hours: a bot runs only while its
+room has a member, for its type's longest run at most, a type runs at most
+`max_running` bots, and the deployment's daily cost limit, which stops every
 paid workload once reached, bounds what bots spend around the clock. A request
 for a type not in the file is `400`.
 
