@@ -705,30 +705,100 @@
   content: '●';
 }
 
-/* Whiteboard: strokes on a dark board and the cursors of two people drawing. */
+/* Whiteboard: the page's tool bar over a white board, with a drawing two people are adding to. */
 .th-board {
   width: 100%;
   height: 100%;
   fill: none;
   stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.th-board .bar {
+  fill: var(--th-panel);
+}
+
+.th-board .tool {
+  fill: var(--th-tile);
+}
+
+.th-board .tool.on {
+  fill: rgba(45, 212, 191, 0.25);
+}
+
+.th-board .tool-icon {
+  stroke: var(--th-accent);
+  stroke-width: 1.6;
+}
+
+.th-board .tool-icon-2 {
+  stroke: var(--th-dim);
+  stroke-width: 0.8;
+}
+
+.th-board .swatch {
+  fill: #0f766e;
+  stroke: var(--th-text);
+  stroke-width: 0.6;
+}
+
+.th-board .slider {
+  stroke: var(--th-line);
+  stroke-width: 1.2;
+}
+
+.th-board .knob {
+  fill: var(--th-text);
+}
+
+.th-board .paper {
+  fill: #eef1f3;
+}
+
+.th-board .ink,
+.th-board .ink-2,
+.th-board .ink-3,
+.th-board .ink-4 {
+  stroke-width: 1.6;
 }
 
 .th-board .ink {
-  stroke: var(--th-accent);
-  stroke-width: 3;
+  stroke: #0f766e;
 }
 
 .th-board .ink-2 {
-  stroke: var(--th-dim);
-  stroke-width: 3;
+  stroke: #c98a1a;
 }
 
-.th-board .cursor {
-  fill: var(--th-accent);
+.th-board .ink-3 {
+  stroke: #3f8f5f;
 }
 
+.th-board .ink-4 {
+  stroke: #94a3b8;
+}
+
+.th-board .cursor,
+.th-board .tag {
+  fill: #0f766e;
+}
+
+.th-board .cursor-2,
+.th-board .tag-2 {
+  fill: #475569;
+}
+
+.th-board .cursor,
 .th-board .cursor-2 {
-  fill: var(--th-text);
+  stroke: #fff;
+  stroke-width: 0.6;
+}
+
+.th-board .tag-text {
+  fill: #fff;
+  font-size: 3.6px;
+  font-weight: 700;
+  text-anchor: middle;
 }
 
 /* ONVIF: the street swinging past as the camera pans, and its field of view turning. */
