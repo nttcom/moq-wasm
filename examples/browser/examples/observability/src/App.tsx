@@ -196,10 +196,6 @@ export default function App() {
   return (
     <div className="app">
       <div className="app-toolbar">
-        <div>
-          <span className="app-eyebrow">運用ツール · Observability</span>
-          <h1>通信状況</h1>
-        </div>
         <span className="app-badge" title={appTitle}>
           App <b>{shortAppId(access.namespaceRoot)}</b>
         </span>

@@ -92,9 +92,6 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
             <Webcam className="h-[18px] w-[18px]" />
           </span>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">
-              ユースケース · Remote Monitoring
-            </p>
             <h1 className="text-lg font-bold leading-tight tracking-tight">カメラを配信する</h1>
           </div>
           {isIdle && (

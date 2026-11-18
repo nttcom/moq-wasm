@@ -1,5 +1,5 @@
 import { useState, FormEvent, ChangeEvent } from 'react'
-import { Loader2, LogIn, User, Users, Video } from 'lucide-react'
+import { Loader2, LogIn, User, Users } from 'lucide-react'
 import { LOAD_BALANCED_RELAY_PRESET } from '../../../../utils/relayPresets'
 import { Button } from '../../../../lib/ui/button'
 import { Input } from '../../../../lib/ui/input'
@@ -33,15 +33,6 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
         onSubmit={handleSubmit}
         className="flex w-full max-w-md flex-col gap-5 rounded-xl border border-line bg-surface p-8 shadow-lg"
       >
-        <div className="flex items-center gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-accent-line bg-accent-soft text-accent">
-            <Video className="h-5 w-5" />
-          </span>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-accent">ユースケース · Meeting</p>
-            <h1 className="text-xl font-bold tracking-tight text-fg">ルームに参加する</h1>
-          </div>
-        </div>
         <div className="space-y-2">
           <Label htmlFor="roomName">ルーム名</Label>
           <div className="relative">

@@ -54,21 +54,6 @@
   background: var(--panel);
 }
 
-.app > .app-toolbar h1 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.app-eyebrow {
-  display: block;
-  color: var(--accent);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
 .app > .app-toolbar .divider {
   width: 1px;
   height: 20px;

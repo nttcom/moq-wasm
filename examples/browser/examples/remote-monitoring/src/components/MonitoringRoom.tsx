@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { Cctv, Loader2, MapPin, Plug, Plus } from 'lucide-react'
+import { Loader2, MapPin, Plug, Plus } from 'lucide-react'
 import type { LivePlayerState } from 'moq-wasm/media'
 import { CameraId, MonitorMode } from '../types/monitoring'
 import { StageCamera } from './StageCamera'
@@ -180,18 +180,6 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
       {/* header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent-line bg-accent-soft text-accent">
-            <Cctv className="h-[18px] w-[18px]" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">
-              ユースケース · Remote Monitoring
-            </p>
-            <h1 className="flex items-center gap-1.5 text-lg font-bold leading-tight tracking-tight">
-              MoQT 遠隔監視
-              <Tip note={KEYBOARD_NOTE} />
-            </h1>
-          </div>
           <span
             className="inline-flex items-center gap-1 rounded-full border border-line-strong bg-sunken px-2.5 py-0.5 font-mono text-xs text-muted"
             title="location"
@@ -199,6 +187,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
             <MapPin className="h-3 w-3" />
             {location}
           </span>
+          <Tip note={KEYBOARD_NOTE} />
         </div>
         <div className="flex items-center gap-2">
           <a
