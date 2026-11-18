@@ -22,6 +22,7 @@ use crate::{
 pub(crate) async fn run(args: BotArgs) -> Result<()> {
     let bots = Arc::new(BotsClient::from_env(
         args.bots_url.clone(),
+        args.bot_type.clone(),
         args.bot_id.clone(),
     ));
     let job = match prepare(args, &bots).await {

@@ -120,7 +120,9 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         },
         format: record_state.format,
         limits,
-        presence: bots.as_ref().map(|_| format!("{prefix}/bots/recorder")),
+        presence: bots
+            .as_ref()
+            .map(|bots| format!("{prefix}/bots/{}", bots.bot_type())),
     };
     let result = record(config, stop, &status).await;
     sync.finish().await;

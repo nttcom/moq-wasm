@@ -50,7 +50,7 @@ pub(crate) struct RoomConfig {
     pub(crate) format: RecordingFormat,
     pub(crate) limits: RecordingLimits,
     /// The namespace a recording started by `bots` publishes for the room to
-    /// see it, `<room>/bots/recorder`.
+    /// see it, `<room>/bots/<type>`.
     pub(crate) presence: Option<String>,
 }
 
