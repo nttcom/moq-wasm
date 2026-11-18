@@ -10,7 +10,7 @@ import { KeyFrameWait } from './keyFrameWait'
 
 const TARGET = 'moq-wasm::media::video_decoder'
 
-const bitrateLogger = createBitrateLogger((kbps) => {
+const addVideoBytes = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', kbps })
 })
 
@@ -231,7 +231,7 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       return
     case 'object': {
       const { groupId, subgroupStreamObject: object } = data
-      bitrateLogger.addBytes(object.objectPayloadLength)
+      addVideoBytes(object.objectPayloadLength)
       if (!object.objectPayloadLength) {
         return
       }

@@ -14,7 +14,7 @@ type AudioConfig = {
   descriptionBase64?: string
 }
 
-const audioBitrateLogger = createBitrateLogger((kbps) => {
+const addAudioBytes = createBitrateLogger((kbps) => {
   self.postMessage({ type: 'bitrate', media: 'audio', kbps })
 })
 
@@ -74,7 +74,7 @@ self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
       )
       return
     case 'object':
-      audioBitrateLogger.addBytes(data.subgroupStreamObject.objectPayloadLength)
+      addAudioBytes(data.subgroupStreamObject.objectPayloadLength)
       groupOrder.push(data.groupId, data.subgroupStreamObject)
   }
 }
