@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { temporaryAppToken, temporaryAppsUrl } from '../../../../utils/access'
-import { type BotsApi, latestBot, startBot, stopBot } from '../bots/roomBots'
+import { latestBot, startBot, stopBot, temporaryAppsBots } from '../../../../utils/roomBots'
 import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
@@ -40,7 +39,7 @@ export type CaptionsControls = {
 }
 
 /// `null` in a room the transcriber does not serve. The transcriber is a bot of the room
-/// (bots/roomBots.ts), which any page starts and stops; whether it is in the room comes from its
+/// (utils/roomBots.ts), which any page starts and stops; whether it is in the room comes from its
 /// namespace, `transcriberPresent`.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
   // The bot this page started, until it joins the room or ends.
@@ -53,7 +52,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const arrivals = useRef(new Map<string, number>())
   const [now, setNow] = useState(() => Date.now())
-  const bots = useMemo<BotsApi>(() => ({ url: temporaryAppsUrl(), token: temporaryAppToken }), [])
+  const bots = useMemo(temporaryAppsBots, [])
   const namespacePrefix = session.trackNamespacePrefix.join('/')
 
   useEffect(() => {

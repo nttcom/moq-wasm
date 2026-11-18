@@ -1,6 +1,6 @@
-/// The recording the Meeting shows for the room's recorder bot (bots/roomBots.ts).
+/// The recording the Meeting shows for the room's recorder bot (utils/roomBots.ts).
 
-import type { RoomBot } from '../bots/roomBots'
+import type { RoomBot } from '../../../../utils/roomBots'
 
 export const RECORDER_BOT_TYPE = 'recorder'
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { bearerToken, temporaryAppToken, temporaryAppsUrl } from '../../../../utils/access'
+import { bearerToken } from '../../../../utils/access'
 import { type RecordingLayout, type RecordingFormat, type Recorder, listRecordings } from '../recording/recorderApi'
-import { type BotsApi, latestBot, startBot, stopBot } from '../bots/roomBots'
+import { latestBot, startBot, stopBot, temporaryAppsBots } from '../../../../utils/roomBots'
 import { type ActiveRecording, RECORDER_BOT_TYPE, activeRecording } from '../recording/recorderBot'
 
 const POLL_INTERVAL_MS = 5_000
@@ -54,7 +54,7 @@ export interface RoomRecordingControls {
 
 /// `null` until the recorder has answered once, so a recorder that is not
 /// running hides recording. The recorder lists the room's recordings; the
-/// recorder bot (bots/roomBots.ts) makes them. `relayUrl` is the relay the
+/// recorder bot (utils/roomBots.ts) makes them. `relayUrl` is the relay the
 /// player opens the recording through.
 export function useRoomRecording(
   recorderUrl: string,
@@ -67,7 +67,7 @@ export function useRoomRecording(
   const [error, setError] = useState<string | null>(null)
   const [replays, setReplays] = useState<RecordingReplay[]>([])
   const recorder = useMemo<Recorder>(() => ({ url: recorderUrl, token: bearerToken }), [recorderUrl])
-  const bots = useMemo<BotsApi>(() => ({ url: temporaryAppsUrl(), token: temporaryAppToken }), [])
+  const bots = useMemo(temporaryAppsBots, [])
 
   const refresh = useCallback(async () => {
     if (bots.token()) {
