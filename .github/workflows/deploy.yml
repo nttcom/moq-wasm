@@ -7,6 +7,9 @@ on:
     paths-ignore:
       - "**.md"
       - "docs/**"
+      # The SDK docs render these READMEs.
+      - "!crates/wasm/js/README.md"
+      - "!crates/python/README.md"
 
 permissions:
   contents: read
@@ -54,8 +57,29 @@ jobs:
         run: npm ci
         working-directory: examples/browser
 
+      # TypeDoc sits outside the npm workspace: it needs TypeScript 6, which would shadow the workspace's tsc.
+      - name: Install TypeDoc
+        run: npm ci
+        working-directory: crates/wasm/js/typedoc
+
+      - name: Setup uv
+        # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7
+        with:
+          version: 0.13.4
+          checksum: 2b428396f12572d4429cf210ca234dd599a33b3af0958a4d5ed569d63e3f344f
+
+      - name: Build wasm
+        run: npm run wasm
+        working-directory: examples/browser
+
+      # TypeDoc reads the wasm package's types; pdoc imports the Python SDK, building its native module.
+      - name: Generate SDK docs
+        run: npm run docs
+        working-directory: examples/browser
+
       - name: Build with Vite
-        run: npm run build
+        run: npx vite build
         working-directory: examples/browser
 
       - name: Archive GitHub Pages artifact

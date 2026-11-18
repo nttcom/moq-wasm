@@ -19,6 +19,33 @@
 /* ---------- Top bar controls ---------- */
 
 /* The access mode switch, at the end of the top bar. */
+/* Links to the SDK docs, before the draft switch. */
+.docs-nav {
+  display: flex;
+  gap: 4px;
+}
+
+.docs-nav a {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.docs-nav .icon {
+  margin-right: 6px;
+}
+
+.docs-nav a:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 .home-controls {
   position: relative;
   display: flex;
@@ -96,6 +123,24 @@
     gap: 4px;
   }
 
+  .docs-nav {
+    gap: 0;
+  }
+
+  .docs-nav a {
+    padding: 0 6px;
+  }
+
+  .docs-nav .icon,
+  .docs-suffix,
+  .access-switch .icon {
+    display: none;
+  }
+
+  .app-shell-inner {
+    gap: 6px;
+  }
+
   .app-shell .segmented button {
     padding: 0 8px;
   }
@@ -107,6 +152,14 @@
   .access-status {
     border-radius: var(--radius-lg);
   }
+}
+
+/* Below 360px the top bar has no room for the docs links beside the switches. */
+@media (max-width: 360px) {
+  .docs-nav {
+    display: none;
+  }
+
 }
 
 /* The temporary app's link and its expiry, above the categories. */
