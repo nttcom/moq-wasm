@@ -45,7 +45,7 @@ Pass every comment and doc comment the diff adds, each with the code around it, 
 Run the checks for what the diff touches, every time, whether the files were changed with Edit, Write or a shell command. The PostToolUse hook in `.claude/settings.json` formats only files written with Edit and Write.
 
 - Rust: `cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
-- Files prettier checks (under `examples/browser/` or `crates/wasm/js/`): the `Lint (JavaScript)` command in `AGENTS.md`. Run `npm --prefix examples/browser ci` first in this checkout, so prettier is the version its lock file pins rather than one left in another checkout.
+- Files prettier checks (under `examples/browser/` or `crates/wasm/js/`): the `Lint (JavaScript)` command in `AGENTS.md`. Run `npm ci` first in this checkout, so prettier is the version its lock file pins rather than one left in another checkout.
 
 Fix a failure with the formatter or by hand, never by loosening the check.
 
