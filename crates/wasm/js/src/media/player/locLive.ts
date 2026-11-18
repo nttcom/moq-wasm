@@ -1,11 +1,10 @@
 import { latencyMsFromCaptureMicros } from '../internal/clock'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
-import type { AudioCatalogMessage, SubgroupWorkerMessage } from '../internal/jitterBufferTypes'
+import type { AudioCatalogMessage, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../internal/jitterBufferTypes'
 import type { BufferPolicy } from './jitterBuffer'
 import { LivePlayout } from './livePlayout'
 import { type LivePictureKind, type LivePictureSink, createLivePictureSink } from './livePictureSink'
 import type { MediaKind } from './trackContext'
-import type { ReceivedObject } from '../../core/session'
 import type { MediaCatalogTrack } from '../catalog'
 import { type LogSession, receiveWorkerLog } from '../../core/log'
 
@@ -14,10 +13,6 @@ const PRESENTATION_MARGIN_MS = 200
 const ARRIVAL_GAP_WINDOW_MS = 10_000
 
 export type DecodedFrameIds = { groupId: bigint; objectId: bigint }
-export type LocObject = Pick<
-  ReceivedObject,
-  'subgroupId' | 'objectId' | 'objectPayloadLength' | 'objectPayload' | 'objectStatus' | 'locHeader'
->
 
 export type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void
@@ -156,7 +151,13 @@ export class LocLive {
   /// video object that predates the subscription, such as one from a joining
   /// FETCH: it is shown as soon as it decodes, and its arrival does not count
   /// toward the delivery stats.
-  push(kind: MediaKind, groupId: bigint, object: LocObject, codec: string | undefined, cached = false): void {
+  push(
+    kind: MediaKind,
+    groupId: bigint,
+    object: SubgroupObjectWithLoc,
+    codec: string | undefined,
+    cached = false
+  ): void {
     if (cached) {
       this.cachedFrameKeys.add(frameKey(groupId, object.objectId))
     } else {
@@ -255,7 +256,7 @@ export function audioCatalogMessage(track: MediaCatalogTrack): AudioCatalogMessa
 
 export function objectMessage(
   groupId: bigint,
-  object: LocObject,
+  object: SubgroupObjectWithLoc,
   codec?: string
 ): [SubgroupWorkerMessage, Transferable[]] {
   const objectPayload = new Uint8Array(object.objectPayload)

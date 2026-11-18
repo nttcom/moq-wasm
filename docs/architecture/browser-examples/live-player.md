@@ -145,7 +145,7 @@ class LocLive {
   readonly playout: LivePlayout
   readonly picture: LivePictureSink
   configureTrack(kind: MediaKind, track: MediaCatalogTrack): void
-  push(kind: MediaKind, groupId: bigint, object: LocObject): void
+  push(kind: MediaKind, groupId: bigint, object: SubgroupObjectWithLoc): void
   setBufferPolicy(policy: BufferPolicy): void
   reset(): void
   dispose(): void
