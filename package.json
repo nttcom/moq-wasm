@@ -1,5 +1,8 @@
 {
   "name": "moq-wasm-workspace",
   "private": true,
-  "workspaces": ["crates/wasm/js", "examples/browser"]
+  "workspaces": ["crates/wasm/js", "examples/browser"],
+  "overrides": {
+    "minimatch": "^11.0.1"
+  }
 }
