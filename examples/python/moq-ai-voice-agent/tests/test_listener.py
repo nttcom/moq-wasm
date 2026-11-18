@@ -49,7 +49,7 @@ async def test_returns_once_the_room_stays_empty():
     # Arrange
     listener = Listener()
 
-    # Act / Assert: an empty room from the start ends after the grace period
+    # Act / Assert
     await asyncio.wait_for(listener.until_empty_for(0.01), 1)
 
 

@@ -16,21 +16,18 @@ LLM_MODEL = "gemini-3.6-flash"
 
 @dataclass(frozen=True)
 class VertexProject:
-    """A Google Cloud project whose Vertex AI the bot calls with the application default
-    credentials, such as a Cloud Run service account's."""
+    """Called with the application default credentials, such as a Cloud Run service account's."""
 
     project: str
-    location: str = VERTEX_LOCATION
 
     def client(self) -> genai.Client:
-        return genai.Client(vertexai=True, project=self.project, location=self.location)
+        return genai.Client(vertexai=True, project=self.project, location=VERTEX_LOCATION)
 
 
 @dataclass(frozen=True)
 class GeminiServices:
-    """Builds the bot's speech-to-text, LLM and text-to-speech on the Gemini API with an API key, or
-    on Vertex AI. pipecat's Gemini STT and TTS reach the Gemini API only, so on Vertex AI they get a
-    Vertex AI client instead."""
+    """pipecat's Gemini STT and TTS reach the Gemini API only, so on Vertex AI subclasses give them a
+    Vertex AI client."""
 
     language: Language
     api_key: str | None = None
@@ -47,7 +44,7 @@ class GeminiServices:
             settings = GoogleLLMService.Settings(model=LLM_MODEL, system_instruction=system_instruction)
             return GoogleLLMService(api_key=self.api_key, settings=settings)
         settings = GoogleVertexLLMService.Settings(model=LLM_MODEL, system_instruction=system_instruction)
-        return GoogleVertexLLMService(project_id=self.vertex.project, location=self.vertex.location, settings=settings)
+        return GoogleVertexLLMService(project_id=self.vertex.project, location=VERTEX_LOCATION, settings=settings)
 
     def tts(self, voice: str) -> GeminiTTSService:
         settings = GeminiTTSService.Settings(voice=voice, language=self.language)

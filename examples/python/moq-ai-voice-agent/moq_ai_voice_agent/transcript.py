@@ -37,8 +37,6 @@ async def _append(timeline: EventTimeline, role: str, text: str, turn: int | Non
 
 
 def write_user_turns(aggregator: LLMUserAggregator, timeline: EventTimeline) -> None:
-    """Appends what the user said, each time their turn ends."""
-
     @aggregator.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(_aggregator, _strategy, message: UserTurnStoppedMessage):
         if message.content:
@@ -62,13 +60,13 @@ class AnswerTranscript:
 
     The TTS hands over a sentence's text right after synthesizing its audio, faster than it plays,
     and the output transport passes that text on once the audio has played. So `synthesized`, put
-    before the output transport, learns the sentences ahead; `spoken`, put after it, shows the first
-    as the bot starts speaking and each next one as the one before has played, or as it is
-    synthesized when the one before has already played."""
+    before the output transport, learns the sentences ahead; `spoken`, put after it, shows each
+    sentence as the one before it finishes playing, or as soon as it is synthesized if that one has
+    already played."""
 
     def __init__(self, timeline: EventTimeline):
         self._timeline = timeline
-        # The sentences of the answer playing first, and of any synthesized after it.
+        # The sentences of the answer now playing, then of each answer synthesized after it.
         self._answers: deque[list[TextPartForConcatenation]] = deque([[]])
         self._shown = 0
         self._played = 0
@@ -106,7 +104,7 @@ class AnswerTranscript:
         if count <= self._shown:
             return
         if self._shown == 0:
-            # A page that stays while the bot reconnects tells answers apart across its runs.
+            # Wall-clock milliseconds, so a page that stays across a bot reconnect still tells answers apart.
             self._turn = max(_now_ms(), self._turn + 1)
         self._shown = count
         await _append(self._timeline, ASSISTANT, concatenate_aggregated_text(sentences[:count]), self._turn)

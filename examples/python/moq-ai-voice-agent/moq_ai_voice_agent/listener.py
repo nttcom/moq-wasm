@@ -43,5 +43,4 @@ class Listener:
                 return
 
     async def accepts(self, frame: Frame) -> bool:
-        """A `FunctionFilter` function: drops the audio of every participant but `current`."""
         return not isinstance(frame, UserAudioRawFrame) or frame.user_id == self.current

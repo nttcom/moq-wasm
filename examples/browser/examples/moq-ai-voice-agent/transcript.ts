@@ -2,8 +2,7 @@
 export type TranscriptTurn = { role: 'user' | 'assistant'; text: string; turn?: number }
 
 /// The turns of one object of the bot's transcript: draft-ietf-moq-msf-02 §8.2 makes each object a
-/// JSON array of records, each `{"T": milliseconds, "data": {"role", "text", "turn"?}}`. Anything
-/// else is skipped.
+/// JSON array of records, each `{"T": milliseconds, "data": {"role", "text", "turn"?}}`.
 export function transcriptTurns(payload: Uint8Array): TranscriptTurn[] {
   let records: unknown
   try {
@@ -21,6 +20,6 @@ export function transcriptTurns(payload: Uint8Array): TranscriptTurn[] {
     if ((role !== 'user' && role !== 'assistant') || typeof text !== 'string' || text.length === 0) {
       return []
     }
-    return [Number.isInteger(data?.turn) ? { role, text, turn: data?.turn as number } : { role, text }]
+    return [{ role, text, ...(Number.isInteger(data?.turn) && { turn: data?.turn as number }) }]
   })
 }

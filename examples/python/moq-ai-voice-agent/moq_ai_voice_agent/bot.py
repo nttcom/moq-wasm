@@ -26,8 +26,8 @@ from moq_ai_voice_agent.listener import Listener
 DEFAULT_PORT = 8101
 # Every room holds its own Gemini sessions; the bot itself does little but VAD.
 DEFAULT_MAX_ROOMS = 4
-# The page publishes its microphone one level under the room; the bot publishes its voice and its
-# transcript side by side under `gemini`, two levels under the room.
+# The page publishes its microphone one level under the room; the bot's broadcasts sit two levels under
+# it, so the transport does not take them for a participant.
 PARTICIPANT_ID = "gemini"
 VOICE_NAMESPACE = [PARTICIPANT_ID, "voice"]
 TRANSCRIPT_NAMESPACE = [PARTICIPANT_ID, "transcript"]
@@ -59,15 +59,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def room_namespace(room: BotRoom) -> list[str]:
-    """The namespace examples/browser/examples/moq-ai-voice-agent/main.ts uses."""
-    return [room.namespace_root, "moq-ai-voice-agent", room.room_id]
-
-
 def voice_pipeline(
     gemini: GeminiServices, transport: MoqWasmTransport, listener: Listener, timeline: EventTimeline
 ) -> Pipeline:
-    """Gemini speech-to-text, LLM and text-to-speech in a row, on the audio of `listener.current`."""
     stt = gemini.stt(keepalive_timeout=STT_KEEPALIVE_SECONDS)
     llm = gemini.llm(SYSTEM_INSTRUCTION)
     tts = gemini.tts(VOICE)
@@ -93,8 +87,8 @@ def voice_pipeline(
 
 
 async def talk_in_session(gemini: GeminiServices, room: BotRoom, session: moq_wasm.Session) -> None:
-    """Returns once the room has had no participant for the grace period."""
-    namespace = room_namespace(room)
+    # The namespace examples/browser/examples/moq-ai-voice-agent/main.ts uses.
+    namespace = [room.namespace_root, "moq-ai-voice-agent", room.room_id]
     transport = MoqWasmTransport(
         session,
         MoqWasmParams(

@@ -16,8 +16,7 @@ import { resolveServiceUrl } from '../../utils/serviceUrl'
 import { type TranscriptTurn, transcriptTurns } from './transcript'
 
 const ROOM = pageRoomId()
-/// The namespaces examples/python/moq-ai-voice-agent/moq_ai_voice_agent/bot.py uses: the page's microphone
-/// one level under the room, the bot's voice and transcript side by side under `gemini`.
+/// Must match examples/python/moq-ai-voice-agent/moq_ai_voice_agent/bot.py.
 const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-ai-voice-agent', ROOM])
 const VOICE_NAMESPACE = [...ROOM_NAMESPACE, 'gemini', 'voice']
 const TRANSCRIPT_NAMESPACE = [...ROOM_NAMESPACE, 'gemini', 'transcript']
@@ -58,6 +57,8 @@ muteButton.addEventListener('click', () => void toggleMute())
 async function join(): Promise<void> {
   joinButton.disabled = true
   botRoomNotice.style.display = 'none'
+  transcriptList.replaceChildren()
+  transcriptEmpty.hidden = false
   setStatus('connection-status', '接続中', 'review')
   try {
     // Resumed from the click, as the browser allows only after a user gesture.
@@ -150,21 +151,19 @@ async function followTranscript(joined: MoqSession): Promise<void> {
   }
 }
 
-/// A record of an answer already shown replaces its text; any other record adds a bubble.
 function showTurn(turn: TranscriptTurn): void {
-  const key = turn.turn === undefined ? undefined : `${turn.role}-${turn.turn}`
-  const shown = key ? transcriptList.querySelector<HTMLLIElement>(`[data-turn="${key}"]`) : null
-  const item = shown ?? document.createElement('li')
-  item.className = 'voice-agent-turn'
-  item.dataset.role = turn.role
-  item.dataset.testid = 'voice-agent-turn'
-  if (key) {
-    item.dataset.turn = key
-  }
-  item.textContent = turn.text
-  if (!shown) {
+  let item = turn.turn === undefined ? null : transcriptList.querySelector<HTMLLIElement>(`[data-turn="${turn.turn}"]`)
+  if (!item) {
+    item = document.createElement('li')
+    item.className = 'voice-agent-turn'
+    item.dataset.role = turn.role
+    item.dataset.testid = 'voice-agent-turn'
+    if (turn.turn !== undefined) {
+      item.dataset.turn = String(turn.turn)
+    }
     transcriptList.append(item)
   }
+  item.textContent = turn.text
   transcriptEmpty.hidden = true
   item.scrollIntoView({ block: 'nearest' })
 }
