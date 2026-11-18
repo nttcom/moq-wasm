@@ -18,8 +18,7 @@ import { type TranscriptTurn, transcriptTurns } from './transcript'
 const ROOM = pageRoomId()
 /// Must match examples/python/moq-ai-voice-agent/moq_ai_voice_agent/bot.py.
 const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-ai-voice-agent', ROOM])
-const VOICE_NAMESPACE = [...ROOM_NAMESPACE, 'gemini', 'voice']
-const TRANSCRIPT_NAMESPACE = [...ROOM_NAMESPACE, 'gemini', 'transcript']
+const BOT_NAMESPACE = [...ROOM_NAMESPACE, 'gemini']
 const TRANSCRIPT_TRACK = 'transcript'
 const BOT_SERVICE = {
   param: 'botUrl',
@@ -81,24 +80,15 @@ async function join(): Promise<void> {
       label: 'Mic',
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     })
-    // One watch for both: the relay refuses a second SUBSCRIBE_NAMESPACE overlapping the first.
     room = await watchBroadcasts(joined, ROOM_NAMESPACE, {
       audioContext,
-      filter: (namespace) =>
-        sameNamespace(namespace, VOICE_NAMESPACE) || sameNamespace(namespace, TRANSCRIPT_NAMESPACE),
+      filter: (namespace) => sameNamespace(namespace, BOT_NAMESPACE),
       onAdd: (remote) => {
-        if (sameNamespace(remote.namespace, TRANSCRIPT_NAMESPACE)) {
-          void followTranscript(joined)
-          return
-        }
         setBotStatus(true)
         remote.listen({ onSourceAdd: (view) => botPlayer.append(view.element) })
+        void followTranscript(joined)
       },
-      onRemove: (remote) => {
-        if (sameNamespace(remote.namespace, VOICE_NAMESPACE)) {
-          setBotStatus(false)
-        }
-      }
+      onRemove: () => setBotStatus(false)
     })
     setStatus('connection-status', '接続済み', 'ok')
     leaveButton.disabled = false
@@ -140,7 +130,7 @@ async function toggleMute(): Promise<void> {
 
 async function followTranscript(joined: MoqSession): Promise<void> {
   try {
-    const subscription = await joined.subscribe(TRANSCRIPT_NAMESPACE, TRANSCRIPT_TRACK)
+    const subscription = await joined.subscribe(BOT_NAMESPACE, TRANSCRIPT_TRACK)
     for await (const object of subscription) {
       for (const turn of transcriptTurns(object.objectPayload)) {
         showTurn(turn)

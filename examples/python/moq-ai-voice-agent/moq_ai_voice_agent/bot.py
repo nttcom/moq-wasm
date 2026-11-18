@@ -8,7 +8,6 @@ from moq_bot_rooms.relay import add_relay_arguments
 from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
 from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.relay import stay_connected
-from moq_wasm.media import EventTimeline, create_broadcast
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
@@ -26,11 +25,8 @@ from moq_ai_voice_agent.listener import Listener
 DEFAULT_PORT = 8101
 # Every room holds its own Gemini sessions; the bot itself does little but VAD.
 DEFAULT_MAX_ROOMS = 4
-# The page publishes its microphone one level under the room; the bot's broadcasts sit two levels under
-# it, so the transport does not take them for a participant.
+# The page publishes its microphone one level under the room, and the bot its voice and transcript.
 PARTICIPANT_ID = "gemini"
-VOICE_NAMESPACE = [PARTICIPANT_ID, "voice"]
-TRANSCRIPT_NAMESPACE = [PARTICIPANT_ID, "transcript"]
 # The transcript is kept for FETCH as long as a room runs by default (--max-room-seconds).
 TRANSCRIPT_RETENTION_SECONDS = 60 * 60
 LANGUAGE = Language.JA_JP
@@ -59,17 +55,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def voice_pipeline(
-    gemini: GeminiServices, transport: MoqWasmTransport, listener: Listener, timeline: EventTimeline
-) -> Pipeline:
+def voice_pipeline(gemini: GeminiServices, transport: MoqWasmTransport, listener: Listener) -> Pipeline:
     stt = gemini.stt(keepalive_timeout=STT_KEEPALIVE_SECONDS)
     llm = gemini.llm(SYSTEM_INSTRUCTION)
     tts = gemini.tts(VOICE)
     aggregators = LLMContextAggregatorPair(
         LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
     )
-    transcript.write_user_turns(aggregators.user(), timeline)
-    answer = transcript.AnswerTranscript(timeline)
+    transcript.write_user_turns(aggregators.user())
+    answer = transcript.AnswerTranscript()
     return Pipeline(
         [
             transport.input(),
@@ -94,26 +88,25 @@ async def talk_in_session(gemini: GeminiServices, room: BotRoom, session: moq_wa
         MoqWasmParams(
             room=namespace,
             participant_id=PARTICIPANT_ID,
-            broadcast=[*namespace, *VOICE_NAMESPACE],
             audio_in_enabled=True,
             audio_out_enabled=True,
+            event_timelines_out={transcript.TRACK_NAME: TRANSCRIPT_RETENTION_SECONDS},
+            empty_timeout=GRACE_SECONDS,
         ),
     )
     listener = Listener()
     transport.add_event_handler("on_client_connected", lambda _, participant_id: listener.joined(participant_id))
     transport.add_event_handler("on_client_disconnected", lambda _, participant_id: listener.left(participant_id))
-    transcript_broadcast = create_broadcast(session, [*namespace, *TRANSCRIPT_NAMESPACE])
-    timeline = transcript_broadcast.event_timeline(transcript.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
-    pipeline = voice_pipeline(gemini, transport, listener, timeline)
-    worker = PipelineWorker(pipeline, enable_rtvi=False, idle_timeout_secs=None)
+    worker = PipelineWorker(voice_pipeline(gemini, transport, listener), enable_rtvi=False, idle_timeout_secs=None)
     # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
     runner = WorkerRunner(handle_sigint=False)
-    await runner.add_workers(worker)
-    async with transcript_broadcast, asyncio.TaskGroup() as tasks:
-        await transcript_broadcast.published()
-        tasks.create_task(runner.run())
-        await listener.until_empty_for(GRACE_SECONDS)
+
+    @transport.event_handler("on_room_empty")
+    async def on_room_empty(_):
         await runner.cancel()
+
+    await runner.add_workers(worker)
+    await runner.run()
 
 
 async def talk_in_room(args: argparse.Namespace, gemini: GeminiServices, room: BotRoom) -> None:

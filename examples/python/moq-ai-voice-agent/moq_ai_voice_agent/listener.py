@@ -1,5 +1,3 @@
-import asyncio
-
 from pipecat.frames.frames import Frame, UserAudioRawFrame
 
 
@@ -14,7 +12,6 @@ class Listener:
 
     def __init__(self):
         self._participants: list[str] = []
-        self._changed = asyncio.Event()
 
     @property
     def current(self) -> str | None:
@@ -22,25 +19,10 @@ class Listener:
 
     def joined(self, participant_id: str) -> None:
         self._participants.append(participant_id)
-        self._changed.set()
 
     def left(self, participant_id: str) -> None:
         if participant_id in self._participants:
             self._participants.remove(participant_id)
-        self._changed.set()
-
-    async def until_empty_for(self, seconds: float) -> None:
-        """Returns once nobody has been in the room for `seconds`, counted from the call or from
-        the moment the last participant left."""
-        while True:
-            self._changed.clear()
-            if self._participants:
-                await self._changed.wait()
-                continue
-            try:
-                await asyncio.wait_for(self._changed.wait(), seconds)
-            except TimeoutError:
-                return
 
     async def accepts(self, frame: Frame) -> bool:
         return not isinstance(frame, UserAudioRawFrame) or frame.user_id == self.current

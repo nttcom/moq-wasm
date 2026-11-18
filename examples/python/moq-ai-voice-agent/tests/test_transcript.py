@@ -1,15 +1,28 @@
-from pipecat.frames.frames import BotStartedSpeakingFrame, InterruptionFrame, LLMFullResponseEndFrame, TTSTextFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    InterruptionFrame,
+    LLMFullResponseEndFrame,
+    OutputTransportMessageUrgentFrame,
+    TTSTextFrame,
+)
 from pipecat.tests.utils import SleepFrame, run_test
 
 from moq_ai_voice_agent.transcript import ASSISTANT, AnswerTranscript, transcript_record
 
 
 class RecordingTimeline:
+    """The records the taps send toward the output transport, in order."""
+
     def __init__(self):
         self.records: list[dict] = []
 
-    async def append(self, record: dict) -> None:
-        self.records.append(record)
+    async def run(self, tap, frames) -> None:
+        downstream, upstream = await run_test(tap, frames_to_send=frames)
+        self.records += [
+            frame.message.record
+            for frame in [*downstream, *upstream]
+            if isinstance(frame, OutputTransportMessageUrgentFrame)
+        ]
 
 
 def sentence(text: str) -> TTSTextFrame:
@@ -36,14 +49,14 @@ def test_a_record_of_an_answer_carries_its_turn():
 async def test_each_sentence_shows_as_it_starts_to_play():
     # Arrange: the TTS synthesized the whole answer before any of it played
     timeline = RecordingTimeline()
-    answer = AnswerTranscript(timeline)
-    await run_test(answer.synthesized, frames_to_send=[sentence("こんにちは。"), sentence("いい天気ですね。"), LLMFullResponseEndFrame()])
+    answer = AnswerTranscript()
+    await timeline.run(answer.synthesized, [sentence("こんにちは。"), sentence("いい天気ですね。"), LLMFullResponseEndFrame()])
     shown_before_playing = list(timeline.records)
 
     # Act: the output transport plays it; a sentence's text passes once its audio has played
-    await run_test(
+    await timeline.run(
         answer.spoken,
-        frames_to_send=[BotStartedSpeakingFrame(), SleepFrame(), sentence("こんにちは。"), sentence("いい天気ですね。"), LLMFullResponseEndFrame()],
+        [BotStartedSpeakingFrame(), SleepFrame(), sentence("こんにちは。"), sentence("いい天気ですね。"), LLMFullResponseEndFrame()],
     )
 
     # Assert
@@ -54,12 +67,12 @@ async def test_each_sentence_shows_as_it_starts_to_play():
 async def test_a_sentence_synthesized_after_the_one_before_played_shows_at_once():
     # Arrange: the first sentence played before the TTS finished the second
     timeline = RecordingTimeline()
-    answer = AnswerTranscript(timeline)
-    await run_test(answer.synthesized, frames_to_send=[sentence("こんにちは。")])
-    await run_test(answer.spoken, frames_to_send=[BotStartedSpeakingFrame(), SleepFrame(), sentence("こんにちは。")])
+    answer = AnswerTranscript()
+    await timeline.run(answer.synthesized, [sentence("こんにちは。")])
+    await timeline.run(answer.spoken, [BotStartedSpeakingFrame(), SleepFrame(), sentence("こんにちは。")])
 
     # Act
-    await run_test(answer.synthesized, frames_to_send=[sentence("長い二つ目の文です。")])
+    await timeline.run(answer.synthesized, [sentence("長い二つ目の文です。")])
 
     # Assert
     assert answers(timeline) == [(1, "こんにちは。"), (1, "こんにちは。 長い二つ目の文です。")]
@@ -68,13 +81,15 @@ async def test_a_sentence_synthesized_after_the_one_before_played_shows_at_once(
 async def test_the_next_answer_starts_a_new_turn():
     # Arrange
     timeline = RecordingTimeline()
-    answer = AnswerTranscript(timeline)
-    await run_test(answer.synthesized, frames_to_send=[sentence("一つ目。"), LLMFullResponseEndFrame(), sentence("二つ目。"), LLMFullResponseEndFrame()])
+    answer = AnswerTranscript()
+    await timeline.run(
+        answer.synthesized, [sentence("一つ目。"), LLMFullResponseEndFrame(), sentence("二つ目。"), LLMFullResponseEndFrame()]
+    )
 
     # Act
-    await run_test(
+    await timeline.run(
         answer.spoken,
-        frames_to_send=[
+        [
             BotStartedSpeakingFrame(),
             SleepFrame(),
             sentence("一つ目。"),
@@ -92,11 +107,11 @@ async def test_the_next_answer_starts_a_new_turn():
 async def test_an_interruption_drops_the_sentences_not_yet_shown():
     # Arrange
     timeline = RecordingTimeline()
-    answer = AnswerTranscript(timeline)
-    await run_test(answer.synthesized, frames_to_send=[sentence("途中まで。"), sentence("言わなかった文。")])
+    answer = AnswerTranscript()
+    await timeline.run(answer.synthesized, [sentence("途中まで。"), sentence("言わなかった文。")])
 
     # Act: the interruption is a system frame, which would overtake a sentence still queued
-    await run_test(answer.spoken, frames_to_send=[BotStartedSpeakingFrame(), SleepFrame(), InterruptionFrame(), sentence("途中まで。")])
+    await timeline.run(answer.spoken, [BotStartedSpeakingFrame(), SleepFrame(), InterruptionFrame(), sentence("途中まで。")])
 
     # Assert
     assert answers(timeline) == [(1, "途中まで。")]
