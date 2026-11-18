@@ -2,11 +2,9 @@ import asyncio
 import time
 
 import aiohttp
-import av
-import numpy as np
 from loguru import logger
 from moq_system_one_bot.event_timeline import Location, location_record
-from moq_system_one_bot.video import picture_to_jpeg
+from moq_system_one_bot.video import rgb_to_jpeg
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage
 from pipecat.frames.frames import (
     Frame,
@@ -100,7 +98,7 @@ class CameraDetector(FrameProcessor):
 
     async def _judge(self, frame: UserImageRawFrame, prompt: Prompt) -> None:
         location: Location = (frame.metadata["location"].group_id, frame.metadata["location"].object_id)
-        jpeg = await asyncio.to_thread(_rgb_to_jpeg, frame.image, frame.size)
+        jpeg = await asyncio.to_thread(rgb_to_jpeg, frame.image, frame.size)
         requested_at = time.monotonic()
         try:
             answers = await self._vision.answer(jpeg, prompt)
@@ -114,8 +112,3 @@ class CameraDetector(FrameProcessor):
         record = location_record(location, {"prompt": prompt.location, "answers": answers})
         await self.push_frame(OutputTransportMessageFrame(message=MoqWasmEventRecord(EVENT_TIMELINE_TRACK, record)))
 
-
-def _rgb_to_jpeg(rgb: bytes, size: tuple[int, int]) -> bytes:
-    width, height = size
-    picture = av.VideoFrame.from_ndarray(np.frombuffer(rgb, np.uint8).reshape(height, width, 3), format="rgb24")
-    return picture_to_jpeg(picture)

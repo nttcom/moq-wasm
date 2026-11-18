@@ -171,6 +171,18 @@ class Room:
             return True
         return False
 
+    async def capture(self, participant_id: str, source: str, framerate: float | None) -> None:
+        receiver = self._receivers.get(participant_id)
+        if receiver is None:
+            logger.warning("cannot capture %s of %s: not in the room", source, participant_id)
+            return
+        await receiver.capture(source, framerate)
+
+    async def release(self, participant_id: str, source: str) -> None:
+        receiver = self._receivers.get(participant_id)
+        if receiver is not None:
+            await receiver.release(source)
+
     async def request_image(self, request: UserImageRequestFrame) -> None:
         receiver = self._receivers.get(request.user_id)
         if receiver is None:

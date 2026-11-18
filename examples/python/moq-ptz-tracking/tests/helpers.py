@@ -4,7 +4,7 @@ from typing import Any
 from moq_system_one_bot import testing
 from moq_system_one_bot.testing import READ_TIMEOUT_SECONDS
 from moq_ptz_tracking.ptz import PtzCommands
-from moq_ptz_tracking.target import LatestTarget, Target
+from moq_ptz_tracking.target import Target
 from moq_ptz_tracking.vision import Answer, Box, Sighting, TargetBox
 
 # next_group ends a group after this long without a write, so a test's turns must be shorter.
@@ -46,12 +46,6 @@ async def published_commands() -> tuple[PtzCommands, RecordingPublication]:
     publication = RecordingPublication()
     commands.publish_on(publication)
     return commands, publication
-
-
-def tracking(target: Target) -> LatestTarget:
-    latest_target = LatestTarget()
-    latest_target.set(target)
-    return latest_target
 
 
 def sighting(*boxes: Box) -> Sighting:

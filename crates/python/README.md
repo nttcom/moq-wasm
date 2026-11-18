@@ -92,6 +92,7 @@ transport = MoqWasmTransport(
         audio_in_enabled=True,
         audio_out_enabled=True,
         video_in_enabled=True,
+        video_in_sources={"camera": VideoInSourceParams(framerate=10)},
         video_out_enabled=True,  # H.264 unless video_out_codec="VP8"
     ),
 )

@@ -43,10 +43,16 @@ class ReceiveOptions:
     video_sources: dict[str, float | None]
     video_in_track: Callable[[Catalog], CatalogTrack | None] | None
     data_tracks: list[str] = field(default_factory=list)
+    # Whether video sources not in `video_sources` may be asked for later.
+    video_in: bool = False
+
+    @property
+    def receives_media(self) -> bool:
+        return self.audio_in or self.video_in or bool(self.video_sources)
 
     @property
     def receives_anything(self) -> bool:
-        return self.audio_in or bool(self.video_sources) or bool(self.data_tracks)
+        return self.receives_media or bool(self.data_tracks)
 
 
 @dataclass(frozen=True)
@@ -92,6 +98,9 @@ class ParticipantReceiver:
         it ends or its SUBSCRIBE fails, as when the publisher has not written it yet."""
         data = [asyncio.create_task(self._receive_data(track)) for track in self._options.data_tracks]
         try:
+            # When only data tracks are read, the participant may publish no catalog, so none is asked for.
+            if not self._options.receives_media:
+                await asyncio.Event().wait()
             while True:
                 try:
                     async for catalog in self._remote.catalogs():
@@ -122,6 +131,29 @@ class ParticipantReceiver:
             self._sources[source] = None
             if self._catalog is not None:
                 await self._pick_tracks(self._catalog)
+
+    async def capture(self, source: str, framerate: float | None) -> None:
+        """Receives `source` at `framerate` pictures a second, or for image requests only when it is
+        None; for a source already received, changes its framerate."""
+        self._sources[source] = framerate
+        self._sampler(source).set_framerate(framerate)
+        if self._catalog is not None:
+            await self._pick_tracks(self._catalog)
+
+    async def release(self, source: str) -> None:
+        """Stops receiving `source` and answers the image requests waiting on it with an error."""
+        async with self._picking:
+            if source not in self._sources and source not in self._samplers:
+                return
+            self._sources.pop(source, None)
+            current = self._receiving.pop(f"video:{source}", None)
+            if current is not None:
+                current[1].cancel()
+                # A request the track was answering goes back to the sampler as the task ends.
+                await asyncio.gather(current[1], return_exceptions=True)
+            sampler = self._samplers.pop(source, None)
+        if sampler is not None:
+            await self._sink.answer_image_requests(sampler.take_requests(), f"{source} of {self.participant_id} released")
 
     def _left(self) -> str:
         return f"{self.participant_id} left"
@@ -234,9 +266,12 @@ class _Sampler:
     none when `framerate` is None, and the next picture after each image request either way."""
 
     def __init__(self, framerate: float | None):
-        self._interval = None if framerate is None else 1 / framerate
+        self.set_framerate(framerate)
         self._next_at = 0.0
         self._requests: list[UserImageRequestFrame] = []
+
+    def set_framerate(self, framerate: float | None) -> None:
+        self._interval = None if framerate is None else 1 / framerate
 
     def add_request(self, request: UserImageRequestFrame) -> None:
         self._requests.append(request)

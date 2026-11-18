@@ -1,4 +1,5 @@
 import av
+import numpy as np
 
 JPEG_PIXEL_FORMAT = "yuvj420p"
 
@@ -15,3 +16,10 @@ def picture_to_jpeg(picture: av.VideoFrame, width: int | None = None) -> bytes:
     encoder.height = picture.height
     encoder.pix_fmt = JPEG_PIXEL_FORMAT
     return b"".join(bytes(packet) for packet in [*encoder.encode(picture), *encoder.encode(None)])
+
+
+def rgb_to_jpeg(rgb: bytes, size: tuple[int, int], width: int | None = None) -> bytes:
+    """`picture_to_jpeg` for the RGB picture of a pipecat `UserImageRawFrame`."""
+    columns, rows = size
+    picture = av.VideoFrame.from_ndarray(np.frombuffer(rgb, np.uint8).reshape(rows, columns, 3), format="rgb24")
+    return picture_to_jpeg(picture, width)
