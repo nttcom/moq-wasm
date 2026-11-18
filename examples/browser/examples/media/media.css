@@ -1,10 +1,10 @@
 /* The playback statistics of the media and media-cmaf subscriber pages. */
 
-/* Statistics change every frame, so a fixed height keeps the stage still. */
+/* Below the stage, statistics that change every frame cannot move it; three reserved lines keep the rest of
+   the card steady too. */
 .playback-stats {
-  height: calc(1.5em * 3);
+  min-height: calc(1.5em * 3);
   margin: 10px 0 0;
-  overflow: hidden;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.75rem;

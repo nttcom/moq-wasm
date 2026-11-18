@@ -28,9 +28,8 @@ startPageTelemetry(
 const catalogPicker = setUpCatalogPicker(() => session, form)
 
 function renderPlayer(): void {
-  if (!player.state.started) {
-    delete stage.dataset.started
-  }
+  // CMAF plays through MSE without onLiveFrame, so the player's own state names a started stage.
+  stage.toggleAttribute('data-started', player.state.started)
   const { started, playbackStatus } = player.state
   if (started) {
     setStatusText('subscriber-playback-status', playbackStatus.text)
@@ -38,7 +37,6 @@ function renderPlayer(): void {
 }
 
 function renderStats(): void {
-  stage.dataset.started = ''
   const stats = player.stats()
   setStatusText(
     'subscriber-receive-status',

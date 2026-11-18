@@ -109,22 +109,26 @@
 }
 
 /* The SDK's controls size their own buttons; drop the page defaults they leave unset. */
-.video-card #stage button {
+.video-card #stage :is(button, select, input) {
   min-height: 0;
   font-weight: 400;
 }
 
-/* main.ts sets data-started while the player runs. Before that the stage keeps the shape of the
-   video it will show. */
-.video-card #stage:not([data-started]) {
+/* The stage keeps a 16:9 box whatever it shows, so it does not collapse between starting and the
+   first frame, and the player's automatic quality reads a stable height. */
+.video-card #stage {
   aspect-ratio: 16 / 9;
 }
 
-.video-card #stage:not([data-started]) > video.live-player-picture {
+.video-card #stage > :is(video, canvas) {
   position: absolute;
   inset: 0;
+  width: 100%;
   height: 100%;
+  object-fit: contain;
 }
+
+/* main.ts sets data-started while the player runs. */
 
 .video-card #stage:not([data-started])::before {
   position: absolute;

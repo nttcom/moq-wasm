@@ -338,22 +338,26 @@
 }
 
 /* The SDK's controls size their own buttons; drop the page defaults they leave unset. */
-#stage.viewer-stage button {
+#stage.viewer-stage :is(button, select, input) {
   min-height: 0;
   font-weight: 400;
 }
 
-/* main.ts sets data-started while the player runs. Before that the stage keeps the shape of the
-   video it will show. */
-#stage.viewer-stage:not([data-started]) {
+/* The stage keeps a 16:9 box whatever it shows, so it does not collapse between starting and the
+   first frame, and the player's automatic quality reads a stable height. */
+#stage.viewer-stage {
   aspect-ratio: 16 / 9;
 }
 
-#stage.viewer-stage:not([data-started]) > video.live-player-picture {
+#stage.viewer-stage > :is(video, canvas) {
   position: absolute;
   inset: 0;
+  width: 100%;
   height: 100%;
+  object-fit: contain;
 }
+
+/* main.ts sets data-started while the player runs. */
 
 #stage.viewer-stage:not([data-started])::before {
   position: absolute;
@@ -415,4 +419,16 @@
   padding: 0;
   border: 0;
   background: none;
+}
+
+/* Statistics change every frame; below the stage, wrapping onto a reserved second line, they leave it still. */
+.viewer-stats {
+  min-height: calc(1.5em * 2);
+  margin: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }

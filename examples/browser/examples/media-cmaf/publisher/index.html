@@ -6,7 +6,6 @@
     <title>Media CMAF Publisher · MoQT Playground</title>
     <link rel="stylesheet" href="../../../utils/theme.css" />
     <link rel="stylesheet" href="../../../utils/components.css" />
-    <link rel="stylesheet" href="../../media/media.css" />
   </head>
   <body data-title="Publisher" data-parent-title="Media CMAF" data-parent-href="../index.html">
     <main class="page">
@@ -63,7 +62,12 @@
                 </label>
               </div>
               <div class="button-row">
-                <button type="button" id="startGetUserMediaBtn" data-testid="publisher-get-user-media-button">
+                <button
+                  type="button"
+                  class="secondary"
+                  id="startGetUserMediaBtn"
+                  data-testid="publisher-get-user-media-button"
+                >
                   getUserMedia
                 </button>
                 <button type="button" id="publishBtn" class="primary" data-testid="publisher-send-button">
