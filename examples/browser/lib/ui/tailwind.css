@@ -1,0 +1,74 @@
+/* Tailwind for the React examples, with colors named after the tokens of utils/theme.css so `bg-surface`
+   follows the access mode. theme.css's unlayered `--font-*` and `--radius-*` override Tailwind's defaults;
+   its `--shadow-*` do not reach the `shadow-*` utilities, which inline their values. */
+@import 'tailwindcss';
+
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-subtle: var(--bg-subtle);
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-sunken: var(--surface-sunken);
+  --color-hover: var(--surface-hover);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-faint: var(--text-subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-line: var(--accent-border);
+  --color-on-accent: var(--on-accent);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-chart-cyan: var(--chart-cyan);
+  --color-chart-orange: var(--chart-orange);
+  --color-chart-emerald: var(--chart-emerald);
+  --color-chart-fuchsia: var(--chart-fuchsia);
+  --color-chart-yellow: var(--chart-yellow);
+  --color-chart-sky: var(--chart-sky);
+  --color-chart-rose: var(--chart-rose);
+  --color-chart-lime: var(--chart-lime);
+  --color-chart-violet: var(--chart-violet);
+  --color-chart-amber: var(--chart-amber);
+}
+
+/* Chart series: the 400 shades on the dark surface and the 700 shades on the light one, so each line
+   keeps at least 3:1 against the chart in both access modes. */
+:root {
+  --chart-cyan: #22d3ee;
+  --chart-orange: #fb923c;
+  --chart-emerald: #34d399;
+  --chart-fuchsia: #e879f9;
+  --chart-yellow: #facc15;
+  --chart-sky: #38bdf8;
+  --chart-rose: #fb7185;
+  --chart-lime: #a3e635;
+  --chart-violet: #a78bfa;
+  --chart-amber: #fbbf24;
+}
+
+:root[data-access-mode='public'] {
+  --chart-cyan: #0e7490;
+  --chart-orange: #c2410c;
+  --chart-emerald: #047857;
+  --chart-fuchsia: #a21caf;
+  --chart-yellow: #a16207;
+  --chart-sky: #0369a1;
+  --chart-rose: #be123c;
+  --chart-lime: #4d7c0f;
+  --chart-violet: #6d28d9;
+  --chart-amber: #b45309;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+}

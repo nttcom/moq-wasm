@@ -3,56 +3,78 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Live Translate Streamer</title>
-    <link rel="stylesheet" href="../../media/media.css" />
-    <style>
-      #app {
-        grid-template-columns: repeat(auto-fit, minmax(max(280px, calc((100% - 18px) / 2)), 1fr));
-      }
-      #viewer-link {
-        overflow-wrap: anywhere;
-      }
-    </style>
+    <title>Live Translate 配信 · MoQT Playground</title>
+    <link rel="stylesheet" href="../../../utils/theme.css" />
+    <link rel="stylesheet" href="../../../utils/components.css" />
+    <link rel="stylesheet" href="./streamer.css" />
   </head>
-  <body>
-    <div class="page">
-      <header class="hero">
-        <div>
-          <span class="pill">Live Translate</span>
-          <h1>配信する</h1>
-          <p>カメラとマイクを配信し、視聴者は好きな言語の音声で見られます。</p>
+  <body data-title="Live Translate · 配信">
+    <main class="page">
+      <div id="app" class="workspace">
+        <div class="workspace-main">
+          <section class="card">
+            <div class="card-head">
+              <h2>プレビュー</h2>
+            </div>
+            <div id="preview-stage" class="stage" data-placeholder="配信開始で映像が映ります">
+              <video id="preview" autoplay muted playsinline></video>
+            </div>
+          </section>
         </div>
-      </header>
-      <div id="app" class="control-grid">
-        <section class="card stack">
-          <h2>配信</h2>
-          <div id="urlPresets"></div>
-          <input type="url" id="url" aria-label="Relay URL" data-testid="streamer-url-input" />
-          <p>
-            配信 ID: <strong id="broadcast-id" data-testid="streamer-broadcast-id"></strong>
-            <button type="button" id="copyBroadcastIdBtn" data-testid="streamer-copy-broadcast-id">コピー</button>
-          </p>
-          <div class="button-row">
-            <button type="button" id="startBtn" data-testid="streamer-start-button">配信開始</button>
-            <button type="button" id="stopBtn">停止</button>
-          </div>
-          <p id="streamer-status" class="hint" data-testid="streamer-status"></p>
-        </section>
-        <section id="viewer-link-section" class="card stack" hidden>
-          <h2>視聴リンク</h2>
-          <p class="hint">このリンクを視聴者に共有します。</p>
-          <a id="viewer-link" target="_blank" rel="noopener" data-testid="streamer-viewer-link"></a>
-          <div class="button-row">
-            <button type="button" id="copyViewerLinkBtn" data-testid="streamer-copy-viewer-link">リンクをコピー</button>
-          </div>
-        </section>
-        <section class="card stack full">
-          <h2>プレビュー</h2>
-          <video id="preview" autoplay muted playsinline></video>
-        </section>
+        <aside class="workspace-side">
+          <section class="card stack">
+            <h2>配信</h2>
+            <div id="urlPresets"></div>
+            <input type="url" id="url" aria-label="Relay URL" data-testid="streamer-url-input" />
+            <div class="broadcast-id">
+              <span class="status-label">配信 ID</span>
+              <div class="broadcast-id-row">
+                <strong id="broadcast-id" data-testid="streamer-broadcast-id"></strong>
+                <button
+                  type="button"
+                  id="copyBroadcastIdBtn"
+                  class="secondary compact-button"
+                  data-testid="streamer-copy-broadcast-id"
+                >
+                  <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg
+                  ><span class="label">コピー</span>
+                </button>
+              </div>
+            </div>
+            <div class="button-row">
+              <button type="button" id="startBtn" data-testid="streamer-start-button">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg>配信開始
+              </button>
+              <button type="button" id="stopBtn">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-square" /></svg>停止
+              </button>
+            </div>
+            <p id="streamer-status" class="hint" data-testid="streamer-status"></p>
+          </section>
+          <section id="viewer-link-section" class="card stack viewer-link-card" hidden>
+            <h2>
+              視聴リンク
+              <span
+                class="tip"
+                tabindex="0"
+                role="img"
+                aria-label="このリンクを視聴者に共有します"
+                data-tip="このリンクを視聴者に共有します"
+                ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+              ></span>
+            </h2>
+            <a id="viewer-link" target="_blank" rel="noopener" data-testid="streamer-viewer-link"></a>
+            <div class="button-row">
+              <button type="button" id="copyViewerLinkBtn" data-testid="streamer-copy-viewer-link">
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg
+                ><span class="label">リンクをコピー</span>
+              </button>
+            </div>
+          </section>
+        </aside>
       </div>
-    </div>
+    </main>
     <script type="module" src="./main.ts"></script>
-    <script type="module" src="../../../utils/accessBar.ts"></script>
+    <script type="module" src="../../../utils/shell.ts"></script>
   </body>
 </html>

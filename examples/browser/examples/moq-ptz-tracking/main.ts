@@ -3,6 +3,7 @@ import { withNamespaceRoot } from '../../utils/access'
 import { LivePlayer } from 'moq-wasm/media'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
+import { icon } from '../../utils/icon'
 import { element, setStatus } from '../../utils/page'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
@@ -29,11 +30,15 @@ startPageTelemetry(
   () => element<HTMLInputElement>('url').value.trim(),
   () => playerSamples(player)
 )
+const stage = element<HTMLDivElement>('stage')
 const player = new LivePlayer({
-  container: element('stage'),
+  container: stage,
   callbacks: {
     onStateChange: followSelectedVideoTrack,
-    onLiveFrame: renderViewerDelay,
+    onLiveFrame: () => {
+      stage.dataset.started = ''
+      renderViewerDelay()
+    },
     onLog: (level, message) => {
       reportLog(level, 'moq-ptz-tracking', message)
       console[level](`[moq-ptz-tracking] ${message}`)
@@ -81,6 +86,7 @@ setUpSystemOneBotPage({
   },
   onReset: async () => {
     await player.stop()
+    delete stage.dataset.started
     viewerDelayLabel.textContent = ''
     promptWriter = undefined
     promptGroupId = undefined
@@ -113,7 +119,10 @@ function addTargetRow(value: string): HTMLInputElement {
   input.dataset.testid = 'ptz-tracking-target-input'
   const remove = document.createElement('button')
   remove.type = 'button'
-  remove.textContent = '削除'
+  remove.className = 'remove'
+  remove.setAttribute('aria-label', '削除')
+  remove.title = '削除'
+  remove.append(icon('trash'))
   remove.dataset.testid = 'ptz-tracking-remove-target-button'
   remove.addEventListener('click', () => {
     row.remove()

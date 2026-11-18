@@ -3,30 +3,52 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Media Examples</title>
-    <link rel="stylesheet" href="./media.css" />
+    <title>Media · MoQT Playground</title>
+    <link rel="stylesheet" href="../../utils/theme.css" />
+    <link rel="stylesheet" href="../../utils/components.css" />
   </head>
-  <body>
-    <div class="page">
-      <header class="hero">
-        <div>
-          <span class="pill">Media</span>
-          <h1>MoQT Media Examples</h1>
-          <p>Open the publisher or subscriber interface with low-level controls.</p>
+  <body data-title="Media">
+    <main class="page">
+      <div>
+        <div class="choice-grid">
+          <a class="card link-card choice" href="./publisher/index.html">
+            <span class="choice-icon" aria-hidden="true"
+              ><svg><use href="/icons.svg#icon-video" /></svg
+            ></span>
+            <h2>Publisher</h2>
+            <p>カメラ・マイク・画面共有を Publish</p>
+          </a>
+          <a class="card link-card choice" href="./subscriber/index.html">
+            <span class="choice-icon" aria-hidden="true"
+              ><svg><use href="/icons.svg#icon-monitor" /></svg
+            ></span>
+            <h2>Subscriber</h2>
+            <p>catalog からトラックを選んで再生</p>
+          </a>
         </div>
-      </header>
-      <main class="control-grid">
-        <a class="card link-card" href="./publisher/index.html">
-          <h2>Publisher</h2>
-          <p>Send encoded video and audio chunks over MoQT with manual controls.</p>
-        </a>
-        <a class="card link-card" href="./subscriber/index.html">
-          <h2>Subscriber</h2>
-          <p>Subscribe to tracks and render incoming streams with diagnostics.</p>
-        </a>
-      </main>
-    </div>
+        <ol class="steps" aria-label="使い方">
+          <li>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-radio" /></svg> <b>Publisher</b> で
+              Publish</span
+            >
+          </li>
+          <li>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-copy" /></svg>
+              <b>Track Namespace</b> をコピー</span
+            >
+          </li>
+          <li>
+            <span
+              ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-play" /></svg> <b>Subscriber</b> で
+              Subscribe</span
+            >
+          </li>
+        </ol>
+      </div>
+    </main>
     <script type="module" src="../../utils/preserveQueryLinks.js"></script>
-    <script type="module" src="../../utils/accessBar.ts"></script>
+    <script type="module" src="../../utils/shell.ts"></script>
   </body>
 </html>

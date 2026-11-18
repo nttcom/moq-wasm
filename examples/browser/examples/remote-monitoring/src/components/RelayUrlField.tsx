@@ -8,12 +8,12 @@ interface Props {
 
 export function RelayUrlField({ value, onChange }: Props) {
   return (
-    <RelayPicker value={value} onChange={onChange} className="text-zinc-300">
+    <RelayPicker value={value} onChange={onChange} className="text-fg">
       <Input
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-label="Relay URL"
-        className="bg-zinc-800 border-zinc-700 font-mono text-sm"
+        className="font-mono text-sm"
       />
     </RelayPicker>
   )

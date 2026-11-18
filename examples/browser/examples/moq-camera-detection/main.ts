@@ -2,6 +2,7 @@ import type { TrackWriter } from 'moq-wasm'
 import { withNamespaceRoot } from '../../utils/access'
 import { createBroadcast } from 'moq-wasm/media'
 import { pageRoomId } from '../../utils/botRoom'
+import { icon } from '../../utils/icon'
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '../../utils/systemOneBot'
 import { element, setStatus } from '../../utils/page'
@@ -59,6 +60,7 @@ setUpSystemOneBotPage({
       audio: false
     })
     preview.srcObject = mediaStream
+    preview.parentElement!.dataset.started = ''
   },
   onConnect: async (session) => {
     const broadcast = await createBroadcast(session, CAMERA_NAMESPACE)
@@ -93,6 +95,7 @@ setUpSystemOneBotPage({
     }
     mediaStream = undefined
     preview.srcObject = null
+    delete preview.parentElement!.dataset.started
     showVerdicts(undefined)
   }
 })
@@ -127,7 +130,10 @@ function addQuestionRow(question: Question): void {
   choices.value = question.type === 'choice' ? question.choices.join(', ') : ''
   const remove = document.createElement('button')
   remove.type = 'button'
-  remove.textContent = '削除'
+  remove.className = 'remove'
+  remove.setAttribute('aria-label', '削除')
+  remove.title = '削除'
+  remove.append(icon('trash'))
   remove.dataset.testid = 'camera-detection-remove-question-button'
   remove.addEventListener('click', () => {
     row.remove()

@@ -2,7 +2,13 @@ import { MoqSession } from 'moq-wasm'
 import { type LocalBroadcast, createBroadcast } from 'moq-wasm/media'
 import { connectOptions } from '../../../utils/access'
 import { buildVideoEncoding } from '../../media/videoEncoding'
-import { getErrorMessage, initializeMediaExamplePage, parseTrackNamespace, setStatusText } from '../../../utils/page'
+import {
+  element,
+  getErrorMessage,
+  initializeMediaExamplePage,
+  parseTrackNamespace,
+  setStatusText
+} from '../../../utils/page'
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 const form = document.getElementById('form') as HTMLFormElement
@@ -31,6 +37,7 @@ async function startCapture(): Promise<void> {
   })
   const video = document.getElementById('video') as HTMLVideoElement
   video.srcObject = mediaStream
+  element<HTMLElement>('preview-stage').dataset.started = ''
   setStatusText('publisher-capture-status', 'Media ready')
 }
 

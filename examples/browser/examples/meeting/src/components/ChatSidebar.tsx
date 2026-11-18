@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react'
+import { Captions, MessageSquare, SendHorizontal, X } from 'lucide-react'
 import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import type { TranscriptRecord } from '../media/transcript'
@@ -31,24 +32,27 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const [tab, setTab] = useState<'chat' | 'transcription' | 'record'>('chat')
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-white/15 bg-zinc-900">
-      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
-        <div className="flex gap-1">
-          <SidebarTab label="Chat" active={tab === 'chat'} onClick={() => setTab('chat')} />
+    // Below sm the sidebar covers the room instead of squeezing the tiles beside it.
+    <aside className="absolute inset-0 z-20 flex flex-col bg-surface sm:static sm:h-full sm:w-80 sm:shrink-0 sm:border-l sm:border-line">
+      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
+        <div className="flex gap-0.5 rounded-lg border border-line bg-sunken p-0.5">
+          <SidebarTab label="チャット" active={tab === 'chat'} onClick={() => setTab('chat')} />
           <SidebarTab
-            label="Transcription"
+            label="文字起こし"
             testId="transcript-tab"
             active={tab === 'transcription'}
             onClick={() => setTab('transcription')}
           />
-          <SidebarTab label="Record" testId="record-tab" active={tab === 'record'} onClick={() => setTab('record')} />
+          <SidebarTab label="録画" testId="record-tab" active={tab === 'record'} onClick={() => setTab('record')} />
         </div>
         <button
           type="button"
           onClick={onToggle}
-          className="rounded-md bg-white/10 px-3 py-1 text-xs font-semibold text-teal-100 transition hover:bg-white/20"
+          aria-label="閉じる"
+          title="閉じる"
+          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted transition hover:bg-hover hover:text-fg"
         >
-          Close
+          <X className="h-4 w-4" />
         </button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
@@ -70,25 +74,26 @@ export function ChatSidebar({
 
 function TranscriptionNotice({ captions }: { captions: CaptionsControls | null }) {
   if (!captions) {
-    return <p className="mt-4 text-sm text-teal-100">Transcription is not available in this room</p>
+    return <p className="mt-4 text-sm text-muted">このルームでは文字起こしを利用できません</p>
   }
   return (
     <div className="mt-4 space-y-3">
-      <p className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-teal-100">
+      <p className="rounded-lg border border-line bg-subtle px-4 py-3 text-sm text-muted">
         {captions.active ? 'Starting transcription…' : 'Transcription has not started yet'}
       </p>
       {!captions.active && (
         <>
-          {captions.error && <p className="text-xs text-red-300">{captions.error}</p>}
-          <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Start transcription</div>
+          {captions.error && <p className="text-xs text-danger">{captions.error}</p>}
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">文字起こしを開始</div>
           <div className="space-y-2">
             {ASR_CHOICES.map(({ asr, label }) => (
               <button
                 key={asr}
                 type="button"
                 onClick={() => captions.start(asr)}
-                className="w-full rounded-lg bg-white/10 px-4 py-2 text-left text-sm font-semibold text-white transition hover:bg-white/20"
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-line-strong bg-raised px-4 py-2 text-left text-sm font-semibold text-fg transition hover:bg-hover"
               >
+                <Captions className="h-4 w-4 shrink-0 text-accent" />
                 {label}
               </button>
             ))}
@@ -112,46 +117,51 @@ function ChatPanel({
 }) {
   return (
     <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
-      <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+      <div className="flex flex-1 flex-col gap-2 overflow-y-auto pr-1">
         {messages.length === 0 ? (
-          <p className="text-teal-100">No messages yet.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-faint">
+            <MessageSquare className="h-6 w-6" />
+            <p>メッセージはまだありません</p>
+          </div>
         ) : (
           messages.map((message, index) => (
             <div
               key={`${message.timestamp}-${index}`}
               data-testid="chat-message"
-              className={`rounded-xl border border-white/10 px-4 py-3 ${
-                message.isLocal ? 'self-end bg-teal-600/50' : 'bg-gray-900/70'
+              className={`max-w-[88%] rounded-lg border px-3 py-2 ${
+                message.isLocal ? 'self-end border-accent-line bg-accent-soft' : 'self-start border-line bg-sunken'
               }`}
             >
-              <div className="flex items-center justify-between text-sm text-teal-200">
-                <span className="font-semibold">{message.sender}</span>
-                <span>{new Date(message.timestamp).toLocaleTimeString()}</span>
+              <div className="flex items-center justify-between gap-3 text-xs text-faint">
+                <span className="font-semibold text-muted">{message.sender}</span>
+                <span className="tabular-nums">{new Date(message.timestamp).toLocaleTimeString()}</span>
               </div>
-              <p className="mt-2 whitespace-pre-wrap break-words text-base text-white">{message.text}</p>
+              <p className="mt-1 whitespace-pre-wrap break-words text-sm text-fg">{message.text}</p>
             </div>
           ))
         )}
       </div>
-      <form onSubmit={onSend} className="space-y-3 border-t border-white/10 pt-4">
-        <label className="block text-sm font-medium text-teal-100">
-          Send Chat Message
+      <form onSubmit={onSend} className="flex items-center gap-2 border-t border-line pt-3">
+        <label className="min-w-0 flex-1">
+          <span className="sr-only">チャットメッセージを送信</span>
           <input
             type="text"
             data-testid="chat-message-input"
             value={chatMessage}
             onChange={(event) => onMessageChange(event.target.value)}
-            className="mt-2 w-full rounded-lg border border-teal-300/40 bg-white/5 px-4 py-3 text-base text-white placeholder-teal-200 focus:border-teal-200 focus:outline-none focus:ring-2 focus:ring-teal-300/50"
-            placeholder="Type your message"
+            className="h-10 w-full rounded-md border border-line-strong bg-sunken px-3 text-sm text-fg placeholder:text-faint focus:border-accent focus:outline-none focus:ring-3 focus:ring-accent/25"
+            placeholder="メッセージを入力"
           />
         </label>
         <button
           type="submit"
           data-testid="chat-send-button"
-          className="w-full rounded-lg bg-teal-600 px-4 py-2 font-semibold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-teal-600/50"
+          aria-label="送信"
+          title="送信"
+          className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent text-on-accent transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!chatMessage.trim()}
         >
-          Send
+          <SendHorizontal className="h-4 w-4" />
         </button>
       </form>
     </div>
@@ -174,8 +184,9 @@ function SidebarTab({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-        active ? 'bg-teal-600 text-white' : 'bg-white/10 text-teal-100 hover:bg-white/20'
+      aria-pressed={active}
+      className={`cursor-pointer rounded-md px-2.5 py-1 text-xs font-semibold transition ${
+        active ? 'bg-raised text-fg shadow-sm ring-1 ring-line-strong' : 'text-muted hover:text-fg'
       }`}
     >
       {label}
@@ -187,19 +198,19 @@ function TranscriptPanel({ records }: { records: TranscriptRecord[] }) {
   return (
     <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
       {records.length === 0 ? (
-        <p className="text-teal-100">Nothing transcribed yet.</p>
+        <p className="text-sm text-faint">まだ文字起こしはありません</p>
       ) : (
         records.map((record) => (
           <div
             key={`${record.startedAtMs}-${record.speaker}`}
             data-testid="transcript-record"
-            className="rounded-xl border border-white/10 bg-gray-900/70 px-4 py-3"
+            className="rounded-lg border border-line bg-sunken px-3 py-2"
           >
-            <div className="flex items-center justify-between text-sm text-teal-200">
-              <span className="font-semibold">{record.speaker}</span>
-              <span>{new Date(record.startedAtMs).toLocaleTimeString()}</span>
+            <div className="flex items-center justify-between gap-3 text-xs text-faint">
+              <span className="font-semibold text-muted">{record.speaker}</span>
+              <span className="tabular-nums">{new Date(record.startedAtMs).toLocaleTimeString()}</span>
             </div>
-            <p className="mt-2 whitespace-pre-wrap break-words text-base text-white">{record.text}</p>
+            <p className="mt-1 whitespace-pre-wrap break-words text-sm text-fg">{record.text}</p>
           </div>
         ))
       )}

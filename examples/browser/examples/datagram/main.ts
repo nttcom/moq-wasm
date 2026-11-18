@@ -198,7 +198,7 @@ function draw(): void {
   const style = getComputedStyle(document.documentElement)
   const colors = {
     accent: style.getPropertyValue('--accent'),
-    muted: style.getPropertyValue('--muted'),
+    muted: style.getPropertyValue('--text-muted'),
     border: style.getPropertyValue('--border')
   }
   const now = nowMs()
@@ -264,9 +264,6 @@ function drawChart(
   colors: Colors
 ): void {
   const { ctx, width, height } = context(canvas)
-  ctx.strokeStyle = colors.border
-  ctx.lineWidth = 1
-  ctx.strokeRect(0.5, 0.5, width - 1, height - 1)
   ctx.fillStyle = colors.muted
   ctx.font = '11px sans-serif'
   ctx.fillText(`遅延 ${maxMs.toFixed(0)} ms`, 6, 14)

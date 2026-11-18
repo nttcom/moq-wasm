@@ -1,3 +1,4 @@
+import { Radio, StepBack, StepForward } from 'lucide-react'
 import { Button } from '../../../../lib/ui/button'
 
 interface Props {
@@ -19,20 +20,30 @@ export function TransportControls({
 }: Props) {
   return (
     <div className="flex items-center gap-2">
-      <Button size="sm" variant="outline" onClick={onStepBack} disabled={disabled || !canStepBack}>
-        ◀▌ 1s 戻し
+      <Button size="sm" variant="outline" title="1 秒戻す" onClick={onStepBack} disabled={disabled || !canStepBack}>
+        <StepBack className="h-4 w-4" />
+        1s
       </Button>
-      <Button size="sm" variant="outline" onClick={onStepForward} disabled={disabled || !canStepForward}>
-        1s 送り ▐▶
+      <Button
+        size="sm"
+        variant="outline"
+        title="1 秒進める"
+        onClick={onStepForward}
+        disabled={disabled || !canStepForward}
+      >
+        1s
+        <StepForward className="h-4 w-4" />
       </Button>
       <Button
         size="sm"
         variant="outline"
         onClick={onReturnToLive}
         disabled={disabled}
-        className="ml-auto border-green-600 text-green-600 hover:bg-green-50"
+        title="LIVE に戻る"
+        className="ml-auto border-success/50 text-success hover:bg-success-soft"
       >
-        ⤓ LIVE 復帰
+        <Radio className="h-4 w-4" />
+        LIVE
       </Button>
     </div>
   )

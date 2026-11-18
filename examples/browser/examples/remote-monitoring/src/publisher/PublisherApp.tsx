@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Camera, FileVideo, Loader2, Radio, Sparkles, Webcam } from 'lucide-react'
 import type { CameraId, VideoSource, VideoSourceType } from '../types/monitoring'
 import { NAME_PATTERN } from '../types/monitoring'
+import { Tip } from '../../../../lib/ui/tip'
 import { PublisherSession } from './publisherSession'
 import { CameraPublisher } from './cameraPublisher'
 import { RelayUrlField } from '../components/RelayUrlField'
@@ -21,6 +23,12 @@ interface Props {
   location: string
   camId: CameraId
   relayUrl: string
+}
+
+const SOURCE_ICONS: Record<VideoSourceType, ReactNode> = {
+  synthetic: <Sparkles className="h-3.5 w-3.5" />,
+  camera: <Camera className="h-3.5 w-3.5" />,
+  file: <FileVideo className="h-3.5 w-3.5" />
 }
 
 export function PublisherApp({ location: defaultLocation, camId: defaultCamId, relayUrl: defaultRelayUrl }: Props) {
@@ -76,43 +84,48 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-zinc-950 text-white p-4 gap-4">
+    <main className="mx-auto flex min-h-[calc(100dvh-var(--shell-height))] w-full max-w-[1200px] flex-col gap-4 px-4 py-5 text-fg sm:px-6">
       {/* header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold font-mono">Publisher</h1>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-accent-line bg-accent-soft text-accent">
+            <Webcam className="h-[18px] w-[18px]" />
+          </span>
+          <div>
+            <h1 className="text-lg font-bold leading-tight tracking-tight">カメラを配信する</h1>
+          </div>
           {isIdle && (
             <a
               href={pageHref({ mode: null, cam: null, location, relay: relayUrl })}
-              className="text-xs text-zinc-500 hover:text-zinc-300 font-mono underline"
+              className="ml-2 inline-flex items-center gap-1 text-sm font-medium text-accent hover:text-accent-hover"
             >
-              Monitor へ
+              <ArrowLeft className="h-4 w-4" />
+              Monitor に戻る
             </a>
           )}
         </div>
         <div className="flex items-center gap-2">
           {isIdle && (
-            <Button
-              onClick={handleStart}
-              disabled={!canStart}
-              className="bg-teal-600 hover:bg-teal-700 disabled:opacity-40"
-            >
+            <Button onClick={handleStart} disabled={!canStart}>
+              <Radio className="h-4 w-4" />
               配信開始
             </Button>
           )}
           {status === 'connecting' && (
             <Button disabled variant="outline">
+              <Loader2 className="h-4 w-4 animate-spin" />
               接続中…
             </Button>
           )}
           {status === 'starting' && (
             <Button disabled variant="outline">
+              <Loader2 className="h-4 w-4 animate-spin" />
               起動中…
             </Button>
           )}
           {status === 'live' && (
-            <span className="flex items-center gap-1.5 font-mono text-sm font-bold text-red-400">
-              <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
+            <span className="inline-flex h-9 items-center gap-2 rounded-md bg-red-600 px-3 font-mono text-sm font-bold text-white">
+              <span className="h-2 w-2 rounded-full bg-white animate-pulse" />
               REC
             </span>
           )}
@@ -121,23 +134,23 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
 
       {/* config form (idle/error only) */}
       {isIdle && (
-        <div className="rounded-xl bg-zinc-900 px-4 py-4 space-y-3">
-          <div className="grid grid-cols-[1fr_1fr_2fr] gap-3 items-end">
+        <div className="space-y-4 rounded-xl border border-line bg-surface p-4 shadow-sm">
+          <div className="grid items-start gap-3 md:grid-cols-[1fr_1fr_2fr]">
             <div className="space-y-1">
-              <Label className="text-xs text-zinc-400 font-mono">カメラ名</Label>
+              <Label className="text-xs text-muted">カメラ名</Label>
               <Input
                 value={camId}
                 onChange={(e) => setCamId(e.target.value.trim())}
-                className="bg-zinc-800 border-zinc-700 font-mono text-sm"
+                className="font-mono text-sm"
                 placeholder="entrance"
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-zinc-400 font-mono">Location</Label>
+              <Label className="text-xs text-muted">Location</Label>
               <Input
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
-                className="bg-zinc-800 border-zinc-700 font-mono text-sm"
+                className="font-mono text-sm"
                 placeholder="brave-otter"
               />
             </div>
@@ -146,18 +159,20 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
 
           {/* video source selector */}
           <div className="space-y-2">
-            <Label className="text-xs text-zinc-400 font-mono">映像ソース</Label>
-            <div className="flex gap-2">
+            <Label className="text-xs text-muted">映像ソース</Label>
+            <div className="flex w-fit gap-0.5 rounded-lg border border-line bg-sunken p-0.5">
               {(['synthetic', 'camera', 'file'] as VideoSourceType[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => setSourceType(t)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-mono border transition-colors ${
+                  aria-pressed={sourceType === t}
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
                     sourceType === t
-                      ? 'bg-teal-600 border-teal-500 text-white'
-                      : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
+                      ? 'bg-raised text-fg shadow-sm ring-1 ring-line-strong'
+                      : 'text-muted hover:text-fg'
                   }`}
                 >
+                  {SOURCE_ICONS[t]}
                   {SOURCE_LABELS[t]}
                 </button>
               ))}
@@ -167,25 +182,26 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                 <Input
                   value={fileUrl}
                   onChange={(e) => setFileUrl(e.target.value)}
-                  className="bg-zinc-800 border-zinc-700 font-mono text-xs"
+                  className="font-mono text-xs"
                   placeholder="/moq-wasm/videos/cam01.mp4"
                 />
-                <span className="text-xs text-zinc-500 whitespace-nowrap font-mono">public/videos/ 以下に置く</span>
+                <Tip note="public/videos/ 以下に置いたファイルを指定します" end />
               </div>
-            )}
-            {sourceType === 'camera' && (
-              <p className="text-xs text-zinc-500 font-mono">ブラウザがカメラ許可を求めます</p>
             )}
           </div>
 
-          {error && <p className="text-red-400 text-xs font-mono">⚠ {error}</p>}
+          {error && (
+            <p className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 font-mono text-xs text-danger">
+              {error}
+            </p>
+          )}
         </div>
       )}
 
       {/* preview */}
-      <div className="relative flex-1 rounded-xl overflow-hidden bg-zinc-900 aspect-video flex items-center justify-center">
+      <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-neutral-950 shadow-md ring-1 ring-line">
         <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
-        {status === 'idle' && <p className="font-mono text-zinc-500 text-sm">配信開始 を押すと接続して配信します</p>}
+        {status === 'idle' && <Webcam className="h-10 w-10 text-neutral-600" aria-hidden="true" />}
         {camId && (
           <div className="absolute bottom-3 left-3 font-mono text-xs text-white bg-black/50 rounded px-2 py-1">
             {camId}
@@ -195,26 +211,26 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
 
       {/* status bar */}
       {!isIdle && (
-        <div className="rounded-xl bg-zinc-900 px-4 py-3 font-mono text-sm space-y-1">
-          <div className="flex gap-3 text-xs text-zinc-400">
+        <div className="space-y-1.5 rounded-xl border border-line bg-surface px-4 py-3 font-mono text-sm shadow-sm">
+          <div className="flex gap-3 text-xs text-muted">
             <span>Relay:</span>
-            <span className="text-zinc-300">{relayUrl}</span>
+            <span className="text-muted">{relayUrl}</span>
           </div>
-          <div className="flex gap-3 text-xs text-zinc-400">
+          <div className="flex gap-3 text-xs text-muted">
             <span>Namespace:</span>
-            <span className="text-zinc-300">
+            <span className="text-muted">
               [{location}, {camId}] / video
             </span>
           </div>
-          <div className="flex gap-3 text-xs text-zinc-400">
+          <div className="flex gap-3 text-xs text-muted">
             <span>Source:</span>
-            <span className="text-zinc-300">
+            <span className="text-muted">
               {SOURCE_LABELS[sourceType]}
               {sourceType === 'file' ? ` — ${fileUrl}` : ''}
             </span>
           </div>
         </div>
       )}
-    </div>
+    </main>
   )
 }

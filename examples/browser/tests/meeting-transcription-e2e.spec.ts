@@ -45,7 +45,7 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   const alice = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
   await joinRoom(alice.page, room, 'alice', 'a')
   await alice.page.toggleMicrophoneButton.click()
-  await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
+  await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('マイクをオフ', { timeout: 15_000 })
 
   // Act
   const bob = await joinWithCaptionsOn(browser, room, 'bob')
@@ -79,7 +79,7 @@ test('captions bring the transcriber, reach a late joiner and stay until someone
   await expect(bob.page.page.getByTestId('transcriber-badge')).toBeVisible()
 
   await alice.page.toggleMicrophoneButton.click()
-  await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone on')
+  await expect(alice.page.toggleMicrophoneButton).toHaveAccessibleName('マイクをオン')
   const saidBefore = await bobRecords.count()
 
   // Act: carol joins while alice is muted, so only the joining FETCH can bring alice's records
@@ -158,7 +158,7 @@ test('a GPU recognizer that is starting is announced, then its text reaches the 
   const bob = await arrangeMeetingClient(browser, { params: { transcriberUrl: BOT_URL } })
   await joinRoom(bob.page, room, 'bob', 'a')
   await bob.page.toggleMicrophoneButton.click()
-  await expect(bob.page.toggleMicrophoneButton).toHaveAccessibleName('Turn microphone off', { timeout: 15_000 })
+  await expect(bob.page.toggleMicrophoneButton).toHaveAccessibleName('マイクをオフ', { timeout: 15_000 })
 
   // Assert
   await expect(getMemberCard(alice.page.page, 'bob').getByTestId('tile-caption')).toContainText(FAKE_ASR_TEXT, {
