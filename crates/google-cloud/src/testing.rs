@@ -1,18 +1,15 @@
 use std::{
     collections::HashMap,
-    convert::Infallible,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use http_body_util::{BodyExt, Full};
+use http_server::HttpServer;
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    server::conn::http1,
-    service::service_fn,
 };
-use hyper_util::rt::TokioIo;
 use reqwest::Url;
 use tokio::{net::TcpListener, task::JoinHandle};
 
@@ -36,7 +33,7 @@ pub struct FakeCloudStorage {
     url: Url,
     bucket: String,
     state: Arc<Mutex<FakeState>>,
-    _accept_handle: JoinHandle<()>,
+    _http: HttpServer,
 }
 
 impl FakeCloudStorage {
@@ -44,11 +41,15 @@ impl FakeCloudStorage {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
         let state = Arc::new(Mutex::new(FakeState::default()));
+        let handler_bucket = bucket.to_owned();
+        let handler_state = state.clone();
         Self {
             url,
             bucket: bucket.to_owned(),
-            state: state.clone(),
-            _accept_handle: tokio::spawn(accept_connections(listener, bucket.to_owned(), state)),
+            state,
+            _http: HttpServer::run(listener, move |request, _peer| {
+                handle(request, handler_bucket.clone(), handler_state.clone())
+            }),
         }
     }
 
@@ -115,25 +116,11 @@ async fn hold_connections(listener: TcpListener) {
     }
 }
 
-async fn accept_connections(listener: TcpListener, bucket: String, state: Arc<Mutex<FakeState>>) {
-    loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let bucket = bucket.clone();
-        let state = state.clone();
-        tokio::spawn(async move {
-            let service = service_fn(move |request| handle(request, bucket.clone(), state.clone()));
-            let _ = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await;
-        });
-    }
-}
-
 async fn handle(
     request: Request<Incoming>,
     bucket: String,
     state: Arc<Mutex<FakeState>>,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Response<Full<Bytes>> {
     let url = Url::parse(&format!("http://fake{}", request.uri())).unwrap();
     let query = |name: &str| {
         url.query_pairs()
@@ -147,7 +134,7 @@ async fn handle(
     let mut state = state.lock().unwrap();
     let if_generation_match = query("ifGenerationMatch").map(|value| value.parse::<u64>());
 
-    let response = match (method, url.path()) {
+    match (method, url.path()) {
         (Method::GET, path) if path.starts_with(&objects_path) => {
             let object = percent_decode(&path[objects_path.len()..]);
             match (state.objects.get(&object), query("alt")) {
@@ -166,7 +153,7 @@ async fn handle(
             if path == upload_path && query("uploadType").as_deref() == Some("media") =>
         {
             let Some(object) = query("name") else {
-                return Ok(respond(StatusCode::BAD_REQUEST, Vec::new()));
+                return respond(StatusCode::BAD_REQUEST, Vec::new());
             };
             let current = state
                 .objects
@@ -188,8 +175,7 @@ async fn handle(
             }
         }
         _ => respond(StatusCode::NOT_FOUND, Vec::new()),
-    };
-    Ok(response)
+    }
 }
 
 /// Decodes the `%XX` escapes of an object name. Read as a query value, a `+`
