@@ -11,7 +11,7 @@ use moqt::{
     publish::{OutgoingObject, TrackDemand},
 };
 use msf::{
-    Catalog, Track,
+    Catalog, Dependency, Track,
     types::{KnownPackaging, KnownTrackRole, Packaging, TrackRole},
 };
 
@@ -446,13 +446,15 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
             .push(placeholder.name.clone());
         tracks.push(placeholder);
     }
-    tracks.extend(
-        source_track_names
-            .into_iter()
-            .map(|(source, depends)| timeline_track(&namespace, source, depends)),
-    );
+    let timelines: Vec<Track> = source_track_names
+        .into_iter()
+        .map(|(source, names)| {
+            timeline_track(&namespace, source, Dependency::on_tracks(&tracks, names))
+        })
+        .collect();
+    tracks.extend(timelines);
     if metadata.has_default_tracks() || metadata.chat_offered {
-        tracks.push(chat_track(&namespace, metadata));
+        tracks.push(chat_track(&namespace));
     }
 
     let mut catalog = Catalog::new(tracks, executor::system_time().as_millis() as u64);
@@ -485,7 +487,7 @@ fn audio_placeholder(
 
 /// A source's media timeline (draft-ietf-moq-msf-02 §7), listed while the
 /// catalog lists any of the source's tracks.
-fn timeline_track(namespace: &Option<String>, source: &str, depends: Vec<String>) -> Track {
+fn timeline_track(namespace: &Option<String>, source: &str, depends: Vec<Dependency>) -> Track {
     let mut timeline = track(
         namespace,
         &timeline_track_name(source),
@@ -498,9 +500,9 @@ fn timeline_track(namespace: &Option<String>, source: &str, depends: Vec<String>
     timeline
 }
 
-/// The chat depends on the default tracks the catalog lists (draft-ietf-moq-msf-02
-/// §8.3), none for a chat offered without media.
-fn chat_track(namespace: &Option<String>, metadata: &CatalogMetadata) -> Track {
+/// The chat indexes its records by wallclock time, so it depends on no track
+/// (draft-ietf-moq-msf-02 §8.3).
+fn chat_track(namespace: &Option<String>) -> Track {
     let mut chat = track(
         namespace,
         CHAT_TRACK_NAME,
@@ -509,22 +511,6 @@ fn chat_track(namespace: &Option<String>, metadata: &CatalogMetadata) -> Track {
     );
     chat.event_type = Some(CHAT_EVENT_TYPE.to_string());
     chat.label = Some("Chat".to_string());
-    let default_audio_listed = metadata.audio_tracks.contains_key(AUDIO_TRACK_NAME)
-        || (metadata.has_default_tracks() && !metadata.default_audio_removed);
-    let depends = [
-        (
-            VIDEO_TRACK_NAME,
-            metadata.video_tracks.contains_key(VIDEO_TRACK_NAME),
-        ),
-        (AUDIO_TRACK_NAME, default_audio_listed),
-    ];
-    chat.depends = Some(
-        depends
-            .into_iter()
-            .filter(|(_, listed)| *listed)
-            .map(|(name, _)| name.to_string())
-            .collect(),
-    );
     chat.mime_type = Some("application/json".to_string());
     chat
 }
@@ -757,10 +743,7 @@ mod tests {
             .map(|track| track.name.as_str())
             .collect();
         assert_eq!(names, [CHAT_TRACK_NAME]);
-        assert_eq!(
-            track_named(&catalog, CHAT_TRACK_NAME).depends,
-            Some(Vec::new())
-        );
+        assert_eq!(track_named(&catalog, CHAT_TRACK_NAME).depends, None);
     }
 
     fn video(switching_set: &str) -> VideoTrackInfo {
@@ -877,7 +860,7 @@ mod tests {
     }
 
     #[test]
-    fn each_source_has_a_media_timeline_that_depends_on_its_tracks() {
+    fn each_source_has_a_media_timeline_that_depends_on_its_render_group() {
         // Arrange: a camera with a rendition, a shared screen and a source with audio only
         let metadata = CatalogMetadata {
             video_tracks: BTreeMap::from([
@@ -896,7 +879,7 @@ mod tests {
         let catalog = build_catalog("live/test", &metadata).unwrap();
 
         // Assert
-        let timelines: Vec<(&str, Vec<String>)> = catalog
+        let timelines: Vec<(&str, Vec<Dependency>)> = catalog
             .tracks
             .iter()
             .flatten()
@@ -908,25 +891,66 @@ mod tests {
                 )
             })
             .collect();
-        let names = |names: &[&str]| names.iter().map(|name| name.to_string()).collect();
+        let render_group = |name: &str| {
+            vec![Dependency::RenderGroup(
+                track_named(&catalog, name).render_group.unwrap(),
+            )]
+        };
         assert_eq!(
             timelines,
             [
-                ("mic_timeline", names(&["mic_audio", "mic_audio_cmaf"])),
-                ("screen_timeline", names(&["screen", "screen_cmaf"])),
-                (
-                    "video_timeline",
-                    names(&[
-                        "video",
-                        "video_cmaf",
-                        "video_low",
-                        "video_low_cmaf",
-                        "audio",
-                        "audio_cmaf"
-                    ])
-                ),
+                ("mic_timeline", render_group("mic_audio")),
+                ("screen_timeline", render_group("screen")),
+                ("video_timeline", render_group("video")),
             ]
         );
+    }
+
+    #[test]
+    fn the_media_timelines_of_sources_sharing_a_switching_set_depend_on_their_tracks() {
+        // Arrange: two profiles of one camera
+        let profile = |source: &str| VideoTrackInfo {
+            source: source.to_string(),
+            cmaf: false,
+            ..video("camera")
+        };
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                ("main".to_string(), profile("main")),
+                ("sub".to_string(), profile("sub")),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        assert_eq!(
+            track_named(&catalog, "main_timeline").depends,
+            Some(vec!["main".into()])
+        );
+        assert_eq!(
+            track_named(&catalog, "sub_timeline").depends,
+            Some(vec!["sub".into()])
+        );
+    }
+
+    #[test]
+    fn the_catalog_is_valid_under_the_draft() {
+        // Arrange
+        let mut metadata = metadata_with_video_and_audio();
+        metadata
+            .video_tracks
+            .insert("screen".to_string(), video("screen"));
+        metadata.chat_offered = true;
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Act
+        let parsed = Catalog::parse(&serde_json::to_vec(&catalog).unwrap());
+
+        // Assert
+        assert_eq!(parsed.unwrap(), catalog);
     }
 
     #[test]
@@ -1003,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn tracks_without_cmaf_list_no_cmaf_sibling_and_the_timeline_depends_on_loc_only() {
+    fn tracks_without_cmaf_list_no_cmaf_sibling() {
         // Arrange
         let mut metadata = metadata_with_video_and_audio();
         for video in metadata.video_tracks.values_mut() {
@@ -1026,13 +1050,6 @@ mod tests {
         assert!(
             !names.iter().any(|name| name.ends_with("_cmaf")),
             "{names:?}"
-        );
-        assert_eq!(
-            track_named(&catalog, "video_timeline").depends,
-            Some(vec![
-                VIDEO_TRACK_NAME.to_string(),
-                AUDIO_TRACK_NAME.to_string()
-            ])
         );
         assert!(init_data_of(&catalog, track_named(&catalog, AUDIO_TRACK_NAME)).is_some());
     }

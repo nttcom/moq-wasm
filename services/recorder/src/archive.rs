@@ -526,15 +526,15 @@ mod tests {
     fn follows_only_a_catalog_it_can_read() {
         // Arrange
         let catalog = |payload: &str| Event::Object(stored_object(0, 0, payload.to_string()));
-        let draft_01 = serde_json::to_string(&Catalog::new(Vec::new(), 0)).unwrap();
+        let draft_02 = serde_json::to_string(&Catalog::new(Vec::new(), 0)).unwrap();
 
         // Act
-        let draft_01 = catalog_document("anon/test", &catalog(&draft_01));
+        let draft_02 = catalog_document("anon/test", &catalog(&draft_02));
         let draft_03 = catalog_document("anon/test", &catalog(r#"{"version":"draft-03"}"#));
         let malformed = catalog_document("anon/test", &catalog("not json"));
 
         // Assert
-        assert!(draft_01.unwrap().is_some());
+        assert!(draft_02.unwrap().is_some());
         assert!(draft_03.unwrap().is_none());
         assert!(malformed.is_err());
     }
@@ -672,8 +672,10 @@ mod tests {
         let mut video = msf::Track::new("video", KnownPackaging::Loc, true);
         video.role = Some(KnownTrackRole::Video.into());
         video.codec = Some("avc1.42C01E".into());
+        video.bitrate = Some(1_000_000);
+        video.framerate = Some(30.0);
         let mut chat = msf::Track::new("chat", KnownPackaging::EventTimeline, true);
-        chat.depends = Some(vec!["video".into()]);
+        chat.event_type = Some("com.skyway.chat.v1".into());
         let mut timeline = msf::Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
         timeline.depends = Some(vec!["video".into()]);
         let catalog = serde_json::to_vec(&Catalog::new(vec![video, chat, timeline], 0)).unwrap();
@@ -1006,6 +1008,8 @@ mod tests {
                     msf::Track::new(&format!("video_{height}p"), KnownPackaging::Loc, true);
                 track.role = Some(KnownTrackRole::Video.into());
                 track.codec = Some("avc1.42C01E".into());
+                track.bitrate = Some(1_000_000);
+                track.framerate = Some(30.0);
                 track.height = Some(*height);
                 track
             })

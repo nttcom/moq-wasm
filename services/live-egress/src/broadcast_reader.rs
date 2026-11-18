@@ -328,7 +328,12 @@ mod tests {
         audio.codec = Some(OPUS_CODEC.to_owned());
         audio.sample_rate = Some(48_000);
         audio.channel_config = Some("2".to_owned());
-        let catalog = catalog_with(vec![loc_track("video", KnownTrackRole::Video), audio]);
+        audio.bitrate = Some(64_000);
+        let mut video = loc_track("video", KnownTrackRole::Video);
+        video.codec = Some("avc1.42e01e".to_owned());
+        video.bitrate = Some(1_000_000);
+        video.framerate = Some(30.0);
+        let catalog = catalog_with(vec![video, audio]);
         Bytes::from(serde_json::to_vec(&catalog).unwrap())
     }
 

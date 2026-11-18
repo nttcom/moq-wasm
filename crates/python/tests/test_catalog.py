@@ -4,9 +4,9 @@ import moq_wasm
 import pytest
 
 
-def test_parse_catalog_reads_a_draft_01_catalog():
+def test_parse_catalog_reads_a_draft_02_catalog():
     # Arrange
-    document = {"version": "draft-01", "tracks": [{"name": "video", "packaging": "loc", "isLive": True}]}
+    document = {"version": "draft-02", "tracks": [{"name": "video", "packaging": "loc", "isLive": True}]}
 
     # Act / Assert
     assert moq_wasm.parse_catalog(json.dumps(document).encode()) == document

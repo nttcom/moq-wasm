@@ -274,7 +274,7 @@ pub(crate) async fn recorded_camera() -> StoredRecording {
     video.render_group = Some(1);
     video.target_latency = Some(500);
     let mut timeline = Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
-    timeline.depends = Some(vec!["video".to_string(), "video_480p".to_string()]);
+    timeline.depends = Some(vec![msf::Dependency::RenderGroup(1)]);
     let catalog = serde_json::to_vec(&Catalog::new(vec![video, timeline], 1)).unwrap();
     let frames = (10..13)
         .map(|group| recorded_object(group, (group - 10) * 1_000_000))
@@ -300,6 +300,8 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
         if with_audio {
             tracks.push(("audio", KnownTrackRole::Audio));
         }
+        let mut timeline = Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
+        timeline.depends = Some(vec![msf::Dependency::RenderGroup(1)]);
         let listed = tracks
             .iter()
             .map(|(name, role)| {
@@ -308,6 +310,7 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
                 track.render_group = Some(1);
                 track
             })
+            .chain([timeline])
             .collect();
         let catalog = serde_json::to_vec(&Catalog::new(listed, 1)).unwrap();
         let mut archive = vec![("catalog", vec![stored_object(0, 0, catalog)])];

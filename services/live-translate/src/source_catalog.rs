@@ -99,19 +99,19 @@ mod tests {
     fn delivers_only_a_catalog_it_can_read() {
         // Arrange
         let (catalog_sender, mut catalog_receiver) = mpsc::unbounded_channel();
-        let draft_01 = serde_json::to_vec(&Catalog::new(Vec::new(), 0)).unwrap();
+        let draft_02 = serde_json::to_vec(&Catalog::new(Vec::new(), 0)).unwrap();
 
         // Act
         deliver(
             &catalog_sender,
             &Bytes::from_static(br#"{"version":"draft-03","tracks":[]}"#),
         );
-        deliver(&catalog_sender, &Bytes::from(draft_01));
+        deliver(&catalog_sender, &Bytes::from(draft_02));
 
         // Assert
         assert_eq!(
             catalog_receiver.try_recv().unwrap().version.as_deref(),
-            Some("draft-01")
+            Some("draft-02")
         );
         assert!(catalog_receiver.try_recv().is_err());
     }

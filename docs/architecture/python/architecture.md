@@ -66,7 +66,7 @@ async for obj in track:  # ends with the subscription (PUBLISH_DONE, close())
     obj.group_id, obj.object_id
     obj.payload  # bytes
     # Checked by msf's Catalog::parse: ValueError on a version other than
-    # draft-01 or a delta update.
+    # draft-02, a delta update or an invalid catalog.
     catalog = moq_wasm.parse_catalog(obj.payload)
 
 # Tracks published through moqt's Origin; the session answers their

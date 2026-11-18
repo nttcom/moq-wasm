@@ -35,7 +35,7 @@ def picture(value: int) -> bytes:
 
 
 def catalog_payload(*tracks: dict) -> bytes:
-    return json.dumps({"version": "draft-01", "tracks": list(tracks)}).encode()
+    return json.dumps({"version": "draft-02", "tracks": list(tracks)}).encode()
 
 
 class RecordingSink:
@@ -120,7 +120,7 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
     relay = FakeRelay()
     session = await open_session(relay)
     native = relay.sessions[0]
-    native.tracks["catalog"] = [[catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "isLive": True}), STAY_OPEN]]
+    native.tracks["catalog"] = [[catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True}), STAY_OPEN]]
     native.tracks["audio"] = [OpusEncoder().encode(tone(0.04), SAMPLE_RATE)]
     sink = RecordingSink()
     room = Room(session, room_options(audio_in=True), sink)
@@ -148,7 +148,7 @@ async def test_a_participants_video_reaches_the_sink_as_pictures():
     native = relay.sessions[0]
     encoder = VideoEncoder("H264", *SIZE, 30)
     frames = [packet for value in (0, 10, 20) for packet in encoder.encode(picture(value), SIZE, "RGB")]
-    native.tracks["catalog"] = [[catalog_payload({"name": "video", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "isLive": True}), STAY_OPEN]]
+    native.tracks["catalog"] = [[catalog_payload({"name": "video", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 1000000, "framerate": 30, "isLive": True}), STAY_OPEN]]
     native.tracks["video"] = [frames]
     sink = RecordingSink()
     room = Room(session, room_options(video_in=True), sink)

@@ -89,10 +89,20 @@ the WebCodecs codec string read from the bitstream; a VP9 stream carries no
 level, so its string takes the lowest level whose picture size fits, the same
 estimate the CMAF track's vpcC box gives.
 
+Every LOC audio and video track lists the fields draft-ietf-moq-msf-02
+§5.2.4.1 requires of it, including a `bitrate` and, for video, a
+`framerate`, which a writer that relays a stream without encoding it does not
+know. The catalog then lists estimates: a video's bitrate scales the bitrate
+of the largest video of its switching set whose bitrate is known by pixel
+count, which keeps a player's ladder ordered the way the renditions are, or
+without one comes from its codec, size and frame rate; a video's frame rate
+is 30 unless the source caps it; an audio track's bitrate comes from its codec
+and channel count. The audio placeholder lists AAC-LC stereo at 48 kHz.
+
 ## CMAF tracks
 A writer whose `SourceTracks::cmaf` is off publishes its tracks as LOC alone:
 the catalog lists no CMAF sibling for them, nothing is muxed into fMP4, and the
-media timeline depends on the LOC tracks only. Otherwise every media track
+media timeline covers the LOC tracks only. Otherwise every media track
 has a CMAF sibling named with a `_cmaf` suffix, except A-law,
 Opus and MP3 audio, which travel as LOC alone (`video_cmaf`,
 `video_480p_cmaf`, `audio_cmaf`) declared with `packaging: cmaf`
@@ -257,10 +267,12 @@ produce a location an earlier run already used.
 ## Media timeline
 Every writer publishes a media timeline track (draft-ietf-moq-msf-02 §7) named
 after its video track, `<video>_timeline` (`video_timeline` for the default
-names), even a writer that never publishes video. Its `depends` lists the
-writer's tracks the catalog lists: the video, the renditions and the audio,
-with their CMAF siblings. One timeline covers them all because they share the
-writer's group ids (see Group alignment), so its records also hold across
+names), even a writer that never publishes video. It covers the writer's
+tracks the catalog lists: the video, the renditions and the audio, with their
+CMAF siblings. Its `depends` names their `renderGroup` when they are all of
+it, as §7.2 requires, and the tracks by name when writers share a switching
+set and so a `renderGroup`. One timeline covers them all because they share
+the writer's group ids (see Group alignment), so its records also hold across
 rendition changes. The timeline is listed while the catalog lists any of those
 tracks.
 

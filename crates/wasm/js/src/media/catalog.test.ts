@@ -24,7 +24,7 @@ test.afterEach(() => {
 
 function catalogWithInitDataList(initDataList: unknown[]): unknown {
   return {
-    version: 'draft-01',
+    version: 'draft-02',
     tracks: [
       { name: 'video', packaging: 'loc', role: 'video', isLive: true, codec: 'avc1.640028' },
       { name: 'audio', packaging: 'loc', role: 'audio', isLive: true, codec: 'mp4a.40.2', initRef: 'audio' }
@@ -72,7 +72,7 @@ test('the written catalog names its version as the draft release, a string', () 
   const catalog = JSON.parse(buildMsfCatalogJson([{ name: 'video', packaging: 'loc', isLive: true }]))
 
   // Assert
-  expect(catalog.version).toBe('draft-01')
+  expect(catalog.version).toBe('draft-02')
 })
 
 test('the written catalog puts initDataList after tracks and leaves an empty one out', () => {
@@ -92,7 +92,7 @@ test('the written catalog puts initDataList after tracks and leaves an empty one
 test('a video track keeps its alternate group and bitrate', () => {
   // Arrange
   const catalog = {
-    version: 'draft-01',
+    version: 'draft-02',
     tracks: [
       { name: 'video', packaging: 'loc', role: 'video', isLive: true, altGroup: 1 },
       { name: 'video_480p', packaging: 'loc', role: 'video', isLive: true, altGroup: 1, bitrate: 1_200_000 }
@@ -216,10 +216,10 @@ test('a player finds the media timeline of its own source', () => {
   const catalog = {
     tracks: [
       { name: 'screenshare', packaging: 'loc', role: 'video', isLive: true },
-      { name: 'video', packaging: 'loc', role: 'video', isLive: true },
-      { name: 'audio', packaging: 'loc', role: 'audio', isLive: true },
+      { name: 'video', packaging: 'loc', role: 'video', isLive: true, renderGroup: 1 },
+      { name: 'audio', packaging: 'loc', role: 'audio', isLive: true, renderGroup: 1 },
       { name: 'screenshare_timeline', packaging: 'mediatimeline', isLive: true, depends: ['screenshare'] },
-      { name: 'video_timeline', packaging: 'mediatimeline', isLive: true, depends: ['video', 'audio'] }
+      { name: 'video_timeline', packaging: 'mediatimeline', isLive: true, depends: [1] }
     ]
   }
 
@@ -234,4 +234,22 @@ test('a player finds the media timeline of its own source', () => {
     'video_timeline',
     'screenshare_timeline'
   ])
+})
+
+test('a dependency on a render group names every other track of it', () => {
+  // Arrange
+  const catalog = {
+    tracks: [
+      { name: 'video', packaging: 'loc', role: 'video', isLive: true, renderGroup: 1 },
+      { name: 'audio', packaging: 'loc', role: 'audio', isLive: true, renderGroup: 1 },
+      { name: 'screenshare', packaging: 'loc', role: 'video', isLive: true, renderGroup: 2 },
+      { name: 'timeline', packaging: 'mediatimeline', isLive: true, renderGroup: 1, depends: [1, 'screenshare'] }
+    ]
+  }
+
+  // Act
+  const [timeline] = extractCatalogTracks(catalog, 'mediatimeline')
+
+  // Assert
+  expect(timeline.depends).toEqual(['video', 'audio', 'screenshare'])
 })
