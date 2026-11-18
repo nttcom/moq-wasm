@@ -1,9 +1,10 @@
 import type { SubgroupObjectWithLoc } from './jitterBufferTypes'
 import { readLocHeader } from './loc'
-import { isTerminalStatus } from './objectStatus'
 
 const HOLD_MS = 100
 const MICROS_PER_MILLI = 1_000
+const OBJECT_STATUS_END_OF_GROUP = 3
+const OBJECT_STATUS_END_OF_TRACK = 4
 
 /// Maps a capture timestamp onto the local time by which its object has to
 /// leave the gate to be heard on time.
@@ -97,4 +98,8 @@ export class GroupOrderGate {
     const [earliest] = [...this.held.keys()].sort((left, right) => Number(left - right))
     return earliest
   }
+}
+
+function isTerminalStatus(status: number | undefined): boolean {
+  return status === OBJECT_STATUS_END_OF_GROUP || status === OBJECT_STATUS_END_OF_TRACK
 }

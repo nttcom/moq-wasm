@@ -735,7 +735,7 @@ export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
 // types/media/player/livePlayer.d.ts:38:5 - (ae-forgotten-export) The symbol "StatusState" needs to be exported by the entry point index.d.ts
 // types/media/player/livePlayer.d.ts:64:5 - (ae-forgotten-export) The symbol "SeekAxis" needs to be exported by the entry point index.d.ts
 // types/media/player/livePlayer.d.ts:73:9 - (ae-forgotten-export) The symbol "ReviewFetchWindow" needs to be exported by the entry point index.d.ts
-// types/media/player/locLive.d.ts:49:5 - (ae-forgotten-export) The symbol "MediaKind_2" needs to be exported by the entry point index.d.ts
+// types/media/player/locLive.d.ts:40:5 - (ae-forgotten-export) The symbol "MediaKind_2" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

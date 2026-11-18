@@ -1,6 +1,6 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
 import { connectOptions } from './access'
-import { botNamespace, startRoomBot } from './roomBots'
+import { botNamespace, sameNamespace, startRoomBot } from './roomBots'
 import { SystemOneStatusView } from './systemOneStatus'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
 import { setUpRelayUrlControls } from './relayPicker'
@@ -121,8 +121,4 @@ export function latestRecordForPrompt<T>(payload: Uint8Array, promptGroupId: big
   const data = JSON.parse(new TextDecoder().decode(payload)).at(-1)?.data
   const [groupId] = Array.isArray(data?.prompt) ? data.prompt : []
   return Number.isInteger(groupId) && BigInt(groupId) === promptGroupId ? data : undefined
-}
-
-function sameNamespace(left: string[], right: string[]): boolean {
-  return left.join('/') === right.join('/')
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { bearerToken } from '../../../../utils/access'
+import { bearerToken, temporaryAppToken } from '../../../../utils/access'
 import { type RecordingLayout, type RecordingFormat, type Recorder, listRecordings } from '../recording/recorderApi'
-import { latestBot, startBot, stopBot, temporaryAppsBots } from '../../../../utils/roomBots'
+import { latestBot, startBot, stopBot } from '../../../../utils/roomBots'
 import { type ActiveRecording, RECORDER_BOT_TYPE, activeRecording } from '../recording/recorderBot'
 
 const POLL_INTERVAL_MS = 5_000
@@ -67,12 +67,11 @@ export function useRoomRecording(
   const [error, setError] = useState<string | null>(null)
   const [replays, setReplays] = useState<RecordingReplay[]>([])
   const recorder = useMemo<Recorder>(() => ({ url: recorderUrl, token: bearerToken }), [recorderUrl])
-  const bots = useMemo(temporaryAppsBots, [])
 
   const refresh = useCallback(async () => {
-    if (bots.token()) {
+    if (temporaryAppToken()) {
       try {
-        setActive(activeRecording(await latestBot(bots, RECORDER_BOT_TYPE, namespacePrefix)))
+        setActive(activeRecording(await latestBot(RECORDER_BOT_TYPE, namespacePrefix)))
         setError(null)
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught))
@@ -96,7 +95,7 @@ export function useRoomRecording(
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     }
-  }, [bots, namespacePrefix, recorder, recorderUrl, relayUrl])
+  }, [namespacePrefix, recorder, recorderUrl, relayUrl])
 
   useEffect(() => {
     void refresh()
@@ -119,24 +118,24 @@ export function useRoomRecording(
   const start = useCallback(
     (layout: RecordingLayout, composite: boolean, format: RecordingFormat = 'mp4') =>
       run(async () =>
-        activeRecording(await startBot(bots, RECORDER_BOT_TYPE, namespacePrefix, { layout, composite, format }))
+        activeRecording(await startBot(RECORDER_BOT_TYPE, namespacePrefix, { layout, composite, format }))
       ),
-    [bots, namespacePrefix, run]
+    [namespacePrefix, run]
   )
   const stop = useCallback(async () => {
     const id = active?.id
     if (id) {
       await run(async () => {
-        await stopBot(bots, RECORDER_BOT_TYPE, id)
+        await stopBot(RECORDER_BOT_TYPE, id)
         return { id, state: 'stopping' }
       })
     }
-  }, [active?.id, bots, run])
+  }, [active?.id, run])
 
   if (!reachable) {
     return null
   }
-  return { active, canRecord: bots.token() !== undefined, busy, error, start, stop, replays }
+  return { active, canRecord: temporaryAppToken() !== undefined, busy, error, start, stop, replays }
 }
 
 function replayUrl(recorderUrl: string, relayUrl: string, id: string): string {

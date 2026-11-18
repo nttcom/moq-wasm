@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { latestBot, startBot, stopBot, temporaryAppsBots } from '../../../../utils/roomBots'
+import { latestBot, startBot, stopBot } from '../../../../utils/roomBots'
 import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
-import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
+import { TRANSCRIBER_AVAILABLE, TRANSCRIBER_BOT_TYPE } from '../session/trackNamespace'
 
-const TRANSCRIBER_BOT_TYPE = 'transcriber'
 /// How often a page that started the transcriber asks `bots` whether it failed before joining the room.
 const STARTING_POLL_INTERVAL_MS = 5_000
 
@@ -52,7 +51,6 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const arrivals = useRef(new Map<string, number>())
   const [now, setNow] = useState(() => Date.now())
-  const bots = useMemo(temporaryAppsBots, [])
   const namespacePrefix = session.trackNamespacePrefix.join('/')
 
   useEffect(() => {
@@ -66,7 +64,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
       return
     }
     const timer = window.setInterval(() => {
-      latestBot(bots, TRANSCRIBER_BOT_TYPE, namespacePrefix)
+      latestBot(TRANSCRIBER_BOT_TYPE, namespacePrefix)
         .then((bot) => {
           if (bot?.id !== startingId || bot.state === 'failed' || bot.state === 'finished') {
             setStartingId(undefined)
@@ -76,7 +74,7 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
         .catch((caught) => console.warn('[meeting][captions] cannot read the transcriber', caught))
     }, STARTING_POLL_INTERVAL_MS)
     return () => window.clearInterval(timer)
-  }, [bots, namespacePrefix, startingId])
+  }, [namespacePrefix, startingId])
 
   useEffect(() => {
     if (!transcriberPresent) {
@@ -130,14 +128,14 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
     start: (asr) => {
       setError(undefined)
       setHidden(false)
-      startBot(bots, TRANSCRIBER_BOT_TYPE, namespacePrefix, { asr })
+      startBot(TRANSCRIBER_BOT_TYPE, namespacePrefix, { asr })
         .then((bot) => setStartingId(bot.id))
         .catch((caught) => setError(errorText(caught)))
     },
     stop: () => {
       setStartingId(undefined)
-      latestBot(bots, TRANSCRIBER_BOT_TYPE, namespacePrefix)
-        .then((bot) => (bot ? stopBot(bots, TRANSCRIBER_BOT_TYPE, bot.id) : undefined))
+      latestBot(TRANSCRIBER_BOT_TYPE, namespacePrefix)
+        .then((bot) => (bot ? stopBot(TRANSCRIBER_BOT_TYPE, bot.id) : undefined))
         .catch((caught) => setError(errorText(caught)))
     },
     show: (shown) => setHidden(!shown),

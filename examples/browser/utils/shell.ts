@@ -7,6 +7,8 @@
 /// The bar is drawn at once; the access chip follows once utils/access.ts has resolved the page's
 /// token, which may wait for the token mint.
 
+import { withPageQuery } from './pageQuery'
+
 const shell = document.createElement('header')
 shell.className = 'app-shell'
 const inner = document.createElement('div')
@@ -61,14 +63,4 @@ function crumb(text: string, href?: string): HTMLLIElement {
     item.append(current)
   }
   return item
-}
-
-/// Carries the page's query (a relay URL, a token mint URL) to the pages the bar links to, as
-/// utils/preserveQueryLinks.js does for the links in the page.
-function withPageQuery(href: string): string {
-  const url = new URL(href, window.location.href)
-  for (const [name, value] of new URLSearchParams(window.location.search)) {
-    url.searchParams.set(name, value)
-  }
-  return url.toString()
 }

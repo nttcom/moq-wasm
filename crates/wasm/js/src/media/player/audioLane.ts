@@ -2,7 +2,8 @@ import type { MediaCatalogTrack } from '../catalog'
 import { readLocHeader } from '../internal/loc'
 import type { AudioPlayout } from './audioPlayout'
 import type { LivePlayout } from './livePlayout'
-import { type LocObject, audioCatalogMessage, objectMessage } from './locLive'
+import type { SubgroupObjectWithLoc } from '../internal/jitterBufferTypes'
+import { audioCatalogMessage, objectMessage } from './locLive'
 
 /// A second audio track, such as a translation of the main one, played on a
 /// live playout's clock. It starts silent; `fadeTo` fades it in. A chunk that
@@ -36,7 +37,7 @@ export class AudioLane {
 
   /// `cached` marks an object a joining FETCH delivered from before the
   /// subscription started.
-  push(groupId: bigint, object: LocObject, cached = false): void {
+  push(groupId: bigint, object: SubgroupObjectWithLoc, cached = false): void {
     if (cached) {
       const captureMicros = readLocHeader(object.locHeader).timestampMicros
       if (captureMicros !== undefined) {

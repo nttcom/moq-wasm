@@ -1,6 +1,6 @@
 import { alawToAudioData, isPcmAlawCodec } from '../alaw'
 import { GroupOrderGate } from '../groupOrderGate'
-import type { SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
+import type { AudioCatalogMessage, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
 import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
 import { workerLog } from '../../../core/log'
@@ -14,8 +14,8 @@ type AudioConfig = {
   descriptionBase64?: string
 }
 
-const audioBitrateLogger = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', media: 'audio', kbps })
+const addAudioBytes = createBitrateLogger((kbps) => {
+  self.postMessage({ type: 'bitrate', kbps })
 })
 
 /// How far ahead of its hand-over to the audio output the group order gate
@@ -52,9 +52,7 @@ async function createAudioDecoder(config: AudioDecoderConfig, signature: string)
 }
 
 type AudioWorkerMessage =
-  | SubgroupWorkerMessage
-  | { type: 'catalog'; codec?: string; sampleRate?: number; channels?: number; descriptionBase64?: string }
-  | { type: 'timeline'; captureMicros?: number; handOverAtUnixMs?: number }
+  SubgroupWorkerMessage | AudioCatalogMessage | { type: 'timeline'; captureMicros?: number; handOverAtUnixMs?: number }
 
 self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
   const data = event.data
@@ -76,7 +74,7 @@ self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
       )
       return
     case 'object':
-      audioBitrateLogger.addBytes(data.subgroupStreamObject.objectPayloadLength)
+      addAudioBytes(data.subgroupStreamObject.objectPayloadLength)
       groupOrder.push(data.groupId, data.subgroupStreamObject)
   }
 }

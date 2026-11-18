@@ -10,23 +10,10 @@ export type RelayPreset = {
   testId?: string
 }
 
-export const CLOUD_RELAY_PRESETS: RelayPreset[] = [
-  {
-    label: 'relay-1',
-    value: 'https://relay-1.moqt.research.skyway.io:443',
-    helper: 'relay-1.moqt.research.skyway.io:443'
-  },
-  {
-    label: 'relay-2',
-    value: 'https://relay-2.moqt.research.skyway.io:443',
-    helper: 'relay-2.moqt.research.skyway.io:443'
-  },
-  {
-    label: 'relay-3',
-    value: 'https://relay-3.moqt.research.skyway.io:443',
-    helper: 'relay-3.moqt.research.skyway.io:443'
-  }
-]
+export const CLOUD_RELAY_PRESETS: RelayPreset[] = [1, 2, 3].map((n) => {
+  const host = `relay-${n}.moqt.research.skyway.io:443`
+  return { label: `relay-${n}`, value: `https://${host}`, helper: host }
+})
 
 export const LOAD_BALANCED_RELAY_PRESET: RelayPreset = {
   label: 'relay.moqt.research.skyway.io',

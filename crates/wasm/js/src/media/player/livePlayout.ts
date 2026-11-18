@@ -50,7 +50,7 @@ type Held = { captureMicros: number; arrivedAtMs: number } & (
 /// buffer is dropped rather than played late. Pausing drops what arrives, and
 /// resuming warms up again at the live edge.
 export class LivePlayout {
-  private readonly clock = new PlayoutClock()
+  private readonly clock: PlayoutClock
   private readonly jitterBuffer = new JitterBuffer(DEFAULT_BUFFER_POLICY)
   private readonly audio: AudioPlayout
   private readonly video: VideoPlayout
@@ -78,9 +78,7 @@ export class LivePlayout {
       audioContext && (() => audioContext)
     )
     this.video = new VideoPlayout(showVideo)
-    if (onTimeline) {
-      this.clock.setOriginListener(onTimeline)
-    }
+    this.clock = new PlayoutClock(onTimeline)
   }
 
   /// `arrivedAtMs` is when the frame's object arrived, before any wait for
