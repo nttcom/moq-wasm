@@ -1,6 +1,6 @@
 import { expect, test as base } from '@playwright/test'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { cpSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,15 +17,18 @@ import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 /// Built by the runner that starts the relay.
 const RECORDER_BINARY = join(REPO_ROOT, 'target', 'debug', 'recorder')
+const BOTS_BINARY = join(REPO_ROOT, 'target', 'debug', 'bots')
 const RECORDER_START_TIMEOUT_MS = 180_000
 const RECORDER_SERVE_PORT = Number(process.env.RECORDER_E2E_PORT ?? 8096)
-/// The recording job checks for a stop every 5 s, then waits up to 10 s for the participants' tracks to end.
+const BOTS_PORT = Number(process.env.BOTS_E2E_PORT ?? 8098)
+/// The recorder bot learns of a stop from its heartbeat every 5 s, then waits up to 10 s for the participants'
+/// tracks to end.
 const RECORDING_FINISH_TIMEOUT_MS = 30_000
 /// Compositing re-encodes the whole room after it stopped, slower than real time in a debug build.
 const COMPOSITE_TIMEOUT_MS = 120_000
 const POLL_INTERVAL_MS = 200
 
-/// The fields of `recorder serve`'s `manifest.json` that the tests read.
+/// The fields of the recorder bot's `manifest.json` that the tests read.
 export interface RecordingManifest {
   members: { namespace: string; screen_share_files: { key: string }[] }[]
 }
@@ -91,11 +94,38 @@ export function recordingPlayerPath(recorderUrl: string, id: string): string {
 
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
 
-/// `recorder serve` with a directory store; it runs every recording and composite as a child process.
+/// `recorder serve` over a directory store, and `bots` without authorization, which the fixture calls as an app
+/// server would to start each recording as a `recorder bot` child process.
 async function startRecorderServe() {
   const url = `http://127.0.0.1:${RECORDER_SERVE_PORT}`
+  const botsUrl = `http://127.0.0.1:${BOTS_PORT}`
   const dir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
   const storeDir = join(dir, 'store')
+  const storeUrl = pathToFileURL(storeDir).href + '/'
+  const typesFile = join(dir, 'bot-types.json')
+  writeFileSync(
+    typesFile,
+    JSON.stringify({
+      recorder: {
+        launcher: { kind: 'local', program: RECORDER_BINARY },
+        args: [
+          'bot',
+          '--relay',
+          liveViewerE2EConfig.moqtUrl,
+          '--insecure-skip-tls-verify',
+          '--store',
+          storeUrl,
+          '--output-dir',
+          join(dir, 'work')
+        ],
+        grace_seconds: 300,
+        max_seconds: 7200,
+        max_running: 8
+      }
+    })
+  )
+  // The jobs inherit the environment; GStreamer's ERROR lines name the element behind a failed composite.
+  const env = { GST_DEBUG: '*:1', ...process.env, RUST_LOG: 'info' }
   const recorder = spawn(
     RECORDER_BINARY,
     [
@@ -108,30 +138,41 @@ async function startRecorderServe() {
       liveViewerE2EConfig.moqtUrl,
       '--insecure-skip-tls-verify',
       '--store',
-      pathToFileURL(storeDir).href + '/',
-      '--output-dir',
-      join(dir, 'work'),
-      '--composite',
+      storeUrl,
       '--insecure-skip-auth'
     ],
-    {
-      cwd: REPO_ROOT,
-      // The jobs inherit the environment; GStreamer's ERROR lines name the element behind a failed composite.
-      env: { GST_DEBUG: '*:1', ...process.env, RUST_LOG: 'info' },
-      stdio: 'inherit'
-    }
+    { cwd: REPO_ROOT, env, stdio: 'inherit' }
   )
-  const exited = new Promise<number | null>((resolveExit) => recorder.on('exit', resolveExit))
+  const bots = spawn(BOTS_BINARY, [], {
+    cwd: REPO_ROOT,
+    env: {
+      ...env,
+      PORT: String(BOTS_PORT),
+      BOTS_PUBLIC_URL: botsUrl,
+      BOTS_TYPES_FILE: typesFile,
+      BOTS_STORE_URL: pathToFileURL(join(dir, 'bots')).href + '/',
+      BOTS_INSECURE_SKIP_AUTH: 'true'
+    },
+    stdio: 'inherit'
+  })
+  const exited = Promise.all(
+    [recorder, bots].map((child) => new Promise<number | null>((resolveExit) => child.on('exit', resolveExit)))
+  )
   const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
-  while (
-    !(await fetch(`${url}/healthz`)
-      .then((response) => response.ok)
-      .catch(() => false))
-  ) {
-    if (recorder.exitCode !== null || Date.now() > deadline) {
-      throw new Error(`recorder serve did not start (exit code ${recorder.exitCode})`)
+  for (const [child, healthz] of [
+    [recorder, `${url}/healthz`],
+    [bots, `${botsUrl}/healthz`]
+  ] as const) {
+    while (
+      !(await fetch(healthz)
+        .then((response) => response.ok)
+        .catch(() => false))
+    ) {
+      if (child.exitCode !== null || Date.now() > deadline) {
+        throw new Error(`${healthz} did not answer (exit code ${child.exitCode})`)
+      }
+      await sleep(POLL_INTERVAL_MS)
     }
-    await sleep(POLL_INTERVAL_MS)
   }
   // The recorder runs with --insecure-skip-auth against a relay without authorization.
   const api: Recorder = { url, token: () => undefined }
@@ -140,34 +181,43 @@ async function startRecorderServe() {
   /// A recording's files are under its app, the first element of its room.
   const recordingDir = (recording: RoomRecording) =>
     join(storeDir, recording.namespace_prefix.split('/')[0], recording.id)
+  /// The bot id of each recording, for `stop`.
+  const botIds = new Map<string, string>()
   return {
     url,
     storeDir,
     recordingDir,
-    /// Returns once the recording job has joined the room, so that the recording covers what follows.
+    /// Returns once the recorder bot has joined the room, so that the recording covers what follows.
     async start(
       namespacePrefix: string,
       layout: RecordingLayout,
       composite = false,
       format: RecordingFormat = 'mp4'
     ): Promise<RoomRecording> {
-      const recording = await recorderRequest<RoomRecording>(api, '/recordings', {
+      const before = new Set((await listRecordings(api, namespacePrefix)).map((recording) => recording.id))
+      const bot = await jsonRequest<{ id: string }>(`${botsUrl}/bots/recorder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ namespace_prefix: namespacePrefix, layout, composite, format })
+        body: JSON.stringify({ namespace_prefix: namespacePrefix, options: { layout, composite, format } })
       })
       const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
-      while ((await current(recording))?.state === 'starting') {
+      for (;;) {
+        const recording = (await listRecordings(api, namespacePrefix)).find(
+          (candidate) => !before.has(candidate.id) && candidate.state !== 'starting'
+        )
+        if (recording) {
+          botIds.set(recording.id, bot.id)
+          return recording
+        }
         if (Date.now() > deadline) {
-          throw new Error(`recording ${recording.id} did not start`)
+          throw new Error(`the recorder bot ${bot.id} did not start recording`)
         }
         await sleep(POLL_INTERVAL_MS)
       }
-      return recording
     },
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
-      await recorderRequest(api, `/recordings/${encodeURIComponent(recording.id)}/stop`, { method: 'POST' })
+      await jsonRequest(`${botsUrl}/bots/recorder/${botIds.get(recording.id)}`, { method: 'DELETE' })
       const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
       for (;;) {
         const state = (await current(recording))?.state
@@ -184,7 +234,7 @@ async function startRecorderServe() {
         .filter((name) => name.endsWith('.mp4') && name !== 'composite.mp4')
         .map((name) => join(dir, name))
     },
-    /// Throws until the recording is `finished`: `recorder serve` writes `manifest.json` only then.
+    /// Throws until the recording is `finished`: the recorder bot writes `manifest.json` only then.
     manifest(recording: RoomRecording): RecordingManifest {
       return JSON.parse(readFileSync(join(recordingDir(recording), 'manifest.json'), 'utf8')) as RecordingManifest
     },
@@ -222,6 +272,7 @@ async function startRecorderServe() {
     },
     async close(): Promise<void> {
       recorder.kill('SIGINT')
+      bots.kill('SIGINT')
       await exited
     }
   }
@@ -314,13 +365,11 @@ function largestGap(times: number[]): number {
   return times.slice(1).reduce((largest, time, index) => Math.max(largest, time - times[index]), 0)
 }
 
-/// `recorder serve`'s own start and stop, which the Meeting no longer calls: it starts a recorder bot
-/// through `bots`.
-async function recorderRequest<T>(recorder: Recorder, path: string, init: RequestInit): Promise<T> {
-  const response = await fetch(`${recorder.url}${path}`, init)
+async function jsonRequest<T>(url: string, init: RequestInit): Promise<T> {
+  const response = await fetch(url, init)
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new Error(body.error ?? `recorder answered ${response.status}`)
+    throw new Error(body.error ?? `${url} answered ${response.status}`)
   }
   return body as T
 }
