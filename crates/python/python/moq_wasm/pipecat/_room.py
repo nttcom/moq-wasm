@@ -1,13 +1,12 @@
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol
 
 from moq_wasm._session import Session
-from moq_wasm.codecs import OPUS_SAMPLE_RATE, OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder
-from moq_wasm.media import Catalog, CatalogTrack, LocalBroadcast, MediaSource, RemoteBroadcast, create_broadcast, watch_broadcasts
+from moq_wasm.codecs import OPUS_SAMPLE_RATE, OpusEncoder, VideoEncoder
+from moq_wasm.media import LocalBroadcast, MediaSource, RemoteBroadcast, create_broadcast, watch_broadcasts
+from moq_wasm.pipecat._participant import ParticipantSink, ReceiveOptions, receive_participant
 
 logger = logging.getLogger("moq_wasm")
 
@@ -18,22 +17,10 @@ MAX_AUDIO_AHEAD_MICROS = 100_000
 
 
 @dataclass(frozen=True)
-class MoqWasmTrack:
-    """A participant's track the transport subscribed to, for `on_track_subscribed`."""
-
-    participant_id: str
-    name: str
-    kind: Literal["audio", "video"]
-
-
-@dataclass(frozen=True)
 class RoomOptions:
     room: list[str]
     participant_id: str
-    audio_in: bool
-    video_in: bool
-    video_in_max_fps: float
-    video_in_track: Callable[[Catalog], CatalogTrack | None] | None
+    receive: ReceiveOptions
     audio_out: bool
     video_out: bool
     video_out_codec: str
@@ -41,20 +28,11 @@ class RoomOptions:
     video_out_framerate: int
 
 
-class RoomSink(Protocol):
-    """Where the room's media and events go: the transport and its input processor."""
-
-    def audio_in_sample_rate(self) -> int: ...
-    async def push_audio(self, pcm: bytes, sample_rate: int, participant_id: str) -> None: ...
-    async def push_picture(self, rgb: bytes, size: tuple[int, int], participant_id: str) -> None: ...
-    async def event(self, name: str, *args: object) -> None: ...
-
-
 class Room:
     """What `MoqWasmTransport` does on its session: publishes its own broadcast `[*room,
     participant_id]` and follows every other broadcast one level under `room` as a participant."""
 
-    def __init__(self, session: Session, options: RoomOptions, sink: RoomSink):
+    def __init__(self, session: Session, options: RoomOptions, sink: ParticipantSink):
         self._session = session
         self._options = options
         self._sink = sink
@@ -111,7 +89,7 @@ class Room:
         except RuntimeError as error:
             await self._sink.event("on_error", f"cannot publish {self._broadcast.namespace}", error)
             raise
-        if options.audio_in or options.video_in:
+        if options.receive.audio_in or options.receive.video_in:
             self._tasks.append(
                 asyncio.create_task(
                     watch_broadcasts(self._session, options.room, self._follow, filter=self._is_participant)
@@ -160,91 +138,10 @@ class Room:
     async def _follow(self, remote: RemoteBroadcast) -> None:
         participant_id = remote.namespace[-1]
         await self._sink.event("on_client_connected", participant_id)
-        receiving: dict[str, tuple[str, asyncio.Task]] = {}
         try:
-            async for catalog in remote.catalogs():
-                if self._options.audio_in:
-                    audio = catalog.select(role="audio", packaging="loc", codec="opus", prefer="lowest_bitrate")
-                    await self._receive(participant_id, receiving, "audio", audio, lambda track: self._receive_audio(remote, track))
-                if self._options.video_in:
-                    video = self._video_track(catalog)
-                    await self._receive(participant_id, receiving, "video", video, lambda track: self._receive_video(remote, track))
-        except RuntimeError as error:
-            logger.info("catalog of %s ended: %s", remote.namespace, error)
+            await receive_participant(remote, self._options.receive, self._sink)
         finally:
-            for _, task in receiving.values():
-                task.cancel()
             await self._sink.event("on_client_disconnected", participant_id)
-
-    def _video_track(self, catalog: Catalog) -> CatalogTrack | None:
-        if self._options.video_in_track is not None:
-            return self._options.video_in_track(catalog)
-        decodable = Catalog([track for track in catalog.tracks if _decodable(track)])
-        return decodable.select(role="video", packaging="loc", prefer="lowest_bitrate")
-
-    async def _receive(
-        self,
-        participant_id: str,
-        receiving: dict[str, tuple[str, asyncio.Task]],
-        kind: Literal["audio", "video"],
-        track: CatalogTrack | None,
-        receive: Callable[[CatalogTrack], Awaitable[None]],
-    ) -> None:
-        current = receiving.get(kind)
-        if current is not None and track is not None and current[0] == track.name:
-            return
-        if current is not None:
-            current[1].cancel()
-            del receiving[kind]
-        if track is not None:
-            receiving[kind] = (track.name, asyncio.create_task(self._report_failure(participant_id, track, receive)))
-            await self._sink.event("on_track_subscribed", MoqWasmTrack(participant_id, track.name, kind))
-
-    async def _report_failure(
-        self, participant_id: str, track: CatalogTrack, receive: Callable[[CatalogTrack], Awaitable[None]]
-    ) -> None:
-        """Ends the participant's track on a failure, such as a frame PyAV cannot decode, and hands
-        it to `on_error`; the next catalog naming another track starts afresh."""
-        try:
-            await receive(track)
-        except Exception as error:
-            logger.exception("receiving %s of %s failed", track.name, participant_id)
-            await self._sink.event("on_error", f"receiving {track.name} of {participant_id} failed", error)
-
-    async def _receive_audio(self, remote: RemoteBroadcast, track: CatalogTrack) -> None:
-        participant_id = remote.namespace[-1]
-        sample_rate = self._sink.audio_in_sample_rate()
-        decoder = OpusDecoder(sample_rate)
-        async for audio_object in remote.follow(track.name):
-            pcm = decoder.decode(audio_object.payload)
-            if pcm:
-                await self._sink.push_audio(pcm, sample_rate, participant_id)
-
-    async def _receive_video(self, remote: RemoteBroadcast, track: CatalogTrack) -> None:
-        participant_id = remote.namespace[-1]
-        interval = 1 / self._options.video_in_max_fps
-        next_picture_at = 0.0
-        decoder: VideoDecoder | None = None
-        group_id: int | None = None
-        async for video_object in remote.follow(track.name):
-            if video_object.group_id != group_id:
-                decoder = VideoDecoder(track.codec or "")
-                group_id = video_object.group_id
-            picture = await asyncio.to_thread(decoder.decode, video_object.payload)
-            now = time.monotonic()
-            if picture is None or now < next_picture_at:
-                continue
-            next_picture_at = now + interval
-            rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
-            await self._sink.push_picture(rgb, (picture.width, picture.height), participant_id)
-
-
-def _decodable(track: CatalogTrack) -> bool:
-    try:
-        VideoDecoder(track.codec or "")
-        return True
-    except ValueError:
-        return False
 
 
 class _MediaClock:

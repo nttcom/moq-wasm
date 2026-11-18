@@ -15,6 +15,7 @@ from pipecat.transports.base_transport import BaseTransport, TransportParams
 
 from moq_wasm._session import Session
 from moq_wasm.media import Catalog, CatalogTrack
+from moq_wasm.pipecat._participant import ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
 
 DEFAULT_VIDEO_OUT_CODEC = "H264"
@@ -122,10 +123,12 @@ class MoqWasmTransport(BaseTransport):
         options = RoomOptions(
             room=params.room,
             participant_id=params.participant_id,
-            audio_in=params.audio_in_enabled,
-            video_in=params.video_in_enabled,
-            video_in_max_fps=params.video_in_max_fps,
-            video_in_track=params.video_in_track,
+            receive=ReceiveOptions(
+                audio_in=params.audio_in_enabled,
+                video_in=params.video_in_enabled,
+                video_in_max_fps=params.video_in_max_fps,
+                video_in_track=params.video_in_track,
+            ),
             audio_out=params.audio_out_enabled,
             video_out=params.video_out_enabled,
             video_out_codec=params.video_out_codec or DEFAULT_VIDEO_OUT_CODEC,

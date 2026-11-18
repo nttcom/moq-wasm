@@ -9,6 +9,7 @@ import pytest
 import moq_wasm
 from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoEncoder
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTrack, MoqWasmTransport
+from moq_wasm.pipecat._participant import ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
 
 from tests.fake_native import STAY_OPEN, FakeRelay, open_session
@@ -60,14 +61,14 @@ class RecordingSink:
         self.events.append((name, *args))
 
 
-def room_options(**overrides) -> RoomOptions:
+AUDIO_CATALOG = catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True})
+
+
+def room_options(audio_in: bool = False, video_in: bool = False, **overrides) -> RoomOptions:
     options = dict(
         room=ROOM,
         participant_id="bot",
-        audio_in=False,
-        video_in=False,
-        video_in_max_fps=1000.0,
-        video_in_track=None,
+        receive=ReceiveOptions(audio_in=audio_in, video_in=video_in, video_in_max_fps=1000.0, video_in_track=None),
         audio_out=False,
         video_out=False,
         video_out_codec="H264",
@@ -120,7 +121,7 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
     relay = FakeRelay()
     session = await open_session(relay)
     native = relay.sessions[0]
-    native.tracks["catalog"] = [[catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True}), STAY_OPEN]]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
     native.tracks["audio"] = [OpusEncoder().encode(tone(0.04), SAMPLE_RATE)]
     sink = RecordingSink()
     room = Room(session, room_options(audio_in=True), sink)
