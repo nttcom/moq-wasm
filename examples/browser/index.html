@@ -136,12 +136,61 @@
             <div class="example-thumb" aria-hidden="true">
               <span class="th-monitor"
                 ><span class="th-main"
-                  ><span class="th-cam-label">CAM 1</span><span class="th-live-dot">LIVE</span
-                  ><span class="th-person" style="width: 26%; left: 40%"></span></span
+                  ><svg class="th-cctv-scene" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice">
+                    <rect class="wall" width="160" height="62" />
+                    <path class="floor" d="M0 90 L0 62 L160 62 L160 90 Z" />
+                    <path class="edge" d="M0 90 L40 62 M160 90 L120 62 M0 62 H160" />
+                    <rect class="frame" x="58" y="18" width="44" height="44" />
+                    <rect class="glass" x="61" y="21" width="18.5" height="41" />
+                    <rect class="glass" x="80.5" y="21" width="18.5" height="41" />
+                    <path class="edge" d="M80 21 V62" />
+                    <rect class="sign" x="66" y="11" width="28" height="5" rx="1" />
+                    <g class="figure">
+                      <circle cx="46" cy="63" r="4" />
+                      <path d="M40 82 C40 64 52 64 52 82 Z" />
+                    </g>
+                    <g class="figure far">
+                      <circle cx="90" cy="45" r="2.4" />
+                      <path d="M86.5 62 C86.5 51 93.5 51 93.5 62 Z" />
+                    </g></svg
+                  ><span class="th-cam-label">CAM 1 · 正面入口</span><span class="th-live-dot">REC</span
+                  ><span class="th-time">2026-11-18 09:42:13</span></span
                 ><span class="th-side"
-                  ><span><span class="th-cam-label">CAM 2</span></span
-                  ><span><span class="th-cam-label">CAM 3</span></span
-                  ><span><span class="th-cam-label">CAM 4</span></span></span
+                  ><span
+                    ><svg class="th-cctv-scene" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice">
+                      <rect class="wall" width="160" height="66" />
+                      <path class="floor" d="M0 90 V66 H160 V90 Z" />
+                      <rect class="frame" x="30" y="14" width="100" height="52" />
+                      <path class="edge" d="M32 20 H128" />
+                      <path class="edge" d="M32 26 H128" />
+                      <path class="edge" d="M32 32 H128" />
+                      <path class="edge" d="M32 38 H128" />
+                      <path class="edge" d="M32 44 H128" />
+                      <path class="edge" d="M32 50 H128" />
+                      <path class="edge" d="M32 56 H128" />
+                      <path class="edge" d="M32 62 H128" />
+                      <rect class="box" x="104" y="70" width="22" height="14" />
+                      <rect class="box" x="110" y="62" width="14" height="8" /></svg
+                    ><span class="th-cam-label">搬入口</span></span
+                  ><span
+                    ><svg class="th-cctv-scene" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice">
+                      <rect class="wall" width="160" height="58" />
+                      <path class="floor" d="M0 90 V58 H160 V90 Z" />
+                      <path class="desk" d="M36 60 H124 L118 80 H42 Z" />
+                      <rect class="sign" x="62" y="24" width="36" height="8" rx="1" />
+                      <path class="plant" d="M140 58 c-6 -10 -2 -20 0 -26 c2 6 6 16 0 26 Z" />
+                      <rect class="box" x="136" y="58" width="8" height="10" /></svg
+                    ><span class="th-cam-label">受付</span></span
+                  ><span
+                    ><svg class="th-cctv-scene" viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice">
+                      <rect class="wall" width="160" height="50" />
+                      <path class="floor" d="M0 90 V50 H160 V90 Z" />
+                      <path class="edge" d="M60 90 L76 50 M100 90 L84 50" />
+                      <rect class="box" x="18" y="34" width="22" height="26" />
+                      <path class="arm" d="M40 46 H128" />
+                      <path class="stripe" d="M52 46 h8 M72 46 h8 M92 46 h8 M112 46 h8" /></svg
+                    ><span class="th-cam-label">ゲート</span></span
+                  ></span
                 ></span
               >
             </div>
@@ -200,12 +249,46 @@
         <div class="group">
           <a class="example featured" href="examples/live-viewer/index.html">
             <div class="example-thumb" aria-hidden="true">
-              <span class="th-live"
-                ><span class="th-scene"
-                  ><span class="th-stage"></span><span class="th-person" style="width: 22%; bottom: 14%"></span
-                  ><span class="th-live-badge"><b>LIVE</b><span>遅延 0.4 秒</span></span
-                  ><span class="th-seek"></span></span
-                ><span class="th-chat"><i></i><i></i><i class="me"></i><i></i><i></i><i></i></span
+              <span class="th-tube"
+                ><span class="th-tube-main"
+                  ><span class="th-tube-video"
+                    ><span class="th-tube-light" style="left: 18%"></span
+                    ><span class="th-tube-light" style="left: 62%"></span><span class="th-stage"></span
+                    ><span class="th-person" style="width: 20%; bottom: 18%"></span
+                    ><span class="th-tube-controls"
+                      ><span class="th-tube-progress"></span
+                      ><span class="th-tube-row"
+                        ><svg viewBox="0 0 24 24"><path d="M8 5 L19 12 L8 19 Z" /></svg
+                        ><svg viewBox="0 0 24 24">
+                          <path d="M4 10 H8 L13 6 V18 L8 14 H4 Z" />
+                          <path class="line" d="M16 9 a4 4 0 0 1 0 6" /></svg
+                        ><span class="th-tube-live">ライブ</span><span class="th-tube-spacer"></span
+                        ><svg viewBox="0 0 24 24">
+                          <circle class="line" cx="12" cy="12" r="3" />
+                          <circle class="line" cx="12" cy="12" r="7.5" stroke-dasharray="3 2.2" /></svg
+                        ><svg viewBox="0 0 24 24">
+                          <path
+                            class="line"
+                            d="M5 9 V5 H9 M15 5 H19 V9 M19 15 V19 H15 M9 19 H5 V15"
+                          /></svg></span></span></span
+                  ><span class="th-tube-meta"
+                    ><span class="th-avatar"></span
+                    ><span class="th-tube-title"><b>MoQ で届ける低遅延ライブ</b><small>1.2 万人が視聴中</small></span
+                    ><span class="th-follow">フォロー</span></span
+                  ></span
+                ><span class="th-tube-chat"
+                  ><span class="th-tube-chat-head">ライブチャット</span
+                  ><span class="th-tube-msg"
+                    ><i class="th-avatar"></i><span><b style="width: 40%"></b><em style="width: 90%"></em></span></span
+                  ><span class="th-tube-msg"
+                    ><i class="th-avatar"></i><span><b style="width: 55%"></b><em style="width: 70%"></em></span></span
+                  ><span class="th-tube-msg"
+                    ><i class="th-avatar"></i><span><b style="width: 35%"></b><em style="width: 85%"></em></span></span
+                  ><span class="th-tube-msg"
+                    ><i class="th-avatar"></i><span><b style="width: 50%"></b><em style="width: 60%"></em></span></span
+                  ><span class="th-tube-msg"
+                    ><i class="th-avatar"></i
+                    ><span><b style="width: 45%"></b><em style="width: 80%"></em></span></span></span
               ></span>
             </div>
             <p class="example-flow">

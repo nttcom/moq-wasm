@@ -600,6 +600,12 @@
   background: var(--th-tile);
 }
 
+/* In a tile the person follows the tile's height, so wide tiles do not make them larger. */
+.th-tile .th-person {
+  width: auto;
+  height: 64%;
+}
+
 .th-tile.speak {
   box-shadow: 0 0 0 1.5px var(--th-accent);
 }
@@ -850,18 +856,107 @@
   font-weight: 700;
 }
 
-/* Live Viewer: a stage with the live badge, the seek bar and the chat beside it. */
-.th-live {
+/* A security camera's view: wall, floor and doorway lines in the slate palette. */
+.th-cctv-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.th-cctv-scene .wall {
+  fill: #1f2731;
+}
+
+.th-cctv-scene .floor {
+  fill: #141920;
+}
+
+.th-cctv-scene .edge,
+.th-cctv-scene .arm {
+  fill: none;
+  stroke: var(--th-line);
+  stroke-width: 1.2;
+}
+
+.th-cctv-scene .frame,
+.th-cctv-scene .desk,
+.th-cctv-scene .box {
+  fill: var(--th-tile);
+  stroke: var(--th-line);
+}
+
+.th-cctv-scene .glass {
+  fill: #26313d;
+}
+
+.th-cctv-scene .sign {
+  fill: var(--th-dim);
+}
+
+.th-cctv-scene .plant {
+  fill: #2f5f5a;
+}
+
+.th-cctv-scene .arm {
+  stroke: var(--th-text);
+  stroke-width: 2.4;
+}
+
+.th-cctv-scene .stripe {
+  fill: none;
+  stroke: var(--th-alert);
+  stroke-width: 2.4;
+}
+
+.th-cctv-scene .figure {
+  fill: var(--th-figure);
+}
+
+.th-cctv-scene .figure.far {
+  fill: #2f5f5a;
+}
+
+.th-time {
+  position: absolute;
+  bottom: 5%;
+  left: 4%;
+  color: var(--th-text);
+  font-family: ui-monospace, monospace;
+  font-size: 0.85em;
+}
+
+/* Live Viewer: a video page, the player with its controls, the channel row under it and the live chat. */
+.th-tube {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: 1fr 26%;
+  grid-template-columns: 1fr 28%;
+  gap: 3%;
+  padding: 4%;
 }
 
-.th-scene {
+.th-tube-main {
+  display: flex;
+  flex-direction: column;
+  gap: 5%;
+  min-width: 0;
+}
+
+.th-tube-video {
   position: relative;
+  flex: 1;
   overflow: hidden;
+  border-radius: 4px;
   background: linear-gradient(180deg, #1f2731, var(--th-panel));
+}
+
+.th-tube-light {
+  position: absolute;
+  top: -10%;
+  width: 22%;
+  height: 80%;
+  background: radial-gradient(ellipse at top, rgba(45, 212, 191, 0.18), transparent 70%);
 }
 
 .th-stage {
@@ -869,78 +964,146 @@
   right: 0;
   bottom: 0;
   left: 0;
-  height: 28%;
+  height: 26%;
   background: var(--th-bg);
 }
 
-.th-live-badge {
+.th-tube-controls {
   position: absolute;
-  top: 6%;
-  left: 4%;
-  display: flex;
-  gap: 4px;
-}
-
-.th-live-badge b,
-.th-live-badge span {
-  padding: 0 0.5em;
-  border-radius: 3px;
-}
-
-.th-live-badge b {
-  background: var(--th-alert);
-  color: #fff;
-  letter-spacing: 0.05em;
-}
-
-.th-live-badge span {
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.th-seek {
-  position: absolute;
-  right: 4%;
-  bottom: 6%;
-  left: 4%;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--th-line);
-}
-
-.th-seek::after {
-  position: absolute;
+  right: 0;
+  bottom: 0;
   left: 0;
-  width: 86%;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--th-accent);
-  content: '';
+  padding: 0 3% 2%;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.6), transparent);
 }
 
-.th-chat {
+.th-tube-progress {
+  display: block;
+  height: 2px;
+  margin-bottom: 3%;
+  background: var(--th-accent);
+}
+
+.th-tube-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+}
+
+.th-tube-row svg {
+  width: 1.3em;
+  height: 1.3em;
+  fill: var(--th-text);
+}
+
+.th-tube-row svg .line {
+  fill: none;
+  stroke: var(--th-text);
+  stroke-width: 2;
+}
+
+.th-tube-live {
+  font-weight: 700;
+}
+
+.th-tube-live::before {
+  margin-right: 0.3em;
+  color: var(--th-alert);
+  content: '●';
+}
+
+.th-tube-spacer {
+  flex: 1;
+}
+
+.th-tube-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  white-space: nowrap;
+}
+
+.th-avatar {
+  flex: none;
+  width: 2em;
+  height: 2em;
+  border-radius: 50%;
+  background: var(--th-figure);
+}
+
+.th-tube-title {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  gap: 5px;
-  padding: 8px 6px;
-  border-left: 1px solid var(--th-line);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.th-tube-title b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.th-tube-title small {
+  color: var(--th-dim);
+  font-size: 0.85em;
+}
+
+.th-follow {
+  margin-left: auto;
+  padding: 0.2em 0.8em;
+  border-radius: 999px;
+  background: var(--th-accent);
+  color: var(--th-bg);
+  font-weight: 700;
+}
+
+.th-tube-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 6%;
+  overflow: hidden;
+  padding: 6% 7%;
+  border-radius: 4px;
   background: var(--th-panel);
 }
 
-.th-chat i {
+.th-tube-chat-head {
+  padding-bottom: 4%;
+  border-bottom: 1px solid var(--th-line);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.th-tube-msg {
+  display: flex;
+  gap: 0.4em;
+}
+
+.th-tube-msg .th-avatar {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+.th-tube-msg > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.th-tube-msg b,
+.th-tube-msg em {
   display: block;
-  height: 4px;
+  height: 3px;
   border-radius: 2px;
+}
+
+.th-tube-msg b {
+  background: var(--th-dim);
+}
+
+.th-tube-msg em {
   background: var(--th-line);
-}
-
-.th-chat i:nth-child(odd) {
-  width: 80%;
-}
-
-.th-chat i.me {
-  width: 60%;
-  background: rgba(45, 212, 191, 0.5);
 }
 
 /* Chat Moderation: a chat whose abusive message the moderator has taken down. */
