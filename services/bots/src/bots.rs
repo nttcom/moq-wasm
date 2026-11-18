@@ -71,7 +71,7 @@ pub(crate) struct Heartbeat {
 pub(crate) struct Bots {
     types: BotTypes,
     store: BotStore,
-    signer: BotTokenSigner,
+    signer: Option<BotTokenSigner>,
     /// `None` accepts only locally launched bots, which present their key.
     id_tokens: Option<IdTokenVerifier>,
     /// The URL a bot calls back, passed to it as `--bots-url`.
@@ -82,7 +82,7 @@ impl Bots {
     pub(crate) fn new(
         types: BotTypes,
         store: BotStore,
-        signer: BotTokenSigner,
+        signer: Option<BotTokenSigner>,
         id_tokens: Option<IdTokenVerifier>,
         public_url: String,
     ) -> Self {
@@ -255,27 +255,32 @@ impl Bots {
         self.store.request_stop(id).await
     }
 
-    /// A new token for the bot to join its room with.
+    /// A new token for the bot to join its room with; `None` without a
+    /// signer, when the bot joins a relay without authorization with none.
     pub(crate) async fn token(
         &self,
         bot_type: &str,
         id: &str,
         bearer: Option<&str>,
         now_ms: u64,
-    ) -> Result<String, BotError> {
+    ) -> Result<Option<String>, BotError> {
         let record = self.authenticated(bot_type, id, bearer, now_ms).await?;
         if !is_active(&record, now_ms) {
             return Err(BotError::Ended);
         }
-        Ok(self
-            .signer
-            .sign(
-                &record.app_id,
-                &record.namespace_prefix,
-                &record.bot_type,
-                now_ms / 1000,
-            )
-            .await?)
+        let Some(signer) = &self.signer else {
+            return Ok(None);
+        };
+        Ok(Some(
+            signer
+                .sign(
+                    &record.app_id,
+                    &record.namespace_prefix,
+                    &record.bot_type,
+                    now_ms / 1000,
+                )
+                .await?,
+        ))
     }
 
     /// Records what the bot reports; `true` asks it to stop, because the app
@@ -490,6 +495,7 @@ mod tests {
             .bots
             .token("recorder", &bot.id, Some(KEY), NOW)
             .await
+            .unwrap()
             .unwrap();
 
         // Assert

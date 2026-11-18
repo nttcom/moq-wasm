@@ -47,7 +47,7 @@ pub(crate) fn test_bots() -> TestBots {
     let bots = Bots::new(
         types,
         store.clone(),
-        BotTokenSigner::new(registry.store(), None),
+        Some(BotTokenSigner::new(registry.store(), None)),
         None,
         "http://bots.test".to_string(),
     );

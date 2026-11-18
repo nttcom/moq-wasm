@@ -102,14 +102,14 @@ async fn start(
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
     let prefix = request.namespace_prefix.as_str();
-    let launch = match state.launch_auth.authorize(headers, prefix).await {
-        Ok(launch) => launch,
+    let app_id = match state.launch_auth.authorize(headers, prefix).await {
+        Ok(app_id) => app_id,
         Err(rejection) => return refused(rejection, prefix),
     };
     let result = state
         .bots
         .start(
-            &launch.app_id,
+            &app_id,
             bot_type,
             prefix,
             request.options.as_ref(),
@@ -121,7 +121,7 @@ async fn start(
             tracing::info!(
                 bot_id = %bot.id,
                 bot_type = %bot.bot_type,
-                app_id = %launch.app_id,
+                app_id = %app_id,
                 track_namespace_prefix = prefix,
                 "bot launched"
             );
@@ -135,7 +135,7 @@ async fn start(
             tracing::error!(
                 error = format!("{error:#}"),
                 bot_type,
-                app_id = %launch.app_id,
+                app_id = %app_id,
                 track_namespace_prefix = prefix,
                 "bot launch failed"
             );
@@ -145,7 +145,7 @@ async fn start(
     tracing::info!(
         error,
         bot_type,
-        app_id = %launch.app_id,
+        app_id = %app_id,
         track_namespace_prefix = prefix,
         "bot launch refused"
     );

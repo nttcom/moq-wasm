@@ -254,7 +254,10 @@ and the audience of their ID tokens), `BOTS_VTS_URL`, `BOTS_STORE_URL`,
 `BOTS_REGISTRY_FILE` or `BOTS_REGISTRY_BUCKET` (with
 `BOTS_REGISTRY_OBJECT`), `BOTS_TEMPORARY_APP_SECRET`, and
 `BOTS_JOB_SERVICE_ACCOUNT`, without which only locally launched bots can
-authenticate.
+authenticate. `BOTS_INSECURE_SKIP_AUTH=true`, for a relay without
+authorization only (local development and the E2E tests), accepts every
+request for the app its room starts with, reads no registry, and answers a
+bot's token call with `null`, so the bot joins with no token.
 
 ## Modules
 

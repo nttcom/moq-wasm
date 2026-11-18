@@ -52,16 +52,26 @@ async fn main() -> anyhow::Result<()> {
     let metadata_token = Arc::new(MetadataToken::new(reqwest::Client::new()));
     let types = BotTypes::parse(&types_text, &metadata_token)?;
     let store = BotStore::open(&required("BOTS_STORE_URL")?.parse()?)?;
-    let registry = Location::from_env(&LocationVariables {
-        file: "BOTS_REGISTRY_FILE",
-        bucket: "BOTS_REGISTRY_BUCKET",
-        object: "BOTS_REGISTRY_OBJECT",
-    })?
-    .context("set BOTS_REGISTRY_FILE or BOTS_REGISTRY_BUCKET")?;
-    let signer = BotTokenSigner::new(
-        RegistryStore::new(registry)?,
-        non_empty_env("BOTS_TEMPORARY_APP_SECRET"),
-    );
+    // Without authorization the bots join with no token, so no app secret is read.
+    let insecure = non_empty_env("BOTS_INSECURE_SKIP_AUTH").is_some_and(|value| value == "true");
+    let (signer, launch_auth) = if insecure {
+        tracing::warn!(
+            "BOTS_INSECURE_SKIP_AUTH: every request is accepted and bots join with no token"
+        );
+        (None, LaunchAuth::Insecure)
+    } else {
+        let registry = Location::from_env(&LocationVariables {
+            file: "BOTS_REGISTRY_FILE",
+            bucket: "BOTS_REGISTRY_BUCKET",
+            object: "BOTS_REGISTRY_OBJECT",
+        })?
+        .context("set BOTS_REGISTRY_FILE or BOTS_REGISTRY_BUCKET")?;
+        let signer = BotTokenSigner::new(
+            RegistryStore::new(registry)?,
+            non_empty_env("BOTS_TEMPORARY_APP_SECRET"),
+        );
+        (Some(signer), LaunchAuth::new(required("BOTS_VTS_URL")?))
+    };
     let id_tokens = non_empty_env("BOTS_JOB_SERVICE_ACCOUNT").map(|service_account| {
         IdTokenVerifier::new(
             non_empty_env("BOTS_GOOGLE_CERTS_URL").unwrap_or_else(|| GOOGLE_CERTS_URL.to_owned()),
@@ -70,7 +80,6 @@ async fn main() -> anyhow::Result<()> {
         )
     });
     let bots = Bots::new(types, store, signer, id_tokens, public_url);
-    let launch_auth = LaunchAuth::new(required("BOTS_VTS_URL")?);
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     let _server = BotsServer::run(listener, bots, launch_auth);

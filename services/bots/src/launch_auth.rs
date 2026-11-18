@@ -22,30 +22,42 @@ fn rejected(status: StatusCode, error: &'static str) -> Rejection {
 
 /// Verifies the launch token an app server sends as `Authorization: Bearer`
 /// through the VTS, which checks only its signature.
-pub(crate) struct LaunchAuth {
-    client: reqwest::Client,
-    vts_url: String,
+pub(crate) enum LaunchAuth {
+    Vts {
+        client: reqwest::Client,
+        vts_url: String,
+    },
+    /// Accepts every request for the app the prefix starts with
+    /// (`BOTS_INSECURE_SKIP_AUTH`, a relay without authorization only).
+    Insecure,
 }
 
 impl LaunchAuth {
     pub(crate) fn new(vts_url: String) -> Self {
-        Self {
+        Self::Vts {
             client: reqwest::Client::new(),
             vts_url,
         }
     }
 
-    /// The verified token, whose `bots` claim covers `namespace_prefix`.
+    /// The app of the verified token, whose `bots` claim covers
+    /// `namespace_prefix`.
     pub(crate) async fn authorize(
         &self,
         headers: &HeaderMap,
         namespace_prefix: &str,
-    ) -> Result<SignedToken, Rejection> {
+    ) -> Result<String, Rejection> {
+        let Self::Vts { client, vts_url } = self else {
+            return Ok(namespace_prefix
+                .split('/')
+                .next()
+                .unwrap_or_default()
+                .to_string());
+        };
         let token = bearer_token(headers)
             .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "a bearer token is required"))?;
-        let response = self
-            .client
-            .post(&self.vts_url)
+        let response = client
+            .post(vts_url)
             .timeout(VTS_TIMEOUT)
             .json(&serde_json::json!({ "token": token }))
             .send()
@@ -62,7 +74,7 @@ impl LaunchAuth {
             .await
             .map_err(|_| rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"))?;
         check(&verified, namespace_prefix, SystemTime::now())?;
-        Ok(verified)
+        Ok(verified.app_id)
     }
 }
 
@@ -139,5 +151,16 @@ mod tests {
             .status,
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[tokio::test]
+    async fn without_authorization_the_app_is_the_rooms_first_element() {
+        // Act
+        let app_id = LaunchAuth::Insecure
+            .authorize(&HeaderMap::new(), "anon/room")
+            .await;
+
+        // Assert
+        assert_eq!(app_id, Ok("anon".to_string()));
     }
 }
