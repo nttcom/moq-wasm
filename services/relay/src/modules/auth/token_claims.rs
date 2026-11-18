@@ -45,6 +45,7 @@ mod tests {
             claims: Claims {
                 app_id: "APP".to_string(),
                 publish: publish.map(str::to_string),
+                bots: None,
                 subscribe: Some("site1".to_string()),
                 iat: Some(iat),
                 exp: Some(exp),
