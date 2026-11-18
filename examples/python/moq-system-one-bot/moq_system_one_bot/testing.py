@@ -7,8 +7,6 @@ from typing import Any
 
 from aiohttp import web
 from aiohttp.test_utils import TestServer
-from moq_wasm import TrackWriter
-from moq_wasm.media import EventRecord, EventTimeline
 
 READ_TIMEOUT_SECONDS = 2
 
@@ -24,22 +22,6 @@ class RecordingPublication:
 
     async def next_write(self, timeout: float = READ_TIMEOUT_SECONDS) -> tuple[bool, Any]:
         return await asyncio.wait_for(self._writes.get(), timeout)
-
-
-async def next_records(publication: RecordingPublication) -> list[EventRecord]:
-    _, records = await publication.next_write()
-    return records
-
-
-async def published_timeline() -> tuple[EventTimeline, RecordingPublication]:
-    """A timeline on a registered track writing to a `RecordingPublication`, with its first write
-    already read."""
-    writer = TrackWriter(["test"], "eventtimeline", retention_seconds=60)
-    timeline = EventTimeline(writer)
-    publication = RecordingPublication()
-    await writer._bind(publication)
-    await publication.next_write()
-    return timeline, publication
 
 
 @dataclass
