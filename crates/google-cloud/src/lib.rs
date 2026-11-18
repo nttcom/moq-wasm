@@ -4,4 +4,4 @@ mod metadata_token;
 pub mod testing;
 
 pub use cloud_storage::{CloudStorageBucket, Endpoint, Uploaded, Versioned};
-pub use metadata_token::MetadataToken;
+pub use metadata_token::{MetadataToken, identity_token};
