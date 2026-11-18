@@ -9,8 +9,8 @@ module boundaries, runtime flow, or invariants described here change.
 
 `http-server` is the HTTP/1 server part every HTTP service shares: `console`,
 `vts`, `temporary-apps`, `observability`, `live-translate` and `recorder`. Each
-service keeps its own routing, state and response headers; this crate only
-accepts connections, reads JSON request bodies and builds responses.
+service keeps its own routing and state; this crate accepts connections,
+reads JSON bodies, bearer tokens and query strings, and builds responses.
 
 | Item | Responsibility |
 | --- | --- |
@@ -18,6 +18,7 @@ accepts connections, reads JSON request bodies and builds responses.
 | `json_response(status, body)` | `body` serialized as JSON with `Content-Type: application/json`. |
 | `error_response(status, error)` | `{"error": error}` through `json_response`. |
 | `empty_response(status)` | `status` with an empty body and no headers. |
+| `allow_any_origin(response, methods, headers)` | `response` with `Access-Control-Allow-Origin: *` and the given allowed methods and request headers, for the services whose pages are served from any origin (`temporary-apps`, `live-translate`, `observability`). |
 | `bearer_token(headers)` | The token of `Authorization: Bearer <token>`, or `None` without one or with an empty token. |
 | `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
 
@@ -47,8 +48,8 @@ sequenceDiagram
 - Dropping `HttpServer` aborts the accept loop. Open connections are not
   tracked and run to their end.
 - Headers that only some services send (`Cache-Control: no-store` in
-  `console`, CORS in `observability`, `temporary-apps` and `recorder`) are added by
-  the service, not here.
+  `console`, the allowed-origin CORS of `recorder`, `Access-Control-Max-Age`
+  in `observability`) are added by the service, not here.
 
 ## Dependencies
 

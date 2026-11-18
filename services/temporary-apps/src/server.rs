@@ -6,15 +6,13 @@ use std::{
 
 use http_body_util::Full;
 use http_server::{
-    HttpServer, bearer_token, empty_response, error_response, json_response, read_json,
+    HttpServer, allow_any_origin, bearer_token, empty_response, error_response, json_response,
+    read_json,
 };
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
-    header::{
-        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        CONTENT_TYPE, HeaderValue,
-    },
+    header::{CONTENT_TYPE, HeaderValue},
     http::request::Parts,
 };
 use serde::Deserialize;
@@ -99,7 +97,7 @@ async fn handle(
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
-    with_cors(response)
+    allow_any_origin(response, "GET, POST, DELETE", "content-type, authorization")
 }
 
 fn issue(state: &ServerState, client: IpAddr) -> JsonResponse {
@@ -233,20 +231,6 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-fn with_cors(mut response: JsonResponse) -> JsonResponse {
-    let headers = response.headers_mut();
-    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, DELETE"),
-    );
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("content-type, authorization"),
-    );
-    response
-}
-
 fn internal_error(error: &anyhow::Error) -> JsonResponse {
     tracing::error!(
         error = format!("{error:#}"),
@@ -260,7 +244,7 @@ mod tests {
     use std::time::Duration;
 
     use auth_token::{sign_token, verify_signature};
-    use hyper::header::AUTHORIZATION;
+    use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN, AUTHORIZATION};
 
     use super::*;
 

@@ -8,14 +8,11 @@ use std::{
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
-use http_server::{HttpServer, bearer_token};
+use http_server::{HttpServer, allow_any_origin, bearer_token};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Body, Frame, Incoming},
-    header::{
-        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        CACHE_CONTROL, CONTENT_TYPE, HeaderValue,
-    },
+    header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue},
 };
 use serde_json::json;
 use tokio::{net::TcpListener, time::Interval};
@@ -74,23 +71,8 @@ async fn handle(request: Request<Incoming>, state: Arc<SessionServerState>) -> S
     .instrument(span.clone())
     .await;
     span.record("http.response.status_code", response.status().as_u16());
-    with_cors(response)
-}
-
-/// The pages are served from another origin, so every response allows any
-/// origin, as the temporary-apps service's do.
-fn with_cors(mut response: ServerResponse) -> ServerResponse {
-    let headers = response.headers_mut();
-    headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, OPTIONS"),
-    );
-    headers.insert(
-        ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("authorization"),
-    );
-    response
+    // The pages are served from another origin.
+    allow_any_origin(response, "GET, POST, OPTIONS", "authorization")
 }
 
 async fn start_session(state: &SessionServerState, headers: &HeaderMap) -> ServerResponse {
@@ -182,6 +164,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use auth_token::{Claims, sign_token};
+    use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
     use tokio::sync::Semaphore;
 
     use crate::{root_translation::TranslationResources, translation_engine::TranslationEngine};

@@ -4,7 +4,10 @@ use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
     HeaderMap, Request, Response, StatusCode,
     body::{Body, Bytes, Incoming},
-    header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue},
+    header::{
+        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+        AUTHORIZATION, CONTENT_TYPE, HeaderValue,
+    },
     server::conn::http1,
     service::service_fn,
 };
@@ -83,6 +86,26 @@ pub fn error_response(status: StatusCode, error: &str) -> Response<Full<Bytes>> 
 pub fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::default());
     *response.status_mut() = status;
+    response
+}
+
+/// `methods` and `headers` are comma-separated lists; panics if either is not
+/// a valid header value.
+pub fn allow_any_origin<B>(
+    mut response: Response<B>,
+    methods: &'static str,
+    headers: &'static str,
+) -> Response<B> {
+    let response_headers = response.headers_mut();
+    response_headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
+    response_headers.insert(
+        ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static(methods),
+    );
+    response_headers.insert(
+        ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static(headers),
+    );
     response
 }
 
@@ -184,6 +207,22 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(response.headers().is_empty());
         assert_eq!(body_of(response).await, "");
+    }
+
+    #[test]
+    fn any_origin_is_allowed_the_given_methods_and_headers() {
+        // Act
+        let response = allow_any_origin(
+            empty_response(StatusCode::NO_CONTENT),
+            "GET, POST",
+            "authorization",
+        );
+
+        // Assert
+        let headers = response.headers();
+        assert_eq!(headers[ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(headers[ACCESS_CONTROL_ALLOW_METHODS], "GET, POST");
+        assert_eq!(headers[ACCESS_CONTROL_ALLOW_HEADERS], "authorization");
     }
 
     fn authorization(value: &str) -> HeaderMap {
