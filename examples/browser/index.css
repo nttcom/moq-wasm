@@ -66,6 +66,12 @@
   font-weight: 750;
   line-height: 1.12;
   letter-spacing: -0.035em;
+  text-wrap: balance;
+  word-break: auto-phrase;
+}
+
+:root[data-access-mode='public'] .home-hero h1 em {
+  background-image: linear-gradient(100deg, var(--accent) 10%, #1d4ed8 90%);
 }
 
 .home-hero h1 em {
@@ -260,10 +266,14 @@
 }
 
 .filters .count {
-  color: inherit;
+  color: var(--text-subtle);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
-  opacity: 0.6;
+}
+
+.filters button[aria-pressed='true'] .count {
+  color: inherit;
+  opacity: 0.8;
 }
 
 .search {
@@ -315,6 +325,12 @@
   font-size: 0.7rem;
   transform: translateY(-50%);
   pointer-events: none;
+}
+
+@media (hover: none) {
+  .search kbd {
+    display: none;
+  }
 }
 
 .search input:focus + kbd,
@@ -793,10 +809,6 @@
   border-top: 1px solid var(--border);
   color: var(--text-subtle);
   font-size: 0.8125rem;
-}
-
-.home-footer a {
-  color: var(--text-muted);
 }
 
 @keyframes fade-up {

@@ -4,8 +4,7 @@
 
 :root {
   color-scheme: dark;
-  --font-sans:
-    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
 
   --bg: #090b0f;
@@ -18,7 +17,7 @@
   --border-strong: #323b46;
   --text: #e8ecf1;
   --text-muted: #9aa5b1;
-  --text-subtle: #6b7684;
+  --text-subtle: #7b8695;
   --accent: #2dd4bf;
   --accent-hover: #5eead4;
   --accent-soft: rgba(45, 212, 191, 0.12);
@@ -41,7 +40,8 @@
   --radius-lg: 14px;
   --radius-xl: 20px;
   --control-height: 36px;
-  --shell-height: 56px;
+  /* The app shell's height, its bottom border included. */
+  --shell-height: 57px;
   --content-width: 1200px;
 
   /* Read by utils/relayPicker.css. */
@@ -60,13 +60,13 @@
   --border-strong: #c9d4d1;
   --text: #0f1f1e;
   --text-muted: #55666a;
-  --text-subtle: #84928f;
+  --text-subtle: #62706d;
   --accent: #0f766e;
   --accent-hover: #0b5f58;
   --accent-soft: rgba(15, 118, 110, 0.08);
   --accent-border: rgba(15, 118, 110, 0.35);
   --on-accent: #ffffff;
-  --danger: #dc2626;
+  --danger: #b91c1c;
   --danger-soft: rgba(220, 38, 38, 0.08);
   --warning: #b45309;
   --warning-soft: rgba(180, 83, 9, 0.08);
@@ -144,6 +144,13 @@
 
 /* ---------- App shell: the bar at the top of every page ---------- */
 
+/* Holds the bar's place until utils/shell.ts inserts it, so the page does not shift down. */
+body:not(:has(> .app-shell))::before {
+  display: block;
+  height: var(--shell-height);
+  content: '';
+}
+
 .app-shell {
   position: sticky;
   top: 0;
@@ -159,9 +166,9 @@
   align-items: center;
   gap: 16px;
   max-width: var(--content-width);
-  min-height: var(--shell-height);
+  height: calc(var(--shell-height) - 1px);
   margin: 0 auto;
-  padding: 8px 24px;
+  padding: 0 24px;
 }
 
 .app-shell-inner.wide {
@@ -197,6 +204,7 @@
 .app-logo svg {
   width: 16px;
   height: 16px;
+  stroke: currentColor;
 }
 
 .app-breadcrumb {
@@ -259,8 +267,16 @@
 
 @media (max-width: 720px) {
   .app-shell-inner {
-    flex-wrap: wrap;
-    padding: 8px 16px;
+    gap: 10px;
+    padding: 0 16px;
+  }
+
+  .app-shell-end {
+    max-width: 75%;
+  }
+
+  .access-bar.temporary b {
+    display: none;
   }
 
   .app-brand-name,
@@ -296,7 +312,6 @@
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
-  transform: none;
   transition:
     background 0.15s ease,
     color 0.15s ease;
@@ -305,7 +320,6 @@
 .segmented button:hover {
   background: var(--surface-hover);
   color: var(--text);
-  transform: none;
 }
 
 .segmented button[aria-selected='true'],
@@ -453,6 +467,7 @@
 }
 
 .access-bar button {
+  flex: none;
   min-height: 26px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
@@ -463,17 +478,22 @@
   font: inherit;
   font-size: 0.75rem;
   font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
-  transform: none;
 }
 
 .access-bar button:hover {
   background: var(--surface-hover);
-  transform: none;
 }
 
 @media (max-width: 960px) {
   .access-bar .access-detail {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .access-bar.temporary > span:not(.access-info, .access-dot) {
     display: none;
   }
 }

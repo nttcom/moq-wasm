@@ -13,16 +13,7 @@
       <div class="app-shell-inner">
         <a class="app-brand" href="./index.html">
           <span class="app-logo"
-            ><svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.4"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M4 17 9 7l3 6 3-6 5 10" /></svg
+            ><svg aria-hidden="true"><use href="/icons.svg#icon-logo" /></svg
           ></span>
           <span class="app-brand-name">MoQT Playground</span>
         </a>
@@ -41,21 +32,21 @@
           <span class="home-eyebrow"><span class="badge accent">MoQT</span>Media over QUIC Transport</span>
           <h1>MoQT を、<em>ブラウザで</em>試す。</h1>
           <p class="home-lead">
-            低遅延配信プロトコル MoQT の Relay とブラウザ SDK <code>moq-wasm</code> で動く Example 集です。
-            制御メッセージの送受信から会議・ライブ配信・遠隔監視・AI 連携まで、実際に動かして確かめられます。
+            低遅延配信プロトコル MoQT の Relay とブラウザ SDK <code>moq-wasm</code> で動く Example
+            集です。制御メッセージの送受信から会議・ライブ配信・遠隔監視・AI 連携まで、実際に動かして確かめられます。
           </p>
           <dl class="home-stats">
             <div>
               <dt>Examples</dt>
-              <dd>15</dd>
+              <dd id="example-count">15</dd>
             </div>
             <div>
               <dt>MoQT draft</dt>
               <dd>14 / 18</dd>
             </div>
             <div>
-              <dt>Transport</dt>
-              <dd>WebTransport</dd>
+              <dt>Browser SDK</dt>
+              <dd>moq-wasm</dd>
             </div>
           </dl>
         </div>
@@ -67,24 +58,18 @@
           </div>
           <div class="setting">
             <span class="setting-label" id="access-mode-label">接続モード</span>
-            <div class="segmented access-switch" role="tablist" aria-labelledby="access-mode-label">
-              <button type="button" role="tab" data-access-mode="temporary" data-testid="access-temporary">
-                一時トークン
-              </button>
-              <button type="button" role="tab" data-access-mode="public" data-testid="access-public">Public</button>
+            <div class="segmented access-switch" role="group" aria-labelledby="access-mode-label">
+              <button type="button" data-access-mode="temporary" data-testid="access-temporary">一時トークン</button>
+              <button type="button" data-access-mode="public" data-testid="access-public">Public</button>
             </div>
             <p class="access-description" id="access-description"></p>
             <div class="access-status" id="access-status"></div>
           </div>
           <div class="setting">
             <span class="setting-label" id="version-label">MoQT draft</span>
-            <div class="segmented version-switch" role="tablist" aria-labelledby="version-label">
-              <button type="button" role="tab" data-moqt-version="draft-14" data-testid="version-draft-14">
-                draft-14
-              </button>
-              <button type="button" role="tab" data-moqt-version="draft-18" data-testid="version-draft-18">
-                draft-18
-              </button>
+            <div class="segmented version-switch" role="group" aria-labelledby="version-label">
+              <button type="button" data-moqt-version="draft-14" data-testid="version-draft-14">draft-14</button>
+              <button type="button" data-moqt-version="draft-18" data-testid="version-draft-18">draft-18</button>
             </div>
           </div>
         </aside>
@@ -286,7 +271,7 @@
               </p>
             </div>
             <div class="example-body">
-              <div class="example-title"><h3>Onvif</h3></div>
+              <div class="example-title"><h3>ONVIF</h3></div>
               <p>PTZ カメラを MoQ Gateway 経由で遠隔制御・遠隔監視する</p>
               <div class="example-foot">
                 <span class="tag">ONVIF</span><span class="tag">PTZ 制御</span

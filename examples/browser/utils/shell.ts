@@ -1,13 +1,11 @@
-import { applyNamespaceRootToInputs } from './access'
-import { createAccessBar } from './accessBar'
-
 /// The bar at the top of every example: the way back to the list, where the page sits, and the access chip.
 ///
 /// The page names itself with `<body data-title>` (else its `<title>`), names the page above it with
 /// `data-parent-title` and `data-parent-href`, and asks for a full-width bar with `data-shell="wide"`.
 /// It links utils/theme.css itself, so the colors apply before this module runs.
-const LOGO =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17 9 7l3 6 3-6 5 10"/></svg>'
+///
+/// The bar is drawn at once; the access chip follows once utils/access.ts has resolved the page's
+/// token, which may wait for the token mint.
 
 const shell = document.createElement('header')
 shell.className = 'app-shell'
@@ -21,7 +19,7 @@ const home = withPageQuery(import.meta.env.BASE_URL)
 const brand = document.createElement('a')
 brand.className = 'app-brand'
 brand.href = home
-brand.innerHTML = `<span class="app-logo">${LOGO}</span><span class="app-brand-name">MoQT Playground</span>`
+brand.innerHTML = `<span class="app-logo"><svg aria-hidden="true"><use href="${import.meta.env.BASE_URL}icons.svg#icon-logo" /></svg></span><span class="app-brand-name">MoQT Playground</span>`
 
 const breadcrumb = document.createElement('nav')
 breadcrumb.className = 'app-breadcrumb'
@@ -37,12 +35,17 @@ breadcrumb.append(trail)
 
 const end = document.createElement('div')
 end.className = 'app-shell-end'
-end.append(createAccessBar())
 
 inner.append(brand, breadcrumb, end)
 shell.append(inner)
 document.body.prepend(shell)
-applyNamespaceRootToInputs()
+
+void Promise.all([import('./access'), import('./accessBar')]).then(
+  ([{ applyNamespaceRootToInputs }, { createAccessBar }]) => {
+    end.append(createAccessBar())
+    applyNamespaceRootToInputs()
+  }
+)
 
 function crumb(text: string, href?: string): HTMLLIElement {
   const item = document.createElement('li')

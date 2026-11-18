@@ -1,5 +1,3 @@
-import { access } from './access'
-
 /// The example list's category buttons and search box: a card shows when it is in the chosen category
 /// and its text contains every word typed, and a section with no card left hides.
 const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-filter]')]
@@ -55,11 +53,13 @@ function apply(): void {
   empty.hidden = shown > 0
 }
 
-// The recorder records only rooms with a token, so the public app has no recording to play.
-if (access.kind === 'public') {
+document.getElementById('example-count')!.textContent = String(document.querySelectorAll('.example').length)
+
+// The recorder records only rooms with a token, so the public app has no recording to play. The mode
+// is read from <html>, set before the first paint, so the list works while a token is still being issued.
+if (document.documentElement.dataset.accessMode === 'public') {
   for (const card of document.querySelectorAll<HTMLAnchorElement>('.requires-token')) {
+    card.removeAttribute('href')
     card.setAttribute('aria-disabled', 'true')
-    card.tabIndex = -1
-    card.addEventListener('click', (event) => event.preventDefault())
   }
 }

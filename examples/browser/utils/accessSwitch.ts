@@ -8,7 +8,7 @@ const status = document.getElementById('access-status')!
 
 for (const tab of document.querySelectorAll<HTMLButtonElement>('.access-switch [data-access-mode]')) {
   const tabMode = tab.dataset.accessMode as AccessMode
-  tab.setAttribute('aria-selected', String(tabMode === accessMode))
+  tab.setAttribute('aria-pressed', String(tabMode === accessMode))
   tab.addEventListener('click', () => {
     if (tabMode !== accessMode) {
       writeAccessMode(tabMode)
