@@ -105,8 +105,9 @@ class MoqWasmParticipantInput(_ReceivingInput):
     the `StartFrame` until the `EndFrame`, the `CancelFrame` or the end of the catalog. Publishes
     nothing: follow the room with `watch_broadcasts` and publish with `create_broadcast`.
 
-    Event handlers: `on_track_subscribed` (takes a `MoqWasmTrack`) and `on_error` (takes a message
-    and the exception)."""
+    Event handlers: `on_track_subscribed` (takes a `MoqWasmTrack`). A failed track, such as one
+    PyAV cannot decode, is pushed upstream as a non-fatal `ErrorFrame`, which reaches pipecat's
+    `on_error`."""
 
     def __init__(self, broadcast: RemoteBroadcast, params: MoqWasmInputParams, **kwargs):
         super().__init__(params, **kwargs)
@@ -114,7 +115,6 @@ class MoqWasmParticipantInput(_ReceivingInput):
         self._options = _receive_options(params)
         self._receiving: asyncio.Task | None = None
         self._register_event_handler("on_track_subscribed")
-        self._register_event_handler("on_error")
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
@@ -132,7 +132,11 @@ class MoqWasmParticipantInput(_ReceivingInput):
         await super().cancel(frame)
 
     async def event(self, name: str, *args: object) -> None:
-        await self._call_event_handler(name, *args)
+        if name == "on_error":
+            message, error = args
+            await self.push_error(message, error)
+        else:
+            await self._call_event_handler(name, *args)
 
     async def _stop_receiving(self) -> None:
         receiving, self._receiving = self._receiving, None

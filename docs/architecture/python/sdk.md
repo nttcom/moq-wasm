@@ -368,8 +368,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   speaker, so a bot may run a pipeline per participant.
   `MoqWasmParticipantInput(broadcast, MoqWasmInputParams(...))` is the input
   of one `RemoteBroadcast`: it picks, decodes and pushes the tracks as the
-  transport's input does, with the same `on_track_subscribed` and
-  `on_error`, and publishes nothing. The bot follows the room with
+  transport's input does, with the same `on_track_subscribed`, and publishes
+  nothing. A failed track is pushed upstream as a non-fatal `ErrorFrame`, the
+  way pipecat processors report errors: `on_error` belongs to pipecat's
+  `FrameProcessor`. The bot follows the room with
   `watch_broadcasts`, starts a pipeline in each handler task (cancelled when
   the participant leaves), and publishes with `create_broadcast`.
   `MoqWasmParams` extends `MoqWasmInputParams` with the room.
