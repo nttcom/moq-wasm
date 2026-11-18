@@ -1,13 +1,6 @@
 #!/usr/bin/env node
 
-import {
-  registerSignalHandlers,
-  runCommand,
-  spawnProcess,
-  spawnViteServer,
-  terminateProcess,
-  waitForOutput,
-} from "./process.mjs";
+import { runCommand, spawnProcess, waitForOutput } from "./process.mjs";
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
@@ -18,11 +11,10 @@ import {
   assertE2EPrerequisites,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
-  getDefaultWebPort,
   jsDir,
   waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
+import { startRelayAndPage } from "./relay-dev.mjs";
 
 const liveTranslateStreamerPath =
   "/moq-wasm/examples/live-translate/streamer/index.html";
@@ -33,27 +25,20 @@ const temporaryAppSecret = "development-temporary-app-secret";
 // (utils/access.ts, examples/live-translate/liveTranslate.ts).
 const temporaryAppsPort = 8083;
 const liveTranslatePort = 18090;
-const childProcesses = [];
 
 async function main() {
   ensureLinuxEnvironment();
   assertE2EPrerequisites();
 
-  const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
 
-  const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
-  };
-
-  registerSignalHandlers(cleanup);
+  process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
+  const { childProcesses, cleanup, ready } = startRelayAndPage(
+    liveTranslateStreamerPath,
+  );
 
   try {
-    process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
-    const vts = await startVts();
     const temporaryApps = spawnProcess("temporary-apps", "cargo", ["run", "-p", "temporary-apps"], {
       cwd: repoRoot,
       env: {
@@ -62,17 +47,8 @@ async function main() {
         TEMPORARY_APPS_SECRET: temporaryAppSecret,
       },
     });
-    childProcesses.push(vts, temporaryApps);
-    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
-      cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayEnv() },
-    });
-    const vite = spawnViteServer(webPort);
-    childProcesses.push(server, vite);
-    await Promise.all([
-      waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${liveTranslateStreamerPath}`, 120_000),
-    ]);
+    childProcesses.push(temporaryApps);
+    await ready;
 
     // --echo returns the source audio after each language's fixed delay, so
     // the viewer checks need no Gemini. The browser dials the relay over

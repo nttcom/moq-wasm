@@ -14,6 +14,7 @@ import aiohttp
 from loguru import logger
 
 from moq_bot_job.identity_token import IdentityToken, metadata_identity_token
+from moq_bot_job.relay import add_relay_arguments
 from moq_bot_job.telemetry import add_telemetry_arguments, report_logs, telemetry_endpoint
 
 BOT_KEY_ENV = "BOTS_BOT_KEY"
@@ -50,9 +51,10 @@ class BotJob:
 
 
 def add_bot_job_arguments(parser: argparse.ArgumentParser) -> None:
-    """The arguments the bot service appends. `--max-seconds` is read by the service itself, which
-    asks the bot to stop at its longest run."""
+    """The arguments the bot service appends, plus the relay's. `--max-seconds` is read by the
+    service itself, which asks the bot to stop at its longest run."""
     add_telemetry_arguments(parser)
+    add_relay_arguments(parser)
     parser.add_argument("--bot-type", required=True)
     parser.add_argument("--bot-id", required=True)
     parser.add_argument("--bots-url", required=True)

@@ -6,7 +6,6 @@ import aiohttp
 import moq_wasm
 from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
 from moq_bot_job.identity_token import IdentityToken, add_identity_token_arguments, identity_token_from_arguments
-from moq_bot_job.relay import add_relay_arguments
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.pipeline_track import PipelineTrack
@@ -37,7 +36,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.set_defaults(bot="moq-ptz-tracking")
     add_bot_job_arguments(parser)
-    add_relay_arguments(parser)
     parser.add_argument(
         "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
     )

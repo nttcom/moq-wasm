@@ -5,14 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import {
-  registerSignalHandlers,
-  runCommand,
-  spawnProcess,
-  spawnViteServer,
-  terminateProcess,
-  waitForOutput,
-} from "./process.mjs";
+import { runCommand } from "./process.mjs";
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
@@ -24,12 +17,10 @@ import {
   findFreePort,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
-  getDefaultWebPort,
   jsDir,
-  waitForHttpOk,
 } from "./helpers.mjs";
 import { localPythonBot, startBots, temporaryAppSecret } from "./bots-dev.mjs";
-import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
+import { startRelayAndPage } from "./relay-dev.mjs";
 
 const botDir = resolve(repoRoot, "examples/python/moq-meeting-transcriber");
 const meetingPath = "/moq-wasm/examples/meeting/index.html";
@@ -37,7 +28,6 @@ const speechText =
   "こんにちは。これは会議の書き起こしのテストです。今日はいい天気ですね。";
 // The smallest multilingual Whisper model, so the run downloads and loads little.
 const whisperModel = "tiny";
-const childProcesses = [];
 
 /// Speech for the fake microphone, which Chrome loops.
 function synthesizeSpeech() {
@@ -66,34 +56,17 @@ async function main() {
   ensureLinuxEnvironment();
   assertE2EPrerequisites();
 
-  const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
   const speech = synthesizeSpeech();
 
-  const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
-  };
-
-  registerSignalHandlers(cleanup);
+  process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
+  // Watched from now: the relay may start while the builds below run.
+  const { childProcesses, cleanup, ready } = startRelayAndPage(meetingPath, {
+    timeoutMs: 600_000,
+  });
 
   try {
-    process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
-    const vts = await startVts();
-    childProcesses.push(vts);
-    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
-      cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayEnv() },
-    });
-    const vite = spawnViteServer(webPort);
-    childProcesses.push(server, vite);
-    // Watched from now: the relay may start while the builds below run.
-    const ready = Promise.all([
-      waitForOutput(server, /Relay server started/, "relay", 600_000),
-      waitForHttpOk(`${baseUrl}${meetingPath}`, 600_000),
-    ]);
     // The first run builds the moq-wasm SDK into the bot's environment.
     await runCommand(resolveCommandName("uv"), ["sync"], { cwd: botDir });
     await ready;

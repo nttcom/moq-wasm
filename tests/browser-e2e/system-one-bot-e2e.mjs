@@ -4,14 +4,7 @@ import { resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { setTimeout } from "node:timers/promises";
 
-import {
-  registerSignalHandlers,
-  runCommand,
-  spawnProcess,
-  spawnViteServer,
-  terminateProcess,
-  waitForOutput,
-} from "./process.mjs";
+import { runCommand } from "./process.mjs";
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
@@ -22,12 +15,10 @@ import {
   assertE2EPrerequisites,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
-  getDefaultWebPort,
   jsDir,
-  waitForHttpOk,
 } from "./helpers.mjs";
 import { localPythonBot, startBots, temporaryAppSecret } from "./bots-dev.mjs";
-import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
+import { startRelayAndPage } from "./relay-dev.mjs";
 
 /// A fake System One answering each POST with `{ answers: answer(body, settings) }`. `PUT /<key>`
 /// sets `settings[key]` to its body: as text if the setting is a string, else parsed as JSON.
@@ -77,7 +68,6 @@ async function run({
 
   const botDir = resolve(repoRoot, `examples/python/moq-${name}`);
   const envPrefix = name.toUpperCase().replaceAll("-", "_");
-  const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
   const fakeSystemOne = await startFakeSystemOne(answer, {
@@ -85,36 +75,15 @@ async function run({
     ...settings,
   });
   const fakeSystemOneOrigin = `http://127.0.0.1:${fakeSystemOne.address().port}`;
-  const childProcesses = [];
 
-  const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
-    fakeSystemOne.close();
-  };
-
-  registerSignalHandlers(cleanup);
+  process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
+  const { childProcesses, cleanup, ready } = startRelayAndPage(
+    `/moq-wasm/examples/moq-${name}/index.html`,
+    { onCleanup: () => fakeSystemOne.close() },
+  );
 
   try {
-    process.env.VTS_TEMPORARY_APP_SECRET = temporaryAppSecret;
-    const vts = await startVts();
-    childProcesses.push(vts);
-    const server = spawnProcess("server", "cargo", ["run", "-p", "relay"], {
-      cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayEnv() },
-    });
-    const vite = spawnViteServer(webPort);
-
-    childProcesses.push(server, vite);
-
-    await Promise.all([
-      waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(
-        `${baseUrl}/moq-wasm/examples/moq-${name}/index.html`,
-        120_000,
-      ),
-    ]);
+    await ready;
 
     // The first run builds the moq-wasm SDK into the bot's environment.
     await runCommand(resolveCommandName("uv"), ["sync"], { cwd: botDir });

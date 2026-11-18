@@ -8,7 +8,6 @@ from faster_whisper import WhisperModel
 from loguru import logger
 from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
 from moq_bot_job.identity_token import add_identity_token_arguments, identity_token_from_arguments
-from moq_bot_job.relay import add_relay_arguments
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
 from moq_meeting_transcriber.granite import SharedGranite
@@ -25,7 +24,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.set_defaults(bot="moq-meeting-transcriber")
     add_bot_job_arguments(parser)
-    add_relay_arguments(parser)
     parser.add_argument("--model", default=DEFAULT_MODEL, help="the faster-whisper model of `whisper`, such as small")
     parser.add_argument(
         "--asr",
