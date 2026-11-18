@@ -12,7 +12,10 @@ use broadcast::{Broadcast, RelayConnection};
 
 use crate::stats_panel::Registration;
 
-use crate::ingest_publisher::{IngestOptions, IngestPublisher};
+use crate::{
+    ingest_publisher::{IngestOptions, IngestPublisher},
+    namespace::split_namespace,
+};
 
 #[derive(Default)]
 pub struct RtmpCounters {
@@ -68,10 +71,7 @@ impl RtmpState {
             .or_insert_with(|| RtmpStream {
                 demuxer: flv::Demuxer::new(),
                 publisher: IngestPublisher::new(
-                    Broadcast::new(
-                        self.connection.clone(),
-                        namespace_path.split('/').map(str::to_owned).collect(),
-                    ),
+                    Broadcast::new(self.connection.clone(), split_namespace(&namespace_path)),
                     self.transcode,
                 ),
             });
