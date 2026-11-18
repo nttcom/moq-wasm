@@ -222,8 +222,14 @@ pub(crate) struct BotArgs {
     #[command(flatten)]
     pub(crate) room: RoomArgs,
 
-    #[command(flatten)]
-    pub(crate) launcher: LauncherArgs,
+    /// Run the composite job as a child process of this binary or as a Cloud Run Job
+    #[arg(long, value_enum, default_value_t = LauncherKind::Local)]
+    pub(crate) launcher: LauncherKind,
+
+    /// Cloud Run Job running `recorder composite`, as
+    /// projects/<project>/locations/<region>/jobs/<job>
+    #[arg(long, env = "RECORDER_COMPOSITE_JOB")]
+    pub(crate) composite_job: Option<String>,
 }
 
 /// Composite one room recording into one MP4, then exit
@@ -263,19 +269,6 @@ pub(crate) struct RoomArgs {
     /// Skip TLS certificate verification (INSECURE, local development only)
     #[arg(long)]
     pub(crate) insecure_skip_tls_verify: bool,
-}
-
-/// Where the composite job runs.
-#[derive(clap::Args, Debug, Clone)]
-pub(crate) struct LauncherArgs {
-    /// Run the composite job as a child process of this binary or as a Cloud Run Job
-    #[arg(long, value_enum, default_value_t = LauncherKind::Local)]
-    pub(crate) launcher: LauncherKind,
-
-    /// Cloud Run Job running `recorder composite`, as
-    /// projects/<project>/locations/<region>/jobs/<job>
-    #[arg(long, env = "RECORDER_COMPOSITE_JOB")]
-    pub(crate) composite_job: Option<String>,
 }
 
 #[tokio::main]

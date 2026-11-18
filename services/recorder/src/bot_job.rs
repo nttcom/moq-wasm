@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::{
     BotArgs,
     bots_client::{BotState, BotsClient},
-    launcher::Launcher,
+    launcher::composite_launcher,
     record_job::{RecordingJob, record_room},
     recordings::recording_id,
     relay::ServiceToken,
@@ -73,10 +73,11 @@ async fn prepare(args: BotArgs, bots: &Arc<BotsClient>) -> Result<RecordingJob> 
         track_namespace_prefix = %record_state.namespace_prefix,
         "recording bot started"
     );
+    let launcher = composite_launcher(&args)?;
     Ok(RecordingJob {
         store,
         store_url: args.store,
-        launcher: Launcher::from_args(&args.launcher)?,
+        launcher,
         record_state,
         room: args.room,
         limits: RecordingLimits {

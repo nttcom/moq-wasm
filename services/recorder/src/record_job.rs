@@ -5,13 +5,13 @@ use std::{
 };
 
 use anyhow::Result;
+use job_launcher::JobLauncher;
 use tokio::sync::watch;
 use url::Url;
 
 use crate::{
     RoomArgs,
     bots_client::BotsClient,
-    launcher::Launcher,
     recorder::{BroadcastOptions, Content},
     relay::ServiceToken,
     room_recording::{RecordingLimits, RoomConfig, RoomStatus, lock, record},
@@ -24,7 +24,7 @@ use crate::{
 pub(crate) struct RecordingJob {
     pub(crate) store: RecordingStore,
     pub(crate) store_url: Url,
-    pub(crate) launcher: Launcher,
+    pub(crate) launcher: JobLauncher,
     /// Written to the store as `starting` before the job runs.
     pub(crate) record_state: RoomRecord,
     pub(crate) room: RoomArgs,
@@ -129,12 +129,13 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
 
 /// `None` once the composite job runs: it reports its own state.
 async fn launch_composite(
-    launcher: &Launcher,
+    launcher: &JobLauncher,
     id: &str,
     store_url: &Url,
     work_dir: &std::path::Path,
 ) -> Option<CompositeState> {
-    let composite_args = vec![
+    let command = vec![
+        "composite".to_string(),
         "--id".to_string(),
         id.to_string(),
         "--store".to_string(),
@@ -142,8 +143,11 @@ async fn launch_composite(
         "--work-dir".to_string(),
         work_dir.display().to_string(),
     ];
-    match launcher.launch_composite(composite_args).await {
-        Ok(()) => None,
+    match launcher.launch(command, Vec::new()).await {
+        Ok(()) => {
+            tracing::info!(id, "composite job launched");
+            None
+        }
         Err(error) => {
             tracing::error!(
                 error = format!("{error:#}"),
