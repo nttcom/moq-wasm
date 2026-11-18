@@ -364,6 +364,15 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   duration. `write_audio_frame` waits while the speech written so far runs
   more than 100 ms ahead of the clock, as `MOQTransport` paces its own, so
   an interruption stops speech the browser has not yet received.
+- **A pipeline per participant.** A voice activity detector must hear one
+  speaker, so a bot may run a pipeline per participant.
+  `MoqWasmParticipantInput(broadcast, MoqWasmInputParams(...))` is the input
+  of one `RemoteBroadcast`: it picks, decodes and pushes the tracks as the
+  transport's input does, with the same `on_track_subscribed` and
+  `on_error`, and publishes nothing. The bot follows the room with
+  `watch_broadcasts`, starts a pipeline in each handler task (cancelled when
+  the participant leaves), and publishes with `create_broadcast`.
+  `MoqWasmParams` extends `MoqWasmInputParams` with the room.
 - **Codecs are the transport's job.** pipecat's frames carry raw audio and
   pictures, and each transport encodes and decodes with its own stack (the
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
