@@ -28,8 +28,6 @@ struct StoredObject {
 #[derive(Default)]
 struct FakeState {
     objects: HashMap<String, StoredObject>,
-    requests: Vec<String>,
-    failure: Option<StatusCode>,
 }
 
 /// Serves the requests of `CloudStorageBucket` for one bucket from memory.
@@ -86,16 +84,6 @@ impl FakeCloudStorage {
     pub fn generation(&self, object: &str) -> Option<u64> {
         let state = self.state.lock().unwrap();
         state.objects.get(object).map(|stored| stored.generation)
-    }
-
-    /// Each request as `<method> <path>?<query>`, still percent-encoded.
-    pub fn requests(&self) -> Vec<String> {
-        self.state.lock().unwrap().requests.clone()
-    }
-
-    /// Answers every later request with `status`.
-    pub fn fail_with(&self, status: u16) {
-        self.state.lock().unwrap().failure = Some(StatusCode::from_u16(status).unwrap());
     }
 }
 
@@ -155,13 +143,8 @@ async fn handle(
     let objects_path = format!("/storage/v1/b/{bucket}/o/");
     let upload_path = format!("/upload/storage/v1/b/{bucket}/o");
     let method = request.method().clone();
-    let request_line = format!("{method} {}", request.uri());
     let body = request.into_body().collect().await.unwrap().to_bytes();
     let mut state = state.lock().unwrap();
-    state.requests.push(request_line);
-    if let Some(status) = state.failure {
-        return Ok(respond(status, Vec::new()));
-    }
     let if_generation_match = query("ifGenerationMatch").map(|value| value.parse::<u64>());
 
     let response = match (method, url.path()) {
