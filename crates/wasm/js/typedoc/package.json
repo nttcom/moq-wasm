@@ -1,0 +1,10 @@
+{
+  "name": "moq-wasm-typedoc",
+  "private": true,
+  "scripts": {
+    "docs": "typedoc"
+  },
+  "devDependencies": {
+    "typedoc": "^0.28.20"
+  }
+}

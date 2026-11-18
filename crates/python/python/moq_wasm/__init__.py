@@ -1,4 +1,6 @@
-"""The Python SDK of this repository's MoQT implementation (docs/architecture/python/sdk.md)."""
+"""
+.. include:: ../../README.md
+"""
 
 from moq_wasm._errors import RequestErrorCode
 from moq_wasm._log import init, report_log
