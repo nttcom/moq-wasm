@@ -85,11 +85,6 @@ once, and the room at once if no other page holds it, without the grace
 period, and answers after the bot has left so that the teardown runs while
 Cloud Run gives the instance CPU.
 
-`POST /rooms/{room}/stop?member={id}`, sent the same way, ends the room for
-every page that holds it: each stream gets
-`stopped`. The server forgets the room once its bot has left, so the next
-request starts a new bot.
-
 The server sends a comment line every 15 s. A write to a page that is gone
 fails, so a server the page reaches directly notices a closed tab within one
 interval even when no TCP FIN arrives. Cloud Run does not pass that on: its
@@ -110,7 +105,6 @@ The stream carries the server's own events, each of which ends the response:
 | `closed` | the request comes outside the opening hours, or the hours end while the room runs |
 | `expired` | the room has run for `--max-room-seconds` |
 | `failed` | the bot stopped with an exception |
-| `stopped` | a page that holds the room stopped it |
 
 The page closes the request on any of them, since it reopens any stream the
 server ends, and shows why the bot left. `closed` shows the
@@ -221,7 +215,7 @@ service keeps a token of its own alive with the issuer's `POST
   it. A ticket from a separate `POST` would leave a credential to the room in
   the URL as well. The header costs one preflight per request and
   `EventSource`'s reconnection, which the page does itself; in exchange
-  each reconnection sends the page's current token. `leave` and `stop` carry
+  each reconnection sends the page's current token. `leave` carries
   no token: the member ID the stream named is the capability.
 - **Validating.** The service refreshes the token it was handed. The issuer
   refreshes only a token it signed that has not expired, so the answer both

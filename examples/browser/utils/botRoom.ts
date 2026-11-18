@@ -1,12 +1,11 @@
 /// Why moq-bot-rooms ended the page's hold on its room, sent as the event name.
-export type BotRoomEnd = 'full' | 'closed' | 'expired' | 'failed' | 'stopped'
+export type BotRoomEnd = 'full' | 'closed' | 'expired' | 'failed'
 
 export const BOT_ROOM_END_TEXT: Record<BotRoomEnd, string> = {
   full: '空いているボットがありません',
   closed: '平日日中以外はボットを停止しています',
   expired: 'ボットは 1 時間で退出します',
-  failed: 'ボットが停止しました',
-  stopped: 'ルームの参加者がボットを止めました'
+  failed: 'ボットが停止しました'
 }
 
 // One namespace element, as moq-bot-rooms accepts it.
@@ -31,8 +30,6 @@ export function pageRoomId(): string {
 }
 
 export type BotRoomOptions = {
-  /// Reaches the bot of a room this request starts, such as the Meeting transcriber's `asr`.
-  query?: Record<string, string>
   /// The page's temporary app token, read on every connection; with one, the room runs under the
   /// token's app instead of the public root.
   token?: () => string | undefined
@@ -46,7 +43,7 @@ const RECONNECT_DELAY_MS = 3_000
 export class BotRoomRequest {
   private abort: AbortController | undefined
   /// Set from the server's `member` event.
-  private holdUrl: ((action: 'leave' | 'stop') => string) | undefined
+  private leaveUrl: string | undefined
   private readonly closeOnPageHide = () => this.close()
 
   constructor(
@@ -63,17 +60,6 @@ export class BotRoomRequest {
     void this.hold(roomUrl, options, abort.signal)
   }
 
-  /// Stops the bot for every page that holds the room, then closes the request; before the server's
-  /// `member` event it only closes.
-  async stop(): Promise<void> {
-    const stopUrl = this.holdUrl?.('stop')
-    if (stopUrl) {
-      // The server stops only a room this page still holds, so the request closes after the stop.
-      await postWithoutPreflight(stopUrl)
-    }
-    this.close()
-  }
-
   /// Closes the stream and tells the server the page leaves, since a server behind a proxy such as
   /// Cloud Run's does not see the stream close. The bot then leaves at once if no other page holds
   /// the room.
@@ -81,19 +67,18 @@ export class BotRoomRequest {
     window.removeEventListener('pagehide', this.closeOnPageHide)
     this.abort?.abort()
     this.abort = undefined
-    if (this.holdUrl) {
-      void postWithoutPreflight(this.holdUrl('leave'))
-      this.holdUrl = undefined
+    if (this.leaveUrl) {
+      void postWithoutPreflight(this.leaveUrl)
+      this.leaveUrl = undefined
     }
   }
 
   /// Reopens a stream that drops, as `EventSource` does. A response that is not an event stream, such
-  /// as the 400 for a query the bot refuses or the 401 for a token it refuses, ends the request.
+  /// as the 401 for a refused token, ends the request.
   private async hold(roomUrl: string, options: BotRoomOptions, signal: AbortSignal): Promise<void> {
-    const url = `${roomUrl}?${new URLSearchParams(options.query ?? {})}`
     while (!signal.aborted) {
       const token = options.token?.()
-      const response = await fetch(url, {
+      const response = await fetch(roomUrl, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         cache: 'no-store',
         signal
@@ -145,8 +130,7 @@ export class BotRoomRequest {
           const { event, data } = parseEvent(buffered.slice(0, boundary))
           buffered = buffered.slice(boundary + 2)
           if (event === 'member') {
-            const member = new URLSearchParams({ member: data })
-            this.holdUrl = (action) => `${roomUrl}/${action}?${member}`
+            this.leaveUrl = `${roomUrl}/leave?${new URLSearchParams({ member: data })}`
           } else if (event && event in BOT_ROOM_END_TEXT) {
             return event as BotRoomEnd
           }

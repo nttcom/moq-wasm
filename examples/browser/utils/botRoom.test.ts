@@ -71,7 +71,7 @@ test('a dropped stream reconnects with the current token, and a reason ends the 
     const ends: BotRoomEnd[] = []
     let token = 'token-1'
     const request = new BotRoomRequest((reason) => ends.push(reason), RECONNECT_DELAY_MS)
-    request.open('http://bots.example', 'team 1', { query: { asr: 'qwen3-asr' }, token: () => token })
+    request.open('http://bots.example', 'team 1', { token: () => token })
     await settle()
 
     // Act
@@ -83,8 +83,8 @@ test('a dropped stream reconnects with the current token, and a reason ends the 
 
     // Assert
     expect(browser.gets.map(({ url, authorization }) => [url, authorization])).toEqual([
-      ['http://bots.example/rooms/team%201?asr=qwen3-asr', 'Bearer token-1'],
-      ['http://bots.example/rooms/team%201?asr=qwen3-asr', 'Bearer token-2']
+      ['http://bots.example/rooms/team%201', 'Bearer token-1'],
+      ['http://bots.example/rooms/team%201', 'Bearer token-2']
     ])
     expect(ends).toEqual(['expired'])
   })
@@ -159,28 +159,5 @@ test('a page that is hidden for good closes its request', async () => {
     // Assert
     expect(browser.gets[0].signal?.aborted).toBe(true)
     expect(browser.posts).toHaveLength(1)
-  })
-})
-
-test('stopping asks the server to stop the room while the page still holds it', async () => {
-  await withFakeBrowser(async (browser) => {
-    // Arrange
-    const request = new BotRoomRequest(() => undefined, RECONNECT_DELAY_MS)
-    request.open('http://bots.example', 'team-1')
-    await settle()
-    browser.gets[0].stream.send('event: member\ndata: m-1\n\n')
-    await settle()
-
-    // Act
-    const stopped = request.stop()
-    const openWhileStopping = !browser.gets[0].signal?.aborted
-    await stopped
-
-    // Assert
-    expect(openWhileStopping).toBe(true)
-    expect(browser.posts.map(({ url }) => url)).toEqual([
-      'http://bots.example/rooms/team-1/stop?member=m-1',
-      'http://bots.example/rooms/team-1/leave?member=m-1'
-    ])
   })
 })

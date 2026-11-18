@@ -181,24 +181,6 @@ async def test_shutdown_stops_every_bot_without_a_reason_and_refuses_new_pages()
     page.leave()
 
 
-async def test_the_join_that_starts_a_room_picks_its_bot():
-    # Arrange
-    default_bots = FakeBots()
-    picked_bots = FakeBots()
-    rooms = make_rooms(default_bots)
-
-    # Act
-    first = rooms.join(BotRoom("abc"), picked_bots.run)
-    second = rooms.join(BotRoom("abc"), default_bots.run)
-    await settle()
-
-    # Assert: the second join shares the bot the first one started
-    assert picked_bots.started == ["abc"]
-    assert default_bots.started == []
-    first.leave()
-    second.leave()
-
-
 async def test_page_that_says_it_leaves_ends_the_room_without_the_grace_period():
     # Arrange
     bots = FakeBots()
@@ -242,40 +224,6 @@ async def test_leave_names_no_hold_after_the_page_left():
     # Act / Assert
     assert not await rooms.leave(page.id)
     assert not await rooms.leave("unknown")
-
-
-async def test_stop_ends_the_room_for_every_page_and_the_next_page_starts_it_anew():
-    # Arrange
-    bots = FakeBots()
-    rooms = make_rooms(bots)
-    stopping = rooms.join(BotRoom("abc"))
-    other = rooms.join(BotRoom("abc"))
-    await settle()
-
-    # Act
-    stopped = await rooms.stop(stopping.id)
-    later = rooms.join(BotRoom("abc"))
-    await settle()
-
-    # Assert
-    assert stopped
-    assert await stopping.ended() == RoomEnd.STOPPED
-    assert await other.ended() == RoomEnd.STOPPED
-    assert bots.started == ["abc", "abc"]
-    assert bots.running == {"abc"}
-    stopping.leave()
-    other.leave()
-    later.leave()
-
-
-async def test_stop_names_no_hold_after_the_page_left():
-    # Arrange
-    rooms = make_rooms(FakeBots())
-    page = rooms.join(BotRoom("abc"))
-    page.leave()
-
-    # Act / Assert
-    assert not await rooms.stop(page.id)
 
 
 async def test_the_same_room_id_in_two_apps_is_two_rooms():
