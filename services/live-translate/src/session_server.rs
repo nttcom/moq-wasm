@@ -8,13 +8,13 @@ use std::{
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, combinators::BoxBody};
-use http_server::HttpServer;
+use http_server::{HttpServer, bearer_token};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Body, Frame, Incoming},
     header::{
         ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderValue,
+        CACHE_CONTROL, CONTENT_TYPE, HeaderValue,
     },
 };
 use serde_json::json;
@@ -94,11 +94,7 @@ fn with_cors(mut response: ServerResponse) -> ServerResponse {
 }
 
 async fn start_session(state: &SessionServerState, headers: &HeaderMap) -> ServerResponse {
-    let Some(token) = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-    else {
+    let Some(token) = bearer_token(headers) else {
         return error_response(StatusCode::UNAUTHORIZED, "missing_token");
     };
     match state.temporary_apps.start(token).await {

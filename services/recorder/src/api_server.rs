@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use http_body_util::{Either, Full};
-use http_server::HttpServer;
+use http_server::{HttpServer, bearer_token};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -14,7 +14,6 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use crate::{
-    api_auth::bearer_token,
     recordings::{Publication, PublishRejection, Recordings},
     replay_stream::ReplayStream,
 };

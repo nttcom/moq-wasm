@@ -4,7 +4,9 @@ use std::{
 };
 
 use http_body_util::Full;
-use http_server::{HttpServer, empty_response, error_response, json_response, read_json};
+use http_server::{
+    HttpServer, bearer_token, empty_response, error_response, json_response, read_json,
+};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -16,7 +18,7 @@ use tracing::Instrument;
 
 use crate::{
     bots::{BotError, Bots, Heartbeat, StartError},
-    launch_auth::{LaunchAuth, Rejection, bearer_token},
+    launch_auth::{LaunchAuth, Rejection},
     store::BotRecord,
 };
 

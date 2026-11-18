@@ -2,9 +2,9 @@ use std::{convert::Infallible, error::Error, future::Future, net::SocketAddr, sy
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
-    Request, Response, StatusCode,
+    HeaderMap, Request, Response, StatusCode,
     body::{Body, Bytes, Incoming},
-    header::{CONTENT_TYPE, HeaderValue},
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue},
     server::conn::http1,
     service::service_fn,
 };
@@ -84,6 +84,17 @@ pub fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
     let mut response = Response::new(Full::default());
     *response.status_mut() = status;
     response
+}
+
+/// `None` when the `Authorization` header is absent, is not UTF-8, is not
+/// `Bearer`, or has an empty token.
+pub fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)?
+        .to_str()
+        .ok()?
+        .strip_prefix("Bearer ")
+        .filter(|token| !token.is_empty())
 }
 
 pub const MAX_JSON_BODY_BYTES: usize = 16 * 1024;
@@ -173,6 +184,32 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert!(response.headers().is_empty());
         assert_eq!(body_of(response).await, "");
+    }
+
+    fn authorization(value: &str) -> HeaderMap {
+        HeaderMap::from_iter([(AUTHORIZATION, HeaderValue::from_str(value).unwrap())])
+    }
+
+    #[test]
+    fn a_bearer_token_is_read_from_the_authorization_header() {
+        // Act / Assert
+        assert_eq!(bearer_token(&authorization("Bearer jwt")), Some("jwt"));
+    }
+
+    #[test]
+    fn an_absent_empty_or_other_scheme_authorization_has_no_bearer_token() {
+        // Arrange
+        let headers = [
+            HeaderMap::new(),
+            authorization("Bearer "),
+            authorization("Basic dXNlcg=="),
+        ];
+
+        // Act
+        let tokens: Vec<_> = headers.iter().map(bearer_token).collect();
+
+        // Assert
+        assert_eq!(tokens, [None, None, None]);
     }
 
     #[tokio::test]

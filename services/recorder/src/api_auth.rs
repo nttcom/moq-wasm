@@ -4,6 +4,7 @@ use std::{
 };
 
 use auth_token::{Access, ClaimError, ClaimPolicy, SignedToken};
+use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
 
 const DENIED: &str = "token does not authorize this room";
@@ -62,15 +63,6 @@ pub(crate) async fn authorize(
         )
     })?;
     check_claims(&verified, namespace, SystemTime::now())
-}
-
-pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .filter(|value| !value.is_empty())
 }
 
 fn check_claims(verified: &SignedToken, namespace: &str, now: SystemTime) -> Result<(), AuthError> {

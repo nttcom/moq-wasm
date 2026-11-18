@@ -1,4 +1,5 @@
 use auth_token::Access;
+use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
 
 use crate::{
@@ -39,15 +40,10 @@ pub(crate) async fn viewer_app(
     headers: &HeaderMap,
     verifier: Option<&AppVerifier>,
 ) -> Result<String, Refusal> {
-    let Some(authorization) = headers.get(AUTHORIZATION) else {
+    if !headers.contains_key(AUTHORIZATION) {
         return Ok(ANONYMOUS_APP_ID.to_string());
-    };
-    let token = authorization
-        .to_str()
-        .ok()
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|token| !token.is_empty())
-        .ok_or(Refusal::Unauthorized)?;
+    }
+    let token = bearer_token(headers).ok_or(Refusal::Unauthorized)?;
     let verifier = verifier.ok_or(Refusal::Unavailable)?;
     let signed = verifier.verify(token).await.map_err(|error| match error {
         VerifyError::Unauthorized(_) => {

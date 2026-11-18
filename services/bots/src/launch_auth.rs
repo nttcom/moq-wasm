@@ -1,7 +1,8 @@
 use std::time::{Duration, SystemTime};
 
 use auth_token::{Access, ClaimPolicy, SignedToken};
-use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
+use http_server::bearer_token;
+use hyper::{HeaderMap, StatusCode};
 
 /// A launch token lives at most this long: an app server signs one per call.
 const LAUNCH_TOKEN_POLICY: ClaimPolicy = ClaimPolicy {
@@ -76,15 +77,6 @@ impl LaunchAuth {
         check(&verified, namespace_prefix, SystemTime::now())?;
         Ok(verified.app_id)
     }
-}
-
-pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .filter(|value| !value.is_empty())
 }
 
 fn check(verified: &SignedToken, namespace_prefix: &str, now: SystemTime) -> Result<(), Rejection> {

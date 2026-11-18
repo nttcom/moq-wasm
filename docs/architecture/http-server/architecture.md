@@ -18,6 +18,7 @@ accepts connections, reads JSON request bodies and builds responses.
 | `json_response(status, body)` | `body` serialized as JSON with `Content-Type: application/json`. |
 | `error_response(status, error)` | `{"error": error}` through `json_response`. |
 | `empty_response(status)` | `status` with an empty body and no headers. |
+| `bearer_token(headers)` | The token of `Authorization: Bearer <token>`, or `None` without one or with an empty token. |
 | `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
 
 ## Runtime flow
