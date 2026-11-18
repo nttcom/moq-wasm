@@ -1353,6 +1353,48 @@
   background: var(--th-line);
 }
 
+/* AI Voice Agent: the speaker's voice as a waveform, and the spoken question with the AI's answer. */
+.th-voice {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6%;
+  padding: 0 8%;
+}
+
+.th-wave {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3%;
+  height: 26%;
+}
+
+.th-wave i {
+  width: 3%;
+  border-radius: 999px;
+  background: var(--th-accent);
+}
+
+.th-bubble {
+  max-width: 70%;
+  padding: 0.35em 0.8em;
+  border-radius: 0.9em;
+  white-space: nowrap;
+}
+
+.th-bubble.me {
+  align-self: flex-end;
+  background: rgba(45, 212, 191, 0.2);
+}
+
+.th-bubble.ai {
+  align-self: flex-start;
+  background: var(--th-panel);
+}
+
 /* Chat Moderation: a chat whose abusive message the moderator has taken down. */
 .th-chatlog {
   position: absolute;
