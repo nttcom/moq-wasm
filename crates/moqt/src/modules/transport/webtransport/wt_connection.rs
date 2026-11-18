@@ -1,13 +1,11 @@
 use crate::modules::transport::transport_connection::{BoxedReceiveStream, BoxedSendStream};
 use async_trait::async_trait;
 use futures::{FutureExt, future::BoxFuture};
-use std::{
-    sync::PoisonError,
-    task::{Context, Poll, Waker},
-};
+use std::task::{Context, Poll, Waker};
 
 use super::wt_receive_stream::WtReceiveStream;
 use super::wt_send_stream::WtSendStream;
+use crate::modules::extensions::mutex::lock;
 use crate::modules::transport::application_protocol::NegotiatedProtocol;
 use crate::modules::transport::transport_addresses::TransportAddresses;
 use crate::modules::transport::transport_connection::{
@@ -51,10 +49,7 @@ impl WtConnection {
     }
 
     fn take_opening_bi(&self) -> Option<OpeningBi> {
-        self.opening_bi
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
+        lock(&self.opening_bi).take()
     }
 }
 
@@ -110,10 +105,7 @@ impl TransportConnection for WtConnection {
         match opening.poll_unpin(&mut Context::from_waker(Waker::noop())) {
             Poll::Ready(opened) => Ok(Some(boxed_bi(opened?))),
             Poll::Pending => {
-                *self
-                    .opening_bi
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = Some(opening);
+                *lock(&self.opening_bi) = Some(opening);
                 Ok(None)
             }
         }

@@ -95,7 +95,6 @@ impl CertificateVerification {
 }
 
 pub struct ClientConfig {
-    pub port: u16,
     pub certificate_verification: CertificateVerification,
     pub authorization_token: Option<AuthorizationTokenSource>,
     /// A session follows the server's GOAWAY by itself (draft-14 §3.5):
@@ -114,7 +113,6 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            port: 0,
             certificate_verification: CertificateVerification::NativeRoots,
             authorization_token: None,
             follow_go_away: true,
@@ -144,7 +142,6 @@ pub struct Endpoint<T: TransportProtocol> {
 impl<T: TransportProtocol> Endpoint<T> {
     pub fn create_client(config: &ClientConfig) -> anyhow::Result<Self> {
         let client = T::ConnectionCreator::client(
-            config.port,
             &config.certificate_verification,
             application_protocols(&config.versions)?,
         )?;

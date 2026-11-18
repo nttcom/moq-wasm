@@ -66,11 +66,10 @@ pub struct NativeConnectionCreator {
 
 impl NativeConnectionCreator {
     fn create_client(
-        port_num: u16,
         crypto: rustls::ClientConfig,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        let endpoint = client_endpoint(port_num)?;
+        let endpoint = client_endpoint()?;
         let quic_config = quic_client_config(crypto.clone(), protocols.quic_alpn_list())?;
         let web_transport_config = quic_client_config(
             crypto.clone(),
@@ -98,11 +97,10 @@ impl TransportConnectionCreator for NativeConnectionCreator {
     const WEB_SOCKET_HEAD_START: Option<Duration> = Some(Duration::from_millis(200));
 
     fn client(
-        port_num: u16,
         verification: &CertificateVerification,
         protocols: ApplicationProtocols,
     ) -> anyhow::Result<Self> {
-        Self::create_client(port_num, client_crypto(verification)?, protocols)
+        Self::create_client(client_crypto(verification)?, protocols)
     }
 
     fn server(
@@ -291,7 +289,7 @@ mod tests {
             server.local_port().unwrap()
         );
         let client =
-            NativeConnectionCreator::client(0, &CertificateVerification::Disabled, client).unwrap();
+            NativeConnectionCreator::client(&CertificateVerification::Disabled, client).unwrap();
         let target = ConnectTarget::parse(&url).unwrap();
         tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
             let (client, server) = tokio::join!(client.create_new_transport(&target), async {
@@ -507,7 +505,6 @@ mod tests {
         let port = server.local_port().unwrap();
         server.refuse_new_connections();
         let client = NativeConnectionCreator::client(
-            0,
             &CertificateVerification::Disabled,
             application_protocols(DEFAULT_VERSIONS).unwrap(),
         )

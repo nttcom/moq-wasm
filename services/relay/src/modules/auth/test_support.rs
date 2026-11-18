@@ -192,7 +192,6 @@ fn client_endpoint_offering(
         authorization_token: authorization_token.map(Into::into),
         follow_go_away: false,
         versions: versions.to_vec(),
-        ..ClientConfig::default()
     })
     .unwrap()
 }

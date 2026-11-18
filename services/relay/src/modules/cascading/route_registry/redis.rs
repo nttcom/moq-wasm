@@ -4,7 +4,6 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::SystemTime,
 };
 
 use async_trait::async_trait;
@@ -13,6 +12,7 @@ use tokio::sync::watch;
 
 use super::{RegisterRouteError, RelayInfo, RelayRouteRegistry};
 use crate::modules::domain::track_key::{TrackKey, namespace_has_prefix};
+use crate::modules::observability::stats_export_task::unix_millis_now;
 
 #[derive(Clone, Copy)]
 enum RouteKind {
@@ -117,7 +117,7 @@ impl RedisRelayRouteRegistry {
                     ("public_host", self.public_host.as_str()),
                     ("client_sessions", &client_sessions),
                     ("status", self.status()),
-                    ("updated_at", &Self::now_millis().to_string()),
+                    ("updated_at", &unix_millis_now().to_string()),
                 ],
             )
             .await?;
@@ -286,13 +286,6 @@ impl RedisRelayRouteRegistry {
 
     fn watched_namespace_key(track_namespace: &str) -> String {
         format!("route:subscriber:watched:{track_namespace}")
-    }
-
-    fn now_millis() -> u128 {
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or_default()
     }
 }
 

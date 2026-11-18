@@ -188,7 +188,6 @@ async fn main() -> Result<()> {
         return pending().await;
     }
     let config = ClientConfig {
-        port: 0,
         certificate_verification: CertificateVerification::native_roots_or_disabled(!args.insecure),
         ..ClientConfig::default()
     };

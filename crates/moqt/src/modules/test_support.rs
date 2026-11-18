@@ -243,11 +243,7 @@ pub(crate) struct WebSocketOnlyCreator {
 
 #[async_trait::async_trait]
 impl TransportConnectionCreator for WebSocketOnlyCreator {
-    fn client(
-        _: u16,
-        _: &CertificateVerification,
-        _: ApplicationProtocols,
-    ) -> anyhow::Result<Self> {
+    fn client(_: &CertificateVerification, _: ApplicationProtocols) -> anyhow::Result<Self> {
         anyhow::bail!("a WebSocket-only endpoint is a server")
     }
 

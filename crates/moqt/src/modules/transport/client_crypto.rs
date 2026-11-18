@@ -75,7 +75,7 @@ pub(crate) fn quic_client_config(
     Ok(config)
 }
 
-pub(crate) fn client_endpoint(port_num: u16) -> anyhow::Result<quinn::Endpoint> {
-    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port_num));
+pub(crate) fn client_endpoint() -> anyhow::Result<quinn::Endpoint> {
+    let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
     Ok(quinn::Endpoint::client(address)?)
 }
