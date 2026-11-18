@@ -5,11 +5,12 @@ use std::{
 };
 
 use anyhow::Context;
+use google_cloud::Uploaded;
 use tokio::sync::Mutex;
 
 use crate::{
     app::Apps,
-    store::{Generation, Snapshot, Stored},
+    store::{Generation, Snapshot},
 };
 
 pub(crate) struct RegistryFile {
@@ -37,10 +38,10 @@ impl RegistryFile {
         &self,
         apps: &Apps,
         if_generation_match: Generation,
-    ) -> anyhow::Result<Stored> {
+    ) -> anyhow::Result<Uploaded> {
         let _guard = FILE_WRITE_LOCK.lock().await;
         if generation_of(&self.read().await?) != if_generation_match {
-            return Ok(Stored::Conflict);
+            return Ok(Uploaded::Conflict);
         }
         let mut temporary = OsString::from(self.path.as_os_str());
         temporary.push(".tmp");
@@ -51,7 +52,7 @@ impl RegistryFile {
         tokio::fs::rename(&temporary, &self.path)
             .await
             .with_context(|| format!("failed to replace {}", self.path.display()))?;
-        Ok(Stored::Written)
+        Ok(Uploaded::Written)
     }
 
     async fn read(&self) -> anyhow::Result<Vec<u8>> {

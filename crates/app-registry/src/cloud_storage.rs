@@ -4,7 +4,7 @@ use google_cloud::{CloudStorageBucket, Endpoint, Uploaded};
 
 use crate::{
     app::Apps,
-    store::{Generation, Snapshot, Stored},
+    store::{Generation, Snapshot},
 };
 
 // Shorter than the 3 seconds the relay waits for the VTS, so the VTS can still answer from the
@@ -36,20 +36,15 @@ impl CloudStorageObject {
         &self,
         apps: &Apps,
         if_generation_match: Generation,
-    ) -> anyhow::Result<Stored> {
-        let uploaded = self
-            .bucket
+    ) -> anyhow::Result<Uploaded> {
+        self.bucket
             .upload_if_generation_matches(
                 &self.object,
                 "application/json",
                 apps.to_json()?,
                 if_generation_match.0,
             )
-            .await?;
-        Ok(match uploaded {
-            Uploaded::Written => Stored::Written,
-            Uploaded::Conflict => Stored::Conflict,
-        })
+            .await
     }
 }
 

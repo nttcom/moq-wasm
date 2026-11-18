@@ -1,4 +1,5 @@
 use anyhow::bail;
+use google_cloud::Uploaded;
 
 use crate::{
     app::{App, Apps},
@@ -25,11 +26,6 @@ pub struct RegistryStore {
 enum Backend {
     CloudStorage(Box<CloudStorageObject>),
     File(RegistryFile),
-}
-
-pub(crate) enum Stored {
-    Written,
-    Conflict,
 }
 
 impl RegistryStore {
@@ -72,14 +68,18 @@ impl RegistryStore {
                 return Ok(outcome);
             }
             match self.store(&apps, snapshot.generation).await? {
-                Stored::Written => return Ok(outcome),
-                Stored::Conflict => continue,
+                Uploaded::Written => return Ok(outcome),
+                Uploaded::Conflict => continue,
             }
         }
         bail!("another writer kept changing the registry during {MAX_UPDATE_ATTEMPTS} attempts")
     }
 
-    async fn store(&self, apps: &Apps, if_generation_match: Generation) -> anyhow::Result<Stored> {
+    async fn store(
+        &self,
+        apps: &Apps,
+        if_generation_match: Generation,
+    ) -> anyhow::Result<Uploaded> {
         match &self.backend {
             Backend::CloudStorage(object) => object.store(apps, if_generation_match).await,
             Backend::File(file) => file.store(apps, if_generation_match).await,
