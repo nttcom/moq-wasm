@@ -185,11 +185,9 @@ impl FetchHandler {
     /// (draft-14 §9.16.2).
     pub fn close_for_protocol_violation(&self, reason: &str) {
         self.guard.mark_responded();
-        self.session_context.close_connection(
-            self.guard.connection(),
-            TerminationErrorCode::ProtocolViolation,
-            reason,
-        );
+        self.guard
+            .connection()
+            .close_with_error(TerminationErrorCode::ProtocolViolation, reason);
     }
 }
 

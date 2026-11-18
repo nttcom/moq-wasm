@@ -591,7 +591,7 @@ impl SessionContext {
 
     /// `Connection::close_with_error` on the session's current connection.
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
-        self.close_connection(&self.connection(), code, reason);
+        self.connection().close_with_error(code, reason);
     }
 
     /// Resolves once the application has read enough events for one more
@@ -603,16 +603,6 @@ impl SessionContext {
         // A session that follows GOAWAY reads `connection`'s events into its own.
         connection.event_sender.has_room().await;
         self.event_sender.has_room().await;
-    }
-
-    /// Like `close_with_error`, for the connection a message arrived on.
-    pub(crate) fn close_connection(
-        &self,
-        connection: &Connection,
-        code: TerminationErrorCode,
-        reason: &str,
-    ) {
-        connection.close_with_error(code, reason);
     }
 }
 

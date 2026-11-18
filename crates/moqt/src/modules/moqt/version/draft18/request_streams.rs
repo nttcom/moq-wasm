@@ -93,11 +93,9 @@ fn close_on_violation(scope: &Scope, reason: &str) {
         reason,
         "Protocol violation on a draft-18 stream; closing session"
     );
-    scope.session.close_connection(
-        &scope.connection,
-        TerminationErrorCode::ProtocolViolation,
-        reason,
-    );
+    scope
+        .connection
+        .close_with_error(TerminationErrorCode::ProtocolViolation, reason);
 }
 
 /// How the peer ended a request this endpoint opened.
@@ -121,11 +119,9 @@ fn accept_request_id(scope: &Scope, request_id: RequestId) -> bool {
         request_id,
         "invalid or repeated Request ID; closing session"
     );
-    scope.session.close_connection(
-        &scope.connection,
-        TerminationErrorCode::InvalidRequestId,
-        "invalid request id",
-    );
+    scope
+        .connection
+        .close_with_error(TerminationErrorCode::InvalidRequestId, "invalid request id");
     false
 }
 
