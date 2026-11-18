@@ -583,6 +583,29 @@ body:not(:has(> .app-shell))::before {
   margin-left: 4px;
 }
 
+/* A tip that warns: an amber mark, and a note edged in amber. */
+.tip.warning,
+.tip.warning:hover,
+.tip.warning:focus-visible,
+.access-info.warning,
+.access-info.warning:hover,
+.access-info.warning:focus-visible {
+  color: var(--warning);
+}
+
+.tip.warning:hover::after,
+.tip.warning:focus::after,
+.access-info.warning:hover::after,
+.access-info.warning:focus::after {
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+}
+
+.access-info.danger,
+.access-info.danger:hover,
+.access-info.danger:focus-visible {
+  color: var(--danger);
+}
+
 /* A tip that reports a failure: a red mark, and a note edged in red. */
 .tip.danger,
 .tip.danger:hover,

@@ -38,6 +38,10 @@
   white-space: pre-line;
 }
 
+.tip-note.warning {
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+}
+
 .tip-note.danger {
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
   color: var(--danger);

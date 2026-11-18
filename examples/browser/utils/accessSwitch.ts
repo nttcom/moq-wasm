@@ -23,7 +23,9 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.access-switch [
 
 switch (access.kind) {
   case 'public':
+    // Everything sent is open to everyone, so the mark warns instead of informing.
     describe('送信したメディアは誰でも視聴できます')
+    tone('warning', 'triangle-alert')
     break
   case 'given':
     describe(`URL のトークン（app ${access.namespaceRoot}）で接続します`)
@@ -32,8 +34,7 @@ switch (access.kind) {
     // A red mark in place of the ⓘ, so the failure shows without taking room on the page.
     description.dataset.tip = access.reason
     description.setAttribute('aria-label', access.reason)
-    description.classList.add('danger')
-    description.replaceChildren(icon('circle-alert'))
+    tone('danger', 'circle-alert')
     break
   case 'temporary': {
     describe('URL を共有した相手だけが参加・視聴できます')
@@ -57,7 +58,9 @@ if (access.kind === 'unavailable' || localStorage.getItem(NOTE_CLOSED_KEY) === n
 /// Shows the ⓘ's text as an open note under the top bar's end, with a button that closes it.
 function openNote(): void {
   const note = document.createElement('div')
-  note.className = description.classList.contains('danger') ? 'tip-note danger' : 'tip-note'
+  note.className = ['tip-note', ...['warning', 'danger'].filter((name) => description.classList.contains(name))].join(
+    ' '
+  )
   note.setAttribute('role', 'note')
   const text = document.createElement('span')
   text.textContent = description.dataset.tip ?? ''
@@ -78,6 +81,12 @@ function openNote(): void {
   note.append(text, close)
   description.classList.add('open')
   description.parentElement!.append(note)
+}
+
+/// Colors the ⓘ as a warning or a failure and swaps its icon to match.
+function tone(name: 'warning' | 'danger', iconName: string): void {
+  description.classList.add(name)
+  description.replaceChildren(icon(iconName))
 }
 
 /// Puts what the mode means, and the caution every mode shares, in the ⓘ beside the switch.
