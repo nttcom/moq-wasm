@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
+
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
-  repoRoot,
   resolveCommandName,
 } from "../../scripts/dev-env.mjs";
 import { jsDir } from "./helpers.mjs";
+import { runCommand } from "./process.mjs";
 import { ensureRelayCertificates } from "../../scripts/ensure-relay-certs.mjs";
 
 async function main() {
   ensureLinuxEnvironment();
-  await assertRequiredTools();
+  assertRequiredTools();
   await ensureRelayCertificates();
   await runCommand(resolveCommandName("npm"), ["ci"], { cwd: jsDir });
   await runCommand(resolveCommandName("npm"), ["run", "wasm"], { cwd: jsDir });
@@ -28,58 +29,17 @@ async function main() {
   console.log("Media E2E setup completed.");
 }
 
-async function assertRequiredTools() {
-  const checks = [
-    ["node", ["--version"]],
-    ["npm", ["--version"]],
-    ["cargo", ["--version"]],
-    ["wasm-pack", ["--version"]],
-  ];
-
-  for (const [command, args] of checks) {
-    await runCommand(resolveCommandName(command), args, {
-      cwd: repoRoot,
-      quiet: true,
-      errorHint: `Install ${command} before running the media E2E setup.`,
+function assertRequiredTools() {
+  for (const command of ["node", "npm", "cargo", "wasm-pack"]) {
+    const { status } = spawnSync(resolveCommandName(command), ["--version"], {
+      stdio: "ignore",
     });
-  }
-}
-
-async function runCommand(command, args, options) {
-  const { cwd, quiet = false, errorHint } = options;
-  await new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: quiet ? ["ignore", "ignore", "pipe"] : "inherit",
-      env: process.env,
-    });
-
-    let stderr = "";
-    if (quiet && child.stderr) {
-      child.stderr.on("data", (chunk) => {
-        stderr += chunk.toString();
-      });
+    if (status !== 0) {
+      throw new Error(
+        `${command} --version failed. Install ${command} before running the media E2E setup.`,
+      );
     }
-
-    child.on("error", (error) => {
-      rejectPromise(
-        new Error(
-          `${command} failed to start: ${getErrorMessage(error)} ${errorHint ?? ""}`.trim(),
-        ),
-      );
-    });
-    child.on("exit", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      rejectPromise(
-        new Error(
-          `${command} ${args.join(" ")} exited with code ${code}. ${errorHint ?? ""} ${stderr.trim()}`.trim(),
-        ),
-      );
-    });
-  });
+  }
 }
 
 main().catch((error) => {
