@@ -11,15 +11,17 @@ use hyper::{
     body::{Bytes, Incoming},
     header::{
         ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue,
+        AUTHORIZATION, CONTENT_TYPE, HeaderValue,
     },
+    http::request::Parts,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
+    bot_proxy::BotProxy,
     issuer::{RefreshError, TemporaryApps},
     rate_limit::RateLimit,
 };
@@ -32,6 +34,8 @@ struct ServerState {
     issuer: TemporaryApps,
     issue_limit: RateLimit,
     trusted_proxy_hops: usize,
+    /// `None` answers every `/bots` route 404.
+    bots: Option<BotProxy>,
 }
 
 impl TemporaryAppsServer {
@@ -40,11 +44,13 @@ impl TemporaryAppsServer {
         issuer: TemporaryApps,
         issue_limit: RateLimit,
         trusted_proxy_hops: usize,
+        bots: Option<BotProxy>,
     ) -> Self {
         let state = Arc::new(ServerState {
             issuer,
             issue_limit,
             trusted_proxy_hops,
+            bots,
         });
         Self {
             _http: HttpServer::run(listener, move |request, peer| {
@@ -84,6 +90,7 @@ async fn handle(
                 issue(&state, client)
             }
             (&Method::POST, "/tokens/refresh") => refresh(body, &state.issuer).await,
+            (_, path) if path.starts_with("/bots/") => bots(&state, &head, peer, body).await,
             _ => error_response(StatusCode::NOT_FOUND, "not_found"),
         }
     }
@@ -130,6 +137,76 @@ async fn refresh(body: Incoming, issuer: &TemporaryApps) -> JsonResponse {
     }
 }
 
+/// Passes a page's call on to the app server routes of `bots`, with a launch
+/// token for the app its own token names. The routes the bots call are 404.
+async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incoming) -> JsonResponse {
+    let Some(proxy) = &state.bots else {
+        return error_response(StatusCode::NOT_FOUND, "not_found");
+    };
+    let segments: Vec<&str> = head.uri.path().trim_start_matches('/').split('/').collect();
+    let bot_type = match (&head.method, segments.as_slice()) {
+        (&Method::POST | &Method::GET, ["bots", bot_type])
+        | (&Method::GET | &Method::DELETE, ["bots", bot_type, _]) => *bot_type,
+        _ => return error_response(StatusCode::NOT_FOUND, "not_found"),
+    };
+    if !proxy.allows(bot_type) {
+        return error_response(StatusCode::NOT_FOUND, "not_found");
+    }
+    let page_token = head
+        .headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+    let app_id = match page_token.map(|token| state.issuer.verify(token, unix_now())) {
+        Some(Ok(app_id)) => app_id,
+        Some(Err(RefreshError::Internal(error))) => return internal_error(&error),
+        _ => {
+            tracing::info!(bot_type, error = "invalid_token", "bot request refused");
+            return error_response(StatusCode::UNAUTHORIZED, "invalid_token");
+        }
+    };
+    tracing::Span::current().record("app_id", app_id.as_str());
+    let body = if head.method == Method::POST {
+        let client = client_address(&head.headers, peer, state.trusted_proxy_hops);
+        if !proxy.allow_launch(client, Instant::now()) {
+            tracing::info!(%app_id, bot_type, error = "rate_limited", "bot request refused");
+            return error_response(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+        }
+        match read_json::<Value, _>(body).await {
+            Some(body) => Some(body),
+            None => return error_response(StatusCode::BAD_REQUEST, "invalid_request"),
+        }
+    } else {
+        None
+    };
+    let launch_token = match state.issuer.sign_launch(&app_id, unix_now()) {
+        Ok(token) => token,
+        Err(error) => return internal_error(&error),
+    };
+    let path_and_query = head
+        .uri
+        .path_and_query()
+        .map_or(head.uri.path(), |path| path.as_str());
+    match proxy
+        .forward(head.method.clone(), path_and_query, &launch_token, body)
+        .await
+    {
+        Ok((status, body)) => {
+            tracing::info!(%app_id, bot_type, "bot request forwarded");
+            let mut response = Response::new(Full::new(body));
+            *response.status_mut() = status;
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            response
+        }
+        Err(error) => {
+            tracing::warn!(%app_id, bot_type, error = format!("{error:#}"), "bots unreachable");
+            error_response(StatusCode::SERVICE_UNAVAILABLE, "bots_unavailable")
+        }
+    }
+}
+
 /// `trusted_proxy_hops` proxies in front of the server append to
 /// `X-Forwarded-For`; the client address is the entry the outermost of them
 /// appended, or with `0` the connection's peer address.
@@ -163,11 +240,11 @@ fn with_cors(mut response: JsonResponse) -> JsonResponse {
     headers.insert(ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
     headers.insert(
         ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST"),
+        HeaderValue::from_static("GET, POST, DELETE"),
     );
     headers.insert(
         ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("content-type"),
+        HeaderValue::from_static("content-type, authorization"),
     );
     response
 }
@@ -184,8 +261,7 @@ fn internal_error(error: &anyhow::Error) -> JsonResponse {
 mod tests {
     use std::time::Duration;
 
-    use auth_token::verify_signature;
-    use serde_json::Value;
+    use auth_token::{sign_token, verify_signature};
 
     use super::*;
 
@@ -196,7 +272,7 @@ mod tests {
         _server: TemporaryAppsServer,
     }
 
-    async fn start_server(max_issues: u32) -> TestServer {
+    async fn start_server(max_issues: u32, bots: Option<BotProxy>) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         TestServer {
@@ -206,6 +282,7 @@ mod tests {
                 TemporaryApps::new(SECRET.into()),
                 RateLimit::new(max_issues, Duration::from_secs(3600)),
                 1,
+                bots,
             ),
         }
     }
@@ -228,7 +305,7 @@ mod tests {
     #[tokio::test]
     async fn post_tokens_returns_201_with_a_signed_token_to_any_origin() {
         // Arrange
-        let server = start_server(10).await;
+        let server = start_server(10, None).await;
 
         // Act
         let response = post(&server, "/tokens", "192.0.2.1", "").await;
@@ -244,7 +321,7 @@ mod tests {
     #[tokio::test]
     async fn post_tokens_returns_429_once_a_client_reaches_the_limit() {
         // Arrange
-        let server = start_server(1).await;
+        let server = start_server(1, None).await;
         post(&server, "/tokens", "192.0.2.1", "").await;
 
         // Act
@@ -257,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn post_tokens_counts_the_address_the_trusted_proxy_appended() {
         // Arrange
-        let server = start_server(1).await;
+        let server = start_server(1, None).await;
         post(&server, "/tokens", "198.51.100.7, 192.0.2.1", "").await;
 
         // Act
@@ -270,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn post_tokens_refresh_returns_200_with_a_token_for_the_same_app() {
         // Arrange
-        let server = start_server(10).await;
+        let server = start_server(10, None).await;
         let issued = post(&server, "/tokens", "192.0.2.1", "")
             .await
             .json::<Value>()
@@ -290,7 +367,7 @@ mod tests {
     #[tokio::test]
     async fn post_tokens_refresh_returns_401_for_a_token_signed_elsewhere() {
         // Arrange
-        let server = start_server(10).await;
+        let server = start_server(10, None).await;
         let token = auth_token::sign_token(&json!({ "appId": "temp-x", "exp": u64::MAX }), "other")
             .unwrap();
         let body = json!({ "token": token }).to_string();
@@ -309,7 +386,7 @@ mod tests {
     #[tokio::test]
     async fn post_tokens_refresh_returns_400_without_a_token() {
         // Arrange
-        let server = start_server(10).await;
+        let server = start_server(10, None).await;
 
         // Act
         let response = post(&server, "/tokens/refresh", "192.0.2.1", "{}").await;
@@ -321,7 +398,7 @@ mod tests {
     #[tokio::test]
     async fn options_answers_the_preflight() {
         // Arrange
-        let server = start_server(10).await;
+        let server = start_server(10, None).await;
 
         // Act
         let response = reqwest::Client::new()
@@ -337,7 +414,163 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert_eq!(
             response.headers()[ACCESS_CONTROL_ALLOW_HEADERS],
-            "content-type"
+            "content-type, authorization"
+        );
+    }
+
+    type Calls = Arc<std::sync::Mutex<Vec<(String, String, String)>>>;
+
+    /// A `bots` that answers every call `201 {"id": "b1"}` and keeps the
+    /// method, the path and the bearer token of each.
+    async fn fake_bots() -> (String, Calls, HttpServer) {
+        let calls: Calls = Arc::default();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::clone(&calls);
+        let server = HttpServer::run(listener, move |request, _| {
+            let bearer = request
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.strip_prefix("Bearer "))
+                .unwrap_or_default()
+                .to_string();
+            let path = request.uri().path_and_query().unwrap().to_string();
+            seen.lock()
+                .unwrap()
+                .push((request.method().to_string(), path, bearer));
+            async { json_response(StatusCode::CREATED, &json!({ "id": "b1" })) }
+        });
+        (url, calls, server)
+    }
+
+    /// Lets temporary apps start `recorder` bots on `bots_url`.
+    fn recorder_proxy(bots_url: &str, max_launches: u32) -> Option<BotProxy> {
+        Some(BotProxy::new(
+            bots_url.to_string(),
+            vec!["recorder".to_string()],
+            RateLimit::new(max_launches, Duration::from_secs(3600)),
+        ))
+    }
+
+    fn page_token() -> (String, String) {
+        let issued = TemporaryApps::new(SECRET.into()).issue(unix_now()).unwrap();
+        (issued.token, issued.app_id)
+    }
+
+    #[tokio::test]
+    async fn a_page_starts_a_bot_through_a_launch_token_for_its_app() {
+        // Arrange
+        let (bots_url, calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bots_url, 10)).await;
+        let (token, app_id) = page_token();
+
+        // Act
+        let response = reqwest::Client::new()
+            .post(format!("{}/bots/recorder", server.base_url))
+            .bearer_auth(&token)
+            .json(&json!({ "namespace_prefix": format!("{app_id}/room") }))
+            .send()
+            .await
+            .unwrap();
+
+        // Assert
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            json!({ "id": "b1" })
+        );
+        let calls = calls.lock().unwrap();
+        let (method, path, launch_token) = &calls[0];
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/bots/recorder"));
+        verify_signature(launch_token, SECRET).unwrap();
+        let claims = auth_token::decode_unverified_payload(launch_token).unwrap();
+        assert_eq!(
+            (claims["appId"].as_str(), claims["bots"].as_str()),
+            (Some(app_id.as_str()), Some(""))
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_valid_page_token_reaches_the_app_server_routes_of_an_allowed_type() {
+        // Arrange
+        let (bots_url, calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bots_url, 10)).await;
+        let (token, _) = page_token();
+        let client = reqwest::Client::new();
+        let status = |request: reqwest::RequestBuilder| async move {
+            request.send().await.unwrap().status()
+        };
+
+        // Act
+        let without_token = status(client.get(format!("{}/bots/recorder", server.base_url))).await;
+        let forged = status(
+            client
+                .get(format!("{}/bots/recorder", server.base_url))
+                .bearer_auth(
+                    sign_token(
+                        &json!({ "appId": "temp-x", "exp": unix_now() + 60 }),
+                        "other",
+                    )
+                    .unwrap(),
+                ),
+        )
+        .await;
+        let other_type = status(
+            client
+                .get(format!("{}/bots/chat", server.base_url))
+                .bearer_auth(&token),
+        )
+        .await;
+        let bot_route = status(
+            client
+                .post(format!("{}/bots/recorder/b1/token", server.base_url))
+                .bearer_auth(&token),
+        )
+        .await;
+        let stop = status(
+            client
+                .delete(format!("{}/bots/recorder/b1", server.base_url))
+                .bearer_auth(&token),
+        )
+        .await;
+
+        // Assert
+        assert_eq!(without_token, StatusCode::UNAUTHORIZED);
+        assert_eq!(forged, StatusCode::UNAUTHORIZED);
+        assert_eq!(other_type, StatusCode::NOT_FOUND);
+        assert_eq!(bot_route, StatusCode::NOT_FOUND);
+        assert_eq!(stop, StatusCode::CREATED);
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            (calls[0].0.as_str(), calls[0].1.as_str()),
+            ("DELETE", "/bots/recorder/b1")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_starts_bots_within_its_launch_limit() {
+        // Arrange
+        let (bots_url, _calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bots_url, 1)).await;
+        let (token, app_id) = page_token();
+        let start = || {
+            reqwest::Client::new()
+                .post(format!("{}/bots/recorder", server.base_url))
+                .bearer_auth(&token)
+                .json(&json!({ "namespace_prefix": format!("{app_id}/room") }))
+                .send()
+        };
+
+        // Act
+        let first = start().await.unwrap().status();
+        let second = start().await.unwrap().status();
+
+        // Assert
+        assert_eq!(
+            (first, second),
+            (StatusCode::CREATED, StatusCode::TOO_MANY_REQUESTS)
         );
     }
 }
