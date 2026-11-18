@@ -62,6 +62,17 @@ Agent**, join and talk to the agent: only the page of a temporary app starts
 the bot. `MOQT_FAKE_MEDIA=0` gives the page your microphone instead of Chrome's
 test tone.
 
+### Observability
+
+Add `-f compose.observability.yml` to any demo, in `up` and in `down`:
+
+```shell
+docker compose -f compose.demo.yml -f compose.observability.yml --profile live up
+```
+
+Open **Observability** for the relay's sessions and tracks, and HyperDX on
+`http://localhost:8080` for the logs and traces of the relay and the pages.
+
 ## Development
 
 To change the code, run the services from source instead
