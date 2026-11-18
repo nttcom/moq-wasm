@@ -12,8 +12,9 @@ use tokio::{
 };
 
 use crate::{
+    bots_client::{BotState, BotsClient},
     room_recording::{RoomStatus, lock, stopping},
-    room_state::RoomRecord,
+    room_state::{RoomRecord, RoomState},
     store::RecordingStore,
 };
 
@@ -23,9 +24,10 @@ const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// API can tell a running job from one that died.
 pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Keeps a recording job's `state/<id>.json` in sync with its `RoomStatus`
-/// and turns a stop request in the store, SIGTERM (Cloud Run stopping the
-/// job) or SIGINT into `stop_sender`.
+/// Keeps a recording job's `state/<id>.json` in sync with its `RoomStatus`,
+/// reports it to `bots` when `bots` started the recording, and turns a stop
+/// request in the store or from `bots`, SIGTERM (Cloud Run stopping the job)
+/// or SIGINT into `stop_sender`.
 pub(crate) struct StateSyncTask {
     handle: JoinHandle<()>,
     finish_sender: Option<oneshot::Sender<()>>,
@@ -37,6 +39,7 @@ impl StateSyncTask {
         record: RoomRecord,
         status: Arc<Mutex<RoomStatus>>,
         stop_sender: watch::Sender<bool>,
+        bots: Option<Arc<BotsClient>>,
     ) -> Result<Self> {
         let mut terminate = signal(SignalKind::terminate())?;
         let mut interrupt = signal(SignalKind::interrupt())?;
@@ -60,6 +63,17 @@ impl StateSyncTask {
                             error = format!("{error:#}"),
                             "cannot read the stop request"
                         ),
+                    }
+                }
+                // Every poll, so a stop through `bots` takes effect within it.
+                if let Some(bots) = &bots {
+                    let state = bot_state(&lock(&status).state);
+                    match bots.heartbeat(state, None).await {
+                        Ok(true) => request_stop(&status, &stop_sender, "bots"),
+                        Ok(false) => {}
+                        Err(error) => {
+                            tracing::warn!(error = format!("{error:#}"), "cannot report to bots")
+                        }
                     }
                 }
                 let current = with_status(&record, &lock(&status));
@@ -115,6 +129,15 @@ pub(crate) fn with_status(record: &RoomRecord, status: &RoomStatus) -> RoomRecor
 
 pub(crate) fn now_ms() -> u64 {
     moqt::executor::system_time().as_millis() as u64
+}
+
+pub(crate) fn bot_state(state: &RoomState) -> BotState {
+    match state {
+        RoomState::Starting | RoomState::Recording => BotState::Running,
+        RoomState::Stopping => BotState::Stopping,
+        RoomState::Finished => BotState::Finished,
+        RoomState::Failed(_) => BotState::Failed,
+    }
 }
 
 fn same_progress(a: &RoomRecord, b: &RoomRecord) -> bool {

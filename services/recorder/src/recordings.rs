@@ -22,6 +22,7 @@ use crate::{
     room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
     state_sync_task::{HEARTBEAT_INTERVAL, now_ms},
     store::RecordingStore,
+    token_refresh_task::TokenRenewal,
 };
 
 /// A recording job that has not written its state for this long is treated
@@ -375,11 +376,12 @@ impl Recordings {
         let temporary = namespace_prefix.starts_with(TEMPORARY_APP_ID_PREFIX);
         ServiceToken {
             token: bearer.map(str::to_string),
-            issuer_url: self
+            renewal: self
                 .config
                 .temporary_apps_url
                 .clone()
-                .filter(|_| temporary && bearer.is_some()),
+                .filter(|_| temporary && bearer.is_some())
+                .map(TokenRenewal::Issuer),
         }
     }
 
@@ -395,10 +397,11 @@ impl Recordings {
         if let Some(token) = &token.token {
             args.extend(["--token".to_string(), token.clone()]);
         }
-        if let Some(issuer_url) = &token.issuer_url {
+        if let Some(TokenRenewal::Issuer(issuer_url)) = &token.renewal {
             args.extend(["--temporary-apps-url".to_string(), issuer_url.clone()]);
         }
         args.extend(self.config.room.to_args());
+        args.extend(self.config.limits.to_args());
         args.extend(self.config.launcher.to_args());
         args
     }
@@ -442,7 +445,7 @@ fn effective_state(record: &RoomRecord, now_ms: u64) -> RoomState {
 
 /// `<Unix ms>-<6 hex digits>`: sorts by start time and does not collide
 /// between API instances.
-fn recording_id() -> String {
+pub(crate) fn recording_id() -> String {
     let random = RandomState::new().hash_one(now_ms()) & 0xff_ffff;
     format!("{}-{random:06x}", now_ms())
 }
@@ -713,20 +716,12 @@ mod tests {
         let registered = recordings.service_token("app/room", Some("jwt"));
 
         // Assert
-        assert_eq!(
-            temporary,
-            ServiceToken {
-                token: Some("jwt".to_string()),
-                issuer_url: Some(TEMPORARY_APPS_URL.to_string()),
-            }
+        assert_eq!(temporary.token.as_deref(), Some("jwt"));
+        assert!(
+            matches!(&temporary.renewal, Some(TokenRenewal::Issuer(url)) if url == TEMPORARY_APPS_URL)
         );
-        assert_eq!(
-            registered,
-            ServiceToken {
-                token: Some("jwt".to_string()),
-                issuer_url: None,
-            }
-        );
+        assert_eq!(registered.token.as_deref(), Some("jwt"));
+        assert!(registered.renewal.is_none());
     }
 
     #[tokio::test]

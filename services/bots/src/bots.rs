@@ -14,8 +14,8 @@ use crate::{
     store::{BotRecord, BotState, BotStore},
 };
 
-/// A bot that has not reported for this long is taken as gone: three missed
-/// heartbeats of a bot reporting every 30 s.
+/// A bot that has not reported for this long is taken as gone; the recorder
+/// reports every 5 s.
 const HEARTBEAT_TIMEOUT_MS: u64 = 90_000;
 /// The environment variable a locally launched bot finds its key in.
 const BOT_KEY_ENV: &str = "BOTS_BOT_KEY";
