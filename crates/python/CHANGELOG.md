@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.1
 
 - The first release of `moq-wasm` for Python, as abi3 wheels for Python 3.11
   and later on Linux x86_64, Linux aarch64 and macOS arm64. The session offers

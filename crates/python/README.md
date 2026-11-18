@@ -113,14 +113,14 @@ declare it as an explicit index used only for `moq-wasm`:
 
 ```toml
 [project]
-dependencies = ["moq-wasm[pipecat]==0.1.0"]
+dependencies = ["moq-wasm[pipecat]==0.0.1"]
 
 [tool.uv.sources]
 moq-wasm = { index = "moq-wasm" }
 
 [[tool.uv.index]]
 name = "moq-wasm"
-url = "https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.1.0"
+url = "https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1"
 format = "flat"
 explicit = true
 ```
@@ -128,8 +128,8 @@ explicit = true
 `uv lock` records the wheels of all three platforms. With pip:
 
 ```shell
-pip install "moq-wasm[pipecat]==0.1.0" \
-  --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.1.0
+pip install "moq-wasm[pipecat]==0.0.1" \
+  --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1
 ```
 
 Pin the version, or pip takes a newer `moq-wasm` from PyPI if one appears.
