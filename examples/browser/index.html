@@ -140,19 +140,24 @@
         </div>
         <div class="grid wide">
           <a class="example" href="examples/meeting/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                ><span class="link">↔</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">↔</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-meet"
+                ><span class="th-tile speak" style="--a: #134e4a; --b: #042f2e"
+                  ><span class="th-person" style="--c: #5eead4"></span><span class="th-name">Aiko</span></span
+                ><span class="th-tile" style="--a: #1e3a8a; --b: #0b1533"
+                  ><span class="th-person" style="--c: #93c5fd"></span><span class="th-name">Ben</span></span
+                ><span class="th-tile" style="--a: #4c1d95; --b: #1a0b3a"
+                  ><span class="th-person" style="--c: #c4b5fd"></span><span class="th-name">Chen</span></span
+                ><span class="th-tile" style="--a: #7c2d12; --b: #2a0f05"
+                  ><span class="th-person" style="--c: #fdba74"></span><span class="th-name">Dana</span></span
+                ></span
+              ><span class="th-bar"><i class="on"></i><i class="on"></i><i></i><i class="end"></i></span>
             </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Meeting</h3></div>
               <p>多人数の映像・音声会議。画面共有やチャットにも対応する</p>
@@ -165,22 +170,20 @@
             </div>
           </a>
           <a class="example requires-token" href="examples/recording-player/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node cloud"
-                  ><svg><use href="/icons.svg#icon-cloud" /></svg>Object Store</span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-workflow" /></svg>Recorder<small>FETCH で再配信</small></span
-                ><span class="link">→</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-meet th-replay"
+                ><span class="th-tile" style="--a: #1e3a8a; --b: #0b1533"
+                  ><span class="th-person" style="--c: #93c5fd"></span></span
+                ><span class="th-tile" style="--a: #4c1d95; --b: #1a0b3a"
+                  ><span class="th-person" style="--c: #c4b5fd"></span></span></span
+              ><span class="th-timeline"></span><span class="th-badge">REC</span>
             </div>
+            <p class="example-flow">
+              <span class="chip relay">Object Store</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Recorder</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Browser</span>
+            </p>
             <div class="example-body">
               <div class="example-title">
                 <h3>Recording Player</h3>
@@ -197,19 +200,26 @@
             </div>
           </a>
           <a class="example" href="examples/whiteboard/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                ><span class="link">↔</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">↔</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <svg class="th-board" viewBox="0 0 160 90">
+                <path
+                  d="M20 60 C40 20, 60 20, 70 50 S100 80, 120 30"
+                  fill="none"
+                  stroke="#0f766e"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                />
+                <path d="M30 25 l25 0" stroke="#db2777" stroke-width="3" stroke-linecap="round" />
+                <circle cx="118" cy="62" r="12" fill="none" stroke="#2563eb" stroke-width="3" />
+                <path d="M122 30 l6 10 -4 0 2 5 -2 1 -2 -5 -3 3z" fill="#db2777" />
+                <path d="M55 62 l6 10 -4 0 2 5 -2 1 -2 -5 -3 3z" fill="#2563eb" />
+              </svg>
             </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Whiteboard</h3></div>
               <p>多人数で描くホワイトボード。途中から参加してもボードを再現する</p>
@@ -222,22 +232,31 @@
             </div>
           </a>
           <a class="example" href="examples/onvif/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera</span
-                ><span class="link">↔</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-router" /></svg>MoQ Gateway</span
-                ><span class="link">↔</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">↔</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-cctv"
+                ><span class="th-street ghost"
+                  ><span class="th-bldg" style="left: 8%; width: 18%; height: 55%"></span
+                  ><span class="th-bldg" style="left: 30%; width: 24%; height: 40%"></span
+                  ><span class="th-bldg" style="left: 58%; width: 14%; height: 65%"></span></span
+                ><span class="th-street"
+                  ><span class="th-bldg" style="left: 8%; width: 18%; height: 55%"></span
+                  ><span class="th-bldg" style="left: 30%; width: 24%; height: 40%"></span
+                  ><span class="th-bldg" style="left: 58%; width: 14%; height: 65%"></span></span
+                ><span class="th-rec">CAM-01</span><span class="th-ptz">PAN ← 35°</span
+                ><svg class="th-radar" viewBox="0 0 40 40">
+                  <circle cx="20" cy="20" r="18" />
+                  <path class="was" d="M20 20 L31 4 A18 18 0 0 1 37 15 Z" />
+                  <path class="now" d="M20 20 L9 4 A18 18 0 0 1 24 2.4 Z" />
+                  <path class="turn" d="M30 10 Q24 5 17 6" />
+                  <circle class="cam" cx="20" cy="20" r="2.5" /></svg
+              ></span>
             </div>
+            <p class="example-flow">
+              <span class="chip">PTZ Camera</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">MoQ Gateway</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">Browser</span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>ONVIF</h3></div>
               <p>PTZ カメラを MoQ Gateway 経由で遠隔制御・遠隔監視する</p>
@@ -250,22 +269,24 @@
             </div>
           </a>
           <a class="example" href="examples/remote-monitoring/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-webcam" /></svg>USB Camera</span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-square-terminal" /></svg>MoQ Publisher<small>Rust CLI</small></span
-                ><span class="link">→</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-monitor"
+                ><span class="th-main" style="--a: #334155; --b: #0f172a"
+                  ><span class="th-cam-label">CAM 1</span><span class="th-live-dot">LIVE</span
+                  ><span class="th-person" style="--c: #020617; width: 26%; left: 40%"></span></span
+                ><span class="th-side"
+                  ><span style="--a: #1e3a8a; --b: #0b1533"><span class="th-cam-label">CAM 2</span></span
+                  ><span style="--a: #14532d; --b: #052e16"><span class="th-cam-label">CAM 3</span></span
+                  ><span style="--a: #3f3f46; --b: #18181b"><span class="th-cam-label">CAM 4</span></span></span
+                ></span
+              >
             </div>
+            <p class="example-flow">
+              <span class="chip">USB Camera</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">MoQ Publisher</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Remote Monitoring</h3></div>
               <p>USB カメラの映像を Rust CLI から配信し、ブラウザで遠隔監視する</p>
@@ -278,24 +299,24 @@
             </div>
           </a>
           <a class="example" href="examples/live-viewer/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg</span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small
-                    >RTMP / SRT → MoQ</small
-                  ></span
-                ><span class="link">→</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-live"
+                ><span class="th-scene"
+                  ><span class="th-beam" style="left: 14%; transform: rotate(-14deg)"></span
+                  ><span class="th-beam" style="left: 60%; transform: rotate(14deg)"></span
+                  ><span class="th-stage"></span
+                  ><span class="th-person" style="--c: #0b0820; width: 22%; bottom: 16%"></span
+                  ><span class="th-live-badge"><b>LIVE</b><span>遅延 0.4 秒</span></span
+                  ><span class="th-seek"></span></span
+                ><span class="th-chat"><i></i><i></i><i class="me"></i><i></i><i></i><i></i></span
+              ></span>
             </div>
+            <p class="example-flow">
+              <span class="chip">OBS / ffmpeg</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">moqtsink</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Live Viewer</h3></div>
               <p>OBS や ffmpeg の RTMP / SRT 配信を MoQ に変換し、ライブで視聴する</p>
@@ -314,24 +335,23 @@
         <div class="section-heading">
           <h2 id="ai-heading">AI 連携</h2>
         </div>
-        <div class="grid wide">
+        <div class="grid wide pairs">
           <a class="example" href="examples/moq-chat-moderation/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                ><span class="link">↔</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">↔</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
-                ><span class="link">↔</span
-                ><span class="node cloud"
-                  ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-chatlog"
+                ><span class="th-msg"><b>alice</b>Great stream today!<em class="ok">OK</em></span
+                ><span class="th-msg removed"
+                  ><b>troll42</b><s>You are all idiots</s><em class="ng">Removed by moderator</em></span
+                ><span class="th-msg"><b>carol</b>When is the next one?<em class="ok">OK</em></span
+                ><span class="th-input">Send a message…</span></span
+              >
             </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">d1-2B</span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Chat Moderation</h3></div>
               <p>チャットの発言を AI が読み、内容をラベル判定する</p>
@@ -344,22 +364,26 @@
             </div>
           </a>
           <a class="example" href="examples/moq-camera-detection/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-webcam" /></svg>Browser</span
-                ><span class="link">↔</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">↔</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
-                ><span class="link">↔</span
-                ><span class="node cloud"
-                  ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-cam" style="--a: #475569; --b: #1e293b"
+                ><span class="th-person" style="--c: #0f172a; width: 40%; left: 38%"></span
+                ><span class="th-table"></span
+                ><svg class="th-cup" viewBox="0 0 40 40">
+                  <path class="steam" d="M15 8 q-3 -4 0 -7 M22 8 q-3 -4 0 -7" />
+                  <path class="body" d="M8 12 h24 l-3 22 a3 3 0 0 1 -3 2.6 h-12 a3 3 0 0 1 -3 -2.6 z" />
+                  <path class="handle" d="M31 16 h3 a5 5 0 0 1 0 10 h-4" /></svg
+                ><span class="th-box" style="left: 22%; top: 18%; width: 32%; height: 82%"><b>人 0.94</b></span
+                ><span class="th-box" style="left: 65%; top: 44%; width: 19%; height: 38%"
+                  ><b>カップ 0.88</b></span
+                ></span
+              >
             </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">d1-2B</span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Camera Detection</h3></div>
               <p>カメラ映像についての質問に、AI が映像を見て答える</p>
@@ -372,25 +396,20 @@
             </div>
           </a>
           <a class="example" href="examples/moq-ptz-tracking/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow hub">
-                <span class="node hub-browser"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                ><span class="link hub-browser-link">↕</span
-                ><span class="node hub-camera"
-                  ><svg><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera</span
-                ><span class="link hub-camera-link">↔</span
-                ><span class="node relay hub-relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link hub-bot-link">↔</span
-                ><span class="node hub-bot"
-                  ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
-                ><span class="link hub-system-one-link">↔</span
-                ><span class="node cloud hub-system-one"
-                  ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-cam" style="--a: #334155; --b: #0f172a"
+                ><span class="th-person" style="--c: #020617; width: 34%; left: 58%"></span
+                ><span class="th-box dashed" style="left: 44%; top: 14%; width: 28%; height: 80%"><b>追従中</b></span
+                ><svg class="th-cross" viewBox="0 0 160 90"><path d="M80 37v16M72 45h16" /></svg
+              ></span>
             </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">+</span
+              ><span class="chip">PTZ Camera</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip">pipecat</span><span class="chip-link" aria-hidden="true">↔</span
+              ><span class="chip relay">d1-2B</span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>PTZ Tracking</h3></div>
               <p>指定した対象を AI が見つけ、PTZ カメラで画面に収め続ける</p>
@@ -403,24 +422,26 @@
             </div>
           </a>
           <a class="example" href="examples/live-translate/streamer/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <p class="flow">
-                <span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                ><span class="link">→</span
-                ><span class="node relay"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                ><span class="link">⇄</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-workflow" /></svg>live-translate<small
-                    >Gemini Live Translate</small
-                  ></span
-                ><span class="link">→</span
-                ><span class="node"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-                >
-              </p>
+            <div class="example-thumb" aria-hidden="true">
+              <span class="th-cam" style="--a: #1e3a8a; --b: #0b1533"
+                ><span class="th-person" style="--c: #93c5fd; width: 34%; left: 30%"></span
+                ><span class="th-speech">Hello everyone!</span
+                ><span class="th-langs"><i>EN</i><span>→</span><i class="on">JA</i></span
+                ><span class="th-hear"
+                  ><svg viewBox="0 0 24 24">
+                    <path
+                      d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"
+                    /></svg
+                  >みなさん、こんにちは！</span
+                ></span
+              >
             </div>
+            <p class="example-flow">
+              <span class="chip">Browser</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip relay">Relay</span><span class="chip-link" aria-hidden="true">⇄</span
+              ><span class="chip">live-translate</span><span class="chip-link" aria-hidden="true">→</span
+              ><span class="chip">Browser<span class="chip-count">×N</span></span>
+            </p>
             <div class="example-body">
               <div class="example-title"><h3>Live Translate</h3></div>
               <p>配信の音声を Gemini Live Translate で視聴者の言語に翻訳して届ける</p>
@@ -441,85 +462,113 @@
         </div>
         <div class="grid wide">
           <a class="example span-all" href="examples/observability/index.html">
-            <div class="example-visual" aria-hidden="true">
-              <div class="observability-map">
-                <svg class="observability-links" viewBox="0 0 444 270" aria-hidden="true">
-                  <defs>
-                    <marker
-                      id="obs-arrow"
-                      viewBox="0 0 10 10"
-                      refX="9"
-                      refY="5"
-                      markerWidth="7"
-                      markerHeight="7"
-                      orient="auto-start-reverse"
-                    >
-                      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
-                    </marker>
-                  </defs>
-                  <line
-                    x1="57.5"
-                    y1="34.0"
-                    x2="100.0"
-                    y2="34.0"
-                    marker-end="url(#obs-arrow)"
-                    marker-start="url(#obs-arrow)"
-                  />
-                  <line
-                    x1="160.0"
-                    y1="34.0"
-                    x2="280.0"
-                    y2="34.0"
-                    marker-end="url(#obs-arrow)"
-                    marker-start="url(#obs-arrow)"
-                  />
-                  <line
-                    x1="340.0"
-                    y1="34.0"
-                    x2="386.5"
-                    y2="34.0"
-                    marker-end="url(#obs-arrow)"
-                    marker-start="url(#obs-arrow)"
-                  />
-                  <line
-                    x1="160.0"
-                    y1="65.3"
-                    x2="190.0"
-                    y2="96.7"
-                    marker-end="url(#obs-arrow)"
-                    marker-start="url(#obs-arrow)"
-                  />
-                  <line
-                    x1="280.0"
-                    y1="65.3"
-                    x2="250.0"
-                    y2="96.7"
-                    marker-end="url(#obs-arrow)"
-                    marker-start="url(#obs-arrow)"
-                  />
-                  <line x1="145.4" y1="68.5" x2="204.6" y2="201.5" marker-end="url(#obs-arrow)" />
-                  <line x1="294.6" y1="68.5" x2="235.4" y2="201.5" marker-end="url(#obs-arrow)" />
-                  <line x1="220.0" y1="162.5" x2="220.0" y2="201.5" marker-end="url(#obs-arrow)" />
-                </svg>
-                <span class="node" style="left: 26px; top: 34px"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Client</span
-                >
-                <span class="node relay" style="left: 130px; top: 34px"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                >
-                <span class="node relay" style="left: 310px; top: 34px"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                >
-                <span class="node" style="left: 418px; top: 34px"
-                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Client</span
-                >
-                <span class="node relay" style="left: 220px; top: 128px"
-                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                >
-                <span class="node cloud" style="left: 220px; top: 236px"
-                  ><svg><use href="/icons.svg#icon-globe" /></svg>Observability</span
-                >
-              </div>
+            <div class="example-thumb" aria-hidden="true">
+              <svg class="th-globe" viewBox="0 0 400 225">
+                <defs>
+                  <radialGradient id="th-globe-sea" cx="38%" cy="32%" r="75%">
+                    <stop offset="0" stop-color="#134e4a" />
+                    <stop offset="0.55" stop-color="#0b2530" />
+                    <stop offset="1" stop-color="#050b14" />
+                  </radialGradient>
+                  <radialGradient id="th-globe-glow" r="50%">
+                    <stop offset="0.7" stop-color="rgba(45, 212, 191, 0.25)" />
+                    <stop offset="1" stop-color="rgba(45, 212, 191, 0)" />
+                  </radialGradient>
+                  <pattern id="th-globe-dots" width="4" height="4" patternUnits="userSpaceOnUse">
+                    <circle cx="2" cy="2" r="0.9" fill="rgba(94, 234, 212, 0.55)" />
+                  </pattern>
+                  <clipPath id="th-globe-clip"><circle cx="200" cy="112" r="92" /></clipPath>
+                </defs>
+                <g class="stars">
+                  <circle cx="30" cy="30" r="0.8" />
+                  <circle cx="70" cy="180" r="0.6" />
+                  <circle cx="352" cy="40" r="0.9" />
+                  <circle cx="372" cy="170" r="0.7" />
+                  <circle cx="320" cy="200" r="0.5" />
+                  <circle cx="48" cy="110" r="0.5" />
+                  <circle cx="96" cy="24" r="0.6" />
+                  <circle cx="340" cy="110" r="0.6" />
+                </g>
+                <circle cx="200" cy="112" r="106" fill="url(#th-globe-glow)" />
+                <circle cx="200" cy="112" r="92" fill="url(#th-globe-sea)" />
+                <g clip-path="url(#th-globe-clip)">
+                  <g class="land">
+                    <path
+                      d="M104 70 C118 58 146 60 156 72 C162 82 150 96 140 104 C132 110 120 106 112 98 C104 90 98 80 104 70 Z"
+                    />
+                    <path
+                      d="M150 128 C160 124 172 134 170 150 C168 166 160 182 154 188 C148 178 144 160 146 146 C147 138 146 132 150 128 Z"
+                    />
+                    <path
+                      d="M200 56 C214 50 230 54 236 64 C240 74 232 82 228 92 C236 104 236 122 226 136 C218 146 208 140 206 126 C204 112 196 104 198 92 C200 82 192 66 200 56 Z"
+                    />
+                    <path
+                      d="M244 60 C262 52 290 58 300 72 C306 84 300 98 288 106 C276 112 266 118 256 112 C246 104 240 92 242 80 C242 72 240 66 244 60 Z"
+                    />
+                    <path d="M262 140 C272 136 284 142 284 152 C282 160 270 162 262 156 C258 150 258 144 262 140 Z" />
+                  </g>
+                  <g class="grid">
+                    <ellipse cx="200" cy="112" rx="79.7" ry="92" />
+                    <ellipse cx="200" cy="112" rx="46.0" ry="92" />
+                    <line x1="200" y1="20" x2="200" y2="204" />
+                    <ellipse cx="200" cy="32.3" rx="46.0" ry="7.4" />
+                    <ellipse cx="200" cy="66.0" rx="79.7" ry="12.7" />
+                    <ellipse cx="200" cy="112.0" rx="92.0" ry="14.7" />
+                    <ellipse cx="200" cy="158.0" rx="79.7" ry="12.7" />
+                    <ellipse cx="200" cy="191.7" rx="46.0" ry="7.4" />
+                  </g>
+                </g>
+                <circle class="rim" cx="200" cy="112" r="92" />
+                <g class="client-links">
+                  <line x1="116" y1="80" x2="130" y2="92" />
+                  <line x1="142" y1="112" x2="130" y2="92" />
+                  <line x1="228" y1="56" x2="214" y2="68" />
+                  <line x1="300" y1="100" x2="284" y2="88" />
+                  <line x1="272" y1="146" x2="262" y2="130" />
+                  <line x1="150" y1="176" x2="158" y2="162" />
+                </g>
+                <g class="arcs">
+                  <path d="M130 92 Q154 59 214 68" />
+                  <path d="M214 68 Q268 65 284 88" />
+                  <path d="M284 88 Q288 108 262 130" />
+                  <path d="M262 130 Q262 91 214 68" />
+                  <path d="M130 92 Q121 133 158 162" />
+                  <path d="M158 162 Q152 122 214 68" />
+                </g>
+                <g class="flows">
+                  <path d="M130 92 Q154 59 214 68" style="animation-delay: -0s" />
+                  <path d="M214 68 Q268 65 284 88" style="animation-delay: -0.4s" />
+                  <path d="M284 88 Q288 108 262 130" style="animation-delay: -0.8s" />
+                  <path d="M262 130 Q262 91 214 68" style="animation-delay: -1.2s" />
+                  <path d="M130 92 Q121 133 158 162" style="animation-delay: -1.6s" />
+                  <path d="M158 162 Q152 122 214 68" style="animation-delay: -2s" />
+                </g>
+                <g class="clients">
+                  <circle cx="116" cy="80" r="1.8" />
+                  <circle cx="142" cy="112" r="1.8" />
+                  <circle cx="228" cy="56" r="1.8" />
+                  <circle cx="300" cy="100" r="1.8" />
+                  <circle cx="272" cy="146" r="1.8" />
+                  <circle cx="150" cy="176" r="1.8" />
+                </g>
+                <g class="relays">
+                  <circle class="halo" cx="130" cy="92" r="7" />
+                  <circle cx="130" cy="92" r="3.2" />
+                  <text x="136" y="86">IAD</text>
+                  <circle class="halo" cx="158" cy="162" r="7" />
+                  <circle cx="158" cy="162" r="3.2" />
+                  <text x="164" y="156">GRU</text>
+                  <circle class="halo" cx="214" cy="68" r="7" />
+                  <circle cx="214" cy="68" r="3.2" />
+                  <text x="220" y="62">FRA</text>
+                  <circle class="halo" cx="262" cy="130" r="7" />
+                  <circle cx="262" cy="130" r="3.2" />
+                  <text x="268" y="124">SIN</text>
+                  <circle class="halo" cx="284" cy="88" r="7" />
+                  <circle cx="284" cy="88" r="3.2" />
+                  <text x="290" y="82">TYO</text>
+                </g></svg
+              ><span class="th-metrics"><b>5</b> Relays<i></i><b>128</b> Sessions<i></i><b>0.2%</b> Loss</span>
             </div>
             <div class="example-body">
               <div class="example-title"><h3>Observability</h3></div>
