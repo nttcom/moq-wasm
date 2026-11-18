@@ -9,7 +9,8 @@ WORKDIR /workspace
 COPY . .
 RUN UV_PYTHON_DOWNLOADS=never uv build --wheel --python python3 --out-dir /wheels crates/python
 
-FROM python:3.11-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce
+# `bots`: every bot without the transcriber's models.
+FROM python:3.11-slim-trixie@sha256:0dd364ba7e10242f07755449e3a3d0e35f9efd987952737b90def6709ab0c5ce AS bots
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
@@ -46,6 +47,19 @@ COPY examples/python/moq-ai-voice-agent/moq_ai_voice_agent moq-ai-voice-agent/mo
 RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-meeting-transcriber moq-ai-voice-agent; do \
         uv pip install --python $bot/.venv/bin/python --no-deps -e $bot || exit 1; \
     done
+
+FROM rust:1.99.1-slim-trixie@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6 AS bot-service
+WORKDIR /workspace
+COPY . .
+RUN cargo build --locked --release -p bots
+
+# `demo`: the bots with the bot service, which launches them as local processes (compose.demo.yml).
+FROM bots AS demo
+COPY --from=bot-service /workspace/target/release/bots /usr/local/bin/
+CMD ["/usr/local/bin/bots"]
+
+FROM bots
+
 # Bake the transcriber's CPU models (the default Whisper and Granite Speech) into the image so a new
 # room does not wait for a download and Cloud Run does not hold the files in the instance's memory.
 ENV HF_HOME=/opt/huggingface
