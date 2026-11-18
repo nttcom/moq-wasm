@@ -4,41 +4,36 @@ import aiohttp
 import pytest
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
-from moq_meeting_transcriber.bot import bot_from_query, http_recognizers
-from tests.helpers import NamedRecognizer
+from moq_meeting_transcriber.bot import recognizer_named
+from moq_meeting_transcriber.granite import SharedGranite
 
-ARGS = argparse.Namespace(relay_url="moqt://relay.example", insecure=False)
-
-
-RECOGNIZERS = {"whisper": NamedRecognizer("whisper"), "qwen3-asr": NamedRecognizer("qwen3-asr")}
-
-
-@pytest.mark.parametrize(("query", "expected"), [({}, "whisper"), ({"asr": "qwen3-asr"}, "qwen3-asr")])
-def test_the_query_picks_the_recognizer_and_whisper_is_the_default(query, expected):
-    # Act
-    run_bot = bot_from_query(ARGS, RECOGNIZERS, query)
-
-    # Assert
-    assert run_bot.args[1].name == expected
+ARGS = argparse.Namespace(
+    asr=[f"{GRANITE_SPEECH}=https://granite.example", "qwen3-asr=https://qwen.example"],
+    gcloud_auth=False,
+    metadata_auth=False,
+)
 
 
-def test_a_recognizer_the_bot_was_not_started_with_is_refused():
-    # Act / Assert
-    with pytest.raises(ValueError, match="unknown asr"):
-        bot_from_query(ARGS, RECOGNIZERS, {"asr": "https://elsewhere.example"})
-
-
-async def test_granite_speech_is_called_through_its_own_recognizer():
-    # Arrange
-    args = argparse.Namespace(
-        asr=[f"{GRANITE_SPEECH}=https://granite.example", "qwen3-asr=https://qwen.example"],
-        gcloud_auth=False,
-        metadata_auth=False,
-    )
-    async with aiohttp.ClientSession() as session:
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("granite-speech-5-470m", SharedGranite),
+        (GRANITE_SPEECH, GraniteSpeechRecognizer),
+        ("qwen3-asr", HttpRecognizer),
+    ],
+)
+async def test_the_option_picks_the_recognizer(name, expected):
+    async with aiohttp.ClientSession() as http:
         # Act
-        recognizers = http_recognizers(args, session)
+        recognizer = recognizer_named(ARGS, http, name)
 
     # Assert
-    assert type(recognizers[GRANITE_SPEECH]) is GraniteSpeechRecognizer
-    assert type(recognizers["qwen3-asr"]) is HttpRecognizer
+    assert type(recognizer) is expected
+    assert recognizer.name == name
+
+
+async def test_a_recognizer_the_bot_was_not_started_with_is_refused():
+    async with aiohttp.ClientSession() as http:
+        # Act / Assert
+        with pytest.raises(ValueError, match="unknown asr"):
+            recognizer_named(ARGS, http, "https://elsewhere.example")

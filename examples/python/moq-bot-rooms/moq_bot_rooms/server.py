@@ -3,7 +3,7 @@ import asyncio
 import os
 import re
 import signal
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 
 import aiohttp
 from aiohttp import web
@@ -71,19 +71,13 @@ def room_app(
     temporary_apps: TemporaryApps,
     only_room: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
-    room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
-    bot_from_query: Callable[[Mapping[str, str]], RunBot] | None = None,
 ) -> web.Application:
     """`GET /rooms/{room}` holds the room while the page keeps the event stream open, which starts
     with a `member` event naming the hold. `POST /rooms/{room}/leave?member=` ends that hold at once.
-    `POST /rooms/{room}/stop?member=` ends the room for every page that holds it.
 
     A request with `Authorization: Bearer <token>` holds the room under the token's temporary app,
     which `temporary_apps` vouches for by refreshing the token: 401 if it refuses, 503 if it does not
     answer. A request without one holds the room under the public root.
-
-    With `bot_from_query`, the query of the request that starts a room picks the room's bot; it
-    raises `ValueError` for a query it refuses, which the page gets as 400.
     """
 
     def allow_origin(origin: str | None) -> str:
@@ -111,12 +105,8 @@ def room_app(
         if allowed_origins and origin not in allowed_origins:
             raise web.HTTPForbidden()
         room_id = request.match_info["room"]
-        if not room_id_pattern.fullmatch(room_id) or (only_room is not None and room_id != only_room):
+        if not ROOM_ID_PATTERN.fullmatch(room_id) or (only_room is not None and room_id != only_room):
             raise web.HTTPNotFound()
-        try:
-            run_bot = bot_from_query(request.query) if bot_from_query else None
-        except ValueError as error:
-            raise web.HTTPBadRequest(text=str(error)) from error
         room = await bot_room(request, room_id)
         response = web.StreamResponse(
             headers={
@@ -126,7 +116,7 @@ def room_app(
             }
         )
         await response.prepare(request)
-        membership = rooms.join(room, run_bot)
+        membership = rooms.join(room)
         try:
             await response.write(f"event: member\ndata: {membership.id}\n\n".encode())
             reason = await hold(response, membership, heartbeat_seconds)
@@ -177,9 +167,8 @@ def room_app(
     app.router.add_get("/rooms/{room}", room_events)
     # A page in a temporary app sends its token in a header, which needs a CORS preflight.
     app.router.add_route("OPTIONS", "/rooms/{room}", room_preflight)
-    # The page sends these without a body or headers, so the browser needs no CORS preflight.
+    # The page sends this without a body or headers, so the browser needs no CORS preflight.
     app.router.add_post("/rooms/{room}/leave", member_action(rooms.leave))
-    app.router.add_post("/rooms/{room}/stop", member_action(rooms.stop))
     return app
 
 
@@ -197,8 +186,6 @@ async def serve_rooms(
     args: argparse.Namespace,
     run_bot: RunBot,
     only_room: str | None = None,
-    room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
-    bot_from_query: Callable[[Mapping[str, str]], RunBot] | None = None,
 ) -> None:
     """Serves rooms until SIGINT or SIGTERM, then stops every bot before it returns."""
     endpoint = telemetry_endpoint(args.telemetry_url, args.no_telemetry, args.relay_url)
@@ -210,16 +197,7 @@ async def serve_rooms(
             max_room_seconds=args.max_room_seconds,
             open_hours=args.open_hours,
         )
-        runner = web.AppRunner(
-            room_app(
-                rooms,
-                args.allowed_origin,
-                temporary_apps,
-                only_room,
-                room_id_pattern=room_id_pattern,
-                bot_from_query=bot_from_query,
-            )
-        )
+        runner = web.AppRunner(room_app(rooms, args.allowed_origin, temporary_apps, only_room))
         await runner.setup()
         await web.TCPSite(runner, args.host, args.port).start()
         logger.info(f"serving rooms on http://{args.host}:{args.port}")

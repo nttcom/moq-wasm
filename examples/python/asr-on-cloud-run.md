@@ -1,6 +1,6 @@
 # 音声認識を Cloud Run の GPU にデプロイする
 
-Meeting の書き起こし bot（`moq-meeting-transcriber`）が `?asr=` で呼ぶ、GPU の音声認識サーバです。
+Meeting の書き起こし bot（`moq-meeting-transcriber`）がオプション `asr` で呼ぶ、GPU の音声認識サーバです。
 どちらのモデルも vLLM で動かし、OpenAI 互換の API で答えます。
 bot は発話の区間ごとに WAV を送ります。Qwen3-ASR には `/v1/audio/transcriptions` で、Granite Speech には `/v1/chat/completions` で送ります。
 vLLM の書き起こし API は、Granite Speech に言語を書かない決まったプロンプトを渡すため、bot は日本語だと書いたプロンプトをチャット API で送ります。設計は [Live transcription for the Meeting example](../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
@@ -18,7 +18,7 @@ System One の判定サーバ（[d1-2B を Cloud Run にデプロイする](syst
 | --- | --- |
 | IAM 認証必須。専用のサービスアカウントを使う | GPU の費用がかかるため |
 | 重みを GCS に置き、起動時に `/dev/shm` へコピーする | 判定サーバと同じく、GCS のマウントから直接読み込むと遅いため |
-| モデル名を `--served-model-name <asr>` にする | bot は `?asr=` の名前をモデル名として送るため |
+| モデル名を `--served-model-name <asr>` にする | bot はオプション `asr` の名前をモデル名として送るため |
 
 > この手順は、モデルカードと判定サーバ（当時は d3-flash）の手順をもとに書いたもので、まだ GPU 上で通していません。初回のデプロイで確かめてください。
 > イメージは digest で固定します。Qwen3-ASR はモデルカードが求める nightly 版以降の `vllm/vllm-openai:nightly`、Granite Speech はリリース版の `vllm/vllm-openai` です。
@@ -105,10 +105,10 @@ bot のサービスアカウント（手元ならそのアカウント）に `ro
 gcloud run services add-iam-policy-binding moqt-${ASR} --project=${PROJECT} --region=${REGION} \
   --member=serviceAccount:<bot のサービスアカウント> --role=roles/run.invoker
 ASR_URL=$(gcloud run services describe moqt-${ASR} --project=${PROJECT} --region=${REGION} --format 'value(status.url)')
-uv run python -m moq_meeting_transcriber.bot --asr ${ASR}=${ASR_URL} --metadata-auth
 ```
 
-手元の bot から呼ぶときは `--metadata-auth` の代わりに `--gcloud-auth` を付けます。
+bot サービスの `BOTS_TYPES` で、`transcriber` の `args` に `--asr ${ASR}=${ASR_URL}` と `--metadata-auth` を足します（[moq-meeting-transcriber](moq-meeting-transcriber/README.md)）。
+手元で起動する bot から呼ぶときは `--metadata-auth` の代わりに `--gcloud-auth` を付けます。
 
 ## 費用と起動時間
 

@@ -27,7 +27,7 @@ See [relay and authentication](../../README.md#relay-and-authentication) for acc
 - **Quality switching**: `Auto` (the default) picks a rendition no taller than the tile and steps down when delivery falls behind; a new rendition takes over at a group boundary.
 - **Stats**: a per-participant modal charts bitrate, the playout buffer, the capture-to-display delay and the A/V offset.
 - **Recording**: in a temporary app's room, Record in Activities asks the temporary-apps service ([`services/temporary-apps`](../../../../services/temporary-apps/README.md)) to start the recorder bot through [`services/bots`](../../../../docs/architecture/bots/architecture.md); the bot records the whole room as a MoQ archive with chat and transcript, as one composited video, or as one file per participant or per track. The recorder (`make recorder-serve`, see [`services/recorder`](../../../../services/recorder/README.md)) lists the room's recordings, and a finished MoQ archive opens in the [Recording Player](../recording-player/). `?temporaryAppsUrl=` and `?recorderUrl=` name the two services.
-- **Captions**: with the transcriber ([`examples/python/moq-meeting-transcriber`](../../../python/moq-meeting-transcriber/README.md)), STT in Activities asks it into the room; each speaker's newest utterance shows on their tile. `?transcriberUrl=` names the transcriber.
+- **Captions**: in a temporary app's room, STT in Activities asks the temporary-apps service to start the transcriber bot ([`examples/python/moq-meeting-transcriber`](../../../python/moq-meeting-transcriber/README.md)) through `services/bots`; each speaker's newest utterance shows on their tile.
 - **Chat** sidebar.
 
 Only a temporary app's page starts a recording: a registered app's server

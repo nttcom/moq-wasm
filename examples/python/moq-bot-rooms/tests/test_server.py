@@ -109,44 +109,6 @@ async def test_server_for_one_room_refuses_any_other(open_client):
     fixed.close()
 
 
-async def test_room_id_follows_the_pattern_the_bot_passes(open_client):
-    # Arrange
-    bots = FakeBots()
-    client = await open_client(bots, allowed_origins=[], room_id_pattern=re.compile(r"[^/]{1,64}"))
-
-    # Act
-    response = await client.get("/rooms/Team%20A")
-
-    # Assert
-    assert response.status == 200
-    await settle()
-    assert bots.started == ["Team A"]
-    response.close()
-
-
-async def test_the_query_picks_the_bot_and_a_refused_query_is_a_bad_request(open_client):
-    # Arrange
-    picked = FakeBots()
-
-    def bot_from_query(query):
-        if query.get("asr") != "qwen3-asr":
-            raise ValueError("unknown asr")
-        return picked.run
-
-    client = await open_client(FakeBots(), allowed_origins=[], bot_from_query=bot_from_query)
-
-    # Act
-    refused = await client.get("/rooms/abc?asr=other")
-    accepted = await client.get("/rooms/abc?asr=qwen3-asr")
-    await settle()
-
-    # Assert
-    assert refused.status == 400
-    assert accepted.status == 200
-    assert picked.started == ["abc"]
-    accepted.close()
-
-
 async def test_page_that_posts_leave_ends_its_hold_and_the_room_at_once(open_client):
     # Arrange
     bots = FakeBots()
@@ -174,25 +136,6 @@ async def test_leave_from_another_origin_is_refused(open_client):
 
     # Assert
     assert left.status == 403
-
-
-async def test_page_that_posts_stop_ends_the_room_for_every_page(open_client):
-    # Arrange
-    bots = FakeBots()
-    client = await open_client(bots, allowed_origins=[PAGE_ORIGIN])
-    stopping = await client.get("/rooms/abc", headers={"Origin": PAGE_ORIGIN})
-    other = await client.get("/rooms/abc", headers={"Origin": PAGE_ORIGIN})
-    first_event = (await stopping.content.readuntil(b"\n\n")).decode()
-    member = re.fullmatch(r"event: member\ndata: (\S+)\n\n", first_event).group(1)
-
-    # Act
-    stopped = await client.post(f"/rooms/abc/stop?member={member}", headers={"Origin": PAGE_ORIGIN})
-    other_body = await asyncio.wait_for(other.content.read(), 2)
-
-    # Assert
-    assert stopped.status == 204
-    assert bots.running == set()
-    assert other_body.endswith(b"event: stopped\ndata: stopped\n\n")
 
 
 async def test_a_page_token_runs_the_room_under_its_app_with_a_token_of_its_own(open_client):

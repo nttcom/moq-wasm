@@ -21,7 +21,6 @@ class RoomEnd(StrEnum):
     CLOSED = "closed"
     EXPIRED = "expired"
     FAILED = "failed"
-    STOPPED = "stopped"
 
 
 @dataclass(frozen=True)
@@ -116,10 +115,8 @@ class Rooms:
         self._members: dict[str, tuple[Membership, _Room]] = {}
         self._shutting_down = False
 
-    def join(self, bot_room: BotRoom, run_bot: RunBot | None = None) -> Membership:
-        """`run_bot`, when given, runs the room's bot instead of the default one if this join
-        starts the room; a join to a running room leaves its bot, and the token it runs with, as
-        they are."""
+    def join(self, bot_room: BotRoom) -> Membership:
+        """A join to a running room leaves its bot, and the token it runs with, as they are."""
         if self._shutting_down:
             return Membership.refused(None)
         room = self._rooms.get(bot_room.key)
@@ -128,7 +125,7 @@ class Rooms:
                 return Membership.refused(RoomEnd.CLOSED)
             if sum(not other.ended.done() for other in self._rooms.values()) >= self._max_rooms:
                 return Membership.refused(RoomEnd.FULL)
-            room = self._start(bot_room, run_bot or self._run_bot)
+            room = self._start(bot_room)
         elif room.ended.done():
             # The room ended while pages held it and is remembered until they are gone, so a
             # page that reconnects learns why instead of starting the room again.
@@ -153,18 +150,6 @@ class Rooms:
             await asyncio.wait([room.task])
         return True
 
-    async def stop(self, member_id: str) -> bool:
-        """Ends the named hold's room for every page that holds it; False for an ID no page holds.
-        Returns once the room's bot has left, and forgets the room so that the next join starts a new
-        bot."""
-        if member_id not in self._members:
-            return False
-        _, room = self._members[member_id]
-        self._end(room, RoomEnd.STOPPED)
-        await asyncio.wait([room.task])
-        self._remove(room)
-        return True
-
     def close_outside_hours(self) -> None:
         if self._is_open():
             return
@@ -181,17 +166,17 @@ class Rooms:
     def _is_open(self) -> bool:
         return self._open_hours is None or self._open_hours.contains(self._now())
 
-    def _start(self, bot_room: BotRoom, run_bot: RunBot) -> _Room:
+    def _start(self, bot_room: BotRoom) -> _Room:
         room = _Room(bot_room)
         self._rooms[room.key] = room
-        room.task = asyncio.create_task(self._run(room, run_bot))
+        room.task = asyncio.create_task(self._run(room))
         room.expiry = asyncio.get_running_loop().call_later(self._max_room_seconds, self._end, room, RoomEnd.EXPIRED)
         logger.info(f"room {room.key}: bot started")
         return room
 
-    async def _run(self, room: _Room, run_bot: RunBot) -> None:
+    async def _run(self, room: _Room) -> None:
         try:
-            await run_bot(room.room)
+            await self._run_bot(room.room)
         except asyncio.CancelledError:
             raise
         except Exception:

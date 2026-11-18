@@ -1,23 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { temporaryAppToken } from '../../../../utils/access'
-import { type BotRoomEnd, BotRoomRequest } from '../../../../utils/botRoom'
-import { resolveServiceUrl } from '../../../../utils/serviceUrl'
+import { temporaryAppToken, temporaryAppsUrl } from '../../../../utils/access'
+import { type BotsApi, latestBot, startBot, stopBot } from '../bots/roomBots'
 import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcriptRecordKey } from '../media/transcript'
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE } from '../session/trackNamespace'
 
-const TRANSCRIBER_SERVICE = {
-  param: 'transcriberUrl',
-  local: 'http://127.0.0.1:8100',
-  cloud: 'https://moq-meeting-transcriber.moqt.research.skyway.io'
-}
-const TRANSCRIBER_END_TEXT: Record<BotRoomEnd, string> = {
-  full: 'no transcriber free',
-  closed: 'transcriber closed',
-  expired: 'transcriber left after an hour',
-  failed: 'transcriber stopped',
-  stopped: 'stopped by a participant'
-}
+const TRANSCRIBER_BOT_TYPE = 'transcriber'
+/// How often a page that started the transcriber asks `bots` whether it failed before joining the room.
+const STARTING_POLL_INTERVAL_MS = 5_000
 
 /// The recognizers the deployed transcriber offers (docs/architecture/ai-bots/meeting-transcriber.md).
 export const ASR_CHOICES = [
@@ -29,11 +19,11 @@ export const ASR_CHOICES = [
 ] as const
 
 export type CaptionsControls = {
-  /// Whether the transcriber is in the room or this page has asked it in.
+  /// Whether the transcriber is in the room or this page has started it.
   active: boolean
   /// Whether this page shows captions on the tiles: while `active`, unless hidden with `show(false)`.
   on: boolean
-  /// Asks the transcriber in with `asr`; a transcriber already in the room keeps its own.
+  /// Starts the transcriber with `asr`; a transcriber already in the room keeps its own.
   start: (asr: string) => void
   /// Stops the transcriber for everyone in the room.
   stop: () => void
@@ -41,7 +31,7 @@ export type CaptionsControls = {
   show: (shown: boolean) => void
   /// `undefined` until the transcriber's status arrives and after it leaves.
   status: TranscriberStatus | undefined
-  /// Why the transcriber left while this page held it.
+  /// Why this page failed to start or stop the transcriber.
   error: string | undefined
   /// The room's transcript while the transcriber is in the room, whether or not `on`.
   records: TranscriptRecord[]
@@ -49,48 +39,47 @@ export type CaptionsControls = {
   captions: Map<string, string>
 }
 
-/// `null` in a room the transcriber does not serve.
+/// `null` in a room the transcriber does not serve. The transcriber is a bot of the room
+/// (bots/roomBots.ts), which any page starts and stops; whether it is in the room comes from its
+/// namespace, `transcriberPresent`.
 export function useCaptions(session: LocalSession, transcriberPresent: boolean): CaptionsControls | null {
-  const [asr, setAsr] = useState<string>()
-  // Set when this page's hold ends, so that the page does not hold the transcriber again before the transcriber has left the room.
-  const [ended, setEnded] = useState(false)
+  // The bot this page started, until it joins the room or ends.
+  const [startingId, setStartingId] = useState<string>()
   const [hidden, setHidden] = useState(false)
-  const active = transcriberPresent || asr !== undefined
+  const active = transcriberPresent || startingId !== undefined
   const on = active && !hidden
   const [status, setStatus] = useState<TranscriberStatus>()
   const [error, setError] = useState<string>()
   const [records, setRecords] = useState<TranscriptRecord[]>([])
   const arrivals = useRef(new Map<string, number>())
   const [now, setNow] = useState(() => Date.now())
-  // Every page holds the transcriber while it is in the room, so one page leaving does not stop it for the others.
-  const heldAsr = asr ?? (transcriberPresent && !ended ? status?.asr : undefined)
-  const holding = useRef<BotRoomRequest>(undefined)
+  const bots = useMemo<BotsApi>(() => ({ url: temporaryAppsUrl(), token: temporaryAppToken }), [])
+  const namespacePrefix = session.trackNamespacePrefix.join('/')
 
   useEffect(() => {
-    if (heldAsr === undefined) {
+    if (transcriberPresent) {
+      setStartingId(undefined)
+    }
+  }, [transcriberPresent])
+
+  useEffect(() => {
+    if (startingId === undefined) {
       return
     }
-    const request = new BotRoomRequest((reason) => {
-      setAsr(undefined)
-      setEnded(true)
-      setError(TRANSCRIBER_END_TEXT[reason])
-    })
-    request.open(resolveServiceUrl(window.location.search, session.relayUrl, TRANSCRIBER_SERVICE), session.roomName, {
-      query: { asr: heldAsr },
-      token: temporaryAppToken
-    })
-    holding.current = request
-    return () => {
-      // `stop` takes the request over and closes it once the server has stopped the room.
-      if (holding.current === request) {
-        holding.current = undefined
-        request.close()
-      }
-    }
-  }, [heldAsr, session])
+    const timer = window.setInterval(() => {
+      latestBot(bots, TRANSCRIBER_BOT_TYPE, namespacePrefix)
+        .then((bot) => {
+          if (bot?.id !== startingId || bot.state === 'failed' || bot.state === 'finished') {
+            setStartingId(undefined)
+            setError(bot?.state === 'failed' ? 'transcriber failed to start' : undefined)
+          }
+        })
+        .catch((caught) => console.warn('[meeting][captions] cannot read the transcriber', caught))
+    }, STARTING_POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [bots, namespacePrefix, startingId])
 
   useEffect(() => {
-    setEnded(false)
     if (!transcriberPresent) {
       setStatus(undefined)
       return
@@ -139,18 +128,18 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
   return {
     active,
     on,
-    start: (choice) => {
+    start: (asr) => {
       setError(undefined)
-      setEnded(false)
       setHidden(false)
-      setAsr(choice)
+      startBot(bots, TRANSCRIBER_BOT_TYPE, namespacePrefix, { asr })
+        .then((bot) => setStartingId(bot.id))
+        .catch((caught) => setError(errorText(caught)))
     },
     stop: () => {
-      const request = holding.current
-      holding.current = undefined
-      setAsr(undefined)
-      setEnded(true)
-      void request?.stop()
+      setStartingId(undefined)
+      latestBot(bots, TRANSCRIBER_BOT_TYPE, namespacePrefix)
+        .then((bot) => (bot ? stopBot(bots, TRANSCRIBER_BOT_TYPE, bot.id) : undefined))
+        .catch((caught) => setError(errorText(caught)))
     },
     show: (shown) => setHidden(!shown),
     status,
@@ -158,6 +147,10 @@ export function useCaptions(session: LocalSession, transcriberPresent: boolean):
     records,
     captions
   }
+}
+
+function errorText(caught: unknown): string {
+  return caught instanceof Error ? caught.message : String(caught)
 }
 
 /// The effect's cleanup: unsubscribes whether or not the SUBSCRIBE has been answered yet.
