@@ -978,11 +978,11 @@ private range, so publishing the extension would need a provisional
 registration.
 `moqt` has no OpenTelemetry dependency: the application gives it the current
 span's `traceparent` with `set_trace_context_provider` (the relay through
-`telemetry::current_traceparent`, the wasm module and `moq-cli` through
+`telemetry_otlp::current_traceparent`, the wasm module and `moq-cli` through
 `client_telemetry::current_traceparent`), and the send functions read it inside the request span. Without a
 provider the parameter is omitted. In the other direction,
 `set_trace_context_joiner` gives it the function that makes a span a child
-of a received `traceparent` (`telemetry::continue_trace_from_traceparent` or
+of a received `traceparent` (`telemetry_otlp::continue_trace_from_traceparent` or
 `client_telemetry::continue_trace_from_traceparent`); `client::Session` calls
 it on the spans that answer the peer's requests. On receipt, `trace_context()` on
 `SubscribeHandler`, `PublishHandler`, `FetchHandler`,

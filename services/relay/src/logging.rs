@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use opentelemetry::trace::{Status, TraceContextExt as _};
-use telemetry::{LogOutput, TelemetryConfig, TelemetryGuard, non_empty_env};
+use telemetry_otlp::{LogOutput, TelemetryConfig, TelemetryGuard, non_empty_env};
 use tracing::Span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
@@ -27,9 +27,9 @@ pub(crate) fn relay_hostname() -> &'static str {
 }
 
 pub fn init_logging(service_name: &str) -> anyhow::Result<TelemetryGuard> {
-    moqt::set_trace_context_provider(telemetry::current_traceparent);
+    moqt::set_trace_context_provider(telemetry_otlp::current_traceparent);
     let relay_hostname = relay_hostname();
-    telemetry::init(TelemetryConfig {
+    telemetry_otlp::init(TelemetryConfig {
         service_name,
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["relay=info", "moqt=info"],

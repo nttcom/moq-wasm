@@ -37,7 +37,7 @@ GET /healthz -> 200 { "status": "ok" }
 | `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that append to `X-Forwarded-For`; `0` takes the connection's peer address |
 | `PORT` | `8083` | Listen port |
 
-Logging and OTLP export follow `crates/telemetry` (`TEMPORARY_APPS_STDOUT_FILTER`
+Logging and OTLP export follow `crates/telemetry-otlp` (`TEMPORARY_APPS_STDOUT_FILTER`
 and the standard `OTEL_*` variables).
 
 ## Running

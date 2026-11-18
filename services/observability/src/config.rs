@@ -1,5 +1,5 @@
 use anyhow::Context;
-use telemetry::non_empty_env;
+use telemetry_otlp::non_empty_env;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClickHouseConfig {

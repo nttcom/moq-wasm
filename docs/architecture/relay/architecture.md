@@ -35,7 +35,7 @@ each other only through `VerifiedToken` / `SessionExpiryTask`.
 ## Startup path
 
 `main.rs`:
-1. `init_logging` (tracing + OpenTelemetry OTLP export, set up by `crates/telemetry`).
+1. `init_logging` (tracing + OpenTelemetry OTLP export, set up by `crates/telemetry-otlp`).
 2. Generate self-signed certs under `RELAY_CERT_DIR` (default `services/relay/keys/`) if missing.
 3. `RelayConfig::from_env()` — `RELAY_ID`, `RELAY_ADVERTISE_HOST`,
    `RELAY_PUBLIC_HOST` (the `host[:port]` clients connect to, default
@@ -1493,9 +1493,9 @@ the path its traces and logs already take, so the observability server needs
 no list of relays and no session to each.
 
 - `StatsExportTask` runs only with OTLP on. Once per second it collects a
-  snapshot, emits it through `telemetry::EventLogger` (`EventName`
+  snapshot, emits it through `telemetry_otlp::EventLogger` (`EventName`
   `relay.stats.snapshot`, the JSON in its `snapshot` attribute) and records
-  its `process` values through `telemetry::relay_stats::ProcessGauges`
+  its `process` values through `telemetry_otlp::ProcessGauges`
   ("Relay gauges" in the observability architecture). It reads the
   same locks as the control plane, so a stuck runtime or lock stops the
   records and the relay leaves the live view.

@@ -74,7 +74,7 @@ async fn handle(
         "http.response.status_code" = tracing::field::Empty,
         app_id = tracing::field::Empty,
     );
-    telemetry::continue_trace_from(&span, &head.headers);
+    telemetry_otlp::continue_trace_from(&span, &head.headers);
     let response = async {
         match (&head.method, head.uri.path()) {
             (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),

@@ -26,7 +26,7 @@ Target scale: 3 relays, up to 100 clients.
 ```mermaid
 flowchart LR
   subgraph relay-a
-    C[StatsCollector] --> E[telemetry::EventLogger]
+    C[StatsCollector] --> E[telemetry_otlp::EventLogger]
   end
   E -- "OTLP gRPC log record<br/>relay.stats.snapshot" --> K[ClickStack collector]
   K -- INSERT --> L[(otel.otel_logs)]
@@ -337,7 +337,7 @@ between sessions, tracks and subscriptions; querying the snapshot JSON in
 
 The page reads the tables above, but HyperDX dashboards and alerts read
 `otel_metrics_*`. So the relay also records each snapshot's `process` values
-as OTLP gauges (`telemetry::relay_stats::ProcessGauges`), exported every 10 s
+as OTLP gauges (`telemetry_otlp::ProcessGauges`), exported every 10 s
 with resource `service.name=relay` and `relay.id`:
 
 | Metric | Unit | `process` field |

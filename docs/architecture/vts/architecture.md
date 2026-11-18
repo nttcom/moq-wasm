@@ -88,7 +88,7 @@ sequenceDiagram
 
 ## Operational notes
 
-- Logging goes through `tracing`, set up by `crates/telemetry`: `verify ok` /
+- Logging goes through `tracing`, set up by `crates/telemetry-otlp`: `verify ok` /
   `verify rejected` at INFO, per-connection HTTP errors at DEBUG.
   `VTS_STDOUT_FILTER`, `VTS_OTEL_FILTER` and `VTS_LOG_FILTER` filter, each
   falling back to `RUST_LOG`.

@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, bail};
 use moqt::CertificateVerification;
-use telemetry::non_empty_env;
+use telemetry_otlp::non_empty_env;
 
 use auth_token::ClaimPolicy;
 

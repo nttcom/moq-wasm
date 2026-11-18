@@ -24,7 +24,7 @@ sha2 = "0.9"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1"
 transcode = { path = "../../crates/transcode" }
-telemetry = { path = "../../crates/telemetry" }
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 url = "2.5.8"
 
 [dev-dependencies]

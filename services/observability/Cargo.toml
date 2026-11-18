@@ -17,6 +17,7 @@ serde_json = "1"
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 tracing = "0.1.44"
 telemetry = { path = "../../crates/telemetry" }
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["test-util"] }

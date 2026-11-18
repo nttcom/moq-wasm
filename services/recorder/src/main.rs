@@ -329,7 +329,7 @@ impl LauncherArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
         service_name: "recorder",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &[
@@ -339,7 +339,7 @@ async fn main() -> Result<()> {
             "mediapack=info",
             "transcode=info",
         ],
-        log_output: telemetry::LogOutput::Stderr,
+        log_output: telemetry_otlp::LogOutput::Stderr,
         ..Default::default()
     })?;
     // One parser per mode instead of clap subcommands: with subcommands, a

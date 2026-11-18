@@ -14,7 +14,7 @@ msf = { path = "../../crates/msf" }
 serde_json = "1"
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = "0.1"
-telemetry = { path = "../../crates/telemetry" }
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 
 [dev-dependencies]
 moqt = { path = "../../crates/moqt", features = ["self-signed-cert"] }

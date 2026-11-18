@@ -12,11 +12,11 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
         service_name: "observability",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["observability=info"],
-        log_output: telemetry::LogOutput::Stdout,
+        log_output: telemetry_otlp::LogOutput::Stdout,
         ..Default::default()
     })?;
     let config = ObservabilityConfig::from_env()?;

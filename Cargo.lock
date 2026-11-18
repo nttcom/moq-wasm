@@ -538,7 +538,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
 ]
@@ -1739,7 +1739,7 @@ dependencies = [
  "moqt",
  "msf",
  "serde_json",
- "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
 ]
@@ -1758,7 +1758,7 @@ dependencies = [
  "rml_rtmp",
  "socket2 0.6.5",
  "srt-tokio",
- "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
  "transcode",
@@ -1949,7 +1949,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-native-certs",
- "telemetry",
+ "telemetry-otlp",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
@@ -2152,6 +2152,7 @@ dependencies = [
  "serde",
  "serde_json",
  "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
 ]
@@ -2196,7 +2197,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "telemetry",
+ "telemetry-otlp",
  "time",
  "tokio",
  "tracing",
@@ -2810,7 +2811,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "sha2",
- "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
  "transcode",
@@ -2920,6 +2921,7 @@ dependencies = [
  "serde",
  "serde_json",
  "telemetry",
+ "telemetry-otlp",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3554,14 +3556,22 @@ name = "telemetry"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "telemetry-otlp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "http",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rustls",
- "serde",
- "serde_json",
+ "telemetry",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -3580,7 +3590,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
 ]
@@ -4096,7 +4106,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "telemetry",
+ "telemetry-otlp",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -10,7 +10,7 @@ An arrow `A --> B` means `A` depends on `B`. A crate depends only on crates in i
 | Media | `mediapack`, `broadcast`, `transcode` | Containers and codecs, and turning media into an MSF broadcast. |
 | Applications | `relay`, `live-ingest`, `live-egress`, `onvif-ingest`, `recorder`, `gst-plugin-moqt`, `observability`, `vts`, `console` | Binaries and plugins. Nothing in the workspace depends on them. |
 | Bindings | `wasm`, `python` | `moqt` exposed to the browser and to Python. Nothing in the workspace depends on them. |
-| Shared support | `telemetry`, `client-telemetry`, `auth-token`, `app-registry`, `google-cloud` | Small crates shared by the applications; among them only `app-registry` depends on another (`google-cloud`). |
+| Shared support | `telemetry`, `telemetry-otlp`, `client-telemetry`, `auth-token`, `app-registry`, `google-cloud` | Small crates shared by the applications; among them only `telemetry-otlp` (on `telemetry`) and `app-registry` (on `google-cloud`) depend on another. |
 
 ## Media and protocol
 
@@ -79,7 +79,7 @@ flowchart TD
 
 - Publishers build their MSF broadcast through `broadcast`; the subscribers `live-egress` and `recorder` read the catalog with `msf` and the objects with `moqt` directly.
 - `mediapack` depends on `moqt` only with its `moqt` feature (the dotted arrow), which maps LOC properties to MoQT extension headers.
-- Arrows to `telemetry`, `client-telemetry` and `auth-token` are left out of this diagram.
+- Arrows to `telemetry-otlp`, `client-telemetry` and `auth-token` are left out of this diagram.
 
 ## Relay and services
 
@@ -97,6 +97,7 @@ flowchart TD
         auth-token
         app-registry
         google-cloud
+        telemetry-otlp
         telemetry
     end
 
@@ -104,22 +105,25 @@ flowchart TD
 
     relay --> moqt
     relay --> auth-token
+    relay --> telemetry-otlp
     relay --> telemetry
 
     recorder --> auth-token
     recorder --> google-cloud
 
+    observability --> telemetry-otlp
     observability --> telemetry
 
     vts --> auth-token
     vts --> app-registry
-    vts --> telemetry
+    vts --> telemetry-otlp
 
     console --> auth-token
     console --> app-registry
-    console --> telemetry
+    console --> telemetry-otlp
 
     app-registry --> google-cloud
+    telemetry-otlp --> telemetry
 ```
 
 - Only `vts` and `console` read `app-registry`; `relay` and `recorder` reach it through `vts` over HTTP.

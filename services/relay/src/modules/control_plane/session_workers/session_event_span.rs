@@ -190,7 +190,7 @@ pub(super) fn session_event_span(
         ),
     };
     if let Some(trace_context) = trace_context(event) {
-        telemetry::continue_trace_from_traceparent(&span, trace_context.as_str());
+        telemetry_otlp::continue_trace_from_traceparent(&span, trace_context.as_str());
     }
     if !matches!(
         event,
@@ -237,7 +237,7 @@ mod tests {
         let provider = SdkTracerProvider::builder().build();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
-        let _default = telemetry::testing::set_default(subscriber);
+        let _default = telemetry_otlp::testing::set_default(subscriber);
         let event = MoqtSessionEvent::Subscribe(Box::new(MockSubscribeHandler {
             trace_context: moqt::TraceContext::parse(TRACEPARENT.as_bytes()),
             ..MockSubscribeHandler::default()

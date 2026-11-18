@@ -4,16 +4,16 @@ use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
 use console::{ConsoleServer, ConsoleState, GOOGLE_IAP_KEYS_URL, Identity, IdentitySettings};
 use reqwest::Url;
-use telemetry::non_empty_env;
+use telemetry_otlp::non_empty_env;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
         service_name: "console",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["console=info", "app_registry=info", "auth_token=info"],
-        log_output: telemetry::LogOutput::Stdout,
+        log_output: telemetry_otlp::LogOutput::Stdout,
         ..Default::default()
     })?;
 
