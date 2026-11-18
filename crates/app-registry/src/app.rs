@@ -65,7 +65,7 @@ impl Apps {
         self.0.is_empty()
     }
 
-    pub fn into_vec(self) -> Vec<App> {
+    pub(crate) fn into_vec(self) -> Vec<App> {
         self.0
     }
 }
