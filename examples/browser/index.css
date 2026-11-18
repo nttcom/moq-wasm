@@ -82,42 +82,6 @@
   font-style: normal;
 }
 
-.home-lead {
-  max-width: 40rem;
-  margin: 18px 0 0;
-  color: var(--text-muted);
-  font-size: 1.05rem;
-  line-height: 1.75;
-}
-
-.home-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 28px;
-  margin: 28px 0 0;
-  padding: 0;
-}
-
-.home-stats div {
-  display: grid;
-  gap: 2px;
-}
-
-.home-stats dt {
-  order: 2;
-  color: var(--text-subtle);
-  font-size: 0.8125rem;
-}
-
-.home-stats dd {
-  order: 1;
-  margin: 0;
-  color: var(--text);
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
 /* ---------- Connection settings ---------- */
 
 .settings {
@@ -281,68 +245,6 @@
   opacity: 0.8;
 }
 
-.search {
-  position: relative;
-  flex: 0 1 300px;
-}
-
-.search svg {
-  position: absolute;
-  top: 50%;
-  left: 11px;
-  width: 16px;
-  height: 16px;
-  stroke: var(--text-subtle);
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.search input {
-  width: 100%;
-  min-height: 36px;
-  padding: 0 40px 0 34px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.875rem;
-}
-
-.search input::placeholder {
-  color: var(--text-subtle);
-}
-
-.search input:focus {
-  border-color: var(--accent);
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.search kbd {
-  position: absolute;
-  top: 50%;
-  right: 8px;
-  padding: 1px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-subtle);
-  font-size: 0.7rem;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-@media (hover: none) {
-  .search kbd {
-    display: none;
-  }
-}
-
-.search input:focus + kbd,
-.search input:not(:placeholder-shown) + kbd {
-  display: none;
-}
-
 /* ---------- Sections ---------- */
 
 .section {
@@ -425,10 +327,6 @@
 
   .filters button {
     flex: none;
-  }
-
-  .search {
-    flex: 1 1 100%;
   }
 
   .grid {
@@ -624,28 +522,6 @@
   display: none;
 }
 
-.empty {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-  padding: 64px 16px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.empty button {
-  min-height: 32px;
-  padding: 0 14px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
 /* ---------- Flow diagrams ---------- */
 
 .flow {
@@ -791,18 +667,6 @@
 }
 
 /* ---------- Footer ---------- */
-
-.home-footer {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px 24px;
-  margin-top: 64px;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
-  color: var(--text-subtle);
-  font-size: 0.8125rem;
-}
 
 @keyframes fade-up {
   from {

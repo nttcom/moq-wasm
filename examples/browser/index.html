@@ -31,27 +31,11 @@
         <div>
           <span class="home-eyebrow"><span class="badge accent">MoQT</span>Media over QUIC Transport</span>
           <h1>MoQT を、<em>ブラウザで</em>試す。</h1>
-          <p class="home-lead"><code>moq-wasm</code> で動く MoQT の Example 集。ブラウザだけで試せます。</p>
-          <dl class="home-stats">
-            <div>
-              <dt>Examples</dt>
-              <dd id="example-count">15</dd>
-            </div>
-            <div>
-              <dt>MoQT draft</dt>
-              <dd>14 / 18</dd>
-            </div>
-            <div>
-              <dt>Browser SDK</dt>
-              <dd>moq-wasm</dd>
-            </div>
-          </dl>
         </div>
 
         <aside class="settings" aria-labelledby="settings-heading">
           <div class="settings-head">
             <h2 id="settings-heading">接続設定</h2>
-            <span class="badge">これから開く Example に適用</span>
           </div>
           <div class="setting">
             <span class="setting-label"
@@ -95,11 +79,6 @@
             運用ツール<span class="count">1</span>
           </button>
         </div>
-        <label class="search">
-          <svg><use href="/icons.svg#icon-search" /></svg>
-          <input type="search" id="example-search" placeholder="Example を検索" aria-label="Example を検索" />
-          <kbd>/</kbd>
-        </label>
       </div>
 
       <section class="section" id="low-level" data-section="low-level" aria-labelledby="low-level-heading">
@@ -107,7 +86,7 @@
           <h2 id="low-level-heading">低レベル API</h2>
         </div>
         <div class="grid">
-          <a class="example" href="examples/message/index.html" data-category="low-level">
+          <a class="example" href="examples/message/index.html">
             <div class="example-body">
               <span class="example-icon" aria-hidden="true"
                 ><svg><use href="/icons.svg#icon-message-square-code" /></svg
@@ -122,7 +101,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/datagram/index.html" data-category="low-level">
+          <a class="example" href="examples/datagram/index.html">
             <div class="example-body">
               <span class="example-icon" aria-hidden="true"
                 ><svg><use href="/icons.svg#icon-zap" /></svg
@@ -137,7 +116,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/media/index.html" data-category="low-level">
+          <a class="example" href="examples/media/index.html">
             <div class="example-body">
               <span class="example-icon" aria-hidden="true"
                 ><svg><use href="/icons.svg#icon-video" /></svg
@@ -152,7 +131,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/media-cmaf/index.html" data-category="low-level">
+          <a class="example" href="examples/media-cmaf/index.html">
             <div class="example-body">
               <span class="example-icon" aria-hidden="true"
                 ><svg><use href="/icons.svg#icon-film" /></svg
@@ -175,7 +154,7 @@
           <h2 id="usecases-heading">ユースケース</h2>
         </div>
         <div class="grid wide">
-          <a class="example" href="examples/meeting/index.html" data-category="usecase">
+          <a class="example" href="examples/meeting/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -200,7 +179,7 @@
               </div>
             </div>
           </a>
-          <a class="example requires-token" href="examples/recording-player/index.html" data-category="usecase">
+          <a class="example requires-token" href="examples/recording-player/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node cloud"
@@ -232,7 +211,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/whiteboard/index.html" data-category="usecase">
+          <a class="example" href="examples/whiteboard/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -257,7 +236,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/onvif/index.html" data-category="usecase">
+          <a class="example" href="examples/onvif/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -285,7 +264,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/remote-monitoring/index.html" data-category="usecase">
+          <a class="example" href="examples/remote-monitoring/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -313,7 +292,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/live-viewer/index.html" data-category="usecase">
+          <a class="example" href="examples/live-viewer/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -351,7 +330,7 @@
           <h2 id="ai-heading">AI 連携</h2>
         </div>
         <div class="grid wide">
-          <a class="example" href="examples/moq-chat-moderation/index.html" data-category="ai">
+          <a class="example" href="examples/moq-chat-moderation/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -379,7 +358,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/moq-camera-detection/index.html" data-category="ai">
+          <a class="example" href="examples/moq-camera-detection/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -407,7 +386,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/moq-ptz-tracking/index.html" data-category="ai">
+          <a class="example" href="examples/moq-ptz-tracking/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow hub">
                 <span class="node hub-browser"
@@ -438,7 +417,7 @@
               </div>
             </div>
           </a>
-          <a class="example" href="examples/live-translate/streamer/index.html" data-category="ai">
+          <a class="example" href="examples/live-translate/streamer/index.html">
             <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
@@ -476,7 +455,7 @@
           <h2 id="operations-heading">運用ツール</h2>
         </div>
         <div class="grid wide">
-          <a class="example span-all" href="examples/observability/index.html" data-category="operations">
+          <a class="example span-all" href="examples/observability/index.html">
             <div class="example-visual" aria-hidden="true">
               <div class="observability-map">
                 <svg class="observability-links" viewBox="0 0 444 270" aria-hidden="true">
@@ -570,15 +549,6 @@
           </a>
         </div>
       </section>
-
-      <div class="empty" id="example-empty" hidden>
-        <p>条件に合う Example はありません</p>
-        <button type="button" id="example-reset">絞り込みを解除</button>
-      </div>
-
-      <footer class="home-footer">
-        <span>MoQT Playground — moq-wasm の Example 集</span>
-      </footer>
     </main>
     <script type="module" src="./utils/preserveQueryLinks.js"></script>
     <script type="module" src="./utils/accessSwitch.ts"></script>
