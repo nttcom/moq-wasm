@@ -1,6 +1,6 @@
 # haas-asr-server
 
-Meeting の書き起こし bot（`moq-meeting-transcriber`）が `?asr=haas-ja` で呼ぶ、[Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0) の音声認識サーバです。
+Meeting の書き起こし bot（`moq-meeting-transcriber`）がオプション `asr: haas-ja` で呼ぶ、[Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0) の音声認識サーバです。
 Haas-ja は NVIDIA NeMo でしか動かないので、[haas-asr](https://github.com/third-intelligence/Haas-ASR) でモデルを読み込み、vLLM と同じ `/health` と `/v1/audio/transcriptions` で答えます。
 設計は [Live transcription for the Meeting example](../../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
@@ -48,10 +48,10 @@ gcloud beta run deploy moqt-haas-ja \
 gcloud run services add-iam-policy-binding moqt-haas-ja --project=${PROJECT} --region=${REGION} \
   --member=serviceAccount:<bot のサービスアカウント> --role=roles/run.invoker
 ASR_URL=$(gcloud run services describe moqt-haas-ja --project=${PROJECT} --region=${REGION} --format 'value(status.url)')
-uv run python -m moq_meeting_transcriber.bot --asr haas-ja=${ASR_URL} --metadata-auth
 ```
 
-手元の bot から呼ぶときは `--metadata-auth` の代わりに `--gcloud-auth` を付けます。
+bot サービスの `BOTS_TYPES` で、`transcriber` の `args` に `--asr haas-ja=${ASR_URL}` と `--metadata-auth` を足します（[moq-meeting-transcriber](../moq-meeting-transcriber/README.md)）。
+手元で起動する bot から呼ぶときは `--metadata-auth` の代わりに `--gcloud-auth` を付けます。
 
 ## テスト
 
