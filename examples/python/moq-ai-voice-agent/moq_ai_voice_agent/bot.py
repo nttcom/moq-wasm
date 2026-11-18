@@ -16,13 +16,11 @@ from pipecat.pipeline.worker import PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
 from pipecat.processors.filters.function_filter import FunctionFilter
-from pipecat.services.google.gemini_live.stt import GeminiSTTService
-from pipecat.services.google.llm import GoogleLLMService
-from pipecat.services.google.tts import GeminiTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.workers.runner import WorkerRunner
 
 from moq_ai_voice_agent import transcript
+from moq_ai_voice_agent.gemini import GeminiServices, VertexProject
 from moq_ai_voice_agent.listener import Listener
 
 DEFAULT_PORT = 8101
@@ -37,7 +35,7 @@ TRANSCRIPT_NAMESPACE = [PARTICIPANT_ID, "transcript"]
 TRANSCRIPT_RETENTION_SECONDS = 60 * 60
 LANGUAGE = Language.JA_JP
 VOICE = "Kore"
-# Gemini Live closes a session that gets no audio for a minute, and GeminiSTTService gives up after
+# Gemini Live closes a session that gets no audio for a minute, and pipecat's Gemini STT gives up after
 # three such closes in a row. Nobody may speak for longer than that: before the first participant
 # joins, or while the one the bot listens to is muted. Silence sent after this many seconds without
 # audio keeps the session open.
@@ -53,6 +51,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Talk with the MoQ AI Voice Agent page through Gemini")
     add_serve_arguments(parser, bot="moq-ai-voice-agent", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
     add_relay_arguments(parser)
+    parser.add_argument(
+        "--vertex-project",
+        help="call Gemini on this Google Cloud project's Vertex AI with the application default credentials "
+        "instead of the Gemini API with GOOGLE_API_KEY",
+    )
     return parser.parse_args()
 
 
@@ -62,16 +65,12 @@ def room_namespace(room: BotRoom) -> list[str]:
 
 
 def voice_pipeline(
-    api_key: str, transport: MoqWasmTransport, listener: Listener, timeline: EventTimeline
+    gemini: GeminiServices, transport: MoqWasmTransport, listener: Listener, timeline: EventTimeline
 ) -> Pipeline:
     """Gemini speech-to-text, LLM and text-to-speech in a row, on the audio of `listener.current`."""
-    stt = GeminiSTTService(
-        api_key=api_key,
-        settings=GeminiSTTService.Settings(languages=[LANGUAGE]),
-        keepalive_timeout=STT_KEEPALIVE_SECONDS,
-    )
-    llm = GoogleLLMService(api_key=api_key, settings=GoogleLLMService.Settings(system_instruction=SYSTEM_INSTRUCTION))
-    tts = GeminiTTSService(api_key=api_key, settings=GeminiTTSService.Settings(voice=VOICE, language=LANGUAGE))
+    stt = gemini.stt(keepalive_timeout=STT_KEEPALIVE_SECONDS)
+    llm = gemini.llm(SYSTEM_INSTRUCTION)
+    tts = gemini.tts(VOICE)
     aggregators = LLMContextAggregatorPair(
         LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
     )
@@ -93,7 +92,7 @@ def voice_pipeline(
     )
 
 
-async def talk_in_session(api_key: str, room: BotRoom, session: moq_wasm.Session) -> None:
+async def talk_in_session(gemini: GeminiServices, room: BotRoom, session: moq_wasm.Session) -> None:
     """Returns once the room has had no participant for the grace period."""
     namespace = room_namespace(room)
     transport = MoqWasmTransport(
@@ -111,7 +110,7 @@ async def talk_in_session(api_key: str, room: BotRoom, session: moq_wasm.Session
     transport.add_event_handler("on_client_disconnected", lambda _, participant_id: listener.left(participant_id))
     transcript_broadcast = create_broadcast(session, [*namespace, *TRANSCRIPT_NAMESPACE])
     timeline = transcript_broadcast.event_timeline(transcript.TRACK_NAME, retention_seconds=TRANSCRIPT_RETENTION_SECONDS)
-    pipeline = voice_pipeline(api_key, transport, listener, timeline)
+    pipeline = voice_pipeline(gemini, transport, listener, timeline)
     worker = PipelineWorker(pipeline, enable_rtvi=False, idle_timeout_secs=None)
     # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
     runner = WorkerRunner(handle_sigint=False)
@@ -123,16 +122,19 @@ async def talk_in_session(api_key: str, room: BotRoom, session: moq_wasm.Session
         await runner.cancel()
 
 
-async def talk_in_room(args: argparse.Namespace, api_key: str, room: BotRoom) -> None:
-    await stay_connected(args, room, partial(talk_in_session, api_key, room))
+async def talk_in_room(args: argparse.Namespace, gemini: GeminiServices, room: BotRoom) -> None:
+    await stay_connected(args, room, partial(talk_in_session, gemini, room))
 
 
 async def main():
     args = parse_args()
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise SystemExit("set GOOGLE_API_KEY to a Gemini API key")
-    await serve_rooms(args, partial(talk_in_room, args, api_key))
+    if args.vertex_project:
+        gemini = GeminiServices(LANGUAGE, vertex=VertexProject(args.vertex_project))
+    elif api_key := os.environ.get("GOOGLE_API_KEY"):
+        gemini = GeminiServices(LANGUAGE, api_key=api_key)
+    else:
+        raise SystemExit("set GOOGLE_API_KEY to a Gemini API key, or pass --vertex-project")
+    await serve_rooms(args, partial(talk_in_room, args, gemini))
 
 
 if __name__ == "__main__":
