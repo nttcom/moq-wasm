@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronsLeft, ChevronsRight, Filter, List, X } from 'lucide-react'
 import { type RelaySnapshot, fetchPastSnapshots, fetchSnapshots } from './api'
 import type { NamespaceSummary } from './api'
 import { ChartDrawer } from './ChartDrawer'
@@ -203,12 +204,13 @@ export default function App() {
           App <b>{shortAppId(access.namespaceRoot)}</b>
         </span>
         <span className="divider" aria-hidden="true" />
-        <label className="filter">
-          Track Namespace
+        <label className="filter" title="Track Namespace で絞り込む">
+          <Filter size={14} aria-hidden="true" />
           <input
+            aria-label="Track Namespace の prefix"
             className={filters.namespacePrefix ? 'active' : ''}
             list="namespace-options"
-            placeholder="prefix（例: room1）"
+            placeholder="Track Namespace"
             autoComplete="off"
             value={filters.namespacePrefix}
             onChange={(event) => setFilters({ ...filters, namespacePrefix: event.target.value })}
@@ -222,13 +224,14 @@ export default function App() {
             aria-label="Namespace の絞り込みを解除"
             onClick={() => setFilters({ ...filters, namespacePrefix: '' })}
           >
-            ×
+            <X size={14} />
           </button>
         </label>
         <button
           className={`panel-toggle${namespacesOpen ? ' on' : ''}`}
           onClick={() => setNamespacesOpen(!namespacesOpen)}
         >
+          <List size={14} aria-hidden="true" />
           Namespaces
         </button>
         <div className="timeline" title="← → で 1 秒、Shift + ← → で 10 秒移動">
@@ -240,7 +243,8 @@ export default function App() {
             ))}
           </div>
           <button className="step" aria-label="10 秒戻る" onClick={() => stepBy(-COARSE_STEP_MS)}>
-            −10s
+            <ChevronsLeft size={14} aria-hidden="true" />
+            10s
           </button>
           <input
             type="range"
@@ -252,7 +256,8 @@ export default function App() {
             onChange={(event) => seekTo(windowStartMs + Number(event.target.value) * SEEK_STEP_MS)}
           />
           <button className="step" aria-label="10 秒進む" onClick={() => stepBy(COARSE_STEP_MS)}>
-            +10s
+            10s
+            <ChevronsRight size={14} aria-hidden="true" />
           </button>
           <button className={`live${live ? '' : ' past'}`} onClick={() => setAtMs(null)}>
             <i />

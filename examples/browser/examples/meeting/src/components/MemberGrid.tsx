@@ -3,6 +3,7 @@ import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PanelRightClose, PanelRightOpen, X } from 'lucide-react'
+import { Tip } from '../../../../lib/ui/tip'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
 import { ControlBar } from './ControlBar'
@@ -255,7 +256,10 @@ export function MemberGrid({
               resolutionOptions={VIDEO_RESOLUTION_OPTIONS}
             />
             <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
-              <div className="text-sm font-semibold text-fg">映像エンコーダーのハードウェアアクセラレーション</div>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-fg">
+                ハードウェアエンコード
+                <Tip note="映像エンコーダーのハードウェアアクセラレーション" />
+              </div>
               <OptionSelect
                 label="カメラ"
                 className={DEVICE_MODAL_FIELD_CLASS}

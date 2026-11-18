@@ -1,3 +1,4 @@
+import { History } from 'lucide-react'
 import { cn } from '../../../../lib/ui/classNames'
 import { CameraId, MonitorMode, ConnState } from '../types/monitoring'
 import { PlayerHost } from './PlayerHost'
@@ -78,8 +79,11 @@ export function StageCamera({ cameraId, host, mode, connState, lost, behindSecon
 
       {/* click hint */}
       {!isReview && cameraId && !lost && (
-        <div className="absolute bottom-11 right-3 z-10 rounded bg-black/55 px-2 py-0.5 text-xs text-white/80 backdrop-blur-sm">
-          クリックか ↓ で過去を見る
+        <div
+          className="absolute bottom-11 right-3 z-10 flex items-center gap-1 rounded bg-black/55 px-2 py-0.5 text-xs text-white/80 backdrop-blur-sm"
+          title="クリックか ↓ で過去を見る"
+        >
+          <History className="h-3.5 w-3.5" />↓
         </div>
       )}
 

@@ -867,3 +867,12 @@
     flex: 1 1 60px;
   }
 }
+
+/* Buttons that hold an icon beside their text. */
+.panel-toggle,
+.timeline .step,
+.filter button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

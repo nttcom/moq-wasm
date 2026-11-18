@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { Cctv, Plus } from 'lucide-react'
+import { Cctv, Loader2, MapPin, Plug, Plus } from 'lucide-react'
 import type { LivePlayerState } from 'moq-wasm/media'
 import { CameraId, MonitorMode } from '../types/monitoring'
 import { StageCamera } from './StageCamera'
@@ -8,6 +8,7 @@ import { DebugBar } from './DebugBar'
 import { SeekBar } from './SeekBar'
 import { TransportControls } from './TransportControls'
 import { RelayUrlField } from './RelayUrlField'
+import { Tip } from '../../../../lib/ui/tip'
 import { Button } from '../../../../lib/ui/button'
 import { CameraPlayers } from '../monitor/cameraPlayers'
 import { pageHref, useUrlSync } from '../hooks/useUrlSync'
@@ -30,6 +31,10 @@ function stepsForwardWithinReview({ mode, seek }: LivePlayerState): boolean {
   )
 }
 const MICROS_PER_SECOND = 1_000_000
+
+/// The keys of the stage, shown in the title's tip.
+const KEYBOARD_NOTE =
+  '← → メインのカメラを切替\n↓ またはメインをクリックで REVIEW（← → でコマ送り、↑ で LIVE）\n右のカメラをクリックでメインに表示'
 
 export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const [relayUrl, setRelayUrl] = useState(defaultRelayUrl)
@@ -182,10 +187,17 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">
               ユースケース · Remote Monitoring
             </p>
-            <h1 className="text-lg font-bold leading-tight tracking-tight">MoQT 遠隔監視</h1>
+            <h1 className="flex items-center gap-1.5 text-lg font-bold leading-tight tracking-tight">
+              MoQT 遠隔監視
+              <Tip note={KEYBOARD_NOTE} />
+            </h1>
           </div>
-          <span className="rounded-full border border-line-strong bg-sunken px-2.5 py-0.5 font-mono text-xs text-muted">
-            location: {location}
+          <span
+            className="inline-flex items-center gap-1 rounded-full border border-line-strong bg-sunken px-2.5 py-0.5 font-mono text-xs text-muted"
+            title="location"
+          >
+            <MapPin className="h-3 w-3" />
+            {location}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -194,11 +206,17 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
             className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line-strong bg-raised px-3 text-sm font-semibold text-fg transition hover:bg-hover"
           >
             <Plus className="h-4 w-4" />
-            この location にカメラを追加
+            カメラを追加
           </a>
-          {(connStatus === 'idle' || connStatus === 'error') && <Button onClick={handleConnect}>接続</Button>}
+          {(connStatus === 'idle' || connStatus === 'error') && (
+            <Button onClick={handleConnect}>
+              <Plug className="h-4 w-4" />
+              接続
+            </Button>
+          )}
           {connStatus === 'connecting' && (
             <Button disabled variant="outline">
+              <Loader2 className="h-4 w-4 animate-spin" />
               接続中…
             </Button>
           )}
@@ -221,20 +239,6 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
             </p>
           )}
         </div>
-      )}
-
-      {/* hint */}
-      {cameras.length > 0 && (
-        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-          <span>
-            <Kbd>←</Kbd> <Kbd>→</Kbd> メインのカメラを切替
-          </span>
-          <span>
-            メインをクリックか <Kbd>↓</Kbd> で REVIEW（<Kbd>←</Kbd> <Kbd>→</Kbd> でコマ送り、<Kbd>↑</Kbd> で LIVE
-            に戻る）
-          </span>
-          <span>右のカメラをクリックでもメインに出せる</span>
-        </p>
       )}
 
       {/* main grid */}
@@ -288,13 +292,5 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
         reviewStatus={stageState?.rewindStatus.text ?? null}
       />
     </main>
-  )
-}
-
-function Kbd({ children }: { children: string }) {
-  return (
-    <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-line-strong bg-raised px-1 font-sans text-[11px] text-fg shadow-sm">
-      {children}
-    </kbd>
   )
 }

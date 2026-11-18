@@ -1,3 +1,4 @@
+import { Cctv, History } from 'lucide-react'
 import { cn } from '../../../../lib/ui/classNames'
 import { CameraId, ConnState } from '../types/monitoring'
 
@@ -38,7 +39,9 @@ export function DebugBar({ connState, relayUrl, cameras, reviewingCamera, review
 
       {/* cameras row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="w-24 shrink-0 text-[11px] font-semibold tracking-[0.08em] text-faint">CAMERAS</span>
+        <span className="flex shrink-0 items-center text-faint" title="配信中のカメラ">
+          <Cctv className="h-4 w-4" aria-label="カメラ" />
+        </span>
         {cameras.length > 0 ? (
           cameras.map((id) => (
             <span
@@ -58,7 +61,9 @@ export function DebugBar({ connState, relayUrl, cameras, reviewingCamera, review
 
       {/* review row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="w-24 shrink-0 text-[11px] font-semibold tracking-[0.08em] text-faint">REVIEW</span>
+        <span className="flex shrink-0 items-center text-faint" title="REVIEW 中のカメラ">
+          <History className="h-4 w-4" aria-label="REVIEW" />
+        </span>
         {reviewingCamera && reviewStatus ? (
           <span
             className={cn(

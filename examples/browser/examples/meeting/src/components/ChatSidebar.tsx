@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react'
-import { MessageSquare, SendHorizontal, X } from 'lucide-react'
+import { Captions, MessageSquare, SendHorizontal, X } from 'lucide-react'
 import { ASR_CHOICES, type CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
 import type { TranscriptRecord } from '../media/transcript'
@@ -91,8 +91,9 @@ function TranscriptionNotice({ captions }: { captions: CaptionsControls | null }
                 key={asr}
                 type="button"
                 onClick={() => captions.start(asr)}
-                className="w-full cursor-pointer rounded-lg border border-line-strong bg-raised px-4 py-2 text-left text-sm font-semibold text-fg transition hover:bg-hover"
+                className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-line-strong bg-raised px-4 py-2 text-left text-sm font-semibold text-fg transition hover:bg-hover"
               >
+                <Captions className="h-4 w-4 shrink-0 text-accent" />
                 {label}
               </button>
             ))}

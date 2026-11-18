@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Webcam } from 'lucide-react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Camera, FileVideo, Loader2, Radio, Sparkles, Webcam } from 'lucide-react'
 import type { CameraId, VideoSource, VideoSourceType } from '../types/monitoring'
 import { NAME_PATTERN } from '../types/monitoring'
+import { Tip } from '../../../../lib/ui/tip'
 import { PublisherSession } from './publisherSession'
 import { CameraPublisher } from './cameraPublisher'
 import { RelayUrlField } from '../components/RelayUrlField'
@@ -22,6 +23,12 @@ interface Props {
   location: string
   camId: CameraId
   relayUrl: string
+}
+
+const SOURCE_ICONS: Record<VideoSourceType, ReactNode> = {
+  synthetic: <Sparkles className="h-3.5 w-3.5" />,
+  camera: <Camera className="h-3.5 w-3.5" />,
+  file: <FileVideo className="h-3.5 w-3.5" />
 }
 
 export function PublisherApp({ location: defaultLocation, camId: defaultCamId, relayUrl: defaultRelayUrl }: Props) {
@@ -96,23 +103,26 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
               className="ml-2 inline-flex items-center gap-1 text-sm font-medium text-accent hover:text-accent-hover"
             >
               <ArrowLeft className="h-4 w-4" />
-              Monitor へ
+              Monitor に戻る
             </a>
           )}
         </div>
         <div className="flex items-center gap-2">
           {isIdle && (
             <Button onClick={handleStart} disabled={!canStart}>
+              <Radio className="h-4 w-4" />
               配信開始
             </Button>
           )}
           {status === 'connecting' && (
             <Button disabled variant="outline">
+              <Loader2 className="h-4 w-4 animate-spin" />
               接続中…
             </Button>
           )}
           {status === 'starting' && (
             <Button disabled variant="outline">
+              <Loader2 className="h-4 w-4 animate-spin" />
               起動中…
             </Button>
           )}
@@ -159,12 +169,13 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                   key={t}
                   onClick={() => setSourceType(t)}
                   aria-pressed={sourceType === t}
-                  className={`cursor-pointer rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
                     sourceType === t
                       ? 'bg-raised text-fg shadow-sm ring-1 ring-line-strong'
                       : 'text-muted hover:text-fg'
                   }`}
                 >
+                  {SOURCE_ICONS[t]}
                   {SOURCE_LABELS[t]}
                 </button>
               ))}
@@ -177,10 +188,9 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                   className="font-mono text-xs"
                   placeholder="/moq-wasm/videos/cam01.mp4"
                 />
-                <span className="text-xs text-faint whitespace-nowrap font-mono">public/videos/ 以下に置く</span>
+                <Tip note="public/videos/ 以下に置いたファイルを指定します" end />
               </div>
             )}
-            {sourceType === 'camera' && <p className="text-xs text-faint font-mono">ブラウザがカメラ許可を求めます</p>}
           </div>
 
           {error && (
@@ -194,7 +204,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
       {/* preview */}
       <div className="relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-neutral-950 shadow-md ring-1 ring-line">
         <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
-        {status === 'idle' && <p className="text-sm text-neutral-400">配信開始 を押すと接続して配信します</p>}
+        {status === 'idle' && <Webcam className="h-10 w-10 text-neutral-600" aria-hidden="true" />}
         {camId && (
           <div className="absolute bottom-3 left-3 font-mono text-xs text-white bg-black/50 rounded px-2 py-1">
             {camId}

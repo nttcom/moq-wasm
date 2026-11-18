@@ -1,5 +1,7 @@
+import { Camera } from 'lucide-react'
 import type { CaptureSettingsState } from '../types/captureConstraints'
 import { FIELD_CLASS } from '../../../../lib/ui/field'
+import { Tip } from '../../../../lib/ui/tip'
 
 interface GetUserMediaFormProps {
   settings: CaptureSettingsState
@@ -24,21 +26,24 @@ export function GetUserMediaForm({
   return (
     <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
       <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-fg">getUserMedia の設定</div>
+        <div className="flex items-center gap-1.5 text-sm font-semibold text-fg">
+          getUserMedia の設定
+          <Tip note="開始する前にキャプチャの条件を設定します" />
+        </div>
         <button
           type="button"
           onClick={onApply}
           disabled={disabled}
-          className={`h-8 rounded-md px-3 text-sm font-semibold transition ${
+          className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm font-semibold transition ${
             disabled
               ? 'cursor-not-allowed bg-hover text-faint'
               : 'cursor-pointer bg-accent text-on-accent hover:bg-accent-hover'
           }`}
         >
+          <Camera className="h-4 w-4" />
           Apply & getUserMedia
         </button>
       </div>
-      <p className="text-xs text-muted">開始する前にキャプチャの条件を設定します</p>
       <div className="grid grid-cols-2 gap-3 text-sm text-fg">
         <label className="flex items-center gap-2">
           <input

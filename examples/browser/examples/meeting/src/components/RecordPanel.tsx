@@ -1,4 +1,4 @@
-import { CircleStop, ExternalLink } from 'lucide-react'
+import { Circle, CircleStop, ExternalLink } from 'lucide-react'
 import { RECORDING_CHOICES, type RoomRecordingControls, pendingRecordingLabel } from '../hooks/useRoomRecording'
 
 export function RecordPanel({ recording }: { recording: RoomRecordingControls | null }) {
@@ -60,8 +60,9 @@ function RecordControls({ recording }: { recording: RoomRecordingControls }) {
               data-testid={`record-panel-${id}`}
               disabled={recording.busy}
               onClick={() => void recording.start(layout, composite, format)}
-              className="w-full cursor-pointer rounded-lg border border-line-strong bg-raised px-4 py-2 text-left text-sm font-semibold text-fg transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex w-full cursor-pointer items-center gap-2 rounded-lg border border-line-strong bg-raised px-4 py-2 text-left text-sm font-semibold text-fg transition hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
+              <Circle className="h-3.5 w-3.5 shrink-0 fill-red-500 text-red-500" />
               {label}
             </button>
           ))}
