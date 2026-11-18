@@ -73,8 +73,8 @@ mod tests {
         let ([log], [span]) = (logs.as_slice(), spans.as_slice()) else {
             panic!("{logs:?} {spans:?}");
         };
-        assert_eq!(log["message"], "SUBSCRIBE_ERROR received");
-        assert_eq!(span["name"], "moqt.subscriber.subscribe");
-        assert_eq!(span["traceId"].as_str().unwrap().len(), 32);
+        assert_eq!(log.message, "SUBSCRIBE_ERROR received");
+        assert_eq!(span.name, "moqt.subscriber.subscribe");
+        assert_eq!(span.trace_id.len(), 32);
     }
 }

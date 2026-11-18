@@ -1,8 +1,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use client_telemetry::ReportBuffer;
 use reqwest::StatusCode;
-use serde_json::json;
+use telemetry::client_report::{ClientReport, ClientService};
+use telemetry_report::ReportBuffer;
 use tokio::{sync::oneshot, task::JoinHandle};
 use url::Url;
 
@@ -10,7 +10,6 @@ use crate::{cli::RelayArgs, transport::current_auth_token};
 
 const REPORT_INTERVAL: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-const SERVICE: &str = "moq-cli";
 
 pub struct ReportTarget {
     pub endpoint: Url,
@@ -99,18 +98,19 @@ impl Reporter {
             .ok()
             .flatten()
             .filter(|token| self.rejected_token.as_ref() != Some(token));
-        let body = json!({
-            "service": SERVICE,
-            "token": token,
-            "clientId": self.client_id,
-            "page": self.target.page,
-            "logs": logs,
-            "spans": spans,
-        });
+        let body = ClientReport {
+            token: token.clone(),
+            service: ClientService::MoqCli,
+            client_id: self.client_id.clone(),
+            page: self.target.page.to_owned(),
+            logs,
+            stats: Vec::new(),
+            spans,
+        };
         let result = self
             .http
             .post(self.target.endpoint.clone())
-            .body(body.to_string())
+            .json(&body)
             .send()
             .await;
         if let Ok(response) = &result

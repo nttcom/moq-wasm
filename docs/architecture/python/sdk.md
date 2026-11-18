@@ -202,10 +202,10 @@ SDK's `init({ logLevel, onLog, onSpan })`:
   subscriber is installed.
 - **`on_log` and `on_span`** receive the records in the shape the browser
   SDK's callbacks and the observability server's `/api/client-telemetry`
-  take (`crates/client-telemetry`). With `on_span`, the requests a session
+  take (`crates/telemetry-report`). With `on_span`, the requests a session
   sends carry the span's TRACE_CONTEXT and the answers to the relay's
   requests join its trace (`moqt::set_trace_context_provider` and
-  `set_trace_context_joiner` with `client-telemetry`'s functions, as the
+  `set_trace_context_joiner` with `telemetry-report`'s functions, as the
   wasm module registers them).
 - **No GIL in `tracing`.** The subscriber only queues records, from
   whichever tokio thread logs, in a queue of 4096 that drops and counts
@@ -215,7 +215,7 @@ SDK's `init({ logLevel, onLog, onSpan })`:
   it is stopped before the interpreter finalizes.
 - **Tokens.** Each native `Session` and every object it returns (a
   subscription, a fetch, a track writer, a media broadcast with its
-  sources and renditions) runs its calls in a `client_telemetry` scope that
+  sources and renditions) runs its calls in a `telemetry_report` scope that
   the log sink maps to the session's token, its newest after
   `refresh_token`, as the browser SDK's `SessionScope` does. The tasks
   `moqt::executor::spawn` starts keep the scope they are spawned in

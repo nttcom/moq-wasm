@@ -3,12 +3,11 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use client_telemetry::{
-    Scoped, SpanRecordLayer, continue_trace_from_traceparent, current_scope, current_traceparent,
-    in_scope, log_record, scoped,
-};
 use js_sys::Function;
-use serde_json::Value;
+use telemetry_report::{
+    ClientSpan, Scoped, SpanRecordLayer, continue_trace_from_traceparent, current_scope,
+    current_traceparent, in_scope, log_record, scoped,
+};
 use tracing::level_filters::LevelFilter;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
@@ -86,8 +85,8 @@ pub fn set_log_sink(
         SpanRecordLayer {
             now_ms,
             random_byte: || (js_sys::Math::random() * 256.0) as u8,
-            emit: |record, scope: Option<u64>| {
-                call(&SPAN_CALLBACK, &record, &token_of(scope));
+            emit: |record: ClientSpan, scope: Option<u64>| {
+                call(&SPAN_CALLBACK, &record.to_json(), &token_of(scope));
             },
         }
         .with_filter(LevelFilter::INFO)
@@ -109,10 +108,10 @@ pub fn set_log_sink(
 
 fn call(
     callback: &'static std::thread::LocalKey<RefCell<Option<Function>>>,
-    record: &Value,
+    record: &str,
     token: &JsValue,
 ) {
-    let Ok(record) = js_sys::JSON::parse(&record.to_string()) else {
+    let Ok(record) = js_sys::JSON::parse(record) else {
         return;
     };
     callback.with(|slot| {
@@ -129,7 +128,7 @@ impl<S: Subscriber> Layer<S> for JsLogLayer {
     fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
         call(
             &LOG_CALLBACK,
-            &log_record(event, now_ms()),
+            &log_record(event, now_ms()).to_json(),
             &token_of(current_scope()),
         );
     }

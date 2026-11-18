@@ -9,14 +9,14 @@ Accepted
 ## What
 `crates/python` depends on `tracing-subscriber` (0.3, already in the workspace) with
 `default-features = false, features = ["registry", "std"]`, as `wasm` does, and on the workspace's
-`client-telemetry`.
+`telemetry-report`.
 
 ## Context
 `moqt` and `broadcast` log and open spans through `tracing`, but the module installed no subscriber,
 so a bot's SUBSCRIBE, PUBLISH and connection events were lost and its requests carried no trace
 context. The browser SDK's `init({ logLevel, onLog, onSpan })` installs one; `moq_wasm.init` is its
 Python counterpart. The records the browser and `moq-cli` build come from
-`client_telemetry::SpanRecordLayer` and `log_record`, which need a `tracing-subscriber` `Registry`.
+`telemetry_report::SpanRecordLayer` and `log_record`, which need a `tracing-subscriber` `Registry`.
 
 ## Alternatives
 - **Call into Python from a `tracing` layer** (forward each event to `logging` at once): every event

@@ -1,6 +1,7 @@
 use std::fmt;
 
 use serde_json::{Map, Value, json};
+use telemetry::client_report::ClientLog;
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level};
 
@@ -8,23 +9,23 @@ use crate::span_record::{current_span_ids, hex};
 
 /// `time_ms` is milliseconds since the Unix epoch. Inside a span that
 /// `SpanRecordLayer` saw entered, the record also carries that span's
-/// `traceId` and `spanId`.
-pub fn log_record(event: &Event<'_>, time_ms: u64) -> Value {
+/// trace and span ids.
+pub fn log_record(event: &Event<'_>, time_ms: u64) -> ClientLog {
     let mut visitor = FieldVisitor::default();
     event.record(&mut visitor);
     let metadata = event.metadata();
-    let mut record = json!({
-        "timeMs": time_ms,
-        "level": level_name(*metadata.level()),
-        "target": metadata.target(),
-        "message": visitor.message,
-        "fields": visitor.fields,
-    });
-    if let Some((trace_id, span_id)) = current_span_ids() {
-        record["traceId"] = json!(hex(&trace_id));
-        record["spanId"] = json!(hex(&span_id));
+    let (trace_id, span_id) = current_span_ids()
+        .map(|(trace_id, span_id)| (hex(&trace_id), hex(&span_id)))
+        .unzip();
+    ClientLog {
+        time_ms,
+        level: level_name(*metadata.level()).to_owned(),
+        target: metadata.target().to_owned(),
+        message: visitor.message,
+        fields: visitor.fields,
+        trace_id,
+        span_id,
     }
-    record
 }
 
 fn level_name(level: Level) -> &'static str {
@@ -98,7 +99,8 @@ mod tests {
 
     impl<S: Subscriber> Layer<S> for CaptureLayer {
         fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
-            self.0.lock().unwrap().push(log_record(event, 1234));
+            let record = serde_json::to_value(log_record(event, 1234)).unwrap();
+            self.0.lock().unwrap().push(record);
         }
     }
 

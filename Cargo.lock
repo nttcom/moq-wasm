@@ -486,15 +486,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
-name = "client-telemetry"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1923,12 +1914,12 @@ dependencies = [
  "anyhow",
  "broadcast",
  "clap",
- "client-telemetry",
  "mediapack",
  "moqt",
  "msf",
  "reqwest",
- "serde_json",
+ "telemetry",
+ "telemetry-report",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2588,7 +2579,6 @@ dependencies = [
  "anyhow",
  "broadcast",
  "bytes",
- "client-telemetry",
  "mediapack",
  "moqt",
  "msf",
@@ -2596,6 +2586,7 @@ dependencies = [
  "pyo3-async-runtimes",
  "pyo3-build-config",
  "serde_json",
+ "telemetry-report",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3578,6 +3569,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "telemetry-report"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "telemetry",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "temporary-apps"
 version = "0.1.0"
 dependencies = [
@@ -4153,14 +4154,13 @@ dependencies = [
  "anyhow",
  "broadcast",
  "bytes",
- "client-telemetry",
  "console_error_panic_hook",
  "js-sys",
  "mediapack",
  "moqt",
  "msf",
  "serde-wasm-bindgen",
- "serde_json",
+ "telemetry-report",
  "tokio",
  "tracing",
  "tracing-subscriber",
