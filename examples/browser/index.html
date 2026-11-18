@@ -17,12 +17,27 @@
           ></span>
           <span class="app-brand-name">MoQT Playground</span>
         </a>
-        <nav class="home-nav" aria-label="カテゴリ">
-          <a href="#low-level">低レベル API</a>
-          <a href="#usecases">ユースケース</a>
-          <a href="#ai">AI 連携</a>
-          <a href="#operations">運用ツール</a>
-        </nav>
+        <div class="home-controls">
+          <div class="segmented access-switch" role="group" aria-label="接続モード">
+            <button type="button" data-access-mode="temporary" data-testid="access-temporary">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-link" /></svg>一時トークン
+            </button>
+            <button type="button" data-access-mode="public" data-testid="access-public">
+              <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-globe" /></svg>Public
+            </button>
+          </div>
+          <span class="tip end" id="access-description" tabindex="0" role="img"
+            ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
+          ></span>
+          <div class="segmented version-switch" role="group" aria-label="MoQT draft">
+            <button type="button" data-moqt-version="draft-14" data-testid="version-draft-14">
+              <span class="draft-prefix">draft-</span>14
+            </button>
+            <button type="button" data-moqt-version="draft-18" data-testid="version-draft-18">
+              <span class="draft-prefix">draft-</span>18
+            </button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -31,38 +46,8 @@
         <div>
           <span class="home-eyebrow"><span class="badge accent">MoQT</span>Media over QUIC Transport</span>
           <h1>MoQT を、<em>ブラウザで</em>試す。</h1>
+          <div class="access-status" id="access-status"></div>
         </div>
-
-        <aside class="settings" aria-labelledby="settings-heading">
-          <div class="settings-head">
-            <h2 id="settings-heading">接続設定</h2>
-          </div>
-          <div class="setting">
-            <span class="setting-label"
-              ><span id="access-mode-label">接続モード</span
-              ><span
-                class="tip"
-                tabindex="0"
-                role="img"
-                aria-label="検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください"
-                data-tip="検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください"
-                ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg></span
-            ></span>
-            <div class="segmented access-switch" role="group" aria-labelledby="access-mode-label">
-              <button type="button" data-access-mode="temporary" data-testid="access-temporary">一時トークン</button>
-              <button type="button" data-access-mode="public" data-testid="access-public">Public</button>
-            </div>
-            <p class="access-description" id="access-description"></p>
-            <div class="access-status" id="access-status"></div>
-          </div>
-          <div class="setting">
-            <span class="setting-label" id="version-label">MoQT draft</span>
-            <div class="segmented version-switch" role="group" aria-labelledby="version-label">
-              <button type="button" data-moqt-version="draft-14" data-testid="version-draft-14">draft-14</button>
-              <button type="button" data-moqt-version="draft-18" data-testid="version-draft-18">draft-18</button>
-            </div>
-          </div>
-        </aside>
       </section>
 
       <div class="toolbar">

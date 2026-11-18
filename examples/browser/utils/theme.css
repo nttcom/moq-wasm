@@ -307,6 +307,10 @@ body:not(:has(> .app-shell))::before {
 }
 
 .segmented button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   min-height: 28px;
   padding: 0 12px;
   border: 0;

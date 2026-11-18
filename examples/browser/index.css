@@ -6,41 +6,41 @@
   padding: 0 24px 80px;
 }
 
-.home-nav {
+/* ---------- Hero ---------- */
+
+/* The mode and draft switches, at the end of the top bar. */
+.home-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 8px;
+  gap: 8px;
+  margin-left: auto;
 }
 
-.home-nav a {
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 0.875rem;
-  font-weight: 500;
-  white-space: nowrap;
+/* The draft's prefix and number read as one word. */
+.version-switch button {
+  gap: 0;
 }
 
-.home-nav a:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
+@media (max-width: 560px) {
+  .home-controls {
+    gap: 4px;
+  }
 
-@media (max-width: 960px) {
-  .home-nav {
+  .home-controls .segmented button {
+    padding: 0 8px;
+  }
+
+  .draft-prefix {
     display: none;
+  }
+
+  .access-status {
+    border-radius: var(--radius-lg);
   }
 }
 
-/* ---------- Hero ---------- */
-
 .home-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.9fr);
-  align-items: center;
-  gap: 40px;
-  padding: 56px 0 48px;
+  padding: 48px 0 32px;
 }
 
 .home-eyebrow {
@@ -82,73 +82,24 @@
   font-style: normal;
 }
 
-/* ---------- Connection settings ---------- */
-
-.settings {
-  display: grid;
-  gap: 18px;
-  padding: 22px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-}
-
-.settings-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.settings-head h2 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 650;
-}
-
-.setting {
-  display: grid;
-  gap: 8px;
-}
-
-.setting-label {
-  display: inline-flex;
-  align-items: center;
-  color: var(--text-subtle);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.setting .segmented {
-  display: flex;
-}
-
-.setting .segmented button {
-  flex: 1;
-  min-height: 34px;
-}
-
-.access-description {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.8125rem;
-  line-height: 1.7;
-}
-
+/* The temporary app's link and its expiry, or why there is none, under the title. */
 .access-status {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 12px;
-  padding: 10px 12px;
+  margin-top: 20px;
+  padding: 6px 6px 6px 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--text-muted);
   font-size: 0.8125rem;
+}
+
+.access-error {
+  padding-right: 6px;
+  color: var(--danger);
 }
 
 .access-status:empty {
@@ -162,7 +113,7 @@
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: var(--surface-raised);
   color: var(--text);
   font: inherit;
@@ -172,10 +123,6 @@
 
 .access-status button:hover {
   background: var(--surface-hover);
-}
-
-.access-status button:first-of-type {
-  margin-left: auto;
 }
 
 /* ---------- Toolbar ---------- */
@@ -296,9 +243,7 @@
 
 @media (max-width: 860px) {
   .home-hero {
-    grid-template-columns: 1fr;
-    gap: 28px;
-    padding: 36px 0 28px;
+    padding: 32px 0 20px;
   }
 
   .grid.wide {

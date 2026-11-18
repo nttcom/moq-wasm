@@ -2,8 +2,9 @@ import { ACCESS_MODE_PARAM, type AccessMode, access, accessMode, startNewTempora
 import { icon } from './icon'
 import { temporaryStatus } from './temporaryStatus'
 
-/// The example list's mode tabs. A change is stored and the page reloads, so `access` is resolved
-/// again for the new mode, issuing a temporary app if there is none.
+/// The example list's mode switch in the top bar. A change is stored and the page reloads, so `access`
+/// is resolved again for the new mode, issuing a temporary app if there is none.
+const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
 const description = document.getElementById('access-description')!
 const status = document.getElementById('access-status')!
 
@@ -20,16 +21,21 @@ for (const tab of document.querySelectorAll<HTMLButtonElement>('.access-switch [
 
 switch (access.kind) {
   case 'public':
-    description.textContent = '送信したメディアは誰でも視聴できます'
+    describe('送信したメディアは誰でも視聴できます')
     break
   case 'given':
-    description.textContent = `URL のトークン（app ${access.namespaceRoot}）で接続します`
+    describe(`URL のトークン（app ${access.namespaceRoot}）で接続します`)
     break
-  case 'unavailable':
-    description.textContent = access.reason
+  case 'unavailable': {
+    describe('URL を共有した相手だけが参加・視聴できます')
+    const reason = document.createElement('span')
+    reason.className = 'access-error'
+    reason.textContent = access.reason
+    status.replaceChildren(reason)
     break
+  }
   case 'temporary': {
-    description.textContent = 'URL を共有した相手だけが参加・視聴できます'
+    describe('URL を共有した相手だけが参加・視聴できます')
     const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)
     const renew = button('トークンを作り直す', async () => {
       await startNewTemporaryApp()
@@ -39,6 +45,13 @@ switch (access.kind) {
       '今開いている会議はそのまま続きます。これから開く Example は、今の共有リンクや録画とは別の場所になります'
     status.replaceChildren(...shown, renew)
   }
+}
+
+/// Puts what the mode means, and the caution every mode shares, in the ⓘ beside the switch.
+function describe(note: string): void {
+  const text = `${note}\n${CAUTION}`
+  description.dataset.tip = text
+  description.setAttribute('aria-label', text)
 }
 
 /// The fragment names the current app; reloading with it would adopt that app again as a shared link.
