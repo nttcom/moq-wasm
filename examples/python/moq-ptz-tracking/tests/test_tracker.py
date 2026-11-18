@@ -53,7 +53,7 @@ async def test_box_leaving_the_margin_moves_the_camera_and_is_recorded():
     assert [command["type"] for command in await command_track.next_group()] == ["continuous", "stop"]
     assert await next_records(group) == [
         {
-            "l": [42, 3],
+            "L": [42, 3],
             "data": {
                 "prompt": [7, 0],
                 "boxes": [[0, [0.7, 0.4, 0.95, 0.6]]],

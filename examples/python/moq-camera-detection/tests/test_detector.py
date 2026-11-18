@@ -42,7 +42,7 @@ async def test_fresh_picture_answer_is_recorded_at_its_location_with_its_prompt(
     )
 
     # Assert
-    assert await next_records(publication) == [{"l": [42, 3], "data": {"prompt": [7, 0], "answers": ["yes"]}}]
+    assert await next_records(publication) == [{"L": [42, 3], "data": {"prompt": [7, 0], "answers": ["yes"]}}]
 
 
 async def test_stale_picture_is_not_judged():
@@ -74,6 +74,6 @@ async def test_answer_returned_after_a_newer_one_is_not_recorded():
     )
 
     # Assert
-    assert await next_records(publication) == [{"l": [44, 1], "data": {"prompt": [7, 0], "answers": ["no"]}}]
+    assert await next_records(publication) == [{"L": [44, 1], "data": {"prompt": [7, 0], "answers": ["no"]}}]
     with pytest.raises(TimeoutError):
         await publication.next_write(NO_MORE_RECORDS_WAIT_SECONDS)

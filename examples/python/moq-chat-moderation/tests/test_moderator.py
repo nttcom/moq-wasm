@@ -20,7 +20,7 @@ async def test_chat_is_recorded_with_each_label_probability_at_its_location():
     # Assert
     _, records = await publication.next_write()
     assert records == [
-        {"l": [7, 0], "data": {"labels": [{"name": "喜", "probability": 0.02}, {"name": "暴言", "probability": 0.93}]}}
+        {"L": [7, 0], "data": {"labels": [{"name": "喜", "probability": 0.02}, {"name": "暴言", "probability": 0.93}]}}
     ]
 
 

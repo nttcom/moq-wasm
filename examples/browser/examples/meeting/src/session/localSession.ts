@@ -330,7 +330,7 @@ function isAtOrBefore(object: ReceivedObject, location: MoqLocation | undefined)
 }
 
 type ChatEventRecord = {
-  t?: number
+  T?: number
   data?: { text?: string }
 }
 
@@ -344,7 +344,7 @@ function decodeChatPayload(payload: string): { text: string; timestamp: number }
     }
     const data = isObject(record.data) ? record.data : null
     const text = typeof data?.text === 'string' && data.text.trim() ? data.text : payload
-    const timestamp = typeof record.t === 'number' && Number.isFinite(record.t) ? record.t : fallback.timestamp
+    const timestamp = typeof record.T === 'number' && Number.isFinite(record.T) ? record.T : fallback.timestamp
     return { text, timestamp }
   } catch {
     return fallback
@@ -352,7 +352,7 @@ function decodeChatPayload(payload: string): { text: string; timestamp: number }
 }
 
 function encodeChatPayload(message: string): string {
-  const record: ChatEventRecord = { t: Date.now(), data: { text: message } }
+  const record: ChatEventRecord = { T: Date.now(), data: { text: message } }
   return JSON.stringify([record])
 }
 

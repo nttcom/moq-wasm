@@ -452,7 +452,7 @@ keeps as `started_at_ms`. Each media object's wall-clock LOC Timestamp becomes m
 with a Timescale property of 1,000,000 (draft-ietf-moq-loc-04 §2.3.1.2), and a
 group whose objects begin before the start is not stored, so a publisher
 whose clock runs behind the recorder's loses its first group. Each event timeline record
-indexed by wallclock (`t`) becomes a media time record (`m`,
+indexed by wallclock (`T`) becomes a media time record (`M`,
 draft-ietf-moq-msf-02 §8.2), and one from before the start is left out. So
 every participant shares one time axis, and a replay's media timeline names
 each group at the presentation time its first object carries, with wallclock
@@ -523,7 +523,7 @@ media timeline tracks, one object each, at group 0, object 0:
 - A participant's transcript is an event timeline of its own, built from the
   transcriber's recording (see below).
 - The event timelines, the chat and the transcript, hold media time records
-  (`m`, see `RecordingClock`), so their `depends` names the namespace's media
+  (`M`, see `RecordingClock`), so their `depends` names the namespace's media
   timelines (§8.3).
 - All of them come from the stored objects alone. draft-ietf-moq-transport-14 §2.1
   requires an object to be the same bytes wherever it is read, and several
@@ -543,9 +543,9 @@ and does not announce the transcriber's namespace:
 
 - The transcriber names a speaker after the element below the room of the
   namespace it transcribed, so a record goes to the member `<room>/<speaker>`,
-  in the camera session whose media spans its `m`, the first one when several
-  do. A record of another speaker, at an `m` outside all their sessions or
-  for a session without an audio track is left out. `m` comes from the
+  in the camera session whose media spans its `M`, the first one when several
+  do. A record of another speaker, at an `M` outside all their sessions or
+  for a session without an audio track is left out. `M` comes from the
   transcriber's clock and the Timestamps from the participant's, so a skew
   between them moves the boundaries by as much.
 - The session's catalog lists `transcript` after its other tracks:
@@ -554,7 +554,7 @@ and does not announce the transcriber's namespace:
   `Transcript`, `mimeType` `application/json`, `depends` the namespace's media
   timelines, and the namespace's `trackDuration` like the others.
 - The track is one object at group 0, object 0: the session's records as one
-  §8.2 array sorted by `m`, a record stored twice listed once.
+  §8.2 array sorted by `M`, a record stored twice listed once.
 
 `archive_reader::StoredRecording` rejects cross-recording keys, invalid ranges,
 oversized metadata and corrupt chunks. FETCH sorts object locations across chunk

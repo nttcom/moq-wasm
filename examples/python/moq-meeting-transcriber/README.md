@@ -64,7 +64,7 @@ curl -N "http://127.0.0.1:8100/rooms/<ルーム名>"   # 開いている間、bo
 | namespace | track | 内容 |
 | --- | --- | --- |
 | `anon/{room}/{user}` | `catalog`、`audio_*` | 参加者が publish するもの。bot は最も高いビットレートの音声を購読する |
-| `anon/{room}/bots/transcriber` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"t": 発話開始の ms, "data": {"speaker", "text"}}` |
+| `anon/{room}/bots/transcriber` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"T": 発話開始の ms, "data": {"speaker", "text"}}` |
 | `anon/{room}/bots/transcriber` | `status` | `{"asr": 名前, "state": "starting" か "ready"}` |
 
 ## テスト

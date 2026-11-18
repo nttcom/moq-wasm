@@ -17,7 +17,7 @@ class TranscriptRecord:
     text: str
 
     def to_json(self) -> dict:
-        return {"t": self.started_at_ms, "data": {"speaker": self.speaker, "text": self.text}}
+        return {"T": self.started_at_ms, "data": {"speaker": self.speaker, "text": self.text}}
 
 
 class TranscriptWriter(FrameProcessor):

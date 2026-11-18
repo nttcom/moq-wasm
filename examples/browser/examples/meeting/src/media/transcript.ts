@@ -83,9 +83,9 @@ function parseRecords(payload: Uint8Array, live: boolean): TranscriptRecord[] {
     return []
   }
   return records.flatMap((record) => {
-    const { t, data } = record ?? {}
-    return typeof t === 'number' && typeof data?.speaker === 'string' && typeof data?.text === 'string'
-      ? [{ startedAtMs: t, speaker: data.speaker, text: data.text, live }]
+    const { T, data } = record ?? {}
+    return typeof T === 'number' && typeof data?.speaker === 'string' && typeof data?.text === 'string'
+      ? [{ startedAtMs: T, speaker: data.speaker, text: data.text, live }]
       : []
   })
 }
