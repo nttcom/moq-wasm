@@ -135,35 +135,9 @@
 
 /* ---------- Verdict drawer ---------- */
 
-.chat-sidebar {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: min(380px, 100vw);
-  padding: 20px 22px;
-  overflow-y: auto;
-  border-left: 1px solid var(--border-strong);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-lg);
-  animation: drawer-in 0.18s ease-out;
-}
-
-@keyframes drawer-in {
-  from {
-    transform: translateX(24px);
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-sidebar {
-    animation: none;
-  }
+/* The judgment of a clicked message, a card in the side column so it covers none of the controls. */
+.chat-sidebar[hidden] {
+  display: none;
 }
 
 .sidebar-text {
