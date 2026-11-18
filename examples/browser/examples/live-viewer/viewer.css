@@ -204,6 +204,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 16px;
+  padding: 2px 0;
 }
 
 .playback-charts {
@@ -324,51 +325,6 @@
   position: static;
   max-height: none;
   overflow: visible;
-}
-
-.viewer-status {
-  padding: 2px 0;
-}
-
-/* `#stage` outranks the SDK's own .viewer-stage rule, which loads after this file. */
-#stage.viewer-stage {
-  border-color: var(--border);
-  border-radius: var(--radius-md);
-  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
-}
-
-/* The SDK's controls do not set min-height or font-weight, so the page's button defaults would apply. */
-#stage.viewer-stage :is(button, select, input) {
-  min-height: 0;
-  font-weight: 400;
-}
-
-/* The stage keeps a 16:9 box whatever it shows, so it does not collapse between starting and the
-   first frame, and the player's automatic quality reads a stable height. */
-#stage.viewer-stage {
-  aspect-ratio: 16 / 9;
-}
-
-#stage.viewer-stage > :is(video, canvas) {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-/* main.ts sets data-started while the player runs. */
-
-#stage.viewer-stage:not([data-started])::before {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  pointer-events: none;
-  display: grid;
-  place-items: center;
-  color: #9aa5b1;
-  content: 'Watch を押すと再生が始まります';
-  font-size: 0.875rem;
 }
 
 .publish-row {

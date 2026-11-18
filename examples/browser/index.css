@@ -1118,8 +1118,7 @@
   fill: var(--th-floor);
 }
 
-.th-cctv-scene .edge,
-.th-cctv-scene .arm {
+.th-cctv-scene .edge {
   fill: none;
   stroke: var(--th-line);
   stroke-width: 1.2;

@@ -358,22 +358,10 @@ body:not(:has(> .app-shell))::before {
   white-space: nowrap;
 }
 
-.badge.accent {
-  border-color: var(--accent-border);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .badge.warning {
   border-color: color-mix(in srgb, var(--warning) 40%, transparent);
   background: var(--warning-soft);
   color: var(--warning);
-}
-
-.badge.danger {
-  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
-  background: var(--danger-soft);
-  color: var(--danger);
 }
 
 /* ---------- Access status (utils/accessBar.ts) ---------- */
@@ -400,7 +388,7 @@ body:not(:has(> .app-shell))::before {
   white-space: nowrap;
 }
 
-.access-bar > span:not(.access-info) {
+.access-bar > span:not(.tip) {
   max-width: 36ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -440,43 +428,6 @@ body:not(:has(> .app-shell))::before {
   background: var(--danger);
 }
 
-.access-info {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  color: var(--text-subtle);
-  cursor: help;
-}
-
-.access-info:hover,
-.access-info:focus-visible {
-  color: var(--text);
-}
-
-/* The note hangs from the chip's right edge, which stays on screen at any width. */
-.access-info:hover::after,
-.access-info:focus::after {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 60;
-  width: min(20rem, 80vw);
-  padding: 10px 12px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-lg);
-  color: var(--text);
-  content: attr(data-note);
-  font-size: 0.8125rem;
-  font-weight: 400;
-  line-height: 1.6;
-  white-space: normal;
-}
-
 .access-bar button {
   flex: none;
   min-height: 26px;
@@ -504,7 +455,7 @@ body:not(:has(> .app-shell))::before {
 }
 
 @media (max-width: 480px) {
-  .access-bar.temporary > span:not(.access-info, .access-dot) {
+  .access-bar.temporary > span:not(.tip, .access-dot) {
     display: none;
   }
 }
@@ -579,31 +530,20 @@ body:not(:has(> .app-shell))::before {
 }
 
 /* Beside a heading's or label's words, the mark keeps a little space from them. */
-:is(h1, h2, h3, h4, label, legend, summary, .setting-label) > .tip {
+:is(h1, h2, h3, h4, label, legend, summary) > .tip {
   margin-left: 4px;
 }
 
 /* A tip that warns: an amber mark, and a note edged in amber. */
 .tip.warning,
 .tip.warning:hover,
-.tip.warning:focus-visible,
-.access-info.warning,
-.access-info.warning:hover,
-.access-info.warning:focus-visible {
+.tip.warning:focus-visible {
   color: var(--warning);
 }
 
 .tip.warning:hover::after,
-.tip.warning:focus::after,
-.access-info.warning:hover::after,
-.access-info.warning:focus::after {
+.tip.warning:focus::after {
   border-color: color-mix(in srgb, var(--warning) 55%, transparent);
-}
-
-.access-info.danger,
-.access-info.danger:hover,
-.access-info.danger:focus-visible {
-  color: var(--danger);
 }
 
 /* A tip that reports a failure: a red mark, and a note edged in red. */

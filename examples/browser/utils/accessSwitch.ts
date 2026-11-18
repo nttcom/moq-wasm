@@ -1,11 +1,18 @@
-import { ACCESS_MODE_PARAM, type AccessMode, access, accessMode, startNewTemporaryApp, writeAccessMode } from './access'
+import {
+  ACCESS_MODE_PARAM,
+  type AccessMode,
+  CAUTION,
+  access,
+  accessMode,
+  startNewTemporaryApp,
+  writeAccessMode
+} from './access'
 import { icon } from './icon'
 import { temporaryStatus } from './temporaryStatus'
 
 // The example list's mode switch in the top bar. A change is stored and the page reloads, so access is
 // resolved again for the new mode.
 
-const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
 /// Set once a reader has closed the note, so it opens by itself only on their first visit.
 const NOTE_CLOSED_KEY = 'moqt.accessNoteClosed'
 const description = document.getElementById('access-description')!
@@ -40,7 +47,10 @@ switch (access.kind) {
   case 'temporary': {
     describe('URL を共有した相手だけが参加・視聴できます')
     const shown = temporaryStatus(access, (minutes) => `リンクの有効期限 残り ${minutes} 分`)
-    const renew = button('トークンを作り直す', async () => {
+    const renew = document.createElement('button')
+    renew.type = 'button'
+    renew.append(icon('refresh-cw'), 'トークンを作り直す')
+    renew.addEventListener('click', async () => {
       await startNewTemporaryApp()
       reloadWithoutToken()
     })
@@ -101,12 +111,4 @@ function reloadWithoutToken(): void {
   const query = new URLSearchParams(window.location.search)
   query.delete(ACCESS_MODE_PARAM)
   window.location.replace(window.location.pathname + (query.size > 0 ? `?${query}` : ''))
-}
-
-function button(label: string, onClick: () => Promise<void>): HTMLButtonElement {
-  const element = document.createElement('button')
-  element.type = 'button'
-  element.append(icon('refresh-cw'), label)
-  element.addEventListener('click', () => void onClick())
-  return element
 }

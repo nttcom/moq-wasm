@@ -1,8 +1,6 @@
-import { type Access, access } from './access'
-import { icon } from './icon'
+import { type Access, CAUTION, access } from './access'
+import { icon, tip } from './icon'
 import { temporaryStatus } from './temporaryStatus'
-
-const CAUTION = '検証用の認証認可機能です。機密情報やプライバシーに関わる情報は入力しないでください'
 
 /// The chip at the end of the app shell that shows which namespace root the page uses and who can see it.
 export function createAccessBar(): HTMLElement {
@@ -65,15 +63,14 @@ function detail(value: string): HTMLElement {
   return element
 }
 
-/// Shows `note` while the pointer is over the mark or the mark has focus. A `warning` (the public app,
-/// open to everyone) or a `danger` (no token) mark takes that color and icon in place of the ⓘ.
+/// The ⓘ of the chip, opening leftward from its end. A `warning` (the public app, open to everyone) or a
+/// `danger` (no token) mark takes that color and icon in place of the ⓘ.
 function info(note: string, tone?: 'warning' | 'danger'): HTMLElement {
-  const element = document.createElement('span')
-  element.className = tone ? `access-info ${tone}` : 'access-info'
-  element.tabIndex = 0
-  element.dataset.note = note
-  element.setAttribute('role', 'img')
-  element.setAttribute('aria-label', note)
-  element.append(icon(tone === 'warning' ? 'triangle-alert' : tone === 'danger' ? 'circle-alert' : 'info'))
+  const element = tip(note)
+  element.classList.add('end')
+  if (tone) {
+    element.classList.add(tone)
+    element.replaceChildren(icon(tone === 'warning' ? 'triangle-alert' : 'circle-alert'))
+  }
   return element
 }

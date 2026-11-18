@@ -103,43 +103,6 @@
 .video-card #stage {
   overflow: hidden;
   margin-bottom: 10px;
-  border-color: var(--border);
-  border-radius: var(--radius-md);
-  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
-}
-
-/* The SDK's controls do not set min-height or font-weight, so the page's button defaults would apply. */
-.video-card #stage :is(button, select, input) {
-  min-height: 0;
-  font-weight: 400;
-}
-
-/* The stage keeps a 16:9 box whatever it shows, so it does not collapse between starting and the
-   first frame, and the player's automatic quality reads a stable height. */
-.video-card #stage {
-  aspect-ratio: 16 / 9;
-}
-
-.video-card #stage > :is(video, canvas) {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-/* main.ts sets data-started while the player runs. */
-
-.video-card #stage:not([data-started])::before {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  pointer-events: none;
-  display: grid;
-  place-items: center;
-  color: #9aa5b1;
-  content: 'カメラの映像を待っています';
-  font-size: 0.875rem;
 }
 
 .video-card #video-stats {
