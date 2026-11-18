@@ -30,39 +30,44 @@ bot が聞くのは、ルームにいる参加者のうち最も早く入った 
 
 ## 起動
 
-[Google AI Studio](https://aistudio.google.com/apikey) で Gemini API キーを取得し、各コマンドを別々のターミナルで実行します。
+bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、ルームごとに `voice-agent` 型の bot として起動します。
+一時アプリのページは Join するときに temporary-apps の `/bots/voice-agent` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。Public モードのページでは bot は動きません。
 
-```shell
-make relay
-make browser
+手元では、[Google AI Studio](https://aistudio.google.com/apikey) で Gemini API キーを取得して `uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
+bots は自分の環境変数を bot に引き継ぐので、bots を `GOOGLE_API_KEY=<API キー>` で起動します。
 
-cd examples/python/moq-ai-voice-agent
-GOOGLE_API_KEY=<API キー> uv run python -m moq_ai_voice_agent.bot --insecure
+```json
+{
+  "voice-agent": {
+    "launcher": { "kind": "local", "program": "<リポジトリ>/examples/python/moq-ai-voice-agent/.venv/bin/python" },
+    "args": ["-m", "moq_ai_voice_agent.bot", "--relay-url", "https://127.0.0.1:4433", "--insecure"],
+    "grace_seconds": 30,
+    "max_seconds": 3600,
+    "max_running": 4
+  }
+}
 ```
 
-- `http://localhost:5173/moq-wasm/examples/moq-ai-voice-agent/` を開き、Local relay を選んで Join し、話しかけます。
-- Cloud relay を使うときは bot を `--relay-url https://relay-1.moqt.research.skyway.io:443` で起動し、ページを `?botUrl=http://127.0.0.1:8101` 付きで開きます。
-- Vertex AI で動かすときは、`GOOGLE_API_KEY` の代わりに `--vertex-project <プロジェクト ID>` を付けます。手元では `gcloud auth application-default login` の認証情報を使います。
-- bot は `http://127.0.0.1:8101` で待ち受けます。`moq-wasm` のビルドに Rust のツールチェーンが要ります。
+- Vertex AI で動かすときは、`GOOGLE_API_KEY` の代わりに `args` に `--vertex-project <プロジェクト ID>` を足します。手元では `gcloud auth application-default login` の認証情報を使います。
+- `moq-wasm` のビルドに Rust のツールチェーンが要ります。
 
 ## オプション
 
-接続先・TLS・退出条件は [moq-bot-rooms](../moq-bot-rooms/README.md) を参照してください。
+bot サービスが付ける引数と、接続先・TLS のオプションは [moq-bot-rooms](../moq-bot-rooms/README.md) を参照してください。`args` にはさらに次を書けます。
 
 | オプション | 既定値 | 内容 |
 | --- | --- | --- |
-| `--max-rooms` | `4` | 同時に動かすルームの数 |
 | `--vertex-project` | なし | Gemini をこのプロジェクトの Vertex AI で呼ぶ。なければ Gemini API を `GOOGLE_API_KEY` で呼ぶ |
 
 ## トラック
 
-`anon` は一時アプリのルームでは appId（`temp-…`）になります。
+`{app}` は一時アプリの appId（`temp-…`）です。
 
 | namespace | track | 内容 |
 | --- | --- | --- |
-| `anon/moq-ai-voice-agent/{room}/{user}` | `catalog`、`mic_audio` | ページが publish するマイク |
-| `anon/moq-ai-voice-agent/{room}/gemini` | `catalog`、`audio` | bot の声 |
-| `anon/moq-ai-voice-agent/{room}/gemini` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"T": ms, "data": {"role": "user" か "assistant", "text", "turn"}}`。bot の返答は、1 文が再生され始めるごとにそこまでの全文を送る。同じ返答のレコードは同じ `turn`（最初のレコードの ms）を持つ |
+| `{app}/moq-ai-voice-agent/{room}/{user}` | `catalog`、`mic_audio` | ページが publish するマイク |
+| `{app}/moq-ai-voice-agent/{room}/bots/voice-agent` | `catalog`、`audio` | bot の声 |
+| `{app}/moq-ai-voice-agent/{room}/bots/voice-agent` | `transcript` | draft-ietf-moq-msf-02 §8 の event timeline。`{"T": ms, "data": {"role": "user" か "assistant", "text", "turn"}}`。bot の返答は、1 文が再生され始めるごとにそこまでの全文を送る。同じ返答のレコードは同じ `turn`（最初のレコードの ms）を持つ |
 
 ## テスト
 

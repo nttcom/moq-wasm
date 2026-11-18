@@ -6,25 +6,20 @@ import {
   createBroadcast,
   watchBroadcasts
 } from 'moq-wasm/media'
-import { connectOptions, temporaryAppToken, withNamespaceRoot } from '../../utils/access'
-import { BOT_ROOM_END_TEXT, BotRoomRequest, pageRoomId } from '../../utils/botRoom'
+import { connectOptions, withNamespaceRoot } from '../../utils/access'
+import { pageRoomId } from '../../utils/botRoom'
+import { botNamespace, startRoomBot } from '../../utils/roomBots'
 import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { randomName } from '../../utils/randomName'
 import { setUpRelayUrlControls } from '../../utils/relayPicker'
-import { resolveServiceUrl } from '../../utils/serviceUrl'
 import { type TranscriptTurn, transcriptTurns } from './transcript'
 
 const ROOM = pageRoomId()
-/// Must match examples/python/moq-ai-voice-agent/moq_ai_voice_agent/bot.py.
 const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-ai-voice-agent', ROOM])
-const BOT_NAMESPACE = [...ROOM_NAMESPACE, 'gemini']
+const BOT_TYPE = 'voice-agent'
+const BOT_NAMESPACE = botNamespace(ROOM_NAMESPACE, BOT_TYPE)
 const TRANSCRIPT_TRACK = 'transcript'
-const BOT_SERVICE = {
-  param: 'botUrl',
-  local: 'http://127.0.0.1:8101',
-  cloud: 'https://moq-ai-voice-agent.moqt.research.skyway.io'
-}
 
 const urlInput = element<HTMLInputElement>('url')
 const joinButton = element<HTMLButtonElement>('joinBtn')
@@ -34,10 +29,6 @@ const transcriptList = element<HTMLOListElement>('transcript')
 const transcriptEmpty = element<HTMLParagraphElement>('transcript-empty')
 const botPlayer = element<HTMLDivElement>('bot-player')
 const botRoomNotice = element<HTMLSpanElement>('bot-room')
-const botRoom = new BotRoomRequest((reason) => {
-  botRoomNotice.textContent = BOT_ROOM_END_TEXT[reason]
-  botRoomNotice.style.display = ''
-})
 
 let session: MoqSession | undefined
 let audioContext: AudioContext | undefined
@@ -64,8 +55,8 @@ async function join(): Promise<void> {
     audioContext = new AudioContext()
     await audioContext.resume()
     const relayUrl = urlInput.value.trim()
-    // Asking before connecting lets the bot start while the page connects.
-    botRoom.open(resolveServiceUrl(window.location.search, relayUrl, BOT_SERVICE), ROOM, { token: temporaryAppToken })
+    // Starting before connecting lets the bot start while the page connects.
+    startBot()
     const joined = await MoqSession.connect(relayUrl, connectOptions())
     session = joined
     void joined.closed.then(() => {
@@ -88,7 +79,14 @@ async function join(): Promise<void> {
         remote.listen({ onSourceAdd: (view) => botPlayer.append(view.element) })
         void followTranscript(joined)
       },
-      onRemove: () => setBotStatus(false)
+      onRemove: () => {
+        setBotStatus(false)
+        // A start sent while the previous bot was still leaving an empty room got 409, so start one
+        // again once it has left.
+        if (session === joined) {
+          startBot()
+        }
+      }
     })
     setStatus('connection-status', '接続済み', 'ok')
     leaveButton.disabled = false
@@ -98,10 +96,13 @@ async function join(): Promise<void> {
   }
 }
 
+function startBot(): void {
+  void startRoomBot(BOT_TYPE, ROOM_NAMESPACE, botRoomNotice)
+}
+
 async function leave(text: string, state: StatusState): Promise<void> {
   const leaving = session
   session = undefined
-  botRoom.close()
   await room?.close().catch(() => undefined)
   room = undefined
   await broadcast?.close().catch(() => undefined)

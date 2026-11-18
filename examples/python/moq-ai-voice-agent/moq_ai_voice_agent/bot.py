@@ -4,9 +4,8 @@ import os
 from functools import partial
 
 import moq_wasm
+from moq_bot_rooms.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
 from moq_bot_rooms.relay import add_relay_arguments
-from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
-from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -22,12 +21,7 @@ from moq_ai_voice_agent import transcript
 from moq_ai_voice_agent.gemini import GeminiServices, VertexProject
 from moq_ai_voice_agent.listener import Listener
 
-DEFAULT_PORT = 8101
-# Every room holds its own Gemini sessions; the bot itself does little but VAD.
-DEFAULT_MAX_ROOMS = 4
-# The page publishes its microphone one level under the room, and the bot its voice and transcript.
-PARTICIPANT_ID = "gemini"
-# The transcript is kept for FETCH as long as a room runs by default (--max-room-seconds).
+# The transcript is kept for FETCH as long as the bot service lets a room's bot run.
 TRANSCRIPT_RETENTION_SECONDS = 60 * 60
 LANGUAGE = Language.JA_JP
 VOICE = "Kore"
@@ -44,8 +38,11 @@ SYSTEM_INSTRUCTION = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Talk with the MoQ AI Voice Agent page through Gemini")
-    add_serve_arguments(parser, bot="moq-ai-voice-agent", default_port=DEFAULT_PORT, default_max_rooms=DEFAULT_MAX_ROOMS)
+    parser = argparse.ArgumentParser(
+        description="Talk through Gemini in the MoQ AI Voice Agent room the bot service launched the bot for"
+    )
+    parser.set_defaults(bot="moq-ai-voice-agent")
+    add_bot_job_arguments(parser)
     add_relay_arguments(parser)
     parser.add_argument(
         "--vertex-project",
@@ -80,25 +77,25 @@ def voice_pipeline(gemini: GeminiServices, transport: MoqWasmTransport, listener
     )
 
 
-async def talk_in_session(gemini: GeminiServices, room: BotRoom, session: moq_wasm.Session) -> None:
-    # The namespace examples/browser/examples/moq-ai-voice-agent/main.ts uses.
-    namespace = [room.namespace_root, "moq-ai-voice-agent", room.room_id]
+async def talk_in_session(gemini: GeminiServices, job: BotJob, session: moq_wasm.Session) -> None:
+    # The page publishes its microphone one level under the room, and the bot its voice and transcript
+    # at `<room>/bots/voice-agent` (examples/browser/examples/moq-ai-voice-agent/main.ts).
     transport = MoqWasmTransport(
         session,
         MoqWasmParams(
-            room=namespace,
-            participant_id=PARTICIPANT_ID,
+            room=job.namespace_prefix,
+            broadcast=job.broadcast,
             audio_in_enabled=True,
             audio_out_enabled=True,
             event_timelines_out={transcript.TRACK_NAME: TRANSCRIPT_RETENTION_SECONDS},
-            empty_timeout=GRACE_SECONDS,
+            empty_timeout=job.grace_seconds,
         ),
     )
     listener = Listener()
     transport.add_event_handler("on_client_connected", lambda _, participant_id: listener.joined(participant_id))
     transport.add_event_handler("on_client_disconnected", lambda _, participant_id: listener.left(participant_id))
     worker = PipelineWorker(voice_pipeline(gemini, transport, listener), enable_rtvi=False, idle_timeout_secs=None)
-    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    # serve_bot_job owns SIGINT and SIGTERM.
     runner = WorkerRunner(handle_sigint=False)
 
     @transport.event_handler("on_room_empty")
@@ -109,8 +106,8 @@ async def talk_in_session(gemini: GeminiServices, room: BotRoom, session: moq_wa
     await runner.run()
 
 
-async def talk_in_room(args: argparse.Namespace, gemini: GeminiServices, room: BotRoom) -> None:
-    await stay_connected(args, room, partial(talk_in_session, gemini, room))
+async def talk_in_room(args: argparse.Namespace, gemini: GeminiServices, job: BotJob, bots: Bots) -> None:
+    await stay_connected(args, bots, partial(talk_in_session, gemini, job))
 
 
 async def main():
@@ -121,7 +118,7 @@ async def main():
         gemini = GeminiServices(LANGUAGE, api_key=api_key)
     else:
         raise SystemExit("set GOOGLE_API_KEY to a Gemini API key, or pass --vertex-project")
-    await serve_rooms(args, partial(talk_in_room, args, gemini))
+    await serve_bot_job(args, partial(talk_in_room, args, gemini))
 
 
 if __name__ == "__main__":

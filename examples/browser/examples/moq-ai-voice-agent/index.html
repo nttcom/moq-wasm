@@ -44,19 +44,17 @@
               <li>
                 <h4>pipecat bot を起動する</h4>
                 <p class="hint">
-                  Gemini API キーを Google AI Studio で取得します。relay は Cloud relay-1 か、<code>make relay</code>
-                  で起動したローカルの relay です
+                  bot サービス（<code>services/bots</code>）の <code>BOTS_TYPES</code> に登録します（<a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/moq-ai-voice-agent/README.md"
+                    target="_blank"
+                    rel="noopener"
+                    >README</a
+                  >）
                 </p>
-                <pre><code>cd examples/python/moq-ai-voice-agent
-GOOGLE_API_KEY=&lt;API キー&gt; uv run python -m moq_ai_voice_agent.bot \
-  --relay-url https://relay-1.moqt.research.skyway.io:443</code></pre>
               </li>
               <li>
                 <h4>話しかける</h4>
-                <p class="hint">
-                  手元の bot を Cloud relay で使うときは、このページの URL に
-                  <code>?botUrl=http://127.0.0.1:8101</code> を付けて開き、Join します
-                </p>
+                <p class="hint">一時アプリのページで Join します</p>
               </li>
             </ol>
           </details>
