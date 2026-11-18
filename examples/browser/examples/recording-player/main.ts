@@ -101,7 +101,7 @@ function showPlaying(value: boolean): void {
 
 function avatar(name: string, size: string): HTMLElement {
   const chip = document.createElement('span')
-  chip.className = `flex shrink-0 items-center justify-center rounded-full bg-blue-600 font-semibold text-white ${size}`
+  chip.className = `flex shrink-0 items-center justify-center rounded-full bg-teal-600 font-semibold text-white ${size}`
   chip.textContent = name.slice(0, 1).toUpperCase()
   chip.title = name
   return chip
@@ -111,7 +111,7 @@ function showNotice(text: string, kind: 'progress' | 'error'): void {
   const notice = element('stage-notice')
   notice.textContent = text
   notice.classList.remove('hidden')
-  notice.classList.toggle('bg-slate-800/90', kind === 'progress')
+  notice.classList.toggle('bg-zinc-800/90', kind === 'progress')
   notice.classList.toggle('bg-red-600/90', kind === 'error')
 }
 
@@ -215,7 +215,7 @@ function tileFor(current: OpenedRecording, participant: string, content: string)
   }
   const tile = document.createElement('div')
   tile.className =
-    'group relative aspect-video w-full overflow-hidden rounded-xl bg-slate-800 ring-2 ring-white/5 transition'
+    'group relative aspect-video w-full overflow-hidden rounded-xl bg-zinc-800 ring-2 ring-white/5 transition'
   tile.dataset.participant = participant
   tile.dataset.content = content
   const placeholder = document.createElement('div')
@@ -230,7 +230,7 @@ function tileFor(current: OpenedRecording, participant: string, content: string)
   label.textContent = content === 'camera' ? participant : `${participant} · ${content}`
   const state = document.createElement('output')
   state.className =
-    'pointer-events-none absolute bottom-2 right-2 max-w-[60%] truncate rounded bg-black/50 px-1.5 py-0.5 font-mono text-[10px] text-slate-200 opacity-0 transition group-hover:opacity-100'
+    'pointer-events-none absolute bottom-2 right-2 max-w-[60%] truncate rounded bg-black/50 px-1.5 py-0.5 font-mono text-[10px] text-zinc-200 opacity-0 transition group-hover:opacity-100'
   tile.append(placeholder, caption, label, state)
   const created: Tile = { participant, content, element: tile, caption, state, sources: [] }
   current.tiles.set(key, created)
@@ -423,7 +423,7 @@ function renderParticipants(current: OpenedRecording): void {
   chips.replaceChildren(
     ...participants.map((name) => {
       const chip = avatar(name, 'h-6 w-6 text-[11px]')
-      chip.classList.add('ring-2', 'ring-slate-950')
+      chip.classList.add('ring-2', 'ring-zinc-950')
       return chip
     })
   )
@@ -442,7 +442,7 @@ function renderEvents(current: OpenedRecording, at: number): void {
         item.className = 'rounded-xl border border-white/10 bg-gray-900/70 px-4 py-3'
         item.dataset.timeUs = String(event.at)
         const heading = document.createElement('div')
-        heading.className = 'flex items-center justify-between text-sm text-blue-200'
+        heading.className = 'flex items-center justify-between text-sm text-teal-200'
         const speaker = document.createElement('span')
         speaker.className = 'font-semibold'
         speaker.textContent = event.speaker

@@ -3,15 +3,15 @@ import { RECORDING_CHOICES, type RoomRecordingControls, pendingRecordingLabel } 
 
 export function RecordPanel({ recording }: { recording: RoomRecordingControls | null }) {
   if (!recording) {
-    return <p className="mt-4 text-sm text-blue-100">Recording is not available in this room</p>
+    return <p className="mt-4 text-sm text-teal-100">Recording is not available in this room</p>
   }
   return (
     <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
       <RecordControls recording={recording} />
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Recordings</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Recordings</div>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {recording.replays.length === 0 ? (
-          <p className="text-sm text-blue-100">No finished recording yet.</p>
+          <p className="text-sm text-teal-100">No finished recording yet.</p>
         ) : (
           recording.replays.toReversed().map((replay) => (
             <a
@@ -25,7 +25,7 @@ export function RecordPanel({ recording }: { recording: RoomRecordingControls | 
               <span className="truncate">
                 {replay.startedAtMs === undefined ? replay.id : new Date(replay.startedAtMs).toLocaleString()}
               </span>
-              <ExternalLink className="h-4 w-4 shrink-0 text-blue-200" />
+              <ExternalLink className="h-4 w-4 shrink-0 text-teal-200" />
             </a>
           ))
         )}
@@ -52,7 +52,7 @@ function RecordControls({ recording }: { recording: RoomRecordingControls }) {
         </button>
       ) : (
         <>
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">Start recording</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Start recording</div>
           {RECORDING_CHOICES.map(({ id, layout, composite, label, format }) => (
             <button
               key={id}

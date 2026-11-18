@@ -95,7 +95,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
             <Button
               onClick={handleStart}
               disabled={!canStart}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40"
+              className="bg-teal-600 hover:bg-teal-700 disabled:opacity-40"
             >
               配信開始
             </Button>
@@ -154,7 +154,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
                   onClick={() => setSourceType(t)}
                   className={`px-3 py-1.5 rounded-md text-xs font-mono border transition-colors ${
                     sourceType === t
-                      ? 'bg-blue-600 border-blue-500 text-white'
+                      ? 'bg-teal-600 border-teal-500 text-white'
                       : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
                   }`}
                 >

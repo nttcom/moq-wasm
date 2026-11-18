@@ -8,7 +8,7 @@ const CATCH_UP_OPTIONS: { value: CatchUp; label: string }[] = [
 ]
 
 const CONTROL_CLASS =
-  'w-40 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-blue-400'
+  'w-40 rounded-md bg-white/10 px-2 py-1 text-sm text-white outline-none ring-1 ring-white/10 focus:ring-teal-400'
 
 interface PlayoutControlsProps {
   value?: PlayoutSettings
@@ -24,8 +24,8 @@ export function PlayoutControls({ value, onChange }: PlayoutControlsProps) {
 
   return (
     <div className="space-y-3 rounded-lg border border-white/10 bg-white/5 p-3">
-      <div className="text-xs font-semibold uppercase tracking-wide text-blue-100">Playout Buffer</div>
-      <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
+      <div className="text-xs font-semibold uppercase tracking-wide text-teal-100">Playout Buffer</div>
+      <label className="flex items-center justify-between gap-3 text-sm text-teal-50">
         <span>Min buffer (ms)</span>
         <input
           type="number"
@@ -37,7 +37,7 @@ export function PlayoutControls({ value, onChange }: PlayoutControlsProps) {
           className={CONTROL_CLASS}
         />
       </label>
-      <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
+      <label className="flex items-center justify-between gap-3 text-sm text-teal-50">
         <span>Max buffer (ms)</span>
         <input
           type="number"
@@ -52,7 +52,7 @@ export function PlayoutControls({ value, onChange }: PlayoutControlsProps) {
           className={CONTROL_CLASS}
         />
       </label>
-      <label className="flex items-center justify-between gap-3 text-sm text-blue-50">
+      <label className="flex items-center justify-between gap-3 text-sm text-teal-50">
         <span>Catch up</span>
         <select
           value={settings.catchUp}

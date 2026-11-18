@@ -12,7 +12,7 @@ interface JoinRoomFormProps {
 }
 
 const INPUT_CLASS_NAME =
-  'h-12 border-white/10 bg-slate-800 text-base text-white placeholder:text-slate-500 ring-offset-slate-900 focus-visible:ring-blue-500'
+  'h-12 border-white/10 bg-zinc-800 text-base text-white placeholder:text-zinc-500 ring-offset-zinc-900 focus-visible:ring-teal-500'
 
 export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProps) {
   const [roomName, setRoomName] = useState('')
@@ -27,15 +27,15 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 p-6 text-white">
-      <div className="w-full max-w-xl space-y-8 rounded-2xl bg-slate-900 p-8 ring-1 ring-white/10">
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-6 text-white">
+      <div className="w-full max-w-xl space-y-8 rounded-2xl bg-zinc-900 p-8 ring-1 ring-white/10">
         <div className="space-y-2">
           <h1 className="text-3xl font-semibold">Join Meeting Room</h1>
-          <p className="text-slate-400">Enter your details to join the meeting</p>
+          <p className="text-zinc-400">Enter your details to join the meeting</p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="roomName" className="text-slate-300">
+            <Label htmlFor="roomName" className="text-zinc-300">
               Room Name
             </Label>
             <Input
@@ -50,7 +50,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="userName" className="text-slate-300">
+            <Label htmlFor="userName" className="text-zinc-300">
               User Name
             </Label>
             <Input
@@ -64,7 +64,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
               className={INPUT_CLASS_NAME}
             />
           </div>
-          <RelayPicker value={relayUrl} onChange={setRelayUrl} className="text-slate-300" />
+          <RelayPicker value={relayUrl} onChange={setRelayUrl} className="text-zinc-300" />
           {joinError && (
             <p className="text-sm text-red-400" data-testid="join-error">
               {joinError.message}
@@ -74,7 +74,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
             type="submit"
             size="lg"
             data-testid="join-submit-button"
-            className="h-12 w-full rounded-full bg-blue-600 text-base font-semibold text-white hover:bg-blue-700"
+            className="h-12 w-full rounded-full bg-teal-600 text-base font-semibold text-white hover:bg-teal-700"
             disabled={!roomName.trim() || !userName.trim() || connecting}
           >
             {connecting ? 'Connecting...' : 'Join Room'}

@@ -266,7 +266,7 @@ function StatsChartList({ charts, emptyMessage }: { charts: StatsChart[]; emptyM
 
   if (!visibleCharts.length) {
     return (
-      <div className="rounded-md border border-white/10 bg-white/[0.03] p-4 text-xs text-blue-200">{emptyMessage}</div>
+      <div className="rounded-md border border-white/10 bg-white/[0.03] p-4 text-xs text-teal-200">{emptyMessage}</div>
     )
   }
 
@@ -346,7 +346,7 @@ function MetricChart({
   return (
     <section className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h4 className="text-xs font-semibold text-blue-100">{title}</h4>
+        <h4 className="text-xs font-semibold text-teal-100">{title}</h4>
         <div className="flex flex-wrap items-center gap-2 text-[10px]">
           {series.map((entry) => {
             const hidden = hiddenSeriesKeys.has(entry.key)
@@ -355,7 +355,7 @@ function MetricChart({
                 key={entry.key}
                 type="button"
                 onClick={() => onToggleSeries(entry.key)}
-                className={`inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-blue-100/90 transition ${
+                className={`inline-flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-teal-100/90 transition ${
                   hidden ? 'border-white/10 opacity-40' : 'border-white/20 bg-white/[0.04]'
                 }`}
                 title={hidden ? 'Show series' : 'Hide series'}
@@ -412,7 +412,7 @@ function MetricChart({
           {tickValues.map((tick) => (
             <span
               key={`${title}-tick-label-${tick}`}
-              className="absolute left-1.5 -translate-y-full text-xs leading-none text-blue-200/75"
+              className="absolute left-1.5 -translate-y-full text-xs leading-none text-teal-200/75"
               style={{ top: `${(Math.max(2.5, toChartY(tick) - 0.6) / CHART_VIEWBOX_HEIGHT) * 100}%` }}
             >
               {formatTickLabel(tick, scale.unit)}
@@ -421,7 +421,7 @@ function MetricChart({
         </div>
       ) : (
         <div
-          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded bg-black/20 text-xs text-blue-200`}
+          className={`flex ${CHART_HEIGHT_CLASS} items-center justify-center rounded bg-black/20 text-xs text-teal-200`}
         >
           No data
         </div>

@@ -16,14 +16,14 @@ interface RoomHeaderProps {
 /// Every remote member appears here, on the stage or not.
 export function RoomHeader({ roomName, members, recording, transcribing, transcriberStarting }: RoomHeaderProps) {
   return (
-    <header className="flex items-center gap-3 border-b border-white/15 bg-slate-900 px-4 py-2 text-sm">
+    <header className="flex items-center gap-3 border-b border-white/15 bg-zinc-900 px-4 py-2 text-sm">
       <h1 className="font-semibold" data-testid="room-name">
         {roomName}
       </h1>
       {recording === 'starting' && (
         <span
           data-testid="recording-badge"
-          className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold text-slate-200"
+          className="rounded bg-zinc-700 px-2 py-0.5 text-xs font-semibold text-zinc-200"
         >
           Starting
         </span>
@@ -41,12 +41,12 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
         <span
           data-testid="transcriber-badge"
           title="Speech in this room is transcribed"
-          className="rounded bg-slate-700 px-2 py-0.5 text-xs font-semibold text-slate-200"
+          className="rounded bg-zinc-700 px-2 py-0.5 text-xs font-semibold text-zinc-200"
         >
           {transcriberStarting ? 'CC starting' : 'CC'}
         </span>
       )}
-      <span className="text-slate-400">{members.length + 1} participants</span>
+      <span className="text-zinc-400">{members.length + 1} participants</span>
       <div className="flex -space-x-1">
         {members.map((member) => (
           <span
@@ -54,8 +54,8 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
             title={member.name}
             data-testid={`member-chip-${member.name}`}
             {...member.states}
-            className={`flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-[11px] font-semibold ring-2 ${
-              member.speaking ? 'ring-emerald-400' : 'ring-slate-950'
+            className={`flex h-6 w-6 items-center justify-center rounded-full bg-teal-600 text-[11px] font-semibold ring-2 ${
+              member.speaking ? 'ring-emerald-400' : 'ring-zinc-950'
             }`}
           >
             {member.name.slice(0, 1).toUpperCase()}

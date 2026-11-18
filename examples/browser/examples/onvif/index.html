@@ -8,15 +8,15 @@
       @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&display=swap');
 
       :root {
-        --bg: #0c1117;
-        --bg-2: #111a24;
+        --bg: #0b0d10;
+        --bg-2: #11151a;
         --card: rgba(255, 255, 255, 0.08);
         --card-strong: rgba(255, 255, 255, 0.12);
         --border: rgba(255, 255, 255, 0.14);
-        --accent: #ff9f1c;
-        --accent-2: #2ec4b6;
-        --text: #f7f2e8;
-        --muted: #9fa8b3;
+        --accent: #2dd4bf;
+        --accent-2: #5eead4;
+        --text: #e9eef0;
+        --muted: #9aa6ad;
         --shadow: 0 30px 60px rgba(7, 12, 18, 0.45);
         --radius: 18px;
       }
@@ -29,8 +29,8 @@
         margin: 0;
         font-family: 'Space Grotesk', sans-serif;
         background:
-          radial-gradient(1200px 600px at 15% 20%, #1b2a3a, transparent 60%),
-          radial-gradient(1000px 600px at 80% 10%, #2c1c2a, transparent 55%),
+          radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.08), transparent 60%),
+          radial-gradient(1200px 700px at 90% -20%, rgba(224, 122, 95, 0.06), transparent 55%),
           linear-gradient(160deg, var(--bg), var(--bg-2));
         color: var(--text);
         min-height: 100vh;
@@ -141,7 +141,7 @@
       }
 
       button {
-        background: linear-gradient(135deg, var(--accent), #ffbf69);
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
         border: none;
         color: #1a1208;
         padding: 10px 16px;
@@ -479,9 +479,9 @@
       }
 
       button.pad-btn:active {
-        background: linear-gradient(135deg, var(--accent), #ffbf69);
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
         color: #1a1208;
-        box-shadow: 0 0 0 3px rgba(255, 159, 28, 0.3);
+        box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.3);
       }
 
       button.pad-home {

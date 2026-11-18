@@ -182,7 +182,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
         </div>
         <div className="flex items-center gap-2">
           {(connStatus === 'idle' || connStatus === 'error') && (
-            <Button onClick={handleConnect} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={handleConnect} className="bg-teal-600 hover:bg-teal-700 text-white">
               接続
             </Button>
           )}

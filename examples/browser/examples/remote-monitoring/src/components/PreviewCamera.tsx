@@ -15,13 +15,13 @@ export function PreviewCamera({ cameraId, host, onStage, onClick }: Props) {
     <div
       className={cn(
         'relative flex flex-col justify-end overflow-hidden rounded-md transition-shadow aspect-video w-full',
-        onStage ? 'ring-2 ring-blue-400' : 'cursor-pointer ring-1 ring-zinc-700 hover:ring-blue-400'
+        onStage ? 'ring-2 ring-teal-400' : 'cursor-pointer ring-1 ring-zinc-700 hover:ring-teal-400'
       )}
       onClick={onStage ? undefined : onClick}
     >
       <div className="absolute inset-0 bg-zinc-800">
         {onStage ? (
-          <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-blue-300">
+          <div className="absolute inset-0 flex items-center justify-center font-mono text-xs text-teal-300">
             メインに表示中
           </div>
         ) : (
