@@ -14,7 +14,7 @@ doctest = false
 anyhow = "1.0.102"
 broadcast = { path = "../broadcast" }
 bytes = "1.11.1"
-client-telemetry = { path = "../client-telemetry" }
+telemetry-report = { path = "../telemetry-report" }
 mediapack = { path = "../mediapack", features = ["moqt"] }
 moqt = { path = "../moqt" }
 msf = { path = "../msf" }

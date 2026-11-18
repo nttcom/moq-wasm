@@ -872,12 +872,12 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   `moqt.subscriber.subscribe` など）が `SpanRecord`
   （`{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`、id は小文字 hex）で
   渡る。`logLevel` は span には効かない。span を記録する `Layer` は
-  `crates/client-telemetry/src/span_record.rs` にある。
+  `crates/telemetry-report/src/span_record.rs` にある。
 - `onLog` と `onSpan` は、レコードが属する session のトークンを第2引数で受け取る
   （provider なら最後に返した値）。session に属さないレコードと、トークンのない
   session のレコードでは `undefined`。テレメトリのレポートの `token` に入れるためのもので、
   レコードの `fields` には入れない（ClickHouse にそのまま残る）。アプリは何もしなくてよい。
-  - 仕組み: `MoqSession.connect` ごとに wasm が `client-telemetry` の scope（番号）を1つ
+  - 仕組み: `MoqSession.connect` ごとに wasm が `telemetry-report` の scope（番号）を1つ
     割り当て、トークンを scope に結び付ける。session と、それが返すオブジェクト
     （`Subscription`、`MediaBroadcast` など）のメソッドは、その scope の中で poll される。
     moqt の browser 用 `executor::spawn` は `set_spawn_wrapper` で、spawn した側の scope を
@@ -1000,7 +1000,7 @@ telemetry の帰属、`RequestError` から draft-14 のコードを持つ `Erro
 `RelayConnection::with_client_session` で作り、`add_handler` で `Origin` より前に
 並べる（外さない）。相手のリクエストへの答えは `moqt.client.subscribe`、
 `moqt.client.publish`、`moqt.client.subscribe_namespace` の span に入る。`setLogSink`
-が span の callback とともに `client_telemetry::continue_trace_from_traceparent` を
+が span の callback とともに `telemetry_report::continue_trace_from_traceparent` を
 `moqt::set_trace_context_joiner` に渡すので、その span は相手の request span の子に
 なる。`close()` は `moqt::Session::close_with_error` で "closed by the application"
 を送り、待たずに戻る。

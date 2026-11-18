@@ -10,8 +10,8 @@ Accepted
 `crates/python` depends on `serde_json` (1, already in the workspace).
 
 ## Context
-`client_telemetry::log_record` and `SpanRecordLayer` build the records as `serde_json::Value`, and
-`wait_log_records` hands them to Python.
+`telemetry_report::log_record` and `SpanRecordLayer` build the records, which `wait_log_records`
+hands to Python as JSON text.
 
 ## Alternatives
 - **`pythonize`**: converts a `Value` to Python objects without the text in between, but is a new

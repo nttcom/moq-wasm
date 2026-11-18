@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::fmt::Write;
 
-use serde_json::{Value, json};
+use telemetry::client_report::ClientSpan;
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Span, Subscriber};
 use tracing_subscriber::Registry;
@@ -112,7 +112,7 @@ impl<E> SpanRecordLayer<E> {
 impl<S, E> Layer<S> for SpanRecordLayer<E>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
-    E: Fn(Value, Option<u64>) + 'static,
+    E: Fn(ClientSpan, Option<u64>) + 'static,
 {
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let Some(span) = ctx.span(id) else {
@@ -172,17 +172,15 @@ where
         let Some(open) = span.extensions_mut().remove::<OpenSpan>() else {
             return;
         };
-        let mut record = json!({
-            "traceId": hex(&open.trace_id),
-            "spanId": hex(&open.span_id),
-            "name": span.name(),
-            "startTimeMs": open.start_ms,
-            "endTimeMs": (self.now_ms)(),
-            "fields": open.fields.fields,
-        });
-        if let Some(parent_span_id) = open.parent_span_id {
-            record["parentSpanId"] = json!(hex(&parent_span_id));
-        }
+        let record = ClientSpan {
+            trace_id: hex(&open.trace_id),
+            span_id: hex(&open.span_id),
+            parent_span_id: open.parent_span_id.map(|id| hex(&id)),
+            name: span.name().to_owned(),
+            start_time_ms: open.start_ms,
+            end_time_ms: (self.now_ms)(),
+            fields: open.fields.fields,
+        };
         (self.emit)(record, open.scope);
     }
 }
@@ -219,7 +217,10 @@ mod tests {
         let layer = SpanRecordLayer {
             now_ms: || 1000,
             random_byte: || NEXT_BYTE.fetch_add(1, Ordering::Relaxed),
-            emit: move |record, scope| sink.lock().unwrap().push((record, scope)),
+            emit: move |record, scope| {
+                let record = serde_json::to_value(record).unwrap();
+                sink.lock().unwrap().push((record, scope));
+            },
         };
         let subscriber = tracing_subscriber::registry().with(layer);
         tracing::subscriber::with_default(subscriber, emit_spans);

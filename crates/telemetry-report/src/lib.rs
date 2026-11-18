@@ -9,3 +9,4 @@ pub use report_buffer::ReportBuffer;
 pub use report_layer::{now_ms, random_u64, report_layer};
 pub use scope::{Scoped, current_scope, in_scope, scoped};
 pub use span_record::{SpanRecordLayer, continue_trace_from_traceparent, current_traceparent};
+pub use telemetry::client_report::{ClientLog, ClientSpan};

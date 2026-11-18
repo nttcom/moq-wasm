@@ -10,7 +10,7 @@ An arrow `A --> B` means `A` depends on `B`. A crate depends only on crates in i
 | Media | `mediapack`, `broadcast`, `transcode` | Containers and codecs, and turning media into an MSF broadcast. |
 | Applications | `relay`, `live-ingest`, `live-egress`, `onvif-ingest`, `recorder`, `gst-plugin-moqt`, `observability`, `vts`, `console` | Binaries and plugins. Nothing in the workspace depends on them. |
 | Bindings | `wasm`, `python` | `moqt` exposed to the browser and to Python. Nothing in the workspace depends on them. |
-| Shared support | `telemetry`, `telemetry-otlp`, `client-telemetry`, `auth-token`, `app-registry`, `google-cloud` | Small crates shared by the applications; among them only `telemetry-otlp` (on `telemetry`) and `app-registry` (on `google-cloud`) depend on another. |
+| Shared support | `telemetry`, `telemetry-otlp`, `telemetry-report`, `auth-token`, `app-registry`, `google-cloud` | Small crates shared by the applications; among them only `telemetry-otlp` and `telemetry-report` (on `telemetry`) and `app-registry` (on `google-cloud`) depend on another. |
 
 ## Media and protocol
 
@@ -79,7 +79,7 @@ flowchart TD
 
 - Publishers build their MSF broadcast through `broadcast`; the subscribers `live-egress` and `recorder` read the catalog with `msf` and the objects with `moqt` directly.
 - `mediapack` depends on `moqt` only with its `moqt` feature (the dotted arrow), which maps LOC properties to MoQT extension headers.
-- Arrows to `telemetry-otlp`, `client-telemetry` and `auth-token` are left out of this diagram.
+- Arrows to `telemetry-otlp`, `telemetry-report` and `auth-token` are left out of this diagram.
 
 ## Relay and services
 

@@ -12,8 +12,8 @@ use tracing_subscriber::{
 };
 
 use cli::{Cli, Command};
-use client_telemetry::{ReportBuffer, report_layer};
 use telemetry::{ReportTarget, ReportTask};
+use telemetry_report::{ReportBuffer, report_layer};
 
 #[tokio::main]
 async fn main() {
@@ -38,7 +38,7 @@ async fn main() {
         .with(report_layer)
         .init();
     if report_target.is_some() {
-        moqt::set_trace_context_provider(client_telemetry::current_traceparent);
+        moqt::set_trace_context_provider(telemetry_report::current_traceparent);
     }
     let report_task = report_target.map(|target| ReportTask::run(target, buffer));
 

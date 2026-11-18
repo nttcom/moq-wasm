@@ -11,7 +11,7 @@ The release flow itself is described in `docs/architecture/python/sdk.md` ("Pack
 
 1. `git fetch origin --tags` and take the last release: `git tag --list 'python-sdk-v*' --sort=-v:refname | head -1`. With no tag yet, this is the first release: it takes the version already in `crates/python/pyproject.toml` and the entries under `## Unreleased`, so skip steps 2 to 5.
 2. List the PRs merged since then that change what the wheel is built from:
-   `git log --format='%s' <tag>..origin/master -- crates/python crates/moqt crates/broadcast crates/msf crates/mediapack crates/client-telemetry`.
+   `git log --format='%s' <tag>..origin/master -- crates/python crates/moqt crates/broadcast crates/msf crates/mediapack crates/telemetry crates/telemetry-report`.
    Each squash-merged subject ends in `(#<number>)`.
 3. Read each PR's body with `gh pr view <number> --json title,body` and take its `## リリースノート（Python）` section.
 4. Show the user the PRs without that section whose entry is not already under `## Unreleased` in `crates/python/CHANGELOG.md`, with their titles, and ask which of them a user of the Python SDK would notice. Write an entry for those the user names, following the `## リリースノート（Python）` rule of the `create-pull-request` skill.

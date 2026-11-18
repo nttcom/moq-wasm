@@ -359,7 +359,8 @@ session would add a series, and their relations exist only in the snapshot.
 Clients (browser pages, `moq-cli`, the Python bots) cannot reach the
 collector, which listens only inside the VPC, so they post to the
 observability server behind its public load balancer, which converts the
-report to OTLP/JSON and forwards it (`client_telemetry`).
+report to OTLP/JSON and forwards it (`client_telemetry`). The body is
+`telemetry::client_report::ClientReport`.
 
 - **Request.** `POST /api/client-telemetry` with a JSON body
   `{ token?, service?, clientId, page, logs: [{ timeMs, level, target, message, fields, traceId?, spanId? }], stats: [{ timeMs, trackNamespace?, mediaSource?, values }], spans: [{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }] }`.

@@ -7,8 +7,27 @@ intent, module boundaries, runtime flow, or invariants described here change.
 ## Scope
 The records the observability server reads, as types its producers write
 and it decodes, so both sides share one definition. The crate depends only on
-Serde and JSON: how a record is sent (`telemetry-otlp` for the workspace
-binaries) stays with the producer.
+Serde and JSON, so it builds on wasm32: how a record is sent
+(`telemetry-otlp` for the workspace binaries, `telemetry-report` for the
+clients) stays with the producer.
+
+## Client reports
+
+`telemetry::client_report` defines the body a client posts to the
+observability server's `/api/client-telemetry`: `ClientReport` with its
+`ClientLog`s, `ClientSpan`s and `PlayerStats`, and `MAX_RECORDS`, the most of
+each one report carries.
+
+- `telemetry-report` builds `ClientLog` and `ClientSpan` from `tracing`; the
+  wasm module and the Python module hand them on as JSON, and `moq-cli`
+  posts them in a `ClientReport`. The browser SDK builds the same JSON in
+  TypeScript, with `PlayerStats` added.
+- `services/observability` parses a `ClientReport`, checks the limits the
+  collector and the metric attributes need, and forwards it as OTLP.
+
+A field added to a record is optional, so the server reads the reports of
+clients that predate it. An absent trace or span id is left out of the JSON
+rather than written as `null`.
 
 ## Relay snapshots
 
