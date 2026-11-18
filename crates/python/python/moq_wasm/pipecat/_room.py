@@ -36,6 +36,7 @@ class RoomOptions:
     video_out_codec: str
     video_out_size: tuple[int, int]
     video_out_framerate: int
+    broadcast: list[str]
     data_out_tracks: dict[str, float] = field(default_factory=dict)
     event_timelines_out: dict[str, float] = field(default_factory=dict)
     empty_timeout: float | None = None
@@ -61,8 +62,8 @@ class MoqWasmEventRecord:
 
 
 class Room:
-    """What `MoqWasmTransport` does on its session: publishes its own broadcast `[*room,
-    participant_id]` and follows every other broadcast one level under `room` as a participant."""
+    """What `MoqWasmTransport` does on its session: publishes its own broadcast `broadcast` and
+    follows every other broadcast one level under `room` as a participant."""
 
     def __init__(self, session: Session, options: RoomOptions, sink: ParticipantSink):
         self._session = session
@@ -108,7 +109,7 @@ class Room:
 
     async def _open(self) -> None:
         options = self._options
-        self._broadcast = create_broadcast(self._session, [*options.room, options.participant_id])
+        self._broadcast = create_broadcast(self._session, options.broadcast)
         if options.audio_out or options.video_out:
             self._media = self._broadcast.add_media_source(label=options.participant_id)
         if options.audio_out:

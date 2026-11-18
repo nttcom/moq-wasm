@@ -104,7 +104,9 @@ def room_options(audio_in: bool = False, video_in: bool = False, **overrides) ->
         video_out_size=SIZE,
         video_out_framerate=30,
     )
-    return RoomOptions(**{**options, **overrides})
+    options = {**options, **overrides}
+    options.setdefault("broadcast", [*options["room"], options["participant_id"]])
+    return RoomOptions(**options)
 
 
 def test_opus_encoded_speech_decodes_back_to_pcm():
@@ -268,6 +270,22 @@ async def test_the_room_ends_once_both_processors_stopped_it_however_often_each_
     assert ("unannounce", [*ROOM, "bot"]) not in first_stop
     assert ("unannounce", [*ROOM, "bot"]) in relay.sessions[0].calls
     assert sink.events[-1] == ("on_disconnected",)
+    await session.close()
+
+
+async def test_the_bot_publishes_under_the_broadcast_it_names():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    voice = [*ROOM, "bots", "voice-agent"]
+    room = Room(session, room_options(audio_out=True, broadcast=voice), RecordingSink())
+
+    # Act
+    await room.start("input")
+    await room.stop("input")
+
+    # Assert
+    assert ("media_announce", voice) in relay.sessions[0].calls
     await session.close()
 
 
