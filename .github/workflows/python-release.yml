@@ -44,7 +44,7 @@ jobs:
             platform: manylinux_2_28_aarch64
             uv-checksum: 1ae72b4718729e2ccc4f1ae2c6d1e531ca8467800e0546e9130b3886023a60ab
           # The macOS runner has no Docker for the Redis the GOAWAY test starts.
-          - runner: macos-14
+          - runner: macos-15
             platform: macosx_11_0_arm64
             uv-checksum: e0b1d4743ce64c55d9f0f4a444afa6b81125680070ee04e853fcd0f6c1ebf8f1
             pytest-args: --deselect tests/test_session.py::test_a_subscription_continues_on_the_relay_a_draining_relay_names
