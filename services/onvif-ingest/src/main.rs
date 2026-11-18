@@ -93,7 +93,7 @@ struct ProfileSource {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
         service_name: "onvif-ingest",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &[
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
             "broadcast=info",
             "mediapack=info",
         ],
-        log_output: telemetry::LogOutput::Stdout,
+        log_output: telemetry_otlp::LogOutput::Stdout,
         ..Default::default()
     })?;
     let args = MoqtArgs::parse();

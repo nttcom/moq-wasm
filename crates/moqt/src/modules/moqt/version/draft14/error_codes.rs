@@ -189,7 +189,7 @@ mod tests {
         let levels = Arc::new(Mutex::new(Vec::new()));
         let subscriber = tracing_subscriber::registry().with(LoggedLevels(levels.clone()));
         let value = {
-            let _default = telemetry::testing::set_default(subscriber);
+            let _default = telemetry_otlp::testing::set_default(subscriber);
             f()
         };
         let levels = levels.lock().unwrap().clone();

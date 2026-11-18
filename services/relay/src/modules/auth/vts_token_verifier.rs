@@ -58,7 +58,7 @@ impl TokenVerifier for VtsTokenVerifier {
 impl VtsTokenVerifier {
     async fn request_verification(&self, token: &str) -> Result<VerifiedToken, VerifyError> {
         let mut headers = HeaderMap::new();
-        telemetry::inject_trace_context(&tracing::Span::current(), &mut headers);
+        telemetry_otlp::inject_trace_context(&tracing::Span::current(), &mut headers);
         let response = self
             .client
             .post(&self.verify_url)

@@ -1,9 +1,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use telemetry::{
-    EventLogger,
-    relay_stats::{self, ProcessGauges},
-};
+use telemetry::relay_stats;
+use telemetry_otlp::{EventLogger, ProcessGauges};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
 use crate::modules::observability::{process_memory, stats_collector::StatsCollector};

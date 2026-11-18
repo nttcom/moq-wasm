@@ -17,4 +17,4 @@ moqt = { path = "../../crates/moqt" }
 mediapack = { path = "../../crates/mediapack" }
 transcode = { path = "../../crates/transcode" }
 tracing = "0.1"
-telemetry = { path = "../../crates/telemetry" }
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }

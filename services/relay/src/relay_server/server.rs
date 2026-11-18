@@ -196,8 +196,8 @@ impl RelayServer {
     pub fn spawn_stats_exporter(
         &self,
         relay_id: String,
-        event_logger: telemetry::EventLogger,
-        process_gauges: telemetry::relay_stats::ProcessGauges,
+        event_logger: telemetry_otlp::EventLogger,
+        process_gauges: telemetry_otlp::ProcessGauges,
     ) -> StatsExportTask {
         StatsExportTask::run(
             self.runtime.stats_collector(relay_id),

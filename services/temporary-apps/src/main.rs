@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
-use telemetry::non_empty_env;
+use telemetry_otlp::non_empty_env;
 use temporary_apps::{RateLimit, TemporaryApps, TemporaryAppsServer};
 use tokio::{
     net::TcpListener,
@@ -14,11 +14,11 @@ const ISSUE_WINDOW: Duration = Duration::from_secs(60 * 60);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
         service_name: "temporary-apps",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &["temporary_apps=info"],
-        log_output: telemetry::LogOutput::Stdout,
+        log_output: telemetry_otlp::LogOutput::Stdout,
         ..Default::default()
     })?;
 

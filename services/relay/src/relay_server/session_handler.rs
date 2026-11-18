@@ -128,7 +128,7 @@ fn session_setup_span(
         app_id = tracing::field::Empty,
     );
     if let Some(trace_context) = trace_context {
-        telemetry::continue_trace_from_traceparent(&span, trace_context.as_str());
+        telemetry_otlp::continue_trace_from_traceparent(&span, trace_context.as_str());
     }
     link_span(&span, session_span);
     span
@@ -274,7 +274,7 @@ mod tests {
         let provider = SdkTracerProvider::builder().build();
         let subscriber = tracing_subscriber::registry()
             .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")));
-        let _default = telemetry::testing::set_default(subscriber);
+        let _default = telemetry_otlp::testing::set_default(subscriber);
         let trace_context = moqt::TraceContext::parse(TRACEPARENT.as_bytes());
 
         // Act
@@ -294,7 +294,7 @@ mod tests {
     async fn the_setup_span_closes_while_the_session_lives() {
         // Arrange
         let closed_spans = ClosedSpans::default();
-        let _default = telemetry::testing::set_default(
+        let _default = telemetry_otlp::testing::set_default(
             tracing_subscriber::registry().with(closed_spans.clone()),
         );
 
@@ -313,7 +313,7 @@ mod tests {
     async fn server_setup_is_sent_inside_the_setup_span() {
         // Arrange
         let event_spans = EventSpans::default();
-        let _default = telemetry::testing::set_default(
+        let _default = telemetry_otlp::testing::set_default(
             tracing_subscriber::registry().with(event_spans.clone()),
         );
 

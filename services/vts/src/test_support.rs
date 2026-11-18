@@ -80,7 +80,7 @@ impl RecordedFields {
 pub(crate) fn capture_recorded_fields() -> (RecordedFields, DefaultGuard) {
     let fields = RecordedFields::default();
     let subscriber = tracing_subscriber::registry().with(fields.clone());
-    (fields, telemetry::testing::set_default(subscriber))
+    (fields, telemetry_otlp::testing::set_default(subscriber))
 }
 
 struct FieldVisitor<'a>(&'a mut SpanFields);

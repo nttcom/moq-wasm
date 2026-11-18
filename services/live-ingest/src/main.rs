@@ -74,7 +74,7 @@ impl Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let _telemetry = telemetry::init(telemetry::TelemetryConfig {
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
         service_name: "live-ingest",
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &[
@@ -85,9 +85,9 @@ async fn main() -> Result<()> {
             "transcode=info",
         ],
         log_output: if args.stats {
-            telemetry::LogOutput::Stderr
+            telemetry_otlp::LogOutput::Stderr
         } else {
-            telemetry::LogOutput::Stdout
+            telemetry_otlp::LogOutput::Stdout
         },
         ..Default::default()
     })?;
