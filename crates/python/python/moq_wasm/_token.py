@@ -23,14 +23,14 @@ class TokenClaims:
 
 
 def read_claims(token: str) -> TokenClaims:
-    """Reads `app_id` and `exp` from a JWT without verifying it: the relay verifies the token, and
+    """Reads `appId` and `exp` from a JWT without verifying it: the relay verifies the token, and
     the session only needs to know when to refresh it. Raises ValueError for what is not a JWT."""
     try:
         payload = token.split(".")[1]
         claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        return TokenClaims(app_id=claims["app_id"], expires_at=claims.get("exp"))
+        return TokenClaims(app_id=claims["appId"], expires_at=claims.get("exp"))
     except (IndexError, KeyError, TypeError, ValueError) as error:
-        raise ValueError(f"not a token with an app_id claim: {error}") from error
+        raise ValueError(f"not a token with an appId claim: {error}") from error
 
 
 class TokenExpired(Exception):

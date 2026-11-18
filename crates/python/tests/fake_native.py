@@ -12,12 +12,12 @@ STAY_OPEN = object()
 
 
 def unsigned_token(app_id: str, expires_at: float | None) -> str:
-    """A JWT carrying `app_id` and `exp`; the SDK reads its claims without verifying it."""
+    """A JWT carrying `appId` and `exp`; the SDK reads its claims without verifying it."""
 
     def encode(part: dict) -> str:
         return base64.urlsafe_b64encode(json.dumps(part).encode()).rstrip(b"=").decode()
 
-    claims = {"app_id": app_id} if expires_at is None else {"app_id": app_id, "exp": expires_at}
+    claims = {"appId": app_id} if expires_at is None else {"appId": app_id, "exp": expires_at}
     return f"{encode({'alg': 'none'})}.{encode(claims)}.signature"
 
 
