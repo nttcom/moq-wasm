@@ -29,10 +29,11 @@ COPY examples/python/moq-chat-moderation/pyproject.toml examples/python/moq-chat
 COPY examples/python/moq-camera-detection/pyproject.toml examples/python/moq-camera-detection/uv.lock moq-camera-detection/
 COPY examples/python/moq-ptz-tracking/pyproject.toml examples/python/moq-ptz-tracking/uv.lock moq-ptz-tracking/
 COPY examples/python/moq-meeting-transcriber/pyproject.toml examples/python/moq-meeting-transcriber/uv.lock moq-meeting-transcriber/
+COPY examples/python/moq-ai-voice-agent/pyproject.toml examples/python/moq-ai-voice-agent/uv.lock moq-ai-voice-agent/
 COPY --from=moq-wasm-wheel /wheels /wheels
 # This stage has no crates/python for the lock's path source, so uv skips moq-wasm and the prebuilt
 # wheel is installed instead.
-RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-meeting-transcriber; do \
+RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-meeting-transcriber moq-ai-voice-agent; do \
         uv sync --frozen --no-dev --no-install-project --no-install-package moq-wasm --directory $bot \
         && uv pip install --python $bot/.venv/bin/python --no-deps /wheels/moq_wasm-*.whl || exit 1; \
     done
@@ -40,6 +41,7 @@ COPY examples/python/moq-chat-moderation/moq_chat_moderation moq-chat-moderation
 COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detection/moq_camera_detection
 COPY examples/python/moq-ptz-tracking/moq_ptz_tracking moq-ptz-tracking/moq_ptz_tracking
 COPY examples/python/moq-meeting-transcriber/moq_meeting_transcriber moq-meeting-transcriber/moq_meeting_transcriber
+COPY examples/python/moq-ai-voice-agent/moq_ai_voice_agent moq-ai-voice-agent/moq_ai_voice_agent
 # Bake the transcriber's CPU models (the default Whisper and Granite Speech) into the image so a new
 # room does not wait for a download and Cloud Run does not hold the files in the instance's memory.
 ENV HF_HOME=/opt/huggingface
