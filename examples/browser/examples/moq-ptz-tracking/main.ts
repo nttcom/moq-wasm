@@ -8,16 +8,12 @@ import { element, setStatus } from '../../utils/page'
 import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
 
-const CAMERA_NAMESPACE = withNamespaceRoot(['anon', 'onvif', 'client'])
-const VIEWER_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking', 'viewer'])
-const TRACKER_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking', 'tracker'])
+// One room per app: onvif-ingest publishes the camera at `<room>/onvif/client` and follows the
+// tracker's commands at `<room>/bots/ptz-tracking/command` (examples/python/moq-ptz-tracking).
+const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-ptz-tracking'])
+const CAMERA_NAMESPACE = [...ROOM_NAMESPACE, 'onvif', 'client']
+const VIEWER_NAMESPACE = [...ROOM_NAMESPACE, 'page', 'viewer']
 // There is one ONVIF camera, so the bot service runs this one room only.
-const ROOM = 'onvif'
-const BOT_SERVICE = {
-  param: 'botUrl',
-  local: 'http://127.0.0.1:8099',
-  cloud: 'https://moq-ptz-tracking.moqt.research.skyway.io'
-}
 const PROMPT_TRACK = 'prompt'
 const MAX_TARGETS = 16
 
@@ -61,9 +57,8 @@ const viewerDelayLabel = element<HTMLSpanElement>('viewer-delay')
 
 setUpSystemOneBotPage({
   logTag: 'moq-ptz-tracking',
-  botNamespace: TRACKER_NAMESPACE,
-  room: ROOM,
-  botService: BOT_SERVICE,
+  room: ROOM_NAMESPACE,
+  botType: 'ptz-tracking',
   onConnect: async (session) => {
     await session.announce(VIEWER_NAMESPACE)
     promptWriter = await session.publishTrack(VIEWER_NAMESPACE, PROMPT_TRACK)

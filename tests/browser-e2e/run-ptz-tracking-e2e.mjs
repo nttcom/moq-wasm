@@ -26,7 +26,7 @@ function answerQuestions({ questions }, { boxes }) {
   );
 }
 
-async function startCamera({ botDir, moqtUrl, childProcesses }) {
+async function startCamera({ botDir, moqtUrl, app, childProcesses }) {
   const cameraPort = await findFreePort();
   const camera = spawnProcess(
     "camera",
@@ -44,6 +44,10 @@ async function startCamera({ botDir, moqtUrl, childProcesses }) {
       moqCliBinary,
       "--port",
       String(cameraPort),
+      "--room",
+      `${app.appId}/moq-ptz-tracking`,
+      "--token",
+      app.token,
     ],
     { cwd: repoRoot },
   );

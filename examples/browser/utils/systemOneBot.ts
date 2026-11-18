@@ -1,23 +1,20 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
-import { connectOptions, temporaryAppToken } from './access'
-import { BOT_ROOM_END_TEXT, BotRoomRequest } from './botRoom'
+import { connectOptions } from './access'
+import { botNamespace, startRoomBot } from './roomBots'
 import { SystemOneStatusView } from './systemOneStatus'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
 import { setUpRelayUrlControls } from './relayPicker'
-import { type ServiceUrls, resolveServiceUrl } from './serviceUrl'
 
 const EVENT_TIMELINE_TRACK = 'eventtimeline'
 
 export type SystemOneBotPageOptions = {
   logTag: string
-  botNamespace: string[]
-  /// The room the page asks the bot service to run a bot for while it is joined.
-  room: string
-  botService: ServiceUrls
+  /// The room's namespace, `<app>/...`, which the page starts the bot in when it joins.
+  room: string[]
+  botType: string
   /// Called once connected, to announce the page's namespace and publish its tracks.
   onConnect(session: MoqSession): Promise<void> | void
   onTimelineObject(payload: Uint8Array): void
-  /// Called when the bot withdraws `botNamespace`.
   onBotLeft(): void
   onReset(): Promise<void> | void
   beforeConnect?(): Promise<void>
@@ -25,23 +22,21 @@ export type SystemOneBotPageOptions = {
 }
 
 export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
-  const { logTag, botNamespace } = options
+  const { logTag } = options
+  const ownBotNamespace = botNamespace(options.room, options.botType)
   const urlInput = element<HTMLInputElement>('url')
   const joinButton = element<HTMLButtonElement>('joinBtn')
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
   const systemOneStatus = new SystemOneStatusView(element('system-one-status'))
   const botRoomNotice = element<HTMLSpanElement>('bot-room')
-  const botRoom = new BotRoomRequest((reason) => {
-    botRoomNotice.textContent = BOT_ROOM_END_TEXT[reason]
-    botRoomNotice.style.display = ''
-  })
   botRoomNotice.style.display = 'none'
   setUpRelayUrlControls(urlInput, element('urlPresets'))
   let session: MoqSession | undefined
 
+  const startBot = (): void => void startRoomBot(options.botType, options.room, botRoomNotice)
+
   const reset = async (connectionText: string, connectionState: StatusState): Promise<void> => {
     session = undefined
-    botRoom.close()
     systemOneStatus.reset()
     await options.onReset()
     setStatus('connection-status', connectionText, connectionState)
@@ -50,13 +45,13 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
   }
 
   const followBot = async (joined: MoqSession): Promise<void> => {
-    const timeline = await joined.subscribe(botNamespace, EVENT_TIMELINE_TRACK)
+    const timeline = await joined.subscribe(ownBotNamespace, EVENT_TIMELINE_TRACK)
     void (async () => {
       for await (const object of timeline) {
         options.onTimelineObject(object.objectPayload)
       }
     })().catch((error: unknown) => console.warn(`[${logTag}] event timeline read ended`, error))
-    await systemOneStatus.follow(joined, botNamespace)
+    await systemOneStatus.follow(joined, ownBotNamespace)
   }
 
   const join = async (): Promise<void> => {
@@ -66,10 +61,8 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
     try {
       await options.beforeConnect?.()
       const relayUrl = urlInput.value.trim()
-      // Asking before connecting lets the bot start while the page connects.
-      botRoom.open(resolveServiceUrl(window.location.search, relayUrl, options.botService), options.room, {
-        token: temporaryAppToken
-      })
+      // Starting before connecting lets the bot start while the page connects.
+      startBot()
       const joined = await MoqSession.connect(relayUrl, connectOptions())
       session = joined
       void joined.closed.then(() => {
@@ -78,14 +71,19 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
         }
       })
       await options.onConnect(joined)
-      const bots = await joined.watchNamespaces(botNamespace)
+      const bots = await joined.watchNamespaces(ownBotNamespace)
       void (async () => {
         for await (const { kind, namespace } of bots) {
-          if (!sameNamespace(namespace, botNamespace)) {
+          if (!sameNamespace(namespace, ownBotNamespace)) {
             continue
           }
           if (kind === 'withdrawn') {
             options.onBotLeft()
+            // A start sent while the previous bot was still leaving an empty room got 409, so start one
+            // again once it has left.
+            if (session === joined) {
+              startBot()
+            }
           } else {
             await followBot(joined).catch((error) => console.warn(`[${logTag}] bot subscribe failed`, error))
           }

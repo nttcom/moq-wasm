@@ -26,36 +26,38 @@ IAM 認証が必須なので、bot を起動するアカウントには `roles/r
 
 ## 起動
 
-Cloud relay で試すだけなら bot の起動は要りません。ページを既定の Cloud relay-1 のまま Join すると、Cloud Run の bot（平日 9:00〜17:30、1 ルーム 1 時間まで）がルームに入ります。
-ルームは URL の `room` で決まり、同じ URL を開くと同じルームに入ります。
+bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、ルームごとに `camera-detection` 型の bot として起動します。
+一時アプリのページは Join するときに temporary-apps の `/bots/camera-detection` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。
+ルームは URL の `room` で決まり、同じ URL を開くと同じルームに入ります。Public モードのページでは bot は動きません。
 
-手元で試すときは、各コマンドを別々のターミナルで実行します。
+手元では、`uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
+System One は 1 度に 1 つの問いにしか答えないので、同時に動かす bot は 1 つです。
 
-```shell
-make relay
-
-cd examples/python/moq-camera-detection
-uv run python -m moq_camera_detection.bot --insecure \
-  --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
-  --gcloud-auth
-
-make browser
-make chrome
+```json
+{
+  "camera-detection": {
+    "launcher": { "kind": "local", "program": "<リポジトリ>/examples/python/moq-camera-detection/.venv/bin/python" },
+    "args": ["-m", "moq_camera_detection.bot", "--relay-url", "https://127.0.0.1:4433", "--insecure",
+             "--system-one-url", "<System One の URL>/v1/systemone", "--gcloud-auth"],
+    "grace_seconds": 30,
+    "max_seconds": 3600,
+    "max_running": 1
+  }
+}
 ```
 
 - bot は `moq-wasm` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
-- bot は `http://127.0.0.1:8098` で待ち受けます。同時に動かせるのは既定で 1 ルームです。オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
-- `make chrome` の Chrome でハブから MoQ Camera Detection を開き、Local relay-a を選んで Join します。`?botUrl=` で bot の URL を指定できます。
+- 起動のオプションは [moq-bot-rooms](../moq-bot-rooms/README.md) の「bot サービスから起動される bot」にあります。
 
 ## トラック
 
-一時アプリのページでは、`anon` の代わりにその appId（`temp-…`）が namespace root になります。
+`{app}` は一時アプリの appId（`temp-…`）です。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`（1〜8 個）。選択式は `{"type": "choice", "question", "choices"}`、枠は `{"type": "boxes", "target"}` |
-| `anon/moq-camera-detection/{room}/camera` | `catalog`、`camera` | ブラウザ | MSF catalog と H.264 の映像。キーフレームごとに group を始める |
-| `anon/moq-camera-detection/{room}/detector` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`L` で判定したフレーム、`data.answers` で質問の順の答え（枠は `[[left, top, right, bottom], ...]`）を示す |
+| `{app}/moq-camera-detection/{room}/camera` | `prompt` | ブラウザ | `{"questions": [...]}`（1〜8 個）。選択式は `{"type": "choice", "question", "choices"}`、枠は `{"type": "boxes", "target"}` |
+| `{app}/moq-camera-detection/{room}/camera` | `catalog`、`camera` | ブラウザ | MSF catalog と H.264 の映像。キーフレームごとに group を始める |
+| `{app}/moq-camera-detection/{room}/bots/camera-detection` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`L` で判定したフレーム、`data.answers` で質問の順の答え（枠は `[[left, top, right, bottom], ...]`）を示す |
 
 - 判定が追いつかない間の画像と、デコードから 2 秒以上たった画像は捨てます。
 - relay とのセッションが閉じると、bot は 2 秒後に接続し直します。

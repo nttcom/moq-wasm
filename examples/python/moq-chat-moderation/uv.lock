@@ -789,7 +789,7 @@ dev = [
 [[package]]
 name = "moq-chat-moderation"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "moq-bot-rooms" },
@@ -866,6 +866,7 @@ provides-extras = ["codecs", "pipecat"]
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = ">=14" },
+    { name = "pdoc", specifier = ">=16" },
     { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },

@@ -10,13 +10,8 @@ import { startPageTelemetry } from '../../utils/pageTelemetry'
 
 startPageTelemetry('moq-camera-detection', () => element<HTMLInputElement>('url').value.trim())
 const ROOM = pageRoomId()
-const CAMERA_NAMESPACE = withNamespaceRoot(['anon', 'moq-camera-detection', ROOM, 'camera'])
-const DETECTOR_NAMESPACE = withNamespaceRoot(['anon', 'moq-camera-detection', ROOM, 'detector'])
-const BOT_SERVICE = {
-  param: 'botUrl',
-  local: 'http://127.0.0.1:8098',
-  cloud: 'https://moq-camera-detection.moqt.research.skyway.io'
-}
+const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-camera-detection', ROOM])
+const CAMERA_NAMESPACE = [...ROOM_NAMESPACE, 'camera']
 const PROMPT_TRACK = 'prompt'
 const MAX_QUESTIONS = 8
 const MAX_QUESTION_LENGTH = 200
@@ -51,9 +46,8 @@ let appliedPrompt = readPrompt()
 
 setUpSystemOneBotPage({
   logTag: 'moq-camera-detection',
-  botNamespace: DETECTOR_NAMESPACE,
-  room: ROOM,
-  botService: BOT_SERVICE,
+  room: ROOM_NAMESPACE,
+  botType: 'camera-detection',
   beforeConnect: async () => {
     mediaStream = await navigator.mediaDevices.getUserMedia({
       video: { width: MAIN_VIDEO.width, height: MAIN_VIDEO.height },

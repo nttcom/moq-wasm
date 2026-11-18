@@ -33,49 +33,47 @@ sequenceDiagram
 
 ## 起動
 
-ONVIF カメラは手元のネットワークにあるため、`onvif-ingest` は常に手元で起動します。リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定します。
+bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、一時アプリごとに `ptz-tracking` 型の bot として起動します。
+一時アプリのページは Join するときに temporary-apps の `/bots/ptz-tracking` を呼び、bot はページが 30 秒いないか 1 時間たつと抜けます。
+ルームはアプリに 1 つ（`{app}/moq-ptz-tracking`）で、カメラもそのルームに配信します。Public モードのページでは bot は動きません。
 
-### クラウドの relay と bot を使う
-
-```shell
-make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443
-```
-
-ページを既定の Cloud relay-1 のまま Join すると、Cloud Run の bot（平日 9:00〜17:30、1 時間まで）がつながります。
-Cloud relay-1 の `anon/onvif/*` は誰でも見られ、PTZ コマンドも誰でも送れます。
-
-### 手元の relay と bot を使う
-
-各コマンドを別々のターミナルで実行します。
+ONVIF カメラは手元のネットワークにあるため、`onvif-ingest` は常に手元で起動します。リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定し、
+PTZ Tracking ページの共有リンクの `#jwt=` のトークンと、その appId（`temp-…`）でルームに配信します。
 
 ```shell
-make relay
-make onvif
-
-cd examples/python/moq-ptz-tracking
-uv run python -m moq_ptz_tracking.bot --insecure \
-  --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
-  --gcloud-auth
-
-make browser
-make chrome
+make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
+  ONVIF_AUTH_TOKEN=<トークン> \
+  ONVIF_PUBLISH_NAMESPACE=<appId>/moq-ptz-tracking/onvif/client \
+  ONVIF_SUBSCRIBE_NAMESPACE=<appId>/moq-ptz-tracking/bots/ptz-tracking/command
 ```
 
-- d1-2B の認証は [moq-camera-detection](../moq-camera-detection/README.md#d1-2b) と同じです。bot のビルドには Rust のツールチェーンが要ります。
-- bot は `http://127.0.0.1:8099` で待ち受けます。カメラが 1 台なので、ルームは `onvif` だけです。オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
-- `make chrome` の Chrome でハブから MoQ PTZ Tracking を開き、Local relay-a を選んで Join します。対象を入力して「追従」を押すと bot がカメラを動かし始め、「停止」かページを閉じると止まります。
+- トークンは 1 時間で切れます。切れたらページの新しい共有リンクのトークンで起動し直します。
+- 手元の relay と bot で試すときは、`uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。d1-2B の認証は [moq-camera-detection](../moq-camera-detection/README.md#d1-2b) と同じです。
+
+```json
+{
+  "ptz-tracking": {
+    "launcher": { "kind": "local", "program": "<リポジトリ>/examples/python/moq-ptz-tracking/.venv/bin/python" },
+    "args": ["-m", "moq_ptz_tracking.bot", "--relay-url", "https://127.0.0.1:4433", "--insecure",
+             "--system-one-url", "<System One の URL>/v1/systemone", "--gcloud-auth"],
+    "grace_seconds": 30,
+    "max_seconds": 3600,
+    "max_running": 1
+  }
+}
+```
 
 ## トラック
 
-`onvif-ingest` はカメラを `anon/onvif/client` にだけ publish するので、一時アプリの PTZ ルームにはカメラがありません。
+`{room}` は `{app}/moq-ptz-tracking`、`{app}` は一時アプリの appId（`temp-…`）です。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-ptz-tracking/viewer` | `prompt` | ブラウザ | `{"targets": ["...", ...], "video": "<映像トラック名>"}` で追従を始め、`{"targets": []}` で止める。対象は 1〜16 個 |
-| `anon/onvif/client` | `video/profile_N` | `onvif-ingest` | H.264 の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
-| `anon/onvif/viewer` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 回の動きを 1 group にし、`continuous` と `stop` を順に送る |
-| `anon/moq-ptz-tracking/tracker` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`data.boxes` は `[[対象の番号, [left, top, right, bottom]], ...]`、どの対象も映っていなければ `"not visible"` |
-| `anon/moq-ptz-tracking/tracker` | `status` | bot | d1-2B の起動状態 |
+| `{room}/page/viewer` | `prompt` | ブラウザ | `{"targets": ["...", ...], "video": "<映像トラック名>"}` で追従を始め、`{"targets": []}` で止める。対象は 1〜16 個 |
+| `{room}/onvif/client` | `video/profile_N` | `onvif-ingest` | H.264 の LOC。bot は prompt の `video` のトラックを、追従している間だけ subscribe する |
+| `{room}/bots/ptz-tracking/command` | `command` | bot | `onvif-ingest` の PTZ コマンド。1 回の動きを 1 group にし、`continuous` と `stop` を順に送る |
+| `{room}/bots/ptz-tracking` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`data.boxes` は `[[対象の番号, [left, top, right, bottom]], ...]`、どの対象も映っていなければ `"not visible"` |
+| `{room}/bots/ptz-tracking` | `status` | bot | d1-2B の起動状態 |
 
 ## テスト
 

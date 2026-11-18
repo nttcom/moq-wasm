@@ -6,6 +6,12 @@ LOCAL_MOQT_URL ?= $(RESOLVED_MOQT_URL)
 LIVE_INGEST_MOQT_URL ?= $(LOCAL_MOQT_URL)
 LIVE_EGRESS_MOQT_URL ?= $(LOCAL_MOQT_URL)
 ONVIF_MOQT_URL ?= $(LOCAL_MOQT_URL)
+# For the PTZ tracking page, set ONVIF_PUBLISH_NAMESPACE to `<appId>/moq-ptz-tracking/onvif/client`,
+# ONVIF_SUBSCRIBE_NAMESPACE to `<appId>/moq-ptz-tracking/bots/ptz-tracking/command` and
+# ONVIF_AUTH_TOKEN to a token of that app.
+ONVIF_PUBLISH_NAMESPACE ?= anon/onvif/client
+ONVIF_SUBSCRIBE_NAMESPACE ?= anon/onvif/viewer
+ONVIF_AUTH_TOKEN ?=
 RECORDER_MOQT_URL ?= $(LOCAL_MOQT_URL)
 RECORDER_NAMESPACE ?= anon/live/test
 RECORDER_STORE_URL ?= file://$(CURDIR)/recordings/store/
@@ -179,8 +185,9 @@ onvif:
 		--username $(ONVIF_USERNAME) \
 		--password $(ONVIF_PASSWORD) \
 		--moqt-url $(ONVIF_MOQT_URL) \
-		--publish-namespace anon/onvif/client \
-		--subscribe-namespace anon/onvif/viewer \
+		--publish-namespace $(ONVIF_PUBLISH_NAMESPACE) \
+		--subscribe-namespace $(ONVIF_SUBSCRIBE_NAMESPACE) \
+		$(if $(ONVIF_AUTH_TOKEN),--auth-token $(ONVIF_AUTH_TOKEN)) \
 		--video-track video \
 		--audio-track audio \
 		--command-track command \
