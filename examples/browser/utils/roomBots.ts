@@ -28,6 +28,12 @@ export class BotsError extends Error {
   }
 }
 
+/// The namespace a bot of `botType` publishes at in `room` (docs/architecture/bots/architecture.md
+/// "Bots in the room").
+export function botNamespace(room: string[], botType: string): string[] {
+  return [...room, 'bots', botType]
+}
+
 export function temporaryAppsBots(): BotsApi {
   return { url: temporaryAppsUrl(), token: temporaryAppToken }
 }
@@ -74,4 +80,21 @@ async function answer<T>(response: Response): Promise<T> {
     throw new BotsError(body.error ?? `bots answered ${response.status}`, response.status)
   }
   return body as T
+}
+
+/// Starts the room's bot of `type` for the page of a temporary app, and shows in `notice` why it could
+/// not. A room that already runs one answers 409, which leaves that bot in place.
+export async function startRoomBot(type: string, room: string[], notice: HTMLElement): Promise<void> {
+  try {
+    await startBot(temporaryAppsBots(), type, room.join('/'), {})
+  } catch (error) {
+    if (error instanceof BotsError && error.status === 409) {
+      return
+    }
+    notice.textContent =
+      error instanceof BotsError && error.status === 503
+        ? '空いているボットがありません'
+        : `ボットを起動できません: ${error instanceof Error ? error.message : String(error)}`
+    notice.style.display = ''
+  }
 }

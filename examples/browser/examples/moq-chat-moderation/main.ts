@@ -19,13 +19,8 @@ import {
 
 startPageTelemetry('moq-chat-moderation', () => element<HTMLInputElement>('url').value.trim())
 const ROOM = pageRoomId()
-const CHAT_NAMESPACE = withNamespaceRoot(['anon', 'moq-chat-moderation', ROOM, 'chat'])
-const MODERATOR_NAMESPACE = withNamespaceRoot(['anon', 'moq-chat-moderation', ROOM, 'moderator'])
-const BOT_SERVICE = {
-  param: 'botUrl',
-  local: 'http://127.0.0.1:8097',
-  cloud: 'https://moq-chat-moderation.moqt.research.skyway.io'
-}
+const ROOM_NAMESPACE = withNamespaceRoot(['anon', 'moq-chat-moderation', ROOM])
+const CHAT_NAMESPACE = [...ROOM_NAMESPACE, 'chat']
 const CHAT_TRACK = 'chat'
 const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除されました'
 const LABEL_THRESHOLD = 0.7
@@ -59,9 +54,8 @@ const sidebarLabels = element<HTMLOListElement>('sidebarLabels')
 
 setUpSystemOneBotPage({
   logTag: 'moq-chat-moderation',
-  botNamespace: MODERATOR_NAMESPACE,
-  room: ROOM,
-  botService: BOT_SERVICE,
+  room: ROOM_NAMESPACE,
+  botType: 'chat-moderation',
   onConnect: async (session) => {
     await session.announce(CHAT_NAMESPACE)
     const writer = await session.publishTrack(CHAT_NAMESPACE, CHAT_TRACK)

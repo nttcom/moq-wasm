@@ -22,36 +22,38 @@ d1-2B の認証とデプロイは [moq-camera-detection](../moq-camera-detection
 
 ## 起動
 
-Cloud relay で試すだけなら bot の起動は要りません。ページを既定の Cloud relay-1 のまま Join すると、Cloud Run の bot（平日 9:00〜17:30、1 ルーム 1 時間まで）がルームに入ります。
-ルームは URL の `room` で決まり、同じ URL を開くと同じルームに入ります。
+bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、ルームごとに `chat-moderation` 型の bot として起動します。
+一時アプリのページは Join するときに temporary-apps の `/bots/chat-moderation` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。
+ルームは URL の `room` で決まり、同じ URL を開くと同じルームに入ります。Public モードのページでは bot は動きません。
 
-手元で試すときは、各コマンドを別々のターミナルで実行します。
+手元では、`uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
+System One の URL は `gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)'` で分かります。
 
-```shell
-make relay
-
-cd examples/python/moq-chat-moderation
-uv run python -m moq_chat_moderation.bot --insecure \
-  --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
-  --gcloud-auth
-
-make browser
-make chrome
+```json
+{
+  "chat-moderation": {
+    "launcher": { "kind": "local", "program": "<リポジトリ>/examples/python/moq-chat-moderation/.venv/bin/python" },
+    "args": ["-m", "moq_chat_moderation.bot", "--relay-url", "https://127.0.0.1:4433", "--insecure",
+             "--system-one-url", "<System One の URL>/v1/systemone", "--gcloud-auth"],
+    "grace_seconds": 30,
+    "max_seconds": 3600,
+    "max_running": 10
+  }
+}
 ```
 
 - bot は `moq-wasm` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
-- bot は `http://127.0.0.1:8097` で待ち受けます（同時に 10 ルームまで）。オプションは [moq-bot-rooms](../moq-bot-rooms/README.md) にあります。
-- `make chrome` の Chrome でハブから MoQ Chat Moderation を開き、Local relay-a を選んで Join します。モデレーター接続済みになったら送信できます。
+- 起動のオプションは [moq-bot-rooms](../moq-bot-rooms/README.md) の「bot サービスから起動される bot」にあります。
 
 ## トラック
 
-一時アプリのページでは、`anon` の代わりにその appId（`temp-…`）が namespace root になります。
+`{app}` は一時アプリの appId（`temp-…`）です。
 
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
-| `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | `{"text": "...", "labels": [{"name": "喜", "description": "..."}]}`。1 メッセージ 1 group |
-| `anon/moq-chat-moderation/{room}/moderator` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`L` で chat の Location を指し、`data` は `{"labels": [{"name": "喜", "probability": 0.91}]}` |
-| `anon/moq-chat-moderation/{room}/moderator` | `status` | bot | System One の状態 `{"system_one", "since"}` |
+| `{app}/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | `{"text": "...", "labels": [{"name": "喜", "description": "..."}]}`。1 メッセージ 1 group |
+| `{app}/moq-chat-moderation/{room}/bots/chat-moderation` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`L` で chat の Location を指し、`data` は `{"labels": [{"name": "喜", "probability": 0.91}]}` |
+| `{app}/moq-chat-moderation/{room}/bots/chat-moderation` | `status` | bot | System One の状態 `{"system_one", "since"}` |
 
 - ラベルは 0〜16 個で、名前は 1〜20 文字、説明は 100 文字以内です。
 - 1 つのルームでチャットを送れるページは同時に 1 つです。そのページが去ると、残ったページが送れるようになります。

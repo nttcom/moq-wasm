@@ -1,14 +1,12 @@
 import argparse
 import asyncio
-from dataclasses import dataclass
 from functools import partial
 
 import aiohttp
 import moq_wasm
+from moq_bot_rooms.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
 from moq_bot_rooms.identity_token import IdentityToken, add_identity_token_arguments, identity_token_from_arguments
 from moq_bot_rooms.relay import add_relay_arguments
-from moq_bot_rooms.rooms import GRACE_SECONDS, BotRoom
-from moq_bot_rooms.server import add_serve_arguments, serve_rooms
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
 from moq_system_one_bot.pipeline_track import PipelineTrack
@@ -22,36 +20,23 @@ from moq_ptz_tracking.ptz import PtzCalibration, PtzCommands
 from moq_ptz_tracking.tracker import CAMERA, COMMAND_TRACK, EVENT_TIMELINE_TRACK, PROMPT_TRACK, VIEWER, PtzTracker
 from moq_ptz_tracking.vision import SystemOneVisionClient
 
-DEFAULT_PORT = 8099
-# There is one ONVIF camera, so there is one room.
-ROOM_ID = "onvif"
 STATUS_TRACK = "status"
-# What the bot publishes is kept for FETCH as long as a room runs by default (--max-room-seconds).
+# What the bot publishes is kept for FETCH as long as the bot service lets a room's bot run.
 RETENTION_SECONDS = 60 * 60
-
-
-@dataclass(frozen=True)
-class RoomNamespaces:
-    """The tracker's namespaces under the room's root, next to the ones
-    examples/browser/examples/moq-ptz-tracking/main.ts uses: the camera `onvif/client` (CAMERA) and
-    the viewer `moq-ptz-tracking/viewer` (VIEWER)."""
-
-    command: list[str]
-    tracker: list[str]
-
-    @classmethod
-    def of(cls, room: BotRoom) -> "RoomNamespaces":
-        root = room.namespace_root
-        return cls(command=[root, "onvif", "viewer"], tracker=[root, "moq-ptz-tracking", "tracker"])
-
+# The page publishes the viewer as `<room>/page/viewer` (VIEWER); onvif-ingest publishes the camera
+# as `<room>/onvif/client` (CAMERA) and follows the commands the tracker publishes at
+# `<room>/bots/ptz-tracking/command`. The two rooms are siblings: one session cannot follow a
+# namespace prefix inside another it follows.
+PAGE_ROOM = "page"
+CAMERA_ROOM = "onvif"
+COMMAND_BROADCAST = "command"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Pan and tilt the ONVIF camera so every box of the MoQ PTZ tracking page's targets stays in the picture"
     )
-    add_serve_arguments(
-        parser, bot="moq-ptz-tracking", default_port=DEFAULT_PORT, default_max_rooms=1
-    )
+    parser.set_defaults(bot="moq-ptz-tracking")
+    add_bot_job_arguments(parser)
     add_relay_arguments(parser)
     parser.add_argument(
         "--system-one-url", required=True, help="a System One /v1/systemone endpoint that reads images, such as system-one-server"
@@ -88,29 +73,29 @@ async def track_in_session(
     args: argparse.Namespace,
     http: aiohttp.ClientSession,
     identity_token: IdentityToken | None,
-    namespaces: RoomNamespaces,
+    job: BotJob,
     session: moq_wasm.Session,
 ) -> None:
-    """Returns once no one has published in the page's room for GRACE_SECONDS."""
+    """Returns once no one has published in the page's room for the grace period."""
     # The tracker takes part in two rooms: the page's, where it reads the viewer's prompt and writes
     # its event timeline and status, and onvif-ingest's, where it watches the camera and writes the
     # camera's commands.
     page = MoqWasmTransport(
         session,
         MoqWasmParams(
-            room=namespaces.tracker[:-1],
-            participant_id=namespaces.tracker[-1],
+            room=[*job.namespace_prefix, PAGE_ROOM],
+            broadcast=job.broadcast,
             data_in_tracks=[PROMPT_TRACK],
             event_timelines_out={EVENT_TIMELINE_TRACK: RETENTION_SECONDS},
             data_out_tracks={STATUS_TRACK: RETENTION_SECONDS},
-            empty_timeout=GRACE_SECONDS,
+            empty_timeout=job.grace_seconds,
         ),
     )
     onvif = MoqWasmTransport(
         session,
         MoqWasmParams(
-            room=namespaces.command[:-1],
-            participant_id=namespaces.command[-1],
+            room=[*job.namespace_prefix, CAMERA_ROOM],
+            broadcast=[*job.broadcast, COMMAND_BROADCAST],
             video_in_enabled=True,
             data_out_tracks={COMMAND_TRACK: RETENTION_SECONDS},
         ),
@@ -126,7 +111,7 @@ async def track_in_session(
         enable_rtvi=False,
         idle_timeout_secs=None,
     )
-    # The room server owns SIGINT and SIGTERM; it stops every room before it exits.
+    # serve_bot_job owns SIGINT and SIGTERM.
     runner = WorkerRunner(handle_sigint=False)
 
     @page.event_handler("on_client_disconnected")
@@ -144,17 +129,15 @@ async def track_in_session(
     await runner.run()
 
 
-async def track_in_room(
-    args: argparse.Namespace, http: aiohttp.ClientSession, identity_token: IdentityToken | None, room: BotRoom
-) -> None:
-    await stay_connected(args, room, partial(track_in_session, args, http, identity_token, RoomNamespaces.of(room)))
+async def track_in_room(args: argparse.Namespace, job: BotJob, bots: Bots) -> None:
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
+        identity_token = identity_token_from_arguments(args, http, args.system_one_url)
+        await stay_connected(args, bots, partial(track_in_session, args, http, identity_token, job))
 
 
 async def main():
     args = parse_args()
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
-        identity_token = identity_token_from_arguments(args, http, args.system_one_url)
-        await serve_rooms(args, partial(track_in_room, args, http, identity_token), only_room=ROOM_ID)
+    await serve_bot_job(args, partial(track_in_room, args))
 
 
 if __name__ == "__main__":

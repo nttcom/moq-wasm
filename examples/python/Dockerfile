@@ -42,8 +42,10 @@ COPY examples/python/moq-camera-detection/moq_camera_detection moq-camera-detect
 COPY examples/python/moq-ptz-tracking/moq_ptz_tracking moq-ptz-tracking/moq_ptz_tracking
 COPY examples/python/moq-meeting-transcriber/moq_meeting_transcriber moq-meeting-transcriber/moq_meeting_transcriber
 COPY examples/python/moq-ai-voice-agent/moq_ai_voice_agent moq-ai-voice-agent/moq_ai_voice_agent
-# The bot service starts the transcriber as `python -m moq_meeting_transcriber.bot` from any directory.
-RUN uv pip install --python moq-meeting-transcriber/.venv/bin/python --no-deps -e moq-meeting-transcriber
+# The bot service starts each bot as `python -m <package>.bot` from any directory.
+RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-meeting-transcriber; do \
+        uv pip install --python $bot/.venv/bin/python --no-deps -e $bot || exit 1; \
+    done
 # Bake the transcriber's CPU models (the default Whisper and Granite Speech) into the image so a new
 # room does not wait for a download and Cloud Run does not hold the files in the instance's memory.
 ENV HF_HOME=/opt/huggingface

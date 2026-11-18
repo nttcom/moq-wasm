@@ -99,10 +99,14 @@
                     ><svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-info" /></svg
                   ></span>
                 </h4>
-                <pre><code>cd examples/python/moq-chat-moderation
-uv run python -m moq_chat_moderation.bot --insecure \
-  --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
-  --gcloud-auth</code></pre>
+                <p class="hint">
+                  bot サービス（<code>services/bots</code>）の <code>BOTS_TYPES</code> に登録します（<a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/moq-chat-moderation/README.md"
+                    target="_blank"
+                    rel="noopener"
+                    >README</a
+                  >）
+                </p>
               </li>
               <li>
                 <h4>Local relay-a で Join</h4>

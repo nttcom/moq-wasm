@@ -43,6 +43,11 @@ class BotJob:
     grace_seconds: float
     options: dict
 
+    @property
+    def broadcast(self) -> list[str]:
+        """`<room>/bots/<type>`, where the bot's token lets it publish."""
+        return [*self.namespace_prefix, "bots", self.bot_type]
+
 
 def add_bot_job_arguments(parser: argparse.ArgumentParser) -> None:
     """The arguments the bot service appends. `--max-seconds` is read by the service itself, which

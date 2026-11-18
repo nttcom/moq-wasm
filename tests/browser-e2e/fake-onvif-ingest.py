@@ -13,8 +13,6 @@ import av
 import moq_wasm
 from aiohttp import web
 
-CAMERA_NAMESPACE = ["anon", "onvif", "client"]
-COMMAND_NAMESPACE = ["anon", "onvif", "viewer"]
 COMMAND_TRACK = "command"
 WIDTH, HEIGHT, FPS = 320, 180, 10
 GRAY = b"\x80"
@@ -25,17 +23,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--relay-url", required=True)
     parser.add_argument("--moq-cli", required=True, help="path of the moq-cli binary that publishes the camera")
     parser.add_argument("--port", type=int, required=True, help="HTTP port serving GET /commands")
+    parser.add_argument("--room", required=True, help="the PTZ tracking page's room, `<app>/moq-ptz-tracking`")
+    parser.add_argument("--token", required=True, help="a token of the room's app")
     return parser.parse_args()
 
 
-async def stream_camera(moq_cli: str, relay_url: str) -> None:
+async def stream_camera(moq_cli: str, relay_url: str, namespace: list[str], token: str) -> None:
     publisher = await asyncio.create_subprocess_exec(
         moq_cli,
         "publish",
         "--relay",
         relay_url,
         "--namespace",
-        "/".join(CAMERA_NAMESPACE),
+        "/".join(namespace),
+        "--auth-token",
+        token,
         "--insecure",
         stdin=asyncio.subprocess.PIPE,
         env={**os.environ, "RUST_LOG": os.environ.get("RUST_LOG", "info")},
@@ -60,12 +62,12 @@ async def stream_camera(moq_cli: str, relay_url: str) -> None:
         await publisher.wait()
 
 
-async def record_commands(session: moq_wasm.Session, commands: list[dict]) -> None:
-    async for event in await session.watch_namespaces(COMMAND_NAMESPACE[:-1]):
-        if event.namespace != COMMAND_NAMESPACE or not event.active:
+async def record_commands(session: moq_wasm.Session, namespace: list[str], commands: list[dict]) -> None:
+    async for event in await session.watch_namespaces(namespace[:-1]):
+        if event.namespace != namespace or not event.active:
             continue
         try:
-            async for command in await session.subscribe(COMMAND_NAMESPACE, COMMAND_TRACK):
+            async for command in await session.subscribe(namespace, COMMAND_TRACK):
                 commands.append(json.loads(command.payload))
         except RuntimeError as error:
             print(f"command track ended: {error}", flush=True)
@@ -79,12 +81,14 @@ async def main() -> None:
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", args.port).start()
-    session = await moq_wasm.connect(args.relay_url, verify_certificate=False)
+    room = args.room.split("/")
+    session = await moq_wasm.connect(args.relay_url, verify_certificate=False, token=args.token)
     print(f"serving commands on http://127.0.0.1:{args.port}", flush=True)
     try:
+        # Where onvif-ingest publishes and reads in the room (examples/browser/examples/moq-ptz-tracking).
         async with asyncio.TaskGroup() as tasks:
-            tasks.create_task(stream_camera(args.moq_cli, args.relay_url))
-            tasks.create_task(record_commands(session, commands))
+            tasks.create_task(stream_camera(args.moq_cli, args.relay_url, [*room, "onvif", "client"], args.token))
+            tasks.create_task(record_commands(session, [*room, "bots", "ptz-tracking", "command"], commands))
     finally:
         await session.close()
         await runner.cleanup()

@@ -53,7 +53,10 @@
               <li>
                 <h4>PTZ カメラを Cloud relay-1 に配信する</h4>
                 <p class="hint"><code>.env</code>: ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD</p>
-                <pre><code>make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443</code></pre>
+                <pre><code>make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
+  ONVIF_AUTH_TOKEN=&lt;共有リンクのトークン&gt; \
+  ONVIF_PUBLISH_NAMESPACE=&lt;appId&gt;/moq-ptz-tracking/onvif/client \
+  ONVIF_SUBSCRIBE_NAMESPACE=&lt;appId&gt;/moq-ptz-tracking/bots/ptz-tracking/command</code></pre>
               </li>
               <li>
                 <h4>追従する対象を指定する</h4>
@@ -112,14 +115,21 @@
               <li>
                 <h4>PTZ カメラを配信する</h4>
                 <p class="hint"><code>.env</code>: ONVIF_IP / ONVIF_USERNAME / ONVIF_PASSWORD</p>
-                <pre><code>make onvif</code></pre>
+                <pre><code>make onvif \
+  ONVIF_AUTH_TOKEN=&lt;共有リンクのトークン&gt; \
+  ONVIF_PUBLISH_NAMESPACE=&lt;appId&gt;/moq-ptz-tracking/onvif/client \
+  ONVIF_SUBSCRIBE_NAMESPACE=&lt;appId&gt;/moq-ptz-tracking/bots/ptz-tracking/command</code></pre>
               </li>
               <li>
                 <h4>pipecat bot を起動する</h4>
-                <pre><code>cd examples/python/moq-ptz-tracking
-uv run python -m moq_ptz_tracking.bot --insecure \
-  --system-one-url "$(gcloud run services describe moqt-system-one --region asia-southeast1 --format 'value(status.url)')/v1/systemone" \
-  --gcloud-auth</code></pre>
+                <p class="hint">
+                  bot サービス（<code>services/bots</code>）の <code>BOTS_TYPES</code> に登録します（<a
+                    href="https://github.com/nttcom/moq-wasm/blob/master/examples/python/moq-ptz-tracking/README.md"
+                    target="_blank"
+                    rel="noopener"
+                    >README</a
+                  >）
+                </p>
               </li>
               <li>
                 <h4>追従する対象を指定する</h4>

@@ -2,7 +2,9 @@ import { type Locator, type Page, expect } from '@playwright/test'
 import { CAMERA_DETECTION_PATH } from '../playwright.helpers'
 
 const moqtUrl = process.env.CAMERA_DETECTION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-const botUrl = process.env.CAMERA_DETECTION_E2E_BOT_URL!
+// The pages join the runner's temporary app, whose pages may start bots through temporary-apps.
+const temporaryAppsUrl = process.env.CAMERA_DETECTION_E2E_TEMPORARY_APPS_URL!
+const appFragment = `#jwt=${process.env.CAMERA_DETECTION_E2E_TEMPORARY_APP_TOKEN!}`
 /// The bot runs one room at a time, so every test shares this room.
 const ROOM = 'e2e'
 export const SYSTEM_ONE_ORIGIN = process.env.CAMERA_DETECTION_E2E_SYSTEM_ONE_ORIGIN!
@@ -31,6 +33,6 @@ export async function joinCamera(page: Page): Promise<Locator> {
 }
 
 export async function clickJoinCamera(page: Page, room = ROOM): Promise<void> {
-  await page.goto(`${CAMERA_DETECTION_PATH}?${new URLSearchParams({ moqtUrl, botUrl, room })}`)
+  await page.goto(`${CAMERA_DETECTION_PATH}?${new URLSearchParams({ moqtUrl, temporaryAppsUrl, room })}${appFragment}`)
   await page.getByTestId('camera-detection-join-button').click()
 }
