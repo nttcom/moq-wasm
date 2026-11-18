@@ -233,9 +233,7 @@ fn json_response(status: StatusCode, body: &Value) -> ApiResponse {
 }
 
 fn empty_response(status: StatusCode) -> ApiResponse {
-    let mut response = Response::new(Either::Left(Full::new(Bytes::new())));
-    *response.status_mut() = status;
-    response
+    http_server::empty_response(status).map(Either::Left)
 }
 
 fn error_response(status: StatusCode, message: &str) -> ApiResponse {

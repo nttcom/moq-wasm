@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, combinators::BoxBody};
+use http_body_util::{BodyExt, combinators::BoxBody};
 use http_server::{HttpServer, allow_any_origin, bearer_token};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
@@ -100,9 +100,7 @@ async fn start_session(state: &SessionServerState, headers: &HeaderMap) -> Serve
 }
 
 fn empty_response(status: StatusCode) -> ServerResponse {
-    let mut response = Response::new(Full::default().boxed());
-    *response.status_mut() = status;
-    response
+    http_server::empty_response(status).map(BodyExt::boxed)
 }
 
 /// `GET /events`: a server-sent event stream of heartbeat comments only; a
