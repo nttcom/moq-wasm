@@ -13,12 +13,13 @@ type RsaKey = (Vec<u8>, Vec<u8>);
 
 /// Verifies the Google ID tokens a bot's job gets from its metadata server:
 /// RS256 signed by one of Google's published keys, issued by Google for
-/// `audience`, not expired, and naming `service_account` as a verified email.
+/// `audience`, not expired, and naming one of `service_accounts` as a verified
+/// email.
 pub(crate) struct IdTokenVerifier {
     client: reqwest::Client,
     certs_url: String,
     audience: String,
-    service_account: String,
+    service_accounts: Vec<String>,
     /// Google's keys by key id, refetched when a token names a key id it does
     /// not hold.
     keys: Mutex<HashMap<String, RsaKey>>,
@@ -53,12 +54,12 @@ struct Jwk {
 }
 
 impl IdTokenVerifier {
-    pub(crate) fn new(certs_url: String, audience: String, service_account: String) -> Self {
+    pub(crate) fn new(certs_url: String, audience: String, service_accounts: Vec<String>) -> Self {
         Self {
             client: reqwest::Client::new(),
             certs_url,
             audience,
-            service_account,
+            service_accounts,
             keys: Mutex::new(HashMap::new()),
         }
     }
@@ -90,8 +91,11 @@ impl IdTokenVerifier {
         ensure!(payload.aud == self.audience, "issued for another audience");
         ensure!(payload.exp > now, "expired");
         ensure!(
-            payload.email_verified && payload.email.as_deref() == Some(&self.service_account),
-            "not the bots' service account"
+            payload.email_verified
+                && payload
+                    .email
+                    .is_some_and(|email| self.service_accounts.contains(&email)),
+            "not a bots' service account"
         );
         Ok(())
     }
@@ -220,11 +224,18 @@ mod tests {
     }
 
     fn verifier(google: &Google) -> IdTokenVerifier {
-        IdTokenVerifier::new(google.certs_url.clone(), AUDIENCE.into(), ACCOUNT.into())
+        IdTokenVerifier::new(
+            google.certs_url.clone(),
+            AUDIENCE.into(),
+            vec![
+                "recorder@project.iam.gserviceaccount.com".into(),
+                ACCOUNT.into(),
+            ],
+        )
     }
 
     #[tokio::test]
-    async fn a_token_of_the_service_account_for_the_audience_passes() {
+    async fn a_token_of_any_listed_service_account_for_the_audience_passes() {
         // Arrange
         let google = google().await;
         let token = sign(&google.key, "k1", &claims());
