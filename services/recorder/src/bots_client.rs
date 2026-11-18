@@ -36,25 +36,33 @@ impl BotState {
 pub(crate) struct BotsClient {
     http: reqwest::Client,
     url: String,
+    bot_type: String,
     id: String,
     key: Option<String>,
 }
 
 impl BotsClient {
-    pub(crate) fn from_env(url: String, id: String) -> Self {
+    pub(crate) fn from_env(url: String, bot_type: String, id: String) -> Self {
         let key = std::env::var(BOT_KEY_ENV)
             .ok()
             .filter(|key| !key.is_empty());
-        Self::new(url, id, key)
+        Self::new(url, bot_type, id, key)
     }
 
-    fn new(url: String, id: String, key: Option<String>) -> Self {
+    fn new(url: String, bot_type: String, id: String, key: Option<String>) -> Self {
         Self {
             http: reqwest::Client::new(),
             url: url.trim_end_matches('/').to_string(),
+            bot_type,
             id,
             key,
         }
+    }
+
+    /// The type `bots` started the bot as, the last element of the namespace
+    /// its token may publish: `<room>/bots/<type>`.
+    pub(crate) fn bot_type(&self) -> &str {
+        &self.bot_type
     }
 
     /// A new token for the relay. Fails when `bots` refuses, as it does once
@@ -90,7 +98,7 @@ impl BotsClient {
                 .await
                 .context("cannot get an ID token from the metadata server")?,
         };
-        let url = format!("{}/bots/{}/{call}", self.url, self.id);
+        let url = format!("{}/bots/{}/{}/{call}", self.url, self.bot_type, self.id);
         let mut request = self
             .http
             .post(&url)
@@ -145,7 +153,7 @@ mod tests {
             }
         });
         (
-            BotsClient::new(url, "b1".into(), Some("key".into())),
+            BotsClient::new(url, "recorder".into(), "b1".into(), Some("key".into())),
             calls,
             server,
         )
@@ -166,8 +174,14 @@ mod tests {
         assert_eq!(
             *calls.lock().unwrap(),
             [
-                ("/bots/b1/token".to_string(), "Bearer key".to_string()),
-                ("/bots/b1/heartbeat".to_string(), "Bearer key".to_string()),
+                (
+                    "/bots/recorder/b1/token".to_string(),
+                    "Bearer key".to_string()
+                ),
+                (
+                    "/bots/recorder/b1/heartbeat".to_string(),
+                    "Bearer key".to_string()
+                ),
             ]
         );
     }

@@ -654,7 +654,7 @@ The recording's JSON carries `composite` (`null` when not requested) with
 `recorder bot` records a room as the bot `bots` started
 (docs/architecture/bots/architecture.md), which is how the bot service's
 `recorder` type runs: its arguments are `bot`, the job's own settings (the
-relay, the store, the launcher) and the ones `bots` adds, `--bot-id`,
+relay, the store, the launcher) and the ones `bots` adds, `--bot-type`, `--bot-id`,
 `--bots-url`, `--namespace-prefix`, `--grace-seconds` (the empty room
 timeout), `--max-seconds` and `--options` (`layout`, `composite` and
 `format`, as `POST /recordings` takes them).
@@ -663,14 +663,14 @@ timeout), `--max-seconds` and `--options` (`layout`, `composite` and
   `BOTS_BOT_KEY` when the job was launched locally, and otherwise with the
   Google ID token of the job's service account for the bots URL
   (`google_cloud::identity_token`).
-- The job takes its first token from `POST /bots/{id}/token`, and
+- The job takes its first token from `POST /bots/{type}/{id}/token`, and
   `TokenRenewal::Bots` renews it there five minutes before it expires. The
-  token subscribes to the room and publishes only `<room>/bots/recorder`, which
+  token subscribes to the room and publishes only `<room>/bots/<type>`, which
   the recording announces so the room sees it.
 - It writes a new recording to the store as `recorder serve` would, so the
   read API lists and serves it alike, but takes no room lock: `bots` holds the
   room.
-- `StateSyncTask` also sends each state it writes to `POST /bots/{id}/heartbeat`
+- `StateSyncTask` also sends each state it writes to `POST /bots/{type}/{id}/heartbeat`
   and stops the recording when the answer asks it to, as it does for a stop
   request in the store. The final state is reported once the recording
   ends; a job that fails before recording reports `failed` with the error.

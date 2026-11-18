@@ -226,6 +226,10 @@ pub(crate) struct RecordArgs {
 #[derive(Parser, Debug)]
 #[command(name = "recorder bot", bin_name = "recorder bot", version)]
 pub(crate) struct BotArgs {
+    /// Type `bots` started the bot as, the name in its types file
+    #[arg(long)]
+    pub(crate) bot_type: String,
+
     /// Id `bots` gave the bot
     #[arg(long)]
     pub(crate) bot_id: String,
