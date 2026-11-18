@@ -19,7 +19,7 @@ impl RecordingFormat {
     }
 }
 
-/// How a room is recorded, as `POST /recordings` or `bots`' `options` ask.
+/// How a room is recorded: the `options` `bots` passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RecordingOptions {
     pub(crate) layout: Layout,
@@ -159,9 +159,8 @@ impl CompositeState {
     }
 }
 
-/// A room recording as `state/<id>.json` holds it. The API writes it once
-/// as `Starting`; from then on only the recording job writes it, stamping
-/// `updated_at_ms` (Unix ms) each time.
+/// A room recording as `state/<id>.json` holds it. The recording job writes
+/// it, first as `Starting`, stamping `updated_at_ms` (Unix ms) each time.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RoomRecord {
     pub(crate) id: String,

@@ -150,7 +150,7 @@ reserved elements `bots` and `recordings` (the recorder's replays).
 ### When a bot ends
 Every bot ends by itself once the room has had no human member for its type's
 grace period, counted from its start too. This generalises what both bots
-already do: the recorder's `AutoStop` (`--empty-room-seconds`) and the Python
+already do: the recorder's `AutoStop` (`--grace-seconds`) and the Python
 bots' "unpublished for the grace period". The grace period differs by type
 because a room that empties for a reload or a break should not split a
 recording:
@@ -181,8 +181,7 @@ delete, so one room runs at most one bot of each type and any number of
 instances answer alike. The object is written by `bots` alone, from the
 launch request and from the bot's heartbeats (`starting`, `running`,
 `stopping`, `finished`, `failed`). A bot that has not sent a heartbeat for
-90 s is reported `failed` and its lock is released, as the recorder does
-today. The recorder keeps its own recording state (members, files,
+90 s is reported `failed` and its lock is released. The recorder keeps its own recording state (members, files,
 composite) in its store for `recorder serve`'s read API.
 
 ### API

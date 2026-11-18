@@ -143,26 +143,6 @@ impl CloudStorageBucket {
         }
     }
 
-    /// An object no longer at `generation`, or missing, is not an error.
-    pub async fn delete_if_generation_matches(
-        &self,
-        object: &str,
-        generation: u64,
-    ) -> anyhow::Result<()> {
-        let mut url = self.object_url(object);
-        url.query_pairs_mut()
-            .append_pair("ifGenerationMatch", &generation.to_string());
-        let response = self.authorize(self.http.delete(url)).await?.send().await?;
-        match response.status() {
-            StatusCode::PRECONDITION_FAILED | StatusCode::NOT_FOUND => Ok(()),
-            status if status.is_success() => Ok(()),
-            status => bail!(
-                "deleting {object} failed with {status}: {}",
-                response.text().await.unwrap_or_default()
-            ),
-        }
-    }
-
     fn object_url(&self, object: &str) -> Url {
         let mut url = self.objects_url.clone();
         url.path_segments_mut()
@@ -273,57 +253,5 @@ mod tests {
         assert_eq!(current, Uploaded::Written);
         assert_eq!(storage.body("registry.json").unwrap(), b"new");
         assert_eq!(storage.generation("registry.json"), Some(2));
-    }
-
-    #[tokio::test]
-    async fn delete_names_the_object_as_one_escaped_path_segment() {
-        // Arrange: object_store keeps the `/` of a namespace prefix escaped in the object name
-        let storage = FakeCloudStorage::run(BUCKET).await;
-        let object = "recorder/locks/anon%2Fresearch";
-        storage.put(object, "id");
-
-        // Act
-        storage
-            .bucket()
-            .delete_if_generation_matches(object, 1)
-            .await
-            .unwrap();
-
-        // Assert
-        assert_eq!(
-            storage.requests().last().unwrap(),
-            "DELETE /storage/v1/b/bucket/o/recorder%2Flocks%2Fanon%252Fresearch?ifGenerationMatch=1"
-        );
-        assert_eq!(storage.body(object), None);
-    }
-
-    #[tokio::test]
-    async fn delete_takes_a_replaced_or_missing_object_as_done_and_fails_on_an_error() {
-        // Arrange
-        let storage = FakeCloudStorage::run(BUCKET).await;
-        storage.put("lock", "replaced");
-        storage.put("lock", "current");
-        let failing = FakeCloudStorage::run(BUCKET).await;
-        failing.fail_with(503);
-
-        // Act
-        let replaced = storage
-            .bucket()
-            .delete_if_generation_matches("lock", 1)
-            .await;
-        let missing = storage
-            .bucket()
-            .delete_if_generation_matches("none", 1)
-            .await;
-        let failed = failing
-            .bucket()
-            .delete_if_generation_matches("lock", 1)
-            .await;
-
-        // Assert
-        assert!(replaced.is_ok());
-        assert_eq!(storage.body("lock").unwrap(), b"current");
-        assert!(missing.is_ok());
-        assert!(failed.unwrap_err().to_string().contains("503"));
     }
 }

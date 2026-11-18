@@ -286,66 +286,46 @@ replayed recordings do not become participants of a new recording, and
 those under `<room>/bots/`, which are bots, the recorder's own presence among
 them; of these only an MoQ recording reads `<room>/bots/transcriber`, as a
 transcript.
+`bots` starts and stops room recordings (see "Started by `bots`"): each runs
+as a `recorder bot` job and each composite as a `recorder composite` job.
 `recorder serve` is an HTTP API (`api_server::ApiServer` on
-`http_server::HttpServer`, see [hyper.md](hyper.md)) that keeps no recording in its own memory or process.
-Every room recording runs as a `recorder record` job and every composite as a
-`recorder composite` job; the API and the jobs share the recordings' state
-through small JSON objects in the store (`--store`, `gs://` or `file://`), so
-any number of API instances answer alike, none has to outlive a recording,
-and on Cloud Run the API scales to zero while the jobs get the CPU they need.
+`http_server::HttpServer`, see [hyper.md](hyper.md)) that lists and replays
+them and keeps no recording in its own memory or process. The jobs and the
+API share the recordings' state through small JSON objects in the store
+(`--store`, `gs://` or `file://`), so any number of API instances answer
+alike and, on Cloud Run, the API scales to zero while the jobs get the CPU
+they need.
 
 ```mermaid
 flowchart LR
-  meeting[Meeting] -->|POST /recordings, stop, GET| api[recorder serve]
-  api -->|launch| record[recorder record job]
+  bots[bots] -->|launch| record[recorder bot job]
+  record -->|token, heartbeat| bots
   record -->|launch| composite[recorder composite job]
-  api <-->|state, stop, locks| store[(store)]
-  record <-->|state, files, manifest| store
+  meeting[Meeting, console] -->|GET, publish| api[recorder serve]
+  api -->|state| store[(store)]
+  record -->|state, files, manifest| store
   composite <-->|files, composite state| store
   record -->|SUBSCRIBE_NAMESPACE| relay[relay]
 ```
 
 `store::RecordingStore` lays the objects out so that each has one writer, and
 so needs neither compare-and-swap nor a database: a `file://` directory and
-GCS behave the same. The exception is a room's lock, which concurrent API
-requests may each find left by an ended recording and release. A release reads
-the lock and deletes it only if it names the recording; in GCS the delete goes
-through the JSON API with `ifGenerationMatch` (`google_cloud::CloudStorageBucket`,
-since `object_store` 0.14 has no conditional delete), so a lock another request
-took after the read stays.
+GCS behave the same. One room runs one recording at a time because `bots`
+holds the room for the `recorder` type.
 
 | Object | Writer | Holds |
 | --- | --- | --- |
-| `state/<id>.json` | the API once (`starting`), then the recording job | `room_state::RoomRecord`: prefix, layout, whether to composite, state, members, `updated_at_ms` |
-| `state/<id>.stop` | the API | a stop request |
+| `state/<id>.json` | the recording job | `room_state::RoomRecord`: prefix, layout, whether to composite, state, members, `updated_at_ms` |
 | `state/<id>.composite.json` | the composite job, or the recording job when it cannot start one | the composite's state |
-| `locks/<prefix>` | the API, only if absent (`PutMode::Create`); deleted by the recording job, or by the API once that recording is no longer active | the id recording the room |
-| `rooms/<prefix>/<id>` | the API | an empty marker, so a room's recordings are listed without reading the others |
+| `rooms/<prefix>/<id>` | the recording job | an empty marker, so a room's recordings are listed without reading the others |
 | `<app>/<id>/<namespace>/...`, `<app>/<id>/manifest.json` | the recording job | the files and the manifest, under the app, the first element of the room's prefix, so that an app's recordings are listed without reading the others |
 
 A namespace prefix is one path element (its `/` percent-encoded), so the rooms
 `anon/a` and `anon/a/b` do not nest in a directory store.
 
-`POST /recordings` with `{"namespace_prefix", "layout", "composite"}`:
-1. Takes the room's lock. A lock whose recording is no longer active (see
-   below) is released first; a held one answers `409`.
-2. Counts the other active recordings against `--max-recordings`; at the
-   limit it releases its lock and answers `503`. A lock with no state whose
-   id was made less than 90 s ago counts as active: it belongs to a request
-   between steps 1 and 3. Of concurrent requests, the one that locks last
-   counts all the others, so they cannot all pass; requests that count each
-   other can all be refused even when one would fit.
-3. Writes the recording as `starting` (id `<Unix ms>-<6 hex digits>`, which
-   does not collide between instances), adds it to the room and launches
-   `recorder record --id <id>` with every flag the job needs: the store, the
-   relay, the limits and the launcher (`launcher::Launcher`). `--launcher
-   local` starts the same binary as a child process; `--launcher cloud-run`
-   starts an execution of `--record-job` through the Cloud Run Admin API with
-   the arguments overridden (see [reqwest.md](reqwest.md)).
-
-The recording job (`record_job::run`) exits at once unless the recording is
-still `starting`, so a job that starts after the API gave it up records
-nothing. Otherwise it records the room as `room_recording::record`:
+The recording job writes the recording as `starting` (id `<Unix ms>-<6 hex
+digits>`, which does not collide between jobs) and records the room as
+`room_recording::record`:
 
 - It opens its own relay session and sends SUBSCRIBE_NAMESPACE for the
   prefix. Each PUBLISH_NAMESPACE under it, the participants already there and
@@ -370,52 +350,35 @@ nothing. Otherwise it records the room as `room_recording::record`:
   relay its GOAWAY names; the PUBLISH_NAMESPACE that relay answers with for a
   participant already recorded is acknowledged and changes nothing.
 - `state_sync_task::StateSyncTask` writes the state whenever it changes and
-  at least every 30 s, and checks `state/<id>.stop` every 5 s. A stop
-  request, SIGTERM (Cloud Run stopping the job) or SIGINT sends the stop
-  signal every `record_broadcast` watches; the state goes from `stopping` to
-  `finished` once each file is closed and uploaded.
-- A recording also stops by itself, the same way, `--max-recording-seconds`
-  (2 h) after it started, or once no participant has been recorded for
-  `--empty-room-seconds` (5 min), counted from the start too. A participant
-  counts until their recording ends, which is up to 10 s after the
-  PUBLISH_DONE that follows their leaving.
+  at least every 30 s. A stop from `bots`, SIGTERM (Cloud Run stopping the
+  job) or SIGINT sends the stop signal every `record_broadcast` watches; the
+  state goes from `stopping` to `finished` once each file is closed and
+  uploaded.
+- A recording also stops by itself, the same way, `--max-seconds` after it
+  started, or once no participant has been recorded for `--grace-seconds`,
+  counted from the start too. A participant counts until their recording
+  ends, which is up to 10 s after the PUBLISH_DONE that follows their
+  leaving.
 - At the end it writes `<app>/<id>/manifest.json`, which lists the uploaded files
   by participant, the camera and audio in `files` and the screen share in
   `screen_share_files`, with each file's capture origin (`capture_origin_us`),
-  leaving out a file whose upload failed; then the final state, and it
-  deletes the room's lock.
+  leaving out a file whose upload failed; then the final state.
 
 The API reports a recording that is `starting`, `recording` or `stopping` but
-has not written its state for 90 s (three heartbeats) as `failed` ("the
-recording job stopped"), and releases its room when it next needs the lock or
-counts the active recordings. The `starting` state lasts as long as the job
-takes to start, about 12 s on Cloud Run; the Meeting shows `Starting` instead
-of `REC` meanwhile, and nothing from before the job joined is recorded.
-A lock with no state whose id was made 90 s ago or more belongs to a request
-that ended between steps 1 and 3 (it failed or its instance died); the API
-releases it when it next needs the room's lock.
+has not written its state for 90 s (three state writes) as `failed` ("the
+recording job stopped"). A recording is `starting` until its job has joined
+the room; nothing from before that is recorded.
 
-The API accepts a prefix of at least two elements, `<app>/<room>`, and one
-recording per prefix. Every request carries a bearer token verified by
-`--auth-vts-url` (`AUTH_VTS_URL`): reads and replay require the `subscribe`
-claim to cover the room, while start and stop require `publish`. Namespace
+Every request carries a bearer token verified by `--auth-vts-url`
+(`AUTH_VTS_URL`), whose `subscribe` claim must cover the room. Namespace
 claims use component boundaries, not a string-prefix match. VTS failures deny
-access. The anonymous app, whose rooms carry no token, is not recorded:
-recording is a feature of an app that authenticates its users. Tokens are never
-stored in the recording.
-
-A recording and a replay present the caller's bearer token to the relay
-(`relay::ServiceToken`), so the recorder holds no identity of its own that
-could read every app: the API hands the token to the recording job as
-`--token`. The relay ends the session when the token expires, which finishes
-an MP4 recording with the files it has and fails a MoQ one (a closed session
-fails an archive). With `--temporary-apps-url`, a temporary app's token
-(`auth_token::TEMPORARY_APP_ID_PREFIX`) is renewed instead: the job gets the
-issuer URL too, and its `TokenRefreshTask` renews the token there
-(`TokenRenewal::Issuer`). A registered app's token comes from that app's own
-backend, which the recorder cannot ask, so its recording lasts at most until the
-token's `exp`. `--insecure-skip-auth` accepts every request and records with
-whatever token it carries, for a local relay without authorization.
+access. A replay presents the caller's bearer token to the relay
+(`relay::ServiceToken`), so the API holds no identity of its own that could
+read every app; with `--temporary-apps-url`, a temporary app's token
+(`auth_token::TEMPORARY_APP_ID_PREFIX`) is renewed there
+(`TokenRenewal::Issuer`). `--insecure-skip-auth` accepts every request and
+replays with whatever token it carries, for a local relay without
+authorization. Tokens are never stored in the recording.
 
 `GET /apps/{app}/recordings` lists an app's MP4 recordings for the console,
 which signs a token covering the whole app with the app's secret: the ids are
@@ -430,8 +393,8 @@ than for every file of a list, since each signature is a call to the IAM
 
 A POST whose `Origin` is not an `--allowed-origin` is refused, since
 CORS alone only hides the answer from that page and a `text/plain` POST needs
-no preflight. The relay URL, the store and the track choice are server
-settings, so a request cannot point the recorder at another relay or bucket.
+no preflight. The relay URL and the store are server settings, so a request
+cannot point the recorder at another relay or bucket.
 
 ## MoQ archives and replay
 
@@ -599,7 +562,7 @@ on a FETCH to the old one within 30 s (10 s for its FETCH_OK, 20 s to fill it).
 Several instances may each run a replay of the same recording; they serve the
 same objects. The player also opens a new answer when the current one ends
 without the player closing it. The number of active publications per instance
-is capped by `--max-recordings`; recording jobs remain independent and their
+is capped by `--max-replays`; recording jobs remain independent and their
 stored state stays shared.
 
 `examples/recording-player` plays a replay with the SDK alone: `openRecording`
@@ -619,9 +582,8 @@ and transcript events, MP4 export from an archive, and the recording and
 playback cost compared with per-participant MP4.
 
 ## Composite
-On a recorder started with `--composite`, a `POST /recordings` with
-`"composite": true` also makes one MP4 of the whole room once the recording
-has ended; without the flag the request is refused with `400`. The MP4 holds
+A recording started with `"composite": true` in its options also makes one
+MP4 of the whole room once it has ended. The MP4 holds
 a screen share or else the active speaker's video in focus, every other
 participant's video in a strip beside it with the speaker on top, and their
 audio mixed (`transcode::Compositor`, see the transcode README). Compositing live was not
@@ -629,7 +591,7 @@ chosen: offline the compositor waits for every participant's data instead of
 dropping late frames.
 
 - When the recording ends, the recording job launches `recorder composite
-  --id <id>` through the same launcher; the compositor's CPU belongs to that
+  --id <id>` through `--launcher`; the compositor's CPU belongs to that
   job alone, not to the API or to other recordings.
 - The composite job (`composite_job::run`) reads the manifest, downloads the
   listed files into `--work-dir/<id>/`, leaving out one it cannot read, and
@@ -657,7 +619,7 @@ The recording's JSON carries `composite` (`null` when not requested) with
 relay, the store, the launcher) and the ones `bots` adds, `--bot-type`, `--bot-id`,
 `--bots-url`, `--namespace-prefix`, `--grace-seconds` (the empty room
 timeout), `--max-seconds` and `--options` (`layout`, `composite` and
-`format`, as `POST /recordings` takes them).
+`format`).
 
 - `bots_client::BotsClient` calls `bots` back with the key in
   `BOTS_BOT_KEY` when the job was launched locally, and otherwise with the
@@ -669,15 +631,12 @@ timeout), `--max-seconds` and `--options` (`layout`, `composite` and
   none. The
   token subscribes to the room and publishes only `<room>/bots/<type>`, which
   the recording announces so the room sees it.
-- It writes a new recording to the store as `recorder serve` would, so the
-  read API lists and serves it alike, but takes no room lock: `bots` holds the
-  room.
-- `StateSyncTask` also reports the state to `POST /bots/{type}/{id}/heartbeat`
-  every 5 s and stops the recording when the answer asks it to, as it does for
-  a stop request in the store. The final state is reported once the recording
-  ends; a job that fails before recording reports `failed` with the error.
-- The record job and the bot job share `record_job::record_room`, which takes
-  the recording as a `RecordingJob`.
+- `StateSyncTask` also reports the state to
+  `POST /bots/{type}/{id}/heartbeat` every 5 s and stops the recording when
+  the answer asks it to. The final state is reported once the recording ends;
+  a job that fails before recording reports `failed` with the error.
+- `bot_job::run` prepares the recording and `record_job::record_room`
+  records it.
 
 ## Token refresh
 A `TokenRefreshTask` polls a `TokenRenewal` every 10 s: `File` re-reads a token
@@ -722,15 +681,6 @@ the recorder started with.
   composited (`skipped`).
 - A composite job that dies stays `composing`: unlike the recording job it
   writes no heartbeat.
-- A lock left by a request that ended between taking it and writing the
-  state counts toward `--max-recordings`, and its room answers `409`, for
-  90 s after its id was made.
-- A `file://` store releases a lock by reading it and then deleting it, so
-  two API processes sharing one directory may delete a lock taken in
-  between and record a room twice.
-- With a `gs://` store outside Google Cloud, a lock cannot be released: the
-  conditional delete needs the metadata server even when `object_store`
-  reads credentials from a key file.
 - A single recording (`recorder --upload`) writes no manifest; the capture
   origin of its files is only logged.
 - Clocks of the participants' devices are trusted as they are; a skewed

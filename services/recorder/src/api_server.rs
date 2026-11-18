@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{Context, Result};
-use http_body_util::{BodyExt, Either, Full, Limited};
+use http_body_util::{Either, Full};
 use http_server::HttpServer;
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
@@ -16,20 +15,12 @@ use tokio::net::TcpListener;
 
 use crate::{
     api_auth::bearer_token,
-    recordings::{Publication, PublishRejection, Recordings, StartRejection},
+    recordings::{Publication, PublishRejection, Recordings},
     replay_stream::ReplayStream,
-    room_state::RecordingOptions,
 };
 
-const MAX_BODY_BYTES: usize = 16 * 1024;
-
-/// Serves the recording API:
-/// - `POST /recordings` with `{"namespace_prefix", "layout", "composite"}`
-///   starts recording every broadcast under the prefix; `layout` is
-///   `combined` by default. `composite: true` also composites the room into
-///   one MP4 once the recording has ended; only a server started with
-///   `--composite` accepts it
-/// - `POST /recordings/{id}/stop` stops it
+/// Serves the recordings that `recorder bot` jobs made; `bots` starts and
+/// stops them (docs/architecture/bots/architecture.md):
 /// - `POST /recordings/{id}/publish` exposes a finished recording through relay FETCH
 ///   while its answer stays open (see [`ReplayStream`])
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it
@@ -40,9 +31,8 @@ const MAX_BODY_BYTES: usize = 16 * 1024;
 /// A POST from a page outside `allowed_origins` is refused: CORS alone would
 /// only hide the answer from that page, and a form or a `text/plain` fetch
 /// needs no preflight. Every request but `/healthz` and a preflight needs a
-/// VTS-verified bearer token whose `publish` claim covers the room to start
-/// or stop a recording, its `subscribe` claim for the rest; an app's list
-/// needs a `subscribe` claim covering the whole app. A failing store
+/// VTS-verified bearer token whose `subscribe` claim covers the room; an
+/// app's list needs a `subscribe` claim covering the whole app. A failing store
 /// answers 500.
 pub(crate) struct ApiServer {
     _http: HttpServer,
@@ -89,12 +79,8 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
             }
             Err(Refusal::Internal(error)) => return with_cors(internal_error(&error), origin),
         };
-        let write = method == Method::POST && segments.last() != Some(&"publish");
         if let Some(namespace) = namespace
-            && let Err(error) = state
-                .recordings
-                .authorize(&headers, &namespace, write)
-                .await
+            && let Err(error) = state.recordings.authorize(&headers, &namespace).await
         {
             return with_cors(error_response(error.status, error.message), origin);
         }
@@ -105,17 +91,6 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
         }
         (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),
         (&Method::GET, ["healthz"]) => json_response(StatusCode::OK, &json!({ "status": "ok" })),
-        (&Method::POST, ["recordings"]) => match read_json(request).await {
-            Ok(body) => {
-                if let Some(namespace) = body["namespace_prefix"].as_str()
-                    && let Err(error) = state.recordings.authorize(&headers, namespace, true).await
-                {
-                    return with_cors(error_response(error.status, error.message), origin);
-                }
-                start(&state.recordings, &body, bearer_token(&headers)).await
-            }
-            Err(error) => error_response(StatusCode::BAD_REQUEST, &format!("{error:#}")),
-        },
         (&Method::GET, ["recordings"]) => match state
             .recordings
             .list(query.get("namespace_prefix").map_or("", String::as_str))
@@ -140,11 +115,6 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
         },
         (&Method::GET, ["recordings", id]) => match state.recordings.get(id).await {
             Ok(recording) => found(recording),
-            Err(error) => internal_error(&error),
-        },
-        (&Method::POST, ["recordings", id, "stop"]) => match state.recordings.stop(id).await {
-            Ok(Some(recording)) => json_response(StatusCode::ACCEPTED, &recording),
-            Ok(None) => error_response(StatusCode::NOT_FOUND, "no such recording"),
             Err(error) => internal_error(&error),
         },
         (&Method::POST, ["recordings", id, "publish"]) => {
@@ -172,8 +142,8 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
 }
 
 /// The namespace the request's token must cover. `None` skips the check, so
-/// only a route naming no namespace answers it, and `POST /recordings`, which
-/// authorizes its body itself. An empty app or prefix is refused instead.
+/// only a route naming no namespace answers it. An empty app or prefix is
+/// refused instead.
 async fn authorized_namespace(
     method: &Method,
     segments: &[&str],
@@ -209,57 +179,9 @@ fn non_empty(namespace: &str, message: &'static str) -> Result<Option<String>, R
     }
 }
 
-async fn start(recordings: &Recordings, body: &Value, bearer: Option<&str>) -> ApiResponse {
-    let Some(namespace_prefix) = body.get("namespace_prefix").and_then(Value::as_str) else {
-        return error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required");
-    };
-    let RecordingOptions {
-        layout,
-        composite,
-        format,
-    } = match RecordingOptions::from_json(body) {
-        Ok(options) => options,
-        Err(error) => return error_response(StatusCode::BAD_REQUEST, error),
-    };
-    match recordings
-        .start(namespace_prefix, layout, composite, format, bearer)
-        .await
-    {
-        Ok(recording) => json_response(StatusCode::CREATED, &recording),
-        Err(StartRejection::NotARoom) => error_response(
-            StatusCode::BAD_REQUEST,
-            "namespace_prefix must name a room: <app>/<room>",
-        ),
-        Err(StartRejection::AlreadyRecording) => {
-            error_response(StatusCode::CONFLICT, "the room is already being recorded")
-        }
-        Err(StartRejection::TooManyRecordings) => error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "too many recordings at once",
-        ),
-        Err(StartRejection::CompositeDisabled) => error_response(
-            StatusCode::BAD_REQUEST,
-            "this recorder does not composite; start it with --composite",
-        ),
-        Err(StartRejection::CompositeRequiresMp4) => {
-            error_response(StatusCode::BAD_REQUEST, "composite requires mp4 format")
-        }
-        Err(StartRejection::Internal(error)) => internal_error(&error),
-    }
-}
-
 fn internal_error(error: &anyhow::Error) -> ApiResponse {
     tracing::error!(error = format!("{error:#}"), "recording API request failed");
     error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{error:#}"))
-}
-
-async fn read_json(request: Request<Incoming>) -> Result<Value> {
-    let body = Limited::new(request.into_body(), MAX_BODY_BYTES)
-        .collect()
-        .await
-        .map_err(|error| anyhow::anyhow!("cannot read the body: {error}"))?
-        .to_bytes();
-    serde_json::from_slice(&body).context("the body is not JSON")
 }
 
 fn query_params(request: &Request<Incoming>) -> HashMap<String, String> {
@@ -335,101 +257,11 @@ mod tests {
     use super::*;
     use crate::test_support::recordings;
 
-    async fn error_of(response: ApiResponse) -> (StatusCode, Value) {
-        let status = response.status();
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        (status, serde_json::from_slice(&body).unwrap())
-    }
-
-    #[tokio::test]
-    async fn rejects_a_request_without_a_room_or_with_an_unknown_option() {
-        // Arrange
-        let recordings = recordings(1, false);
-
-        // Act
-        let missing = error_of(start(&recordings, &json!({}), None).await).await;
-        let app =
-            error_of(start(&recordings, &json!({ "namespace_prefix": "app" }), None).await).await;
-        let layout = error_of(
-            start(
-                &recordings,
-                &json!({ "namespace_prefix": "anon/room", "layout": "grid" }),
-                None,
-            )
-            .await,
-        )
-        .await;
-        let composite = error_of(
-            start(
-                &recordings,
-                &json!({ "namespace_prefix": "anon/room", "composite": "yes" }),
-                None,
-            )
-            .await,
-        )
-        .await;
-        let composite_disabled = error_of(
-            start(
-                &recordings,
-                &json!({ "namespace_prefix": "anon/room", "composite": true }),
-                None,
-            )
-            .await,
-        )
-        .await;
-
-        // Assert: nothing was started
-        assert_eq!(missing.0, StatusCode::BAD_REQUEST);
-        assert_eq!(app.0, StatusCode::BAD_REQUEST);
-        assert_eq!(layout.0, StatusCode::BAD_REQUEST);
-        assert_eq!(composite.0, StatusCode::BAD_REQUEST);
-        assert_eq!(composite_disabled.0, StatusCode::BAD_REQUEST);
-        assert_eq!(
-            recordings.list("anon/room").await.unwrap(),
-            json!({ "recordings": [] })
-        );
-    }
-
-    #[tokio::test]
-    async fn selects_moq_recording_and_rejects_incompatible_composite() {
-        // Arrange
-        let recordings = recordings(2, true);
-
-        // Act
-        let invalid = error_of(
-            start(
-                &recordings,
-                &json!({
-                    "namespace_prefix": "anon/room", "format": "moq", "composite": true
-                }),
-                None,
-            )
-            .await,
-        )
-        .await;
-        let accepted = error_of(
-            start(
-                &recordings,
-                &json!({
-                    "namespace_prefix": "anon/room", "format": "moq"
-                }),
-                None,
-            )
-            .await,
-        )
-        .await;
-
-        // Assert
-        assert_eq!(invalid.0, StatusCode::BAD_REQUEST);
-        assert_eq!(accepted.0, StatusCode::CREATED);
-        assert_eq!(accepted.1["format"], "moq");
-    }
-
     #[tokio::test]
     async fn a_route_naming_an_empty_app_or_room_is_refused_before_authorization() {
         // Arrange
         let state = ApiState {
-            recordings: Arc::new(recordings(1, false)),
+            recordings: Arc::new(recordings(1)),
             allowed_origins: Vec::new(),
         };
         let no_query = HashMap::new();

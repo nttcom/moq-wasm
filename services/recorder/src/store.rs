@@ -1,9 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use google_cloud::{CloudStorageBucket, Endpoint};
 use object_store::{
-    ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutPayload,
+    ObjectMeta, ObjectStore, ObjectStoreExt, PutPayload,
     gcp::GoogleCloudStorageBuilder,
     path::Path,
     signer::{Method, Signer},
@@ -16,21 +15,13 @@ use crate::{
     room_state::{CompositeState, RoomRecord},
 };
 
-const CLOUD_STORAGE_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// The store a recording service keeps its recordings in, and the objects
-/// through which the API and the jobs share their state. Every object but a
-/// lock is written by one side at a time, so a plain overwrite never races:
+/// through which the API and the jobs share their state. Every object is
+/// written by one side at a time, so a plain overwrite never races:
 ///
-/// - `state/<id>.json`: the `RoomRecord`, written by the API once and then by
-///   the recording job.
-/// - `state/<id>.stop`: the API's request to stop.
+/// - `state/<id>.json`: the `RoomRecord`, written by the recording job.
 /// - `state/<id>.composite.json`: the `CompositeState`, written by the
 ///   composite job, or by the recording job when it cannot start one.
-/// - `locks/<namespace prefix>`: the id recording the room, created by the
-///   API only if absent, deleted by the recording job when it ends, or by
-///   the API once that recording is no longer active or its job failed to
-///   launch.
 /// - `rooms/<namespace prefix>/<id>`: every recording of a room, so that a
 ///   room's recordings are listed without reading the others.
 /// - `<app>/<id>/...`: the recording's files and its manifest, under the app
@@ -43,7 +34,6 @@ const CLOUD_STORAGE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) struct RecordingStore {
     store: Arc<dyn ObjectStore>,
     prefix: Path,
-    cloud_storage: Option<Arc<CloudStorageBucket>>,
     /// Signs the URLs a browser reads a file with; only a `gs://` store has one.
     signer: Option<Arc<dyn Signer>>,
 }
@@ -61,28 +51,17 @@ impl RecordingStore {
     pub(crate) fn open(url: &Url) -> Result<Self> {
         let (store, prefix) = object_store::parse_url_opts(url, std::env::vars())
             .with_context(|| format!("cannot use {url} as the recording store"))?;
-        let (cloud_storage, signer) = match (url.scheme(), url.host_str()) {
-            ("gs", Some(bucket)) => {
-                let signer: Arc<dyn Signer> = Arc::new(
-                    GoogleCloudStorageBuilder::from_env()
-                        .with_bucket_name(bucket)
-                        .build()?,
-                );
-                (
-                    Some(Arc::new(CloudStorageBucket::new(
-                        Endpoint::CloudStorage,
-                        bucket,
-                        CLOUD_STORAGE_TIMEOUT,
-                    )?)),
-                    Some(signer),
-                )
-            }
-            _ => (None, None),
+        let signer: Option<Arc<dyn Signer>> = match (url.scheme(), url.host_str()) {
+            ("gs", Some(bucket)) => Some(Arc::new(
+                GoogleCloudStorageBuilder::from_env()
+                    .with_bucket_name(bucket)
+                    .build()?,
+            )),
+            _ => None,
         };
         Ok(Self {
             store: Arc::from(store),
             prefix,
-            cloud_storage,
             signer,
         })
     }
@@ -134,52 +113,6 @@ impl RecordingStore {
             .map(|value| CompositeState::from_json(&value))
             .transpose()
             .with_context(|| format!("malformed composite state of recording {id}"))
-    }
-
-    pub(crate) async fn request_stop(&self, id: &str) -> Result<()> {
-        self.store
-            .put(&self.state_key(id, "stop"), PutPayload::new())
-            .await
-            .with_context(|| format!("cannot request recording {id} to stop"))?;
-        Ok(())
-    }
-
-    /// Takes the room for `id`; false when a recording holds it already.
-    pub(crate) async fn lock_room(&self, namespace_prefix: &str, id: &str) -> Result<bool> {
-        let key = self.lock_key(namespace_prefix);
-        match self
-            .store
-            .put_opts(
-                &key,
-                PutPayload::from(id.to_string()),
-                PutMode::Create.into(),
-            )
-            .await
-        {
-            Ok(_) => Ok(true),
-            Err(object_store::Error::AlreadyExists { .. }) => Ok(false),
-            Err(error) => Err(error).with_context(|| format!("cannot write {key}")),
-        }
-    }
-
-    /// The id of the recording holding the room.
-    pub(crate) async fn room_lock(&self, namespace_prefix: &str) -> Result<Option<String>> {
-        Ok(self
-            .get(&self.lock_key(namespace_prefix))
-            .await?
-            .map(|id| String::from_utf8_lossy(&id).into_owned()))
-    }
-
-    /// The ids of the recordings holding a room.
-    pub(crate) async fn lock_holders(&self) -> Result<Vec<String>> {
-        let locks = self.prefix.clone().join("locks");
-        let mut holders = Vec::new();
-        for lock in self.store.list_with_delimiter(Some(&locks)).await?.objects {
-            if let Some(id) = self.get(&lock.location).await? {
-                holders.push(String::from_utf8_lossy(&id).into_owned());
-            }
-        }
-        Ok(holders)
     }
 
     pub(crate) async fn add_to_room(&self, namespace_prefix: &str, id: &str) -> Result<()> {
@@ -287,35 +220,6 @@ impl RecordingStore {
         Ok(objects)
     }
 
-    pub(crate) async fn stop_requested(&self, id: &str) -> Result<bool> {
-        Ok(self.get(&self.state_key(id, "stop")).await?.is_some())
-    }
-
-    /// Deletes the room's lock if `id` holds it. In Cloud Storage a lock
-    /// another request took after it was read stays.
-    pub(crate) async fn unlock_room(&self, namespace_prefix: &str, id: &str) -> Result<()> {
-        let key = self.lock_key(namespace_prefix);
-        let lock = match self.store.get(&key).await {
-            Ok(lock) => lock,
-            Err(object_store::Error::NotFound { .. }) => return Ok(()),
-            Err(error) => return Err(error).with_context(|| format!("cannot read {key}")),
-        };
-        let generation = lock.meta.version.clone();
-        if lock.bytes().await? != id.as_bytes() {
-            return Ok(());
-        }
-        let (Some(bucket), Some(generation)) = (&self.cloud_storage, generation) else {
-            return delete_if_present(&self.store, &key).await;
-        };
-        let generation = generation
-            .parse()
-            .with_context(|| format!("the generation of {key} is not a number"))?;
-        bucket
-            .delete_if_generation_matches(key.as_ref(), generation)
-            .await
-            .with_context(|| format!("cannot delete {key}"))
-    }
-
     async fn put_json(&self, key: &Path, value: &Value) -> Result<()> {
         self.store
             .put(key, PutPayload::from(value.to_string()))
@@ -346,26 +250,13 @@ impl RecordingStore {
             .join(format!("{id}.{extension}"))
     }
 
-    fn lock_key(&self, namespace_prefix: &str) -> Path {
-        self.prefix.clone().join("locks").join(namespace_prefix)
-    }
-
     fn room_key(&self, namespace_prefix: &str) -> Path {
         self.prefix.clone().join("rooms").join(namespace_prefix)
     }
 }
 
-async fn delete_if_present(store: &Arc<dyn ObjectStore>, key: &Path) -> Result<()> {
-    match store.delete(key).await {
-        Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("cannot delete {key}")),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use object_store::local::LocalFileSystem;
-
     use super::*;
     use crate::{
         recording::Layout,
@@ -402,7 +293,6 @@ mod tests {
         store.write_state(&record()).await.unwrap();
         let read = store.read_state(&record().id).await.unwrap();
         let missing = store.read_state("1700000000000-ffffff").await.unwrap();
-        let stop = store.stop_requested(&record().id).await.unwrap();
 
         // Assert
         let written = dir.join("state/1700000000000-a1b2c3.json").exists();
@@ -410,32 +300,6 @@ mod tests {
         assert!(written);
         assert_eq!(read, Some(record()));
         assert_eq!(missing, None);
-        assert!(!stop);
-    }
-
-    #[tokio::test]
-    async fn unlocks_a_room_only_for_the_recording_holding_it() {
-        // Arrange
-        let dir = scratch_dir();
-        let store = RecordingStore {
-            store: Arc::new(LocalFileSystem::new_with_prefix(&dir).unwrap()),
-            prefix: Path::default(),
-            cloud_storage: None,
-            signer: None,
-        };
-        let key = store.lock_key("anon/research");
-        store.store.put(&key, "newer".into()).await.unwrap();
-
-        // Act
-        store.unlock_room("anon/research", "older").await.unwrap();
-        let kept = store.get(&key).await.unwrap().is_some();
-        store.unlock_room("anon/research", "newer").await.unwrap();
-
-        // Assert
-        let deleted = store.get(&key).await.unwrap().is_none();
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert!(kept);
-        assert!(deleted);
     }
 
     #[tokio::test]

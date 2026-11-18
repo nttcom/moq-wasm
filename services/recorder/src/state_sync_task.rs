@@ -18,16 +18,15 @@ use crate::{
     store::RecordingStore,
 };
 
-/// How often the job looks for a stop request and writes changed progress.
+/// How often the job reports to `bots` and writes changed progress.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How often the state is written even when nothing changed, so that the
 /// API can tell a running job from one that died.
 pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Keeps a recording job's `state/<id>.json` in sync with its `RoomStatus`,
-/// reports it to `bots` when `bots` started the recording, and turns a stop
-/// request in the store or from `bots`, SIGTERM (Cloud Run stopping the job)
-/// or SIGINT into `stop_sender`.
+/// reports it to `bots`, and turns a stop request from `bots`, SIGTERM (Cloud
+/// Run stopping the job) or SIGINT into `stop_sender`.
 pub(crate) struct StateSyncTask {
     handle: JoinHandle<()>,
     finish_sender: Option<oneshot::Sender<()>>,
@@ -39,7 +38,7 @@ impl StateSyncTask {
         record: RoomRecord,
         status: Arc<Mutex<RoomStatus>>,
         stop_sender: watch::Sender<bool>,
-        bots: Option<Arc<BotsClient>>,
+        bots: Arc<BotsClient>,
     ) -> Result<Self> {
         let mut terminate = signal(SignalKind::terminate())?;
         let mut interrupt = signal(SignalKind::interrupt())?;
@@ -55,25 +54,13 @@ impl StateSyncTask {
                     _ = terminate.recv() => request_stop(&status, &stop_sender, "SIGTERM"),
                     _ = interrupt.recv() => request_stop(&status, &stop_sender, "SIGINT"),
                 }
-                if !*stop_sender.borrow() {
-                    match store.stop_requested(&record.id).await {
-                        Ok(true) => request_stop(&status, &stop_sender, "the API"),
-                        Ok(false) => {}
-                        Err(error) => tracing::warn!(
-                            error = format!("{error:#}"),
-                            "cannot read the stop request"
-                        ),
-                    }
-                }
                 // Every poll, so a stop through `bots` takes effect within it.
-                if let Some(bots) = &bots {
-                    let state = bot_state(&lock(&status).state);
-                    match bots.heartbeat(state, None).await {
-                        Ok(true) => request_stop(&status, &stop_sender, "bots"),
-                        Ok(false) => {}
-                        Err(error) => {
-                            tracing::warn!(error = format!("{error:#}"), "cannot report to bots")
-                        }
+                let state = bot_state(&lock(&status).state);
+                match bots.heartbeat(state, None).await {
+                    Ok(true) => request_stop(&status, &stop_sender, "bots"),
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(error = format!("{error:#}"), "cannot report to bots")
                     }
                 }
                 let current = with_status(&record, &lock(&status));
