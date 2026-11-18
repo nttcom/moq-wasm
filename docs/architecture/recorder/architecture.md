@@ -307,7 +307,7 @@ so needs neither compare-and-swap nor a database: a `file://` directory and
 GCS behave the same. The exception is a room's lock, which concurrent API
 requests may each find left by an ended recording and release. A release reads
 the lock and deletes it only if it names the recording; in GCS the delete goes
-through the JSON API with `ifGenerationMatch` (`cloud_storage::CloudStorageBucket`,
+through the JSON API with `ifGenerationMatch` (`google_cloud::CloudStorageBucket`,
 since `object_store` 0.14 has no conditional delete), so a lock another request
 took after the read stays.
 

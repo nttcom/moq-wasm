@@ -10,7 +10,7 @@ An arrow `A --> B` means `A` depends on `B`. A crate depends only on crates in i
 | Media | `mediapack`, `broadcast`, `transcode` | Containers and codecs, and turning media into an MSF broadcast. |
 | Applications | `relay`, `live-ingest`, `live-egress`, `onvif-ingest`, `recorder`, `gst-plugin-moqt`, `observability`, `vts`, `console` | Binaries and plugins. Nothing in the workspace depends on them. |
 | Bindings | `wasm`, `python` | `moqt` exposed to the browser and to Python. Nothing in the workspace depends on them. |
-| Shared support | `telemetry`, `client-telemetry`, `auth-token`, `app-registry` | Small crates with no workspace dependencies, shared by the applications. |
+| Shared support | `telemetry`, `client-telemetry`, `auth-token`, `app-registry`, `google-cloud` | Small crates shared by the applications; among them only `app-registry` depends on another (`google-cloud`). |
 
 ## Media and protocol
 
@@ -96,6 +96,7 @@ flowchart TD
     subgraph support[Shared support]
         auth-token
         app-registry
+        google-cloud
         telemetry
     end
 
@@ -106,6 +107,7 @@ flowchart TD
     relay --> telemetry
 
     recorder --> auth-token
+    recorder --> google-cloud
 
     observability --> telemetry
 
@@ -116,6 +118,8 @@ flowchart TD
     console --> auth-token
     console --> app-registry
     console --> telemetry
+
+    app-registry --> google-cloud
 ```
 
 - Only `vts` and `console` read `app-registry`; `relay` and `recorder` reach it through `vts` over HTTP.

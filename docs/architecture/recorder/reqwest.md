@@ -14,7 +14,7 @@ Add `reqwest` (`default-features = false`, `json` and `rustls`) to
 `services/recorder` as a direct dependency. `launcher::Launcher::CloudRun` uses it
 to start a Cloud Run Job execution with
 `POST https://run.googleapis.com/v2/<job>:run`, with an access token that
-`metadata-token` reads from the GCE metadata server.
+`google-cloud`'s `MetadataToken` reads from the GCE metadata server.
 
 ## Context
 

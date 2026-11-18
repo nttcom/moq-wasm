@@ -91,16 +91,16 @@ impl RegistryStore {
 mod tests {
     use serde_json::json;
 
-    use crate::test_support::{FakeCloudStorage, app};
+    use crate::test_support::{FakeRegistry, app};
 
     #[tokio::test]
     async fn update_stores_the_changed_apps_and_returns_what_the_change_returned() {
         // Arrange
-        let storage = FakeCloudStorage::run().await;
-        storage.put(&json!([]));
+        let registry = FakeRegistry::run().await;
+        registry.put(&json!([]));
 
         // Act
-        let outcome = storage
+        let outcome = registry
             .store()
             .update(|apps| {
                 apps.push(app("a", Some("sub-1")));
@@ -112,7 +112,7 @@ mod tests {
         // Assert
         assert_eq!(outcome, "created");
         assert_eq!(
-            storage.body(),
+            registry.body(),
             json!([{ "appId": "a", "secret": "a-secret", "isRelay": false, "sub": "sub-1" }])
         );
     }
@@ -120,17 +120,17 @@ mod tests {
     #[tokio::test]
     async fn update_runs_the_change_again_on_top_of_a_write_made_in_between() {
         // Arrange
-        let storage = FakeCloudStorage::run().await;
-        storage.put(&json!([]));
+        let registry = FakeRegistry::run().await;
+        registry.put(&json!([]));
         let mut attempts = 0;
 
         // Act
-        storage
+        registry
             .store()
             .update(|apps| {
                 attempts += 1;
                 if attempts == 1 {
-                    storage.put(&json!([{ "appId": "other", "secret": "s", "isRelay": false }]));
+                    registry.put(&json!([{ "appId": "other", "secret": "s", "isRelay": false }]));
                 }
                 apps.push(app("a", Some("sub-1")));
                 Ok(())
@@ -141,7 +141,7 @@ mod tests {
         // Assert
         assert_eq!(attempts, 2);
         assert_eq!(
-            storage.body(),
+            registry.body(),
             json!([
                 { "appId": "other", "secret": "s", "isRelay": false },
                 { "appId": "a", "secret": "a-secret", "isRelay": false, "sub": "sub-1" },
@@ -152,25 +152,25 @@ mod tests {
     #[tokio::test]
     async fn update_does_not_store_when_the_change_leaves_the_apps_alone() {
         // Arrange
-        let storage = FakeCloudStorage::run().await;
-        storage.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
+        let registry = FakeRegistry::run().await;
+        registry.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
 
         // Act
-        let outcome = storage.store().update(|_| Ok("unchanged")).await.unwrap();
+        let outcome = registry.store().update(|_| Ok("unchanged")).await.unwrap();
 
         // Assert
         assert_eq!(outcome, "unchanged");
-        assert_eq!(storage.generation(), 1);
+        assert_eq!(registry.generation(), 1);
     }
 
     #[tokio::test]
     async fn update_leaves_the_registry_alone_when_the_change_breaks_it() {
         // Arrange
-        let storage = FakeCloudStorage::run().await;
-        storage.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false, "sub": "sub-1" }]));
+        let registry = FakeRegistry::run().await;
+        registry.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false, "sub": "sub-1" }]));
 
         // Act
-        let error = storage
+        let error = registry
             .store()
             .update(|apps| {
                 apps.push(app("a", Some("sub-2")));
@@ -182,7 +182,7 @@ mod tests {
         // Assert
         assert!(error.to_string().contains("duplicated"), "{error}");
         assert_eq!(
-            storage.body(),
+            registry.body(),
             json!([{ "appId": "a", "secret": "s", "isRelay": false, "sub": "sub-1" }])
         );
     }

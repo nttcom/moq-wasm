@@ -17,7 +17,7 @@ none runs. A language is translated by Gemini Live Translate only while
 someone subscribes to its track. Gemini is called on the Gemini Enterprise
 Agent Platform (`gemini/platform.rs`): the `global` location's Live API over a
 WebSocket with `Authorization: Bearer`, as the service account the Cloud Run
-runs as (`metadata-token`) or, outside Google Cloud, as that account
+runs as (`google-cloud`'s `MetadataToken`) or, outside Google Cloud, as that account
 impersonated through `gcloud` per connection
 (`LIVE_TRANSLATE_GCLOUD_IMPERSONATE`). `--echo` returns the
 source audio after each language's fixed delay instead of calling Gemini, which

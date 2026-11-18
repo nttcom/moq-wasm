@@ -9,6 +9,6 @@ mod test_support;
 pub mod testing;
 
 pub use app::{App, Apps};
-pub use cloud_storage::Endpoint;
+pub use google_cloud::Endpoint;
 pub use location::{Location, LocationVariables};
 pub use store::{Generation, RegistryStore, Snapshot};

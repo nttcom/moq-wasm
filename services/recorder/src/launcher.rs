@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use clap::ValueEnum;
-use metadata_token::MetadataToken;
+use google_cloud::MetadataToken;
 use serde_json::json;
 
 use crate::LauncherArgs;

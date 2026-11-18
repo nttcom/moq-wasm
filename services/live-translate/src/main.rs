@@ -22,7 +22,7 @@ use std::{future::pending, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use metadata_token::MetadataToken;
+use google_cloud::MetadataToken;
 use moqt::{CertificateVerification, ClientConfig};
 use tokio::{net::TcpListener, sync::Semaphore};
 use tracing_subscriber::{EnvFilter, filter::LevelFilter};

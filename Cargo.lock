@@ -92,11 +92,7 @@ name = "app-registry"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "http-body-util",
- "hyper",
- "hyper-util",
- "metadata-token",
- "reqwest",
+ "google-cloud",
  "serde",
  "serde_json",
  "tokio",
@@ -1098,6 +1094,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "google-cloud"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "reqwest",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "gst-plugin-moqt"
 version = "0.1.0"
 dependencies = [
@@ -1765,13 +1774,13 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "google-cloud",
  "gstreamer",
  "gstreamer-app",
  "http-body-util",
  "http-server",
  "hyper",
  "mediapack",
- "metadata-token",
  "moqt",
  "msf",
  "reqwest",
@@ -1863,16 +1872,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "metadata-token"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest",
- "serde",
- "tokio",
-]
 
 [[package]]
 name = "minimal-lexical"
@@ -2799,12 +2798,12 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "clap",
+ "google-cloud",
  "http-body-util",
  "http-server",
  "hyper",
  "hyper-util",
  "mediapack",
- "metadata-token",
  "moqt",
  "msf",
  "object_store",
