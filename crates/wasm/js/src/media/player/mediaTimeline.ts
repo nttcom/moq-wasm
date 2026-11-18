@@ -13,7 +13,7 @@ type MediaTimelineRecord = {
   timestampMs: number
 }
 
-/// draft-ietf-moq-msf-01 §7.1.1: `[presentation time ms, [group id, object id], wallclock ms]`,
+/// draft-ietf-moq-msf-02 §7.1.1: `[presentation time ms, [group id, object id], wallclock ms]`,
 /// the wallclock 0 for VOD.
 type MediaTimelineEntry = [number, [number, number], number]
 

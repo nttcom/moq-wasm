@@ -50,7 +50,7 @@ make chrome
 | namespace | track | 送信元 | 内容 |
 | --- | --- | --- | --- |
 | `anon/moq-chat-moderation/{room}/chat` | `chat` | ブラウザ | `{"text": "...", "labels": [{"name": "喜", "description": "..."}]}`。1 メッセージ 1 group |
-| `anon/moq-chat-moderation/{room}/moderator` | `eventtimeline` | bot | draft-ietf-moq-msf-01 §8 の event timeline。`l` で chat の Location を指し、`data` は `{"labels": [{"name": "喜", "probability": 0.91}]}` |
+| `anon/moq-chat-moderation/{room}/moderator` | `eventtimeline` | bot | draft-ietf-moq-msf-02 §8 の event timeline。`l` で chat の Location を指し、`data` は `{"labels": [{"name": "喜", "probability": 0.91}]}` |
 | `anon/moq-chat-moderation/{room}/moderator` | `status` | bot | System One の状態 `{"system_one", "since"}` |
 
 - ラベルは 0〜16 個で、名前は 1〜20 文字、説明は 100 文字以内です。

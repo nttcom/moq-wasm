@@ -219,7 +219,7 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
    decoder を設定するので、`VideoDecoder.isConfigSupported` で弾くだけでよい。
 7. **catalog の独自フィールド（見送り）。** MSF は、仕様のフィールドと衝突しない独自
    フィールドを producer が足すことを認め（MAY）、parser には知らないフィールドを
-   無視することを求めている（MUST、draft-ietf-moq-msf-01 §5）。parser 側の要件は
+   無視することを求めている（MUST、draft-ietf-moq-msf-02 §5）。parser 側の要件は
    msf の読み込みがすでに満たしている。producer 側は、仕様のフィールドで表せない
    情報（参加者の表示名など）を載せる用途が出るまで足さない。足すときは、MSF の
    フィールド名と衝突するキーをエラーにする（MUST NOT）。label と role は独自
@@ -314,7 +314,7 @@ listener になる。publisher がいないときの再購読と、catalog の P
 
 | 機能 | API | meeting での使い方 |
 | --- | --- | --- |
-| ソースの選択 | `LivePlayerOptions.source`（`{ video, audio? }`）。名前の映像 track と、その altGroup（draft-ietf-moq-msf-01 §5.2.12）の rendition、名前の音声 track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
+| ソースの選択 | `LivePlayerOptions.source`（`{ video, audio? }`）。名前の映像 track と、その altGroup（draft-ietf-moq-msf-02 §5.2.13）の rendition、名前の音声 track だけを購読する。省略時は今と同じ | カメラと画面共有で player を分ける |
 | 表示の高さで ABR の上限を決める | 自動選択のとき、container の高さを CSS ピクセルで監視し、ladder をその高さを満たす rendition までに絞る（今の `capLadderToHeight`）。devicePixelRatio は掛けない。高密度の画面では rendition をその倍率まで拡大して表示する | 小さいタイルは低い rendition を受ける |
 | Audio Level | `LivePlayerCallbacks.onAudioLevel?(level: AudioLevel)`。音声 object の LOC Audio Level property（draft-ietf-moq-loc-04 §2.3.3.2）を渡す。`AudioLevel` を export する | 話者の検出（`dominantSpeaker.ts`） |
 | 最初の映像を group の先頭から取る | 映像の最初の購読は `subscribeGroupStart` にする（下の「keyframe の間隔と NEW_GROUP_REQUEST」）。rendition の切り替えは新しい group を要求し、その先頭で切り替える | 静止した画面共有も、参加した直後に映る |
@@ -376,7 +376,7 @@ NEW_GROUP_REQUEST（§10.2.13）で新しい group を要求する。
 
 ソースは映像と音声の track 名で渡す。rendition は、catalog が switching set ごとに
 付ける altGroup から見つかる。映像だけがミュートされて catalog から外れても、音声は名前で
-見つかるので再生を続けられる。catalog の render group（§5.2.11）で映像と音声を結び付ける
+見つかるので再生を続けられる。catalog の render group（§5.2.12）で映像と音声を結び付ける
 方法は採らない。番号に意味が無いので、映像 track が catalog に無いときに、どの音声が
 そのソースのものかを決められない。track 名は `publish()` の命名（`video` と `audio`、
 `addSource` の `<name>` と `<name>_audio`）をアプリが渡し、player は命名の規則を持たない。
@@ -469,7 +469,7 @@ source 名は、その source の映像 track の名前である。`createBroadc
 | rendition | `<name>_<rendition>`（映像と同じ altGroup） |
 | CMAF の兄弟、media timeline | `broadcast` の今の命名（`_cmaf`、`_timeline`） |
 
-- source 名は識別子で、表示名は MSF の `label`（draft-ietf-moq-msf-01 §5.2.10）に入れる。
+- source 名は識別子で、表示名は MSF の `label`（draft-ietf-moq-msf-02 §5.2.11）に入れる。
   独自フィールドは足さない（変更7の見送りのまま）。
 - `addSource` は、空の名前、`catalog`、`_audio`・`_cmaf`・`_timeline` で終わる名前、ほかの
   source の track と重なる名前を reject する。
@@ -480,7 +480,7 @@ source 名は、その source の映像 track の名前である。`createBroadc
 
 1. CMAF の兄弟と timeline は source を決めるのに使わない。player が今と同じく、source の
    track から見つける。
-2. altGroup（§5.2.12）を共有する LOC track は1つの source にまとめる。その名前は、group の
+2. altGroup（§5.2.13）を共有する LOC track は1つの source にまとめる。その名前は、group の
    中で一番短い名前の映像 track（映像が無ければ音声 track）に 3 を当てはめて決める。
    rendition と、live-translate の言語ごとの音声はこれでまとまる。
 3. 残りの映像 track は、その名前の source になる。ただし `<name>_<rendition>` の rendition が
@@ -491,7 +491,7 @@ source 名は、その source の映像 track の名前である。`createBroadc
 4. source は、その track が catalog に1本でもある間は存在する。カメラを止めても音声が
    残る間は `onSourceRemove` を呼ばず、view の `state.video` が `off` になるだけである。
 
-renderGroup（§5.2.11）を使わない理由は「足す機能」の節と同じ。映像が catalog から
+renderGroup（§5.2.12）を使わない理由は「足す機能」の節と同じ。映像が catalog から
 抜けると、番号から source の名前を決められない。
 
 ### 送る側: `createBroadcast` と `LocalSource`
@@ -530,7 +530,7 @@ WebCodecs の `framerate` は rate control の目安で、encoder はフレー�
 フレームを飛ばす（`frameRateLimit.ts`）。keyframe のフレームは飛ばさないので、どの
 rendition も同じフレームで group が始まる。指定しなければ、届いたフレームをすべて
 encode する。画面共有のように変化があるときだけフレームが届く入力は、上限より遅いので
-何も飛ばさない。catalog の `framerate`（MSF §5.2.20、任意）は、上限を指定したトラックにだけその値を書く。
+何も飛ばさない。catalog の `framerate`（MSF §5.2.21、任意）は、上限を指定したトラックにだけその値を書く。
 指定がないトラックの実際の fps は入力次第で分からないので、項目を省く。`source.setVideoEncoding({ encoding, main })` は2つを
 置き換えて encoder を作り直す。
 
@@ -664,8 +664,8 @@ MoQ では、過去の Object も FETCH で取れるので、録画とライブ�
 保存した Object を配信する（replay）。そこで、録画を **MSF の VOD broadcast** として
 replay し、`LivePlayer` は catalog が示すとおりに再生する。
 
-- replay の catalog は、各 track を `isLive: false`（draft-ietf-moq-msf-01 §5.2.7）にし、
-  `trackDuration`（§5.2.35）を付け、catalog 全体を `isComplete: true`（§5.1.3）にする。
+- replay の catalog は、各 track を `isLive: false`（draft-ietf-moq-msf-02 §5.2.8）にし、
+  `trackDuration`（§5.2.36）を付け、catalog 全体を `isComplete: true`（§5.1.3）にする。
 - 時刻から位置への対応は、media timeline track（§7）で示す。MoQ は Object を時刻でなく
   位置（Group ID と Object ID）で指定し、Group ID も group の長さも時刻と結び付かないので、
   timeline が無いと、見たことのない group がいつのものかわからない。§7.3 は、独立した
@@ -676,7 +676,7 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
   録画では replay が出す。
 - `LivePlayer` は、ライブか録画かを独自の情報で分けない。catalog の `isLive` と
   timeline で振る舞いを決める。
-- recorder と player は、ソースを `renderGroup`（§5.2.11）で、rendition を `altGroup`（§5.2.12）で
+- recorder と player は、ソースを `renderGroup`（§5.2.12）で、rendition を `altGroup`（§5.2.13）で
   見分ける。カメラか画面共有かを示す独自のフィールドは足さず、recorder は既定のソースの track 名
   （`video`、`audio`、`video_<rendition>`）でカメラを見分ける。表示には `label` を使う。
 - recorder の HTTP API（再 publish の依頼と lease）は `LivePlayer` に入れない。SDK の
@@ -699,11 +699,11 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 | --- | --- | --- |
 | track の選び方 | 画面共有を名前（`screenshare` で始まる）で見分け、画面共有だけ高さの上限を 720p（`SCREEN_SHARE_MAX_HEIGHT`）、カメラを `--max-video-height`（既定 480）にする。チャットは `chat` と決め打ち | catalog の `renderGroup` ごとに1ソースとして録画し、`altGroup` の中から `--max-video-height` 以下で一番高い1本を選ぶ。上限はすべてのソースで同じで、既定を 720 にする。チャットは `eventtimeline` の track を catalog から選ぶ |
 | catalog | 元の catalog の Object をそのまま流す。track の `namespace` 欄は元の publisher のもの | replay の namespace ごとに、保存した track を並べた catalog を1つ作って流す。各 track は元の catalog から codec、幅、高さなどを引き継ぎ、`isLive: false` と `trackDuration` を付ける。catalog 全体は `isComplete: true` にし、`generatedAt` は付けない（§5.1.2） |
-| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline は録画しない。replay は、保存した group ごとの最初の Object の Timestamp（録画の開始からの media time、下の段落）から、ソースごとに全期間の media timeline を1つ出す。presentation time はその Timestamp、wallclock は 0（draft-ietf-moq-msf-01 §7.1.1） |
+| 時刻から位置 | HTTP の JSON（`chunks[].capture_start_us` など）。元の timeline は保存しない | 元の publisher の timeline は録画しない。replay は、保存した group ごとの最初の Object の Timestamp（録画の開始からの media time、下の段落）から、ソースごとに全期間の media timeline を1つ出す。presentation time はその Timestamp、wallclock は 0（draft-ietf-moq-msf-02 §7.1.1） |
 | joining FETCH | 断る | 受ける。catalog と timeline は1 group なので、joining FETCH で全体が届く |
 | 終わり | FETCH_OK の `end_of_track` だけ | catalog の `isLive: false` で示す。SUBSCRIBE は今どおり Object を送らずに続け、lease が切れたら session を閉じる。PUBLISH_DONE は送らない |
 | 参加者の名前 | namespace に無い（`<room>/recordings/<id>/<member-index>/<content>/<session-index>`） | 元の namespace の、room より後の要素（会議では参加者名）を `<member-index>` の代わりに入れる。最後の要素だけにしないのは、room より深い namespace どうしで名前が重ならないようにするため |
-| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。§8.2 は event timeline の `depends` に当てはまる track を並べることを求め（MUST）、§5.2.14 はその名前を同じ namespace で引くので、音声のある namespace に置く |
+| transcript | transcriber は catalog を出さないので、catalog が無い | transcriber の記録を話者ごとに分け、話者のカメラの replay namespace に `transcript` として載せる。transcriber の namespace は announce しない。§8.3 は event timeline の `depends` に当てはまる track を並べることを求め（MUST）、§5.2.15 はその名前を同じ namespace で引くので、音声のある namespace に置く |
 | HTTP の応答 | `tracks` と `chunks` を含む | replay の prefix（`namespace_prefix`）、`renew_after_seconds`、録画の開始時刻（`started_at_ms`）だけにする |
 
 transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
@@ -719,7 +719,7 @@ session の記録を `m` の順に並べ、同じ記録は1つにまとめる。
 録画の時刻は、録画の開始を起点にした1つの時計に揃える。recorder は保存するときに、LOC の
 Timestamp を開始からの media time（Timescale 1,000,000、draft-ietf-moq-loc-04 §2.3.1.2）にし、
 chat などの event timeline の wallclock の記録（`t`）を media time の記録（`m`、
-draft-ietf-moq-msf-01 §8.1）にする。開始より前のものは保存しない。こうすると参加者全員が1つの
+draft-ietf-moq-msf-02 §8.2）にする。開始より前のものは保存しない。こうすると参加者全員が1つの
 時間軸に乗り、timeline の wallclock は §7.1.1 が VOD に勧めるとおり 0 にできる。replay は保存した
 Object をそのまま出す。会議の時刻は、publish の応答の `started_at_ms` に media time を足して求める。
 
@@ -792,7 +792,7 @@ namespace を PUBLISH_NAMESPACE する。relay はその全 publisher から取�
 に入れる。namespace の参加者名で player をタイルにまとめ、その時刻に範囲内の player を
 映す。チャットと字幕は、catalog の event timeline track をアプリが FETCH して並べる。
 `examples/browser/examples/recording-player` がこの形で再生する。event timeline は
-`eventType`（§5.2.5）で見分け、`MediaCatalogTrack` がそれを持つ。track の終わりは
+`eventType`（§5.2.6）で見分け、`MediaCatalogTrack` がそれを持つ。track の終わりは
 SUBSCRIBE_OK の Largest Location で知り、そこまでを1つの FETCH で読む。relay は購読して
 いない track の TRACK_STATUS に答えないので、TRACK_STATUS は使えない。player が catalog を
 購読し続けるので、ページは player を始める前に catalog を読む。
@@ -1176,7 +1176,7 @@ example を1つずつ別の PR で移し、最後の1つのあとで callback �
     1パッケージで出すので、media API が 1.0 未満であることは、バージョンを分けず、
     doc comment と README に書く。
 11. **マルチコーデック: 1つの altGroup に別 codec の rendition を並べる。** MSF の altGroup
-    （draft-ietf-moq-msf-01 §5.2.12）は selection property の違う同じ内容の track で、codec
+    （draft-ietf-moq-msf-02 §5.2.13）は selection property の違う同じ内容の track で、codec
     もその1つなので、たとえば H.265 の映像と H.264 の rendition を同じ altGroup に置く。
     altGroup は time-aligned（§4.2）なので、encoder worker が全 rendition で同じフレームを
     keyframe にする今の仕組みのまま codec が混ざってよい。player は altGroup の中から、

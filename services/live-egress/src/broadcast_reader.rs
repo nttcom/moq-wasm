@@ -102,7 +102,7 @@ impl BroadcastReader {
 }
 
 /// The first LOC track of each role in catalog order. An AAC track whose
-/// `initRef` (draft-ietf-moq-msf-01 §5.2.13) finds no AudioSpecificConfig in
+/// `initRef` (draft-ietf-moq-msf-02 §5.2.14) finds no AudioSpecificConfig in
 /// `initDataList` (§5.1.7), or an A-law or Opus track without a readable
 /// `samplerate` and `channelConfig`, is skipped; fails when neither role has a
 /// track.
@@ -131,8 +131,8 @@ pub fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
 }
 
 /// A-law and Opus tracks carry no initialization data: their catalog entry's
-/// `codec`, `samplerate` and `channelConfig` (draft-ietf-moq-msf-01 §5.2.18,
-/// §5.2.28, §5.2.29) are the whole configuration. Any other track is read as
+/// `codec`, `samplerate` and `channelConfig` (draft-ietf-moq-msf-02 §5.2.19,
+/// §5.2.29, §5.2.30) are the whole configuration. Any other track is read as
 /// AAC from its `initDataList` entry.
 fn audio_config(catalog: &Catalog, track: &Track) -> Result<AudioConfig> {
     let rate_and_channels = || -> Result<(u32, u8)> {
@@ -260,7 +260,7 @@ mod tests {
             audio_catalog("opus", Some(48_000), None),
         ];
 
-        // Assert: a numeric channelConfig is read; a missing samplerate or channelConfig (§5.2.28, §5.2.29), `5.1` and `0` are rejected
+        // Assert: a numeric channelConfig is read; a missing samplerate or channelConfig (§5.2.29, §5.2.30), `5.1` and `0` are rejected
         assert_eq!(
             pcma.audio.unwrap().1,
             AudioConfig::Pcma {

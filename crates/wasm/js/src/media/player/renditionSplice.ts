@@ -12,7 +12,7 @@ export type IncomingVerdict = {
 
 /// Hands live video over from one rendition to another of its switching set
 /// at a group boundary. Renditions of one `altGroup` number their groups by
-/// media time (draft-ietf-moq-msf-01 §4.2), so the outgoing one plays every
+/// media time (draft-ietf-moq-msf-02 §4.2), so the outgoing one plays every
 /// group before the first group the incoming one delivers from its start and
 /// the decoder sees one continuous track. A first incoming group more than
 /// one group away from the outgoing one means the ids are not aligned, and

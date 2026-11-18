@@ -117,7 +117,7 @@ export function onEachSubscriber(writer: TrackWriter, handler: () => Promise<voi
   })().catch((error: unknown) => console.warn('[systemOneBot] subscriber handler failed', error))
 }
 
-/// draft-ietf-moq-msf-01 §8.1: each event timeline object is a JSON array of
+/// draft-ietf-moq-msf-02 §8.2: each event timeline object is a JSON array of
 /// records, newest last. The bots name the prompt group a record answers.
 export function latestRecordForPrompt<T>(payload: Uint8Array, promptGroupId: bigint | undefined): T | undefined {
   const data = JSON.parse(new TextDecoder().decode(payload)).at(-1)?.data

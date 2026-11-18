@@ -70,7 +70,7 @@ impl Track {
         self.role == Some(TrackRole::Known(role))
     }
 
-    /// The fields draft-ietf-moq-msf-01 §5.2 requires of every track object.
+    /// The fields draft-ietf-moq-msf-02 §5.2 requires of every track object.
     pub fn new(name: &str, packaging: impl Into<Packaging>, is_live: bool) -> Self {
         Self {
             namespace: None,
@@ -137,7 +137,7 @@ impl Track {
     }
 }
 
-/// The number of channels a `channelConfig` (draft-ietf-moq-msf-01 §5.2.29)
+/// The number of channels a `channelConfig` (draft-ietf-moq-msf-02 §5.2.30)
 /// names, as `channel_config` writes it (`mono`, `stereo`, `<n>ch`) or as the
 /// draft's examples do (`<n>`). `None` for any other label or zero channels.
 pub fn channel_count(channel_config: &str) -> Option<u8> {
@@ -149,7 +149,7 @@ pub fn channel_count(channel_config: &str) -> Option<u8> {
     (count > 0).then_some(count)
 }
 
-/// The `channelConfig` (draft-ietf-moq-msf-01 §5.2.29) of `channels` channels.
+/// The `channelConfig` (draft-ietf-moq-msf-02 §5.2.30) of `channels` channels.
 pub fn channel_config(channels: u8) -> String {
     match channels {
         1 => "mono".to_string(),

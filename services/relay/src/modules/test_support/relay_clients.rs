@@ -50,7 +50,7 @@ pub(crate) async fn subscribe_track(session: &Session, option: SubscribeOption) 
 }
 
 /// The objects of `subscription`'s current group, read the way an MSF catalog
-/// subscriber does: a Joining FETCH with offset 0 (draft-ietf-moq-msf-01 §5).
+/// subscriber does: a Joining FETCH with offset 0 (draft-ietf-moq-msf-02 §5).
 pub(crate) async fn fetch_current_group(
     session: &Session,
     subscription: &Subscription,

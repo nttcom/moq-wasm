@@ -9,7 +9,7 @@ one player plays and rewinds all of them.
 
 | Track | Packaging | Content |
 | --- | --- | --- |
-| `catalog` | MSF (draft-ietf-moq-msf-01) | Track list; `initDataList` carries the AAC config and the CMAF init segments |
+| `catalog` | MSF (draft-ietf-moq-msf-02) | Track list; `initDataList` carries the AAC config and the CMAF init segments |
 | `video`, `video_<height>p` | LOC (draft-ietf-moq-loc-04) | H.264 Annex-B with in-band parameter sets and the capture timestamp |
 | `audio` | LOC | Raw AAC, G.711 A-law, Opus or MP3 frames |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample; AAC only for audio |

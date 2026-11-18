@@ -21,7 +21,7 @@ type ObservedMark = GroupMark & { observedAtMicros: number }
 export class GroupTimeline {
   private marks: ObservedMark[] = []
   /// The newest media timeline object lists every group the publisher still
-  /// keeps (draft-ietf-moq-msf-01 §7.3). The join group and the groups from
+  /// keeps (draft-ietf-moq-msf-02 §7.3). The join group and the groups from
   /// before the viewer joined are seek targets too: the relay forwards a FETCH
   /// for what it has not cached to the publisher.
   private listed: GroupMark[] = []
@@ -33,7 +33,7 @@ export class GroupTimeline {
   /// group holds no keyframe for a FETCH replay to start from.
   private joinGroupId: bigint | undefined
   private readonly arrivalLag = new ArrivalLag()
-  /// False for a track that is not live (draft-ietf-moq-msf-01 §5.2.7): no
+  /// False for a track that is not live (draft-ietf-moq-msf-02 §5.2.8): no
   /// group will be added to it, so its newest group is closed too. `reset()`
   /// leaves it unchanged.
   live = true

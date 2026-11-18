@@ -101,7 +101,7 @@ export interface LocalBroadcast {
 
 /// Announces `namespace` on `session` at once and returns the broadcast its
 /// sources are added to. Every track of every source is listed in one MSF
-/// catalog (draft-ietf-moq-msf-01 §5).
+/// catalog (draft-ietf-moq-msf-02 §5).
 export async function createBroadcast(
   session: MoqSession,
   namespace: string[],

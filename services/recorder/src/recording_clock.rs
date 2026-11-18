@@ -12,7 +12,7 @@ pub(crate) const MICROS_PER_MILLI: u64 = 1_000;
 /// recording started. Each wall-clock LOC Timestamp becomes media time with a Timescale
 /// of 1,000,000 (draft-ietf-moq-loc-04 §2.3.1.2), and each wall-clock record
 /// (`t`) of an event timeline becomes a media time record (`m`,
-/// draft-ietf-moq-msf-01 §8.1), so every participant shares one time axis and
+/// draft-ietf-moq-msf-02 §8.2), so every participant shares one time axis and
 /// the replay's media timelines need no wallclock (§7.1.1).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RecordingClock {

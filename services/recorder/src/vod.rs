@@ -39,7 +39,7 @@ impl BuiltTrack {
             name: name.to_string(),
             object: Object {
                 location: BUILT_LOCATION,
-                // Subgroup 0, as draft-ietf-moq-msf-01 §5 requires of a catalog object.
+                // Subgroup 0, as draft-ietf-moq-msf-02 §5 requires of a catalog object.
                 forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
                 publisher_priority: 0,
                 status: ObjectStatus::Normal,
@@ -155,7 +155,7 @@ async fn namespace_tracks(
         track.track_duration = duration_ms;
         // Without it each track inherits the replay namespace (§5.2.2).
         track.namespace = None;
-        // Ignored once a track is not live (§5.2.8).
+        // Ignored once a track is not live (§5.2.9).
         track.target_latency = None;
     }
     let catalog = Catalog {
@@ -235,9 +235,9 @@ async fn transcripts(recording: &StoredRecording) -> Result<HashMap<&str, Vec<Va
 }
 
 /// A participant's part of the transcript as an event timeline
-/// (draft-ietf-moq-msf-01 §8.2). It is listed in their own catalog because
-/// `depends`, which §8.2 requires, names tracks of the timeline's own
-/// namespace (§5.2.14).
+/// (draft-ietf-moq-msf-02 §8.3). It is listed in their own catalog because
+/// `depends`, which §8.3 requires, names tracks of the timeline's own
+/// namespace (§5.2.15).
 fn transcript_track(audio: Vec<String>) -> Track {
     let mut track = Track::new(TRANSCRIPT_TRACK_NAME, KnownPackaging::EventTimeline, false);
     track.event_type = Some(TRANSCRIPT_EVENT_TYPE.to_string());
@@ -349,7 +349,7 @@ fn listed_tracks(catalogs: &[Catalog], names: &[&str]) -> Listed {
 /// group they hold media of, at the earliest first object with a LOC
 /// Timestamp among them. Their Timestamps are media time since the recording
 /// started, so the presentation time is that object's Timestamp, floored to
-/// milliseconds, and the wallclock is 0, as draft-ietf-moq-msf-01 §7.1.1 asks
+/// milliseconds, and the wallclock is 0, as draft-ietf-moq-msf-02 §7.1.1 asks
 /// of VOD.
 fn recorded_timeline<'a>(
     tracks: impl Iterator<Item = &'a &'a StoredTrack>,

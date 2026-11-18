@@ -27,10 +27,10 @@ of the same channel; the packetization they need belongs in `mediapack`, as
 The reader takes the first LOC track with role `video` and the first with role
 `audio` in catalog order, which is the source rendition in a `broadcast`
 catalog. An AAC track's AudioSpecificConfig comes from the `initDataList`
-entry its `initRef` names (draft-ietf-moq-msf-01 §5.1.7, §5.2.13); an AAC
+entry its `initRef` names (draft-ietf-moq-msf-02 §5.1.7, §5.2.14); an AAC
 track without one is skipped with a warning. A-law and Opus tracks carry no
 initialization data, so their `codec`, `samplerate` and `channelConfig`
-(§5.2.18, §5.2.28, §5.2.29) make up the configuration. CMAF tracks and the
+(§5.2.19, §5.2.29, §5.2.30) make up the configuration. CMAF tracks and the
 timeline are ignored.
 
 ## Joining

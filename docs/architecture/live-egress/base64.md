@@ -17,7 +17,7 @@ the audio track's AudioSpecificConfig from its catalog `initDataList` entry.
 
 A `broadcast` catalog carries a LOC audio track's AudioSpecificConfig as a
 Base64-encoded inline `initDataList` entry named by the track's `initRef`
-(draft-ietf-moq-msf-01 §5.1.7, §5.2.13). `loc::Demuxer::audio` needs the
+(draft-ietf-moq-msf-02 §5.1.7, §5.2.14). `loc::Demuxer::audio` needs the
 decoded bytes, and the LOC objects themselves do not repeat them.
 
 ## Alternatives

@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 
 use msf::Catalog;
 
-/// Parses an independent MSF catalog (draft-ietf-moq-msf-01 §5) and throws
+/// Parses an independent MSF catalog (draft-ietf-moq-msf-02 §5) and throws
 /// when it is not one, has a `version` other than `draft-01`, or is a delta
 /// update. The wasm module must be loaded: `loadMoqt`, or any
 /// `MoqSession.connect`.

@@ -135,7 +135,7 @@ function failureOf(current: OpenedRecording): (error: unknown) => void {
 }
 
 /// The newest object of a catalog, through SUBSCRIBE with a joining FETCH
-/// (draft-ietf-moq-msf-01 §5).
+/// (draft-ietf-moq-msf-02 §5).
 async function currentCatalog(session: MoqSession, namespace: string[]): Promise<unknown> {
   const subscription = await session.subscribeCurrentGroup(namespace, CATALOG_TRACK_NAME)
   try {
@@ -174,7 +174,7 @@ async function fetchTrack(session: MoqSession, namespace: string[], name: string
 }
 
 /// The chat and the transcript of one replay namespace: the event timelines
-/// (draft-ietf-moq-msf-01 §8) its catalog lists.
+/// (draft-ietf-moq-msf-02 §8) its catalog lists.
 async function readEvents(session: MoqSession, namespace: string[], participant: string): Promise<TimelineEvent[]> {
   const events: TimelineEvent[] = []
   for (const { name, packaging, eventType } of extractCatalogTracks(await currentCatalog(session, namespace))) {

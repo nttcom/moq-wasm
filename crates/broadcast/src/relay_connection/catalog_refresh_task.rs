@@ -5,7 +5,7 @@ use moqt::executor::{self, JoinHandle};
 use super::catalog_track::CatalogTrack;
 
 /// Sends of a namespace's catalog are at most two ticks (30 s) apart, half the
-/// relay's default RELAY_CACHE_TTL_SECS (draft-ietf-moq-msf-01 §5): a tick
+/// relay's default RELAY_CACHE_TTL_SECS (draft-ietf-moq-msf-02 §5): a tick
 /// resends a catalog only when none was sent since the previous tick.
 const CATALOG_REFRESH_TICK: Duration = Duration::from_secs(15);
 

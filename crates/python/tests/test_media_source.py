@@ -230,7 +230,7 @@ async def test_a_subscriber_reads_a_rendition_in_another_codec_as_an_alternative
         push_frame()
         received = await within(anext(rendition))
 
-        # Assert: one switching set (draft-ietf-moq-msf-01 altGroup)
+        # Assert: one switching set (draft-ietf-moq-msf-02 altGroup)
         video, listed = catalog.select(codec="avc1"), catalog.select(codec="vp8")
         assert (video.name, listed.name) == ("video", "video_vp8")
         assert video.fields["altGroup"] == listed.fields["altGroup"]

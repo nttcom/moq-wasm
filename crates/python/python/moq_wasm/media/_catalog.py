@@ -8,7 +8,7 @@ CATALOG_TRACK_NAME = "catalog"
 
 @dataclass(frozen=True)
 class CatalogTrack:
-    """A track of an MSF catalog (draft-ietf-moq-msf-01 §5.2); `fields` holds every field as it
+    """A track of an MSF catalog (draft-ietf-moq-msf-02 §5.2); `fields` holds every field as it
     was written, including those without an attribute here."""
 
     name: str

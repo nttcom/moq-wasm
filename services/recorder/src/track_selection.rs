@@ -31,7 +31,7 @@ pub(crate) struct Choice<'a> {
 }
 
 /// Which source of a broadcast a recording reads. A source is the LOC video
-/// and audio tracks of one `renderGroup` (draft-ietf-moq-msf-01 §5.2.11), such
+/// and audio tracks of one `renderGroup` (draft-ietf-moq-msf-02 §5.2.12), such
 /// as a camera with its renditions and microphone, or a shared screen; the
 /// tracks without a `renderGroup` form one source. `broadcast` renumbers the
 /// `renderGroup`s in each catalog, so the source is found again in every
@@ -58,7 +58,7 @@ pub(crate) enum VideoChoice<'a> {
     /// The source's tallest video track at most this many pixels high, or the
     /// shortest one when all are taller; ties go to the lower `bitrate`. A
     /// `broadcast` source's video tracks are the members of its `altGroup`
-    /// (§5.2.12), or its one video.
+    /// (§5.2.13), or its one video.
     MaxHeight(u32),
 }
 
@@ -194,13 +194,13 @@ pub(crate) fn keeps(catalog: &Catalog, choice: Choice, track: &str) -> bool {
     named || in_main == (choice.source == SourceChoice::Main)
 }
 
-/// The event timeline tracks (draft-ietf-moq-msf-01 §8), such as a meeting's
+/// The event timeline tracks (draft-ietf-moq-msf-02 §8), such as a meeting's
 /// chat.
 pub(crate) fn event_timelines(catalog: &Catalog) -> impl Iterator<Item = &Track> {
     packaged(catalog, KnownPackaging::EventTimeline)
 }
 
-/// The media timeline tracks (draft-ietf-moq-msf-01 §7) whose `depends` names
+/// The media timeline tracks (draft-ietf-moq-msf-02 §7) whose `depends` names
 /// any of `tracks`.
 pub(crate) fn media_timelines<'a>(
     catalog: &'a Catalog,

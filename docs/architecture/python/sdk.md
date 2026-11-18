@@ -27,7 +27,7 @@ browser SDK's `MoqSession`. Every bot under
 | Run a task while a namespace is published, and cancel it when it is withdrawn | `moq_system_one_bot/namespace.py`, the transcriber's participant map |
 | Subscribe to the catalog with a joining FETCH and pick a track from `parse_catalog`'s dict | the transcriber's and camera detection's `catalog.py` |
 | Subscribe again one second after a track ends, because the page that published it left | five places across chat moderation, camera detection, PTZ tracking and the transcriber |
-| Write a draft-ietf-moq-msf-01 §8 event timeline | `EventTimeline` and `TranscriptTimeline` |
+| Write a draft-ietf-moq-msf-02 §8 event timeline | `EventTimeline` and `TranscriptTimeline` |
 | Register tracks before `announce`, so a forwarded SUBSCRIBE is not refused | every bot, each with the same comment |
 | Race the work against `session.closed()` | every bot |
 
@@ -267,7 +267,7 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   `datagram` but not `publish`: the batch is registered before the
   namespace is published, and a PUBLISH must follow the namespace. This
   replaces the register-then-publish rule each bot comments.
-- **`EventTimeline`** writes a draft-ietf-moq-msf-01 §8 event timeline as
+- **`EventTimeline`** writes a draft-ietf-moq-msf-02 §8 event timeline as
   one group: it opens with an empty record list once the track is
   registered, and each record is one more object, so a late joiner's joining
   FETCH brings those the track still keeps. It replaces the two copies.
@@ -286,7 +286,7 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   - `follow(name)` yields the track's objects, and subscribes again a second
     after the track ends or its SUBSCRIBE fails; the handler's cancellation
     ends it.
-- **`Catalog`** is a typed draft-ietf-moq-msf-01 catalog (`tracks` of
+- **`Catalog`** is a typed draft-ietf-moq-msf-02 catalog (`tracks` of
   `CatalogTrack` with `name`, `namespace`, `role`, `packaging`, `codec`,
   `bitrate`, `width`, `height`, `framerate`, `samplerate`, and every field in
   `fields`). `select` picks one track by its fields; `codec="avc1"` matches

@@ -40,7 +40,7 @@ export function rejectedName(name: string, trackNames: string[], taken: Set<stri
 export type CatalogSource = { name: string; label: string; video?: string; audio?: string }
 
 /// The sources of a catalog's LOC tracks (CMAF tracks are left out):
-/// - Tracks of one kind sharing an altGroup (draft-ietf-moq-msf-01 §5.2.12),
+/// - Tracks of one kind sharing an altGroup (draft-ietf-moq-msf-02 §5.2.13),
 ///   such as renditions or translated audio, are one source.
 /// - A video track names its source, or for an altGroup the shortest name in it.
 ///   A rendition `<name>_<rendition>` listed before its video, as when a muted
