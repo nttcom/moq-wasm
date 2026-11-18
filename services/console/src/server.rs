@@ -18,7 +18,6 @@ use hyper::{
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use static_files::StaticFiles;
 use tokio::net::TcpListener;
 
 use crate::{
@@ -26,6 +25,7 @@ use crate::{
     identity::{Caller, Identity},
     input::{CreateAppRequest, InvalidInput, IssueTokenRequest},
     recordings::RecorderClient,
+    static_files::StaticFiles,
     usage::{ObservabilityClient, UsageAnswer},
 };
 
