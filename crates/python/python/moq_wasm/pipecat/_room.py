@@ -1,12 +1,22 @@
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from moq_wasm._session import Session
+from pipecat.frames.frames import UserImageRequestFrame
+
+from moq_wasm._session import Session, TrackWriter
 from moq_wasm.codecs import OPUS_SAMPLE_RATE, OpusEncoder, VideoEncoder
-from moq_wasm.media import LocalBroadcast, MediaSource, RemoteBroadcast, create_broadcast, watch_broadcasts
-from moq_wasm.pipecat._participant import ParticipantSink, ReceiveOptions, receive_participant
+from moq_wasm.media import (
+    EventRecord,
+    EventTimeline,
+    LocalBroadcast,
+    MediaSource,
+    RemoteBroadcast,
+    create_broadcast,
+    watch_broadcasts,
+)
+from moq_wasm.pipecat._participant import ParticipantReceiver, ParticipantSink, ReceiveOptions
 
 logger = logging.getLogger("moq_wasm")
 
@@ -26,6 +36,28 @@ class RoomOptions:
     video_out_codec: str
     video_out_size: tuple[int, int]
     video_out_framerate: int
+    data_out_tracks: dict[str, float] = field(default_factory=dict)
+    event_timelines_out: dict[str, float] = field(default_factory=dict)
+    empty_timeout: float | None = None
+
+
+@dataclass(frozen=True)
+class MoqWasmTrackObject:
+    """An object to write on one of the transport's `data_out_tracks`, the `message` of an
+    `OutputTransportMessageFrame`."""
+
+    track: str
+    payload: bytes
+    new_group: bool = True
+
+
+@dataclass(frozen=True)
+class MoqWasmEventRecord:
+    """A record to append to one of the transport's `event_timelines_out`, the `message` of an
+    `OutputTransportMessageFrame`."""
+
+    track: str
+    record: EventRecord
 
 
 class Room:
@@ -44,6 +76,9 @@ class Room:
         self._video_clock = _MediaClock()
         self._tasks: list[asyncio.Task] = []
         self._users: set[object] = set()
+        self._receivers: dict[str, ParticipantReceiver] = {}
+        self._data_writers: dict[str, TrackWriter] = {}
+        self._timelines: dict[str, EventTimeline] = {}
 
     async def start(self, user: object) -> None:
         """Called by the input and the output processors; the first one starts the room. Raises
@@ -84,23 +119,25 @@ class Room:
             self._media.configure_video(self._video.codec_string)
             self._tasks.append(asyncio.create_task(self._answer_keyframe_requests(self._media, self._video)))
         await self._broadcast.__aenter__()
+        for name, retention in options.data_out_tracks.items():
+            self._data_writers[name] = self._broadcast.publish_track(name, retention_seconds=retention)
+        for name, retention in options.event_timelines_out.items():
+            self._timelines[name] = self._broadcast.event_timeline(name, retention_seconds=retention)
         try:
             await self._broadcast.published()
         except RuntimeError as error:
             await self._sink.event("on_error", f"cannot publish {self._broadcast.namespace}", error)
             raise
-        if options.receive.audio_in or options.receive.video_in:
-            self._tasks.append(
-                asyncio.create_task(
-                    watch_broadcasts(self._session, options.room, self._follow, filter=self._is_participant)
-                )
-            )
+        if options.receive.receives_anything:
+            self._tasks.append(asyncio.create_task(self._follow_participants()))
 
     async def _close(self) -> None:
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        self._data_writers.clear()
+        self._timelines.clear()
         broadcast, self._broadcast = self._broadcast, None
         if broadcast is not None:
             await broadcast.__aexit__(None, None, None)
@@ -123,6 +160,31 @@ class Room:
         for packet in packets:
             self._media.push_video(packet, self._video_clock.next(1))
 
+    async def write_message(self, message: object) -> bool:
+        """Writes a `MoqWasmTrackObject` or a `MoqWasmEventRecord`; returns False for any other
+        message, or one naming a track the transport does not publish."""
+        if isinstance(message, MoqWasmTrackObject) and message.track in self._data_writers:
+            await self._data_writers[message.track].write(message.payload, new_group=message.new_group)
+            return True
+        if isinstance(message, MoqWasmEventRecord) and message.track in self._timelines:
+            await self._timelines[message.track].append(message.record)
+            return True
+        return False
+
+    async def request_image(self, request: UserImageRequestFrame) -> None:
+        receiver = self._receivers.get(request.user_id)
+        if receiver is None:
+            await self._sink.answer_image_requests([request], f"no participant {request.user_id}")
+            return
+        await receiver.request_image(request)
+
+    async def _follow_participants(self) -> None:
+        options = self._options
+        await watch_broadcasts(
+            self._session, options.room, self._follow, filter=self._is_participant, empty_timeout=options.empty_timeout
+        )
+        await self._sink.event("on_room_empty")
+
     def _is_participant(self, namespace: list[str]) -> bool:
         room = self._options.room
         return len(namespace) == len(room) + 1 and namespace[: len(room)] == room
@@ -137,10 +199,14 @@ class Room:
 
     async def _follow(self, remote: RemoteBroadcast) -> None:
         participant_id = remote.namespace[-1]
+        receiver = ParticipantReceiver(remote, self._options.receive, self._sink)
+        self._receivers[participant_id] = receiver
         await self._sink.event("on_client_connected", participant_id)
         try:
-            await receive_participant(remote, self._options.receive, self._sink)
+            await receiver.run()
         finally:
+            if self._receivers.get(participant_id) is receiver:
+                del self._receivers[participant_id]
             await self._sink.event("on_client_disconnected", participant_id)
 
 

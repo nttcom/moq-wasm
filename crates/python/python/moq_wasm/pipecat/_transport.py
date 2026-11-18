@@ -5,19 +5,31 @@ from collections.abc import Callable
 from pipecat.frames.frames import (
     CancelFrame,
     EndFrame,
+    Frame,
+    InputTransportMessageFrame,
     OutputAudioRawFrame,
     OutputImageRawFrame,
+    OutputTransportMessageFrame,
+    OutputTransportMessageUrgentFrame,
     StartFrame,
     UserAudioRawFrame,
     UserImageRawFrame,
+    UserImageRequestFrame,
 )
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 
 from moq_wasm._session import Session
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
-from moq_wasm.pipecat._participant import ReceiveOptions, receive_participant
+from moq_wasm.pipecat._participant import (
+    CAMERA_SOURCE,
+    MoqWasmTrackMessage,
+    ParticipantReceiver,
+    ReceivedPicture,
+    ReceiveOptions,
+)
 from moq_wasm.pipecat._room import Room, RoomOptions
 
 DEFAULT_VIDEO_OUT_CODEC = "H264"
@@ -26,42 +38,73 @@ logger = logging.getLogger("moq_wasm")
 
 
 class MoqWasmInputParams(TransportParams):
-    """`TransportParams` with how a participant's video is received.
+    """`TransportParams` with how a participant's broadcast is received.
+
+    A video source of `video_in_sources` names a track of each participant's catalog: `"camera"`
+    is the track `video_in_track` picks (by default the decodable LOC video track with the lowest
+    bitrate); any other source is the video track of that name. Without `video_in_sources`,
+    `video_in_enabled` receives `"camera"` at `video_in_max_fps`.
 
     Parameters:
-        video_in_max_fps: How many pictures a second, at most, each participant's video yields.
-        video_in_track: Picks the video track of a participant's catalog; by default the LOC
-            video track with the lowest bitrate that PyAV decodes.
+        video_in_max_fps: How many pictures a second, at most, `"camera"` yields when
+            `video_in_sources` is empty.
+        video_in_track: Picks the `"camera"` video track of a participant's catalog; by default
+            the LOC video track with the lowest bitrate that PyAV decodes.
+        data_in_tracks: Tracks of each participant whose objects are pushed as
+            `InputTransportMessageFrame`s carrying a `MoqWasmTrackMessage`.
     """
 
     video_in_max_fps: float = 10.0
     video_in_track: Callable[[Catalog], CatalogTrack | None] | None = None
+    data_in_tracks: list[str] = []
 
 
 class MoqWasmParams(MoqWasmInputParams):
-    """`MoqWasmInputParams` with the room the transport joins.
+    """`MoqWasmInputParams` with the room the transport joins and the tracks it publishes.
 
     Parameters:
         room: The namespace whose broadcasts one level below are the participants.
         participant_id: The transport's own broadcast is `[*room, participant_id]`.
+        data_out_tracks: Tracks of the transport's broadcast, by name, with the seconds each keeps
+            its objects for FETCH; an `OutputTransportMessageFrame` carrying a
+            `MoqWasmTrackObject` writes one.
+        event_timelines_out: Event timeline tracks of the transport's broadcast, by name, with
+            the seconds each keeps its records; an `OutputTransportMessageFrame` carrying a
+            `MoqWasmEventRecord` appends one.
+        empty_timeout: Seconds without any participant after which `on_room_empty` fires and
+            the transport stops following the room.
     """
 
     room: list[str]
     participant_id: str = "bot"
+    data_out_tracks: dict[str, float] = {}
+    event_timelines_out: dict[str, float] = {}
+    empty_timeout: float | None = None
 
 
 def _receive_options(params: MoqWasmInputParams) -> ReceiveOptions:
+    if not params.video_in_enabled:
+        sources = {}
+    elif params.video_in_sources:
+        sources = {
+            name: None if source.on_request_only else source.framerate
+            for name, source in params.video_in_sources.items()
+        }
+    else:
+        sources = {CAMERA_SOURCE: params.video_in_max_fps}
     return ReceiveOptions(
         audio_in=params.audio_in_enabled,
-        video_in=params.video_in_enabled,
-        video_in_max_fps=params.video_in_max_fps,
+        video_sources=sources,
         video_in_track=params.video_in_track,
+        data_tracks=list(params.data_in_tracks),
     )
 
 
 class _ReceivingInput(BaseInputTransport):
-    """Pushes received audio as `UserAudioRawFrame` and pictures as `UserImageRawFrame`, with the
-    participant id as `user_id`."""
+    """Pushes received audio as `UserAudioRawFrame`, pictures as `UserImageRawFrame` and data
+    objects as `InputTransportMessageFrame`, with the participant id as `user_id`, and answers
+    `UserImageRequestFrame`s. A picture carries the `Location` of its object in
+    `metadata["location"]` and its video source in `transport_source`."""
 
     def audio_in_sample_rate(self) -> int:
         return self.sample_rate
@@ -74,8 +117,34 @@ class _ReceivingInput(BaseInputTransport):
             UserAudioRawFrame(audio=pcm, sample_rate=sample_rate, num_channels=1, user_id=participant_id)
         )
 
-    async def push_picture(self, rgb: bytes, size: tuple[int, int], participant_id: str) -> None:
-        await self.push_video_frame(UserImageRawFrame(image=rgb, size=size, format="RGB", user_id=participant_id))
+    async def push_picture(self, picture: ReceivedPicture) -> None:
+        request = picture.request
+        frame = UserImageRawFrame(
+            image=picture.rgb,
+            size=picture.size,
+            format="RGB",
+            user_id=picture.participant_id,
+            text=request.text if request else None,
+            append_to_context=request.append_to_context if request else None,
+            request=request,
+        )
+        frame.transport_source = picture.video_source
+        frame.metadata["location"] = picture.location
+        await self.push_video_frame(frame)
+
+    async def push_message(self, message: MoqWasmTrackMessage) -> None:
+        await self.push_frame(InputTransportMessageFrame(message=message))
+
+    async def answer_image_requests(self, requests: list[UserImageRequestFrame], error: str) -> None:
+        await self._answer_image_requests(requests, error)
+
+    def _supports_video_in_source(self, video_source: str) -> bool:
+        return True
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, UserImageRequestFrame):
+            await self.request_image(frame)
 
 
 class MoqWasmInputTransport(_ReceivingInput):
@@ -98,11 +167,14 @@ class MoqWasmInputTransport(_ReceivingInput):
         await super().cancel(frame)
         await self._room.stop(self)
 
+    async def request_image(self, request: UserImageRequestFrame) -> None:
+        await self._room.request_image(request)
+
 
 class MoqWasmParticipantInput(_ReceivingInput):
     """The input of one participant's broadcast, for a pipeline per participant (a voice activity
     detector must hear one speaker). Picks and decodes the tracks as `MoqWasmTransport` does, from
-    the `StartFrame` until the `EndFrame`, the `CancelFrame` or the end of the catalog. Publishes
+    the `StartFrame` until the `EndFrame` or the `CancelFrame`. Publishes
     nothing: follow the room with `watch_broadcasts` and publish with `create_broadcast`.
 
     Event handlers: `on_track_subscribed` (takes a `MoqWasmTrack`). A failed track, such as one
@@ -111,8 +183,7 @@ class MoqWasmParticipantInput(_ReceivingInput):
 
     def __init__(self, broadcast: RemoteBroadcast, params: MoqWasmInputParams, **kwargs):
         super().__init__(params, **kwargs)
-        self._broadcast = broadcast
-        self._options = _receive_options(params)
+        self._receiver = ParticipantReceiver(broadcast, _receive_options(params), self)
         self._receiving: asyncio.Task | None = None
         self._register_event_handler("on_track_subscribed")
 
@@ -120,8 +191,14 @@ class MoqWasmParticipantInput(_ReceivingInput):
         await super().start(frame)
         await self.set_transport_ready(frame)
         if self._receiving is None:
-            self._receiving = asyncio.create_task(receive_participant(self._broadcast, self._options, self))
+            self._receiving = asyncio.create_task(self._receiver.run())
             self._receiving.add_done_callback(_log_failure)
+
+    async def request_image(self, request: UserImageRequestFrame) -> None:
+        if request.user_id != self._receiver.participant_id:
+            await self.answer_image_requests([request], f"no participant {request.user_id}")
+            return
+        await self._receiver.request_image(request)
 
     async def stop(self, frame: EndFrame):
         await self._stop_receiving()
@@ -152,7 +229,8 @@ def _log_failure(receiving: asyncio.Task) -> None:
 
 class MoqWasmOutputTransport(BaseOutputTransport):
     """Publishes `OutputAudioRawFrame` as Opus and `OutputImageRawFrame` as `video_out_codec` in the
-    transport's broadcast, with its MSF catalog."""
+    transport's broadcast, with its MSF catalog, and writes the `MoqWasmTrackObject` or
+    `MoqWasmEventRecord` an `OutputTransportMessageFrame` carries."""
 
     def __init__(self, room: Room, params: MoqWasmParams, **kwargs):
         super().__init__(params, **kwargs)
@@ -179,6 +257,10 @@ class MoqWasmOutputTransport(BaseOutputTransport):
         await self._room.write_picture(frame.image, frame.size, frame.format or "RGB")
         return True
 
+    async def send_message(self, frame: OutputTransportMessageFrame | OutputTransportMessageUrgentFrame):
+        if not await self._room.write_message(frame.message):
+            logger.warning("transport message not written: %r", frame.message)
+
 
 class MoqWasmTransport(BaseTransport):
     """Takes the place of pipecat's `MOQTransport` on a `moq_wasm.Session`, which owns the connection
@@ -187,7 +269,8 @@ class MoqWasmTransport(BaseTransport):
     Event handlers, as `MOQTransport`'s: `on_connected` and `on_disconnected` (the transport started
     and stopped), `on_client_connected` and `on_client_disconnected` (a participant's broadcast was
     published and withdrawn; they take the participant id), `on_track_subscribed` (takes a
-    `MoqWasmTrack`) and `on_error` (takes a message and the exception)."""
+    `MoqWasmTrack`), `on_error` (takes a message and the exception) and `on_room_empty` (no
+    participant for `empty_timeout` seconds)."""
 
     def __init__(
         self,
@@ -207,6 +290,9 @@ class MoqWasmTransport(BaseTransport):
             video_out_codec=params.video_out_codec or DEFAULT_VIDEO_OUT_CODEC,
             video_out_size=(params.video_out_width, params.video_out_height),
             video_out_framerate=params.video_out_framerate,
+            data_out_tracks=dict(params.data_out_tracks),
+            event_timelines_out=dict(params.event_timelines_out),
+            empty_timeout=params.empty_timeout,
         )
         self._room = Room(session, options, self)
         self._input: MoqWasmInputTransport | None = None
@@ -218,6 +304,7 @@ class MoqWasmTransport(BaseTransport):
             "on_client_disconnected",
             "on_track_subscribed",
             "on_error",
+            "on_room_empty",
         ):
             self._register_event_handler(event)
 
@@ -237,8 +324,14 @@ class MoqWasmTransport(BaseTransport):
     async def push_audio(self, pcm: bytes, sample_rate: int, participant_id: str) -> None:
         await self.input().push_audio(pcm, sample_rate, participant_id)
 
-    async def push_picture(self, rgb: bytes, size: tuple[int, int], participant_id: str) -> None:
-        await self.input().push_picture(rgb, size, participant_id)
+    async def push_picture(self, picture: ReceivedPicture) -> None:
+        await self.input().push_picture(picture)
+
+    async def push_message(self, message: MoqWasmTrackMessage) -> None:
+        await self.input().push_message(message)
+
+    async def answer_image_requests(self, requests: list[UserImageRequestFrame], error: str) -> None:
+        await self.input().answer_image_requests(requests, error)
 
     async def event(self, name: str, *args: object) -> None:
         await self._call_event_handler(name, *args)

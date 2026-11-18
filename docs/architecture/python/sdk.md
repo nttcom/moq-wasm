@@ -346,12 +346,39 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   lowest bitrate is the profile the room's viewers already take, so it starts
   no extra encoder in the participant's browser. The track is unsubscribed
   when its audio stops being in the catalog.
-- **Video in.** For each participant, the LOC video track of its catalog
-  with the lowest bitrate that PyAV decodes, decoded with a fresh decoder for
-  each group (a group starts at a keyframe), is pushed as an RGB
-  `UserImageRawFrame` at most `video_in_max_fps` times a second.
-  `video_in_track` (a callable from `Catalog` to a `CatalogTrack`) picks
-  another track, as PTZ tracking picks the profile its viewer chose.
+- **Video in.** pipecat's video sources name tracks of a participant's
+  catalog. `"camera"` is the LOC video track with the lowest bitrate that
+  PyAV decodes, or the one `video_in_track` picks; any other source is the
+  video track of that name, as an ONVIF camera names its profiles. Each
+  group is decoded with a fresh decoder (a group starts at a keyframe), and
+  each picture is pushed as an RGB `UserImageRawFrame` with the source in
+  `transport_source` and the `Location` of its object in
+  `metadata["location"]`, so a bot records a verdict at the picture it
+  judged. `video_in_sources` sets each source's framerate or
+  `on_request_only`; without it, `video_in_enabled` receives `"camera"` at
+  most `video_in_max_fps` times a second.
+- **Image requests.** A `UserImageRequestFrame` pushed upstream is answered
+  by the next picture of its `user_id` and `video_source` (`"camera"` when
+  unset), with the request in `request`, as pipecat's Daily and SmallWebRTC
+  transports answer it; a source not yet received starts being received for
+  requests only. A request no picture will answer, for a participant not in
+  the room, one who left or a track that failed, gets `{"error": ...}`
+  through its `result_callback`. A bot that judges pictures slower than
+  they arrive asks for one when it is ready instead of thinning a stream.
+- **Data tracks.** The objects of `data_in_tracks` (a camera page's
+  `prompt`, a chat) are pushed as `InputTransportMessageFrame`s carrying a
+  `MoqWasmTrackMessage` (participant id, track, payload, `Location`), as
+  pipecat transports push a client's app messages. An
+  `OutputTransportMessageFrame` carrying a `MoqWasmTrackObject` writes an
+  object on one of `data_out_tracks`, and one carrying a
+  `MoqWasmEventRecord` appends a record to one of `event_timelines_out`;
+  both are tracks of the transport's broadcast, each with the seconds it
+  keeps for FETCH. Other messages, such as RTVI's, are logged and dropped.
+- **Room lifetime.** With `empty_timeout`, `on_room_empty` fires once no
+  participant has been in the room for that many seconds, and the transport
+  stops following it. A participant's catalog is read again a second after it
+  ends or its SUBSCRIBE fails, as when the publisher has not written it yet,
+  until the participant leaves.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
   `OutputImageRawFrame` with PyAV to `video_out_codec` (`"H264"` by default,
   the codec the browser SDK publishes; `"VP8"` is royalty-free), at
