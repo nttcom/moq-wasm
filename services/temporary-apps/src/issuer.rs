@@ -8,6 +8,8 @@ use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 
 pub(crate) const TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
+/// A launch token is signed for one call to `bots`.
+const LAUNCH_TOKEN_LIFETIME: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub(crate) enum RefreshError {
@@ -43,6 +45,13 @@ impl TemporaryApps {
     }
 
     pub(crate) fn refresh(&self, token: &str, now: u64) -> Result<IssuedToken, RefreshError> {
+        let app_id = self.verify(token, now)?;
+        self.sign(app_id, now).map_err(RefreshError::Internal)
+    }
+
+    /// The app of a temporary app token this issuer signed that has not
+    /// expired. `now` is Unix seconds.
+    pub(crate) fn verify(&self, token: &str, now: u64) -> Result<String, RefreshError> {
         verify_signature(token, &self.secret).map_err(|_| RefreshError::NotIssuedHere)?;
         let claims = decode_unverified_payload(token).ok_or(RefreshError::NotIssuedHere)?;
         let app_id = claims
@@ -54,8 +63,18 @@ impl TemporaryApps {
         if exp.is_none_or(|exp| exp <= now) {
             return Err(RefreshError::Expired);
         }
-        self.sign(app_id.to_owned(), now)
-            .map_err(RefreshError::Internal)
+        Ok(app_id.to_owned())
+    }
+
+    /// The launch token `bots` takes from an app server
+    /// (docs/architecture/bots/architecture.md): it may start, stop and read
+    /// bots anywhere under the app's root and grants nothing on the relay.
+    pub(crate) fn sign_launch(&self, app_id: &str, now: u64) -> anyhow::Result<String> {
+        let claims = Claims {
+            bots: Some(String::new()),
+            ..Claims::issued(app_id.to_owned(), None, None, now, LAUNCH_TOKEN_LIFETIME)
+        };
+        sign_token(&claims, &self.secret)
     }
 
     fn sign(&self, app_id: String, now: u64) -> anyhow::Result<IssuedToken> {
@@ -100,6 +119,19 @@ mod tests {
 
     fn claims_of(token: &str) -> serde_json::Value {
         serde_json::Value::Object(decode_unverified_payload(token).unwrap())
+    }
+
+    #[test]
+    fn a_launch_token_covers_the_apps_bots_and_nothing_on_the_relay() {
+        // Act
+        let token = issuer().sign_launch("temp-1", NOW).unwrap();
+
+        // Assert
+        verify_signature(&token, SECRET).unwrap();
+        assert_eq!(
+            claims_of(&token),
+            json!({ "appId": "temp-1", "bots": "", "iat": NOW, "exp": NOW + 60 })
+        );
     }
 
     #[test]
