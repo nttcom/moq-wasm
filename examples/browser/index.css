@@ -536,9 +536,9 @@
   --th-accent: #2dd4bf;
   --th-alert: #c25555;
   --th-success: #34d399;
-  --th-raise: var(--th-raise);
-  --th-floor: var(--th-floor);
-  --th-glass: var(--th-glass);
+  --th-raise: #1f2731;
+  --th-floor: #141920;
+  --th-glass: #26313d;
   --th-figure-on: #2f5f5a;
   --th-on-accent: #04201c;
   position: relative;
