@@ -127,10 +127,6 @@
   border-top: 2px solid #d97706;
 }
 
-.publish-row {
-  align-items: center;
-}
-
 .publish-row > .publish-loop,
 .publish-row > .button-row {
   flex: 0 0 auto;
@@ -322,46 +318,51 @@
   font-family: var(--font-mono);
 }
 
-/* The side column holds the publish preview too, so it can be taller than the window: let it scroll
-   with the page. */
+/* The side column holds the publish preview too, so it can be taller than the window: it scrolls
+   with the page instead of in a box of its own. */
 .workspace-side {
   position: static;
+  max-height: none;
+  overflow: visible;
 }
 
 .viewer-status {
   padding: 2px 0;
 }
 
-/* Before Watch the stage keeps the shape of the video it will show. */
-.viewer-stage {
+/* `#stage` outranks the SDK's own .viewer-stage rule, which loads after this file. */
+#stage.viewer-stage {
   border-color: var(--border);
   border-radius: var(--radius-md);
   background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.04), transparent 60%), #05070a;
 }
 
-.viewer-stage > .live-player-picture {
-  border: 0;
-  border-radius: 0;
+/* The SDK's controls size their own buttons; drop the page defaults they leave unset. */
+#stage.viewer-stage button {
+  min-height: 0;
+  font-weight: 400;
 }
 
-/* Nothing plays until a picture has a source: a video with src, or the shown canvas. */
-.viewer-stage:not(:has(video[src], canvas.live-player-picture:not([hidden]))) {
+/* main.ts sets data-started while the player runs. Before that the stage keeps the shape of the
+   video it will show. */
+#stage.viewer-stage:not([data-started]) {
   aspect-ratio: 16 / 9;
 }
 
-.viewer-stage:not(:has(video[src], canvas.live-player-picture:not([hidden]))) > video.live-player-picture {
+#stage.viewer-stage:not([data-started]) > video.live-player-picture {
   position: absolute;
   inset: 0;
   height: 100%;
-  opacity: 0;
 }
 
-.viewer-stage:not(:has(video[src], canvas.live-player-picture:not([hidden])))::before {
+#stage.viewer-stage:not([data-started])::before {
   position: absolute;
+  z-index: 1;
   inset: 0;
+  pointer-events: none;
   display: grid;
   place-items: center;
-  color: #6b7684;
+  color: #9aa5b1;
   content: 'Watch を押すと再生が始まります';
   font-size: 0.875rem;
 }

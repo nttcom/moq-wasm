@@ -70,6 +70,7 @@ let activeMove: string | null = null
 function renderPlayer(): void {
   const { catalogStatus, playbackStatus, rewindStatus } = player.state
   element('playback-status').textContent = `${playbackStatus.text} · ${rewindStatus.text} · ${catalogStatus.text}`
+  stage.toggleAttribute('data-started', player.state.started)
   controls.render()
 }
 

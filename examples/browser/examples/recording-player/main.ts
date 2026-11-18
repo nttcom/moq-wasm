@@ -419,7 +419,7 @@ function renderParticipants(current: OpenedRecording): void {
     return
   }
   chips.dataset.participants = participants.join('\n')
-  element('participants').textContent = `${participants.length} participants`
+  element('participants').textContent = `参加者 ${participants.length} 人`
   chips.replaceChildren(
     ...participants.map((name) => {
       const chip = avatar(name, 'h-6 w-6 text-[11px]')

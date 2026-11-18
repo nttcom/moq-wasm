@@ -10,10 +10,10 @@
     <link rel="stylesheet" href="./viewer.css" />
   </head>
   <body data-title="Live Viewer">
-    <div class="page">
+    <main class="page">
       <header class="hero">
         <div>
-          <span class="pill">Use case · Live Viewer</span>
+          <span class="pill">ユースケース · Live Viewer</span>
           <h1>ライブ配信を MoQT で視聴</h1>
           <p>
             OBS や ffmpeg の RTMP / SRT を live-ingest bridge が MoQT に変換した配信や、ブラウザから配信した MP4
@@ -28,7 +28,7 @@
             <span class="hint">視聴する前に、別ターミナルで配信を開始します。</span>
           </summary>
           <p class="hint">
-            各コマンドは別々のターミナルで実行します。映像は H.264、音声は AAC を使用してください。 配信経路に合った
+            各コマンドは別々のターミナルで実行します。映像は H.264、音声は AAC を使用してください。配信経路に合った
             Relay URL と namespace <code>anon/live/test</code> を選び、Watch を押します。
           </p>
           <div class="setup-routes">
@@ -323,10 +323,12 @@ make chrome</code></pre>
                     </p>
                   </div>
                   <p class="hint" id="seek-hint">
-                    配信開始からライブ端までが軸で、下線が relay のキャッシュに残っている再生可能な区間です。
-                    映像にカーソルを合わせるとシークバーと ±1 秒 / ±5 秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑
-                    が 5 秒）。&#x26F6; で全画面になります。
-                    <code>--transcode</code> で live-ingest を起動すると画質が自動で切り替わり、歯車で固定できます。
+                    配信開始からライブ端までが軸で、下線が relay
+                    のキャッシュに残っている再生可能な区間です。映像にカーソルを合わせるとシークバーと ±1 秒 / ±5
+                    秒のボタンが出ます（キーボードは ← → が 1 秒、↓ ↑ が 5 秒）。&#x26F6; で全画面になります。<code
+                      >--transcode</code
+                    >
+                    で live-ingest を起動すると画質が自動で切り替わり、歯車で固定できます。
                   </p>
                 </div>
               </div>
@@ -417,7 +419,7 @@ make chrome</code></pre>
           </aside>
         </div>
       </div>
-    </div>
+    </main>
     <script type="module" src="../../utils/preserveQueryLinks.js"></script>
     <script type="module" src="./main.ts"></script>
     <script type="module" src="../../utils/shell.ts"></script>

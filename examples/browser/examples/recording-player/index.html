@@ -9,7 +9,7 @@
   </head>
   <body data-title="Recording Player" data-shell="wide">
     <div class="player-app flex flex-col">
-      <header class="player-bar flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
+      <div class="player-bar flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-sm">
         <h1 id="room-name" class="truncate text-[0.95rem] font-semibold">Recording</h1>
         <span class="badge">REPLAY</span>
         <span
@@ -23,8 +23,8 @@
         <span id="participants" class="player-muted"></span>
         <div id="member-chips" class="flex -space-x-1"></div>
         <output id="status" role="status" class="player-muted ml-auto truncate text-xs">Choose a recording.</output>
-      </header>
-      <div class="relative flex min-h-0 flex-1">
+      </div>
+      <div class="relative flex min-h-0 flex-1 max-[860px]:flex-col">
         <main class="player-stage relative min-w-0 flex-1">
           <div id="videos" class="grid h-full content-center gap-3 p-4"></div>
           <div
@@ -47,7 +47,7 @@
               </label>
               <label class="field-label">
                 <span>Recording ID</span>
-                <input id="recording" type="text" required placeholder="Enter recording ID" class="field" />
+                <input id="recording" type="text" required placeholder="Recorder が発行した ID" class="field" />
               </label>
               <div class="space-y-2">
                 <div id="relayPresets"></div>
@@ -55,20 +55,21 @@
               </div>
               <label class="field-label">
                 <span>Access token <span class="player-subtle font-normal">（任意）</span></span>
-                <input id="token" type="password" autocomplete="off" placeholder="Optional" class="field" />
+                <input id="token" type="password" autocomplete="off" class="field" />
               </label>
               <p id="open-error" class="player-error hidden text-sm"></p>
-              <button id="load" class="primary-button w-full">Open recording</button>
+              <button id="load" class="primary-button w-full">再生する</button>
             </form>
           </div>
         </main>
-        <aside id="sidebar" class="player-sidebar flex h-full w-80 shrink-0 flex-col">
+        <aside
+          id="sidebar"
+          class="player-sidebar flex h-full w-80 shrink-0 flex-col max-[860px]:h-2/5 max-[860px]:w-full"
+        >
           <div class="player-sidebar-head flex items-center px-3 py-2.5">
             <div class="segmented">
-              <button type="button" data-tab="chat" class="sidebar-tab" aria-selected="true">Chat</button>
-              <button type="button" data-tab="transcript" class="sidebar-tab" aria-selected="false">
-                Transcription
-              </button>
+              <button type="button" data-tab="chat" class="sidebar-tab" aria-selected="true">チャット</button>
+              <button type="button" data-tab="transcript" class="sidebar-tab" aria-selected="false">文字起こし</button>
             </div>
           </div>
           <div class="flex min-h-0 flex-1 flex-col px-3 pb-3">
@@ -95,13 +96,7 @@
           class="min-w-0 flex-1"
         />
         <output id="position" class="player-muted shrink-0 font-mono text-sm tabular-nums">00:00 / 00:00</output>
-        <button
-          id="reopen"
-          type="button"
-          aria-label="Open another recording"
-          title="Open another recording"
-          class="round-button"
-        >
+        <button id="reopen" type="button" aria-label="別の録画を開く" title="別の録画を開く" class="round-button">
           <svg class="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
             <path
               d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
@@ -111,9 +106,9 @@
         <button
           id="toggle-sidebar"
           type="button"
-          aria-label="Chat and transcription"
+          aria-label="チャットと文字起こし"
           aria-pressed="true"
-          title="Chat and transcription"
+          title="チャットと文字起こし"
           class="round-button"
         >
           <svg class="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
