@@ -552,23 +552,20 @@
   container-type: inline-size;
 }
 
-/* On the dark theme the card and the page are as dark as the stage, so the thumbnails turn light, the
-   reverse of the light theme's dark thumbnails on white cards. */
+/* On the dark theme the card and the page are as dark as the stage, so the thumbnails take a lighter
+   slate to stand apart from them. */
 :root:not([data-access-mode='public']) .example-thumb {
-  --th-bg: #eef2f5;
-  --th-panel: #ffffff;
-  --th-tile: #dde4ea;
-  --th-figure: #aab6c2;
-  --th-line: #cdd6df;
-  --th-text: #1f2937;
-  --th-dim: #64748b;
-  --th-accent: #0f766e;
-  --th-success: #15803d;
-  --th-raise: #e6ebf0;
-  --th-floor: #d3dbe2;
-  --th-glass: #c3ced8;
-  --th-figure-on: #7fbfb6;
-  --th-on-accent: #ffffff;
+  --th-bg: #232b36;
+  --th-panel: #2b3441;
+  --th-tile: #343e4c;
+  --th-figure: #56636f;
+  --th-line: #424d5b;
+  --th-text: #d5dbe2;
+  --th-dim: #8d98a6;
+  --th-raise: #2e3846;
+  --th-floor: #1d242d;
+  --th-glass: #3a4655;
+  --th-figure-on: #2f6b64;
 }
 
 .example-thumb > * {
