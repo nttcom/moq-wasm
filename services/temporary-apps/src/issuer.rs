@@ -27,11 +27,11 @@ pub(crate) struct IssuedToken {
 }
 
 /// Signs the tokens of temporary apps with the secret the VTS verifies them with.
-pub struct TokenMint {
+pub struct TemporaryApps {
     secret: String,
 }
 
-impl TokenMint {
+impl TemporaryApps {
     pub fn new(secret: String) -> Self {
         Self { secret }
     }
@@ -94,8 +94,8 @@ mod tests {
     const SECRET: &str = "temporary-secret";
     const NOW: u64 = 1_759_600_000;
 
-    fn issuer() -> TokenMint {
-        TokenMint::new(SECRET.into())
+    fn issuer() -> TemporaryApps {
+        TemporaryApps::new(SECRET.into())
     }
 
     fn claims_of(token: &str) -> serde_json::Value {

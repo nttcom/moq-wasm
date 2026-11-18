@@ -67,7 +67,7 @@ The transcriber serves rooms of the anonymous app, whose namespace root is
 `anon`, and rooms of a temporary app, whose page hands the service its token
 (see "Temporary apps" in [on-demand-rooms.md](on-demand-rooms.md)). A page that
 joined with `?jwt=` hides the captions button: the bot can refresh only the
-token mint's tokens, so a room of a registered app would outlive the bot's
+temporary-apps service's tokens, so a room of a registered app would outlive the bot's
 token.
 
 ### Starting and stopping

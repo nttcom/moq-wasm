@@ -370,14 +370,14 @@ impl Recordings {
     }
 
     /// The token a recording or replay of the room presents: the caller's,
-    /// renewed at the token mint when the room is a temporary app's.
+    /// renewed at the temporary-apps service when the room is a temporary app's.
     fn service_token(&self, namespace_prefix: &str, bearer: Option<&str>) -> ServiceToken {
         let temporary = namespace_prefix.starts_with(TEMPORARY_APP_ID_PREFIX);
         ServiceToken {
             token: bearer.map(str::to_string),
             issuer_url: self
                 .config
-                .token_mint_url
+                .temporary_apps_url
                 .clone()
                 .filter(|_| temporary && bearer.is_some()),
         }
@@ -396,7 +396,7 @@ impl Recordings {
             args.extend(["--token".to_string(), token.clone()]);
         }
         if let Some(issuer_url) = &token.issuer_url {
-            args.extend(["--token-mint-url".to_string(), issuer_url.clone()]);
+            args.extend(["--temporary-apps-url".to_string(), issuer_url.clone()]);
         }
         args.extend(self.config.room.to_args());
         args.extend(self.config.launcher.to_args());
@@ -467,7 +467,7 @@ mod tests {
     use object_store::{ObjectStoreExt, PutPayload};
 
     use super::*;
-    use crate::test_support::{TOKEN_MINT_URL, recordings};
+    use crate::test_support::{TEMPORARY_APPS_URL, recordings};
 
     #[test]
     fn accepts_only_a_room_of_an_app() {
@@ -717,7 +717,7 @@ mod tests {
             temporary,
             ServiceToken {
                 token: Some("jwt".to_string()),
-                issuer_url: Some(TOKEN_MINT_URL.to_string()),
+                issuer_url: Some(TEMPORARY_APPS_URL.to_string()),
             }
         );
         assert_eq!(
@@ -740,7 +740,9 @@ mod tests {
 
         // Assert
         let joined = args.join(" ");
-        assert!(joined.contains(&format!("--token jwt --token-mint-url {TOKEN_MINT_URL}")));
+        assert!(joined.contains(&format!(
+            "--token jwt --temporary-apps-url {TEMPORARY_APPS_URL}"
+        )));
     }
 
     #[tokio::test]

@@ -53,7 +53,7 @@ pub(crate) async fn run(args: RecordArgs) -> Result<()> {
         namespace_prefix: record_state.namespace_prefix.clone(),
         token: ServiceToken {
             token: args.token.clone(),
-            issuer_url: args.token_mint_url.clone(),
+            issuer_url: args.temporary_apps_url.clone(),
         },
         output_dir: args.output_dir.join(&args.id),
         store: store.object_store(),

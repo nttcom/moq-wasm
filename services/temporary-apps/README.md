@@ -1,10 +1,10 @@
-# token-mint
+# temporary-apps
 
 Issues the tokens of temporary apps to anyone, without an account. A
 temporary app (`appId` starting with `temp-`) is a namespace root of its own:
 the examples use one so that only the people a page's link is shared with
 join its room, instead of the public `anon` root.
-Design: [architecture document](../../docs/architecture/token-mint/architecture.md).
+Design: [architecture document](../../docs/architecture/temporary-apps/architecture.md).
 
 ## API
 
@@ -33,17 +33,17 @@ GET /healthz -> 200 { "status": "ok" }
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TOKEN_MINT_SECRET` | — | Secret the tokens are signed with; the VTS's `VTS_TEMPORARY_APP_SECRET` must be the same value |
-| `TOKEN_MINT_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that append to `X-Forwarded-For`; `0` takes the connection's peer address |
+| `TEMPORARY_APPS_SECRET` | — | Secret the tokens are signed with; the VTS's `VTS_TEMPORARY_APP_SECRET` must be the same value |
+| `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that append to `X-Forwarded-For`; `0` takes the connection's peer address |
 | `PORT` | `8083` | Listen port |
 
-Logging and OTLP export follow `crates/telemetry` (`TOKEN_MINT_STDOUT_FILTER`
+Logging and OTLP export follow `crates/telemetry` (`TEMPORARY_APPS_STDOUT_FILTER`
 and the standard `OTEL_*` variables).
 
 ## Running
 
 ```
-TOKEN_MINT_SECRET=development-temporary-app-secret cargo run -p token-mint
+TEMPORARY_APPS_SECRET=development-temporary-app-secret cargo run -p temporary-apps
 ```
 
 `docker compose up -d` starts it on port 8083 with the VTS sharing the same

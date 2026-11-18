@@ -345,11 +345,11 @@ pub(crate) fn transcript_record(m_ms: u64, speaker: &str) -> serde_json::Value {
     serde_json::json!({ "M": m_ms, "data": { "speaker": speaker, "text": format!("{speaker} at {m_ms}") } })
 }
 
-pub(crate) const TOKEN_MINT_URL: &str = "http://token-mint.invalid";
+pub(crate) const TEMPORARY_APPS_URL: &str = "http://temporary-apps.invalid";
 
 /// A recording API over an in-memory store, whose jobs exit at once, that
 /// accepts every request and renews temporary apps' tokens at
-/// `TOKEN_MINT_URL`.
+/// `TEMPORARY_APPS_URL`.
 pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
     let store_url = url::Url::parse("memory:///").unwrap();
     let config = ServeArgs {
@@ -359,7 +359,7 @@ pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
         insecure_skip_auth: true,
         max_recordings,
         composite,
-        token_mint_url: Some(TOKEN_MINT_URL.to_string()),
+        temporary_apps_url: Some(TEMPORARY_APPS_URL.to_string()),
         store: store_url.clone(),
         output_dir: std::env::temp_dir(),
         room: RoomArgs {

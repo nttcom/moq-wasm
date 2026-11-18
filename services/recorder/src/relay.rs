@@ -16,7 +16,7 @@ use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal};
 pub(crate) struct ServiceToken {
     /// `None` only on a server started with `--insecure-skip-auth`.
     pub(crate) token: Option<String>,
-    /// The token mint that renews `token`, a temporary app's. Any other token
+    /// The temporary-apps service that renews `token`, a temporary app's. Any other token
     /// is not renewed, and the relay ends the session when it expires.
     pub(crate) issuer_url: Option<String>,
 }

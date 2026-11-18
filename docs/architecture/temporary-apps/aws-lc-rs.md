@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-Add `aws-lc-rs` as a direct dependency of the `token-mint` crate.
+Add `aws-lc-rs` as a direct dependency of the `temporary-apps` crate.
 `issuer.rs` draws the 16 random bytes of every temporary `appId` from
 `aws_lc_rs::rand::SystemRandom`.
 

@@ -1,5 +1,5 @@
 [package]
-name = "token-mint"
+name = "temporary-apps"
 version = "0.1.0"
 edition = "2024"
 description = "Issues the tokens of temporary apps to anyone, so the examples run in a namespace of their own"

@@ -63,7 +63,7 @@ the VTS only verifies. Generate secrets with e.g. `openssl rand -base64 32`.
 
 An `appId` starting with `temp-` names a temporary app: it is not in the
 registry, and its tokens are signed with `VTS_TEMPORARY_APP_SECRET` by
-whoever issues them (`services/token-mint`). A temporary app is never a
+whoever issues them (`services/temporary-apps`). A temporary app is never a
 relay.
 
 ## Running

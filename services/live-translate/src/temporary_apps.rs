@@ -27,7 +27,7 @@ pub(crate) enum Refusal {
     Relay(anyhow::Error),
 }
 
-/// The temporary apps (services/token-mint) being translated. An app is an
+/// The temporary apps (services/temporary-apps) being translated. An app is an
 /// isolated namespace root that only its own tokens reach, so each is watched
 /// over a relay session of its own, opened with the token a streamer hands
 /// over. Nobody renews that token: the relay closes the session when it

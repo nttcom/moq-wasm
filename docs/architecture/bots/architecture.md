@@ -14,7 +14,7 @@ room, and the changes it brings to:
   the recordings' read API (lists, files, replay, VOD) and loses start and stop.
 - The Python bots (`examples/python/moq-*`) and `moq-bot-rooms`, which this
   replaces as the way a bot is started.
-- `services/token-mint`, which becomes the app server of temporary apps.
+- `services/temporary-apps`, which becomes the app server of temporary apps.
 - `crates/auth-token`, which gains the claim a launch request carries.
 
 ## Context
@@ -39,7 +39,7 @@ The shape has four problems:
    the Cloud Run execution's overrides, readable by anyone who can view the
    project, and in the process list of a local launch.
 3. **The bot's lifetime is the token's.** Only a temporary app's token can be
-   renewed (on the token mint). A registered app's token comes from its own
+   renewed (on the temporary-apps service). A registered app's token comes from its own
    backend, which the recorder cannot ask, so a recording ends at the token's
    `exp`.
 4. **The relay cannot tell the bot from the user.** Both present the same
@@ -51,12 +51,12 @@ app's server decides and calls the bot service with a short-lived *launch
 token* signed with the app's secret. The bot service launches the bot, and
 the bot joins the room with a *bot token* the bot service signs for it,
 scoped to what that bot needs. For temporary apps, which have no server of
-their own, the token mint plays the app server.
+their own, the temporary-apps service plays the app server.
 
 ```mermaid
 sequenceDiagram
     participant P as Page
-    participant A as App server (token mint for a temporary app)
+    participant A as App server (temporary-apps service for a temporary app)
     participant B as bots
     participant V as VTS
     participant J as Bot (Cloud Run Job)
@@ -86,7 +86,7 @@ sequenceDiagram
 | Party | Holds | Does |
 | --- | --- | --- |
 | App server | its app's secret | decides who may start a bot, signs launch tokens |
-| Token mint | the temporary app secret | the app server of every temporary app (below) |
+| Temporary-apps service | the temporary app secret | the app server of every temporary app (below) |
 | `bots` | read access to the registry, the temporary app secret | verifies launch tokens through the VTS, launches bots, signs bot tokens, keeps bot state |
 | Bot | its bot id and the job's own identity | joins the room with its bot token, reports its state, ends itself |
 
@@ -204,17 +204,17 @@ answers no CORS.
 
 ### Temporary apps
 A temporary app has no operator and no server: whoever holds one of its
-tokens is the app. The token mint, which holds the temporary app secret,
+tokens is the app. The temporary-apps service, which holds the temporary app secret,
 becomes the app server of all of them, so `bots` handles a temporary app the
 same way as a registered one:
 
-- The token mint gains `POST /bots`, `GET /bots` and `DELETE /bots/{id}`,
+- The temporary-apps service gains `POST /bots`, `GET /bots` and `DELETE /bots/{id}`,
   which a page calls with its own token as `Authorization: Bearer`. The mint
   verifies the token as `POST /tokens/refresh` does (signed by it, temporary,
   not expired), signs a launch token whose `bots` claim is the page's
   `publish` claim, and forwards the request.
-- What a temporary app may start is the token mint's policy: the bot types it
-  allows (`TOKEN_MINT_BOT_TYPES`) and a rate limit per client address, the
+- What a temporary app may start is the temporary-apps service's policy: the bot types it
+  allows (`TEMPORARY_APPS_BOT_TYPES`) and a rate limit per client address, the
   same fixed windows as `POST /tokens`.
 - Anyone can create a temporary app, so anyone can still start a bot in one.
   What changes is that the decision and its limits sit in a server.
@@ -246,20 +246,20 @@ use today). A request for a type not in the file is `400`.
 - An AI bot started as a Cloud Run Job waits for the execution to start,
   about 12 s for the recorder, longer than a request to a warm service.
 - The pages change twice: the recorder's start moves from `recorder serve` to
-  the token mint, and the AI bot pages drop the held event stream.
+  the temporary-apps service, and the AI bot pages drop the held event stream.
 
 ## Rollout
 1. `auth-token`: the `bots` claim.
 2. `bots` with the recorder as its only type; `recorder record` takes its bot
    id, fetches its token and reports heartbeats; the recorder publishes
    `bots/recorder`.
-3. Token mint `POST /bots`; the Meeting starts and stops the recorder through
+3. Temporary-apps service `POST /bots`; the Meeting starts and stops the recorder through
    it and shows REC from `bots/recorder`.
 4. Remove start and stop from `recorder serve`, with `--token` and
-   `--token-mint-url` of `recorder record`.
+   `--temporary-apps-url` of `recorder record`.
 5. The AI bots, one at a time: a `run` entry point that serves one room,
    their presence under `<room>/bots/<type>`, the common end rule, and their
-   pages through the token mint. `moq-bot-rooms` goes away with the last one.
+   pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one.
 
 ## Alternatives Considered
 
@@ -282,8 +282,8 @@ It avoids verifying Google ID tokens, but the key sits where the token sits
 today (the execution's overrides) or needs the job to read `bots`' store.
 
 ### Call `bots` from the page for temporary apps
-It leaves the token mint unchanged, but `bots` would keep a second,
-browser-facing way in, with CORS and token-mint refreshes, for one kind of
+It leaves the temporary-apps service unchanged, but `bots` would keep a second,
+browser-facing way in, with CORS and token refreshes at the temporary-apps service, for one kind of
 app.
 
 ## Open Questions

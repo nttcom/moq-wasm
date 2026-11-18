@@ -9,4 +9,4 @@ Today both bridges publish under `anon` only, so the live-viewer's RTMP/SRT path
 
 ## Plan
 
-Take the page's temporary token with the stream (e.g. in the stream key or the ingest config) and renew it at the token mint, as `services/recorder/src/token_refresh_task.rs` (`TokenRenewal::Issuer`) does.
+Take the page's temporary token with the stream (e.g. in the stream key or the ingest config) and renew it at the temporary-apps service, as `services/recorder/src/token_refresh_task.rs` (`TokenRenewal::Issuer`) does.

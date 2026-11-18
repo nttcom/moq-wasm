@@ -406,7 +406,7 @@ A recording and a replay present the caller's bearer token to the relay
 could read every app: the API hands the token to the recording job as
 `--token`. The relay ends the session when the token expires, which finishes
 an MP4 recording with the files it has and fails a MoQ one (a closed session
-fails an archive). With `--token-mint-url`, a temporary app's token
+fails an archive). With `--temporary-apps-url`, a temporary app's token
 (`auth_token::TEMPORARY_APP_ID_PREFIX`) is renewed instead: the job gets the
 issuer URL too, and its `TokenRefreshTask` renews the token there
 (`TokenRenewal::Issuer`). A registered app's token comes from that app's own
@@ -648,7 +648,7 @@ The recording's JSON carries `composite` (`null` when not requested) with
 
 ## Token refresh
 A `TokenRefreshTask` polls a `TokenRenewal` every 10 s: `File` re-reads a token
-file (`--auth-token-file`), and `Issuer` asks the token mint's
+file (`--auth-token-file`), and `Issuer` asks the temporary-apps service's
 `POST /tokens/refresh` for a new token once the current one expires within
 five minutes, keeping the current one when the mint refuses or is unreachable.
 It sends a changed token with the relay's in-session refresh convention: a

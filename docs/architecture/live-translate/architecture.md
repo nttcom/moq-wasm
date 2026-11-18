@@ -56,7 +56,7 @@ The server listens before the relay is dialed, so the port is open as soon as
 the container is.
 
 `POST /sessions` with `Authorization: Bearer <token>` has the translator
-serve a temporary app (`services/token-mint`), the namespace root the
+serve a temporary app (`services/temporary-apps`), the namespace root the
 examples run under (`temporary_apps.rs`). An app is reached only with its own
 tokens, so the streamer's page hands one over and the translator opens a
 relay session of its own with it, watching `{appId}/live-translate`. With

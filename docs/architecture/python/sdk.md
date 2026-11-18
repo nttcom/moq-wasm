@@ -102,7 +102,7 @@ flowchart TB
 
 The same split as the browser SDK's `moq-wasm` and `moq-wasm/media`. What
 the demo apps need beyond MoQT stays in `examples/python/`: `BotRoom` and
-`serve_rooms`, the token mint client, the System One clients, and the
+`serve_rooms`, the temporary-apps service client, the System One clients, and the
 pipelines.
 
 ### Core: `moq_wasm`
@@ -110,7 +110,7 @@ pipelines.
 ```python
 import moq_wasm
 
-async with moq_wasm.connect(url, token=jwt, refresh_token=mint.refresh) as session:
+async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh) as session:
     ...
 ```
 

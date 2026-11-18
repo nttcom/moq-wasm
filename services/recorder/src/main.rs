@@ -169,11 +169,11 @@ pub(crate) struct ServeArgs {
     #[arg(long)]
     pub(crate) composite: bool,
 
-    /// Token mint that renews temporary app tokens: a recording or replay of
+    /// Temporary-apps service that renews temporary app tokens: a recording or replay of
     /// a temporary app's room (`temp-…` root) renews the caller's token there
     /// instead of ending when it expires
-    #[arg(long, env = "TOKEN_MINT_URL")]
-    pub(crate) token_mint_url: Option<String>,
+    #[arg(long, env = "TEMPORARY_APPS_URL")]
+    pub(crate) temporary_apps_url: Option<String>,
 
     #[command(flatten)]
     pub(crate) room: RoomArgs,
@@ -203,9 +203,9 @@ pub(crate) struct RecordArgs {
     #[arg(long)]
     pub(crate) token: Option<String>,
 
-    /// Token mint that renews `--token` when it is a temporary app's
+    /// Temporary-apps service that renews `--token` when it is a temporary app's
     #[arg(long, requires = "token")]
-    pub(crate) token_mint_url: Option<String>,
+    pub(crate) temporary_apps_url: Option<String>,
 
     #[command(flatten)]
     pub(crate) room: RoomArgs,

@@ -27,7 +27,7 @@ The viewer plays every track 5 s after capture (`?delay=4.5` tries another delay
 The pages follow the access mode of the example list (see [`examples/browser/README.md`](../../README.md)).
 
 - **Public**: the broadcast is `anon/live-translate/<id>`, which a translator started with `--public-root` watches by itself.
-- **Temporary app**: the broadcast is `<appId>/live-translate/<id>`. The streamer page hands the translator a token of the app (`POST /sessions`), so a broadcast is translated for an hour at most. To try it locally, run `docker compose up -d vts token-mint` and start the translator with `PORT=18090`; `?liveTranslateUrl=` points the streamer at another translator.
+- **Temporary app**: the broadcast is `<appId>/live-translate/<id>`. The streamer page hands the translator a token of the app (`POST /sessions`), so a broadcast is translated for an hour at most. To try it locally, run `docker compose up -d vts temporary-apps` and start the translator with `PORT=18090`; `?liveTranslateUrl=` points the streamer at another translator.
 
 ## Tips
 

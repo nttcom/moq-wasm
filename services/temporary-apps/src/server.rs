@@ -20,24 +20,24 @@ use tokio::net::TcpListener;
 use tracing::Instrument;
 
 use crate::{
-    issuer::{RefreshError, TokenMint},
+    issuer::{RefreshError, TemporaryApps},
     rate_limit::RateLimit,
 };
 
-pub struct TokenMintServer {
+pub struct TemporaryAppsServer {
     _http: HttpServer,
 }
 
 struct ServerState {
-    issuer: TokenMint,
+    issuer: TemporaryApps,
     issue_limit: RateLimit,
     trusted_proxy_hops: usize,
 }
 
-impl TokenMintServer {
+impl TemporaryAppsServer {
     pub fn run(
         listener: TcpListener,
-        issuer: TokenMint,
+        issuer: TemporaryApps,
         issue_limit: RateLimit,
         trusted_proxy_hops: usize,
     ) -> Self {
@@ -68,7 +68,7 @@ async fn handle(
 ) -> JsonResponse {
     let (head, body) = request.into_parts();
     let span = tracing::info_span!(
-        "token_mint.request",
+        "temporary_apps.request",
         "http.request.method" = %head.method,
         "url.path" = head.uri.path(),
         "http.response.status_code" = tracing::field::Empty,
@@ -108,7 +108,7 @@ fn issue(state: &ServerState, client: IpAddr) -> JsonResponse {
     }
 }
 
-async fn refresh(body: Incoming, issuer: &TokenMint) -> JsonResponse {
+async fn refresh(body: Incoming, issuer: &TemporaryApps) -> JsonResponse {
     let Some(request) = read_json::<RefreshRequest, _>(body).await else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
@@ -193,7 +193,7 @@ mod tests {
 
     struct TestServer {
         base_url: String,
-        _server: TokenMintServer,
+        _server: TemporaryAppsServer,
     }
 
     async fn start_server(max_issues: u32) -> TestServer {
@@ -201,9 +201,9 @@ mod tests {
         let base_url = format!("http://{}", listener.local_addr().unwrap());
         TestServer {
             base_url,
-            _server: TokenMintServer::run(
+            _server: TemporaryAppsServer::run(
                 listener,
-                TokenMint::new(SECRET.into()),
+                TemporaryApps::new(SECRET.into()),
                 RateLimit::new(max_issues, Duration::from_secs(3600)),
                 1,
             ),

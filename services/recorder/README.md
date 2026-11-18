@@ -76,7 +76,7 @@ cargo run -p recorder -- serve \
   `subscribe` grants viewing and replay, `publish` starting and stopping. The
   room is recorded with the caller's token, so the anonymous app's rooms are
   not recorded.
-- A recording ends when its token expires. With `--token-mint-url`, a
+- A recording ends when its token expires. With `--temporary-apps-url`, a
   temporary app's token is renewed instead, so the recording outlives the
   page that started it.
 - A replay is played by `examples/recording-player/` in the browser examples.
@@ -89,7 +89,7 @@ cargo run -p recorder -- serve \
 | `--allowed-origin` | `http://localhost:5173`, `http://127.0.0.1:5173` | Pages allowed to call it (CORS); repeat for several |
 | `--auth-vts-url` (`AUTH_VTS_URL`) | — | VTS verification endpoint; required unless `--insecure-skip-auth` |
 | `--insecure-skip-auth` | off | Accept every request without a token (local development only) |
-| `--token-mint-url` (`TOKEN_MINT_URL`) | — | Token mint renewing temporary apps' tokens |
+| `--temporary-apps-url` (`TEMPORARY_APPS_URL`) | — | Temporary-apps service renewing temporary apps' tokens |
 | `--max-recordings` | `4` | Rooms recorded at once |
 | `--store` (`RECORDER_STORE_URL`) | — | `gs://<bucket>/<prefix>` or `file:///<dir>/`: the files and the recordings' state |
 | `--output-dir` | `recordings` | Where a job keeps its files until they are uploaded |

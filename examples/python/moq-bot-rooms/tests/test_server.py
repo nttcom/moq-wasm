@@ -4,7 +4,7 @@ import re
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from moq_bot_rooms.app_token import TokenMintUnavailable
+from moq_bot_rooms.app_token import TemporaryAppsUnavailable
 from moq_bot_rooms.server import room_app
 from tests.helpers import FakeBots, FakeIssuer, make_rooms, settle
 
@@ -18,9 +18,9 @@ async def open_client():
 
     async def open(bots: FakeBots, **options) -> TestClient:
         rooms_options = {key: options.pop(key) for key in ("max_room_seconds",) if key in options}
-        issuer = options.pop("token_mint", FakeIssuer())
+        issuer = options.pop("temporary_apps", FakeIssuer())
         app = room_app(
-            make_rooms(bots, **rooms_options), token_mint=issuer, heartbeat_seconds=SHORT_HEARTBEAT_SECONDS, **options
+            make_rooms(bots, **rooms_options), temporary_apps=issuer, heartbeat_seconds=SHORT_HEARTBEAT_SECONDS, **options
         )
         client = TestClient(TestServer(app))
         await client.start_server()
@@ -199,7 +199,7 @@ async def test_a_page_token_runs_the_room_under_its_app_with_a_token_of_its_own(
     # Arrange
     bots = FakeBots()
     issuer = FakeIssuer({"page-token": "temp-0123"})
-    client = await open_client(bots, allowed_origins=[], token_mint=issuer)
+    client = await open_client(bots, allowed_origins=[], temporary_apps=issuer)
 
     # Act
     response = await client.get("/rooms/abc", headers={"Authorization": "Bearer page-token"})
@@ -216,7 +216,7 @@ async def test_a_request_without_a_token_runs_the_room_under_the_public_root(ope
     # Arrange
     bots = FakeBots()
     issuer = FakeIssuer()
-    client = await open_client(bots, allowed_origins=[], token_mint=issuer)
+    client = await open_client(bots, allowed_origins=[], temporary_apps=issuer)
 
     # Act
     response = await client.get("/rooms/abc")
@@ -232,7 +232,7 @@ async def test_a_request_without_a_token_runs_the_room_under_the_public_root(ope
 async def test_a_token_the_issuer_refuses_is_unauthorized_and_starts_no_bot(open_client):
     # Arrange
     bots = FakeBots()
-    client = await open_client(bots, allowed_origins=[PAGE_ORIGIN], token_mint=FakeIssuer())
+    client = await open_client(bots, allowed_origins=[PAGE_ORIGIN], temporary_apps=FakeIssuer())
 
     # Act
     response = await client.get("/rooms/abc", headers={"Authorization": "Bearer forged", "Origin": PAGE_ORIGIN})
@@ -247,8 +247,8 @@ async def test_an_unreachable_issuer_is_service_unavailable(open_client):
     # Arrange
     bots = FakeBots()
     issuer = FakeIssuer({"page-token": "temp-0123"})
-    issuer.failure = TokenMintUnavailable("down")
-    client = await open_client(bots, allowed_origins=[], token_mint=issuer)
+    issuer.failure = TemporaryAppsUnavailable("down")
+    client = await open_client(bots, allowed_origins=[], temporary_apps=issuer)
 
     # Act
     response = await client.get("/rooms/abc", headers={"Authorization": "Bearer page-token"})
