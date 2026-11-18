@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use object_store::{ObjectStoreExt, PutPayload};
 
 use crate::{
-    LauncherArgs, RoomArgs, ServeArgs,
+    LauncherArgs, LimitArgs, RoomArgs, ServeArgs,
     archive_chunks::ChunkWriter,
     archive_reader::StoredRecording,
     archive_receiver::Event,
@@ -366,10 +366,12 @@ pub(crate) fn recordings(max_recordings: usize, composite: bool) -> Recordings {
         room: RoomArgs {
             relay: "moqt://127.0.0.1:1".to_string(),
             segment_seconds: None,
-            max_recording_seconds: 7200,
-            empty_room_seconds: 300,
             max_video_height: 720,
             insecure_skip_tls_verify: false,
+        },
+        limits: LimitArgs {
+            max_recording_seconds: 7200,
+            empty_room_seconds: 300,
         },
         launcher: LauncherArgs {
             launcher: LauncherKind::Local,

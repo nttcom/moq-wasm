@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::{Context, Result};
-use clap::ValueEnum;
 use http_body_util::{BodyExt, Either, Full, Limited};
 use http_server::HttpServer;
 use hyper::{
@@ -17,10 +16,9 @@ use tokio::net::TcpListener;
 
 use crate::{
     api_auth::bearer_token,
-    recording::Layout,
     recordings::{Publication, PublishRejection, Recordings, StartRejection},
     replay_stream::ReplayStream,
-    room_state::RecordingFormat,
+    room_state::RecordingOptions,
 };
 
 const MAX_BODY_BYTES: usize = 16 * 1024;
@@ -215,30 +213,13 @@ async fn start(recordings: &Recordings, body: &Value, bearer: Option<&str>) -> A
     let Some(namespace_prefix) = body.get("namespace_prefix").and_then(Value::as_str) else {
         return error_response(StatusCode::BAD_REQUEST, "namespace_prefix is required");
     };
-    let layout = match body.get("layout").and_then(Value::as_str) {
-        None => Layout::Combined,
-        Some(name) => match Layout::from_str(name, false) {
-            Ok(layout) => layout,
-            Err(_) => {
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    "layout must be combined or per-track",
-                );
-            }
-        },
-    };
-    let composite = match body.get("composite") {
-        None => false,
-        Some(Value::Bool(composite)) => *composite,
-        Some(_) => return error_response(StatusCode::BAD_REQUEST, "composite must be a boolean"),
-    };
-    let format = match body.get("format") {
-        None => RecordingFormat::Mp4,
-        Some(Value::String(name)) => match RecordingFormat::from_str(name, false) {
-            Ok(format) => format,
-            Err(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
-        },
-        Some(_) => return error_response(StatusCode::BAD_REQUEST, "format must be mp4 or moq"),
+    let RecordingOptions {
+        layout,
+        composite,
+        format,
+    } = match RecordingOptions::from_json(body) {
+        Ok(options) => options,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error),
     };
     match recordings
         .start(namespace_prefix, layout, composite, format, bearer)

@@ -4,6 +4,8 @@ mod archive;
 mod archive_chunks;
 mod archive_reader;
 mod archive_receiver;
+mod bot_job;
+mod bots_client;
 mod catalog_reader;
 mod composite;
 mod composite_job;
@@ -178,6 +180,9 @@ pub(crate) struct ServeArgs {
     pub(crate) room: RoomArgs,
 
     #[command(flatten)]
+    pub(crate) limits: LimitArgs,
+
+    #[command(flatten)]
     pub(crate) launcher: LauncherArgs,
 }
 
@@ -205,6 +210,56 @@ pub(crate) struct RecordArgs {
     /// Temporary-apps service that renews `--token` when it is a temporary app's
     #[arg(long, requires = "token")]
     pub(crate) temporary_apps_url: Option<String>,
+
+    #[command(flatten)]
+    pub(crate) room: RoomArgs,
+
+    #[command(flatten)]
+    pub(crate) limits: LimitArgs,
+
+    #[command(flatten)]
+    pub(crate) launcher: LauncherArgs,
+}
+
+/// Record a room as the bot `bots` started, then exit
+/// (docs/architecture/bots/architecture.md)
+#[derive(Parser, Debug)]
+#[command(name = "recorder bot", bin_name = "recorder bot", version)]
+pub(crate) struct BotArgs {
+    /// Id `bots` gave the bot
+    #[arg(long)]
+    pub(crate) bot_id: String,
+
+    /// URL of `bots`, which signs the bot's token and takes its heartbeats
+    #[arg(long)]
+    pub(crate) bots_url: String,
+
+    /// The room: every broadcast under this prefix is recorded
+    #[arg(long)]
+    pub(crate) namespace_prefix: String,
+
+    /// Stop once no participant has been in the room for this many seconds,
+    /// counted from the start too
+    #[arg(long, value_name = "SECONDS")]
+    pub(crate) grace_seconds: u64,
+
+    /// Stop after this many seconds
+    #[arg(long, value_name = "SECONDS")]
+    pub(crate) max_seconds: u64,
+
+    /// `layout`, `composite` and `format` as `POST /recordings` takes them,
+    /// in a JSON object
+    #[arg(long, value_name = "JSON")]
+    pub(crate) options: Option<String>,
+
+    /// Object store holding the recordings and their state, e.g.
+    /// gs://bucket/prefix or file:///directory
+    #[arg(long, env = "RECORDER_STORE_URL", value_name = "URL")]
+    pub(crate) store: url::Url,
+
+    /// Directory the files are written to until they are uploaded
+    #[arg(long, default_value = "recordings")]
+    pub(crate) output_dir: PathBuf,
 
     #[command(flatten)]
     pub(crate) room: RoomArgs,
@@ -243,15 +298,6 @@ pub(crate) struct RoomArgs {
     #[arg(long, value_name = "SECONDS")]
     pub(crate) segment_seconds: Option<u64>,
 
-    /// Stop a recording after this many seconds
-    #[arg(long, value_name = "SECONDS", default_value_t = 7200)]
-    pub(crate) max_recording_seconds: u64,
-
-    /// Stop a recording once no participant has been in the room for this
-    /// many seconds, counted from the start too
-    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
-    pub(crate) empty_room_seconds: u64,
-
     /// Record the tallest video track of each recorded source at most this
     /// high, or the shortest one when all are taller
     #[arg(long, value_name = "PIXELS", default_value_t = 720)]
@@ -262,7 +308,20 @@ pub(crate) struct RoomArgs {
     pub(crate) insecure_skip_tls_verify: bool,
 }
 
-impl RoomArgs {
+/// When `recorder serve`'s recordings stop by themselves.
+#[derive(clap::Args, Debug, Clone)]
+pub(crate) struct LimitArgs {
+    /// Stop a recording after this many seconds
+    #[arg(long, value_name = "SECONDS", default_value_t = 7200)]
+    pub(crate) max_recording_seconds: u64,
+
+    /// Stop a recording once no participant has been in the room for this
+    /// many seconds, counted from the start too
+    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    pub(crate) empty_room_seconds: u64,
+}
+
+impl LimitArgs {
     pub(crate) fn limits(&self) -> RecordingLimits {
         RecordingLimits {
             max_duration: Duration::from_secs(self.max_recording_seconds),
@@ -271,13 +330,20 @@ impl RoomArgs {
     }
 
     pub(crate) fn to_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "--relay".to_string(),
-            self.relay.clone(),
+        vec![
             "--max-recording-seconds".to_string(),
             self.max_recording_seconds.to_string(),
             "--empty-room-seconds".to_string(),
             self.empty_room_seconds.to_string(),
+        ]
+    }
+}
+
+impl RoomArgs {
+    pub(crate) fn to_args(&self) -> Vec<String> {
+        let mut args = vec![
+            "--relay".to_string(),
+            self.relay.clone(),
             "--max-video-height".to_string(),
             self.max_video_height.to_string(),
         ];
@@ -351,6 +417,7 @@ async fn main() -> Result<()> {
     match mode.as_ref().and_then(|mode| mode.to_str()) {
         Some("serve") => serve::serve(ServeArgs::parse_from(mode_args())).await,
         Some("record") => record_job::run(RecordArgs::parse_from(mode_args())).await,
+        Some("bot") => bot_job::run(BotArgs::parse_from(mode_args())).await,
         Some("composite") => composite_job::run(CompositeArgs::parse_from(mode_args())).await,
         _ => recorder::run(Args::parse()).await,
     }
