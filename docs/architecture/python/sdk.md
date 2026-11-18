@@ -339,7 +339,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `MOQTransport` follows one peer; a room is what the transcriber, chat
   moderation, camera detection and PTZ tracking serve. `on_client_connected`
   and `on_client_disconnected` take the participant id. The transport's own
-  broadcast, `[*room, participant_id]`, is not a participant.
+  broadcast, `[*room, participant_id]` or the namespace `broadcast` names, is
+  not a participant. A `broadcast` such as `[*room, "bot", "voice"]` lets the
+  bot publish sibling broadcasts such as `[*room, "bot", "transcript"]`.
 - **Audio in.** For each participant, the Opus LOC audio track of its catalog
   with the lowest bitrate, decoded and resampled to `audio_in_sample_rate`,
   is pushed as `UserAudioRawFrame` with the participant id as `user_id`. The

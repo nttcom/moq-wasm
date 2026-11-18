@@ -103,6 +103,8 @@ await session.run(PipelineRunner().run(PipelineTask(pipeline)))
 Every other broadcast one level under `room` is a participant: its audio comes
 in as `UserAudioRawFrame` and its video as `UserImageRawFrame`, with the
 participant id as `user_id`. The transport has the events of `MOQTransport`.
+Its own broadcast is `[*room, participant_id]`, or the namespace `broadcast`
+names, such as `[*room, "bot", "voice"]` beside the bot's other broadcasts.
 
 Video follows pipecat's API: `video_in_enabled=True` with
 `video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}`

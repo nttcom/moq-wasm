@@ -61,7 +61,10 @@ class MoqWasmParams(MoqWasmInputParams):
 
     Parameters:
         room: The namespace whose broadcasts one level below are the participants.
-        participant_id: The transport's own broadcast is `[*room, participant_id]`.
+        participant_id: Labels the transport's media source, and names its broadcast
+            `[*room, participant_id]` unless `broadcast` does.
+        broadcast: The namespace of the transport's own broadcast, such as `[*room, "bot", "voice"]`
+            beside the bot's other broadcasts.
         data_out_tracks: Tracks of the transport's broadcast, by name, with the seconds each keeps
             its objects for FETCH; an `OutputTransportMessageFrame` carrying a
             `MoqWasmTrackObject` writes one.
@@ -74,6 +77,7 @@ class MoqWasmParams(MoqWasmInputParams):
 
     room: list[str]
     participant_id: str = "bot"
+    broadcast: list[str] | None = None
     data_out_tracks: dict[str, float] = {}
     event_timelines_out: dict[str, float] = {}
     empty_timeout: float | None = None
@@ -283,6 +287,7 @@ class MoqWasmTransport(BaseTransport):
         options = RoomOptions(
             room=params.room,
             participant_id=params.participant_id,
+            broadcast=params.broadcast or [*params.room, params.participant_id],
             receive=_receive_options(params),
             audio_out=params.audio_out_enabled,
             video_out=params.video_out_enabled,
