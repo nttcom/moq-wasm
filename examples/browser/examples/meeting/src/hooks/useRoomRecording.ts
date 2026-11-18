@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { bearerToken, temporaryAppToken, temporaryAppsUrl } from '../../../../utils/access'
 import { type RecordingLayout, type RecordingFormat, type Recorder, listRecordings } from '../recording/recorderApi'
-import {
-  type ActiveRecording,
-  type BotsApi,
-  activeRecording,
-  latestRecorderBot,
-  startRecorderBot,
-  stopRecorderBot
-} from '../recording/recorderBot'
+import { type BotsApi, latestBot, startBot, stopBot } from '../bots/roomBots'
+import { type ActiveRecording, RECORDER_BOT_TYPE, activeRecording } from '../recording/recorderBot'
 
 const POLL_INTERVAL_MS = 5_000
 
@@ -60,7 +54,7 @@ export interface RoomRecordingControls {
 
 /// `null` until the recorder has answered once, so a recorder that is not
 /// running hides recording. The recorder lists the room's recordings; the
-/// recorder bot (recorderBot.ts) makes them. `relayUrl` is the relay the
+/// recorder bot (bots/roomBots.ts) makes them. `relayUrl` is the relay the
 /// player opens the recording through.
 export function useRoomRecording(
   recorderUrl: string,
@@ -78,7 +72,7 @@ export function useRoomRecording(
   const refresh = useCallback(async () => {
     if (bots.token()) {
       try {
-        setActive(activeRecording(await latestRecorderBot(bots, namespacePrefix)))
+        setActive(activeRecording(await latestBot(bots, RECORDER_BOT_TYPE, namespacePrefix)))
         setError(null)
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught))
@@ -124,14 +118,16 @@ export function useRoomRecording(
 
   const start = useCallback(
     (layout: RecordingLayout, composite: boolean, format: RecordingFormat = 'mp4') =>
-      run(async () => activeRecording(await startRecorderBot(bots, namespacePrefix, { layout, composite, format }))),
+      run(async () =>
+        activeRecording(await startBot(bots, RECORDER_BOT_TYPE, namespacePrefix, { layout, composite, format }))
+      ),
     [bots, namespacePrefix, run]
   )
   const stop = useCallback(async () => {
     const id = active?.id
     if (id) {
       await run(async () => {
-        await stopRecorderBot(bots, id)
+        await stopBot(bots, RECORDER_BOT_TYPE, id)
         return { id, state: 'stopping' }
       })
     }
