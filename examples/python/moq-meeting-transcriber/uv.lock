@@ -1246,14 +1246,14 @@ requires-dist = [
     { name = "av", marker = "extra == 'codecs'", specifier = ">=14" },
     { name = "moq-wasm", extras = ["codecs"], marker = "extra == 'pipecat'" },
     { name = "numpy", marker = "extra == 'codecs'", specifier = ">=1.26" },
-    { name = "pipecat-ai", marker = "extra == 'pipecat'", specifier = ">=1.12" },
+    { name = "pipecat-ai", marker = "extra == 'pipecat'", specifier = ">=1.13" },
 ]
 provides-extras = ["codecs", "pipecat"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "av", specifier = ">=14" },
-    { name = "pipecat-ai", specifier = ">=1.12" },
+    { name = "pipecat-ai", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
 ]
