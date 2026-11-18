@@ -1,79 +1,115 @@
 import asyncio
-import time
+import json
 from dataclasses import dataclass, field
 
-import pytest
+from moq_wasm import Location
+from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage
+from pipecat.frames.frames import (
+    InputTransportMessageFrame,
+    OutputTransportMessageFrame,
+    UserImageRawFrame,
+    UserImageRequestFrame,
+)
 from pipecat.tests.utils import SleepFrame, run_test
 
-from moq_camera_detection.detector import STALE_PICTURE_SECONDS, CameraPicture, CameraDetector
+from moq_camera_detection.detector import EVENT_TIMELINE_TRACK, CameraDetector, _rgb_to_jpeg
 from moq_camera_detection.prompt import Prompt
-from moq_system_one_bot.testing import next_records, published_timeline
-from tests.helpers import YES_NO_PROMPT, StubVision
+from tests.helpers import StubVision
 
-NO_MORE_RECORDS_WAIT_SECONDS = 0.2
+SIZE = (16, 16)
+PROMPT = json.dumps({"questions": [{"type": "choice", "question": "Is there a person?", "choices": ["yes", "no"]}]}).encode()
 
 
-def fresh_picture(location: tuple[int, int], jpeg: bytes = b"jpeg") -> CameraPicture:
-    return CameraPicture(jpeg=jpeg, location=location, decoded_at=time.monotonic(), prompt=YES_NO_PROMPT)
+def prompt_message(location: tuple[int, int] = (7, 0)) -> InputTransportMessageFrame:
+    return InputTransportMessageFrame(message=MoqWasmTrackMessage("camera", "prompt", PROMPT, Location(*location)))
+
+
+def camera_picture(location: tuple[int, int], value: int = 0) -> UserImageRawFrame:
+    frame = UserImageRawFrame(
+        image=bytes([value]) * (SIZE[0] * SIZE[1] * 3),
+        size=SIZE,
+        format="RGB",
+        user_id="camera",
+        request=UserImageRequestFrame(user_id="camera"),
+    )
+    frame.metadata["location"] = Location(*location)
+    return frame
+
+
+def records(frames) -> list[dict]:
+    return [
+        frame.message.record
+        for frame in frames
+        if isinstance(frame, OutputTransportMessageFrame) and isinstance(frame.message, MoqWasmEventRecord)
+    ]
 
 
 @dataclass
 class LateFirstAnswerVision:
-    first_answer_released: asyncio.Event = field(default_factory=asyncio.Event)
+    """Answers the first picture (value 0) only after it answered any other."""
+
+    first_jpeg: bytes
+    other_answered: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def answer(self, jpeg: bytes, prompt: Prompt) -> list[str]:
-        if jpeg == b"first":
-            await self.first_answer_released.wait()
-        else:
-            self.first_answer_released.set()
-        return ["yes" if jpeg == b"first" else "no"]
+        if jpeg == self.first_jpeg:
+            await self.other_answered.wait()
+            return ["yes"]
+        self.other_answered.set()
+        return ["no"]
 
 
-async def test_fresh_picture_answer_is_recorded_at_its_location_with_its_prompt():
+async def test_a_pictures_answer_is_recorded_at_its_location_with_the_prompts():
     # Arrange
-    timeline, publication = await published_timeline()
     vision = StubVision(answers=["yes"])
 
     # Act
-    await run_test(
-        CameraDetector(vision, timeline),
-        frames_to_send=[fresh_picture((42, 3)), SleepFrame()],
-        expected_down_frames=[],
+    down, _ = await run_test(
+        CameraDetector(vision),
+        frames_to_send=[prompt_message(), camera_picture((42, 3)), SleepFrame(0.1)],
     )
 
     # Assert
-    assert await next_records(publication) == [{"L": [42, 3], "data": {"prompt": [7, 0], "answers": ["yes"]}}]
+    assert records(down) == [{"L": [42, 3], "data": {"prompt": (7, 0), "answers": ["yes"]}}]
+    assert down[-1].message.track == EVENT_TIMELINE_TRACK
 
 
-async def test_stale_picture_is_not_judged():
+async def test_pictures_are_asked_for_only_once_a_prompt_came():
+    # Act
+    _, up_without = await run_test(CameraDetector(StubVision(answers=["yes"])), frames_to_send=[SleepFrame(0.3)])
+    _, up_with = await run_test(
+        CameraDetector(StubVision(answers=["yes"])), frames_to_send=[prompt_message(), SleepFrame(0.3)]
+    )
+
+    # Assert: one request waits for its picture before the next is made
+    assert not [frame for frame in up_without if isinstance(frame, UserImageRequestFrame)]
+    assert [frame.user_id for frame in up_with if isinstance(frame, UserImageRequestFrame)] == ["camera"]
+
+
+async def test_an_answer_returned_after_a_newer_one_is_not_recorded():
+    # Act
+    down, _ = await run_test(
+        CameraDetector(LateFirstAnswerVision(_rgb_to_jpeg(camera_picture((0, 0)).image, SIZE))),
+        frames_to_send=[prompt_message(), camera_picture((44, 0)), camera_picture((44, 1), 10), SleepFrame(0.1)],
+    )
+
+    # Assert
+    assert records(down) == [{"L": [44, 1], "data": {"prompt": (7, 0), "answers": ["no"]}}]
+
+
+async def test_a_request_no_picture_answers_drops_the_prompt():
     # Arrange
-    timeline, _ = await published_timeline()
-    vision = StubVision(answers=["yes"])
-    decoded_at = time.monotonic() - STALE_PICTURE_SECONDS - 1
+    detector = CameraDetector(StubVision(answers=["yes"]))
+
+    async def fail_requests():
+        await asyncio.sleep(0.15)
+        await detector._request_failed({"error": "camera left"})
+
+    failing = asyncio.create_task(fail_requests())
 
     # Act
-    await run_test(
-        CameraDetector(vision, timeline),
-        frames_to_send=[CameraPicture(jpeg=b"jpeg", location=(43, 0), decoded_at=decoded_at, prompt=YES_NO_PROMPT)],
-        expected_down_frames=[],
-    )
+    _, up = await run_test(detector, frames_to_send=[prompt_message(), SleepFrame(0.5)])
+    await failing
 
-    # Assert
-    assert vision.images == []
-
-
-async def test_answer_returned_after_a_newer_one_is_not_recorded():
-    # Arrange
-    timeline, publication = await published_timeline()
-
-    # Act
-    await run_test(
-        CameraDetector(LateFirstAnswerVision(), timeline),
-        frames_to_send=[fresh_picture((44, 0), b"first"), fresh_picture((44, 1), b"second"), SleepFrame()],
-        expected_down_frames=[],
-    )
-
-    # Assert
-    assert await next_records(publication) == [{"L": [44, 1], "data": {"prompt": [7, 0], "answers": ["no"]}}]
-    with pytest.raises(TimeoutError):
-        await publication.next_write(NO_MORE_RECORDS_WAIT_SECONDS)
+    # Assert: the failed request was the only one
+    assert len([frame for frame in up if isinstance(frame, UserImageRequestFrame)]) == 1

@@ -415,16 +415,18 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   transcript stream.
 
 ### The bots in this repository
-The bots under `examples/python/` do not run on `MoqWasmTransport`:
+- Camera detection runs on `MoqWasmTransport`: it reads the camera page's
+  `prompt` from `data_in_tracks`, asks for the camera's picture with
+  `UserImageRequestFrame` while fewer than eight are being judged, and
+  appends each verdict, at the picture's Location, to `event_timelines_out`.
 - The Meeting transcriber runs a pipeline per participant on
   `MoqWasmParticipantInput`, so that its voice activity detector hears one
   speaker, and publishes under `{root}/{room}/bots/transcriber`, two levels
   down, so the Meeting lists no participant for it.
-- Chat moderation, camera detection and PTZ tracking run on the media layer
-  and `moq_wasm.codecs`. They record each verdict at
-  the Location of the chat message or picture it judged, and follow tracks of
-  their own (`prompt`, `chat`) next to the media. Camera detection and PTZ
-  tracking take their pictures from `decode_pictures`.
+- Chat moderation and PTZ tracking run on the media layer and
+  `moq_wasm.codecs`. They record each verdict at the Location of the chat
+  message or picture it judged; PTZ tracking takes its pictures from
+  `decode_pictures` and subscribes to the camera only while a target is set.
 
 ### Publishing media: `_native.MediaBroadcast`
 The browser SDK encodes with WebCodecs and hands the encoded samples to
