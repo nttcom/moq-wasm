@@ -1,7 +1,6 @@
 /* The dashboard's colors, on the tokens of utils/theme.css so it follows the access mode. */
 .app {
   --panel: var(--surface);
-  --panel-raised: var(--surface-raised);
   --line: var(--border);
   --line-strong: var(--border-strong);
   --muted: var(--text-muted);
