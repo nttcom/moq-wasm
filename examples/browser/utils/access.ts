@@ -228,9 +228,13 @@ async function refresh(token: TemporaryToken): Promise<TemporaryToken> {
   return refreshed
 }
 
+/// The temporary-apps service, which also calls `bots` for a temporary app's pages.
+export function temporaryAppsUrl(): string {
+  return resolveServiceUrl(window.location.search, window.location.href, TEMPORARY_APPS_URLS)
+}
+
 async function callMint(path: string, body: unknown): Promise<TemporaryToken> {
-  const temporaryAppsUrl = resolveServiceUrl(window.location.search, window.location.href, TEMPORARY_APPS_URLS)
-  const response = await fetch(`${temporaryAppsUrl}${path}`, {
+  const response = await fetch(`${temporaryAppsUrl()}${path}`, {
     method: 'POST',
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body)

@@ -36,30 +36,6 @@ export function resolveRecorderUrl(search: string, relayUrl: string): string {
   return resolveServiceUrl(search, relayUrl, RECORDER_URLS)
 }
 
-export function activeRecording(recordings: RoomRecording[]): RoomRecording | undefined {
-  return recordings.find(
-    (recording) => recording.state === 'starting' || recording.state === 'recording' || recording.state === 'stopping'
-  )
-}
-
-export async function startRecording(
-  recorder: Recorder,
-  namespacePrefix: string,
-  layout: RecordingLayout,
-  composite: boolean,
-  format: RecordingFormat = 'mp4'
-): Promise<RoomRecording> {
-  return request(recorder, '/recordings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ namespace_prefix: namespacePrefix, layout, composite, format })
-  })
-}
-
-export async function stopRecording(recorder: Recorder, id: string): Promise<RoomRecording> {
-  return request(recorder, `/recordings/${encodeURIComponent(id)}/stop`, { method: 'POST' })
-}
-
 export async function listRecordings(recorder: Recorder, namespacePrefix: string): Promise<RoomRecording[]> {
   const query = new URLSearchParams({ namespace_prefix: namespacePrefix })
   const body = await request<{ recordings: RoomRecording[] }>(recorder, `/recordings?${query}`, {})
