@@ -6,6 +6,8 @@ use tokio::sync::Mutex;
 
 const METADATA_TOKEN_URL: &str =
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+const METADATA_IDENTITY_URL: &str =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
 const REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(60);
 
 /// The OAuth access token of the service account a Google Cloud workload runs
@@ -61,4 +63,22 @@ impl MetadataToken {
         *cached = Some(token);
         Ok(value)
     }
+}
+
+/// A Google ID token of the workload's service account for `audience`, with
+/// its email (`format=full`), which a service verifies to know the caller.
+/// Read anew on every call. Fails outside Google Cloud.
+pub async fn identity_token(http: &Client, audience: &str) -> anyhow::Result<String> {
+    let url = reqwest::Url::parse_with_params(
+        METADATA_IDENTITY_URL,
+        [("audience", audience), ("format", "full")],
+    )?;
+    Ok(http
+        .get(url)
+        .header("Metadata-Flavor", "Google")
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?)
 }
