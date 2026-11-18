@@ -179,19 +179,6 @@ async fn handle(
                 _ => respond(StatusCode::BAD_REQUEST, Vec::new()),
             }
         }
-        (Method::DELETE, path) if path.starts_with(&objects_path) => {
-            let object = percent_decode(&path[objects_path.len()..]);
-            let current = state.objects.get(&object).map(|stored| stored.generation);
-            match (current, if_generation_match) {
-                (None, _) => respond(StatusCode::NOT_FOUND, Vec::new()),
-                (Some(current), Some(Ok(expected))) if expected == current => {
-                    state.objects.remove(&object);
-                    respond(StatusCode::NO_CONTENT, Vec::new())
-                }
-                (Some(_), Some(Ok(_))) => respond(StatusCode::PRECONDITION_FAILED, Vec::new()),
-                _ => respond(StatusCode::BAD_REQUEST, Vec::new()),
-            }
-        }
         (Method::POST, path)
             if path == upload_path && query("uploadType").as_deref() == Some("media") =>
         {

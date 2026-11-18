@@ -90,6 +90,6 @@ async fn prepare(args: BotArgs, bots: &Arc<BotsClient>) -> Result<RecordingJob> 
             token,
         },
         output_dir: args.output_dir,
-        bots: Some(Arc::clone(bots)),
+        bots: Arc::clone(bots),
     })
 }

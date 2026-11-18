@@ -4,57 +4,23 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::Result;
 use tokio::sync::watch;
 use url::Url;
 
 use crate::{
-    RecordArgs, RoomArgs,
+    RoomArgs,
     bots_client::BotsClient,
-    launcher::{Job, Launcher},
+    launcher::Launcher,
     recorder::{BroadcastOptions, Content},
     relay::ServiceToken,
     room_recording::{RecordingLimits, RoomConfig, RoomStatus, lock, record},
     room_state::{CompositeState, RoomRecord, RoomState},
     state_sync_task::{StateSyncTask, bot_state, now_ms, with_status},
     store::RecordingStore,
-    token_refresh_task::TokenRenewal,
 };
 
-/// Records the room of recording `args.id` as the API wrote it into the
-/// store. A job whose recording is no longer `starting` was given up by the
-/// API and exits without recording.
-pub(crate) async fn run(args: RecordArgs) -> Result<()> {
-    let store = RecordingStore::open(&args.store)?;
-    let record_state = store
-        .read_state(&args.id)
-        .await?
-        .with_context(|| format!("no recording {}", args.id))?;
-    ensure!(
-        record_state.state == RoomState::Starting,
-        "recording {} is {:?}, not starting",
-        args.id,
-        record_state.state
-    );
-    tracing::info!(id = %args.id, prefix = %record_state.namespace_prefix, "recording job started");
-    record_room(RecordingJob {
-        store,
-        store_url: args.store,
-        launcher: Launcher::from_args(&args.launcher)?,
-        record_state,
-        limits: args.limits.limits(),
-        room: args.room,
-        token: ServiceToken {
-            token: args.token,
-            renewal: args.temporary_apps_url.map(TokenRenewal::Issuer),
-        },
-        output_dir: args.output_dir,
-        bots: None,
-    })
-    .await
-}
-
-/// A room recording a job runs, as `recorder serve` or `bots` asked for it.
+/// A room recording `bots` started.
 pub(crate) struct RecordingJob {
     pub(crate) store: RecordingStore,
     pub(crate) store_url: Url,
@@ -65,15 +31,13 @@ pub(crate) struct RecordingJob {
     pub(crate) limits: RecordingLimits,
     pub(crate) token: ServiceToken,
     pub(crate) output_dir: PathBuf,
-    /// `bots`, when it started the recording. It holds the room, and the
-    /// recording reports to it and publishes its presence. Without it the
-    /// room's lock is `recorder serve`'s, released when the recording ends.
-    pub(crate) bots: Option<Arc<BotsClient>>,
+    /// Holds the room; the recording reports to it and publishes its
+    /// presence.
+    pub(crate) bots: Arc<BotsClient>,
 }
 
-/// Records the room and keeps its state in the store while it runs. When it
-/// ends it releases the room, or reports the end to `bots` when `bots`
-/// started it, then starts the composite if one was requested.
+/// Records the room and keeps its state in the store while it runs, reports
+/// the end to `bots`, then starts the composite if one was requested.
 pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
     let RecordingJob {
         store,
@@ -98,7 +62,7 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         record_state.clone(),
         Arc::clone(&status),
         stop_sender,
-        bots.clone(),
+        Arc::clone(&bots),
     )?;
     let config = RoomConfig {
         relay: room.relay.clone(),
@@ -120,9 +84,7 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         },
         format: record_state.format,
         limits,
-        presence: bots
-            .as_ref()
-            .map(|bots| format!("{prefix}/bots/{}", bots.bot_type())),
+        presence: format!("{prefix}/bots/{}", bots.bot_type()),
     };
     let result = record(config, stop, &status).await;
     sync.finish().await;
@@ -142,20 +104,15 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         }
     };
     store.write_state(&finished).await?;
-    match &bots {
-        Some(bots) => {
-            let error = match &finished.state {
-                RoomState::Failed(error) => Some(error.as_str()),
-                _ => None,
-            };
-            if let Err(error) = bots.heartbeat(bot_state(&finished.state), error).await {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    "cannot report the end to bots"
-                );
-            }
-        }
-        None => store.unlock_room(&prefix, &id).await?,
+    let error = match &finished.state {
+        RoomState::Failed(error) => Some(error.as_str()),
+        _ => None,
+    };
+    if let Err(error) = bots.heartbeat(bot_state(&finished.state), error).await {
+        tracing::warn!(
+            error = format!("{error:#}"),
+            "cannot report the end to bots"
+        );
     }
     tracing::info!(%id, state = ?finished.state, "recording job finished");
     if record_state.composite {
@@ -185,7 +142,7 @@ async fn launch_composite(
         "--work-dir".to_string(),
         work_dir.display().to_string(),
     ];
-    match launcher.launch(Job::Composite, composite_args).await {
+    match launcher.launch_composite(composite_args).await {
         Ok(()) => None,
         Err(error) => {
             tracing::error!(
