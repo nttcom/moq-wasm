@@ -547,6 +547,16 @@
   container-type: inline-size;
 }
 
+/* On the dark theme the card and the page are as dark as a stage, so the thumbnail is lifted a step to
+   stand apart from them. */
+:root:not([data-access-mode='public']) .example-thumb {
+  --th-bg: #1a2029;
+  --th-panel: #212833;
+  --th-tile: #29313c;
+  --th-figure: #46525f;
+  --th-line: #36404c;
+}
+
 .example-thumb > * {
   font-size: clamp(5px, 2.6cqi, 11px);
 }
