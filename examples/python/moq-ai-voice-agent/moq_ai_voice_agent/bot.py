@@ -5,7 +5,6 @@ from functools import partial
 
 import moq_wasm
 from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
-from moq_bot_job.relay import add_relay_arguments
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -43,7 +42,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.set_defaults(bot="moq-ai-voice-agent")
     add_bot_job_arguments(parser)
-    add_relay_arguments(parser)
     parser.add_argument(
         "--vertex-project",
         help="call Gemini on this Google Cloud project's Vertex AI with the application default credentials "

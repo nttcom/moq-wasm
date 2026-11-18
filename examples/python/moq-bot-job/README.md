@@ -3,7 +3,7 @@
 [bot サービス](../../../docs/architecture/bots/architecture.md)（`services/bots`）が 1 つのルームのために起動する Python bot の共通部分です。
 Meeting の書き起こし、MoQ Chat Moderation、MoQ Camera Detection、MoQ PTZ Tracking、MoQ AI Voice Agent の bot が使います。
 
-`bot_job.add_bot_job_arguments` がサービスの付ける引数（`--bot-type`、`--bot-id`、`--bots-url`、`--namespace-prefix`、`--grace-seconds`、`--max-seconds`、`--options`）とテレメトリのオプションを足し、`bot_job.serve_bot_job` がルームを動かします。
+`bot_job.add_bot_job_arguments` がサービスの付ける引数（`--bot-type`、`--bot-id`、`--bots-url`、`--namespace-prefix`、`--grace-seconds`、`--max-seconds`、`--options`）とテレメトリ、relay のオプションを足し、`bot_job.serve_bot_job` がルームを動かします。
 
 - bot は relay のトークンを `Bots.token` でサービスから受け取り、`Bots.refresh` で更新します。自分のブロードキャストは、トークンが publish を許す `<room>/bots/<type>`（`BotJob.broadcast`）に置きます。
 - 5 秒ごとに heartbeat を送ります。サービスが停止を求めたら（アプリの `DELETE` か最長時間）、ルームを抜けます。
@@ -16,12 +16,13 @@ Meeting の書き起こし、MoQ Chat Moderation、MoQ Camera Detection、MoQ PT
 | --- | --- | --- |
 | `--telemetry-url` | relay がローカルなら `http://localhost:8095`、それ以外は `https://observability.moqt.research.skyway.io` | `INFO` 以上のログを 10 秒ごとに送る observability サーバー |
 | `--no-telemetry` | なし | ログを送らない |
+| `--relay-url` | `https://127.0.0.1:4433` | 接続する relay |
+| `--insecure` | なし | relay の TLS 検証を省く |
 
-bot は自分のオプションに、次の 2 つの関数で relay と ID トークンのオプションを足せます。
+bot は自分のオプションに、次の関数で ID トークンのオプションを足せます。
 
 | 関数 | 足すオプション |
 | --- | --- |
-| `relay.add_relay_arguments` | `--relay-url`（既定値 `https://127.0.0.1:4433`）と、TLS 検証を省く `--insecure` |
 | `identity_token.add_identity_token_arguments` | `--gcloud-auth` と `--metadata-auth`。`identity_token_from_arguments` がそれに応じた ID トークンを返す |
 
 ## テスト
