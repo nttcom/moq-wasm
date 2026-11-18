@@ -536,6 +536,11 @@
   --th-accent: #2dd4bf;
   --th-alert: #c25555;
   --th-success: #34d399;
+  --th-raise: var(--th-raise);
+  --th-floor: var(--th-floor);
+  --th-glass: var(--th-glass);
+  --th-figure-on: #2f5f5a;
+  --th-on-accent: #04201c;
   position: relative;
   display: block;
   overflow: hidden;
@@ -547,14 +552,23 @@
   container-type: inline-size;
 }
 
-/* On the dark theme the card and the page are as dark as a stage, so the thumbnail is lifted a step to
-   stand apart from them. */
+/* On the dark theme the card and the page are as dark as the stage, so the thumbnails turn light, the
+   reverse of the light theme's dark thumbnails on white cards. */
 :root:not([data-access-mode='public']) .example-thumb {
-  --th-bg: #1a2029;
-  --th-panel: #212833;
-  --th-tile: #29313c;
-  --th-figure: #46525f;
-  --th-line: #36404c;
+  --th-bg: #eef2f5;
+  --th-panel: #ffffff;
+  --th-tile: #dde4ea;
+  --th-figure: #aab6c2;
+  --th-line: #cdd6df;
+  --th-text: #1f2937;
+  --th-dim: #64748b;
+  --th-accent: #0f766e;
+  --th-success: #15803d;
+  --th-raise: #e6ebf0;
+  --th-floor: #d3dbe2;
+  --th-glass: #c3ced8;
+  --th-figure-on: #7fbfb6;
+  --th-on-accent: #ffffff;
 }
 
 .example-thumb > * {
@@ -621,7 +635,7 @@
 }
 
 .th-tile.speak .th-person {
-  --th-figure: #2f5f5a;
+  --th-figure: var(--th-figure-on);
 }
 
 .th-name,
@@ -637,6 +651,7 @@
   padding: 0 0.5em;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.5);
+  color: #fff;
 }
 
 /* Meeting: the room header, the gallery and the control bar, laid out as the page lays them out. */
@@ -884,7 +899,7 @@
 }
 
 .th-board .paper {
-  fill: #eef1f3;
+  fill: #ffffff;
 }
 
 .th-board .ink,
@@ -939,7 +954,7 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: linear-gradient(180deg, #1f2731, var(--th-bg));
+  background: linear-gradient(180deg, var(--th-raise), var(--th-bg));
 }
 
 .th-street {
@@ -1067,11 +1082,11 @@
 }
 
 .th-cctv-scene .wall {
-  fill: #1f2731;
+  fill: var(--th-raise);
 }
 
 .th-cctv-scene .floor {
-  fill: #141920;
+  fill: var(--th-floor);
 }
 
 .th-cctv-scene .edge,
@@ -1089,7 +1104,7 @@
 }
 
 .th-cctv-scene .glass {
-  fill: #26313d;
+  fill: var(--th-glass);
 }
 
 .th-cctv-scene .sign {
@@ -1097,7 +1112,7 @@
 }
 
 .th-cctv-scene .plant {
-  fill: #2f5f5a;
+  fill: var(--th-figure-on);
 }
 
 .th-cctv-scene .arm {
@@ -1116,7 +1131,7 @@
 }
 
 .th-cctv-scene .figure.far {
-  fill: #2f5f5a;
+  fill: var(--th-figure-on);
 }
 
 .th-time {
@@ -1150,7 +1165,7 @@
   flex: 1;
   overflow: hidden;
   border-radius: 4px;
-  background: linear-gradient(180deg, #1f2731, var(--th-panel));
+  background: linear-gradient(180deg, var(--th-raise), var(--th-panel));
 }
 
 .th-tube-light {
@@ -1177,6 +1192,7 @@
   left: 0;
   padding: 0 3% 2%;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.6), transparent);
+  color: #fff;
 }
 
 .th-tube-progress {
@@ -1195,12 +1211,12 @@
 .th-tube-row svg {
   width: 1.3em;
   height: 1.3em;
-  fill: var(--th-text);
+  fill: currentColor;
 }
 
 .th-tube-row svg .line {
   fill: none;
-  stroke: var(--th-text);
+  stroke: currentColor;
   stroke-width: 2;
 }
 
@@ -1427,7 +1443,7 @@
   padding: 0 0.35em;
   border-radius: 2px 2px 0 0;
   background: var(--th-accent);
-  color: #04201c;
+  color: var(--th-on-accent);
   white-space: nowrap;
 }
 
@@ -1469,7 +1485,7 @@
 .th-langs i.on {
   background: var(--th-accent);
   box-shadow: none;
-  color: #04201c;
+  color: var(--th-on-accent);
 }
 
 .th-hear {
