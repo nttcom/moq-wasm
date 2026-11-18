@@ -32,23 +32,24 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const [tab, setTab] = useState<'chat' | 'transcription' | 'record'>('chat')
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-line bg-surface">
+    // Below sm the sidebar covers the room instead of squeezing the tiles beside it.
+    <aside className="absolute inset-0 z-20 flex flex-col bg-surface sm:static sm:h-full sm:w-80 sm:shrink-0 sm:border-l sm:border-line">
       <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5">
         <div className="flex gap-0.5 rounded-lg border border-line bg-sunken p-0.5">
-          <SidebarTab label="Chat" active={tab === 'chat'} onClick={() => setTab('chat')} />
+          <SidebarTab label="チャット" active={tab === 'chat'} onClick={() => setTab('chat')} />
           <SidebarTab
-            label="Transcription"
+            label="文字起こし"
             testId="transcript-tab"
             active={tab === 'transcription'}
             onClick={() => setTab('transcription')}
           />
-          <SidebarTab label="Record" testId="record-tab" active={tab === 'record'} onClick={() => setTab('record')} />
+          <SidebarTab label="録画" testId="record-tab" active={tab === 'record'} onClick={() => setTab('record')} />
         </div>
         <button
           type="button"
           onClick={onToggle}
-          aria-label="Close"
-          title="Close"
+          aria-label="閉じる"
+          title="閉じる"
           className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted transition hover:bg-hover hover:text-fg"
         >
           <X className="h-4 w-4" />
@@ -73,7 +74,7 @@ export function ChatSidebar({
 
 function TranscriptionNotice({ captions }: { captions: CaptionsControls | null }) {
   if (!captions) {
-    return <p className="mt-4 text-sm text-muted">Transcription is not available in this room</p>
+    return <p className="mt-4 text-sm text-muted">このルームでは文字起こしを利用できません</p>
   }
   return (
     <div className="mt-4 space-y-3">
@@ -83,7 +84,7 @@ function TranscriptionNotice({ captions }: { captions: CaptionsControls | null }
       {!captions.active && (
         <>
           {captions.error && <p className="text-xs text-danger">{captions.error}</p>}
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Start transcription</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">文字起こしを開始</div>
           <div className="space-y-2">
             {ASR_CHOICES.map(({ asr, label }) => (
               <button
@@ -119,7 +120,7 @@ function ChatPanel({
         {messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-sm text-faint">
             <MessageSquare className="h-6 w-6" />
-            <p>No messages yet.</p>
+            <p>メッセージはまだありません</p>
           </div>
         ) : (
           messages.map((message, index) => (
@@ -141,21 +142,21 @@ function ChatPanel({
       </div>
       <form onSubmit={onSend} className="flex items-center gap-2 border-t border-line pt-3">
         <label className="min-w-0 flex-1">
-          <span className="sr-only">Send Chat Message</span>
+          <span className="sr-only">チャットメッセージを送信</span>
           <input
             type="text"
             data-testid="chat-message-input"
             value={chatMessage}
             onChange={(event) => onMessageChange(event.target.value)}
             className="h-10 w-full rounded-md border border-line-strong bg-sunken px-3 text-sm text-fg placeholder:text-faint focus:border-accent focus:outline-none focus:ring-3 focus:ring-accent/25"
-            placeholder="Type your message"
+            placeholder="メッセージを入力"
           />
         </label>
         <button
           type="submit"
           data-testid="chat-send-button"
-          aria-label="Send"
-          title="Send"
+          aria-label="送信"
+          title="送信"
           className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-md bg-accent text-on-accent transition hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
           disabled={!chatMessage.trim()}
         >
@@ -196,7 +197,7 @@ function TranscriptPanel({ records }: { records: TranscriptRecord[] }) {
   return (
     <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
       {records.length === 0 ? (
-        <p className="text-sm text-faint">Nothing transcribed yet.</p>
+        <p className="text-sm text-faint">まだ文字起こしはありません</p>
       ) : (
         records.map((record) => (
           <div

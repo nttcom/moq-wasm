@@ -171,7 +171,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
   const publisherHref = pageHref({ mode: 'publisher', location, relay: relayUrl })
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-var(--shell-height))] w-full max-w-[1600px] flex-col gap-4 px-4 py-5 text-fg sm:px-6">
+    <main className="mx-auto flex min-h-[calc(100dvh-var(--shell-height))] w-full max-w-[1600px] flex-col gap-4 px-4 py-5 text-fg sm:px-6">
       {/* header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
@@ -179,7 +179,9 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
             <Cctv className="h-[18px] w-[18px]" />
           </span>
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">Remote Monitoring</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">
+              ユースケース · Remote Monitoring
+            </p>
             <h1 className="text-lg font-bold leading-tight tracking-tight">MoQT 遠隔監視</h1>
           </div>
           <span className="rounded-full border border-line-strong bg-sunken px-2.5 py-0.5 font-mono text-xs text-muted">
@@ -285,7 +287,7 @@ export function MonitoringRoom({ location, relayUrl: defaultRelayUrl }: Props) {
         reviewingCamera={mode === 'review' && stageId ? stageId : null}
         reviewStatus={stageState?.rewindStatus.text ?? null}
       />
-    </div>
+    </main>
   )
 }
 

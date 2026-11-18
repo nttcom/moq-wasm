@@ -3,15 +3,15 @@ import { RECORDING_CHOICES, type RoomRecordingControls, pendingRecordingLabel } 
 
 export function RecordPanel({ recording }: { recording: RoomRecordingControls | null }) {
   if (!recording) {
-    return <p className="mt-4 text-sm text-muted">Recording is not available in this room</p>
+    return <p className="mt-4 text-sm text-muted">このルームでは録画を利用できません</p>
   }
   return (
     <div className="mt-4 flex min-h-0 flex-1 flex-col gap-4">
       <RecordControls recording={recording} />
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted">Recordings</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted">録画</div>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {recording.replays.length === 0 ? (
-          <p className="text-sm text-faint">No finished recording yet.</p>
+          <p className="text-sm text-faint">完了した録画はまだありません</p>
         ) : (
           recording.replays.toReversed().map((replay) => (
             <a
@@ -52,7 +52,7 @@ function RecordControls({ recording }: { recording: RoomRecordingControls }) {
         </button>
       ) : (
         <>
-          <div className="text-xs font-semibold uppercase tracking-wide text-muted">Start recording</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-muted">録画を開始</div>
           {RECORDING_CHOICES.map(({ id, layout, composite, label, format }) => (
             <button
               key={id}

@@ -262,7 +262,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
           states: memberStates(member, remoteViews.get(member.id))
         }))}
       />
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <main className="min-w-0 flex-1">
           <MemberGrid
             localMember={room.localMember}

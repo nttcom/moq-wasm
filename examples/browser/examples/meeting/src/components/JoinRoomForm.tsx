@@ -33,14 +33,14 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
   }
 
   return (
-    <div className="flex min-h-[calc(100dvh-var(--shell-height))] items-center justify-center px-4 py-10 sm:px-6">
+    <main className="flex min-h-[calc(100dvh-var(--shell-height))] items-center justify-center px-4 py-10 sm:px-6">
       <div className="grid w-full max-w-4xl overflow-hidden rounded-xl border border-line bg-surface shadow-lg md:grid-cols-[1fr_1.1fr]">
         <section className="flex flex-col gap-6 border-b border-line bg-subtle p-8 md:border-b-0 md:border-r">
           <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-accent-line bg-accent-soft text-accent">
             <Video className="h-5 w-5" />
           </span>
           <div className="space-y-2">
-            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-accent">MoQT Meeting</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-accent">ユースケース · Meeting</p>
             <h1 className="text-2xl font-bold tracking-tight text-fg">ルームに参加する</h1>
             <p className="text-sm leading-relaxed text-muted">
               MoQT の Relay を経由して、多人数の映像・音声会議をブラウザだけで試せます。
@@ -57,7 +57,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
         </section>
         <form onSubmit={handleSubmit} className="flex flex-col gap-5 p-8">
           <div className="space-y-2">
-            <Label htmlFor="roomName">Room Name</Label>
+            <Label htmlFor="roomName">ルーム名</Label>
             <Input
               type="text"
               id="roomName"
@@ -71,7 +71,7 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="userName">User Name</Label>
+            <Label htmlFor="userName">表示名</Label>
             <Input
               type="text"
               id="userName"
@@ -101,10 +101,10 @@ export function JoinRoomForm({ onJoin, joinError, connecting }: JoinRoomFormProp
             className="mt-1 w-full"
             disabled={!roomName.trim() || !userName.trim() || connecting}
           >
-            {connecting ? 'Connecting...' : 'Join Room'}
+            {connecting ? '接続しています…' : 'ルームに参加'}
           </Button>
         </form>
       </div>
-    </div>
+    </main>
   )
 }

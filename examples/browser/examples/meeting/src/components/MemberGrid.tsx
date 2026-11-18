@@ -1,7 +1,7 @@
 import { LocalMember, RemoteMember } from '../types/member'
 import type { CaptionsControls } from '../hooks/useCaptions'
 import type { RoomRecordingControls } from '../hooks/useRoomRecording'
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { PanelRightClose, PanelRightOpen, X } from 'lucide-react'
 import type { PlayoutSettings } from '../types/playout'
 import { PlayoutControls } from './PlayoutControls'
@@ -20,6 +20,7 @@ import {
   VIDEO_RESOLUTION_OPTIONS,
   type VideoEncodingSettings
 } from '../types/videoEncoding'
+import { FIELD_CLASS } from '../../../../lib/ui/field'
 
 const DEVICE_MODAL_FIELD_CLASS = 'flex items-center justify-between gap-3 text-sm text-fg'
 
@@ -149,7 +150,7 @@ export function MemberGrid({
           name={member.name}
           testId={`member-share-${member.name}`}
           picture={picture}
-          label="Screen"
+          label="画面共有"
           speaking={false}
           onOpenDetails={() => setDetailsTarget(member.id)}
         />
@@ -243,7 +244,7 @@ export function MemberGrid({
         captions={captions}
       />
       {isDeviceModalOpen && (
-        <DeviceModal title="Device settings" onClose={() => setIsDeviceModalOpen(false)}>
+        <DeviceModal title="デバイス設定" onClose={() => setIsDeviceModalOpen(false)}>
           <div className="space-y-4">
             <GetUserMediaForm
               settings={captureSettings}
@@ -254,16 +255,16 @@ export function MemberGrid({
               resolutionOptions={VIDEO_RESOLUTION_OPTIONS}
             />
             <div className="space-y-3 rounded-lg border border-line bg-subtle p-4">
-              <div className="text-sm font-semibold text-fg">Video encoder hardware acceleration</div>
+              <div className="text-sm font-semibold text-fg">映像エンコーダーのハードウェアアクセラレーション</div>
               <OptionSelect
-                label="Camera"
+                label="カメラ"
                 className={DEVICE_MODAL_FIELD_CLASS}
                 options={VIDEO_HARDWARE_ACCELERATION_OPTIONS}
                 value={selectedVideoEncoding.hardwareAcceleration}
                 onChange={(option) => void onSelectVideoEncoding({ hardwareAcceleration: option.value })}
               />
               <OptionSelect
-                label="Screen share"
+                label="画面共有"
                 className={DEVICE_MODAL_FIELD_CLASS}
                 options={VIDEO_HARDWARE_ACCELERATION_OPTIONS}
                 value={selectedScreenShareEncoding.hardwareAcceleration}
@@ -274,7 +275,7 @@ export function MemberGrid({
         </DeviceModal>
       )}
       {isStatsModalOpen && (
-        <DeviceModal title="Stats" onClose={() => setIsStatsModalOpen(false)} size="wide">
+        <DeviceModal title="統計" onClose={() => setIsStatsModalOpen(false)} size="wide">
           <MeetingStats
             remoteMembers={remoteMembers.map((member) => ({
               id: member.id,
@@ -364,14 +365,28 @@ function DeviceModal({
   size?: 'compact' | 'wide'
 }) {
   const maxWidthClass = size === 'wide' ? 'max-w-6xl' : 'max-w-md'
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  // A modal <dialog> moves focus into itself, keeps it there, closes on Escape and gives focus back.
+  useEffect(() => {
+    const dialog = dialogRef.current
+    dialog?.showModal()
+    return () => dialog?.close()
+  }, [])
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 py-6 backdrop-blur-sm">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        className={`w-full ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-xl border border-line-strong bg-surface p-6 text-fg shadow-2xl`}
-      >
+    <dialog
+      ref={dialogRef}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
+      // A click on the backdrop lands on the dialog itself; the content fills the rest of it.
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+      className={`m-auto w-[calc(100%-2rem)] ${maxWidthClass} max-h-[90vh] overflow-y-auto rounded-xl border border-line-strong bg-surface p-0 text-fg shadow-2xl backdrop:bg-black/60 backdrop:backdrop-blur-sm`}
+    >
+      <div className="p-6">
         <div className="mb-5 flex items-center justify-between gap-4">
           <h4 className="text-lg font-semibold tracking-tight">{title}</h4>
           <button
@@ -381,12 +396,12 @@ function DeviceModal({
             className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-line-strong bg-raised px-3 text-sm font-medium text-fg transition hover:bg-hover"
           >
             <X className="h-4 w-4" />
-            Close
+            閉じる
           </button>
         </div>
         {children}
       </div>
-    </div>
+    </dialog>
   )
 }
 
@@ -407,7 +422,7 @@ function OptionSelect<T extends { id: string; label: string }>({
     <label className={className}>
       <span>{label}</span>
       <select
-        className="rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-sm text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25"
+        className={FIELD_CLASS}
         value={value}
         onChange={(event) => {
           const option = options.find((entry) => entry.id === event.target.value)
@@ -552,7 +567,7 @@ function TrackSubscribeRow({
           disabled={disabled}
           data-testid={selectTestId}
           onChange={(event) => onChange(event.target.value)}
-          className="w-full min-w-0 rounded-md border border-line-strong bg-sunken px-2.5 py-1.5 text-sm text-fg outline-none transition focus:border-accent focus:ring-3 focus:ring-accent/25 disabled:opacity-60"
+          className={`w-full min-w-0 ${FIELD_CLASS} disabled:opacity-60`}
         >
           {tracks.length === 0 ? (
             <option value="" className="bg-surface text-fg">

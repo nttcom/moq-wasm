@@ -332,7 +332,7 @@ export function TopologyView({
             select(MESH)
           }}
         >
-          <title>Show all relays</title>
+          <title>すべての Relay を表示</title>
           <rect
             x={CENTER.x - 60}
             y={CENTER.y - ENVIRONMENT_RADIUS - 10}
@@ -475,14 +475,14 @@ export function TopologyView({
             })}
         </g>
       </svg>
-      <div className="zoom" role="group" aria-label="Zoom">
-        <button aria-label="Zoom in" onClick={() => zoomFromCenter(1 / ZOOM_STEP)}>
+      <div className="zoom" role="group" aria-label="ズーム">
+        <button aria-label="拡大" onClick={() => zoomFromCenter(1 / ZOOM_STEP)}>
           +
         </button>
-        <button aria-label="Zoom out" onClick={() => zoomFromCenter(ZOOM_STEP)}>
+        <button aria-label="縮小" onClick={() => zoomFromCenter(ZOOM_STEP)}>
           −
         </button>
-        <button aria-label="Fit to view" title="Fit to view" onClick={fit}>
+        <button aria-label="全体を表示" title="全体を表示" onClick={fit}>
           ⤢
         </button>
       </div>

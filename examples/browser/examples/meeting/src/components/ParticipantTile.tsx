@@ -61,7 +61,7 @@ export function ParticipantTile({
         <button
           type="button"
           aria-label={`Details of ${name}`}
-          title="Details"
+          title="詳細"
           data-testid={menuTestId}
           onClick={onOpenDetails}
           className="absolute right-2 top-2 rounded-full bg-black/60 p-1.5 text-white opacity-0 transition hover:bg-black/80 focus:opacity-100 group-hover:opacity-100"

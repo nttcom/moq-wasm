@@ -9,8 +9,8 @@ import { type Topology } from './topology'
 const POINTS = 90
 const LIVE_REFRESH_MS = 5_000
 const MIN_HEIGHT = 160
-// Mid tones, legible on the light and the dark surface alike; the total follows the text color.
-const PALETTE = ['#3b82f6', '#14b8a6', '#f59e0b', '#ec4899', '#8b5cf6']
+// observability.css sets each series color per access mode; the total follows the text color.
+const PALETTE = [1, 2, 3, 4, 5].map((index) => `var(--series-${index})`)
 const TOTAL_COLOR = 'var(--text)'
 
 function withTotal(lines: ChartLine[], totalLabel: string | undefined): ChartLine[] {
@@ -122,8 +122,8 @@ export function ChartDrawer(props: Props) {
   }
 
   return (
-    <section className="drawer" style={{ height }} aria-label="Charts">
-      <div className="drawer-grip" title="Drag to resize" onPointerDown={onGripDown} />
+    <section className="drawer" style={{ height }} aria-label="グラフ">
+      <div className="drawer-grip" title="ドラッグで高さを変更" onPointerDown={onGripDown} />
       <div className="drawer-head">
         <b>{title}</b>
         <small>{hoverMs === null ? 'latest' : new Date(hoverMs).toLocaleString()}</small>
@@ -135,7 +135,7 @@ export function ChartDrawer(props: Props) {
             </button>
           ))}
         </div>
-        <button className="close" aria-label="Close charts" onClick={onClose}>
+        <button className="close" aria-label="グラフを閉じる" onClick={onClose}>
           ×
         </button>
       </div>

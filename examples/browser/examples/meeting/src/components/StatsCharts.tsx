@@ -51,16 +51,16 @@ const AV_OFFSET_SCALE: ChartScale = {
 }
 
 const SERIES_COLOR_CLASSES = [
-  'text-cyan-500',
-  'text-orange-500',
-  'text-emerald-500',
-  'text-fuchsia-500',
-  'text-yellow-500',
-  'text-sky-500',
-  'text-rose-500',
-  'text-lime-500',
-  'text-violet-500',
-  'text-amber-500'
+  'text-chart-cyan',
+  'text-chart-orange',
+  'text-chart-emerald',
+  'text-chart-fuchsia',
+  'text-chart-yellow',
+  'text-chart-sky',
+  'text-chart-rose',
+  'text-chart-lime',
+  'text-chart-violet',
+  'text-chart-amber'
 ]
 
 const primaryStats = (sample: RemoteStatsSample) => sample.camera ?? sample.screenshare
@@ -71,32 +71,34 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
     title: 'Video Bitrate (kbps)',
     scale: VIDEO_BITRATE_SCALE,
     series: [
-      { label: 'Camera', accessor: (sample) => sample.camera?.receivedKbps, colorClass: 'text-cyan-300' },
-      { label: 'Screen', accessor: (sample) => sample.screenshare?.receivedKbps, colorClass: 'text-orange-300' }
+      { label: 'Camera', accessor: (sample) => sample.camera?.receivedKbps, colorClass: 'text-chart-cyan' },
+      { label: 'Screen', accessor: (sample) => sample.screenshare?.receivedKbps, colorClass: 'text-chart-orange' }
     ]
   },
   {
     key: 'audio-bitrate',
     title: 'Audio Bitrate (kbps)',
     scale: AUDIO_BITRATE_SCALE,
-    series: [{ label: 'Audio', accessor: (sample) => sample.camera?.receivedAudioKbps, colorClass: 'text-emerald-300' }]
+    series: [
+      { label: 'Audio', accessor: (sample) => sample.camera?.receivedAudioKbps, colorClass: 'text-chart-emerald' }
+    ]
   },
   {
     key: 'playout-buffer',
     title: 'Playout Buffer (ms)',
     scale: PLAYOUT_SCALE,
     series: [
-      { label: 'Buffer', accessor: (sample) => primaryStats(sample)?.bufferMs, colorClass: 'text-emerald-300' },
-      { label: 'Target', accessor: (sample) => primaryStats(sample)?.targetBufferMs, colorClass: 'text-orange-300' },
+      { label: 'Buffer', accessor: (sample) => primaryStats(sample)?.bufferMs, colorClass: 'text-chart-emerald' },
+      { label: 'Target', accessor: (sample) => primaryStats(sample)?.targetBufferMs, colorClass: 'text-chart-orange' },
       {
         label: 'Output latency',
         accessor: (sample) => primaryStats(sample)?.outputLatencyMs,
-        colorClass: 'text-sky-300'
+        colorClass: 'text-chart-sky'
       },
       {
         label: 'Jitter (p95)',
         accessor: (sample) => primaryStats(sample)?.arrivalSpreadMs,
-        colorClass: 'text-rose-300'
+        colorClass: 'text-chart-rose'
       }
     ]
   },
@@ -108,7 +110,7 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
       {
         label: 'Pub to sub delay',
         accessor: (sample) => primaryStats(sample)?.viewerDelayMs,
-        colorClass: 'text-cyan-300'
+        colorClass: 'text-chart-cyan'
       }
     ]
   },
@@ -117,7 +119,7 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
     title: 'A/V Offset (video − audio, ms)',
     scale: AV_OFFSET_SCALE,
     series: [
-      { label: 'Offset', accessor: (sample) => primaryStats(sample)?.syncOffsetMs, colorClass: 'text-violet-300' }
+      { label: 'Offset', accessor: (sample) => primaryStats(sample)?.syncOffsetMs, colorClass: 'text-chart-violet' }
     ]
   }
 ]

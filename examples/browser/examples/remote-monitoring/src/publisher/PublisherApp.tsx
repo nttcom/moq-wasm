@@ -77,7 +77,7 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
   }
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-var(--shell-height))] w-full max-w-[1200px] flex-col gap-4 px-4 py-5 text-fg sm:px-6">
+    <main className="mx-auto flex min-h-[calc(100dvh-var(--shell-height))] w-full max-w-[1200px] flex-col gap-4 px-4 py-5 text-fg sm:px-6">
       {/* header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
@@ -85,7 +85,9 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
             <Webcam className="h-[18px] w-[18px]" />
           </span>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">Remote Monitoring</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-accent">
+              ユースケース · Remote Monitoring
+            </p>
             <h1 className="text-lg font-bold leading-tight tracking-tight">カメラを配信する</h1>
           </div>
           {isIdle && (
@@ -222,6 +224,6 @@ export function PublisherApp({ location: defaultLocation, camId: defaultCamId, r
           </div>
         </div>
       )}
-    </div>
+    </main>
   )
 }

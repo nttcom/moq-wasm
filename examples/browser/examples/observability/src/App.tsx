@@ -46,10 +46,10 @@ const shortAppId = (appId: string) => (appId.length > 12 ? `${appId.slice(0, 8)}
 
 /** Whose stats the page shows: the API answers only the app of the page's token, `anon` without one. */
 const appTitle = {
-  public: 'The public anonymous app: everyone can see its stats',
-  temporary: 'The temporary app the examples share in this browser',
-  given: 'The app of the token in the URL',
-  unavailable: 'No temporary app could be started, so the public anonymous app is shown'
+  public: '公開の匿名 app: 誰でもこの統計を見られます',
+  temporary: 'このブラウザの Example が共有する一時 app',
+  given: 'URL のトークンの app',
+  unavailable: '一時 app を用意できなかったため、公開の匿名 app を表示しています'
 }[access.kind]
 
 const handlesArrowKeys = (target: EventTarget | null) =>
@@ -182,7 +182,7 @@ export default function App() {
   const drawerOpen = Boolean(selection) && !drawerClosed
   const selectionTitle = (() => {
     if (!selection) return ''
-    if (selection.kind === 'mesh') return 'All relays'
+    if (selection.kind === 'mesh') return 'すべての Relay'
     if (selection.kind === 'client') return topology.clients.get(selection.id)?.label ?? selection.id
     if (selection.kind === 'link') {
       const [from, to] = selection.id.split('>')
@@ -194,8 +194,11 @@ export default function App() {
 
   return (
     <div className="app">
-      <header>
-        <h1>MoQ Observability</h1>
+      <div className="app-toolbar">
+        <h1>
+          <span className="app-eyebrow">運用ツール · Observability</span>
+          通信状況
+        </h1>
         <span className="app-badge" title={appTitle}>
           App <b>{shortAppId(access.namespaceRoot)}</b>
         </span>
@@ -205,7 +208,7 @@ export default function App() {
           <input
             className={filters.namespacePrefix ? 'active' : ''}
             list="namespace-options"
-            placeholder="prefix, e.g. room1"
+            placeholder="prefix（例: room1）"
             autoComplete="off"
             value={filters.namespacePrefix}
             onChange={(event) => setFilters({ ...filters, namespacePrefix: event.target.value })}
@@ -215,7 +218,10 @@ export default function App() {
               <option key={prefix} value={prefix} />
             ))}
           </datalist>
-          <button aria-label="Clear namespace filter" onClick={() => setFilters({ ...filters, namespacePrefix: '' })}>
+          <button
+            aria-label="Namespace の絞り込みを解除"
+            onClick={() => setFilters({ ...filters, namespacePrefix: '' })}
+          >
             ×
           </button>
         </label>
@@ -225,7 +231,7 @@ export default function App() {
         >
           Namespaces
         </button>
-        <div className="timeline" title="← → move 1 s, Shift + ← → move 10 s">
+        <div className="timeline" title="← → で 1 秒、Shift + ← → で 10 秒移動">
           <div className="ranges">
             {RANGE_NAMES.map((name) => (
               <button key={name} className={name === range ? 'on' : ''} onClick={() => changeRange(name)}>
@@ -233,7 +239,7 @@ export default function App() {
               </button>
             ))}
           </div>
-          <button className="step" aria-label="Back 10 seconds" onClick={() => stepBy(-COARSE_STEP_MS)}>
+          <button className="step" aria-label="10 秒戻る" onClick={() => stepBy(-COARSE_STEP_MS)}>
             −10s
           </button>
           <input
@@ -242,10 +248,10 @@ export default function App() {
             max={RANGES[range] / SEEK_STEP_MS}
             step={1}
             value={((atMs ?? nowMs) - windowStartMs) / SEEK_STEP_MS}
-            aria-label="Snapshot time"
+            aria-label="表示する時刻"
             onChange={(event) => seekTo(windowStartMs + Number(event.target.value) * SEEK_STEP_MS)}
           />
-          <button className="step" aria-label="Forward 10 seconds" onClick={() => stepBy(COARSE_STEP_MS)}>
+          <button className="step" aria-label="10 秒進む" onClick={() => stepBy(COARSE_STEP_MS)}>
             +10s
           </button>
           <button className={`live${live ? '' : ' past'}`} onClick={() => setAtMs(null)}>
@@ -253,7 +259,7 @@ export default function App() {
             {live ? 'Live' : seekLabel(atMs)}
           </button>
         </div>
-      </header>
+      </div>
       {error && <div className="banner">{error}</div>}
       <main>
         <TopologyView
@@ -273,11 +279,11 @@ export default function App() {
             left: (namespacesOpen ? NAMESPACE_PANEL_WIDTH : 0) + 16
           }}
         >
-          <span className="focus">shown in charts</span>
+          <span className="focus">グラフに表示中</span>
           <span className="up">uplink</span>
-          <span className="ok">downlink loss &lt; 1%</span>
-          <span className="warn">downlink loss 1–5%</span>
-          <span className="bad">downlink loss &gt; 5%</span>
+          <span className="ok">downlink 損失 &lt; 1%</span>
+          <span className="warn">downlink 損失 1–5%</span>
+          <span className="bad">downlink 損失 &gt; 5%</span>
         </div>
         {namespacesOpen && (
           <NamespacePanel

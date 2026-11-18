@@ -40,14 +40,23 @@ export function PreviewStrip({ cameraIds, stageId, hostOf, onSelect }: Props) {
         <p className="text-sm font-semibold text-fg">カメラ</p>
         <p className="text-[11px] text-faint">クリックでメインへ</p>
       </div>
-      {visible.map((id) => (
-        <PreviewCamera key={id} cameraId={id} host={hostOf(id)} onStage={id === stageId} onClick={() => onSelect(id)} />
-      ))}
-      {/* Empty slots keep the pager where it is on a last page that is not full. */}
-      {pageCount > 1 &&
-        Array.from({ length: PAGE_SIZE - visible.length }, (_, slot) => (
-          <div key={slot} className="aspect-video w-full" />
+      {/* Two thumbnails a row below lg, where the strip sits under the stage; one column beside it. */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-1">
+        {visible.map((id) => (
+          <PreviewCamera
+            key={id}
+            cameraId={id}
+            host={hostOf(id)}
+            onStage={id === stageId}
+            onClick={() => onSelect(id)}
+          />
         ))}
+        {/* Empty slots keep the pager where it is on a last page that is not full. */}
+        {pageCount > 1 &&
+          Array.from({ length: PAGE_SIZE - visible.length }, (_, slot) => (
+            <div key={slot} className="hidden aspect-video w-full lg:block" />
+          ))}
+      </div>
       {cameraIds.length === 0 && (
         <p className="rounded-md border border-dashed border-line-strong py-6 text-center text-xs text-faint">なし</p>
       )}

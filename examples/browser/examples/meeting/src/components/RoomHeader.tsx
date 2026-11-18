@@ -17,7 +17,7 @@ interface RoomHeaderProps {
 /// Every remote member appears here, on the stage or not.
 export function RoomHeader({ roomName, members, recording, transcribing, transcriberStarting }: RoomHeaderProps) {
   return (
-    <header className="flex min-h-12 items-center gap-3 border-b border-line bg-surface px-4 py-2 text-sm">
+    <div className="flex min-h-12 items-center gap-3 border-b border-line bg-surface px-4 py-2 text-sm">
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
         <Video className="h-4 w-4" />
       </span>
@@ -44,7 +44,7 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
       {transcribing && (
         <span
           data-testid="transcriber-badge"
-          title="Speech in this room is transcribed"
+          title="このルームの発話は文字起こしされています"
           className="rounded-full border border-line-strong bg-sunken px-2 py-0.5 text-xs font-semibold text-muted"
         >
           {transcriberStarting ? 'CC starting' : 'CC'}
@@ -69,6 +69,6 @@ export function RoomHeader({ roomName, members, recording, transcribing, transcr
           </span>
         ))}
       </div>
-    </header>
+    </div>
   )
 }
