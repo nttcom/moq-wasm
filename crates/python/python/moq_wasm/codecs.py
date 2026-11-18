@@ -1,10 +1,16 @@
 """PyAV codecs for the media of LOC tracks. Needs the `codecs` extra, `moq-wasm[codecs]`: the wheel
 carries no codec of its own (docs/architecture/python/sdk.md "No codec in the wheel")."""
 
+import asyncio
+import time
+from collections.abc import AsyncIterable, AsyncIterator
+from dataclasses import dataclass
 from fractions import Fraction
 
 import av
 import numpy as np
+
+from moq_wasm._native import Location, Object
 
 OPUS_SAMPLE_RATE = 48_000
 OPUS_BITRATE = 32_000
@@ -71,6 +77,37 @@ class VideoDecoder:
         except av.FFmpegError:
             return None
         return pictures[-1] if pictures else None
+
+
+@dataclass(frozen=True)
+class DecodedPicture:
+    picture: av.VideoFrame
+    location: Location
+    """The Location of the object the picture was decoded from."""
+    decoded_at: float
+    """`time.monotonic()` when it was decoded."""
+
+
+async def decode_pictures(
+    objects: AsyncIterable[Object], codec: str, *, interval: float = 0.0
+) -> AsyncIterator[DecodedPicture]:
+    """Decodes the objects of a LOC video track, such as `RemoteBroadcast.follow(name)`, in a
+    thread and yields at most one picture every `interval` seconds. Each group gets a fresh
+    `VideoDecoder`, since it starts at a keyframe; a group joined midway decodes to nothing. Raises
+    ValueError when no decoder takes `codec`."""
+    next_picture_at = 0.0
+    decoder: VideoDecoder | None = None
+    group_id: int | None = None
+    async for video_object in objects:
+        if video_object.group_id != group_id:
+            decoder = VideoDecoder(codec)
+            group_id = video_object.group_id
+        picture = await asyncio.to_thread(decoder.decode, video_object.payload)
+        decoded_at = time.monotonic()
+        if picture is None or decoded_at < next_picture_at:
+            continue
+        next_picture_at = decoded_at + interval
+        yield DecodedPicture(picture, Location(video_object.group_id, video_object.object_id), decoded_at)
 
 
 class VideoEncoder:

@@ -1,11 +1,10 @@
 import asyncio
 import logging
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from moq_wasm.codecs import OpusDecoder, VideoDecoder
+from moq_wasm.codecs import OpusDecoder, VideoDecoder, decode_pictures
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 
 logger = logging.getLogger("moq_wasm")
@@ -105,19 +104,9 @@ async def _receive_video(
     remote: RemoteBroadcast, track: CatalogTrack, options: ReceiveOptions, sink: ParticipantSink
 ) -> None:
     participant_id = remote.namespace[-1]
-    interval = 1 / options.video_in_max_fps
-    next_picture_at = 0.0
-    decoder: VideoDecoder | None = None
-    group_id: int | None = None
-    async for video_object in remote.follow(track.name):
-        if video_object.group_id != group_id:
-            decoder = VideoDecoder(track.codec or "")
-            group_id = video_object.group_id
-        picture = await asyncio.to_thread(decoder.decode, video_object.payload)
-        now = time.monotonic()
-        if picture is None or now < next_picture_at:
-            continue
-        next_picture_at = now + interval
+    pictures = decode_pictures(remote.follow(track.name), track.codec or "", interval=1 / options.video_in_max_fps)
+    async for decoded in pictures:
+        picture = decoded.picture
         rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
         await sink.push_picture(rgb, (picture.width, picture.height), participant_id)
 
