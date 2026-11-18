@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use telemetry::non_empty_env;
-use token_mint::{RateLimit, TokenMint, TokenMintServer};
+use temporary_apps::{RateLimit, TemporaryApps, TemporaryAppsServer};
 use tokio::{
     net::TcpListener,
     signal::unix::{SignalKind, signal},
@@ -15,9 +15,9 @@ const ISSUE_WINDOW: Duration = Duration::from_secs(60 * 60);
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _telemetry = telemetry::init(telemetry::TelemetryConfig {
-        service_name: "token-mint",
+        service_name: "temporary-apps",
         service_version: env!("CARGO_PKG_VERSION"),
-        default_directives: &["token_mint=info"],
+        default_directives: &["temporary_apps=info"],
         log_output: telemetry::LogOutput::Stdout,
         ..Default::default()
     })?;
@@ -26,21 +26,22 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "8083".to_owned())
         .parse()
         .context("PORT must be a port number")?;
-    let secret = non_empty_env("TOKEN_MINT_SECRET").context("TOKEN_MINT_SECRET must be set")?;
-    let proxy_hops = non_empty_env("TOKEN_MINT_TRUSTED_PROXY_HOPS")
+    let secret =
+        non_empty_env("TEMPORARY_APPS_SECRET").context("TEMPORARY_APPS_SECRET must be set")?;
+    let proxy_hops = non_empty_env("TEMPORARY_APPS_TRUSTED_PROXY_HOPS")
         .map(|hops| hops.parse())
         .transpose()
-        .context("TOKEN_MINT_TRUSTED_PROXY_HOPS must be a number")?
+        .context("TEMPORARY_APPS_TRUSTED_PROXY_HOPS must be a number")?
         .unwrap_or(0);
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    let _server = TokenMintServer::run(
+    let _server = TemporaryAppsServer::run(
         listener,
-        TokenMint::new(secret),
+        TemporaryApps::new(secret),
         RateLimit::new(MAX_ISSUES_PER_WINDOW, ISSUE_WINDOW),
         proxy_hops,
     );
-    tracing::info!(port, "token-mint listening");
+    tracing::info!(port, "temporary-apps listening");
 
     // As PID 1 in a container the process has no default SIGTERM action, so
     // `docker stop` and Cloud Run would otherwise wait for their SIGKILL.
@@ -49,6 +50,6 @@ async fn main() -> anyhow::Result<()> {
         result = tokio::signal::ctrl_c() => result?,
         _ = terminate.recv() => {}
     }
-    tracing::info!("token-mint shutting down");
+    tracing::info!("temporary-apps shutting down");
     Ok(())
 }

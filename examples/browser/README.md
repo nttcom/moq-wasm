@@ -29,10 +29,10 @@ make chrome         # Chrome trusting the local relay certificate (make chrome:l
 The tabs at the top right of the example list choose how every example
 connects; the choice is kept in localStorage.
 
-| Mode                                                    | Namespace root                 | Token                                                                                                                                                  |
-| ------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **一時トークン** (temporary), the default when deployed | `temp-…`, a new temporary app  | A one-hour token from `services/token-mint`, refreshed by the page. It stays in the address bar as `#jwt=<token>`, so a copied link joins the same app |
-| **Public**, the default on this machine                 | `anon`, which everyone can see | None                                                                                                                                                   |
+| Mode                                                    | Namespace root                 | Token                                                                                                                                                      |
+| ------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **一時トークン** (temporary), the default when deployed | `temp-…`, a new temporary app  | A one-hour token from `services/temporary-apps`, refreshed by the page. It stays in the address bar as `#jwt=<token>`, so a copied link joins the same app |
+| **Public**, the default on this machine                 | `anon`, which everyone can see | None                                                                                                                                                       |
 
 - `?access=public` opens one page as public without changing the stored mode.
 - `?jwt=<token>` connects with any app-scoped JWT (from the `auth-token` CLI
@@ -41,7 +41,7 @@ connects; the choice is kept in localStorage.
 - The bot-backed examples hand a temporary page's token to the bot service,
   so the bot joins the same app
   (`docs/architecture/ai-bots/on-demand-rooms.md`).
-- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?tokenMintUrl=`,
+- A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`,
   `?botUrl=`) is used only when it names this machine or a host under
   `moqt.research.skyway.io`, since the page sends its token there.
 

@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-Add `http-body-util` as a direct dependency of the `token-mint` crate for
+Add `http-body-util` as a direct dependency of the `temporary-apps` crate for
 `Limited` (reject refresh bodies over 16 KiB), `BodyExt::collect` (read the
 body into bytes) and `Full` (the fixed JSON response body).
 

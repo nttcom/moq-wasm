@@ -1,4 +1,4 @@
-# hyper for the token mint HTTP server
+# hyper for the temporary-apps service HTTP server
 
 ## Status
 
@@ -11,12 +11,12 @@ Accepted
 ## What
 
 Add `hyper` 1.x (features `http1`, `server`) as a direct dependency of the
-`token-mint` crate. `server.rs` serves `POST /tokens`,
+`temporary-apps` crate. `server.rs` serves `POST /tokens`,
 `POST /tokens/refresh` and `GET /healthz` over HTTP/1 with it.
 
 ## Context
 
-The token mint needs an HTTP/1 server for three routes, a CORS preflight, a
+The temporary-apps service needs an HTTP/1 server for three routes, a CORS preflight, a
 16 KiB body limit and JSON bodies: the same shape as the VTS server.
 
 ## Alternatives

@@ -10,15 +10,15 @@ FROM chef AS builder
 # until a manifest or Cargo.lock changes; only the workspace crates are
 # compiled after the source is copied in.
 COPY --from=planner /workspace/recipe.json recipe.json
-RUN cargo chef cook --release -p token-mint --recipe-path recipe.json
+RUN cargo chef cook --release -p temporary-apps --recipe-path recipe.json
 COPY . .
-RUN cargo build --release -p token-mint
+RUN cargo build --release -p temporary-apps
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf
 
 WORKDIR /app
-COPY --from=builder /workspace/target/release/token-mint /usr/local/bin/
+COPY --from=builder /workspace/target/release/temporary-apps /usr/local/bin/
 
 EXPOSE 8083
 USER nonroot:nonroot
-CMD ["/usr/local/bin/token-mint"]
+CMD ["/usr/local/bin/temporary-apps"]

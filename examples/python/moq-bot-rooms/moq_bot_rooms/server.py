@@ -11,10 +11,10 @@ from loguru import logger
 
 from moq_bot_rooms.app_token import (
     AppToken,
-    TokenMint,
-    TokenMintUnavailable,
+    TemporaryApps,
+    TemporaryAppsUnavailable,
     TokenRejected,
-    token_mint_url,
+    temporary_apps_url,
 )
 from moq_bot_rooms.open_hours import OpenHours
 from moq_bot_rooms.rooms import BotRoom, Membership, RoomEnd, Rooms, RunBot
@@ -58,17 +58,17 @@ def add_serve_arguments(
         help="a page origin that may request rooms, repeatable; any origin without it",
     )
     parser.add_argument(
-        "--token-mint-url",
-        default=os.environ.get("TOKEN_MINT_URL"),
-        help="token mint that refreshes the tokens of the temporary apps pages request rooms in "
-        "(environment TOKEN_MINT_URL); the local one for a local relay and the deployed one otherwise",
+        "--temporary-apps-url",
+        default=os.environ.get("TEMPORARY_APPS_URL"),
+        help="temporary-apps service that refreshes the tokens of the temporary apps pages request rooms in "
+        "(environment TEMPORARY_APPS_URL); the local one for a local relay and the deployed one otherwise",
     )
 
 
 def room_app(
     rooms: Rooms,
     allowed_origins: list[str],
-    token_mint: TokenMint,
+    temporary_apps: TemporaryApps,
     only_room: str | None = None,
     heartbeat_seconds: float = HEARTBEAT_SECONDS,
     room_id_pattern: re.Pattern[str] = ROOM_ID_PATTERN,
@@ -79,7 +79,7 @@ def room_app(
     `POST /rooms/{room}/stop?member=` ends the room for every page that holds it.
 
     A request with `Authorization: Bearer <token>` holds the room under the token's temporary app,
-    which `token_mint` vouches for by refreshing the token: 401 if it refuses, 503 if it does not
+    which `temporary_apps` vouches for by refreshing the token: 401 if it refuses, 503 if it does not
     answer. A request without one holds the room under the public root.
 
     With `bot_from_query`, the query of the request that starts a room picks the room's bot; it
@@ -97,12 +97,12 @@ def room_app(
             raise web.HTTPUnauthorized(text="a bearer token is expected")
         try:
             page_token = authorization.removeprefix(BEARER_PREFIX).strip()
-            token = AppToken(token_mint, await token_mint.refresh(page_token))
+            token = AppToken(temporary_apps, await temporary_apps.refresh(page_token))
         except TokenRejected as error:
             raise web.HTTPUnauthorized(text=f"token refused: {error}") from error
-        except TokenMintUnavailable as error:
+        except TemporaryAppsUnavailable as error:
             logger.warning(f"cannot check a room token: {error}")
-            raise web.HTTPServiceUnavailable(text="token mint unavailable") from error
+            raise web.HTTPServiceUnavailable(text="temporary-apps service unavailable") from error
         return BotRoom(room_id, token.app_id, token)
 
     async def room_events(request: web.Request) -> web.StreamResponse:
@@ -203,7 +203,7 @@ async def serve_rooms(
     """Serves rooms until SIGINT or SIGTERM, then stops every bot before it returns."""
     endpoint = telemetry_endpoint(args.telemetry_url, args.no_telemetry, args.relay_url)
     async with report_logs(endpoint, args.bot), aiohttp.ClientSession() as http:
-        token_mint = TokenMint(http, token_mint_url(args.token_mint_url, args.relay_url))
+        temporary_apps = TemporaryApps(http, temporary_apps_url(args.temporary_apps_url, args.relay_url))
         rooms = Rooms(
             run_bot,
             max_rooms=args.max_rooms,
@@ -214,7 +214,7 @@ async def serve_rooms(
             room_app(
                 rooms,
                 args.allowed_origin,
-                token_mint,
+                temporary_apps,
                 only_room,
                 room_id_pattern=room_id_pattern,
                 bot_from_query=bot_from_query,

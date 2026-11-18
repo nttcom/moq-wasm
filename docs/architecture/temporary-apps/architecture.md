@@ -1,11 +1,11 @@
-# `token-mint` Architecture
+# `temporary-apps` Architecture
 
 ## Status
 Living document. Update this file in the same change whenever the design intent,
 module boundaries, runtime flow, or invariants described here change.
 
 ## Scope
-`token-mint` hands anyone the token of a new temporary app, and a new token
+`temporary-apps` hands anyone the token of a new temporary app, and a new token
 for an app whose token has not expired. A temporary app has no registry entry:
 its `appId` carries `auth_token::TEMPORARY_APP_ID_PREFIX`, and every token of
 every temporary app is signed with one secret that the VTS verifies them with
@@ -21,10 +21,10 @@ app is revoked.
 
 | Module | Responsibility |
 | --- | --- |
-| `issuer.rs` | `TokenMint`: `issue` signs `Claims::issued` for a new `temp-<32 hex>` app with `publish` and `subscribe` `""` and a one-hour lifetime; `refresh` verifies the token with the secret, requires a temporary `appId` and an `exp` after now, and signs a new hour for the same app. A failed refresh is a `RefreshError`. |
+| `issuer.rs` | `TemporaryApps`: `issue` signs `Claims::issued` for a new `temp-<32 hex>` app with `publish` and `subscribe` `""` and a one-hour lifetime; `refresh` verifies the token with the secret, requires a temporary `appId` and an `exp` after now, and signs a new hour for the same app. A failed refresh is a `RefreshError`. |
 | `rate_limit.rs` | `RateLimit`: fixed windows per client address, counted in this process. |
-| `server.rs` | `TokenMintServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TOKEN_MINT_TRUSTED_PROXY_HOPS`). |
-| `main.rs` | Reads `TOKEN_MINT_SECRET`, `TOKEN_MINT_TRUSTED_PROXY_HOPS` and `PORT`, and serves until terminated. |
+| `server.rs` | `TemporaryAppsServer`: serves HTTP/1 through `http_server::HttpServer`. Routes `POST /tokens` (rate limited), `POST /tokens/refresh`, `GET /healthz` and `OPTIONS` (CORS preflight); every response allows any origin. Finds the client address in `X-Forwarded-For` from the number of trusted proxies in front (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`). |
+| `main.rs` | Reads `TEMPORARY_APPS_SECRET`, `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` and `PORT`, and serves until terminated. |
 
 ## Invariants
 
@@ -36,7 +36,7 @@ app is revoked.
 - Only `POST /tokens` is rate limited. A refresh needs a valid token, and
   refreshing does not create an app.
 - The client address is the `X-Forwarded-For` entry that the outermost of the
-  trusted proxies (`TOKEN_MINT_TRUSTED_PROXY_HOPS`) appended; entries the client wrote before it are
+  trusted proxies (`TEMPORARY_APPS_TRUSTED_PROXY_HOPS`) appended; entries the client wrote before it are
   ignored, so a client cannot pose as another address. Without the header, or
   with `0` hops, it is the peer address.
 - With several instances, each counts on its own, so a client may get up to
@@ -47,7 +47,7 @@ app is revoked.
 - `temporary token issued` / `temporary token refreshed` are logged at INFO
   with the `app_id`; refusals at INFO with `error`. A signing failure is an
   ERROR. Tokens never reach logs or spans.
-- Every request runs in a `token_mint.request` span that continues the
+- Every request runs in a `temporary_apps.request` span that continues the
   caller's trace and records the `app_id` it answered for.
-- The Docker image (`services/token-mint/Dockerfile`) is the same
+- The Docker image (`services/temporary-apps/Dockerfile`) is the same
   `cargo-chef` build onto `distroless/cc` as the VTS.

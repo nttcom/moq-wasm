@@ -14,7 +14,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
 /// token refresh; it reads neither the namespace `[app id]` nor this name.
 const REFRESH_TRACK_NAME: &str = "update_auth_token";
-/// A token mint's token is renewed this long before it expires.
+/// A temporary app's token is renewed this long before it expires.
 const ISSUER_REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
 
 /// Where the next token comes from.
@@ -22,7 +22,7 @@ pub(crate) enum TokenRenewal {
     /// Whatever the file holds, re-read on every poll.
     File(PathBuf),
     /// A temporary app's token, renewed by `POST /tokens/refresh` on the
-    /// token mint at this URL shortly before it expires.
+    /// temporary-apps service at this URL shortly before it expires.
     Issuer(String),
 }
 
@@ -108,16 +108,19 @@ async fn refresh_at_issuer(url: &str, token: &str) -> Result<String> {
         .json(&serde_json::json!({ "token": token }))
         .send()
         .await
-        .context("cannot reach the token mint")?;
+        .context("cannot reach the temporary-apps service")?;
     let status = response.status();
     let body: Value = response.json().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("the token mint answered {status}: {}", body["error"]);
+        bail!(
+            "the temporary-apps service answered {status}: {}",
+            body["error"]
+        );
     }
     body["token"]
         .as_str()
         .map(str::to_string)
-        .context("the token mint answered without a token")
+        .context("the temporary-apps service answered without a token")
 }
 
 /// The file holds one JWT; surrounding whitespace, such as a trailing newline,

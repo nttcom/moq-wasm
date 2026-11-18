@@ -93,7 +93,7 @@ subscriptions to each other and authenticate sessions through the VTS.
 | [`services/live-ingest/`](services/live-ingest/README.md), [`onvif-ingest/`](services/onvif-ingest/README.md), [`crates/gst-plugin-moqt/`](crates/gst-plugin-moqt/README.md) | Publishers: RTMP/SRT/RTP, ONVIF cameras, GStreamer `moqtsink` |
 | [`services/live-egress/`](services/live-egress/README.md), [`recorder/`](services/recorder/README.md) | Subscribers: plain RTP output, MP4 recording |
 | [`crates/mediapack/`](crates/mediapack/README.md), [`msf/`](crates/msf/README.md), [`broadcast/`](crates/broadcast/README.md), [`transcode/`](crates/transcode/README.md) | Media: containers, MSF catalog, track layout, re-encoding |
-| [`services/vts/`](services/vts/README.md), [`token-mint/`](services/token-mint/README.md), [`console/`](services/console/README.md), [`crates/auth-token/`](crates/auth-token/README.md) | Authentication: token verification, issuing and the JWT claims |
+| [`services/vts/`](services/vts/README.md), [`temporary-apps/`](services/temporary-apps/README.md), [`console/`](services/console/README.md), [`crates/auth-token/`](crates/auth-token/README.md) | Authentication: token verification, issuing and the JWT claims |
 | [`crates/telemetry/`](crates/telemetry), [`services/observability/`](services/observability) | Shared `tracing` setup; relay stats collected into ClickHouse |
 | [`examples/`](examples/browser/README.md) | Browser examples, `moq-cli`, pipecat bots |
 | [`tests/`](tests/README.md) | Relay and browser E2E scenarios |

@@ -7,7 +7,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 - 同じルームを開いたページは 1 つの bot を共有します。最後のページが離れてから 30 秒たつと bot を止めます。
 - `POST /rooms/{room}/leave?member={ID}` はそのページの保持をすぐ外し、`POST /rooms/{room}/stop?member={ID}` はルームの bot を全ページについて止めます。`{ID}` はストリームの最初の `member` イベントで届きます。
 - ルーム ID は既定で `[a-z0-9-]` の 1〜32 文字で、namespace の 1 要素になります。
-- 一時アプリのページは要求に `Authorization: Bearer <トークン>` を付けます。サーバーはトークンを token mint で更新し、その `appId` をルームの namespace root にします。トークンのない要求は `anon` のルームです。
+- 一時アプリのページは要求に `Authorization: Bearer <トークン>` を付けます。サーバーはトークンを `temporary-apps` で更新し、その `appId` をルームの namespace root にします。トークンのない要求は `anon` のルームです。
 - bot が止まった理由は、イベント名でページに届きます。
 
   | イベント | 送るとき |
@@ -29,7 +29,7 @@ MoQ Chat Moderation・MoQ Camera Detection・MoQ PTZ Tracking の bot が共通�
 | `--allowed-origin` | なし（すべて） | ルームを要求できるページの origin。複数指定できる |
 | `--telemetry-url` | relay がローカルなら `http://localhost:8095`、それ以外は `https://observability.moqt.research.skyway.io` | `INFO` 以上のログを 10 秒ごとに送る observability サーバー |
 | `--no-telemetry` | なし | ログを送らない |
-| `--token-mint-url` | 環境変数 `TOKEN_MINT_URL`、なければ relay がローカルなら `http://localhost:8083`、それ以外は `https://token-mint.moqt.research.skyway.io` | 一時アプリのトークンを更新する token mint |
+| `--temporary-apps-url` | 環境変数 `TEMPORARY_APPS_URL`、なければ relay がローカルなら `http://localhost:8083`、それ以外は `https://token-mint.moqt.research.skyway.io` | 一時アプリのトークンを更新する temporary-apps service |
 
 bot は自分のオプションに、次の 2 つの関数で relay と ID トークンのオプションを足せます。
 
