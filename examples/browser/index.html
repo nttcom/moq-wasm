@@ -84,6 +84,24 @@
         letter-spacing: 0.01em;
       }
 
+      .top-nav {
+        display: flex;
+        justify-content: flex-end;
+        gap: 1.25rem;
+        margin-bottom: -1.75rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      .top-nav a {
+        color: var(--text-sub);
+        text-decoration: none;
+      }
+
+      .top-nav a:hover {
+        color: var(--accent);
+      }
+
       .hero-head {
         display: flex;
         flex-wrap: wrap;
@@ -525,6 +543,10 @@
   </head>
   <body>
     <main class="page">
+      <nav class="top-nav" aria-label="SDK ドキュメント">
+        <a href="docs/js/index.html">JS SDK Docs</a>
+        <a href="docs/python/index.html">Python SDK Docs</a>
+      </nav>
       <section class="hero">
         <div class="hero-head">
           <div class="hero-title">
