@@ -214,7 +214,11 @@
   scroll-margin-top: calc(var(--shell-height) + 64px);
 }
 
+/* The heading sits on a hairline across the section with a short accent bar under its start. */
 .section-heading {
+  position: relative;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -222,12 +226,23 @@
   gap: 4px 16px;
 }
 
+.section-heading::after {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 40px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  content: '';
+}
+
 .section-heading h2 {
   display: flex;
   align-items: center;
   gap: 10px;
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1.45rem;
   font-weight: 700;
   letter-spacing: -0.02em;
 }
