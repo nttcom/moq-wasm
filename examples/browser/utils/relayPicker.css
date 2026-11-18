@@ -16,31 +16,37 @@
 .relay-picker-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 8px 12px;
+  gap: 12px;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 3%, transparent);
 }
 
 .relay-picker-summary {
-  display: flex;
-  flex: 1 1 12rem;
-  align-items: baseline;
-  gap: 8px;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 1px;
   min-width: 0;
   font-size: 0.875rem;
 }
 
 .relay-picker-summary b {
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .relay-picker-summary code {
   overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: none;
   font-size: 0.75rem;
   text-overflow: ellipsis;
   white-space: nowrap;
-  opacity: 0.65;
+  opacity: 0.6;
 }
 
 .relay-picker .relay-picker-toggle {
@@ -48,9 +54,10 @@
   min-height: 0;
   height: auto;
   margin: 0;
+  flex: none;
   padding: 4px 12px;
   border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-  border-radius: 999px;
+  border-radius: 8px;
   background: transparent;
   box-shadow: none;
   color: inherit;
@@ -80,16 +87,25 @@
 }
 
 .relay-picker-title {
-  font-size: 0.875rem;
-  font-weight: 600;
-  opacity: 0.8;
+  flex: none;
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--relay-picker-accent-color) 14%, transparent);
+  color: var(--relay-picker-accent-color);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .relay-picker-tabs {
   display: inline-flex;
-  padding: 4px;
-  border-radius: 999px;
-  background: color-mix(in srgb, currentColor 8%, transparent);
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
 }
 
 .relay-picker .relay-picker-tabs button {
@@ -97,9 +113,9 @@
   min-height: 0;
   height: auto;
   margin: 0;
-  padding: 4px 16px;
+  padding: 4px 14px;
   border: none;
-  border-radius: 999px;
+  border-radius: 7px;
   background: transparent;
   box-shadow: none;
   color: inherit;
@@ -135,7 +151,7 @@
   margin: 0;
   padding: 10px 14px;
   border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
-  border-radius: 12px;
+  border-radius: 10px;
   background: color-mix(in srgb, currentColor 3%, transparent);
   color: inherit;
   font-weight: 400;

@@ -1,0 +1,471 @@
+/* The design tokens and base elements every page of the playground shares. The temporary mode
+   (the default) is dark and the public mode light, so a reader always sees which app a page uses:
+   utils/access.ts sets data-access-mode on <html>. */
+
+:root {
+  color-scheme: dark;
+  --font-sans:
+    'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+
+  --bg: #090b0f;
+  --bg-subtle: #0e1116;
+  --surface: #12161c;
+  --surface-raised: #171c23;
+  --surface-sunken: #0b0e12;
+  --surface-hover: #1c222a;
+  --border: #232a33;
+  --border-strong: #323b46;
+  --text: #e8ecf1;
+  --text-muted: #9aa5b1;
+  --text-subtle: #6b7684;
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: rgba(45, 212, 191, 0.12);
+  --accent-border: rgba(45, 212, 191, 0.4);
+  --on-accent: #04201c;
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.12);
+  --focus-ring: 0 0 0 3px rgba(45, 212, 191, 0.35);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px -12px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 24px 48px -24px rgba(0, 0, 0, 0.7);
+  --glow: radial-gradient(60rem 28rem at 15% -10%, rgba(45, 212, 191, 0.09), transparent 65%);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --control-height: 36px;
+  --shell-height: 56px;
+  --content-width: 1200px;
+
+  /* Read by utils/relayPicker.css. */
+  --relay-picker-accent: var(--accent);
+}
+
+:root[data-access-mode='public'] {
+  color-scheme: light;
+  --bg: #f6f8f8;
+  --bg-subtle: #eef3f2;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f1f5f4;
+  --surface-hover: #f3f7f6;
+  --border: #e0e7e5;
+  --border-strong: #c9d4d1;
+  --text: #0f1f1e;
+  --text-muted: #55666a;
+  --text-subtle: #84928f;
+  --accent: #0f766e;
+  --accent-hover: #0b5f58;
+  --accent-soft: rgba(15, 118, 110, 0.08);
+  --accent-border: rgba(15, 118, 110, 0.35);
+  --on-accent: #ffffff;
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.08);
+  --warning: #b45309;
+  --warning-soft: rgba(180, 83, 9, 0.08);
+  --success: #15803d;
+  --success-soft: rgba(21, 128, 61, 0.08);
+  --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.22);
+  --shadow-sm: 0 1px 2px rgba(15, 31, 30, 0.06);
+  --shadow-md: 0 8px 24px -12px rgba(15, 31, 30, 0.18);
+  --shadow-lg: 0 24px 48px -24px rgba(15, 31, 30, 0.22);
+  --glow: radial-gradient(60rem 28rem at 15% -10%, rgba(15, 118, 110, 0.08), transparent 65%);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--glow), var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-hover);
+}
+
+code,
+kbd,
+samp,
+pre {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+}
+
+:not(pre) > code {
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- App shell: the bar at the top of every page ---------- */
+
+.app-shell {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(160%) blur(12px);
+  -webkit-backdrop-filter: saturate(160%) blur(12px);
+}
+
+.app-shell-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: var(--content-width);
+  min-height: var(--shell-height);
+  margin: 0 auto;
+  padding: 8px 24px;
+}
+
+.app-shell-inner.wide {
+  max-width: none;
+}
+
+.app-brand {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.app-brand:hover {
+  color: var(--text);
+}
+
+.app-logo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #2dd4bf, #0f766e);
+  color: #04201c;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.app-logo svg {
+  width: 16px;
+  height: 16px;
+}
+
+.app-breadcrumb {
+  display: flex;
+  flex: 1 1 8rem;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.app-breadcrumb ol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.app-breadcrumb li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.app-breadcrumb li + li::before {
+  color: var(--text-subtle);
+  content: '/';
+}
+
+.app-breadcrumb a {
+  color: var(--text-muted);
+}
+
+.app-breadcrumb a:hover {
+  color: var(--text);
+}
+
+.app-breadcrumb [aria-current='page'] {
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.app-shell-end {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .app-shell-inner {
+    flex-wrap: wrap;
+    padding: 8px 16px;
+  }
+
+  .app-brand-name,
+  .app-breadcrumb li:first-child {
+    display: none;
+  }
+
+  .app-breadcrumb li + li::before {
+    content: none;
+  }
+}
+
+/* ---------- Segmented control ---------- */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+
+.segmented button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transform: none;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.segmented button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  transform: none;
+}
+
+.segmented button[aria-selected='true'],
+.segmented button[aria-pressed='true'] {
+  background: var(--surface-raised);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 0 0 1px var(--border-strong);
+  color: var(--text);
+}
+
+/* ---------- Badges and status ---------- */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.badge.accent {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.warning {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.badge.danger {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ---------- Access status (utils/accessBar.ts) ---------- */
+
+.access-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.access-bar b {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.access-bar > span:not(.access-info) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.access-bar.unavailable {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.access-bar.unavailable b {
+  color: var(--danger);
+}
+
+.access-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-subtle);
+}
+
+.access-bar.temporary .access-dot,
+.access-bar.given .access-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.access-bar.public .access-dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
+}
+
+.access-bar.unavailable .access-dot {
+  background: var(--danger);
+}
+
+.access-info {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--text-subtle);
+  cursor: help;
+}
+
+.access-info:hover,
+.access-info:focus-visible {
+  color: var(--text);
+}
+
+.access-info:hover::after,
+.access-info:focus::after {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: -8px;
+  z-index: 60;
+  width: min(20rem, 80vw);
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  content: attr(data-note);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.6;
+  white-space: normal;
+}
+
+.access-bar button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  box-shadow: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transform: none;
+}
+
+.access-bar button:hover {
+  background: var(--surface-hover);
+  transform: none;
+}
+
+@media (max-width: 960px) {
+  .access-bar .access-detail {
+    display: none;
+  }
+}

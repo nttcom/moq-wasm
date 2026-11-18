@@ -4,935 +4,599 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MoQT Playground</title>
-    <style>
-      /* Temporary mode, the default; public mode overrides below. */
-      :root {
-        --bg-top: #07080c;
-        --bg-bottom: #0e1016;
-        --glow-left: rgba(45, 212, 191, 0.08);
-        --glow-right: rgba(26, 29, 42, 0);
-        --hero-bg: linear-gradient(145deg, #15171f, #0c0d12);
-        --surface: rgba(22, 24, 32, 0.82);
-        --surface-border: rgba(255, 255, 255, 0.1);
-        --node-bg: rgba(10, 11, 16, 0.7);
-        --text-main: #eceef3;
-        --text-sub: #a3a8b8;
-        --accent: #2dd4bf;
-        --accent-strong: #5eead4;
-        --on-accent: #0b0d10;
-        --shadow: 0 30px 60px rgba(0, 0, 0, 0.35);
-        --card-shadow: 0 16px 34px rgba(0, 0, 0, 0.26);
-        --card-shadow-hover: 0 24px 38px rgba(0, 0, 0, 0.34);
-      }
-
-      :root[data-access-mode='public'] {
-        --bg-top: #f7f3ea;
-        --bg-bottom: #e7f4f2;
-        --glow-left: rgba(15, 118, 110, 0.15);
-        --glow-right: rgba(224, 122, 95, 0.18);
-        --hero-bg: linear-gradient(145deg, #ffffff, #f2f8f6);
-        --surface: rgba(255, 255, 255, 0.92);
-        --surface-border: rgba(16, 42, 42, 0.14);
-        --node-bg: rgba(255, 255, 255, 0.85);
-        --text-main: #102a2a;
-        --text-sub: #5a6a6a;
-        --accent: #0f766e;
-        --accent-strong: #0b4f49;
-        --on-accent: #fff;
-        --shadow: 0 20px 40px rgba(16, 42, 42, 0.1);
-        --card-shadow: 0 10px 24px rgba(16, 42, 42, 0.08);
-        --card-shadow-hover: 0 18px 30px rgba(16, 42, 42, 0.14);
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-
-      body {
-        margin: 0;
-        min-height: 100vh;
-        font-family: 'Avenir Next', 'Hiragino Sans', 'Noto Sans JP', sans-serif;
-        color: var(--text-main);
-        background:
-          radial-gradient(80rem 45rem at -10% -20%, var(--glow-left) 0%, transparent 60%),
-          radial-gradient(70rem 40rem at 110% -30%, var(--glow-right) 0%, transparent 60%),
-          linear-gradient(160deg, var(--bg-top) 10%, var(--bg-bottom) 90%);
-      }
-
-      .page {
-        display: flex;
-        flex-direction: column;
-        gap: 2.75rem;
-        width: min(1120px, calc(100% - 2rem));
-        margin: 2.5rem auto 3.5rem;
-      }
-
-      .hero {
-        padding: 2rem;
-        border: 1px solid var(--surface-border);
-        border-radius: 1.4rem;
-        background: var(--hero-bg);
-        box-shadow: var(--shadow);
-        backdrop-filter: blur(8px);
-        animation: fade-up 420ms ease-out both;
-      }
-
-      h1 {
-        margin: 0;
-        font-size: clamp(1.8rem, 4.4vw, 2.8rem);
-        line-height: 1.1;
-        letter-spacing: 0.01em;
-      }
-
-      .hero-head {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-      }
-
-      .hero-title {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 1rem;
-      }
-
-      .version-switch button {
-        padding: 0.35rem 0.9rem;
-        font-size: 0.85rem;
-      }
-
-      .access-switch {
-        display: inline-flex;
-        gap: 4px;
-        padding: 4px;
-        border: 1px solid var(--surface-border);
-        border-radius: 999px;
-        background: rgba(127, 127, 127, 0.12);
-      }
-
-      .access-switch button {
-        padding: 0.5rem 1.2rem;
-        border: 0;
-        border-radius: 999px;
-        background: none;
-        color: var(--text-sub);
-        font: inherit;
-        font-size: 0.95rem;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .access-switch button[aria-selected='true'] {
-        background: var(--accent-strong);
-        color: var(--on-accent);
-        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
-      }
-
-      .access-description {
-        margin: 0.9rem 0 0;
-        color: var(--text-sub);
-        font-size: 0.92rem;
-        line-height: 1.7;
-      }
-
-      .access-status {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 0.6rem 1rem;
-        margin-top: 0.8rem;
-        font-size: 0.9rem;
-      }
-
-      .access-status:empty {
-        display: none;
-      }
-
-      .access-status code {
-        padding: 0.15rem 0.5rem;
-        border-radius: 0.4rem;
-        background: rgba(127, 127, 127, 0.16);
-      }
-
-      .access-status button {
-        padding: 0.35rem 0.8rem;
-        border: 1px solid var(--surface-border);
-        border-radius: 0.5rem;
-        background: none;
-        color: inherit;
-        font: inherit;
-        font-weight: 600;
-        cursor: pointer;
-      }
-
-      .section {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-      }
-
-      .section-heading {
-        padding-bottom: 0.75rem;
-        border-bottom: 1px solid var(--surface-border);
-      }
-
-      .section-heading h2 {
-        margin: 0;
-        padding-left: 0.6rem;
-        border-left: 0.35rem solid var(--accent);
-        font-size: 1.3rem;
-        letter-spacing: 0.01em;
-      }
-
-      .grid {
-        display: grid;
-        gap: 1rem;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      }
-
-      .grid.usecases {
-        grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
-      }
-
-      .flow {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: center;
-        align-items: center;
-        gap: 0.35rem;
-      }
-
-      .flow.hub {
-        display: grid;
-        grid-template-areas:
-          '. . browser . . . .'
-          '. . browser-link . . . .'
-          'camera camera-link relay bot-link bot system-one-link system-one';
-        justify-content: center;
-        justify-items: center;
-      }
-
-      .hub-browser {
-        grid-area: browser;
-      }
-
-      .hub-browser-link {
-        grid-area: browser-link;
-      }
-
-      .hub-camera {
-        grid-area: camera;
-      }
-
-      .hub-camera-link {
-        grid-area: camera-link;
-      }
-
-      .hub-relay {
-        grid-area: relay;
-      }
-
-      .hub-bot-link {
-        grid-area: bot-link;
-      }
-
-      .hub-bot {
-        grid-area: bot;
-      }
-
-      .hub-system-one-link {
-        grid-area: system-one-link;
-      }
-
-      .hub-system-one {
-        grid-area: system-one;
-      }
-
-      .observability-map {
-        position: relative;
-        width: 444px;
-        height: 270px;
-        margin: auto;
-        color: var(--accent);
-      }
-
-      .observability-links {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        stroke: currentColor;
-        stroke-width: 1.5;
-      }
-
-      .observability-map .node {
-        position: absolute;
-        transform: translate(-50%, -50%);
-      }
-
-      .card-head {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 0.75rem;
-      }
-
-      .card .flow {
-        margin: auto 0;
-      }
-
-      .node {
-        position: relative;
-        display: inline-flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 0.3rem;
-        padding: 0.5rem 0.6rem 0.4rem;
-        border-radius: 0.6rem;
-        border: 1px solid var(--surface-border);
-        background: var(--node-bg);
-        font-size: 0.72rem;
-        font-weight: 600;
-        line-height: 1.2;
-        text-align: center;
-        white-space: nowrap;
-      }
-
-      .node svg {
-        width: 1.5rem;
-        height: 1.5rem;
-        stroke: var(--text-sub);
-      }
-
-      .node small {
-        font-size: 0.62rem;
-        font-weight: 500;
-        color: var(--text-sub);
-      }
-
-      .node.relay,
-      .node.cloud {
-        border-color: rgba(45, 212, 191, 0.55);
-        color: var(--accent);
-      }
-
-      .node.relay svg,
-      .node.cloud svg {
-        stroke: var(--accent);
-      }
-
-      .node .count {
-        position: absolute;
-        top: -0.5rem;
-        right: -0.5rem;
-        padding: 0.1rem 0.4rem;
-        border-radius: 999px;
-        background: var(--accent-strong);
-        color: var(--on-accent);
-        font-size: 0.62rem;
-        font-weight: 700;
-      }
-
-      .link {
-        color: var(--accent);
-        font-size: 1rem;
-      }
-
-      .card {
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        gap: 0.72rem;
-        padding: 1.1rem 1.1rem 1.15rem;
-        border-radius: 1rem;
-        text-decoration: none;
-        color: var(--text-main);
-        background: var(--surface);
-        border: 1px solid var(--surface-border);
-        box-shadow: var(--card-shadow);
-        transition:
-          transform 180ms ease,
-          border-color 180ms ease,
-          box-shadow 180ms ease;
-        animation: fade-up 420ms ease-out both;
-      }
-
-      .grid .card:nth-child(2) {
-        animation-delay: 50ms;
-      }
-      .grid .card:nth-child(3) {
-        animation-delay: 100ms;
-      }
-      .grid .card:nth-child(4) {
-        animation-delay: 150ms;
-      }
-
-      .card:hover {
-        transform: translateY(-4px);
-        border-color: rgba(45, 212, 191, 0.58);
-        box-shadow: var(--card-shadow-hover);
-      }
-
-      .card:focus-visible {
-        outline: 2px solid var(--accent);
-        outline-offset: 2px;
-      }
-
-      .card-slot {
-        display: flex;
-        flex-direction: column;
-        gap: 0.6rem;
-      }
-
-      /* The card beside the slot keeps its own height instead of stretching to the derived card. */
-      .card-slot + .card {
-        align-self: start;
-      }
-
-      .derived {
-        display: flex;
-        justify-content: flex-end;
-        gap: 0.3rem;
-      }
-
-      /* The recorder records only rooms with a token, so the public app has no recording to play. */
-      :root[data-access-mode='public'] .requires-token {
-        display: none;
-      }
-
-      /* An L-shaped arrow from the card above to the derived card's left edge. */
-      .derived-mark {
-        position: relative;
-        flex: 1;
-        color: var(--accent);
-      }
-
-      .derived-mark::before {
-        position: absolute;
-        top: -0.6rem;
-        right: 9px;
-        bottom: 50%;
-        left: 2rem;
-        border-bottom: 2px solid currentColor;
-        border-left: 2px solid currentColor;
-        border-bottom-left-radius: 0.8rem;
-        content: '';
-      }
-
-      .derived-mark::after {
-        position: absolute;
-        right: 0;
-        bottom: calc(50% - 6px);
-        border-top: 7px solid transparent;
-        border-bottom: 7px solid transparent;
-        border-left: 11px solid currentColor;
-        content: '';
-      }
-
-      .derived .card {
-        width: 86%;
-        gap: 0.55rem;
-        padding: 0.85rem 0.95rem 0.9rem;
-      }
-
-      .derived .card h3 {
-        font-size: 0.98rem;
-      }
-
-      .derived .card p {
-        font-size: 0.85rem;
-      }
-
-      .derived .card .arrow {
-        top: 0.85rem;
-        right: 0.95rem;
-      }
-
-      .card h3 {
-        margin: 0;
-        font-size: 1.08rem;
-        line-height: 1.3;
-      }
-
-      .card p {
-        margin: 0;
-        color: var(--text-sub);
-        font-size: 0.93rem;
-        line-height: 1.6;
-      }
-
-      .card > :first-child {
-        padding-right: 1.5rem;
-      }
-
-      .card .arrow {
-        position: absolute;
-        top: 1.1rem;
-        right: 1.1rem;
-        color: var(--accent);
-        font-size: 1.1rem;
-        font-weight: 700;
-      }
-
-      .card .arrow::after {
-        display: inline-block;
-        content: '→';
-        transition: transform 180ms ease;
-      }
-
-      .card:hover .arrow::after {
-        transform: translateX(3px);
-      }
-
-      @keyframes fade-up {
-        from {
-          opacity: 0;
-          transform: translateY(12px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .hero,
-        .card,
-        .card .arrow::after {
-          animation: none;
-          transition: none;
-        }
-      }
-
-      @media (max-width: 640px) {
-        .page {
-          width: min(1120px, calc(100% - 1rem));
-          margin-top: 1rem;
-          gap: 2rem;
-        }
-        .hero {
-          padding: 1.25rem 1rem 1.3rem;
-          border-radius: 1rem;
-        }
-        .grid {
-          gap: 0.7rem;
-        }
-      }
-    </style>
+    <meta name="description" content="Media over QUIC Transport (MoQT) をブラウザで試せる Example 集" />
+    <link rel="stylesheet" href="./utils/theme.css" />
+    <link rel="stylesheet" href="./index.css" />
   </head>
   <body>
-    <main class="page">
-      <section class="hero">
-        <div class="hero-head">
-          <div class="hero-title">
-            <h1>MoQT Playground</h1>
-            <div class="access-switch version-switch" role="tablist" aria-label="MoQT draft">
+    <header class="app-shell">
+      <div class="app-shell-inner">
+        <a class="app-brand" href="./index.html">
+          <span class="app-logo"
+            ><svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M4 17 9 7l3 6 3-6 5 10" /></svg
+          ></span>
+          <span class="app-brand-name">MoQT Playground</span>
+        </a>
+        <nav class="home-nav" aria-label="カテゴリ">
+          <a href="#low-level">低レベル API</a>
+          <a href="#usecases">ユースケース</a>
+          <a href="#ai">AI 連携</a>
+          <a href="#operations">運用ツール</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="home">
+      <section class="home-hero">
+        <div>
+          <span class="home-eyebrow"><span class="badge accent">MoQT</span>Media over QUIC Transport</span>
+          <h1>MoQT を、<em>ブラウザで</em>試す。</h1>
+          <p class="home-lead">
+            低遅延配信プロトコル MoQT の Relay とブラウザ SDK <code>moq-wasm</code> で動く Example 集です。
+            制御メッセージの送受信から会議・ライブ配信・遠隔監視・AI 連携まで、実際に動かして確かめられます。
+          </p>
+          <dl class="home-stats">
+            <div>
+              <dt>Examples</dt>
+              <dd>15</dd>
+            </div>
+            <div>
+              <dt>MoQT draft</dt>
+              <dd>14 / 18</dd>
+            </div>
+            <div>
+              <dt>Transport</dt>
+              <dd>WebTransport</dd>
+            </div>
+          </dl>
+        </div>
+
+        <aside class="settings" aria-labelledby="settings-heading">
+          <div class="settings-head">
+            <h2 id="settings-heading">接続設定</h2>
+            <span class="badge">これから開く Example に適用</span>
+          </div>
+          <div class="setting">
+            <span class="setting-label" id="access-mode-label">接続モード</span>
+            <div class="segmented access-switch" role="tablist" aria-labelledby="access-mode-label">
+              <button type="button" role="tab" data-access-mode="temporary" data-testid="access-temporary">
+                一時トークン
+              </button>
+              <button type="button" role="tab" data-access-mode="public" data-testid="access-public">Public</button>
+            </div>
+            <p class="access-description" id="access-description"></p>
+            <div class="access-status" id="access-status"></div>
+          </div>
+          <div class="setting">
+            <span class="setting-label" id="version-label">MoQT draft</span>
+            <div class="segmented version-switch" role="tablist" aria-labelledby="version-label">
               <button type="button" role="tab" data-moqt-version="draft-14" data-testid="version-draft-14">
-                draft v14
+                draft-14
               </button>
               <button type="button" role="tab" data-moqt-version="draft-18" data-testid="version-draft-18">
-                draft v18
+                draft-18
               </button>
             </div>
           </div>
-          <div class="access-switch" role="tablist" aria-label="接続モード">
-            <button type="button" role="tab" data-access-mode="temporary" data-testid="access-temporary">
-              一時トークン
-            </button>
-            <button type="button" role="tab" data-access-mode="public" data-testid="access-public">Public</button>
-          </div>
-        </div>
-        <p class="access-description" id="access-description"></p>
-        <div class="access-status" id="access-status"></div>
+        </aside>
       </section>
 
-      <section class="section" aria-labelledby="low-level-heading">
+      <div class="toolbar">
+        <div class="filters" role="group" aria-label="カテゴリで絞り込む">
+          <button type="button" data-filter="all" aria-pressed="true">すべて<span class="count">15</span></button>
+          <button type="button" data-filter="low-level" aria-pressed="false">
+            低レベル API<span class="count">4</span>
+          </button>
+          <button type="button" data-filter="usecase" aria-pressed="false">
+            ユースケース<span class="count">6</span>
+          </button>
+          <button type="button" data-filter="ai" aria-pressed="false">AI 連携<span class="count">4</span></button>
+          <button type="button" data-filter="operations" aria-pressed="false">
+            運用ツール<span class="count">1</span>
+          </button>
+        </div>
+        <label class="search">
+          <svg><use href="/icons.svg#icon-search" /></svg>
+          <input type="search" id="example-search" placeholder="Example を検索" aria-label="Example を検索" />
+          <kbd>/</kbd>
+        </label>
+      </div>
+
+      <section class="section" id="low-level" data-section="low-level" aria-labelledby="low-level-heading">
         <div class="section-heading">
-          <h2 id="low-level-heading">低レベルAPIデモ</h2>
+          <h2 id="low-level-heading">低レベル API</h2>
+          <p>moq-wasm の API を直接呼び、MoQT のメッセージとデータの流れを確かめる</p>
         </div>
         <div class="grid">
-          <a class="card" href="examples/message/index.html">
-            <h3>Message</h3>
-            <p>MoQT 制御メッセージを手動で送受信する</p>
-            <span class="arrow" aria-hidden="true"></span>
+          <a class="example" href="examples/message/index.html" data-category="low-level">
+            <div class="example-body">
+              <span class="example-icon" aria-hidden="true"
+                ><svg><use href="/icons.svg#icon-message-square-code" /></svg
+              ></span>
+              <div class="example-title"><h3>Message</h3></div>
+              <p>SUBSCRIBE や FETCH などの MoQT 制御メッセージを 1 つずつ送り、Relay の応答を確かめる</p>
+              <div class="example-foot">
+                <span class="tag">制御メッセージ</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/datagram/index.html">
-            <h3>Datagram vs Stream</h3>
-            <p>カーソルと時刻を subgroup ストリームと datagram で同時に流して比べる</p>
-            <span class="arrow" aria-hidden="true"></span>
+          <a class="example" href="examples/datagram/index.html" data-category="low-level">
+            <div class="example-body">
+              <span class="example-icon" aria-hidden="true"
+                ><svg><use href="/icons.svg#icon-zap" /></svg
+              ></span>
+              <div class="example-title"><h3>Datagram vs Stream</h3></div>
+              <p>カーソルと時刻を subgroup ストリームと datagram の両方で流し、届き方を並べて比べる</p>
+              <div class="example-foot">
+                <span class="tag">Datagram</span><span class="tag">Subgroup</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/media/index.html">
-            <h3>Media</h3>
-            <p>Publisher / Subscriber を分けてメディアを送受信する</p>
-            <span class="arrow" aria-hidden="true"></span>
+          <a class="example" href="examples/media/index.html" data-category="low-level">
+            <div class="example-body">
+              <span class="example-icon" aria-hidden="true"
+                ><svg><use href="/icons.svg#icon-video" /></svg
+              ></span>
+              <div class="example-title"><h3>Media</h3></div>
+              <p>カメラを MSF ブロードキャストとして Publish し、Subscriber で受信して再生する</p>
+              <div class="example-foot">
+                <span class="tag">MSF</span><span class="tag">LOC</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/media-cmaf/index.html">
-            <h3>Media CMAF</h3>
-            <p>CMAF パッケージで Publish / Subscribe する</p>
-            <span class="arrow" aria-hidden="true"></span>
+          <a class="example" href="examples/media-cmaf/index.html" data-category="low-level">
+            <div class="example-body">
+              <span class="example-icon" aria-hidden="true"
+                ><svg><use href="/icons.svg#icon-film" /></svg
+              ></span>
+              <div class="example-title"><h3>Media CMAF</h3></div>
+              <p>CMAF パッケージのトラックで映像と音声を Publish / Subscribe する</p>
+              <div class="example-foot">
+                <span class="tag">MSF</span><span class="tag">CMAF</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="usecases-heading">
+      <section class="section" id="usecases" data-section="usecase" aria-labelledby="usecases-heading">
         <div class="section-heading">
-          <h2 id="usecases-heading">ユースケースデモ</h2>
+          <h2 id="usecases-heading">ユースケース</h2>
+          <p>会議、ライブ配信、遠隔監視など、MoQT で組み立てたアプリケーション</p>
         </div>
-        <div class="grid usecases">
-          <div class="card-slot">
-            <a class="card" href="examples/meeting/index.html">
-              <div class="card-head">
-                <h3>Meeting</h3>
-                <p>多人数の映像・音声会議</p>
-              </div>
+        <div class="grid wide">
+          <a class="example" href="examples/meeting/index.html" data-category="usecase">
+            <div class="example-visual" aria-hidden="true">
               <p class="flow">
                 <span class="node"
                   ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                >
-                <span class="link">↔</span>
-                <span class="node relay"
+                ><span class="link">↔</span
+                ><span class="node relay"
                   ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                >
-                <span class="link">↔</span>
-                <span class="node"
+                ><span class="link">↔</span
+                ><span class="node"
                   ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
                 >
               </p>
-              <span class="arrow" aria-hidden="true"></span>
-            </a>
-            <div class="derived requires-token">
-              <span class="derived-mark" aria-hidden="true"></span>
-              <a class="card" href="examples/recording-player/index.html">
-                <div class="card-head">
-                  <h3>Recording Player</h3>
-                  <p>Meeting で録画した MoQ アーカイブの再生</p>
-                </div>
-                <p class="flow">
-                  <span class="node cloud"
-                    ><svg><use href="/icons.svg#icon-cloud" /></svg>Object Store</span
-                  >
-                  <span class="link">→</span>
-                  <span class="node"
-                    ><svg><use href="/icons.svg#icon-workflow" /></svg>Recorder<small>FETCH で再配信</small></span
-                  >
-                  <span class="link">→</span>
-                  <span class="node relay"
-                    ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-                  >
-                  <span class="link">→</span>
-                  <span class="node"
-                    ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-                  >
-                </p>
-                <span class="arrow" aria-hidden="true"></span>
-              </a>
             </div>
-          </div>
-          <a class="card" href="examples/whiteboard/index.html">
-            <div class="card-head">
-              <h3>Whiteboard</h3>
-              <p>多人数で描くホワイトボード。途中参加でもボードを再現</p>
+            <div class="example-body">
+              <div class="example-title"><h3>Meeting</h3></div>
+              <p>多人数の映像・音声会議。画面共有やチャットにも対応する</p>
+              <div class="example-foot">
+                <span class="tag">映像・音声</span><span class="tag">画面共有</span><span class="tag">チャット</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-              >
-              <span class="link">↔</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">↔</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
           </a>
-          <a class="card" href="examples/onvif/index.html">
-            <div class="card-head">
-              <h3>Onvif</h3>
-              <p>PTZ カメラの遠隔制御・遠隔監視</p>
+          <a class="example requires-token" href="examples/recording-player/index.html" data-category="usecase">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node cloud"
+                  ><svg><use href="/icons.svg#icon-cloud" /></svg>Object Store</span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-workflow" /></svg>Recorder<small>FETCH で再配信</small></span
+                ><span class="link">→</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+                >
+              </p>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera</span
-              >
-              <span class="link">↔</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-router" /></svg>MoQ Gateway</span
-              >
-              <span class="link">↔</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">↔</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title">
+                <h3>Recording Player</h3>
+                <span class="badge">Meeting の録画</span>
+              </div>
+              <p>Meeting で録画した MoQ アーカイブを、Recorder が FETCH で再配信して再生する</p>
+              <div class="example-foot">
+                <span class="tag">録画</span><span class="tag">FETCH</span
+                ><span class="badge warning requires-token-note">一時トークンで利用できます</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/remote-monitoring/index.html">
-            <div class="card-head">
-              <h3>Remote Monitoring</h3>
-              <p>USB カメラの遠隔監視</p>
+          <a class="example" href="examples/whiteboard/index.html" data-category="usecase">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+                ><span class="link">↔</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">↔</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+                >
+              </p>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-webcam" /></svg>USB Camera</span
-              >
-              <span class="link">→</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-square-terminal" /></svg>MoQ Publisher<small>Rust CLI</small></span
-              >
-              <span class="link">→</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">→</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title"><h3>Whiteboard</h3></div>
+              <p>多人数で描くホワイトボード。途中から参加してもボードを再現する</p>
+              <div class="example-foot">
+                <span class="tag">途中参加</span><span class="tag">データトラック</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/live-viewer/index.html">
-            <div class="card-head">
-              <h3>Live Viewer</h3>
-              <p>ライブ配信ビューワー</p>
+          <a class="example" href="examples/onvif/index.html" data-category="usecase">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera</span
+                ><span class="link">↔</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-router" /></svg>MoQ Gateway</span
+                ><span class="link">↔</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">↔</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+                >
+              </p>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg</span
-              >
-              <span class="link">→</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small
-                  >RTMP / SRT → MoQ</small
-                ></span
-              >
-              <span class="link">→</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">→</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title"><h3>Onvif</h3></div>
+              <p>PTZ カメラを MoQ Gateway 経由で遠隔制御・遠隔監視する</p>
+              <div class="example-foot">
+                <span class="tag">ONVIF</span><span class="tag">PTZ 制御</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
+          </a>
+          <a class="example" href="examples/remote-monitoring/index.html" data-category="usecase">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-webcam" /></svg>USB Camera</span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-square-terminal" /></svg>MoQ Publisher<small>Rust CLI</small></span
+                ><span class="link">→</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+                >
+              </p>
+            </div>
+            <div class="example-body">
+              <div class="example-title"><h3>Remote Monitoring</h3></div>
+              <p>USB カメラの映像を Rust CLI から配信し、ブラウザで遠隔監視する</p>
+              <div class="example-foot">
+                <span class="tag">USB カメラ</span><span class="tag">Rust CLI</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
+          </a>
+          <a class="example" href="examples/live-viewer/index.html" data-category="usecase">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-clapperboard" /></svg>OBS / ffmpeg</span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-workflow" /></svg>gstreamer moqtsink<small
+                    >RTMP / SRT → MoQ</small
+                  ></span
+                ><span class="link">→</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+                >
+              </p>
+            </div>
+            <div class="example-body">
+              <div class="example-title"><h3>Live Viewer</h3></div>
+              <p>OBS や ffmpeg の RTMP / SRT 配信を MoQ に変換し、ライブで視聴する</p>
+              <div class="example-foot">
+                <span class="tag">RTMP / SRT</span><span class="tag">gstreamer</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="ai-heading">
+      <section class="section" id="ai" data-section="ai" aria-labelledby="ai-heading">
         <div class="section-heading">
-          <h2 id="ai-heading">AI連携デモ</h2>
+          <h2 id="ai-heading">AI 連携</h2>
+          <p>pipecat のボットが Relay に参加し、映像・音声・チャットを AI で処理する</p>
         </div>
-        <div class="grid usecases">
-          <a class="card" href="examples/moq-chat-moderation/index.html">
-            <div class="card-head">
-              <h3>MoQ Chat Moderation</h3>
-              <p>チャットのラベル判定</p>
+        <div class="grid wide">
+          <a class="example" href="examples/moq-chat-moderation/index.html" data-category="ai">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+                ><span class="link">↔</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">↔</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
+                ><span class="link">↔</span
+                ><span class="node cloud"
+                  ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
+                >
+              </p>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-              >
-              <span class="link">↔</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">↔</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
-              >
-              <span class="link">↔</span>
-              <span class="node cloud"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title"><h3>Chat Moderation</h3></div>
+              <p>チャットの発言を AI が読み、内容をラベル判定する</p>
+              <div class="example-foot">
+                <span class="tag">pipecat</span><span class="tag">テキスト</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/moq-camera-detection/index.html">
-            <div class="card-head">
-              <h3>MoQ Camera Detection</h3>
-              <p>カメラ映像への質問に答える</p>
+          <a class="example" href="examples/moq-camera-detection/index.html" data-category="ai">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-webcam" /></svg>Browser</span
+                ><span class="link">↔</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">↔</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
+                ><span class="link">↔</span
+                ><span class="node cloud"
+                  ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
+                >
+              </p>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-webcam" /></svg>Browser</span
-              >
-              <span class="link">↔</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">↔</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
-              >
-              <span class="link">↔</span>
-              <span class="node cloud"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title"><h3>Camera Detection</h3></div>
+              <p>カメラ映像についての質問に、AI が映像を見て答える</p>
+              <div class="example-foot">
+                <span class="tag">pipecat</span><span class="tag">映像</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/moq-ptz-tracking/index.html">
-            <div class="card-head">
-              <h3>MoQ PTZ Tracking</h3>
-              <p>指定した対象を PTZ カメラで画面に収める</p>
+          <a class="example" href="examples/moq-ptz-tracking/index.html" data-category="ai">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow hub">
+                <span class="node hub-browser"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+                ><span class="link hub-browser-link">↕</span
+                ><span class="node hub-camera"
+                  ><svg><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera</span
+                ><span class="link hub-camera-link">↔</span
+                ><span class="node relay hub-relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link hub-bot-link">↔</span
+                ><span class="node hub-bot"
+                  ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
+                ><span class="link hub-system-one-link">↔</span
+                ><span class="node cloud hub-system-one"
+                  ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
+                >
+              </p>
             </div>
-            <p class="flow hub">
-              <span class="node hub-browser"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-              >
-              <span class="link hub-browser-link">↕</span>
-              <span class="node hub-camera"
-                ><svg><use href="/icons.svg#icon-cctv" /></svg>PTZ Camera</span
-              >
-              <span class="link hub-camera-link">↔</span>
-              <span class="node relay hub-relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link hub-bot-link">↔</span>
-              <span class="node hub-bot"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>pipecat</span
-              >
-              <span class="link hub-system-one-link">↔</span>
-              <span class="node cloud hub-system-one"
-                ><svg><use href="/icons.svg#icon-brain-circuit" /></svg>d1-2B</span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title"><h3>PTZ Tracking</h3></div>
+              <p>指定した対象を AI が見つけ、PTZ カメラで画面に収め続ける</p>
+              <div class="example-foot">
+                <span class="tag">pipecat</span><span class="tag">PTZ 制御</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
-          <a class="card" href="examples/live-translate/streamer/index.html">
-            <div class="card-head">
-              <h3>Live Translate</h3>
-              <p>配信の音声を視聴者の言語に翻訳して届ける</p>
+          <a class="example" href="examples/live-translate/streamer/index.html" data-category="ai">
+            <div class="example-visual" aria-hidden="true">
+              <p class="flow">
+                <span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
+                ><span class="link">→</span
+                ><span class="node relay"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                ><span class="link">⇄</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-workflow" /></svg>live-translate<small
+                    >Gemini Live Translate</small
+                  ></span
+                ><span class="link">→</span
+                ><span class="node"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
+                >
+              </p>
             </div>
-            <p class="flow">
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser</span
-              >
-              <span class="link">→</span>
-              <span class="node relay"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="link">⇄</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-workflow" /></svg>live-translate<small
-                  >Gemini Live Translate</small
-                ></span
-              >
-              <span class="link">→</span>
-              <span class="node"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Browser<span class="count">×N</span></span
-              >
-            </p>
-            <span class="arrow" aria-hidden="true"></span>
+            <div class="example-body">
+              <div class="example-title"><h3>Live Translate</h3></div>
+              <p>配信の音声を Gemini Live Translate で視聴者の言語に翻訳して届ける</p>
+              <div class="example-foot">
+                <span class="tag">音声翻訳</span><span class="tag">字幕</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
+            </div>
           </a>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="operations-heading">
+      <section class="section" id="operations" data-section="operations" aria-labelledby="operations-heading">
         <div class="section-heading">
           <h2 id="operations-heading">運用ツール</h2>
+          <p>Relay とクライアントの状態を可視化する</p>
         </div>
-        <div class="grid">
-          <a class="card" href="examples/observability/index.html">
-            <div class="card-head">
-              <h3>Observability</h3>
-              <p>自分の app の通信状況と Pub/Sub を Relay ごとのトポロジーで表示する</p>
+        <div class="grid wide">
+          <a class="example span-all" href="examples/observability/index.html" data-category="operations">
+            <div class="example-visual" aria-hidden="true">
+              <div class="observability-map">
+                <svg class="observability-links" viewBox="0 0 444 270" aria-hidden="true">
+                  <defs>
+                    <marker
+                      id="obs-arrow"
+                      viewBox="0 0 10 10"
+                      refX="9"
+                      refY="5"
+                      markerWidth="7"
+                      markerHeight="7"
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+                    </marker>
+                  </defs>
+                  <line
+                    x1="57.5"
+                    y1="34.0"
+                    x2="100.0"
+                    y2="34.0"
+                    marker-end="url(#obs-arrow)"
+                    marker-start="url(#obs-arrow)"
+                  />
+                  <line
+                    x1="160.0"
+                    y1="34.0"
+                    x2="280.0"
+                    y2="34.0"
+                    marker-end="url(#obs-arrow)"
+                    marker-start="url(#obs-arrow)"
+                  />
+                  <line
+                    x1="340.0"
+                    y1="34.0"
+                    x2="386.5"
+                    y2="34.0"
+                    marker-end="url(#obs-arrow)"
+                    marker-start="url(#obs-arrow)"
+                  />
+                  <line
+                    x1="160.0"
+                    y1="65.3"
+                    x2="190.0"
+                    y2="96.7"
+                    marker-end="url(#obs-arrow)"
+                    marker-start="url(#obs-arrow)"
+                  />
+                  <line
+                    x1="280.0"
+                    y1="65.3"
+                    x2="250.0"
+                    y2="96.7"
+                    marker-end="url(#obs-arrow)"
+                    marker-start="url(#obs-arrow)"
+                  />
+                  <line x1="145.4" y1="68.5" x2="204.6" y2="201.5" marker-end="url(#obs-arrow)" />
+                  <line x1="294.6" y1="68.5" x2="235.4" y2="201.5" marker-end="url(#obs-arrow)" />
+                  <line x1="220.0" y1="162.5" x2="220.0" y2="201.5" marker-end="url(#obs-arrow)" />
+                </svg>
+                <span class="node" style="left: 26px; top: 34px"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Client</span
+                >
+                <span class="node relay" style="left: 130px; top: 34px"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                >
+                <span class="node relay" style="left: 310px; top: 34px"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                >
+                <span class="node" style="left: 418px; top: 34px"
+                  ><svg><use href="/icons.svg#icon-monitor" /></svg>Client</span
+                >
+                <span class="node relay" style="left: 220px; top: 128px"
+                  ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
+                >
+                <span class="node cloud" style="left: 220px; top: 236px"
+                  ><svg><use href="/icons.svg#icon-globe" /></svg>Observability</span
+                >
+              </div>
             </div>
-            <div class="observability-map">
-              <svg class="observability-links" viewBox="0 0 444 270" aria-hidden="true">
-                <defs>
-                  <marker
-                    id="obs-arrow"
-                    viewBox="0 0 10 10"
-                    refX="9"
-                    refY="5"
-                    markerWidth="7"
-                    markerHeight="7"
-                    orient="auto-start-reverse"
-                  >
-                    <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
-                  </marker>
-                </defs>
-                <line
-                  x1="57.5"
-                  y1="34.0"
-                  x2="100.0"
-                  y2="34.0"
-                  marker-end="url(#obs-arrow)"
-                  marker-start="url(#obs-arrow)"
-                />
-                <line
-                  x1="160.0"
-                  y1="34.0"
-                  x2="280.0"
-                  y2="34.0"
-                  marker-end="url(#obs-arrow)"
-                  marker-start="url(#obs-arrow)"
-                />
-                <line
-                  x1="340.0"
-                  y1="34.0"
-                  x2="386.5"
-                  y2="34.0"
-                  marker-end="url(#obs-arrow)"
-                  marker-start="url(#obs-arrow)"
-                />
-                <line
-                  x1="160.0"
-                  y1="65.3"
-                  x2="190.0"
-                  y2="96.7"
-                  marker-end="url(#obs-arrow)"
-                  marker-start="url(#obs-arrow)"
-                />
-                <line
-                  x1="280.0"
-                  y1="65.3"
-                  x2="250.0"
-                  y2="96.7"
-                  marker-end="url(#obs-arrow)"
-                  marker-start="url(#obs-arrow)"
-                />
-                <line x1="145.4" y1="68.5" x2="204.6" y2="201.5" marker-end="url(#obs-arrow)" />
-                <line x1="294.6" y1="68.5" x2="235.4" y2="201.5" marker-end="url(#obs-arrow)" />
-                <line x1="220.0" y1="162.5" x2="220.0" y2="201.5" marker-end="url(#obs-arrow)" />
-              </svg>
-              <span class="node" style="left: 26px; top: 34px"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Client</span
-              >
-              <span class="node relay" style="left: 130px; top: 34px"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="node relay" style="left: 310px; top: 34px"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="node" style="left: 418px; top: 34px"
-                ><svg><use href="/icons.svg#icon-monitor" /></svg>Client</span
-              >
-              <span class="node relay" style="left: 220px; top: 128px"
-                ><svg><use href="/icons.svg#icon-server" /></svg>Relay</span
-              >
-              <span class="node cloud" style="left: 220px; top: 236px"
-                ><svg><use href="/icons.svg#icon-globe" /></svg>Observability</span
-              >
+            <div class="example-body">
+              <div class="example-title"><h3>Observability</h3></div>
+              <p>自分の app の通信状況と Pub/Sub を、Relay ごとのトポロジーで表示する</p>
+              <div class="example-foot">
+                <span class="tag">トポロジー</span><span class="tag">Pub/Sub</span
+                ><span class="example-open"
+                  >開く<svg><use href="/icons.svg#icon-arrow-right" /></svg
+                ></span>
+              </div>
             </div>
-            <span class="arrow" aria-hidden="true"></span>
           </a>
         </div>
       </section>
+
+      <div class="empty" id="example-empty" hidden>
+        <p>条件に合う Example はありません</p>
+        <button type="button" id="example-reset">絞り込みを解除</button>
+      </div>
+
+      <footer class="home-footer">
+        <span>MoQT Playground — moq-wasm の Example 集</span>
+        <span>検証用の環境です。機密情報やプライバシーに関わる情報は入力しないでください</span>
+      </footer>
     </main>
     <script type="module" src="./utils/preserveQueryLinks.js"></script>
     <script type="module" src="./utils/accessSwitch.ts"></script>
     <script type="module" src="./utils/versionSwitch.ts"></script>
+    <script type="module" src="./utils/exampleFilter.ts"></script>
   </body>
 </html>
