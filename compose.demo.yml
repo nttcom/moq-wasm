@@ -1,0 +1,114 @@
+# The demos of README.md. The browser examples are on http://localhost:5173/moq-wasm/.
+#   docker compose -f compose.demo.yml up                          # meeting
+#   docker compose -f compose.demo.yml --profile live up           # live streaming
+#   docker compose -f compose.demo.yml --profile voice-agent up    # AI voice agent
+services:
+  browser:
+    image: moqt-browser-examples:local
+    build:
+      context: .
+      dockerfile: examples/browser/Dockerfile
+    ports:
+      - "5173:80"
+
+  vts:
+    image: moqt-vts:local
+    build:
+      context: .
+      dockerfile: services/vts/Dockerfile
+    environment:
+      VTS_TEMPORARY_APP_SECRET: &temporary-app-secret development-temporary-app-secret
+    volumes:
+      - ./services/vts/apps.example.json:/etc/vts/apps.json:ro
+
+  relay:
+    image: moqt-relay:local
+    build:
+      context: .
+      dockerfile: services/relay/Dockerfile
+    environment:
+      RELAY_ID: relay-a
+      AUTH_VTS_URL: http://vts:8081/verify
+      # Minted from apps.example.json (see services/vts/README.md).
+      AUTH_RELAY_TOKEN: eyJhbGciOiJIUzI1NiJ9.eyJhcHBJZCI6IjExMTExMTExLTIyMjItMzMzMy00NDQ0LTU1NTU1NTU1NTU1NSIsInB1Ymxpc2giOiIiLCJzdWJzY3JpYmUiOiIiLCJpYXQiOjE3OTMwODE5ODUsImV4cCI6MjEwODQ0MTk4NSwicmVsYXlJZCI6InJlbGF5LWEifQ.DyVb-XVwjuYKppQCGu2yI-n5-ENrlSou8Akmb4pBqU0
+    ports:
+      - "4433:4433/udp"
+    # The relay writes its self-signed certificate here on first start, and `make chrome` trusts it.
+    # It runs as root to write into the bind mount, which Linux creates owned by root.
+    user: root
+    volumes:
+      - ./services/relay/keys:/workspace/services/relay/keys
+    depends_on:
+      - vts
+
+  live-ingest:
+    image: moqt-live-ingest:local
+    build:
+      context: .
+      dockerfile: services/live-ingest/Dockerfile
+    profiles:
+      - live
+    command:
+      - --moqt-url=https://relay:4433
+      - --insecure-skip-tls-verify
+    depends_on:
+      - relay
+
+  # The test pattern of `make ffmpeg-srt`.
+  ffmpeg:
+    image: linuxserver/ffmpeg:latest@sha256:822d04f0b2d0c4847430f5cc90f20ea48be866bb502ece63fdeb729400bf5361
+    profiles:
+      - live
+    command: >-
+      -re -readrate_catchup 1
+      -f lavfi -i testsrc=size=1920x1080:rate=30
+      -f lavfi -i sine=frequency=1000:sample_rate=48000
+      -c:v libx264 -preset veryfast -profile:v baseline -pix_fmt yuv420p -g 60 -sc_threshold 0
+      -c:a aac -ar 48000 -ac 2
+      -f mpegts srt://live-ingest:9000?streamid=anon/live/test
+    restart: on-failure
+    depends_on:
+      - live-ingest
+
+  # The voice agent page asks temporary-apps for its bot, which bots launches as a local process.
+  temporary-apps:
+    image: moqt-temporary-apps:local
+    build:
+      context: .
+      dockerfile: services/temporary-apps/Dockerfile
+    profiles:
+      - voice-agent
+    environment:
+      PORT: "8083"
+      TEMPORARY_APPS_SECRET: *temporary-app-secret
+      TEMPORARY_APPS_BOTS_URL: http://bots:8098
+      TEMPORARY_APPS_BOT_TYPES: voice-agent
+    ports:
+      - "8083:8083"
+    depends_on:
+      - bots
+
+  bots:
+    image: moqt-python-bots:demo
+    build:
+      context: .
+      dockerfile: examples/python/Dockerfile
+      target: demo
+    profiles:
+      - voice-agent
+    environment:
+      BOTS_PUBLIC_URL: http://bots:8098
+      BOTS_STORE_URL: file:///tmp/
+      BOTS_VTS_URL: http://vts:8081/verify
+      BOTS_REGISTRY_FILE: /etc/vts/apps.json
+      BOTS_TEMPORARY_APP_SECRET: *temporary-app-secret
+      BOTS_TYPES: >-
+        {"voice-agent": {"launcher": {"kind": "local", "program": "/app/moq-ai-voice-agent/.venv/bin/python"},
+        "args": ["-m", "moq_ai_voice_agent.bot", "--relay-url", "https://relay:4433", "--insecure", "--no-telemetry"],
+        "grace_seconds": 30, "max_seconds": 3600, "max_running": 4}}
+      # Inherited by the bots it launches.
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    volumes:
+      - ./services/vts/apps.example.json:/etc/vts/apps.json:ro
+    depends_on:
+      - relay
