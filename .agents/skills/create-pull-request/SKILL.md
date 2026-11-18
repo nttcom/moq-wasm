@@ -7,7 +7,7 @@ description: Create a pull request for the current branch. Use when the user ask
 
 ## Steps
 
-1. Review the change: `git status`, `git diff origin/master...HEAD`, and `git log origin/master..HEAD --oneline`.
+1. Review the change: `git status`, `git diff origin/master...HEAD`, and `git log origin/master..HEAD --oneline`. If it holds a lower-layer change or a refactor together with the change built on it, split it into stacked PRs first (*Lower Layers* in `.agents/rules/coding-style.md`).
 2. Run the ponytail review on the diff and apply its cuts (see *Ponytail Review*). Repeat until it answers `Lean already. Ship.`
 3. Have a subagent review the comments the diff adds (see *Comment Review*) and apply its edits.
 4. Delete each TODO in `docs/todos/` that the diff resolves, and update the docs it makes stale (see the `todo-start` skill).
