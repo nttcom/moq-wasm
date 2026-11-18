@@ -20,6 +20,7 @@ reads JSON bodies, bearer tokens and query strings, and builds responses.
 | `empty_response(status)` | `status` with an empty body and no headers. |
 | `allow_any_origin(response, methods, headers)` | `response` with `Access-Control-Allow-Origin: *` and the given allowed methods and request headers, for the services whose pages are served from any origin (`temporary-apps`, `live-translate`, `observability`). |
 | `bearer_token(headers)` | The token of `Authorization: Bearer <token>`, or `None` without one or with an empty token. |
+| `query_params(query)` | The decoded pairs of a URI's query as a map; of a name given twice, the last value. |
 | `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
 
 ## Runtime flow
@@ -54,3 +55,4 @@ sequenceDiagram
 ## Dependencies
 
 `hyper`, `hyper-util` and `http-body-util`: see [hyper.md](hyper.md).
+`url` for `query_params`: see [url.md](url.md).

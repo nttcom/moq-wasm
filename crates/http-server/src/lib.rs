@@ -1,4 +1,7 @@
-use std::{convert::Infallible, error::Error, future::Future, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap, convert::Infallible, error::Error, future::Future, net::SocketAddr,
+    sync::Arc,
+};
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::{
@@ -107,6 +110,13 @@ pub fn allow_any_origin<B>(
         HeaderValue::from_static(headers),
     );
     response
+}
+
+/// A name given twice keeps its last value.
+pub fn query_params(query: Option<&str>) -> HashMap<String, String> {
+    url::form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+        .into_owned()
+        .collect()
 }
 
 /// `None` when the `Authorization` header is absent, is not UTF-8, is not
@@ -223,6 +233,27 @@ mod tests {
         assert_eq!(headers[ACCESS_CONTROL_ALLOW_ORIGIN], "*");
         assert_eq!(headers[ACCESS_CONTROL_ALLOW_METHODS], "GET, POST");
         assert_eq!(headers[ACCESS_CONTROL_ALLOW_HEADERS], "authorization");
+    }
+
+    #[test]
+    fn query_params_are_decoded() {
+        // Act
+        let params = query_params(Some("name=a%2Fb+c&empty=&name=last"));
+
+        // Assert
+        assert_eq!(
+            params,
+            HashMap::from([
+                ("name".to_string(), "last".to_string()),
+                ("empty".to_string(), String::new()),
+            ])
+        );
+    }
+
+    #[test]
+    fn no_query_has_no_params() {
+        // Act / Assert
+        assert!(query_params(None).is_empty());
     }
 
     fn authorization(value: &str) -> HeaderMap {

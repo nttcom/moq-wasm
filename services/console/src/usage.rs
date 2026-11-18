@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Context;
+use http_server::query_params;
 use hyper::body::Bytes;
 use reqwest::{StatusCode, Url};
 
@@ -43,12 +44,12 @@ impl ObservabilityClient {
         token: &str,
         query: Option<&str>,
     ) -> anyhow::Result<UsageAnswer> {
-        let given = Url::parse(&format!("http://query/?{}", query.unwrap_or_default()))?;
+        let given = query_params(query);
         let mut url = self.usage_url.clone();
         url.query_pairs_mut().extend_pairs(
-            given
-                .query_pairs()
-                .filter(|(name, _)| RANGE_PARAMETERS.contains(&name.as_ref())),
+            RANGE_PARAMETERS
+                .iter()
+                .filter_map(|name| Some((*name, given.get(*name)?))),
         );
         let response = self
             .http

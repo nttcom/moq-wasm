@@ -5,7 +5,8 @@ use std::{
 
 use http_body_util::Full;
 use http_server::{
-    HttpServer, bearer_token, empty_response, error_response, json_response, read_json,
+    HttpServer, bearer_token, empty_response, error_response, json_response, query_params,
+    read_json,
 };
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
@@ -160,11 +161,7 @@ async fn latest(
     bot_type: &str,
     query: Option<&str>,
 ) -> JsonResponse {
-    let Some(prefix) = query.and_then(|query| {
-        url::form_urlencoded::parse(query.as_bytes())
-            .find(|(key, _)| key == "namespace_prefix")
-            .map(|(_, value)| value.into_owned())
-    }) else {
+    let Some(prefix) = query_params(query).remove("namespace_prefix") else {
         return error_response(StatusCode::BAD_REQUEST, "invalid_request");
     };
     if let Err(rejection) = state.launch_auth.authorize(headers, &prefix).await {

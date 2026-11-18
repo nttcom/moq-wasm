@@ -2,7 +2,9 @@ use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use anyhow::Context;
 use http_body_util::Full;
-use http_server::{HttpServer, allow_any_origin, empty_response, error_response, json_response};
+use http_server::{
+    HttpServer, allow_any_origin, empty_response, error_response, json_response, query_params,
+};
 use hyper::{
     Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -53,18 +55,6 @@ impl ApiServer {
 
 type JsonResponse = Response<Full<Bytes>>;
 
-fn query_params(request: &Request<Incoming>) -> HashMap<String, String> {
-    request
-        .uri()
-        .query()
-        .map(|query| {
-            reqwest::Url::parse(&format!("http://query/?{query}"))
-                .map(|url| url.query_pairs().into_owned().collect())
-                .unwrap_or_default()
-        })
-        .unwrap_or_default()
-}
-
 async fn handle(request: Request<Incoming>, peer: IpAddr, state: Arc<ApiState>) -> JsonResponse {
     allow_any_origin(
         route(request, peer, &state).await,
@@ -92,7 +82,7 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
             return error_response(status, code);
         }
     };
-    let params = query_params(&request);
+    let params = query_params(request.uri().query());
     let response = match request.uri().path() {
         "/api/snapshots" => snapshots(state, &params, &app_id).await,
         "/api/series" => series(state, &params, app_id).await,

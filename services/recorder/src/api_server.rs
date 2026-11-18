@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use http_body_util::{Either, Full};
-use http_server::{HttpServer, bearer_token};
+use http_server::{HttpServer, bearer_token, query_params};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -66,7 +66,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
     let origin = allowed_origin(request.headers(), &state.allowed_origins);
     let method = request.method().clone();
     let path = request.uri().path().to_string();
-    let query = query_params(&request);
+    let query = query_params(request.uri().query());
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
     let foreign_page = request.headers().contains_key(ORIGIN) && origin.is_none();
     let headers = request.headers().clone();
@@ -181,15 +181,6 @@ fn non_empty(namespace: &str, message: &'static str) -> Result<Option<String>, R
 fn internal_error(error: &anyhow::Error) -> ApiResponse {
     tracing::error!(error = format!("{error:#}"), "recording API request failed");
     error_response(StatusCode::INTERNAL_SERVER_ERROR, &format!("{error:#}"))
-}
-
-fn query_params(request: &Request<Incoming>) -> HashMap<String, String> {
-    request
-        .uri()
-        .query()
-        .and_then(|query| url::Url::parse(&format!("http://query/?{query}")).ok())
-        .map(|url| url.query_pairs().into_owned().collect())
-        .unwrap_or_default()
 }
 
 fn allowed_origin(headers: &HeaderMap, allowed: &[String]) -> Option<HeaderValue> {
