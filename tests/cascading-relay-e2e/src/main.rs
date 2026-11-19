@@ -14,11 +14,11 @@ use moqt::{
     fetch::{Fetch, FetchOption},
     namespace::NamespaceInterest,
     object::{
-        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, KeyValuePair, Location,
-        Object, ObjectStatus, Subgroup, SubgroupStart, TrackData, VariantType,
+        ContentExists, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
+        ObjectStatus, Subgroup, SubgroupStart, TrackData, VariantType,
     },
     publish::PublishOption,
-    subscribe::{FilterType, SubscribeOption},
+    subscribe::SubscribeOption,
 };
 use redis::AsyncCommands;
 
@@ -321,14 +321,7 @@ async fn run_track_properties_scenario(
         subscriber_session.subscriber().subscribe(
             track_namespace.to_string(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         ),
     )
     .await
@@ -952,14 +945,7 @@ async fn subscribe_largest_object(
     track_namespace: &str,
     track_name: &str,
 ) -> anyhow::Result<Subscription> {
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
+    let option = SubscribeOption::default();
     tracing::info!(%track_namespace, %track_name, "subscriber sending SUBSCRIBE");
     Ok(session
         .subscriber()
@@ -1138,14 +1124,7 @@ async fn subscribe_and_receive_ordered_objects(
     track_name: String,
     count: usize,
 ) -> anyhow::Result<Vec<Vec<u8>>> {
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
+    let option = SubscribeOption::default();
     tracing::info!(%track_namespace, %track_name, count, "subscriber sending SUBSCRIBE for ordered objects");
     let subscription = session
         .subscriber()
@@ -1341,14 +1320,7 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
+    let option = SubscribeOption::default();
     tracing::info!(
         %track_namespace,
         %track_name,

@@ -15,8 +15,8 @@ use crate::{connect, object_payload};
 use anyhow::{Context as _, bail};
 use moqt::{
     Session, SessionEvent, Subscription,
-    object::{ContentExists, GroupOrder, Subgroup, TrackData},
-    subscribe::{FilterType, SubscribeOption},
+    object::{ContentExists, Subgroup, TrackData},
+    subscribe::SubscribeOption,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -136,14 +136,7 @@ impl ClockSubscriber {
             subscriber.subscribe(
                 track_namespace.to_string(),
                 TRACK_NAME.to_string(),
-                SubscribeOption {
-                    subscriber_priority: 128,
-                    group_order: GroupOrder::Ascending,
-                    forward: true,
-                    filter_type: FilterType::LargestObject,
-                    new_group_request: None,
-                    delivery_timeout: None,
-                },
+                SubscribeOption::default(),
             ),
         )
         .await

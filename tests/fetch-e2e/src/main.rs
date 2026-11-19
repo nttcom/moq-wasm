@@ -32,11 +32,11 @@ use moqt::{
     CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
-        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus, StreamDataSenderFactory, Subgroup, SubgroupStart, TrackData,
+        ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
+        StreamDataSenderFactory, Subgroup, SubgroupStart, TrackData,
     },
     publish::PublishOption,
-    subscribe::{FilterType, SubscribeOption},
+    subscribe::SubscribeOption,
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
@@ -295,14 +295,7 @@ async fn carol(
         .subscribe(
             namespace.clone(),
             TRACK_NAME.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(
@@ -377,14 +370,7 @@ async fn bob(
         .subscribe(
             namespace.clone(),
             TRACK_NAME.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(
@@ -619,14 +605,7 @@ async fn run_cross_relay_standalone_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!("[local-sub] subscribe ok on relay-A");
@@ -706,14 +685,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
 
@@ -729,14 +701,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(
@@ -787,14 +752,7 @@ async fn run_cross_relay_leading_gap_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
@@ -807,14 +765,7 @@ async fn run_cross_relay_leading_gap_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(
@@ -951,14 +902,7 @@ async fn run_upstream_fetch_forwarding_data_not_found(
         .subscribe(
             namespace.clone(),
             TRACK_NAME.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     drain_until_group_complete(&mut live_sub, &live_subscription, GROUPS - 1, "nf-live").await?;
@@ -1000,14 +944,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
@@ -1023,14 +960,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(
@@ -1056,14 +986,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     let received =
@@ -1154,14 +1077,7 @@ async fn run_cross_relay_live_joining_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     drain_until_group_complete(&mut local_sub, &local_subscription, GROUPS - 1, "local-sub")
@@ -1175,14 +1091,7 @@ async fn run_cross_relay_live_joining_fetch(
         .subscribe(
             namespace.clone(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(

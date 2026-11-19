@@ -38,10 +38,10 @@ use moqt::{
     CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
     fetch::{Fetch, FetchDataReceiver, FetchOption},
     object::{
-        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object,
-        ObjectStatus, StreamDataSenderFactory, SubgroupStart,
+        ContentExists, ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
+        StreamDataSenderFactory, SubgroupStart,
     },
-    subscribe::{FilterType, SubscribeOption},
+    subscribe::SubscribeOption,
 };
 
 const DEFAULT_RELAY_URL: &str = "moqt://127.0.0.1:4433";
@@ -136,14 +136,7 @@ async fn subscribe_live(namespace: &str) -> anyhow::Result<Session> {
         .subscribe(
             namespace.to_string(),
             TRACK_NAME.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!("[sub {}] subscribe ok", namespace);
