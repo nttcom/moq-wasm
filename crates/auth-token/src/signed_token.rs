@@ -33,6 +33,10 @@ pub enum ClaimError {
     TtlTooLong,
     #[error("namespace path contains an empty element")]
     EmptyElement,
+    /// `exp` plus the clock leeway, or `iat`, is later than `SystemTime` can
+    /// hold.
+    #[error("lifetime_out_of_range")]
+    LifetimeOutOfRange,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,15 +58,22 @@ pub struct SignedToken {
 
 impl SignedToken {
     /// Checks the lifetime and that each namespace claim is `""` or
-    /// `/`-separated non-empty elements.
+    /// `/`-separated non-empty elements. Once it passes, `iat` and `exp`
+    /// convert to a `SystemTime` without overflowing.
     pub fn check(&self, policy: ClaimPolicy, now: SystemTime) -> Result<(), ClaimError> {
         let (Some(iat), Some(exp)) = (self.claims.iat, self.claims.exp) else {
             return Err(ClaimError::MissingLifetime);
         };
-        if SystemTime::UNIX_EPOCH + Duration::from_secs(exp) + policy.clock_leeway <= now {
+        let time = |secs: u64, leeway: Duration| {
+            SystemTime::UNIX_EPOCH
+                .checked_add(Duration::from_secs(secs))
+                .and_then(|time| time.checked_add(leeway))
+                .ok_or(ClaimError::LifetimeOutOfRange)
+        };
+        if time(exp, policy.clock_leeway)? <= now {
             return Err(ClaimError::Expired);
         }
-        if SystemTime::UNIX_EPOCH + Duration::from_secs(iat) > now + policy.clock_leeway {
+        if time(iat, Duration::ZERO)? > now + policy.clock_leeway {
             return Err(ClaimError::NotYetValid);
         }
         if !self.is_relay && exp.saturating_sub(iat) > policy.max_token_ttl.as_secs() {
@@ -137,6 +148,24 @@ mod tests {
 
     fn check(token: &SignedToken) -> Result<(), ClaimError> {
         token.check(ClaimPolicy::default(), now())
+    }
+
+    #[test]
+    fn a_lifetime_past_what_system_time_holds_is_rejected_without_panicking() {
+        for (iat, exp) in [(NOW_SECS, u64::MAX), (u64::MAX, NOW_SECS + 60)] {
+            // Arrange
+            let token = signed(true, iat, exp, None);
+
+            // Act
+            let result = check(&token);
+
+            // Assert
+            assert_eq!(
+                result,
+                Err(ClaimError::LifetimeOutOfRange),
+                "iat {iat}, exp {exp}"
+            );
+        }
     }
 
     #[test]
