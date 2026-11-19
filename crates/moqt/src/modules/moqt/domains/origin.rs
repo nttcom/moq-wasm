@@ -332,9 +332,9 @@ impl Origin {
     /// Forward State 0, so the peer has the track sent only while it wants
     /// the objects (draft-18 §10.10). `demand_sender` is sent whether a
     /// subscription to the track is in Forward State 1, now and at every
-    /// change; while none is, no object written is sent, so the caller need
-    /// not produce any. Call this before `publish`; fails for a track that is
-    /// not registered.
+    /// change until `end_track`; while none is, no object written is sent, so
+    /// the caller need not produce any. Call this before `publish`, again
+    /// after `end_track`; fails for a track that is not registered.
     pub async fn publish_on_demand(
         &self,
         namespace: &str,
@@ -705,7 +705,8 @@ impl Origin {
     /// draft-ietf-moq-transport-14 §9.12). Does nothing for a track that is
     /// not registered. Waits for a `publish` in flight, whose subscription is
     /// then ended too. The track keeps its numbering and cache, so `publish`
-    /// or a SUBSCRIBE takes it up again at the next group.
+    /// or a SUBSCRIBE takes it up again at the next group. A track published
+    /// on demand reports no demand until `publish_on_demand` is called again.
     pub async fn end_track(&self, namespace: &str, track_name: &str) -> Result<()> {
         let key = track_key(namespace, track_name);
         let ended = {
@@ -727,7 +728,9 @@ impl Origin {
                     None => {}
                 }
             }
-            track.refresh_demand();
+            // A producer that publishes the track again must produce its first
+            // objects whatever a SUBSCRIBE to the ended track asks for.
+            track.demand = None;
             for request in requests {
                 state.subscriptions.remove(&request);
             }
@@ -1373,6 +1376,44 @@ mod tests {
                 (received.group_id, received.object_id),
                 (FIRST_GROUP_ID + 1, 0)
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ended_track_reports_no_demand_until_it_is_published_on_demand_again() {
+        for version in DRAFTS {
+            // Arrange: a subscription forwards the track published on demand
+            let peers = origin_with_track("origin-ended-demand", RETENTION, version).await;
+            let origin = &peers.origin;
+            let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+            origin
+                .publish_on_demand(NAMESPACE, TRACK, demand_sender.clone())
+                .await
+                .unwrap();
+            let accepted = publish_accepted_as_asked(&peers).await;
+            update_forward(&peers, &accepted, true).await;
+            while demand_receiver.try_recv().is_ok() {}
+
+            // Act: a SUBSCRIBE comes and goes on the ended track, then another stays while it is published again
+            end_track(&peers).await;
+            let early = subscribe(&peers, FilterType::LargestObject).await;
+            unsubscribe(&peers, &early).await;
+            let ended_reports = std::iter::from_fn(|| demand_receiver.try_recv().ok()).count();
+            let subscribed = subscribe(&peers, FilterType::LargestObject).await;
+            origin
+                .publish_on_demand(NAMESPACE, TRACK, demand_sender)
+                .await
+                .unwrap();
+            unsubscribe(&peers, &subscribed).await;
+
+            // Assert: published again, the track reports its demand from the subscriptions it has
+            let demand = |wanted| TrackDemand {
+                track_name: TRACK.to_string(),
+                wanted,
+            };
+            assert_eq!(ended_reports, 0);
+            assert_eq!(demand_receiver.try_recv(), Ok(demand(true)));
+            assert_eq!(demand_receiver.try_recv(), Ok(demand(false)));
         }
     }
 
