@@ -633,4 +633,205 @@ mod tests {
         assert_eq!(publisher.timing.alignment.newest(), keyframe);
         assert_eq!(publisher.audio_group_id, keyframe);
     }
+
+    mod properties {
+        use std::collections::BTreeSet;
+
+        use proptest::prelude::*;
+
+        use super::*;
+        use crate::{cmaf_video::CmafVideo, group_alignment::REMEMBERED_KEYFRAMES};
+
+        /// One VIDEO_TIMESCALE tick of the fMP4 muxer is 11.1 µs, so gaps of
+        /// 0 to 3 ticks reach the samples it moves one tick later.
+        fn gap_us(frame_us: u64) -> impl Strategy<Value = u64> {
+            prop_oneof![Just(0), 1..=34u64, Just(frame_us)]
+        }
+
+        #[derive(Debug, Clone)]
+        enum Step {
+            /// The source's next frame, and whether the rendition keyframes on it.
+            Source {
+                gap_us: u64,
+                is_keyframe: bool,
+                rendition_keyframe: bool,
+            },
+            /// The rendition takes the next frame the source has taken, if any.
+            Rendition,
+            Audio {
+                gap_us: u64,
+            },
+        }
+
+        fn step() -> impl Strategy<Value = Step> {
+            prop_oneof![
+                (gap_us(33_333), any::<bool>(), any::<bool>()).prop_map(
+                    |(gap_us, is_keyframe, rendition_keyframe)| Step::Source {
+                        gap_us,
+                        is_keyframe,
+                        rendition_keyframe,
+                    }
+                ),
+                Just(Step::Rendition),
+                gap_us(21_333).prop_map(|gap_us| Step::Audio { gap_us }),
+            ]
+        }
+
+        fn sample(dts_us: u64, is_keyframe: bool) -> VideoSample {
+            VideoSample {
+                data: Bytes::from_static(b"frame"),
+                is_keyframe,
+                pts: Timestamp::from_micros(dts_us),
+                dts: Timestamp::from_micros(dts_us),
+            }
+        }
+
+        fn vp8() -> VideoConfig {
+            VideoConfig::Vp8(Vp8Config {
+                width: 64,
+                height: 48,
+            })
+        }
+
+        fn group_ids(boundaries: &[GroupBoundary]) -> Vec<u64> {
+            boundaries
+                .iter()
+                .filter_map(|boundary| match boundary {
+                    GroupBoundary::At(group_id) => Some(*group_id),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        #[derive(Default)]
+        struct Published {
+            video: Vec<GroupBoundary>,
+            video_cmaf: Vec<GroupBoundary>,
+            rendition: Vec<GroupBoundary>,
+            rendition_cmaf: Vec<GroupBoundary>,
+            audio: Vec<GroupBoundary>,
+            /// The rendition keyframes on a source keyframe still remembered
+            /// that did not take its group id, with the id they missed.
+            rendition_misses: Vec<(u64, GroupBoundary)>,
+        }
+
+        /// Numbers the groups the way `publish_video`, a `FollowSource`
+        /// `RenditionTrack` and `publish_audio` do. A keyframe that repeats the
+        /// presentation time of its track's previous keyframe is sent as a
+        /// delta frame: its group would be the one already open.
+        fn publish(steps: &[Step]) -> Published {
+            let mut publisher = publisher();
+            publisher.video_published = true;
+            let alignment = publisher.timing.alignment.clone();
+            let mut video_cmaf = CmafVideo::new(vp8());
+            let mut rendition_cmaf = CmafVideo::new(vp8());
+            let mut published = Published::default();
+            let mut source_frames = Vec::new();
+            let mut source_keyframes = 0;
+            let mut rendition_taken = 0;
+            let (mut video_us, mut audio_us) = (0, 0);
+            let (mut last_keyframe_us, mut last_rendition_keyframe_us) = (None, None);
+            for step in steps {
+                match *step {
+                    Step::Source {
+                        gap_us,
+                        is_keyframe,
+                        rendition_keyframe,
+                    } => {
+                        video_us += gap_us;
+                        let is_keyframe = is_keyframe && last_keyframe_us != Some(video_us);
+                        if is_keyframe {
+                            last_keyframe_us = Some(video_us);
+                        }
+                        let frame = sample(video_us, is_keyframe);
+                        let group = frame
+                            .is_keyframe
+                            .then(|| alignment.keyframe(video_us))
+                            .map_or(GroupBoundary::Within, GroupBoundary::At);
+                        published.video.push(group);
+                        source_keyframes += usize::from(is_keyframe);
+                        if let Some(object) = video_cmaf.push(&frame, group).unwrap() {
+                            published.video_cmaf.push(object.group);
+                        }
+                        let rendition_keyframe =
+                            rendition_keyframe && last_rendition_keyframe_us != Some(video_us);
+                        if rendition_keyframe {
+                            last_rendition_keyframe_us = Some(video_us);
+                        }
+                        source_frames.push((
+                            sample(video_us, rendition_keyframe),
+                            group,
+                            source_keyframes,
+                        ));
+                    }
+                    Step::Rendition => {
+                        let Some((frame, source_group, keyframe_number)) =
+                            source_frames.get(rendition_taken)
+                        else {
+                            continue;
+                        };
+                        rendition_taken += 1;
+                        let group = frame
+                            .is_keyframe
+                            .then(|| alignment.aligned(frame.pts.micros()))
+                            .flatten()
+                            .map_or(GroupBoundary::Within, GroupBoundary::At);
+                        published.rendition.push(group);
+                        if let GroupBoundary::At(source_id) = source_group
+                            && frame.is_keyframe
+                            && source_keyframes - keyframe_number < REMEMBERED_KEYFRAMES
+                            && group != *source_group
+                        {
+                            published.rendition_misses.push((*source_id, group));
+                        }
+                        if let Some(object) = rendition_cmaf.push(frame, group).unwrap() {
+                            published.rendition_cmaf.push(object.group);
+                        }
+                    }
+                    Step::Audio { gap_us } => {
+                        audio_us += gap_us;
+                        if let Some(group) = publisher.audio_group(audio_us) {
+                            published.audio.push(group);
+                        }
+                    }
+                }
+            }
+            published
+        }
+
+        proptest! {
+            #[test]
+            fn every_track_takes_source_video_group_ids_in_increasing_order(
+                steps in prop::collection::vec(step(), 0..600),
+            ) {
+                // Act
+                let published = publish(&steps);
+
+                // Assert: `Origin` rejects a group id that does not increase
+                let source_ids: BTreeSet<u64> = group_ids(&published.video).into_iter().collect();
+                for (track, boundaries) in [
+                    ("video", &published.video),
+                    ("video_cmaf", &published.video_cmaf),
+                    ("rendition", &published.rendition),
+                    ("rendition_cmaf", &published.rendition_cmaf),
+                    ("audio", &published.audio),
+                ] {
+                    let ids = group_ids(boundaries);
+                    prop_assert!(ids.windows(2).all(|pair| pair[0] < pair[1]), "{track}: {ids:?}");
+                    prop_assert!(ids.iter().all(|id| source_ids.contains(id)), "{track}: {ids:?}");
+                }
+                // Assert: a rendition keyframe takes the id of the source keyframe it follows
+                prop_assert_eq!(&published.rendition_misses, &[]);
+                // Assert: each fragment starts the group its LOC object started (cmsf-01 §3.2)
+                prop_assert_eq!(
+                    &published.video_cmaf[..],
+                    &published.video[..published.video_cmaf.len()]
+                );
+                prop_assert_eq!(
+                    &published.rendition_cmaf[..],
+                    &published.rendition[..published.rendition_cmaf.len()]
+                );
+            }
+        }
+    }
 }

@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, sync::Mutex};
 
 /// A rendition that missed a source keyframe, and so has no id for that
 /// presentation time, can only find ids that are still recent.
-const REMEMBERED_KEYFRAMES: usize = 64;
+pub(crate) const REMEMBERED_KEYFRAMES: usize = 64;
 
 /// draft-ietf-moq-cmsf-01 §3.2: the tracks of a switching set start their
 /// groups at the same presentation times with the same group ids. The source
