@@ -85,7 +85,8 @@ class LocalBroadcast:
             await self._session._register(self._pending.pop(0))
         self._batching = False
         if self._media_sources:
-            return await self._session._add_media_broadcast(self.namespace, self._build_media)
+            await self._build_media(self._session._connected())
+            return self._session._announced(self.namespace)
         return await self._session.announce(self.namespace)
 
     async def _build_media(self, native: _native.Session) -> None:

@@ -23,11 +23,11 @@ use moqt::{
     CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure,
     Session, SessionEvent, Subscription,
     object::{
-        ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
-        Subgroup, SubgroupStart, TrackData,
+        ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus, Subgroup,
+        SubgroupStart, TrackData,
     },
     publish::PublishOption,
-    subscribe::{FilterType, SubscribeOption},
+    subscribe::SubscribeOption,
 };
 
 const DEFAULT_RELAY_A_URL: &str = "moqt://127.0.0.1:4433";
@@ -405,14 +405,7 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
+    let option = SubscribeOption::default();
     let subscription = session
         .subscriber()
         .subscribe(track_namespace, track_name, option)

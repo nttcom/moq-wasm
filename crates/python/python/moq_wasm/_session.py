@@ -12,7 +12,6 @@ logger = logging.getLogger("moq_wasm")
 T = TypeVar("T")
 DEFAULT_RETENTION_SECONDS = 60.0
 Dial = Callable[[str | None], Awaitable[_native.Session]]
-MediaBuilder = Callable[[_native.Session], Awaitable[None]]
 
 
 class SessionClosed(Exception):
@@ -96,7 +95,7 @@ class TrackWriter:
         self._writer: _native.TrackWriter | None = None
         # Set once the track is registered, or will not be.
         self._settled = asyncio.Event()
-        self._on_bound: list[Callable[[], Awaitable[None]]] = []
+        self._on_bound: Callable[[], Awaitable[None]] | None = None
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> int | None:
         """`_native.TrackWriter.write`; None for an object dropped before the track is
@@ -128,8 +127,8 @@ class TrackWriter:
     async def _bind(self, writer: _native.TrackWriter) -> None:
         self._writer = writer
         self._settled.set()
-        for bound in self._on_bound:
-            await bound()
+        if self._on_bound is not None:
+            await self._on_bound()
 
     def _abandon(self) -> None:
         """The track will not be registered."""
@@ -231,8 +230,7 @@ class Session:
     async def announce(self, namespace: list[str]) -> Announcement:
         """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it."""
         await self._connected().announce(namespace)
-        self._published.add(tuple(namespace))
-        return Announcement(self, namespace)
+        return self._announced(namespace)
 
     async def publish_track(
         self,
@@ -271,9 +269,8 @@ class Session:
             raise
         await writer._bind(native)
 
-    async def _add_media_broadcast(self, namespace: list[str], build: MediaBuilder) -> Announcement:
-        """Publishes `namespace` through `build`, which builds the media broadcast and announces it."""
-        await build(self._connected())
+    def _announced(self, namespace: list[str]) -> Announcement:
+        """Call once the relay accepted `namespace`."""
         self._published.add(tuple(namespace))
         return Announcement(self, namespace)
 

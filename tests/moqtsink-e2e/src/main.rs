@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail, ensure};
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, QUIC, Session, Subscriber, Subscription,
     fetch::{Fetch, FetchOption},
-    object::{ContentExists, GroupOrder, Location, Subgroup, TrackData},
-    subscribe::{FilterType, SubscribeOption},
+    object::{ContentExists, Location, Subgroup, TrackData},
+    subscribe::SubscribeOption,
 };
 use msf::Catalog;
 use tokio::process::{Child, Command};
@@ -86,14 +86,7 @@ async fn subscribe(subscriber: &mut Subscriber, track: &str) -> Result<Subscript
         .subscribe(
             NAMESPACE.to_string(),
             track.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await
         .with_context(|| format!("subscribe {track}"))

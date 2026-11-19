@@ -24,11 +24,11 @@ use std::time::Duration;
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, QUIC, Session,
     object::{
-        ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
+        ExtensionHeaders, ForwardingPreference, Location, Object, ObjectStatus,
         StreamDataSenderFactory, Subgroup, SubgroupStart, TrackData,
     },
     publish::PublishOption,
-    subscribe::{FilterType, SubscribeOption},
+    subscribe::SubscribeOption,
 };
 use tokio::sync::oneshot;
 
@@ -172,14 +172,7 @@ async fn bob(
         .subscribe(
             NAMESPACE.to_string(),
             TRACK_NAME.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         )
         .await?;
     tracing::info!(

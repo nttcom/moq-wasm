@@ -4,14 +4,7 @@ import { createWriteStream, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  registerSignalHandlers,
-  runCommand,
-  spawnProcess,
-  spawnViteServer,
-  terminateProcess,
-  waitForOutput,
-} from "./process.mjs";
+import { runCommand, spawnProcess, waitForOutput } from "./process.mjs";
 import {
   ensureLinuxEnvironment,
   getErrorMessage,
@@ -24,12 +17,10 @@ import {
   buildLiveIngestFfmpegArgs,
   getDefaultBaseUrl,
   getDefaultMoqtUrl,
-  getDefaultWebPort,
   jsDir,
   liveViewerPath,
-  waitForHttpOk,
 } from "./helpers.mjs";
-import { nativeRelayEnv, startVts } from "./vts-dev.mjs";
+import { startRelayAndPage } from "./relay-dev.mjs";
 
 const rtmpAddress = process.env.LIVE_VIEWER_E2E_RTMP_ADDR ?? "127.0.0.1:1935";
 const srtAddress = process.env.LIVE_VIEWER_E2E_SRT_ADDR ?? "127.0.0.1:9000";
@@ -45,47 +36,26 @@ const specs =
         "tests/recorder-serve-e2e.spec.ts",
         "tests/live-viewer-delivery-e2e.spec.ts",
       ];
-const childProcesses = [];
 
 async function main() {
   ensureLinuxEnvironment();
   assertE2EPrerequisites();
 
-  const webPort = getDefaultWebPort();
   const baseUrl = getDefaultBaseUrl();
   const moqtUrl = getDefaultMoqtUrl();
   const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? "anon/live/e2e";
 
-  const cleanup = async () => {
-    await Promise.allSettled(
-      [...childProcesses].reverse().map((child) => terminateProcess(child)),
-    );
-  };
-
-  registerSignalHandlers(cleanup);
+  // The recorder specs run target/debug/recorder and target/debug/bots.
+  const [liveIngestBinary] = buildBinaries([
+    "live-ingest",
+    "recorder",
+    "bots",
+    "relay",
+  ]);
+  const { childProcesses, cleanup, ready } = startRelayAndPage(liveViewerPath);
 
   try {
-    // The recorder specs run target/debug/recorder and target/debug/bots.
-    const [relayBinary, liveIngestBinary] = buildBinaries([
-      "relay",
-      "live-ingest",
-      "recorder",
-      "bots",
-    ]);
-    const vts = await startVts();
-    childProcesses.push(vts);
-    const server = spawnProcess("server", relayBinary, [], {
-      cwd: repoRoot,
-      env: { ...process.env, ...nativeRelayEnv() },
-    });
-    const vite = spawnViteServer(webPort);
-
-    childProcesses.push(server, vite);
-
-    await Promise.all([
-      waitForOutput(server, /Relay server started/, "relay", 180_000),
-      waitForHttpOk(`${baseUrl}${liveViewerPath}`, 120_000),
-    ]);
+    await ready;
 
     // live-viewer-delivery-e2e.spec.ts compares what the viewer received
     // against the samples this log says the bridge published.

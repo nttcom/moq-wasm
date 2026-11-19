@@ -14,11 +14,11 @@ use moqt::{
     fetch::{Fetch, FetchOption},
     namespace::NamespaceInterest,
     object::{
-        ContentExists, ExtensionHeaders, ForwardingPreference, GroupOrder, KeyValuePair, Location,
-        Object, ObjectStatus, Subgroup, SubgroupStart, TrackData, VariantType,
+        ContentExists, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
+        ObjectStatus, Subgroup, SubgroupStart, TrackData, VariantType,
     },
     publish::PublishOption,
-    subscribe::{FilterType, SubscribeOption},
+    subscribe::SubscribeOption,
 };
 use redis::AsyncCommands;
 
@@ -321,14 +321,7 @@ async fn run_track_properties_scenario(
         subscriber_session.subscriber().subscribe(
             track_namespace.to_string(),
             track_name.to_string(),
-            SubscribeOption {
-                subscriber_priority: 128,
-                group_order: GroupOrder::Ascending,
-                forward: true,
-                filter_type: FilterType::LargestObject,
-                new_group_request: None,
-                delivery_timeout: None,
-            },
+            SubscribeOption::default(),
         ),
     )
     .await
@@ -952,14 +945,7 @@ async fn subscribe_largest_object(
     track_namespace: &str,
     track_name: &str,
 ) -> anyhow::Result<Subscription> {
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
+    let option = SubscribeOption::default();
     tracing::info!(%track_namespace, %track_name, "subscriber sending SUBSCRIBE");
     Ok(session
         .subscriber()
@@ -1138,14 +1124,7 @@ async fn subscribe_and_receive_ordered_objects(
     track_name: String,
     count: usize,
 ) -> anyhow::Result<Vec<Vec<u8>>> {
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
+    let option = SubscribeOption::default();
     tracing::info!(%track_namespace, %track_name, count, "subscriber sending SUBSCRIBE for ordered objects");
     let subscription = session
         .subscriber()
@@ -1318,86 +1297,61 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
 {
-    tokio::time::timeout(
-        Duration::from_secs(15),
-        subscribe_and_receive_one_object_inner(
-            session,
-            track_namespace,
-            track_name,
-            after_subscribe,
-        ),
-    )
-    .await
-    .context("timed out waiting for subscriber object")?
-}
+    let receive = async {
+        let option = SubscribeOption::default();
+        tracing::info!(
+            %track_namespace,
+            %track_name,
+            "subscriber sending SUBSCRIBE"
+        );
+        let subscription = session
+            .subscriber()
+            .subscribe(track_namespace, track_name, option)
+            .await
+            .context("subscriber failed to subscribe")?;
+        tracing::info!(
+            track_alias = subscription.track_alias(),
+            "subscriber received SUBSCRIBE_OK; accepting data receiver"
+        );
+        // Act: downstream subscription の準備ができてから publisher にテスト object を送らせる。
+        after_subscribe().await?;
+        let mut receiver = session
+            .subscriber()
+            .accept_data_receiver(&subscription)
+            .await
+            .context("subscriber failed to accept data receiver")?;
+        tracing::info!("subscriber accepted data receiver; waiting for object payload");
 
-async fn subscribe_and_receive_one_object_inner<F, Fut>(
-    session: Arc<Session>,
-    track_namespace: String,
-    track_name: String,
-    after_subscribe: F,
-) -> anyhow::Result<Vec<u8>>
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = anyhow::Result<()>>,
-{
-    let option = SubscribeOption {
-        subscriber_priority: 128,
-        group_order: GroupOrder::Ascending,
-        forward: true,
-        filter_type: FilterType::LargestObject,
-        new_group_request: None,
-        delivery_timeout: None,
-    };
-    tracing::info!(
-        %track_namespace,
-        %track_name,
-        "subscriber sending SUBSCRIBE"
-    );
-    let subscription = session
-        .subscriber()
-        .subscribe(track_namespace, track_name, option)
-        .await
-        .context("subscriber failed to subscribe")?;
-    tracing::info!(
-        track_alias = subscription.track_alias(),
-        "subscriber received SUBSCRIBE_OK; accepting data receiver"
-    );
-    // Act: downstream subscription の準備ができてから publisher にテスト object を送らせる。
-    after_subscribe().await?;
-    let mut receiver = session
-        .subscriber()
-        .accept_data_receiver(&subscription)
-        .await
-        .context("subscriber failed to accept data receiver")?;
-    tracing::info!("subscriber accepted data receiver; waiting for object payload");
-
-    loop {
-        match receiver.next().await? {
-            TrackData::Subgroup(mut stream) => loop {
-                let Some(subgroup) = stream.receive().await? else {
-                    anyhow::bail!("stream ended before receiving an object");
-                };
-                if let Subgroup::Object(object) = subgroup
-                    && !object.payload.is_empty()
-                {
+        loop {
+            match receiver.next().await? {
+                TrackData::Subgroup(mut stream) => loop {
+                    let Some(subgroup) = stream.receive().await? else {
+                        anyhow::bail!("stream ended before receiving an object");
+                    };
+                    if let Subgroup::Object(object) = subgroup
+                        && !object.payload.is_empty()
+                    {
+                        tracing::info!(
+                            payload_len = object.payload.len(),
+                            "subscriber received stream object"
+                        );
+                        return Ok(object.payload.to_vec());
+                    }
+                },
+                TrackData::Datagram(object) if !object.payload.is_empty() => {
                     tracing::info!(
                         payload_len = object.payload.len(),
-                        "subscriber received stream object"
+                        "subscriber received datagram object"
                     );
                     return Ok(object.payload.to_vec());
                 }
-            },
-            TrackData::Datagram(object) if !object.payload.is_empty() => {
-                tracing::info!(
-                    payload_len = object.payload.len(),
-                    "subscriber received datagram object"
-                );
-                return Ok(object.payload.to_vec());
+                TrackData::Datagram(_) => {}
             }
-            TrackData::Datagram(_) => {}
         }
-    }
+    };
+    tokio::time::timeout(Duration::from_secs(15), receive)
+        .await
+        .context("timed out waiting for subscriber object")?
 }
 
 async fn delete_redis_keys(redis_url: &str, keys: &[String]) -> anyhow::Result<()> {
