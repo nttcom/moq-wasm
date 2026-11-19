@@ -1,4 +1,4 @@
-use std::{pin::pin, time::Duration};
+use std::{mem::DropGuard, pin::pin, time::Duration};
 
 use crate::modules::{executor, transport::transport_connection::BoxedConnection};
 use async_trait::async_trait;
@@ -109,29 +109,11 @@ impl BrowserConnectionCreator {
         let options = web_transport_options(&self.protocols.web_transport)?;
         // A browser without WebTransport throws here, so the fallback starts at once.
         let transport = WebTransport::new_with_options(url, &options).map_err(js_error)?;
-        let pending = CloseUnlessReady(Some(transport));
-        let transport = pending.0.as_ref().expect("set above");
+        // A transport that loses the race must be closed, or the browser keeps
+        // connecting and later holds a session nobody reads.
+        let transport = DropGuard::new(transport, |transport| transport.close());
         JsFuture::from(transport.ready()).await.map_err(js_error)?;
-        Ok(pending.into_ready())
-    }
-}
-
-/// Closes the WebTransport when dropped before `ready` resolves, as when it
-/// loses the race; otherwise the browser keeps connecting and later holds a
-/// session nobody reads.
-struct CloseUnlessReady(Option<WebTransport>);
-
-impl CloseUnlessReady {
-    fn into_ready(mut self) -> WebTransport {
-        self.0.take().expect("taken once")
-    }
-}
-
-impl Drop for CloseUnlessReady {
-    fn drop(&mut self) {
-        if let Some(transport) = self.0.take() {
-            transport.close();
-        }
+        Ok(DropGuard::dismiss(transport))
     }
 }
 
