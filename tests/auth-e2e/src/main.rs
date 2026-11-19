@@ -20,8 +20,8 @@ use std::{env, sync::Arc, time::Duration};
 use anyhow::{Context, bail};
 use bytes::Bytes;
 use moqt::{
-    AuthorizationToken, CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode,
-    RequestFailure, Session, SessionEvent, Subscription,
+    CertificateVerification, ClientConfig, Endpoint, QUIC, RequestErrorCode, RequestFailure,
+    Session, SessionEvent, Subscription,
     object::{
         ExtensionHeaders, ForwardingPreference, GroupOrder, Location, Object, ObjectStatus,
         Subgroup, SubgroupStart, TrackData,
@@ -38,7 +38,6 @@ const EXPIRY_TIMEOUT: Duration = Duration::from_secs(60);
 /// tests/auth-e2e/run.sh mints the short token with `--ttl 15s`; probing after
 /// this delay only succeeds if the refresh moved the session's expiry.
 const REFRESH_PROBE_DELAY: Duration = Duration::from_secs(20);
-const REFRESH_TRACK_NAME: &str = "update_auth_token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scenario {
@@ -324,33 +323,21 @@ async fn expect_refreshed_session_outlives_short_token(
     let subscriber = session.subscriber();
 
     let error = subscriber
-        .track_status(
-            tokens.app_id.clone(),
-            REFRESH_TRACK_NAME.to_string(),
-            vec![AuthorizationToken::use_value_utf8(&tokens.relay)],
-        )
+        .refresh_authorization_token(tokens.app_id.clone(), &tokens.relay)
         .await
         .err()
         .context("TRACK_STATUS with a relay token unexpectedly refreshed the session")?;
     expect_unauthorized(error, "TRACK_STATUS with a relay token")?;
 
     let error = subscriber
-        .track_status(
-            tokens.app_id.clone(),
-            REFRESH_TRACK_NAME.to_string(),
-            vec![AuthorizationToken::use_value_utf8(&tokens.other_app)],
-        )
+        .refresh_authorization_token(tokens.app_id.clone(), &tokens.other_app)
         .await
         .err()
         .context("TRACK_STATUS with another app's token unexpectedly refreshed the session")?;
     expect_unauthorized(error, "TRACK_STATUS with another app's token")?;
 
     subscriber
-        .track_status(
-            tokens.app_id.clone(),
-            REFRESH_TRACK_NAME.to_string(),
-            vec![AuthorizationToken::use_value_utf8(&tokens.app)],
-        )
+        .refresh_authorization_token(tokens.app_id.clone(), &tokens.app)
         .await
         .context("TRACK_STATUS with the long-lived app token was not answered with OK")?;
 

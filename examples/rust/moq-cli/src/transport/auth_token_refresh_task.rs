@@ -1,14 +1,11 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use moqt::{AuthorizationToken, Session};
+use moqt::Session;
 use tracing::{info, warn};
 
 use super::auth_token_file::read_auth_token;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
-/// Namespace `[appId]` and this track name are the convention the relay
-/// accepts as a token refresh; it reads neither.
-const REFRESH_TRACK_NAME: &str = "update_auth_token";
 
 pub struct AuthTokenRefreshTask {
     join_handle: tokio::task::JoinHandle<()>,
@@ -38,11 +35,7 @@ impl AuthTokenRefreshTask {
                 }
                 match session
                     .subscriber()
-                    .track_status(
-                        app_id.clone(),
-                        REFRESH_TRACK_NAME.to_string(),
-                        vec![AuthorizationToken::use_value_utf8(&token)],
-                    )
+                    .refresh_authorization_token(app_id.clone(), &token)
                     .await
                 {
                     Ok(_) => info!("authorization token refreshed"),

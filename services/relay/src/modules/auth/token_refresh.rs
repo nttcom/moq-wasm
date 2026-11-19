@@ -249,11 +249,9 @@ mod tests {
         // Act
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            client.subscriber().track_status(
-                "APP".to_string(),
-                "update_auth_token".to_string(),
-                vec![AuthorizationToken::use_value_utf8("renewed-jwt")],
-            ),
+            client
+                .subscriber()
+                .refresh_authorization_token("APP".to_string(), "renewed-jwt"),
         )
         .await
         .unwrap();

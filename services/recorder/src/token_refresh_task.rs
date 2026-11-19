@@ -5,15 +5,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use moqt::{AuthorizationToken, Session};
+use moqt::Session;
 use serde_json::Value;
 
 use crate::{bots_client::BotsClient, state_sync_task::now_ms};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
-/// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
-/// token refresh; it reads neither the namespace `[app id]` nor this name.
-const REFRESH_TRACK_NAME: &str = "update_auth_token";
 /// A token from `temporary-apps` or `bots` is renewed this long before it expires.
 const REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
 
@@ -81,11 +78,7 @@ impl TokenRefreshTask {
                 };
                 match session
                     .subscriber()
-                    .track_status(
-                        app_id.clone(),
-                        REFRESH_TRACK_NAME.to_string(),
-                        vec![AuthorizationToken::use_value_utf8(&token)],
-                    )
+                    .refresh_authorization_token(app_id.clone(), &token)
                     .await
                 {
                     Ok(_) => tracing::info!("authorization token refreshed"),
