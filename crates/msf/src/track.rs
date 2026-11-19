@@ -201,7 +201,7 @@ pub fn channel_count(channel_config: &str) -> Option<u8> {
     let count = match channel_config {
         "mono" => 1,
         "stereo" => 2,
-        other => other.strip_suffix("ch").unwrap_or(other).parse().ok()?,
+        other => other.trim_suffix("ch").parse().ok()?,
     };
     (count > 0).then_some(count)
 }
