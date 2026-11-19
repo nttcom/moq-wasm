@@ -1128,6 +1128,11 @@ mod tests {
                 value: VariantType::Even(5),
             },
         ]);
+        let mut empty_with_property = object(3, 2, subgroup(2), b"");
+        empty_with_property.extension_headers = ExtensionHeaders::new(vec![KeyValuePair {
+            key: 4,
+            value: VariantType::Even(1),
+        }]);
         let mut end_of_group = object(3, 4, subgroup(2), b"");
         end_of_group.status = ObjectStatus::EndOfGroup;
         let mut encoder = SubgroupEncoder::new(9);
@@ -1139,6 +1144,7 @@ mod tests {
         });
         stream.extend_from_slice(&encoder.object(&with_property).unwrap());
         stream.extend_from_slice(&encoder.object(&object(3, 1, subgroup(2), b"b")).unwrap());
+        stream.extend_from_slice(&encoder.object(&empty_with_property).unwrap());
         stream.extend_from_slice(&encoder.object(&end_of_group).unwrap());
 
         // Act
@@ -1170,7 +1176,12 @@ mod tests {
         sorted.extension_headers.key_value_pairs.reverse();
         assert_eq!(
             objects,
-            vec![sorted, object(3, 1, subgroup(2), b"b"), end_of_group]
+            vec![
+                sorted,
+                object(3, 1, subgroup(2), b"b"),
+                empty_with_property,
+                end_of_group
+            ]
         );
     }
 
@@ -1409,10 +1420,12 @@ mod tests {
             key: 4,
             value: VariantType::Even(1),
         }]);
+        let mut empty_with_property = object(4, 3, ForwardingPreference::Datagram, b"");
+        empty_with_property.extension_headers = with_property.extension_headers.clone();
         let mut padding = BytesMut::new();
         put_vi64(&mut padding, 0x132B_3E29);
 
-        for sent in [ending, status, with_property] {
+        for sent in [ending, status, with_property, empty_with_property] {
             // Act
             let mut encoded = encode_datagram(11, &sent).unwrap().freeze();
             let decoded = decode_datagram(&mut encoded).unwrap();
@@ -1607,6 +1620,27 @@ mod tests {
             fetch_round_trip(&descending, GroupOrder::Descending),
             descending
         );
+    }
+
+    #[test]
+    fn fetch_objects_name_their_subgroup_in_the_shortest_form() {
+        // Arrange
+        let objects = [0, 0, 1, 1, 5].map(|subgroup_id| object(2, 0, subgroup(subgroup_id), b"x"));
+        let mut encoder = FetchEncoder::default();
+
+        // Act
+        let modes: Vec<u8> = objects
+            .iter()
+            .enumerate()
+            .map(|(object_id, sent)| {
+                let mut sent = sent.clone();
+                sent.location.object_id = object_id as u64;
+                encoder.object(&sent).unwrap().unwrap()[0] & 0x03
+            })
+            .collect();
+
+        // Assert: subgroup 0, then the prior subgroup, the next one, the prior one, and an explicit id
+        assert_eq!(modes, [0x00, 0x00, 0x02, 0x01, 0x03]);
     }
 
     #[test]

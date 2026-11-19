@@ -1347,3 +1347,52 @@ impl OutgoingRequestTask {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use super::{Parameter, apply_update, update_baseline};
+    use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
+        authorization_token::AuthorizationToken, filter_type::FilterType, location::Location,
+    };
+
+    #[test]
+    fn an_update_applies_only_the_parameters_it_carries() {
+        // Arrange
+        let mut baseline = update_baseline(2, 10, true, FilterType::LargestObject, Some(500));
+        let token = AuthorizationToken::UseValue {
+            token_type: 1,
+            token_value: Bytes::from_static(b"token"),
+        };
+        let parameters = vec![
+            Parameter::AuthorizationToken(token.clone()),
+            Parameter::ObjectDeliveryTimeout(900),
+            Parameter::SubscriptionFilter(FilterType::AbsoluteRange {
+                location: Location {
+                    group_id: 4,
+                    object_id: 1,
+                },
+                end_group: 7,
+            }),
+        ];
+
+        // Act
+        let (update, _) = apply_update(&mut baseline, 6, parameters);
+
+        // Assert: the end group is the last group plus 1, as in draft-14's SUBSCRIBE_UPDATE
+        assert_eq!(update.request_id, 6);
+        assert_eq!(update.subscriber_priority, 10);
+        assert!(update.forward);
+        assert_eq!(update.authorization_tokens, vec![token]);
+        assert_eq!(update.delivery_timeout, Some(900));
+        assert_eq!(
+            update.start_location,
+            Location {
+                group_id: 4,
+                object_id: 1
+            }
+        );
+        assert_eq!(update.end_group, 8);
+    }
+}

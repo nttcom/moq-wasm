@@ -75,6 +75,20 @@ mod tests {
         }
 
         #[test]
+        fn depacketize_accepts_uri_of_maximum_length() {
+            // Arrange
+            let longest_uri = "a".repeat(MAX_NEW_SESSION_URI_LENGTH);
+            let buf = GoAway::new(longest_uri.clone()).encode();
+            let mut cursor = std::io::Cursor::new(&buf[..]);
+
+            // Act
+            let decoded = GoAway::decode(&mut cursor).unwrap();
+
+            // Assert
+            assert_eq!(decoded.new_session_uri, longest_uri);
+        }
+
+        #[test]
         fn depacketize_rejects_uri_over_maximum_length() {
             let too_long_uri = "a".repeat(MAX_NEW_SESSION_URI_LENGTH + 1);
             let buf = GoAway::new(too_long_uri).encode();
