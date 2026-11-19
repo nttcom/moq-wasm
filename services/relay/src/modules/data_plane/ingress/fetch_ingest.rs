@@ -948,4 +948,66 @@ mod tests {
         // Assert: only Fetch::End may register the filled range as known.
         assert_eq!(resolution, FetchRangeResolution::NotCovered);
     }
+
+    mod properties {
+        use std::collections::{BTreeMap, BTreeSet};
+
+        use moqt::object::Location;
+        use proptest::{collection::btree_map, option, prelude::*};
+
+        use super::*;
+        use crate::modules::test_support::location_strategies::{
+            bound, object_location, positions, stand_in,
+        };
+
+        const GROUPS: u64 = 4;
+
+        proptest! {
+            #[test]
+            fn the_known_ranges_are_the_range_less_its_unknown_stretches(
+                start in stand_in(GROUPS),
+                steps in btree_map(object_location(GROUPS), any::<bool>(), 0..10),
+                end in option::of(bound(GROUPS)),
+            ) {
+                // Arrange: `steps` maps the position of each object, or the last
+                // position of each unknown stretch, to whether it is the latter
+                let steps: BTreeMap<Location, bool> =
+                    steps.into_iter().filter(|(at, _)| start <= *at).collect();
+                let last_step = steps.keys().next_back().copied();
+                let end = end.filter(|end| start <= *end && last_step.is_none_or(|last| last < *end));
+                let mut progress = FillProgress::new(start);
+                let mut unknown = BTreeSet::new();
+                let mut previous = None;
+                for (&at, &is_unknown) in &steps {
+                    if is_unknown {
+                        progress.unknown(at);
+                        unknown.extend(positions(GROUPS).into_iter().filter(|p| {
+                            previous.is_none_or(|previous| previous < *p) && *p <= at
+                        }));
+                    } else {
+                        progress.object(at);
+                    }
+                    previous = Some(at);
+                }
+                let expected: BTreeSet<Location> = positions(GROUPS)
+                    .into_iter()
+                    .filter(|p| start <= *p && !unknown.contains(p))
+                    .filter(|p| match end {
+                        Some(end) => *p < end,
+                        None => last_step.is_some_and(|last| *p <= last),
+                    })
+                    .collect();
+
+                // Act
+                let known = progress.into_known(end);
+
+                // Assert
+                let known: BTreeSet<Location> = positions(GROUPS)
+                    .into_iter()
+                    .filter(|p| known.iter().any(|range| range.contains(p)))
+                    .collect();
+                prop_assert_eq!(known, expected);
+            }
+        }
+    }
 }

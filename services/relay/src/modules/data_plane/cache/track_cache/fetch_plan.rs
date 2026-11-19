@@ -303,4 +303,115 @@ mod tests {
             vec![Ok((0, 0)), Err((0, 1)), Ok((0, 2))]
         );
     }
+
+    mod properties {
+        use std::{cmp::Reverse, collections::BTreeMap};
+
+        use moqt::object::Location;
+        use proptest::{
+            collection::{btree_map, vec},
+            prelude::*,
+        };
+
+        use super::*;
+        use crate::modules::test_support::location_strategies::{
+            bound, last_held, object_location, positions, stand_in,
+        };
+
+        /// The groups the cache holds objects and known ranges in.
+        const GROUPS: u64 = 6;
+
+        /// The steps a FETCH of `start..end` (FETCH_OK End Location encoding)
+        /// gets, from every position it covers in delivery order: each
+        /// unexpired cached object, and one unknown stretch through the
+        /// position before the next object, or the last position, for any
+        /// run of positions holding an expired object or not known.
+        fn expected_steps(
+            objects: &BTreeMap<Location, bool>,
+            known: &[(Location, Location)],
+            start: Location,
+            end: Location,
+            descending: bool,
+        ) -> Vec<Result<(u64, u64), (u64, u64)>> {
+            let end = if end.object_id == 0 {
+                location(end.group_id + 1, 0)
+            } else {
+                end
+            };
+            let mut covered: Vec<Location> = positions(GROUPS + 3)
+                .into_iter()
+                .filter(|p| start <= *p && *p < end)
+                .collect();
+            if descending {
+                covered.sort_by_key(|p| (Reverse(p.group_id), p.object_id));
+            }
+            let mut steps = Vec::new();
+            let mut unknown = false;
+            let mut previous: Option<Location> = None;
+            for at in covered {
+                match objects.get(&at) {
+                    Some(false) => {
+                        if unknown {
+                            let last =
+                                last_held(previous.expect("an unknown position came before"));
+                            steps.push(Err((last.group_id, last.object_id)));
+                        }
+                        steps.push(Ok((at.group_id, at.object_id)));
+                        unknown = false;
+                    }
+                    Some(true) => unknown = true,
+                    None => {
+                        unknown |= !known.iter().any(|(from, until)| *from <= at && at < *until)
+                    }
+                }
+                previous = Some(at);
+            }
+            if unknown {
+                let last = last_held(previous.expect("an unknown position came before"));
+                steps.push(Err((last.group_id, last.object_id)));
+            }
+            steps
+        }
+
+        proptest! {
+            #[test]
+            fn the_plan_is_the_unexpired_objects_with_an_unknown_stretch_for_each_undecided_gap(
+                objects in btree_map(object_location(GROUPS), any::<bool>(), 0..16),
+                known in vec((bound(GROUPS), bound(GROUPS)), 0..5),
+                start in stand_in(GROUPS),
+                end_group_offset in 0..3u64,
+                end_object in stand_in(1),
+                descending in any::<bool>(),
+            ) {
+                let end = location(start.group_id + end_group_offset, end_object.object_id);
+                prop_assume!(end.object_id == 0 || start < end);
+                // Arrange: `objects` maps each cached object to whether it expired
+                let cache = TrackCache::new();
+                for (&at, &expired) in &objects {
+                    let mut object = stream_object(at.group_id, at.object_id);
+                    if expired {
+                        object.expires_at = Some(object.received_at);
+                    }
+                    cache.insert(object).expect("no conflict");
+                }
+                for &(from, until) in &known {
+                    cache.insert_known_until(from, until);
+                }
+                let group_order = if descending {
+                    moqt::object::GroupOrder::Descending
+                } else {
+                    moqt::object::GroupOrder::Ascending
+                };
+
+                // Act
+                let plan = cache.plan_fetch(start, end, group_order);
+
+                // Assert
+                prop_assert_eq!(
+                    planned_steps(plan),
+                    expected_steps(&objects, &known, start, end, descending)
+                );
+            }
+        }
+    }
 }
