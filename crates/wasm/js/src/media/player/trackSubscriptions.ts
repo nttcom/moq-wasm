@@ -26,6 +26,8 @@ export type TrackSubscription = PlayedTrack & {
   handle: MoqSubscription
   /// The Subscriber Priority last sent for it.
   priority: number
+  /// The Forward State last sent for it.
+  forward: boolean
   /// Set once the player let go of it, so objects still in flight are dropped.
   forgotten: boolean
 }
@@ -81,8 +83,8 @@ export class TrackSubscriptions {
     groupStart = false
   ): Promise<void> {
     this.subscriptions.set(kind, await this.open(kind, wireName, track, handler, groupStart))
-    // The priority may have changed since `open` sent the SUBSCRIBE.
-    this.updatePriority(kind)
+    // The priority or the Forward State may have changed since `open` sent the SUBSCRIBE.
+    this.update(kind)
   }
 
   /// Subscribes without making the subscription the one of its kind, so a
@@ -97,7 +99,8 @@ export class TrackSubscriptions {
   ): Promise<TrackSubscription> {
     const namespace = catalogTrackNamespace(track, this.context.namespace)
     const session = sessionOf(this.context)
-    const joining = groupStart && !this.forwardPaused
+    const forward = !this.forwardPaused
+    const joining = groupStart && forward
     const priority = this.priorityOf(kind)
     const handle = joining
       ? await session.subscribeGroupStart(namespace, wireName, FETCHED_GROUP_OBJECTS, {
@@ -105,7 +108,7 @@ export class TrackSubscriptions {
           ...this.delivery
         })
       : await session.subscribe(namespace, wireName, {
-          forward: !this.forwardPaused,
+          forward,
           priority,
           ...this.delivery
         })
@@ -113,6 +116,7 @@ export class TrackSubscriptions {
       id: streamId(),
       handle,
       priority,
+      forward,
       name: wireName,
       track,
       forgotten: false
@@ -149,8 +153,8 @@ export class TrackSubscriptions {
   handOver(kind: MediaKind, next: TrackSubscription): TrackSubscription | undefined {
     const previous = this.subscriptions.get(kind)
     this.subscriptions.set(kind, next)
-    // The priority may have changed since `open` subscribed `next`.
-    this.updatePriority(kind)
+    // The priority or the Forward State may have changed since `open` subscribed `next`.
+    this.update(kind)
     if (previous) {
       this.retiring.add(previous)
     }
@@ -232,15 +236,20 @@ export class TrackSubscriptions {
   /// video subscribed later is subscribed with it.
   setVideoPriority(priority: number): void {
     this.videoPriority = priority
-    this.updatePriority('video')
+    this.update('video')
   }
 
   private priorityOf(kind: MediaKind): number {
     return kind === 'video' ? this.videoPriority : AUDIO_PRIORITY
   }
 
-  private updatePriority(kind: MediaKind): void {
-    this.updates = this.updates.then(() => this.sendPriority(kind))
+  /// Sends the subscription of `kind` the current priority and Forward
+  /// State where they differ from what it was last sent.
+  private update(kind: MediaKind): void {
+    this.updates = this.updates.then(async () => {
+      await this.sendPriority(kind)
+      await this.sendForward(kind)
+    })
   }
 
   private async sendPriority(kind: MediaKind): Promise<void> {
@@ -276,29 +285,34 @@ export class TrackSubscriptions {
     return true
   }
 
-  /// A pause and a resume in quick succession must reach every subscription in
-  /// that order, so the updates are chained rather than sent concurrently.
+  /// Chained after earlier updates, so `sendForward` compares with the
+  /// Forward State they have already sent.
   private updateForward(forward: boolean): void {
-    this.updates = this.updates.then(() => this.setForward(forward))
+    this.updates = this.updates.then(async () => {
+      for (const kind of this.subscriptions.keys()) {
+        await this.sendForward(kind)
+      }
+      this.context.log('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)
+    })
   }
 
-  private async setForward(forward: boolean): Promise<void> {
-    if (!this.context.session?.isOpen) {
+  private async sendForward(kind: MediaKind): Promise<void> {
+    const subscription = this.subscriptions.get(kind)
+    const forward = !this.forwardPaused
+    if (!subscription || subscription.forward === forward || !this.context.session?.isOpen) {
       return
     }
-    for (const [kind, subscription] of this.subscriptions) {
-      try {
-        await subscription.handle.setForward(forward)
-      } catch (error) {
-        this.context.log('error', `forward ${subscription.name}: ${getErrorMessage(error)}`)
-        continue
-      }
-      // Delivery resumes with the next group, which the video would
-      // otherwise wait a keyframe interval for.
-      if (forward && kind === 'video') {
-        void this.requestNewGroup(subscription)
-      }
+    try {
+      await subscription.handle.setForward(forward)
+    } catch (error) {
+      this.context.log('error', `forward ${subscription.name}: ${getErrorMessage(error)}`)
+      return
     }
-    this.context.log('info', `live subscriptions ${forward ? 'resumed' : 'paused'}`)
+    subscription.forward = forward
+    // Delivery resumes with the next group, which the video would
+    // otherwise wait a keyframe interval for.
+    if (forward && kind === 'video') {
+      void this.requestNewGroup(subscription)
+    }
   }
 }

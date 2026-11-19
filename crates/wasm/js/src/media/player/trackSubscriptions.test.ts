@@ -89,15 +89,14 @@ test('resuming forwarding asks the video for a new group, after its Forward upda
   await subscriptions.subscribe('video', 'video', VIDEO, () => {})
   await subscriptions.subscribe('audio', 'audio', { name: 'audio', label: 'audio' }, () => {})
   subscriptions.pauseForward()
+  await expect.poll(() => session.updates.toSorted()).toEqual(['setForward audio false', 'setForward video false'])
 
   // Act
   subscriptions.resumeForward()
   await expect.poll(() => session.updates.at(-1)).toBe('setForward audio true')
 
   // Assert: delivery resumes at a group start, which audio reaches within a frame
-  expect(session.updates).toEqual([
-    'setForward video false',
-    'setForward audio false',
+  expect(session.updates.slice(2)).toEqual([
     'setForward video true',
     'requestNewGroup video undefined',
     'setForward audio true'
@@ -230,6 +229,49 @@ test('a rendition that takes over takes the priority set while it was being subs
 
   // Assert
   await expect.poll(() => session.updates.at(-1)).toBe('setPriority video_low 7')
+})
+
+test('a resume while a subscription is being made is sent once it is made', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  let answer = () => {}
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve
+  })
+  const subscribe = session.subscribe.bind(session)
+  session.subscribe = async (...args) => {
+    await answered
+    return subscribe(...args)
+  }
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  subscriptions.pauseForward()
+
+  // Act
+  const subscribed = subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  subscriptions.resumeForward()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  answer()
+  await subscribed
+
+  // Assert
+  expect(session.calls).toEqual([{ method: 'subscribe', track: 'video', options: { forward: false, priority: 128 } }])
+  await expect.poll(() => session.updates).toEqual(['setForward video true', 'requestNewGroup video undefined'])
+})
+
+test('a rendition that takes over takes the pause made while it was being subscribed', async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+  const subscriptions = new TrackSubscriptions(session.context(), () => {})
+  await subscriptions.subscribe('video', 'video', VIDEO, () => {})
+  const next = await subscriptions.open('video', 'video_low', VIDEO, () => {})
+  subscriptions.pauseForward()
+  await expect.poll(() => session.updates).toEqual(['setForward video false'])
+
+  // Act
+  subscriptions.handOver('video', next)
+
+  // Assert
+  await expect.poll(() => session.updates.at(-1)).toBe('setForward video_low false')
 })
 
 test('a failed UNSUBSCRIBE resolves, so the other tracks are still unsubscribed', async () => {
