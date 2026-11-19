@@ -17,8 +17,10 @@ class Listener:
     def current(self) -> str | None:
         return self._participants[0] if self._participants else None
 
-    def joined(self, participant_id: str) -> None:
+    def joined(self, participant_id: str) -> bool:
+        """Returns whether the room had nobody else, which makes this participant the one the bot listens to."""
         self._participants.append(participant_id)
+        return len(self._participants) == 1
 
     def left(self, participant_id: str) -> None:
         if participant_id in self._participants:

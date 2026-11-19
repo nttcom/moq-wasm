@@ -28,6 +28,8 @@ Gemini は、Gemini API を `GOOGLE_API_KEY` で呼ぶか、`--vertex-project` �
 
 bot が聞くのは、ルームにいる参加者のうち最も早く入った 1 人です。その人が抜けると、次に早く入った人を聞きます。複数人の声を 1 本の音声認識に混ぜると、話者を区別できないためです。
 
+誰もいないルームに人が入ると、bot から先に挨拶します。入った人に、話しかけてよいことがわかるようにするためです。
+
 ## 起動
 
 bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、ルームごとに `voice-agent` 型の bot として起動します。

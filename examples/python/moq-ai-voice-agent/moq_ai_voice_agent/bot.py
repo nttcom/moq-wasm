@@ -8,6 +8,7 @@ from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_j
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import LLMMessagesAppendFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -34,6 +35,9 @@ SYSTEM_INSTRUCTION = (
     "あなたの返答は音声合成で読み上げられるので、記号、箇条書き、Markdown、絵文字を使わず、"
     "話し言葉の短い文で、1 回に 2、3 文までで答えてください。"
 )
+# Sent as a user message when someone joins a room the bot is alone in, so the bot greets first and
+# the person knows they can talk. The page shows only the bot's replies, not this message.
+GREETING_REQUEST = "ルームに入りました。一言で挨拶して、話しかけてくださいと伝えてください。"
 
 
 def parse_args() -> argparse.Namespace:
@@ -90,9 +94,16 @@ async def talk_in_session(gemini: GeminiServices, job: BotJob, session: moq_wasm
         ),
     )
     listener = Listener()
-    transport.add_event_handler("on_client_connected", lambda _, participant_id: listener.joined(participant_id))
-    transport.add_event_handler("on_client_disconnected", lambda _, participant_id: listener.left(participant_id))
     worker = PipelineWorker(voice_pipeline(gemini, transport, listener), enable_rtvi=False, idle_timeout_secs=None)
+
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(_, participant_id: str):
+        if listener.joined(participant_id):
+            await worker.queue_frame(
+                LLMMessagesAppendFrame([{"role": "user", "content": GREETING_REQUEST}], run_llm=True)
+            )
+
+    transport.add_event_handler("on_client_disconnected", lambda _, participant_id: listener.left(participant_id))
     # serve_bot_job owns SIGINT and SIGTERM.
     runner = WorkerRunner(handle_sigint=False)
 
