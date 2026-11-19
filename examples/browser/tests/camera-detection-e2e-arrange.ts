@@ -1,23 +1,15 @@
 import { type Locator, type Page, expect } from '@playwright/test'
 import { CAMERA_DETECTION_PATH } from '../playwright.helpers'
-import { pressStartBot } from './room-bot'
+import { pressStartBot, roomBotE2E } from './room-bot'
 
-const moqtUrl = process.env.CAMERA_DETECTION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-// The pages join the runner's temporary app, whose pages may start bots through temporary-apps.
-const temporaryAppsUrl = process.env.CAMERA_DETECTION_E2E_TEMPORARY_APPS_URL!
-const appFragment = `#jwt=${process.env.CAMERA_DETECTION_E2E_TEMPORARY_APP_TOKEN!}`
+const roomBot = roomBotE2E('CAMERA_DETECTION')
 /// The bot runs one room at a time, so every test shares this room.
 const ROOM = 'e2e'
-export const SYSTEM_ONE_ORIGIN = process.env.CAMERA_DETECTION_E2E_SYSTEM_ONE_ORIGIN!
+export const SYSTEM_ONE_ORIGIN = roomBot.systemOneOrigin
+export const placeBoxes = roomBot.placeBoxes
 
 export async function answerDetectorWith(choice: string): Promise<void> {
   const response = await fetch(`${SYSTEM_ONE_ORIGIN}/answer`, { method: 'PUT', body: choice })
-  expect(response.ok).toBe(true)
-}
-
-/// The boxes the fake System One server finds for each target, as [left, top, right, bottom].
-export async function placeBoxes(boxes: Record<string, [number, number, number, number][]>): Promise<void> {
-  const response = await fetch(`${SYSTEM_ONE_ORIGIN}/boxes`, { method: 'PUT', body: JSON.stringify(boxes) })
   expect(response.ok).toBe(true)
 }
 
@@ -34,7 +26,6 @@ export async function joinCamera(page: Page): Promise<Locator> {
 }
 
 export async function clickJoinCamera(page: Page, room = ROOM): Promise<void> {
-  await page.goto(`${CAMERA_DETECTION_PATH}?${new URLSearchParams({ moqtUrl, temporaryAppsUrl, room })}${appFragment}`)
-  await page.getByTestId('camera-detection-join-button').click()
+  await roomBot.clickJoin(page, CAMERA_DETECTION_PATH, 'camera-detection', room)
   await pressStartBot(page, 'camera-detection')
 }

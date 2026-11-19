@@ -1,15 +1,12 @@
 import { type Page, expect } from '@playwright/test'
 import { CHAT_MODERATION_PATH } from '../playwright.helpers'
-import { pressStartBot } from './room-bot'
+import { pressStartBot, roomBotE2E } from './room-bot'
 import { leavePage } from './leave-all-pages'
 
-const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
-// The pages join the runner's temporary app, whose pages may start bots through temporary-apps.
-const temporaryAppsUrl = process.env.CHAT_MODERATION_E2E_TEMPORARY_APPS_URL!
-const appFragment = `#jwt=${process.env.CHAT_MODERATION_E2E_TEMPORARY_APP_TOKEN!}`
+const roomBot = roomBotE2E('CHAT_MODERATION')
 /// The room every page joins unless a test passes another, so the pages of one test meet one moderator.
 const ROOM = 'e2e'
-export const SYSTEM_ONE_ORIGIN = process.env.CHAT_MODERATION_E2E_SYSTEM_ONE_ORIGIN!
+export const SYSTEM_ONE_ORIGIN = roomBot.systemOneOrigin
 
 export const LEAVE_BUTTON_TEST_ID = 'chat-moderation-leave-button'
 /// The fake System One gives a label 0.95 when the message contains `e2e-<label name>`.
@@ -24,8 +21,7 @@ export async function joinChat(page: Page, room = ROOM) {
 }
 
 export async function clickJoin(page: Page, room = ROOM) {
-  await page.goto(`${CHAT_MODERATION_PATH}?${new URLSearchParams({ moqtUrl, temporaryAppsUrl, room })}${appFragment}`)
-  await page.getByTestId('chat-moderation-join-button').click()
+  await roomBot.clickJoin(page, CHAT_MODERATION_PATH, 'chat-moderation', room)
   const messages = page.locator('.chat-message')
   return {
     messages,
