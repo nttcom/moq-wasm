@@ -329,17 +329,17 @@ fn aac_codec(parameters: &[(String, String)]) -> Result<Codec> {
     })
 }
 
+/// Reads the digits as bytes, so non-ASCII text is an error instead of a
+/// slice inside a character.
 fn decode_hex(text: &str) -> Result<Vec<u8>> {
-    ensure!(
-        text.len().is_multiple_of(2),
-        "odd-length hex string {text:?}"
-    );
-    (0..text.len())
-        .step_by(2)
-        .map(|index| {
-            u8::from_str_radix(&text[index..index + 2], 16)
-                .with_context(|| format!("invalid hex string {text:?}"))
-        })
+    let digit = |byte: u8| char::from(byte).to_digit(16);
+    let byte = |pair: &[u8]| match pair {
+        [high, low] => Some((digit(*high)? << 4 | digit(*low)?) as u8),
+        _ => None,
+    };
+    text.as_bytes()
+        .chunks(2)
+        .map(|pair| byte(pair).with_context(|| format!("invalid hex string {text:?}")))
         .collect()
 }
 
@@ -649,10 +649,60 @@ mod tests {
         let no_config =
             "m=audio 5006 RTP/AVP 97\na=rtpmap:97 MPEG4-GENERIC/48000/1\na=fmtp:97 mode=AAC-hbr\n";
         let no_equals = "v=0\nhello\n";
+        let non_ascii_config = "m=audio 5006 RTP/AVP 97\na=rtpmap:97 MPEG4-GENERIC/48000/1\na=fmtp:97 mode=AAC-hbr; config=a\u{e9}b\n";
+        let odd_config = "m=audio 5006 RTP/AVP 97\na=rtpmap:97 MPEG4-GENERIC/48000/1\na=fmtp:97 mode=AAC-hbr; config=118\n";
 
         // Act / Assert
-        for text in [no_port, interleaved, bad_sprop, no_config, no_equals] {
+        for text in [
+            no_port,
+            interleaved,
+            bad_sprop,
+            no_config,
+            no_equals,
+            non_ascii_config,
+            odd_config,
+        ] {
             assert!(SessionDescription::parse(text).is_err(), "{text:?}");
+        }
+    }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::{FFMPEG_SDP, SessionDescription};
+
+        /// Half the time `original`, so parsing reaches the parameters after a
+        /// replaced one; otherwise any text without `;` or a line end.
+        fn value(original: &'static str) -> impl Strategy<Value = String> {
+            prop_oneof![Just(original.to_string()), "[^;\r\n]{0,12}"]
+        }
+
+        proptest! {
+            #[test]
+            fn any_text_parses_or_fails_without_panicking(text in any::<String>()) {
+                // Act / Assert
+                let _ = SessionDescription::parse(&text);
+            }
+
+            #[test]
+            fn any_fmtp_values_parse_or_fail_without_panicking(
+                sprop in value("Z0LQC9oKN+TARAAAAwAEAAADAHg8SJqA,aM48gA=="),
+                level in value("42D00B"),
+                size_length in value("13"),
+                index_length in value("3"),
+                config in value("1188"),
+            ) {
+                // Arrange: FFmpeg's description with its parameter values replaced
+                let text = FFMPEG_SDP
+                    .replace("Z0LQC9oKN+TARAAAAwAEAAADAHg8SJqA,aM48gA==", &sprop)
+                    .replace("42D00B", &level)
+                    .replace("sizelength=13", &format!("sizelength={size_length}"))
+                    .replace("indexlength=3", &format!("indexlength={index_length}"))
+                    .replace("config=1188", &format!("config={config}"));
+
+                // Act / Assert
+                let _ = SessionDescription::parse(&text);
+            }
         }
     }
 }
