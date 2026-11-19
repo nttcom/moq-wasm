@@ -7,17 +7,17 @@ pub(crate) const HEADER_LENGTH: usize = 7;
 const MAX_FRAME_LENGTH: usize = (1 << 13) - 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdtsHeader {
-    pub config: AudioSpecificConfig,
-    pub frame_length: usize,
-    pub header_length: usize,
+struct AdtsHeader {
+    config: AudioSpecificConfig,
+    frame_length: usize,
+    header_length: usize,
 }
 
 fn has_sync_word(data: &[u8]) -> bool {
     data.len() >= 2 && data[0] == 0xFF && data[1] & 0xF6 == 0xF0
 }
 
-pub fn parse_header(data: &[u8]) -> Result<Option<AdtsHeader>> {
+fn parse_header(data: &[u8]) -> Result<Option<AdtsHeader>> {
     if data.len() < HEADER_LENGTH {
         return Ok(None);
     }
@@ -43,7 +43,7 @@ pub fn parse_header(data: &[u8]) -> Result<Option<AdtsHeader>> {
     }))
 }
 
-pub fn write_header(
+fn write_header(
     config: &AudioSpecificConfig,
     payload_length: usize,
 ) -> Result<[u8; HEADER_LENGTH]> {
