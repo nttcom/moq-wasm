@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, sync::Mutex};
 
+use moqt::publish::GroupBoundary;
+
 /// A rendition that missed a source keyframe, and so has no id for that
 /// presentation time, can only find ids that are still recent.
 pub(crate) const REMEMBERED_KEYFRAMES: usize = 64;
@@ -90,6 +92,28 @@ impl GroupAlignment {
     }
 }
 
+/// The groups one video track has started. A keyframe that repeats the
+/// presentation time of the track's previous keyframe finds that keyframe's
+/// id again, so it continues that group: starting it again would place a
+/// group before the track's next one, which the track refuses.
+#[derive(Default)]
+pub(crate) struct StartedGroups {
+    last: Option<u64>,
+}
+
+impl StartedGroups {
+    /// `group_id` is the id a keyframe found, `None` for any other frame.
+    pub(crate) fn boundary(&mut self, group_id: Option<u64>) -> GroupBoundary {
+        match group_id {
+            Some(group_id) if self.last.is_none_or(|last| group_id > last) => {
+                self.last = Some(group_id);
+                GroupBoundary::At(group_id)
+            }
+            _ => GroupBoundary::Within,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +184,26 @@ mod tests {
         // Assert
         assert_eq!(alignment.aligned(0), None);
         assert_eq!(alignment.aligned(2_000_000), Some(1));
+    }
+
+    #[test]
+    fn a_track_starts_each_group_once_and_in_order() {
+        // Arrange
+        let mut groups = StartedGroups::default();
+
+        // Act
+        let boundaries = [Some(7), None, Some(7), Some(8), Some(6)].map(|id| groups.boundary(id));
+
+        // Assert: a repeated or earlier id continues the open group
+        assert_eq!(
+            boundaries,
+            [
+                GroupBoundary::At(7),
+                GroupBoundary::Within,
+                GroupBoundary::Within,
+                GroupBoundary::At(8),
+                GroupBoundary::Within,
+            ]
+        );
     }
 }

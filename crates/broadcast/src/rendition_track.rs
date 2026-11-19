@@ -11,7 +11,7 @@ use tokio::sync::{Notify, mpsc};
 use crate::{
     broadcast::{Broadcast, VideoTrackInfo, cmaf_track_name},
     cmaf_video::CmafVideo,
-    group_alignment::GroupAlignment,
+    group_alignment::{GroupAlignment, StartedGroups},
     track_publisher::SharedTiming,
     writer::BroadcastWriter,
 };
@@ -53,6 +53,7 @@ pub struct RenditionTrack {
     /// rendition's groups.
     source: String,
     video_codec: VideoCodec,
+    groups: StartedGroups,
     cmaf: Option<CmafVideo>,
     /// The source's `SourceTracks::keyframe_requests`: the rendition keyframes
     /// on the same frames as the source.
@@ -69,6 +70,7 @@ impl RenditionTrack {
             source: writer.source_tracks().video.clone(),
             config,
             video_codec: VideoCodec::H264,
+            groups: StartedGroups::default(),
             cmaf: None,
             keyframe_requests: writer.source_tracks().keyframe_requests.clone(),
             demand_sender: writer.source_tracks().demand_sender.clone(),
@@ -104,7 +106,7 @@ impl RenditionTrack {
                     .await
             }
             MediaEvent::Video(sample) => {
-                let track = &self.config.track;
+                let track = &self.config.track.clone();
                 tracing::trace!(%track, pts = sample.pts.micros(), is_keyframe = sample.is_keyframe, "rendition sample received");
                 let alignment = &self.timing.alignment;
                 if self.config.keyframes == RenditionKeyframes::FollowSource
@@ -156,7 +158,7 @@ impl RenditionTrack {
 }
 
 impl RenditionTrack {
-    fn boundary(&self, is_keyframe: bool, presentation_us: u64) -> GroupBoundary {
+    fn boundary(&mut self, is_keyframe: bool, presentation_us: u64) -> GroupBoundary {
         if !is_keyframe {
             return GroupBoundary::Within;
         }
@@ -165,7 +167,7 @@ impl RenditionTrack {
             RenditionKeyframes::FollowSource => alignment.aligned(presentation_us),
             RenditionKeyframes::SameFrames => Some(alignment.keyframe(presentation_us)),
         };
-        group_id.map_or(GroupBoundary::Within, GroupBoundary::At)
+        self.groups.boundary(group_id)
     }
 }
 
@@ -193,8 +195,8 @@ mod tests {
         // Arrange
         let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
         let writer = BroadcastWriter::run(broadcast, SourceTracks::default());
-        let same_frames = rendition(&writer, RenditionKeyframes::SameFrames);
-        let follow_source = rendition(&writer, RenditionKeyframes::FollowSource);
+        let mut same_frames = rendition(&writer, RenditionKeyframes::SameFrames);
+        let mut follow_source = rendition(&writer, RenditionKeyframes::FollowSource);
 
         // Act
         let before_source = follow_source.boundary(true, 40_000);
@@ -209,5 +211,21 @@ mod tests {
             GroupBoundary::At(source)
         );
         assert_eq!(same_frames.boundary(false, 80_000), GroupBoundary::Within);
+    }
+
+    #[tokio::test]
+    async fn a_keyframe_that_repeats_the_previous_keyframes_time_continues_its_group() {
+        // Arrange
+        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
+        let writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+        let mut rendition = rendition(&writer, RenditionKeyframes::SameFrames);
+        let first = rendition.boundary(true, 40_000);
+
+        // Act
+        let repeated = rendition.boundary(true, 40_000);
+
+        // Assert
+        assert!(matches!(first, GroupBoundary::At(_)), "{first:?}");
+        assert_eq!(repeated, GroupBoundary::Within);
     }
 }

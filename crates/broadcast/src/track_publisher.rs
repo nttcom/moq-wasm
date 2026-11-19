@@ -18,7 +18,7 @@ use crate::{
         timeline_track_name,
     },
     cmaf_video::CmafVideo,
-    group_alignment::GroupAlignment,
+    group_alignment::{GroupAlignment, StartedGroups},
     media_timeline::MediaTimeline,
 };
 
@@ -64,6 +64,7 @@ pub(crate) struct TrackPublisher {
     timeline: MediaTimeline,
     timing: SharedTiming,
     video_codec: VideoCodec,
+    video_groups: StartedGroups,
     video_cmaf: Option<CmafVideo>,
     audio_cmaf: Option<Fmp4TrackMuxer>,
 }
@@ -84,6 +85,7 @@ impl TrackPublisher {
                 alignment: Arc::new(GroupAlignment::new(wall_clock().micros())),
             },
             video_codec: VideoCodec::H264,
+            video_groups: StartedGroups::default(),
             video_cmaf: None,
             audio_cmaf: None,
         }
@@ -191,10 +193,11 @@ impl TrackPublisher {
         };
         let captured_at = object.capture_timestamp();
         let bytes = object.payload.len();
-        let keyframe_group = sample
-            .is_keyframe
-            .then(|| self.timing.alignment.keyframe(sample.pts.micros()));
-        let group = keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At);
+        let group = self.video_groups.boundary(
+            sample
+                .is_keyframe
+                .then(|| self.timing.alignment.keyframe(sample.pts.micros())),
+        );
         let written = self
             .broadcast
             .send_object(
@@ -224,7 +227,7 @@ impl TrackPublisher {
             );
         }
         self.publish_cmaf_video(sample, group).await?;
-        let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
+        let (GroupBoundary::At(group_id), Some(captured_at)) = (group, captured_at) else {
             return Ok(());
         };
         self.publish_timeline(group_id, sample.pts.micros(), captured_at.millis())
@@ -640,7 +643,10 @@ mod tests {
         use proptest::prelude::*;
 
         use super::*;
-        use crate::{cmaf_video::CmafVideo, group_alignment::REMEMBERED_KEYFRAMES};
+        use crate::{
+            cmaf_video::CmafVideo,
+            group_alignment::{REMEMBERED_KEYFRAMES, StartedGroups},
+        };
 
         /// One VIDEO_TIMESCALE tick of the fMP4 muxer is 11.1 µs, so gaps of
         /// 0 to 3 ticks reach the samples it moves one tick later.
@@ -711,14 +717,13 @@ mod tests {
             rendition_cmaf: Vec<GroupBoundary>,
             audio: Vec<GroupBoundary>,
             /// The rendition keyframes on a source keyframe still remembered
-            /// that did not take its group id, with the id they missed.
+            /// that neither took its group id nor followed a rendition frame of
+            /// the same time that did, with the id they missed.
             rendition_misses: Vec<(u64, GroupBoundary)>,
         }
 
         /// Numbers the groups the way `publish_video`, a `FollowSource`
-        /// `RenditionTrack` and `publish_audio` do. A keyframe that repeats the
-        /// presentation time of its track's previous keyframe is sent as a
-        /// delta frame: its group would be the one already open.
+        /// `RenditionTrack` and `publish_audio` do.
         fn publish(steps: &[Step]) -> Published {
             let mut publisher = publisher();
             publisher.video_published = true;
@@ -730,7 +735,8 @@ mod tests {
             let mut source_keyframes = 0;
             let mut rendition_taken = 0;
             let (mut video_us, mut audio_us) = (0, 0);
-            let (mut last_keyframe_us, mut last_rendition_keyframe_us) = (None, None);
+            let (mut video_groups, mut rendition_groups) =
+                (StartedGroups::default(), StartedGroups::default());
             for step in steps {
                 match *step {
                     Step::Source {
@@ -739,24 +745,13 @@ mod tests {
                         rendition_keyframe,
                     } => {
                         video_us += gap_us;
-                        let is_keyframe = is_keyframe && last_keyframe_us != Some(video_us);
-                        if is_keyframe {
-                            last_keyframe_us = Some(video_us);
-                        }
                         let frame = sample(video_us, is_keyframe);
-                        let group = frame
-                            .is_keyframe
-                            .then(|| alignment.keyframe(video_us))
-                            .map_or(GroupBoundary::Within, GroupBoundary::At);
+                        let group = video_groups
+                            .boundary(frame.is_keyframe.then(|| alignment.keyframe(video_us)));
                         published.video.push(group);
                         source_keyframes += usize::from(is_keyframe);
                         if let Some(object) = video_cmaf.push(&frame, group).unwrap() {
                             published.video_cmaf.push(object.group);
-                        }
-                        let rendition_keyframe =
-                            rendition_keyframe && last_rendition_keyframe_us != Some(video_us);
-                        if rendition_keyframe {
-                            last_rendition_keyframe_us = Some(video_us);
                         }
                         source_frames.push((
                             sample(video_us, rendition_keyframe),
@@ -771,19 +766,23 @@ mod tests {
                             continue;
                         };
                         rendition_taken += 1;
-                        let group = frame
-                            .is_keyframe
-                            .then(|| alignment.aligned(frame.pts.micros()))
-                            .flatten()
-                            .map_or(GroupBoundary::Within, GroupBoundary::At);
-                        published.rendition.push(group);
+                        let group = rendition_groups.boundary(
+                            frame
+                                .is_keyframe
+                                .then(|| alignment.aligned(frame.pts.micros()))
+                                .flatten(),
+                        );
+                        let already_started =
+                            |id: &u64| published.rendition.contains(&GroupBoundary::At(*id));
                         if let GroupBoundary::At(source_id) = source_group
                             && frame.is_keyframe
                             && source_keyframes - keyframe_number < REMEMBERED_KEYFRAMES
                             && group != *source_group
+                            && !already_started(source_id)
                         {
                             published.rendition_misses.push((*source_id, group));
                         }
+                        published.rendition.push(group);
                         if let Some(object) = rendition_cmaf.push(frame, group).unwrap() {
                             published.rendition_cmaf.push(object.group);
                         }
