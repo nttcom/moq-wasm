@@ -215,6 +215,11 @@ together, so its renditions use `RenditionKeyframes::SameFrames`: a rendition
 keyframe that arrives before the source's takes the id for that presentation
 time itself, and the source's keyframe finds the same id.
 
+Each video track starts a group only with an id after the last one it started
+(`StartedGroups`). A keyframe that repeats the presentation time of the
+track's previous keyframe finds that keyframe's id again and continues its
+group, since `Origin` refuses a group that precedes the track's next one.
+
 A source that encodes a keyframe when asked sets
 `SourceTracks::keyframe_requests`. `TrackPublisher` and each `RenditionTrack`
 then register that `Notify` for their video track with
