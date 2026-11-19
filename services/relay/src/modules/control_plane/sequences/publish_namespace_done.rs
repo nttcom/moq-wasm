@@ -45,7 +45,14 @@ impl PublishNamespaceDone {
             return;
         }
 
-        Self::notify_local_subscribers(session_id, track_namespace, table, forwarder).await;
+        Self::notify_local_subscribers(
+            session_id,
+            is_origin_client,
+            track_namespace,
+            table,
+            forwarder,
+        )
+        .await;
 
         if !is_origin_client {
             Self::end_relay_namespace_subscription(
@@ -76,6 +83,7 @@ impl PublishNamespaceDone {
     )]
     pub(crate) async fn notify_local_subscribers(
         publisher_session_id: SessionId,
+        publisher_is_client: bool,
         track_namespace: &str,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
@@ -94,14 +102,15 @@ impl PublishNamespaceDone {
         for (subscriber_session_id, subscription) in
             table.get_namespace_subscribers(track_namespace, NamespaceInterest::Namespaces)
         {
-            if subscriber_session_id == publisher_session_id
-                || (published_by_relay && subscription.peer == SessionPeer::Client)
-            {
-                continue;
+            let withdraw = match subscription.peer {
+                SessionPeer::Client => !published_by_relay,
+                SessionPeer::Relay => publisher_is_client,
+            };
+            if withdraw && subscriber_session_id != publisher_session_id {
+                forwarder
+                    .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
+                    .await;
             }
-            forwarder
-                .publish_namespace_done(subscriber_session_id, track_namespace.to_string())
-                .await;
         }
     }
 
@@ -331,6 +340,28 @@ mod tests {
             recorded.publish_namespace_dones(),
             vec![NAMESPACE.to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn a_relay_subscriber_is_not_told_done_for_another_relays_namespace() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_publish_namespace(
+            LEAVING_PUBLISHER,
+            NAMESPACE.to_string(),
+            SessionPeer::Relay,
+        );
+        table.register_subscribe_namespace(
+            NAMESPACE_SUBSCRIBER,
+            NAMESPACE.to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
+
+        // Act
+        let recorded = withdraw(&table, SessionPeer::Relay).await;
+
+        // Assert
+        assert!(recorded.publish_namespace_dones().is_empty());
     }
 
     #[tokio::test]

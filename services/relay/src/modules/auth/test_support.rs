@@ -205,18 +205,18 @@ pub(crate) async fn spawn_relay_and_connect_client(
 }
 
 pub(crate) async fn connect_client(relay: &RunningRelay) -> Session {
-    connect(relay, client_endpoint(Some("jwt".to_string()))).await
+    connect(relay.port, client_endpoint(Some("jwt".to_string()))).await
 }
 
 pub(crate) async fn connect_draft18_client(relay: &RunningRelay) -> Session {
     let endpoint = client_endpoint_offering(Some("jwt".to_string()), &[moqt::Version::Draft18]);
-    connect(relay, endpoint).await
+    connect(relay.port, endpoint).await
 }
 
-async fn connect(relay: &RunningRelay, endpoint: Endpoint<QUIC>) -> Session {
+pub(crate) async fn connect(port: u16, endpoint: Endpoint<QUIC>) -> Session {
     tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
         endpoint
-            .connect(&format!("moqt://127.0.0.1:{}", relay.port))
+            .connect(&format!("moqt://127.0.0.1:{port}"))
             .await?
             .await
     })
