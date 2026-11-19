@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.0
+
+- Breaking: `LiveStats.receivedKbps` is now `{ video: number; audio: number }`, and `receivedAudioKbps` is removed:
+
+  ```ts
+  // before
+  stats.receivedKbps
+  stats.receivedAudioKbps
+  // after
+  stats.receivedKbps.video
+  stats.receivedKbps.audio
+  ```
+
 ## 0.7.0
 
 - Breaking: catalogs are now draft-ietf-moq-msf-02. `parseCatalog` rejects a catalog whose `version` is not `draft-02`, or whose namespace, `depends` or required fields (§5.2.4.1) are invalid. Publishers and players must be updated together.
