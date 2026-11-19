@@ -11,7 +11,7 @@ import { repoRoot } from "../../scripts/dev-env.mjs";
 import { waitForHttpOk } from "./helpers.mjs";
 
 export const vtsAppsFile = "services/vts/apps.example.json";
-export const relayAppId = "11111111-2222-3333-4444-555555555555";
+const relayAppId = "11111111-2222-3333-4444-555555555555";
 export const experimentAppId = "ac8adbc8-a2ff-4c41-9f5e-fdaed5e1e65e";
 export const vtsPort = Number(process.env.VTS_PORT ?? 8081);
 export const vtsVerifyUrl = `http://127.0.0.1:${vtsPort}/verify`;
