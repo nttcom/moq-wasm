@@ -193,9 +193,14 @@ class Room:
 
     async def _follow_participants(self) -> None:
         options = self._options
-        await watch_broadcasts(
-            self._session, options.room, self._follow, filter=self._is_participant, empty_timeout=options.empty_timeout
-        )
+        try:
+            await watch_broadcasts(
+                self._session, options.room, self._follow, filter=self._is_participant, empty_timeout=options.empty_timeout
+            )
+        except RuntimeError as error:
+            logger.exception("cannot watch %s", options.room)
+            await self._sink.event("on_error", f"cannot watch {options.room}", error)
+            return
         await self._sink.event("on_room_empty")
 
     def _is_participant(self, namespace: list[str]) -> bool:
