@@ -6,7 +6,7 @@ use bytes::{Buf, BufMut, Bytes};
 use thiserror::Error;
 
 use crate::modules::{
-    extensions::name_reader::{self, MAX_REASON_PHRASE_LENGTH, NameError},
+    extensions::name_reader::{self, NameError},
     moqt::{
         control_plane::{
             constants::TerminationErrorCode,
@@ -264,12 +264,9 @@ pub(crate) fn get_reason_phrase(buf: &mut impl Buf) -> Result<String, DecodeErro
 
 /// Truncates at a character boundary to the 1024 bytes §1.4.4 allows.
 pub(crate) fn put_reason_phrase(buf: &mut impl BufMut, reason: &str) {
-    let mut len = reason.len().min(MAX_REASON_PHRASE_LENGTH as usize);
-    while !reason.is_char_boundary(len) {
-        len -= 1;
-    }
-    put_vi64(buf, len as u64);
-    buf.put_slice(&reason.as_bytes()[..len]);
+    let reason = name_reader::truncate_reason_phrase(reason);
+    put_vi64(buf, reason.len() as u64);
+    buf.put_slice(reason.as_bytes());
 }
 
 pub(crate) fn get_track_namespace(buf: &mut impl Buf) -> Result<Vec<String>, DecodeError> {

@@ -40,7 +40,7 @@ impl PublishDone {
         payload.put_varint(self.request_id);
         payload.put_varint(self.status_code);
         payload.put_varint(self.stream_count);
-        payload.put_string(&self.error_reason);
+        util::put_reason_phrase(&mut payload, &self.error_reason);
         payload
     }
 }

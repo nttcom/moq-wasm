@@ -1,7 +1,7 @@
 use anyhow::bail;
-use bytes::Buf;
+use bytes::{Buf, BytesMut};
 
-use crate::modules::extensions::{buf_get_ext::BufGetExt, name_reader};
+use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, name_reader};
 
 fn get_varint(buf: &mut impl Buf) -> Option<u64> {
     buf.try_get_varint().ok()
@@ -9,6 +9,11 @@ fn get_varint(buf: &mut impl Buf) -> Option<u64> {
 
 pub(super) fn get_reason_phrase(buf: &mut impl Buf) -> anyhow::Result<String> {
     Ok(name_reader::get_reason_phrase(buf, get_varint)?)
+}
+
+/// Truncates at a character boundary to the 1024 bytes §1.4.3 allows.
+pub(super) fn put_reason_phrase(buf: &mut BytesMut, reason: &str) {
+    buf.put_string(name_reader::truncate_reason_phrase(reason));
 }
 
 /// A Track Namespace or Track Namespace Prefix: 1 to 32 fields (§2.4.1, §9.28).
