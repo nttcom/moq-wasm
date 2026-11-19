@@ -17,10 +17,21 @@ The release flow itself is described in `docs/architecture/wasm/browser-sdk.md` 
 4. Show the user the PRs without that section whose entry is not already under `## Unreleased` in `crates/wasm/js/CHANGELOG.md`, with their titles, and ask which of them a user of the SDK would notice. Write an entry for those the user names, following the `## リリースノート` rule of the `create-pull-request` skill.
 5. Pick the version: a minor bump (`0.x` → `0.(x+1).0`) when an entry starts with `Breaking:`, a patch bump otherwise. Tell the user which and why.
 6. On a branch `chore/wasm-release-<version>` from `origin/master`:
-   - Add `## <version>` under `# Changelog` in `crates/wasm/js/CHANGELOG.md` with the entries, `Breaking:` ones first. Fold in any entries left under `## Unreleased` and remove that heading.
+   - Add `## <version>` under `# Changelog` in `crates/wasm/js/CHANGELOG.md` with the entries (see *Writing the Section*). Fold in any entries left under `## Unreleased` and remove that heading.
    - Set the version in `crates/wasm/js/package.json` and in the `crates/wasm/js` entry of `package-lock.json`.
    - Check `node crates/wasm/js/scripts/release-notes.mjs crates/wasm/js/CHANGELOG.md <version>` prints the section, and run prettier on the changed files.
    - Commit as `chore(wasm): release moq-wasm <version>`.
 7. Open the release PR with the `create-pull-request` skill, titled `chore(wasm): moq-wasm <version> をリリースする`. Its body lists the PRs the release contains and has no `## リリースノート` section.
 8. After the user merges it, confirm with them, then tag the merge commit and push the tag: `git tag js-sdk-v<version> <merge commit>` and `git push origin js-sdk-v<version>`. Check the commit's `crates/wasm/js/package.json` names `<version>` first; the workflow stops otherwise.
 9. Wait for the `SDK release` workflow (`gh run list --workflow sdk-release.yml`), then report the GitHub Release URL and its `moq-wasm-<version>.tgz`.
+
+## Writing the Section
+
+The section is read by someone deciding what to change in their page, not by a reviewer of each PR. Edit the PRs' entries instead of pasting them:
+
+- Order the entries: `Breaking:` ones first, then new APIs and behaviour a page can use, then fixed bugs a page could have hit.
+- Merge into one closing entry the fixes that ask nothing of a page and that it would rarely hit: protocol conformance (limits, malformed or unknown messages), GOAWAY migration and other edge cases, log and span details. Name what they cover in a sentence or two, with their PR numbers.
+- Merge entries about the same API or feature into one.
+- Cut each entry to what a page sees or does: drop the cause, the background and the earlier implementation, unless the old behaviour is what a page has to migrate from. Keep the code of a `Breaking:` migration.
+
+Show the user the section before committing it when it merges or cuts PR entries.
