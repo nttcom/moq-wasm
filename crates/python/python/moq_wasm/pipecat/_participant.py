@@ -249,7 +249,7 @@ class ParticipantReceiver:
         await self._report_failure(track_name, lambda: self._forward_data(track_name))
 
     async def _forward_data(self, track_name: str) -> None:
-        async for data_object in self._remote.follow(track_name):
+        async for data_object in self._remote.follow(track_name, delivery_timeout=None):
             location = Location(data_object.group_id, data_object.object_id)
             await self._sink.push_message(
                 MoqWasmTrackMessage(self.participant_id, track_name, data_object.payload, location)

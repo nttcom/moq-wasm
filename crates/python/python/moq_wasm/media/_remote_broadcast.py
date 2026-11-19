@@ -9,6 +9,7 @@ from moq_wasm.media._catalog import CATALOG_TRACK_NAME, Catalog
 logger = logging.getLogger("moq_wasm")
 
 RESUBSCRIBE_DELAY_SECONDS = 1.0
+DEFAULT_DELIVERY_TIMEOUT_SECONDS = 2.0
 
 
 class RemoteBroadcast:
@@ -33,13 +34,19 @@ class RemoteBroadcast:
         finally:
             await _unsubscribe(subscription)
 
-    async def follow(self, name: str) -> AsyncIterator[Object]:
+    async def follow(
+        self, name: str, *, delivery_timeout: float | None = DEFAULT_DELIVERY_TIMEOUT_SECONDS
+    ) -> AsyncIterator[Object]:
         """The track's objects, subscribing again a second after the track ends or its SUBSCRIBE
         fails, as when the page that published it leaves and another in the room takes over. Never
-        ends by itself."""
+        ends by itself. `delivery_timeout` is the SUBSCRIBE's DELIVERY TIMEOUT in seconds: on a
+        congested link, the relay stops sending a group once one of its objects is that old. Pass
+        None for a track whose every object matters, such as chat."""
         while True:
             try:
-                subscription = await self._session.subscribe(self.namespace, name)
+                subscription = await self._session.subscribe(
+                    self.namespace, name, delivery_timeout=delivery_timeout
+                )
                 try:
                     async for track_object in subscription:
                         yield track_object

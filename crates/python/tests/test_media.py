@@ -191,6 +191,28 @@ async def test_follow_subscribes_again_after_the_track_ends_and_after_a_refused_
     await session.close()
 
 
+async def test_follow_sends_a_two_second_delivery_timeout_unless_told_otherwise():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["video"] = [[b"frame"]]
+    native.tracks["chat"] = [[b"hello"]]
+    broadcast = RemoteBroadcast(session, [*ROOM, "alice"])
+    video = broadcast.follow("video")
+    chat = broadcast.follow("chat", delivery_timeout=None)
+
+    # Act
+    await within(anext(video))
+    await within(anext(chat))
+
+    # Assert
+    assert [options["delivery_timeout"] for options in native.subscribe_options] == [2.0, None]
+    await video.aclose()
+    await chat.aclose()
+    await session.close()
+
+
 async def test_a_watcher_reads_the_catalog_of_a_broadcast_through_a_relay(relay_url):
     # Arrange
     room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
