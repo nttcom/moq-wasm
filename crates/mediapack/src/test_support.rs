@@ -348,3 +348,29 @@ fn loc_events(codec: loc::VideoCodec, payloads: Vec<Bytes>) -> Vec<MediaEvent> {
     }
     events
 }
+
+/// Where to cut a byte stream into chunks: each `Index` picks an offset in
+/// `0..=len`.
+pub(crate) fn cuts() -> impl proptest::strategy::Strategy<Value = Vec<proptest::sample::Index>> {
+    proptest::collection::vec(proptest::prelude::any::<proptest::sample::Index>(), 0..16)
+}
+
+/// Feeds `bytes` to `push` in the chunks `cuts` makes, in order, and collects
+/// what every call returns, up to the first error.
+pub(crate) fn push_in_chunks<T>(
+    bytes: &[u8],
+    cuts: &[proptest::sample::Index],
+    mut push: impl FnMut(&[u8]) -> anyhow::Result<Vec<T>>,
+) -> anyhow::Result<Vec<T>> {
+    let mut offsets: Vec<usize> = cuts
+        .iter()
+        .map(|cut| cut.index(bytes.len() + 1))
+        .chain([0, bytes.len()])
+        .collect();
+    offsets.sort_unstable();
+    let mut output = Vec::new();
+    for chunk in offsets.windows(2) {
+        output.extend(push(&bytes[chunk[0]..chunk[1]])?);
+    }
+    Ok(output)
+}

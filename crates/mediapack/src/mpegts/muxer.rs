@@ -407,4 +407,95 @@ mod tests {
             }
         }
     }
+
+    mod properties {
+        use bytes::Bytes;
+        use proptest::{collection::vec, prelude::*};
+
+        use super::{super::Muxer, demux};
+        use crate::{
+            mpegts::parser::CLOCK_RATE,
+            sample::{AudioSample, MediaEvent, Timestamp, VideoSample},
+            test_support::{
+                audio_samples, delta_frame_annexb, h264_aac_configs, keyframe_annexb, video_samples,
+            },
+        };
+
+        fn ticks(ticks: u64) -> Timestamp {
+            Timestamp::from_ticks(ticks, CLOCK_RATE)
+        }
+
+        fn video(start: u64) -> impl Strategy<Value = Vec<VideoSample>> {
+            vec((1..=6_000u64, 0..=6_000u64, any::<bool>()), 1..16).prop_map(move |frames| {
+                let mut dts = start;
+                frames
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (step, offset, keyframe))| {
+                        dts += step;
+                        let is_keyframe = index == 0 || keyframe;
+                        VideoSample {
+                            data: if is_keyframe {
+                                keyframe_annexb()
+                            } else {
+                                delta_frame_annexb()
+                            },
+                            is_keyframe,
+                            pts: ticks(dts + offset),
+                            dts: ticks(dts),
+                        }
+                    })
+                    .collect()
+            })
+        }
+
+        fn audio(start: u64) -> impl Strategy<Value = Vec<AudioSample>> {
+            vec((1..=6_000u64, vec(any::<u8>(), 1..200)), 1..16).prop_map(move |frames| {
+                let mut pts = start;
+                frames
+                    .into_iter()
+                    .map(|(step, data)| {
+                        pts += step;
+                        AudioSample {
+                            data: Bytes::from(data),
+                            pts: ticks(pts),
+                            audio_level: None,
+                        }
+                    })
+                    .collect()
+            })
+        }
+
+        /// Starts below 2^32 ticks, so no timestamp reaches the 33-bit wrap,
+        /// which the demuxer does not unwrap.
+        fn media() -> impl Strategy<Value = (Vec<VideoSample>, Vec<AudioSample>)> {
+            (0..1u64 << 32).prop_flat_map(|start| (video(start), audio(start)))
+        }
+
+        proptest! {
+            #[test]
+            fn demuxing_muxed_samples_gives_them_back((video, audio) in media()) {
+                // Arrange
+                let mut events = h264_aac_configs();
+                let mut media: Vec<MediaEvent> = video.iter().cloned().map(MediaEvent::Video)
+                    .chain(audio.iter().cloned().map(MediaEvent::Audio))
+                    .collect();
+                media.sort_by_key(|event| match event {
+                    MediaEvent::Video(sample) => sample.dts,
+                    MediaEvent::Audio(sample) => sample.pts,
+                    _ => Timestamp::ZERO,
+                });
+                events.extend(media);
+                let mut muxer = Muxer::new();
+                let stream: Vec<u8> = events.iter().flat_map(|event| muxer.push(event).unwrap()).collect();
+
+                // Act
+                let demuxed = demux(&stream);
+
+                // Assert
+                prop_assert_eq!(video_samples(&demuxed), video.iter().collect::<Vec<_>>());
+                prop_assert_eq!(audio_samples(&demuxed), audio.iter().collect::<Vec<_>>());
+            }
+        }
+    }
 }

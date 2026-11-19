@@ -611,4 +611,32 @@ mod tests {
             nal_units(&sample.data).any(|nal| nal_unit_type(nal) == Some(NalUnitType::Sps))
         }));
     }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::Demuxer;
+        use crate::test_support::{FIXTURE_TS, cuts, push_in_chunks};
+
+        fn demux(cuts: &[proptest::sample::Index]) -> Vec<crate::MediaEvent> {
+            let mut demuxer = Demuxer::new();
+            let mut events = push_in_chunks(FIXTURE_TS, cuts, |chunk| demuxer.push(chunk)).unwrap();
+            events.extend(demuxer.finish().unwrap());
+            events
+        }
+
+        proptest! {
+            #[test]
+            fn the_events_do_not_depend_on_how_the_input_is_chunked(cuts in cuts()) {
+                // Arrange
+                let whole = demux(&[]);
+
+                // Act
+                let chunked = demux(&cuts);
+
+                // Assert
+                prop_assert_eq!(chunked, whole);
+            }
+        }
+    }
 }

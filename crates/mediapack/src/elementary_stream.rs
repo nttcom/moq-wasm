@@ -349,4 +349,41 @@ mod tests {
         // Assert
         assert!(result.is_err());
     }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use crate::{
+            elementary_stream::ElementaryStreamDemuxer,
+            hevc::HevcDecoderConfigurationRecord,
+            sample::{MediaEvent, Timestamp},
+            test_support::{FIXTURE_HEVC, cuts, push_in_chunks},
+        };
+
+        /// Every chunk arrives at the same time, so the timestamps depend on
+        /// the access units alone.
+        fn demux(cuts: &[proptest::sample::Index]) -> Vec<MediaEvent> {
+            let mut demuxer = ElementaryStreamDemuxer::<HevcDecoderConfigurationRecord>::new();
+            let mut events = push_in_chunks(FIXTURE_HEVC, cuts, |chunk| {
+                demuxer.push(chunk, Timestamp::ZERO)
+            })
+            .unwrap();
+            events.extend(demuxer.finish(Timestamp::ZERO).unwrap());
+            events
+        }
+
+        proptest! {
+            #[test]
+            fn the_events_do_not_depend_on_how_the_input_is_chunked(cuts in cuts()) {
+                // Arrange
+                let whole = demux(&[]);
+
+                // Act
+                let chunked = demux(&cuts);
+
+                // Assert
+                prop_assert_eq!(chunked, whole);
+            }
+        }
+    }
 }

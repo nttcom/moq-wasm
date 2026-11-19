@@ -1898,6 +1898,7 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "moqt",
+ "proptest",
  "serde",
  "serde_json",
 ]
