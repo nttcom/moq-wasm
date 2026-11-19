@@ -12,6 +12,10 @@ use crate::opus_codec::OpusDecoder;
 
 const SOURCE_PCM_CAPACITY: usize = 256;
 const RESUBSCRIBE_DELAY: Duration = Duration::from_secs(1);
+/// The relay drops source audio it has not sent this long after receiving it
+/// (draft-14 §9.2.1.2), so the translation catches up instead of falling
+/// behind. Longer than a player's 2 s because a dropped stretch loses words.
+const DELIVERY_TIMEOUT_MS: u64 = 5_000;
 
 #[derive(Clone)]
 pub(crate) struct SourcePcm {
@@ -76,7 +80,10 @@ async fn receive(
         .subscribe(
             namespace.to_string(),
             track_name.to_string(),
-            SubscribeOption::default(),
+            SubscribeOption {
+                delivery_timeout: Some(DELIVERY_TIMEOUT_MS),
+                ..SubscribeOption::default()
+            },
         )
         .await
         .context("subscribe to the source audio")?;

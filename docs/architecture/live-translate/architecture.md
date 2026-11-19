@@ -87,7 +87,7 @@ RootTranslation              one relay session; the only reader of Session::rece
      ├─ PUBLISH_NAMESPACE .../translated
      ├─ CatalogPublication         one per catalog subscriber; re-sends the catalog every 10 s and
      │                             whenever a source catalog changes the translated one
-     ├─ SourceAudio                SUBSCRIBE the highest-bitrate Opus track, decode to 16 kHz,
+     ├─ SourceAudio                SUBSCRIBE the highest-bitrate Opus track (DELIVERY TIMEOUT 5 s), decode to 16 kHz,
      │                             broadcast (latest input timestamp, PCM) to the languages;
      │                             subscribes again a second after the subscription ends or fails
      └─ LanguageTranslation        one per subscribed language
