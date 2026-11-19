@@ -421,7 +421,7 @@ report to OTLP/JSON and forwards it (`client_telemetry`). The body is
 | --- | --- | --- | --- |
 | `client.player.viewer_delay` | ms | gauge | `viewerDelayMs` |
 | `client.player.buffer` | ms | gauge | `bufferMs` |
-| `client.player.received` | kbit/s | gauge, `media_kind` attribute | `receivedKbps` (video), `receivedAudioKbps` (audio) |
+| `client.player.received` | kbit/s | gauge, `media_kind` attribute | `receivedKbps` |
 | `client.player.audio_breaks` | {break} | cumulative sum | `audioBreaks` |
 | `client.player.audio_concealed` | ms | cumulative sum | `audioConcealedMs` |
 | `client.player.shed` | ms | cumulative sum | `shedMs` |

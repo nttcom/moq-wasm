@@ -118,27 +118,20 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
         }
         let values = &stats.values;
         let per_media_kind = [
-            (
-                "client.player.received",
-                "kbit/s",
-                values.received_kbps,
-                values.received_audio_kbps,
-            ),
+            ("client.player.received", "kbit/s", &values.received_kbps),
             (
                 "client.player.max_arrival_gap",
                 "ms",
-                values.max_arrival_gap_ms.video,
-                values.max_arrival_gap_ms.audio,
+                &values.max_arrival_gap_ms,
             ),
             (
                 "client.player.arrival_delay",
                 "ms",
-                values.arrival_delay_ms.video,
-                values.arrival_delay_ms.audio,
+                &values.arrival_delay_ms,
             ),
         ];
-        for (name, unit, video, audio) in per_media_kind {
-            for (media_kind, value) in [("video", video), ("audio", audio)] {
+        for (name, unit, per_kind) in per_media_kind {
+            for (media_kind, value) in [("video", per_kind.video), ("audio", per_kind.audio)] {
                 let mut attributes = identity.clone();
                 attributes.push(string_attribute("media_kind", media_kind));
                 add((name, unit, Gauge, value), &attributes);
@@ -458,8 +451,7 @@ mod tests {
                     "audioBreaks": 3,
                     "syncOffsetMs": -6.5,
                     "videoDroppedFrames": 4,
-                    "receivedKbps": 1500,
-                    "receivedAudioKbps": 64,
+                    "receivedKbps": { "video": 1500, "audio": 64 },
                     "maxArrivalGapMs": { "audio": 25 },
                     "arrivalDelayMs": { "audio": 8, "video": 2254 },
                 },
