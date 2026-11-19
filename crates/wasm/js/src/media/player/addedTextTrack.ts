@@ -33,7 +33,7 @@ export class AddedTextTrack {
       context,
       context.namespace,
       name,
-      TEXT_PRIORITY,
+      { priority: TEXT_PRIORITY },
       (_groupId, object) => {
         const captureMicros = readLocHeader(object.locHeader).timestampMicros
         const dueMs = captureMicros === undefined ? undefined : playout.dueAt(captureMicros)

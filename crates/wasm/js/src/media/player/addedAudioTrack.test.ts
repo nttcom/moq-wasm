@@ -47,6 +47,19 @@ test('an added audio track joins its current group, and closing it unsubscribes 
   expect(session.updates).toEqual(['close audio_en'])
 })
 
+test("an added audio track is subscribed with the player's delivery timeout", async () => {
+  // Arrange
+  const session = new FakeSession(undefined, [])
+
+  // Act
+  await AddedAudioTrack.open(session.context(), playout(), ENGLISH, {}, () => {}, 2_000)
+
+  // Assert
+  expect(session.calls).toEqual([
+    { method: 'subscribeCurrentGroup', track: 'audio_en', options: { priority: 32, deliveryTimeoutMs: 2_000 } }
+  ])
+})
+
 test('closing an added audio track resolves when its UNSUBSCRIBE fails', async () => {
   // Arrange
   const session = new FakeSession(undefined, [])

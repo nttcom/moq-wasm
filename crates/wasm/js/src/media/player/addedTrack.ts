@@ -1,4 +1,4 @@
-import type { PublishDone } from '../../core/session'
+import type { MoqSubscribeGroupStartOptions, PublishDone } from '../../core/session'
 import { getErrorMessage } from '../internal/status'
 import { type ObjectHandler, type TrackContext, readJoinedObjects, sessionOf, streamId } from './trackContext'
 
@@ -10,11 +10,11 @@ export async function subscribeAddedTrack(
   context: TrackContext,
   namespace: string[],
   name: string,
-  priority: number,
+  options: MoqSubscribeGroupStartOptions,
   onObject: ObjectHandler,
   onEnded: ((done: PublishDone) => void) | undefined
 ): Promise<() => Promise<void>> {
-  const subscription = await sessionOf(context).subscribeCurrentGroup(namespace, name, { priority })
+  const subscription = await sessionOf(context).subscribeCurrentGroup(namespace, name, options)
   let closed = false
   void readJoinedObjects(context, streamId(), subscription, (groupId, object, cached) => {
     if (!closed) {
