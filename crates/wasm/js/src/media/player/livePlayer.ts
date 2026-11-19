@@ -1,5 +1,6 @@
 import { forwardSdkLog } from '../../core/log'
 import { RequestError, RequestErrorCode } from '../../core/requestError'
+import { type PlayerStatsSample, registerPlayerStats } from '../../core/telemetry'
 import type { MoqSession, MoqSubscribeOptions, PublishDone, ReceivedObject } from '../../core/session'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
 import { monotonicUnixMicros } from '../internal/clock'
@@ -191,6 +192,7 @@ export class LivePlayer {
   private group: GroupLink | undefined
   private started = false
   private disposed = false
+  private readonly unregisterStats: () => void
   private givenTracks: LiveTracks | undefined
   /// Incremented by every start and stop; a publisher wait from an earlier
   /// start sees the change and returns.
@@ -281,6 +283,7 @@ export class LivePlayer {
       () => this.context.session,
       options.audioContext
     )
+    this.unregisterStats = registerPlayerStats(() => this.statsSample())
     this.locReview = new LocReview(
       this.stage.reviewCanvas,
       {
@@ -361,6 +364,18 @@ export class LivePlayer {
     return { ...this.locLive.stats(), videoObjects: this.videoObjectCount, audioObjects: this.audioObjectCount }
   }
 
+  private statsSample(): PlayerStatsSample | undefined {
+    if (!this.started) {
+      return undefined
+    }
+    return {
+      session: this.context.session,
+      trackNamespace: this.context.namespace.join('/'),
+      mediaSource: this.source?.video,
+      values: this.locLive.stats()
+    }
+  }
+
   elapsedMsAt(captureMicros: number): number | undefined {
     return this.timeline.media.elapsedMsAt(captureMicros)
   }
@@ -426,6 +441,7 @@ export class LivePlayer {
   /// The player cannot start again.
   dispose(): Promise<void> {
     this.disposed = true
+    this.unregisterStats()
     return this.queueTrackChange(async () => {
       await this.stopWatching()
       this.resizeObserver.disconnect()

@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test'
 import type { LiveStats } from '../media/player/locLive'
 import type { LogRecord, SpanRecord } from './init'
-import { ClientTelemetry, type TelemetryOptions } from './telemetry'
+import { bindLogToken } from './log'
+import { ClientTelemetry, type PlayerStatsSample, type TelemetryOptions, registerPlayerStats } from './telemetry'
 
 type Sent = {
   url: string
@@ -23,6 +24,16 @@ function telemetry(
     }
   )
   return { telemetry, sent }
+}
+
+function sessionWithToken(token: string): object {
+  const session = {}
+  bindLogToken(session, () => token)
+  return session
+}
+
+function playerSample(session: object | undefined, mediaSource: string): PlayerStatsSample {
+  return { session, trackNamespace: 'app/meeting/room/alice', mediaSource, values: { bufferMs: 120 } as LiveStats }
 }
 
 function span(name: string): SpanRecord {
@@ -77,6 +88,59 @@ test('a flush sends the samples stats returns with the records of no session', (
     ['jwt-a', []],
     [undefined, [{ timeMs: expect.any(Number), ...sample }]]
   ])
+})
+
+test("a flush sends each player's stats under its session's token", () => {
+  // Arrange
+  const alice = sessionWithToken('jwt-a')
+  const { telemetry: subject, sent } = telemetry()
+  const unregister = [
+    playerSample(alice, 'camera'),
+    playerSample(alice, 'screen'),
+    playerSample(undefined, 'camera')
+  ].map((sample) => registerPlayerStats(() => sample))
+
+  // Act
+  subject.flush()
+  unregister.forEach((done) => done())
+
+  // Assert: the session itself is not sent
+  const sentSample = (mediaSource: string) => {
+    const { session: _, ...sample } = playerSample(undefined, mediaSource)
+    return { timeMs: expect.any(Number), ...sample }
+  }
+  expect(sent.map(({ body }) => [body.token, body.stats])).toEqual([
+    ['jwt-a', [sentSample('camera'), sentSample('screen')]],
+    [undefined, [sentSample('camera')]]
+  ])
+})
+
+test('playerStats false sends no player stats', () => {
+  // Arrange
+  const alice = sessionWithToken('jwt-a')
+  const { telemetry: subject, sent } = telemetry(202, { playerStats: false })
+  const unregister = registerPlayerStats(() => playerSample(alice, 'camera'))
+
+  // Act
+  subject.flush()
+  unregister()
+
+  // Assert
+  expect(sent).toEqual([])
+})
+
+test('a registered player is sent until it unregisters', () => {
+  // Arrange
+  const { telemetry: subject, sent } = telemetry()
+  const unregister = registerPlayerStats(() => playerSample(sessionWithToken('jwt-a'), 'camera'))
+  subject.flush()
+
+  // Act
+  unregister()
+  subject.flush()
+
+  // Assert
+  expect(sent.map(({ body }) => [body.token, (body.stats as unknown[]).length])).toEqual([['jwt-a', 1]])
 })
 
 test('a url function picks the server at each flush', () => {

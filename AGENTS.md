@@ -124,7 +124,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `request_id` | The draft's Request ID (not `subscribe_id`) |
 | `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
-| `media_source` | Which of a member's videos a browser plays: `camera` or `screenshare` |
+| `media_source` | The source of a broadcast a browser plays, named by its video track (`camera`, `screen`, …) |
 | `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
 | `track_alias` | The track alias on the session the log is about |
 | `forward` | The Forward State a message sets or a subscription is in |

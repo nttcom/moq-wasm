@@ -13,6 +13,11 @@ export function bindLogToken(session: object, token: () => string | undefined): 
   sessionTokens.set(session, token)
 }
 
+/// The token `bindLogToken` bound to `session`, or `undefined` when there is none.
+export function sessionToken(session: LogSession): string | undefined {
+  return session && sessionTokens.get(session)?.()
+}
+
 const SEVERITY: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 }
 
 let sink: { emit: (record: LogRecord, token: string | undefined) => void; level: LogLevel } | undefined
@@ -63,7 +68,7 @@ export function reportLog(
 
 function emit(session: LogSession, level: LogLevel, target: string, message: string, fields: Fields): void {
   if (sink && SEVERITY[level] <= SEVERITY[sink.level]) {
-    sink.emit({ timeMs: Date.now(), level, target, message, fields }, session && sessionTokens.get(session)?.())
+    sink.emit({ timeMs: Date.now(), level, target, message, fields }, sessionToken(session))
   }
 }
 

@@ -410,10 +410,11 @@ report to OTLP/JSON and forwards it (`client_telemetry`). The body is
   trace; `moqt.session.connect`'s travels in CLIENT_SETUP, so the relay's
   `relay.session.setup` is its child.
 - **Stats** become metric points with `app_id` and `client_id`, posted to
-  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. A page playing several tracks at
-  once (meeting: each remote member's camera and screen share) sends one
-  sample per track with `trackNamespace` (`/`-joined, as the relay logs it)
-  and `mediaSource`, which become the `track_namespace` and `media_source`
+  `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`. The browser SDK sends one sample per
+  started `LivePlayer` in the report of the player's session token, so a
+  player's stats land in the app of its session, with `trackNamespace`
+  (`/`-joined, as the relay logs it) and `mediaSource` (the source's video
+  track name), which become the `track_namespace` and `media_source`
   attributes. Keys other than these are dropped:
 
 | Metric | Unit | Kind | `LiveStats` field |
