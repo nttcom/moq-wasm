@@ -1,6 +1,7 @@
 //! `MPEG4-GENERIC` RTP payload format for AAC (RFC 3640): an AU header
 //! section followed by one or more access units, or one fragment of a large
-//! access unit. Interleaving (a non-zero first AU-Index) is rejected.
+//! access unit. Interleaving (a non-zero AU-Index or AU-Index-delta) is
+//! rejected, so the units of a packet are consecutive frames.
 
 use anyhow::{Result, bail, ensure};
 use bytes::{BufMut, Bytes, BytesMut};
@@ -112,7 +113,6 @@ impl Depacketizer {
         let mut reader = BitReader::new(&payload[2..section_end]);
         let mut headers = Vec::new();
         let mut bits_left = header_bits;
-        let mut frame_offset = 0_u64;
         while bits_left > 0 {
             let index_bits = if headers.is_empty() {
                 self.config.index_length
@@ -120,18 +120,19 @@ impl Depacketizer {
                 self.config.index_delta_length
             };
             let header_bits = self.config.size_length as usize + index_bits as usize;
+            // A header of no bits would never use up the section.
+            ensure!(header_bits > 0, "AU headers have no bits");
             ensure!(
                 bits_left >= header_bits,
                 "AU header section ends inside an AU header"
             );
             let size = reader.read_bits(self.config.size_length as u32)? as usize;
             let index = reader.read_bits(index_bits as u32)?;
-            if headers.is_empty() {
-                ensure!(index == 0, "interleaved AAC access units are not supported");
-            } else {
-                frame_offset += index + 1;
-            }
-            headers.push(AuHeader { size, frame_offset });
+            ensure!(index == 0, "interleaved AAC access units are not supported");
+            headers.push(AuHeader {
+                size,
+                frame_offset: headers.len() as u64,
+            });
             bits_left -= header_bits;
         }
         ensure!(!headers.is_empty(), "AAC RTP payload has no AU header");
@@ -331,6 +332,35 @@ mod tests {
     }
 
     #[test]
+    fn a_non_zero_au_index_delta_is_rejected_as_interleaving() {
+        // Arrange: two AAC-hbr headers of 13-bit size 1, the second with delta 1
+        let payload = [0x00, 0x20, 0x00, 0x08, 0x00, 0x09, 0xAA, 0xBB];
+
+        // Act
+        let result = Depacketizer::new(AuHeaderConfig::AAC_HBR).push(&payload, true);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn au_headers_of_no_bits_are_rejected() {
+        // Arrange: widths an SDP may declare as 0
+        let config = AuHeaderConfig {
+            size_length: 0,
+            index_length: 0,
+            index_delta_length: 0,
+        };
+        let payload = [0x00, 0x08, 0xAB];
+
+        // Act
+        let result = Depacketizer::new(config).push(&payload, true);
+
+        // Assert
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn rejects_malformed_payloads() {
         // Arrange
         let mut depacketizer = Depacketizer::new(AuHeaderConfig::AAC_HBR);
@@ -345,5 +375,57 @@ mod tests {
         assert!(depacketizer.push(&overlong_section, true).is_err());
         assert!(packetize(&[0; 8192], AuHeaderConfig::AAC_HBR, 1200).is_err());
         assert!(packetize(&FIRST, AuHeaderConfig::AAC_HBR, 4).is_err());
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::{AuHeaderConfig, Depacketizer};
+
+        /// Any width to 255, weighted toward 0 to 16 and toward 64, the most
+        /// bits one read takes.
+        fn width() -> impl Strategy<Value = u8> {
+            prop_oneof![0..=16u8, Just(64), any::<u8>()]
+        }
+
+        /// A payload whose AU header section fits in it, so the headers are read;
+        /// its bytes are mostly 0x00 or 0xFF, the extremes of each field.
+        fn payload() -> impl Strategy<Value = Vec<u8>> {
+            let byte = prop_oneof![1 => Just(0u8), 3 => Just(0xFF), 1 => any::<u8>()];
+            vec(byte, 0..64).prop_flat_map(|rest| {
+                let bits = rest.len() * 8;
+                (0..=bits).prop_map(move |header_bits| {
+                    let mut payload = (header_bits as u16).to_be_bytes().to_vec();
+                    payload.extend_from_slice(&rest);
+                    payload
+                })
+            })
+        }
+
+        fn config() -> impl Strategy<Value = AuHeaderConfig> {
+            (width(), width(), width()).prop_map(
+                |(size_length, index_length, index_delta_length)| AuHeaderConfig {
+                    size_length,
+                    index_length,
+                    index_delta_length,
+                },
+            )
+        }
+
+        proptest! {
+            #[test]
+            fn any_payload_is_read_or_rejected_without_panicking(
+                config in config(),
+                payloads in vec((payload(), any::<bool>()), 1..4),
+            ) {
+                // Arrange
+                let mut depacketizer = Depacketizer::new(config);
+
+                // Act / Assert
+                for (payload, marker) in &payloads {
+                    let _ = depacketizer.push(payload, *marker);
+                }
+            }
+        }
     }
 }
