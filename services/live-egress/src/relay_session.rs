@@ -7,6 +7,10 @@ use moqt::{
     subscribe::{FilterType, SubscribeOption},
 };
 
+/// Objects the relay has not sent this long after receiving them would
+/// play late, so it drops them (draft-14 §9.2.1.2). Same as the browser player.
+const DELIVERY_TIMEOUT_MS: u64 = 2_000;
+
 pub async fn connect(url: &str, config: &ClientConfig) -> Result<Arc<Session>> {
     let endpoint = Endpoint::<NATIVE>::create_client(config)?;
     tracing::info!(relay = %url, "connecting to relay");
@@ -29,6 +33,7 @@ pub async fn subscribe(
         filter_type,
         // A track with long groups starts one when asked (draft-18 §5.1.3.1).
         new_group_request: (filter_type == FilterType::NextGroupStart).then_some(0),
+        delivery_timeout: Some(DELIVERY_TIMEOUT_MS),
         ..SubscribeOption::default()
     };
     session

@@ -45,7 +45,9 @@ keyframe. The audio is subscribed from the largest object
 audio object decodes alone, and a publisher that sends its audio as one
 endless group, as a meeting member does, never starts the next group that
 NextGroupStart waits for. Every media track is subscribed before any is
-read, so the audio usually starts before the video.
+read, so the audio usually starts before the video. Both carry a 2 s
+DELIVERY TIMEOUT, as a browser player does: on a congested link the relay
+drops what would arrive late instead of sending it on.
 
 Group ids cannot line the audio up with the video: `broadcast` gives the
 audio groups the ids of the video groups they start with, but a meeting
