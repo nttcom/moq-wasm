@@ -242,6 +242,21 @@ mod tests {
     }
 
     #[test]
+    fn depends_on_the_only_track_of_a_render_group_names_the_render_group() {
+        // Arrange
+        let tracks = [
+            in_render_group("screen", None),
+            in_render_group("video", Some(1)),
+        ];
+
+        // Act
+        let depends = Dependency::on_tracks(&tracks, vec!["video".into()]);
+
+        // Assert
+        assert_eq!(depends, [Dependency::RenderGroup(1)]);
+    }
+
+    #[test]
     fn depends_on_part_of_a_render_group_or_on_tracks_without_one_names_the_tracks() {
         // Arrange
         let tracks = [
@@ -279,6 +294,19 @@ mod tests {
 
         // Assert
         assert_eq!(names, ["video", "audio", "screen"]);
+    }
+
+    #[test]
+    fn has_role_matches_only_the_track_role() {
+        // Arrange
+        let mut video = Track::new("video", KnownPackaging::Loc, true);
+        video.role = Some(KnownTrackRole::Video.into());
+        let unknown = Track::new("data", KnownPackaging::Loc, true);
+
+        // Act / Assert
+        assert!(video.has_role(KnownTrackRole::Video));
+        assert!(!video.has_role(KnownTrackRole::Audio));
+        assert!(!unknown.has_role(KnownTrackRole::Video));
     }
 
     #[test]

@@ -239,6 +239,48 @@ mod tests {
     }
 
     #[test]
+    fn loc_tracks_skips_the_tracks_of_other_packagings() {
+        // Arrange
+        let catalog = Catalog::new(
+            vec![
+                Track::new("video", KnownPackaging::Loc, true),
+                Track::new("cmaf", KnownPackaging::Cmaf, true),
+                Track::new("audio", KnownPackaging::Loc, true),
+            ],
+            0,
+        );
+
+        // Act
+        let names: Vec<&str> = catalog
+            .loc_tracks()
+            .map(|track| track.name.as_str())
+            .collect();
+
+        // Assert
+        assert_eq!(names, ["video", "audio"]);
+    }
+
+    #[test]
+    fn init_data_is_the_data_of_the_entry_init_ref_names() {
+        // Arrange
+        let mut video = Track::new("video", KnownPackaging::Cmaf, true);
+        let video_init = video.set_inline_init_data("VklE".to_string());
+        let mut audio = Track::new("audio", KnownPackaging::Cmaf, true);
+        let audio_init = audio.set_inline_init_data("QVVE".to_string());
+        let mut dangling = Track::new("dangling", KnownPackaging::Cmaf, true);
+        dangling.init_ref = Some("missing".to_string());
+        let unreferenced = Track::new("plain", KnownPackaging::Cmaf, true);
+        let mut catalog = Catalog::new(vec![], 0);
+        catalog.init_data_list = Some(vec![video_init, audio_init]);
+
+        // Act / Assert
+        assert_eq!(catalog.init_data(&audio), Some("QVVE"));
+        assert_eq!(catalog.init_data(&video), Some("VklE"));
+        assert_eq!(catalog.init_data(&dangling), None);
+        assert_eq!(catalog.init_data(&unreferenced), None);
+    }
+
+    #[test]
     fn a_catalog_with_unresolvable_init_data_still_parses() {
         // Arrange: the list precedes the tracks, its entry has a type the draft does not define, and the initRef names no entry
         let json = r#"{"version":"draft-02","initDataList":[{"id":"init-url","type":"url","data":"https://example.com/init.mp4"}],"tracks":[{"name":"video","packaging":"cmaf","isLive":true,"initRef":"init-hd"}]}"#;

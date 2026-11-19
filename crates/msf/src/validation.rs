@@ -177,6 +177,31 @@ mod tests {
     }
 
     #[test]
+    fn a_namespace_of_32_fields_is_valid() {
+        // Arrange
+        let mut track = Track::new("media", KnownPackaging::Cmaf, true);
+        track.namespace = Some(["a"; 32].join("/"));
+
+        // Act / Assert
+        assert_eq!(validate(&catalog(vec![track])), Ok(()));
+    }
+
+    #[test]
+    fn a_dependency_naming_one_other_track_resolves() {
+        // Arrange
+        let timeline = with_depends(
+            Track::new("timeline", KnownPackaging::MediaTimeline, true),
+            vec!["video".into()],
+        );
+
+        // Act / Assert
+        assert_eq!(
+            validate(&catalog(vec![loc_video("video"), timeline])),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn a_dependency_that_does_not_resolve_to_one_other_track_or_a_render_group_is_invalid() {
         // Arrange
         let timeline = |depends| {
@@ -215,10 +240,25 @@ mod tests {
         audio.codec = Some("opus".to_string());
         audio.bitrate = Some(64_000);
         audio.sample_rate = Some(48_000);
+        let mut audio_description = Track::new("description", KnownPackaging::Loc, true);
+        audio_description.role = Some(KnownTrackRole::AudioDescription.into());
+        audio_description.codec = Some("opus".to_string());
+        audio_description.sample_rate = Some(48_000);
+        audio_description.channel_config = Some("2".to_string());
+        let mut sign_language = Track::new("sign", KnownPackaging::Loc, true);
+        sign_language.role = Some(KnownTrackRole::SignLanguage.into());
+        sign_language.codec = Some("avc1.42e01e".to_string());
         let event_timeline = Track::new("chat", KnownPackaging::EventTimeline, true);
 
         // Act
-        let errors = [video, audio, event_timeline].map(|track| validate(&catalog(vec![track])));
+        let errors = [
+            video,
+            audio,
+            audio_description,
+            sign_language,
+            event_timeline,
+        ]
+        .map(|track| validate(&catalog(vec![track])));
 
         // Assert
         assert_eq!(
@@ -226,6 +266,8 @@ mod tests {
             [
                 Err("track video has no bitrate".to_string()),
                 Err("track audio has no channelConfig".to_string()),
+                Err("track description has no lang".to_string()),
+                Err("track sign has no framerate".to_string()),
                 Err("track chat has no eventType".to_string()),
             ]
         );
