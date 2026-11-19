@@ -66,8 +66,7 @@ impl Muxer {
                     .context("video sample before its configuration")?
                     .nal_length_size as usize;
                 self.last_video_timestamp = sample.dts;
-                let composition_offset_ms =
-                    (sample.pts.micros() as i64 - sample.dts.micros() as i64) / 1_000;
+                let composition_offset_ms = sample.pts.millis() as i64 - sample.dts.millis() as i64;
                 let mut data = BytesMut::new();
                 data.put_u8(if sample.is_keyframe { 0x17 } else { 0x27 });
                 data.put_u8(0x01);
@@ -224,5 +223,72 @@ mod tests {
         assert!(first.starts_with(b"FLV"));
         assert_eq!(first.len(), 13 + 11 + 1 + 4);
         assert_eq!(second.len(), 11 + 1 + 4);
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::Muxer;
+        use crate::{
+            flv::demuxer::Demuxer,
+            sample::{MediaEvent, Timestamp, VideoSample},
+            test_support::{delta_frame_annexb, h264_aac_configs, keyframe_annexb, video_samples},
+        };
+
+        /// A time in microseconds: a whole millisecond half the time, else
+        /// anywhere within one, so the two times of a sample can round down
+        /// by different amounts.
+        fn micros(millis: std::ops::Range<u64>) -> impl Strategy<Value = u64> {
+            (millis, prop_oneof![Just(0u64), 0..1_000u64])
+                .prop_map(|(millis, micros)| millis * 1_000 + micros)
+        }
+
+        fn video() -> impl Strategy<Value = Vec<VideoSample>> {
+            vec((micros(0..1 << 31), micros(0..1_000), any::<bool>()), 1..8).prop_map(|frames| {
+                frames
+                    .into_iter()
+                    .map(|(dts, offset, is_keyframe)| VideoSample {
+                        data: if is_keyframe {
+                            keyframe_annexb()
+                        } else {
+                            delta_frame_annexb()
+                        },
+                        is_keyframe,
+                        pts: Timestamp::from_micros(dts + offset),
+                        dts: Timestamp::from_micros(dts),
+                    })
+                    .collect()
+            })
+        }
+
+        fn in_millis(time: Timestamp) -> Timestamp {
+            Timestamp::from_millis(time.millis())
+        }
+
+        proptest! {
+            #[test]
+            fn demuxing_muxed_video_gives_back_its_times_in_milliseconds(video in video()) {
+                // Arrange
+                let mut muxer = Muxer::new();
+                let mut demuxer = Demuxer::new();
+                let mut events = h264_aac_configs();
+                events.extend(video.iter().cloned().map(MediaEvent::Video));
+                let flv: Vec<u8> = events.iter().flat_map(|event| muxer.push(event).unwrap()).collect();
+
+                // Act
+                let demuxed = demuxer.push(&flv).unwrap();
+
+                // Assert: FLV carries milliseconds, so each time rounds down
+                let expected: Vec<VideoSample> = video
+                    .iter()
+                    .map(|sample| VideoSample {
+                        pts: in_millis(sample.pts),
+                        dts: in_millis(sample.dts),
+                        ..sample.clone()
+                    })
+                    .collect();
+                prop_assert_eq!(video_samples(&demuxed), expected.iter().collect::<Vec<_>>());
+            }
+        }
     }
 }
