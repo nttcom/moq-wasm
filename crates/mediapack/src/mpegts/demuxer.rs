@@ -34,6 +34,7 @@ pub struct Demuxer {
     audio_config: Option<AudioSpecificConfig>,
     /// The last `StreamSet` reported, so a repeated PMT reports none.
     announced_streams: Option<StreamSet>,
+    timestamps: TimestampExtender,
     discontinuities: u64,
 }
 
@@ -212,12 +213,15 @@ impl Demuxer {
             return Ok(());
         };
         let payload = &pes[header.header_length..];
-        let pts = header
-            .pts
-            .map(|ticks| Timestamp::from_ticks(ticks, CLOCK_RATE));
+        // DTS first: it is never later than the PTS, so a PTS past the wrap
+        // does not become a reference the frame's own DTS would have to go
+        // below.
         let dts = header
             .dts
-            .map(|ticks| Timestamp::from_ticks(ticks, CLOCK_RATE));
+            .map(|ticks| Timestamp::from_ticks(self.timestamps.extend(ticks), CLOCK_RATE));
+        let pts = header
+            .pts
+            .map(|ticks| Timestamp::from_ticks(self.timestamps.extend(ticks), CLOCK_RATE));
         match stream.kind {
             StreamKind::H264 => emit_video(&mut self.video, payload, pts, dts, events),
             StreamKind::AacAdts => emit_audio(
@@ -228,6 +232,40 @@ impl Demuxer {
                 events,
             ),
         }
+    }
+}
+
+/// PTS and DTS are 33-bit counts of the program's 90 kHz clock, which wraps
+/// every 2^33 ticks (ISO 13818-1 §2.4.3.7). Every PID runs on that one clock,
+/// so one reference serves them all: each timestamp is extended to the value
+/// nearest the last one, which holds while consecutive timestamps of the
+/// program lie less than half a wrap (about 13 h) apart. When the first
+/// timestamp read is past the wrap, a later one from before it would be
+/// negative, so it is returned unextended.
+#[derive(Default)]
+struct TimestampExtender {
+    last: Option<u64>,
+}
+
+impl TimestampExtender {
+    const WRAP: u64 = 1 << 33;
+
+    fn extend(&mut self, ticks: u64) -> u64 {
+        let extended = match self.last {
+            None => ticks,
+            Some(last) => {
+                let candidate = last - last % Self::WRAP + ticks;
+                if candidate > last + Self::WRAP / 2 && candidate >= Self::WRAP {
+                    candidate - Self::WRAP
+                } else if candidate + Self::WRAP / 2 < last {
+                    candidate + Self::WRAP
+                } else {
+                    candidate
+                }
+            }
+        };
+        self.last = Some(extended);
+        extended
     }
 }
 
@@ -327,7 +365,7 @@ mod tests {
     const VIDEO_PID: u16 = 0x100;
     const AUDIO_PID: u16 = 0x101;
 
-    fn hand_built_stream() -> TsStreamBuilder {
+    fn program_tables() -> TsStreamBuilder {
         let mut stream = TsStreamBuilder::default();
         stream.push(PAT_PID, &pat_section(0x1000));
         stream.push(
@@ -337,6 +375,11 @@ mod tests {
                 (AUDIO_PID, STREAM_TYPE_AAC_ADTS),
             ]),
         );
+        stream
+    }
+
+    fn hand_built_stream() -> TsStreamBuilder {
+        let mut stream = program_tables();
         stream.push(
             VIDEO_PID,
             &pes_packet(0xE0, 90_000, Some(86_400), &keyframe_annexb()),
@@ -379,6 +422,32 @@ mod tests {
         assert_eq!(
             count_events(&events, |event| matches!(event, MediaEvent::Streams(_))),
             0
+        );
+    }
+
+    #[test]
+    fn timestamps_keep_rising_across_the_33_bit_wrap() {
+        // Arrange: the second frame is presented 0.2 s after the first, past the wrap
+        let before_wrap = (1 << 33) - 9_000;
+        let mut stream = program_tables();
+        stream.push(
+            VIDEO_PID,
+            &pes_packet(0xE0, before_wrap, None, &keyframe_annexb()),
+        );
+        stream.push(
+            VIDEO_PID,
+            &pes_packet(0xE0, 9_000, None, &delta_frame_annexb()),
+        );
+
+        // Act
+        let (_, events) = demux_all(&stream.build());
+
+        // Assert
+        let video = video_samples(&events);
+        assert_eq!(video[0].pts, Timestamp::from_ticks(before_wrap, CLOCK_RATE));
+        assert_eq!(
+            video[1].pts,
+            Timestamp::from_ticks(1 << 33 | 9_000, CLOCK_RATE)
         );
     }
 
