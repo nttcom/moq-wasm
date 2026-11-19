@@ -204,19 +204,22 @@ fn micros(ticks: i64, timescale: u32) -> i64 {
     (ticks as i128 * MICROS_PER_SECOND / timescale as i128) as i64
 }
 
-/// Decode times precede presentation times, so the earliest decode time
-/// becomes zero and every sample keeps a non-negative timeline.
+/// The earliest decode or presentation time becomes zero, so every sample
+/// keeps a non-negative timeline. A version 1 `ctts` can put a presentation
+/// time before its decode time (ISO/IEC 14496-12 §8.6.1.3).
 fn rebase(mut samples: Vec<RawSample>) -> (Vec<IndexedSample>, Timestamp) {
-    let base = samples
-        .iter()
-        .map(|sample| sample.dts_micros)
-        .min()
-        .unwrap_or(0);
     let first_presentation = samples
         .iter()
         .map(|sample| sample.pts_micros)
         .min()
-        .unwrap_or(base);
+        .unwrap_or(0);
+    let base = samples
+        .iter()
+        .map(|sample| sample.dts_micros)
+        .min()
+        .map_or(first_presentation, |first_decode| {
+            first_decode.min(first_presentation)
+        });
     let end = samples
         .iter()
         .map(|sample| sample.end_micros)
@@ -534,5 +537,126 @@ mod tests {
             sample_rate: 48_000,
             channels: 1
         })));
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::{ChunkRun, SampleKind, SampleTable, micros, rebase};
+
+        /// A track as its `stbl` and edit list describe it, with each sample's
+        /// `(duration, composition offset, size)` and the number of samples in
+        /// each chunk.
+        #[derive(Debug)]
+        struct Track {
+            timescale: u32,
+            edit_shift: i64,
+            samples: Vec<(u32, i32, u32)>,
+            chunk_lengths: Vec<usize>,
+        }
+
+        impl Track {
+            /// Consecutive chunks of the same length share one `stsc` run.
+            fn table(&self) -> SampleTable {
+                let mut chunk_runs: Vec<ChunkRun> = Vec::new();
+                let mut chunk_offsets = Vec::new();
+                let mut offset = 0u64;
+                let mut sample = 0;
+                for (index, &length) in self.chunk_lengths.iter().enumerate() {
+                    if chunk_runs
+                        .last()
+                        .is_none_or(|run| run.samples_per_chunk as usize != length)
+                    {
+                        chunk_runs.push(ChunkRun {
+                            first_chunk: index as u32 + 1,
+                            samples_per_chunk: length as u32,
+                        });
+                    }
+                    chunk_offsets.push(offset);
+                    let sizes = &self.samples[sample..sample + length];
+                    offset += sizes
+                        .iter()
+                        .map(|&(_, _, size)| u64::from(size))
+                        .sum::<u64>()
+                        + 100;
+                    sample += length;
+                }
+                SampleTable {
+                    durations: self
+                        .samples
+                        .iter()
+                        .map(|&(duration, _, _)| duration)
+                        .collect(),
+                    composition_offsets: self
+                        .samples
+                        .iter()
+                        .map(|&(_, offset, _)| offset)
+                        .collect(),
+                    sizes: self.samples.iter().map(|&(_, _, size)| size).collect(),
+                    sync_samples: None,
+                    chunk_offsets,
+                    chunk_runs,
+                }
+            }
+
+            /// Each sample's decode and presentation time in microseconds,
+            /// before rebasing, in sample order.
+            fn times(&self) -> Vec<(i64, i64)> {
+                let mut decode_time = -self.edit_shift;
+                self.samples
+                    .iter()
+                    .map(|&(duration, composition, _)| {
+                        let times = (
+                            micros(decode_time, self.timescale),
+                            micros(decode_time + i64::from(composition), self.timescale),
+                        );
+                        decode_time += i64::from(duration);
+                        times
+                    })
+                    .collect()
+            }
+        }
+
+        /// Composition offsets of either sign: a version 1 `ctts` may put a
+        /// presentation time before its decode time.
+        fn track() -> impl Strategy<Value = Track> {
+            let sample = (0..3_000u32, -6_000..6_000i32, 1..2_000u32);
+            (
+                prop_oneof![Just(1_000u32), Just(48_000), Just(90_000)],
+                prop_oneof![Just(0i64), -6_000..6_000i64],
+                vec(vec(sample, 1..4), 1..6),
+            )
+                .prop_map(|(timescale, edit_shift, chunks)| Track {
+                    timescale,
+                    edit_shift,
+                    chunk_lengths: chunks.iter().map(Vec::len).collect(),
+                    samples: chunks.into_iter().flatten().collect(),
+                })
+        }
+
+        proptest! {
+            #[test]
+            fn the_index_starts_at_zero_and_keeps_each_samples_times(track in track()) {
+                // Arrange
+                let table = track.table();
+
+                // Act
+                let raw = table.expand(SampleKind::Video, track.timescale, track.edit_shift).unwrap();
+                let (indexed, _) = rebase(raw);
+
+                // Assert: samples keep their order, place and the gaps between
+                // all their times; the earliest time of any sample is zero
+                let times = track.times();
+                let base = times.iter().flat_map(|&(dts, pts)| [dts, pts]).min().unwrap();
+                prop_assert_eq!(indexed.len(), times.len());
+                let mut offset = None;
+                for (sample, &(dts, pts)) in indexed.iter().zip(&times) {
+                    prop_assert_eq!(sample.dts.micros() as i64, dts - base);
+                    prop_assert_eq!(sample.pts.micros() as i64, pts - base);
+                    prop_assert!(offset.is_none_or(|offset| sample.offset >= offset));
+                    offset = Some(sample.offset + u64::from(sample.size));
+                }
+            }
+        }
     }
 }
