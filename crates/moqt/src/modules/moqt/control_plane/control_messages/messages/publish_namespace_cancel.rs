@@ -31,12 +31,12 @@ impl PublishNamespaceCancel {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_tuple(&self.track_namespace);
+        payload.put_tuple(&self.track_namespace)?;
         payload.put_varint(self.error_code);
         payload.put_string(&self.error_reason);
-        payload
+        Ok(payload)
     }
 }
 
@@ -50,7 +50,7 @@ mod tests {
             let message =
                 PublishNamespaceCancel::new(vec!["room".to_string()], 1, "expired".to_string());
 
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let expected = [
                 1, // Track Namespace (tuple): Number of elements
@@ -70,7 +70,7 @@ mod tests {
                 1,
                 "expired".to_string(),
             );
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = PublishNamespaceCancel::decode(&mut cursor).unwrap();

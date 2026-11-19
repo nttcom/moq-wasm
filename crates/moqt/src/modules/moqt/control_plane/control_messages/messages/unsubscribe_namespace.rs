@@ -24,10 +24,10 @@ impl UnsubscribeNamespace {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_tuple(&self.track_namespace_prefix);
-        payload
+        payload.put_tuple(&self.track_namespace_prefix)?;
+        Ok(payload)
     }
 }
 
@@ -38,7 +38,7 @@ mod tests {
     #[test]
     fn encode() {
         let message = UnsubscribeNamespace::new(vec!["room".to_string(), "member".to_string()]);
-        let buf = message.encode();
+        let buf = message.encode().unwrap();
 
         let expected = [
             2, // Track Namespace Prefix(tuple): Number of elements

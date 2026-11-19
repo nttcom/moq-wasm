@@ -63,10 +63,10 @@ impl Publish {
         })
     }
 
-    pub fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        payload.put_tuple(&self.track_namespace_tuple);
+        payload.put_tuple(&self.track_namespace_tuple)?;
         payload.put_string(&self.track_name);
         payload.put_varint(self.track_alias);
         payload.put_u8(
@@ -97,7 +97,7 @@ impl Publish {
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
 
-        payload
+        Ok(payload)
     }
 }
 
@@ -140,7 +140,7 @@ mod tests {
                 trace_context: None,
             };
 
-            let buf = publish_message.encode();
+            let buf = publish_message.encode().unwrap();
             let mut buf = std::io::Cursor::new(&buf[..]);
 
             // depacketize
@@ -182,7 +182,7 @@ mod tests {
                 trace_context: None,
             };
 
-            let buf = publish_message.encode();
+            let buf = publish_message.encode().unwrap();
             let mut buf = std::io::Cursor::new(&buf[..]);
 
             // depacketize
@@ -224,7 +224,7 @@ mod tests {
                 trace_context: None,
             };
 
-            let buf = publish_message.encode();
+            let buf = publish_message.encode().unwrap();
 
             let expected_bytes = vec![
                 1, 1, 3, b'm', b'o', b'q', 5, b'v', b'i', b'd', b'e', b'o', 2, 1, 0, 1, 0,
@@ -249,7 +249,7 @@ mod tests {
                 trace_context: None,
             };
 
-            let buf = publish_message.encode();
+            let buf = publish_message.encode().unwrap();
             let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_message = Publish::decode(&mut buf).unwrap();
 
@@ -299,10 +299,10 @@ mod tests {
             let with = publish(vec![KeyValuePair::even(0x38, 1)]);
 
             // Act
-            let encoded = with.encode();
+            let encoded = with.encode().unwrap();
 
             // Assert
-            assert_eq!(encoded, publish(vec![]).encode());
+            assert_eq!(encoded, publish(vec![]).encode().unwrap());
         }
 
         #[test]
@@ -321,7 +321,7 @@ mod tests {
             };
 
             // Act
-            let bytes = message.encode();
+            let bytes = message.encode().unwrap();
             let decoded = Publish::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
 
             // Assert

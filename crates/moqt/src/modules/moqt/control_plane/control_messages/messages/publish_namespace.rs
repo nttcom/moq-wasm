@@ -49,10 +49,10 @@ impl PublishNamespace {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        payload.put_tuple(&self.track_namespace);
+        payload.put_tuple(&self.track_namespace)?;
         let parameters: Vec<KeyValuePair> = self
             .authorization_token
             .iter()
@@ -60,7 +60,7 @@ impl PublishNamespace {
             .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
-        payload
+        Ok(payload)
     }
 }
 
@@ -80,7 +80,7 @@ mod tests {
                 let parameters = vec![];
                 let announce_message =
                     PublishNamespace::new(request_id, track_namespace.clone(), parameters);
-                let buf = announce_message.encode();
+                let buf = announce_message.encode().unwrap();
 
                 let expected_bytes_array = [
                     0, // request id(u64)
@@ -101,7 +101,7 @@ mod tests {
                 let parameters = vec![];
                 let announce_message =
                     PublishNamespace::new(request_id, track_namespace.clone(), parameters);
-                let buf = announce_message.encode();
+                let buf = announce_message.encode().unwrap();
 
                 let expected_bytes_array = [
                     0, // request id(u64)
@@ -143,7 +143,7 @@ mod tests {
             ];
 
             // Act
-            let bytes = message.encode();
+            let bytes = message.encode().unwrap();
             let decoded = PublishNamespace::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
 
             // Assert
@@ -213,7 +213,7 @@ mod tests {
             };
 
             // Act
-            let bytes = message.encode();
+            let bytes = message.encode().unwrap();
             let decoded = PublishNamespace::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
 
             // Assert

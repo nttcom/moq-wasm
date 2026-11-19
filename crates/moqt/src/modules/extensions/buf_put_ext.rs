@@ -3,7 +3,8 @@ use bytes::{BufMut, BytesMut};
 pub trait BufPutExt: BufMut {
     fn put_varint(&mut self, value: u64);
     fn put_string(&mut self, value: &str);
-    fn put_tuple(&mut self, value: &[String]);
+    /// Fails on a tuple of no fields, which draft-14 §2.4.1 forbids.
+    fn put_tuple(&mut self, value: &[String]) -> anyhow::Result<()>;
 }
 
 impl BufPutExt for BytesMut {
@@ -27,9 +28,11 @@ impl BufPutExt for BytesMut {
         self.extend_from_slice(value.as_bytes());
     }
 
-    fn put_tuple(&mut self, value: &[String]) {
+    fn put_tuple(&mut self, value: &[String]) -> anyhow::Result<()> {
+        anyhow::ensure!(!value.is_empty(), "track namespace of no fields");
         self.put_varint(value.len() as u64);
         value.iter().for_each(|element| self.put_string(element));
+        Ok(())
     }
 }
 
@@ -82,6 +85,24 @@ mod tests {
             let mut bytes = std::io::Cursor::new(&bytes[..]);
             let result = bytes.try_get_string().unwrap();
             assert_eq!(result, "abcd");
+        }
+    }
+
+    mod failure {
+        use crate::modules::extensions::buf_put_ext::BufPutExt;
+        use bytes::BytesMut;
+
+        #[test]
+        fn put_tuple_of_no_fields_fails_and_writes_nothing() {
+            // Arrange
+            let mut bytes = BytesMut::new();
+
+            // Act
+            let result = bytes.put_tuple(&[]);
+
+            // Assert
+            assert!(result.is_err());
+            assert!(bytes.is_empty());
         }
     }
 
