@@ -115,25 +115,6 @@ async fn send_group(factory: &StreamDataSenderFactory, group_id: u64) -> anyhow:
 
 /// Runs one standalone FETCH and returns the received (group_id, object_id) in
 /// delivery order. A receive error before `Fetch::End` is propagated.
-async fn run_fetch(
-    subscriber: &mut moqt::Subscriber,
-    namespace: &str,
-    start: Location,
-    end: Location,
-) -> anyhow::Result<FetchRunResult> {
-    run_fetch_with_label(subscriber, namespace, start, end, "bob").await
-}
-
-async fn run_fetch_with_label(
-    subscriber: &mut moqt::Subscriber,
-    namespace: &str,
-    start: Location,
-    end: Location,
-    label: &str,
-) -> anyhow::Result<FetchRunResult> {
-    run_fetch_ns(subscriber, namespace, TRACK_NAME, start, end, label).await
-}
-
 async fn run_fetch_ns(
     subscriber: &mut moqt::Subscriber,
     namespace: &str,
@@ -162,58 +143,15 @@ async fn run_fetch_ns(
         )
         .await?;
     let end_location = handle.end_location;
-    let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
-    let mut received = Vec::new();
-    loop {
-        match receiver.receive().await {
-            Ok(Fetch::Object(obj)) => {
-                let payload = if obj.payload.is_empty() {
-                    format!("{:?}", obj.status)
-                } else {
-                    String::from_utf8_lossy(&obj.payload).to_string()
-                };
-                tracing::info!(
-                    "[{}] g{}:o{} = {}",
-                    label,
-                    obj.location.group_id,
-                    obj.location.object_id,
-                    payload
-                );
-                received.push((obj.location.group_id, obj.location.object_id));
-            }
-            Ok(Fetch::UnknownRange { last }) => {
-                return Err(anyhow::anyhow!(
-                    "[{}] fetch: unknown range through {:?}",
-                    label,
-                    last
-                ));
-            }
-            Ok(Fetch::End) => {
-                tracing::info!(
-                    "[{}] fetch done g{}:o{}..g{}:o{}",
-                    label,
-                    start.group_id,
-                    start.object_id,
-                    end.group_id,
-                    end.object_id
-                );
-                break;
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "[{}] fetch g{}:o{}..g{}:o{} failed: {}",
-                    label,
-                    start.group_id,
-                    start.object_id,
-                    end.group_id,
-                    end.object_id,
-                    e
-                ));
-            }
-        }
-    }
+    let receiver = subscriber.accept_fetch_receiver(&handle).await?;
+    let range = format!(
+        "g{}:o{}..g{}:o{}",
+        start.group_id, start.object_id, end.group_id, end.object_id
+    );
+    let objects = receive_fetch(receiver, label, "", &format!("fetch {range}")).await?;
+    tracing::info!("[{}] fetch done {}", label, range);
     Ok(FetchRunResult {
-        objects: received,
+        objects,
         end_location,
     })
 }
@@ -221,14 +159,6 @@ async fn run_fetch_ns(
 /// Runs the Joining Fetch and returns the received (group_id, object_id) in
 /// delivery order. A receive error before `Fetch::End` is propagated.
 async fn run_joining_fetch(
-    subscriber: &mut moqt::Subscriber,
-    joining: &moqt::Subscription,
-    joining_start: u64,
-) -> anyhow::Result<Vec<(u64, u64)>> {
-    run_joining_fetch_with_label(subscriber, joining, joining_start, "carol").await
-}
-
-async fn run_joining_fetch_with_label(
     subscriber: &mut moqt::Subscriber,
     joining: &moqt::Subscription,
     joining_start: u64,
@@ -243,7 +173,20 @@ async fn run_joining_fetch_with_label(
     let handle = subscriber
         .fetch_relative_joining(joining, joining_start, FetchOption::default())
         .await?;
-    let mut receiver: FetchDataReceiver = subscriber.accept_fetch_receiver(&handle).await?;
+    let receiver = subscriber.accept_fetch_receiver(&handle).await?;
+    let received = receive_fetch(receiver, label, "joining ", "joining fetch").await?;
+    tracing::info!("[{}] joining fetch done", label);
+    Ok(received)
+}
+
+/// `prefix` starts the name of each logged object and `request` names the
+/// FETCH in a receive error.
+async fn receive_fetch(
+    mut receiver: FetchDataReceiver,
+    label: &str,
+    prefix: &str,
+    request: &str,
+) -> anyhow::Result<Vec<(u64, u64)>> {
     let mut received = Vec::new();
     loop {
         match receiver.receive().await {
@@ -254,8 +197,9 @@ async fn run_joining_fetch_with_label(
                     String::from_utf8_lossy(&obj.payload).to_string()
                 };
                 tracing::info!(
-                    "[{}] joining g{}:o{} = {}",
+                    "[{}] {}g{}:o{} = {}",
                     label,
+                    prefix,
                     obj.location.group_id,
                     obj.location.object_id,
                     payload
@@ -264,21 +208,18 @@ async fn run_joining_fetch_with_label(
             }
             Ok(Fetch::UnknownRange { last }) => {
                 return Err(anyhow::anyhow!(
-                    "[{}] joining fetch: unknown range through {:?}",
+                    "[{}] {}fetch: unknown range through {:?}",
                     label,
+                    prefix,
                     last
                 ));
             }
-            Ok(Fetch::End) => {
-                tracing::info!("[{}] joining fetch done", label);
-                break;
-            }
+            Ok(Fetch::End) => return Ok(received),
             Err(e) => {
-                return Err(anyhow::anyhow!("[{}] joining fetch failed: {}", label, e));
+                return Err(anyhow::anyhow!("[{}] {} failed: {}", label, request, e));
             }
         }
     }
-    Ok(received)
 }
 
 async fn carol(
@@ -306,7 +247,7 @@ async fn carol(
 
     // Joining Fetch: 1 group back from largest_at_subscribe (g2), so groups 1
     // and 2 in full.
-    let received = run_joining_fetch(&mut subscriber, &subscription, 1).await?;
+    let received = run_joining_fetch(&mut subscriber, &subscription, 1, "carol").await?;
     let expected: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP)
         .map(|o| (1, o))
         .chain((0..OBJECTS_PER_GROUP).map(|o| (2, o)))
@@ -410,9 +351,10 @@ async fn bob(
     tracing::info!("[bob] detect done, issuing fetches");
 
     // fetch A: [g0/o0, g1/o3) = g0/o0..g0/o4 + g1/o0..g1/o2 (8 objects)
-    let received_a = run_fetch(
+    let received_a = run_fetch_ns(
         &mut subscriber,
         &namespace,
+        TRACK_NAME,
         Location {
             group_id: 0,
             object_id: 0,
@@ -421,6 +363,7 @@ async fn bob(
             group_id: 1,
             object_id: 3,
         },
+        "bob",
     )
     .await?;
     let expected_a: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP)
@@ -432,9 +375,10 @@ async fn bob(
         "fetch A [g0/o0, g1/o3) must resolve to g0 in full + g1/o0..o2"
     );
     // fetch B: [g1/o2, g2/o4) = g1/o2..g1/o4 + g2/o0..g2/o3 (7 objects)
-    let received_b = run_fetch(
+    let received_b = run_fetch_ns(
         &mut subscriber,
         &namespace,
+        TRACK_NAME,
         Location {
             group_id: 1,
             object_id: 2,
@@ -443,6 +387,7 @@ async fn bob(
             group_id: 2,
             object_id: 4,
         },
+        "bob",
     )
     .await?;
     let expected_b: Vec<(u64, u64)> = (2..OBJECTS_PER_GROUP)
@@ -454,9 +399,10 @@ async fn bob(
         "fetch B [g1/o2, g2/o4) must resolve to g1/o2..o4 + g2/o0..o3"
     );
     // fetch C: [g1/o0, g1/o0) = entire group 1 (object_id==0 = whole group, 5 objects)
-    let received_c = run_fetch(
+    let received_c = run_fetch_ns(
         &mut subscriber,
         &namespace,
+        TRACK_NAME,
         Location {
             group_id: 1,
             object_id: 0,
@@ -465,6 +411,7 @@ async fn bob(
             group_id: 1,
             object_id: 0,
         },
+        "bob",
     )
     .await?;
     let expected_c: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP).map(|o| (1, o)).collect();
@@ -712,7 +659,7 @@ async fn run_cross_relay_joining_fetch(relay_a_url: &str, relay_b_url: &str) -> 
     tracing::info!("[grace] issuing joining fetch from warmed relay-B cache");
 
     // Joining Fetch: 1 group back from g2, so groups 1 and 2 in full.
-    let received = run_joining_fetch_with_label(&mut grace_sub, &subscription, 1, "grace").await?;
+    let received = run_joining_fetch(&mut grace_sub, &subscription, 1, "grace").await?;
     let expected: Vec<(u64, u64)> = (0..OBJECTS_PER_GROUP)
         .map(|o| (1, o))
         .chain((0..OBJECTS_PER_GROUP).map(|o| (2, o)))
@@ -969,8 +916,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
     );
 
     // Joining Fetch 2 groups back from largest (g2): groups 0..=2 in full.
-    let received =
-        run_joining_fetch_with_label(&mut cold_sub, &cold_subscription, 2, "cold-join").await?;
+    let received = run_joining_fetch(&mut cold_sub, &cold_subscription, 2, "cold-join").await?;
     let expected: Vec<(u64, u64)> = (0..GROUPS)
         .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
         .collect();
@@ -989,8 +935,7 @@ async fn run_cross_relay_cold_cache_joining_fetch(
             SubscribeOption::default(),
         )
         .await?;
-    let received =
-        run_joining_fetch_with_label(&mut warm_sub, &warm_subscription, 2, "warm-join").await?;
+    let received = run_joining_fetch(&mut warm_sub, &warm_subscription, 2, "warm-join").await?;
     assert_eq!(
         received, expected,
         "[H] repeated joining fetch must be served from relay-B's warmed cache"
@@ -1113,8 +1058,7 @@ async fn run_cross_relay_live_joining_fetch(
     // Joining Fetch 2 groups back from the subscribe-time largest (g2): exactly
     // groups 0..=2 in full, ending at g2's last object, with no g3 objects even
     // though upstream now has g3.
-    let received =
-        run_joining_fetch_with_label(&mut live_sub, &live_subscription, 2, "live-join").await?;
+    let received = run_joining_fetch(&mut live_sub, &live_subscription, 2, "live-join").await?;
     let expected: Vec<(u64, u64)> = (0..GROUPS)
         .flat_map(|g| (0..OBJECTS_PER_GROUP).map(move |o| (g, o)))
         .collect();
