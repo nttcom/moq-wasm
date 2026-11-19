@@ -16,7 +16,7 @@ export class AddedAudioTrack {
     // Warning: (ae-forgotten-export) The symbol "LivePlayout" needs to be exported by the entry point index.d.ts
     //
     // (undocumented)
-    static open(context: TrackContext, playout: LivePlayout, track: MediaCatalogTrack, listener: AddedAudioTrackListener, onClosed: () => void): Promise<AddedAudioTrack>;
+    static open(context: TrackContext, playout: LivePlayout, track: MediaCatalogTrack, listener: AddedAudioTrackListener, onClosed: () => void, deliveryTimeoutMs?: number): Promise<AddedAudioTrack>;
     // (undocumented)
     get receivedObjects(): number;
     // (undocumented)
@@ -226,7 +226,7 @@ export type LivePlayerOptions = {
     deliveryObserver?: DeliveryObserver;
     livePicture?: LivePictureKind;
     keepLiveWhileReviewing?: boolean;
-    deliveryTimeoutMs?: number;
+    deliveryTimeoutMs?: number | null;
     groupOrder?: 'ascending' | 'descending';
     source?: LiveSource;
     audioContext?: AudioContext;
@@ -608,7 +608,7 @@ export type RemoteBroadcastOptions = {
     pauseHiddenVideo?: boolean;
     audioContext?: AudioContext;
     keepLiveWhileReviewing?: boolean;
-    deliveryTimeoutMs?: number;
+    deliveryTimeoutMs?: number | null;
     groupOrder?: 'ascending' | 'descending';
 };
 

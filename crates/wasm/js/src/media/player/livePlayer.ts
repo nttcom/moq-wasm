@@ -69,6 +69,8 @@ export type LivePlayerCallbacks = {
   onAudioLevel?(level: AudioLevel): void
 }
 
+const DEFAULT_DELIVERY_TIMEOUT_MS = 2_000
+
 export type LivePlayerOptions = {
   container: HTMLElement
   callbacks: LivePlayerCallbacks
@@ -79,15 +81,15 @@ export type LivePlayerOptions = {
   /// waiting for the next group; it costs the live bandwidth and decoding
   /// while reviewing.
   keepLiveWhileReviewing?: boolean
-  /// The DELIVERY TIMEOUT of the SUBSCRIBEs of the selected video and audio
-  /// track and of the media timeline (`MoqSubscribeOptions.deliveryTimeoutMs`),
-  /// an integer from 1 to 4294967295: on a link that cannot carry the tracks,
-  /// the relay stops sending a group once one of its objects is this many
-  /// milliseconds old, instead of sending it late. The catalog, captions and
-  /// tracks added with `addAudioTrack` or `addTextTrack` are not covered.
-  /// Without it every object is delivered. The constructor throws a
-  /// `RangeError` for any other value.
-  deliveryTimeoutMs?: number
+  /// The DELIVERY TIMEOUT, in milliseconds, of the SUBSCRIBEs of the selected
+  /// video and audio track, of the media timeline and of tracks added with
+  /// `addAudioTrack` (`MoqSubscribeOptions.deliveryTimeoutMs`); 2000 by
+  /// default, `null` for none. On a link that cannot carry the tracks, the
+  /// relay stops sending a group once one of its objects is this old, instead
+  /// of sending it late. The catalog, captions and `addTextTrack` tracks never
+  /// get one. The constructor throws a `RangeError` unless it is `null` or an
+  /// integer from 1 to 4294967295.
+  deliveryTimeoutMs?: number | null
   /// The Group Order of the same SUBSCRIBEs (`MoqSubscribeOptions.groupOrder`),
   /// `'ascending'` by default. `'descending'` lets a congested link carry the
   /// newest group first: the picture jumps ahead instead of falling behind.
@@ -236,7 +238,11 @@ export class LivePlayer {
       }
     }
     this.textTracks = new TextTracks(this.context)
-    this.delivery = { deliveryTimeoutMs: options.deliveryTimeoutMs, groupOrder: options.groupOrder }
+    this.delivery = {
+      deliveryTimeoutMs:
+        options.deliveryTimeoutMs === null ? undefined : (options.deliveryTimeoutMs ?? DEFAULT_DELIVERY_TIMEOUT_MS),
+      groupOrder: options.groupOrder
+    }
     this.subscriptions = new TrackSubscriptions(
       this.context,
       (kind, done, leading) => this.publisherEnded(kind, done, leading),
@@ -601,7 +607,14 @@ export class LivePlayer {
       throw new Error('an added audio track plays on the LOC clock, and the player plays CMAF')
     }
     return this.keepAdded(name, (onClosed) =>
-      AddedAudioTrack.open(this.context, this.locLive.playout, track, listener, onClosed)
+      AddedAudioTrack.open(
+        this.context,
+        this.locLive.playout,
+        track,
+        listener,
+        onClosed,
+        this.delivery.deliveryTimeoutMs
+      )
     )
   }
 

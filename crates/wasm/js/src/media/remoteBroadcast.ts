@@ -70,7 +70,7 @@ export type RemoteBroadcastOptions = {
   /// As `LivePlayerOptions.keepLiveWhileReviewing`, for every view's player.
   keepLiveWhileReviewing?: boolean
   /// As `LivePlayerOptions.deliveryTimeoutMs`, for every view's player.
-  deliveryTimeoutMs?: number
+  deliveryTimeoutMs?: number | null
   /// As `LivePlayerOptions.groupOrder`, for every view's player.
   groupOrder?: 'ascending' | 'descending'
 }

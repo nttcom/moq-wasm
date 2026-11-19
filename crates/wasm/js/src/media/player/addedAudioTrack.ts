@@ -30,7 +30,8 @@ export class AddedAudioTrack {
     playout: LivePlayout,
     track: MediaCatalogTrack,
     listener: AddedAudioTrackListener,
-    onClosed: () => void
+    onClosed: () => void,
+    deliveryTimeoutMs?: number
   ): Promise<AddedAudioTrack> {
     const lane = new AudioLane(track, playout, (dueMs) => listener.onFirstScheduled?.(dueMs))
     const added = new AddedAudioTrack(lane, onClosed)
@@ -39,7 +40,7 @@ export class AddedAudioTrack {
         context,
         catalogTrackNamespace(track, context.namespace),
         track.name,
-        AUDIO_PRIORITY,
+        { priority: AUDIO_PRIORITY, deliveryTimeoutMs },
         (groupId, object, cached) => {
           added.received += 1
           lane.push(groupId, object, cached)
