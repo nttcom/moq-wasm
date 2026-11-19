@@ -82,6 +82,7 @@ Application and integration components (draft reference is normally not required
 - Wasm: `npm --prefix crates/wasm/js run wasm`
 - Console web: `npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`
+- Mutation test (the lines a branch changes): `git diff origin/master... > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff -p <package_name>`
 - E2E Test (media): `node tests/browser-e2e/run-media-e2e.mjs`
 - E2E Test (meeting): `node tests/browser-e2e/run-meeting-e2e.mjs`
 - E2E Test (datagram): `node tests/browser-e2e/run-datagram-e2e.mjs`
