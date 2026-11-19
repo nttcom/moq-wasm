@@ -155,8 +155,9 @@ impl Depacketizer {
                 fragment.size
             );
         }
+        // The AU-size comes from the packet, so it does not size an allocation.
         let fragment = self.fragment.get_or_insert_with(|| Fragment {
-            data: BytesMut::with_capacity(header.size),
+            data: BytesMut::new(),
             size: header.size,
         });
         fragment.data.put_slice(data);
@@ -329,6 +330,25 @@ mod tests {
         // Assert
         assert!(short.is_err());
         assert_eq!(next[0].data, Bytes::from_static(&FIRST));
+    }
+
+    #[test]
+    fn a_fragment_announcing_more_bytes_than_memory_holds_is_buffered_as_it_arrives() {
+        // Arrange: one 64-bit AU-size of 2^64 - 1 bytes before a single byte
+        let config = AuHeaderConfig {
+            size_length: 64,
+            index_length: 0,
+            index_delta_length: 0,
+        };
+        let mut payload = vec![0x00, 0x40];
+        payload.extend_from_slice(&[0xFF; 8]);
+        payload.push(0xAA);
+
+        // Act
+        let units = Depacketizer::new(config).push(&payload, false).unwrap();
+
+        // Assert
+        assert!(units.is_empty());
     }
 
     #[test]
