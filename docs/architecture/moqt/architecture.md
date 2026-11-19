@@ -1220,12 +1220,12 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
     maps the draft-14 §7.2 scheduling inputs onto the transport's per-stream
     send priority (`TransportSendStream::set_priority(i32)`, quinn semantics:
     higher first). `stream_priority.rs` packs the four §7.2 rules most
-    significant first — subscriber priority, publisher priority, group rank,
-    subgroup id — into a negative `i32`, so the control stream (transport
-    default 0) always outranks data streams. The group rank is the caller's
-    `group_sequence` (how many groups the subscription opened before this one)
-    modulo 2^12, reversed for Descending group order; the subgroup id
-    saturates at 7. These values never reach the wire: MoQT headers carry the
+    significant first — subscriber priority, publisher priority, group
+    position, subgroup id — into a negative `i32`, so the control stream
+    (transport default 0) always outranks data streams. The group position is
+    the caller's place of the group in the subscription's Group Order, 0 for
+    the next group to send, so the caller resolves the Group Order; it
+    saturates at 4095 and the subgroup id at 7. These values never reach the wire: MoQT headers carry the
     original priority numbers.
   - `DataReceiver` / `StreamDataReceiver` and `FetchDataReceiver` mirror the
     senders on the other side.

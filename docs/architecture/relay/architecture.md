@@ -1286,23 +1286,26 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   again, its lag scan schedules the missed groups that are still cached.
   Each stream is opened with a `moqt::object::StreamPriority` (draft-14 §7.2):
   the subscriber priority `DeliveryControl` holds then, the first object's publisher
-  priority, the subscription's group order with a per-subscription
-  `GroupSequence` (the relay-wide 256 ms tick the sender first sees the group
-  at, at least one more than the previous group's, shared by the subgroups of
-  one group), and the subgroup id. The tick is one clock for every
-  subscription, so among subscriptions of equal subscriber and publisher
-  priority and ascending group order the transport sends the group the sender
-  saw first, and groups of one tick take turns (§7.2 leaves this order to the
-  implementation); a count per subscription made whichever subscription
-  started later win every time. A track with more than one group a tick
-  runs ahead of the clock, and the 12 bits wrap about every 17 minutes; in
-  both cases the order between subscriptions is arbitrary.
+  priority, the group's position, and the subgroup id. The position
+  (`GroupPositions`) is how many groups with a send task of the same
+  subscription its Group Order sends first, so the next group of the
+  subscription is 0 under either order and the subgroups of one group share
+  it. The next groups of subscriptions with equal subscriber and publisher
+  priority tie and the transport takes turns between them (§7.2 leaves this
+  order to the implementation and expects every subscription to send), however
+  their group ids are numbered and whatever their Group Orders. A group id or
+  an arrival time in the rank would make one of them go first entirely.
   `StreamSenderFactory::next(priority)` applies it before the header
-  is written. An update that changes the subscriber priority also reaches a
-  stream that is open (§7.1: a best effort SHOULD be made for the objects not
-  yet scheduled): its task sets the new priority with `DataSender::set_priority`
-  before it reads the next object, so a task waiting inside a write applies it
-  once that write returns. `next` waits for the subscriber's stream credit, so the task
+  is written. A position changes whenever a group of the subscription starts or
+  finishes sending, and an update can change the subscriber priority (§7.1: a
+  best effort SHOULD be made for the objects not yet scheduled). Either reaches
+  a stream that is open: its task sets the new priority with
+  `DataSender::set_priority` while it waits for the next object and, after
+  the FIN, until the transport has every byte acknowledged
+  (`DataSender::acknowledged`), with or without a DELIVERY TIMEOUT: the
+  closed stream's data still waits in the send buffer, and under Descending
+  a newer group must go ahead of it. Its group counts in the positions until
+  then. A task waiting inside a write applies it once that write returns. `next` waits for the subscriber's stream credit, so the task
   keeps only the publisher priority across it and reads the first object from
   the cache again afterwards: a subscriber that withholds credit cannot keep an
   object alive past its cache expiry. A task that has not opened its stream
@@ -1317,10 +1320,7 @@ forwarded PUBLISH passes an already resolved signal: its PUBLISH_OK has been rec
   transport has every byte acknowledged (`DataSender::acknowledged`), since
   unacknowledged data still fills the send buffer the session's streams
   share. In the last two the stream is reset with DELIVERY_TIMEOUT. Without
-  the parameter nothing is dropped. The sequence, not the group id, feeds the rank because group
-  ids may be wall-clock timestamps; assigning it at open time means a still
-  buffered tail of group N keeps outranking group N+1's keyframe without
-  re-prioritizing streams already queued in the transport.
+  the parameter nothing is dropped.
 - Fetch delivery (`fetch_delivery.rs`) — `FetchDeliveryTask`, one task per
   FETCH served from the cache: it opens the fetch stream, drives the `FetchCursor` and writes each
   object as soon as the cursor yields it, so objects of already-closed groups

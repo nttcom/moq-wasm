@@ -222,11 +222,49 @@ async fn later_group_stream_opens_with_a_lower_transport_priority() {
     second_group.object(0);
     let second_priority = egress.expect_stream_priority().await;
     // Assert
-    assert!(first_priority.group_sequence < second_priority.group_sequence);
+    assert_eq!(
+        (
+            first_priority.group_position,
+            second_priority.group_position
+        ),
+        (0, 1)
+    );
     assert_eq!(first_priority.publisher_priority, FIXTURE_PRIORITY);
     assert!(
         first_priority.transport_priority() > second_priority.transport_priority(),
         "the earlier group must be transmitted first under Ascending group order"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_group_takes_the_first_position_once_the_group_before_it_is_sent() {
+    // Arrange: group 1 is open downstream behind group 0
+    let harness = RelayHarness::new();
+    let mut egress = harness.start_egress(None).await;
+    let first_group = harness.open_upstream_stream();
+    first_group.header(0);
+    first_group.object(0);
+    egress.expect_stream_priority().await;
+    let second_group = harness.open_upstream_stream();
+    second_group.header(1);
+    second_group.object(0);
+    let behind = egress.expect_stream_priority().await;
+
+    // Act
+    first_group.fin();
+
+    // Assert
+    let reprioritized = loop {
+        if let Sent::Reprioritized(priority) = egress.expect_sent().await {
+            break priority;
+        }
+    };
+    assert_eq!(
+        reprioritized,
+        moqt::object::StreamPriority {
+            group_position: 0,
+            ..behind
+        }
     );
 }
 
