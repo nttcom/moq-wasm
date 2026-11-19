@@ -4,6 +4,7 @@ use crate::modules::{
     control_plane::control_message_forwarder::ControlMessageForwarder,
     directory::InMemoryLocalPubSubDirectory,
     domain::{session_id::SessionId, track_key::TrackKey},
+    session::session_closed::is_session_closed,
 };
 
 /// Moves a publisher's upstream subscription to the Forward State
@@ -59,10 +60,7 @@ impl UpstreamForward {
 }
 
 fn publisher_left(error: &anyhow::Error) -> bool {
-    matches!(
-        TransportSendError::in_chain(error),
-        Some(TransportSendError::ConnectionLost { .. } | TransportSendError::SessionError { .. })
-    )
+    TransportSendError::in_chain(error).is_some_and(is_session_closed)
 }
 
 #[cfg(test)]

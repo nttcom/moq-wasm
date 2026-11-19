@@ -22,8 +22,11 @@ use crate::modules::{
         single_preference::{SinglePreference, converted_datagram_subgroup},
         track_key::TrackKey,
     },
-    session::data_sender::{
-        DataSender, datagram_sender::DatagramSender, stream_sender_factory::StreamSenderFactory,
+    session::{
+        data_sender::{
+            DataSender, datagram_sender::DatagramSender, stream_sender_factory::StreamSenderFactory,
+        },
+        session_closed::is_session_closed,
     },
 };
 
@@ -861,9 +864,7 @@ struct SentSubgroup {
 pub(super) fn subscriber_left_reason(error: &anyhow::Error) -> Option<&'static str> {
     match TransportSendError::in_chain(error)? {
         TransportSendError::Stopped { .. } => Some("peer_stopped"),
-        TransportSendError::ConnectionLost { .. } | TransportSendError::SessionError { .. } => {
-            Some("connection_lost")
-        }
+        error if is_session_closed(error) => Some("connection_lost"),
         _ => None,
     }
 }
