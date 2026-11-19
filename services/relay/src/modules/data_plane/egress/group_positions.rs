@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::Bound, sync::Arc};
+use std::{collections::BTreeMap, ops::Bound};
 
 use moqt::object::GroupOrder;
 use tokio::sync::watch;
@@ -11,14 +11,14 @@ type Running = BTreeMap<u64, usize>;
 /// ties with the others' (draft-14 §7.2 leaves their order to the
 /// implementation and expects every subscription to send some data).
 pub(super) struct GroupPositions {
-    running_sender: Arc<watch::Sender<Running>>,
+    running_sender: watch::Sender<Running>,
     group_order: GroupOrder,
 }
 
 impl GroupPositions {
     pub(super) fn new(group_order: GroupOrder) -> Self {
         Self {
-            running_sender: Arc::new(watch::channel(Running::new()).0),
+            running_sender: watch::Sender::new(Running::new()),
             group_order,
         }
     }
@@ -37,7 +37,7 @@ impl GroupPositions {
 }
 
 pub(super) struct GroupPosition {
-    running_sender: Arc<watch::Sender<Running>>,
+    running_sender: watch::Sender<Running>,
     running_receiver: watch::Receiver<Running>,
     group_id: u64,
     group_order: GroupOrder,
