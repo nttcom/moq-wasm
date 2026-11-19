@@ -7,8 +7,7 @@ import {
   type SourceView,
   watchBroadcasts
 } from 'moq-wasm/media'
-import type { TelemetryStatsSample } from 'moq-wasm'
-import { reportRelay, sampleCameras } from '../telemetry'
+import { reportRelay } from '../telemetry'
 import type { CameraId } from '../types/monitoring'
 import { PlaybackBadges } from './playbackBadges'
 import 'moq-wasm/media/player.css'
@@ -37,7 +36,7 @@ const GROUP_ORDER = 'descending'
 export class CameraPlayers {
   private session: MoqSession | undefined
   private watch: BroadcastWatch | undefined
-  private readonly views = new Map<CameraId, { view: SourceView; trackNamespace: string }>()
+  private readonly views = new Map<CameraId, SourceView>()
   private readonly hosts = new Map<CameraId, HTMLDivElement>()
   private stageId: CameraId | undefined
   private readonly badges = new PlaybackBadges()
@@ -48,7 +47,6 @@ export class CameraPlayers {
     reportRelay(relayUrl)
     const session = await MoqSession.connect(relayUrl, connectOptions())
     this.session = session
-    sampleCameras(() => this.samples())
     void session.closed.then(() => {
       if (this.session === session) {
         onClosed()
@@ -79,7 +77,7 @@ export class CameraPlayers {
       onAdd: (broadcast: RemoteBroadcast) => {
         const camId = broadcast.namespace[prefix.length]
         const show = (view: SourceView) => {
-          this.views.set(camId, { view, trackNamespace: broadcast.namespace.join('/') })
+          this.views.set(camId, view)
           this.host(camId).replaceChildren(view.element)
           this.prioritize(camId)
           view.listen({ onPlayerChange: () => this.onStateChange(camId) })
@@ -94,7 +92,7 @@ export class CameraPlayers {
           },
           // A source that replaced this one was added before this one finished leaving.
           onSourceRemove: (view) => {
-            if (this.views.get(camId)?.view !== view) {
+            if (this.views.get(camId) !== view) {
               return
             }
             remove(camId)
@@ -121,7 +119,7 @@ export class CameraPlayers {
   }
 
   get(camId: CameraId): LivePlayer | undefined {
-    return this.views.get(camId)?.view.player
+    return this.views.get(camId)?.player
   }
 
   setStage(camId: CameraId | undefined): void {
@@ -133,12 +131,6 @@ export class CameraPlayers {
 
   private prioritize(camId: CameraId): void {
     this.get(camId)?.setVideoPriority(camId === this.stageId ? STAGE_VIDEO_PRIORITY : PREVIEW_VIDEO_PRIORITY)
-  }
-
-  private samples(): TelemetryStatsSample[] {
-    return [...this.views.values()].flatMap(({ view, trackNamespace }) =>
-      view.player.state.started ? [{ trackNamespace, values: view.stats() }] : []
-    )
   }
 
   async disconnect(): Promise<void> {

@@ -9,7 +9,7 @@ import { useCaptions } from '../hooks/useCaptions'
 import { useRoomRecording } from '../hooks/useRoomRecording'
 import { resolveRecorderUrl } from '../recording/recorderApi'
 import { RoomHeader } from './RoomHeader'
-import { sampleRoom } from '../telemetry'
+import { reportSession } from '../telemetry'
 import { useSessionEventHandlers } from '../hooks/useSessionEventHandlers'
 import { useMeetingMedia } from '../hooks/useMeetingMedia'
 import { useRetryBackoff } from '../hooks/useRetryBackoff'
@@ -149,7 +149,7 @@ export function MeetingRoom({ session, onLeave }: MeetingRoomProps) {
     return () => window.clearInterval(timer)
   }, [session])
 
-  useEffect(() => sampleRoom(session, () => remoteMembersRef.current), [session])
+  useEffect(() => reportSession(session), [session])
 
   useSessionEventHandlers({
     session,

@@ -1,20 +1,14 @@
 import { startPageTelemetry } from '../../../utils/pageTelemetry'
-import { memberSamples } from './media/memberSamples'
 import type { LocalSession } from './session/localSession'
-import type { RemoteMember } from './types/member'
 
-let room: { session: LocalSession; members: () => RemoteMember[] } | undefined
+let session: LocalSession | undefined
 
-startPageTelemetry(
-  'meeting',
-  () => room?.session.relayUrl ?? '',
-  () => (room ? memberSamples(room.session.players, room.members()) : [])
-)
+startPageTelemetry('meeting', () => session?.relayUrl ?? '')
 
-/// Samples `session`'s remote members until the returned function is called.
-export function sampleRoom(session: LocalSession, members: () => RemoteMember[]): () => void {
-  room = { session, members }
+/// Points the telemetry at the observability server of `joined`'s relay until the returned function is called.
+export function reportSession(joined: LocalSession): () => void {
+  session = joined
   return () => {
-    room = undefined
+    session = undefined
   }
 }
