@@ -142,6 +142,7 @@ jobs:
       camera_detection: ${{ steps.filter.outputs.camera_detection }}
       ptz_tracking: ${{ steps.filter.outputs.ptz_tracking }}
       live_viewer: ${{ steps.filter.outputs.live_viewer }}
+      live_translate: ${{ steps.filter.outputs.live_translate }}
       meeting: ${{ steps.filter.outputs.meeting }}
       console: ${{ steps.filter.outputs.console }}
       compose_suites: ${{ steps.filter.outputs.compose_suites }}
@@ -170,6 +171,7 @@ jobs:
             camera_detection=true
             ptz_tracking=true
             live_viewer=true
+            live_translate=true
             meeting=true
             console=true
             compose_suites=(cascading-relay auth cache-eviction fetch multiple-publishers moqtsink object-dedup live-translate)
@@ -190,6 +192,7 @@ jobs:
             camera_detection=false
             ptz_tracking=false
             live_viewer=false
+            live_translate=false
             meeting=false
             console=false
             compose_suites=()
@@ -209,6 +212,7 @@ jobs:
                   camera_detection=true
                   ptz_tracking=true
                   live_viewer=true
+                  live_translate=true
                   meeting=true
                   ;;
               esac
@@ -252,6 +256,12 @@ jobs:
               case "$path" in
                 .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-viewer-e2e.mjs|tests/browser-e2e/run-goaway-e2e.mjs|docker-compose.yml|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-viewer/*|examples/browser/examples/media/*|examples/browser/examples/message/*|examples/browser/examples/meeting/*|examples/browser/tests/live-viewer-*|examples/browser/tests/recorder-*|examples/browser/tests/goaway-e2e*|examples/browser/tests/message-e2e-arrange.ts|examples/browser/tests/meeting-e2e-arrange.ts|crates/wasm/*|services/live-ingest/*|services/recorder/*|services/bots/*|crates/job-launcher/*|crates/google-cloud/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/client-telemetry/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|crates/transcode/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
                   live_viewer=true
+                  ;;
+              esac
+
+              case "$path" in
+                .github/workflows/e2e.yml|.github/actions/setup-wasm-pack/*|.github/actions/install-playwright-chromium/*|.github/actions/install-ffmpeg-deps/*|.github/actions/install-apt-packages/*|tests/browser-e2e/setup-media-e2e.mjs|tests/browser-e2e/run-live-translate-e2e.mjs|tests/browser-e2e/relay-dev.mjs|tests/browser-e2e/vts-dev.mjs|tests/browser-e2e/process.mjs|tests/browser-e2e/helpers.mjs|scripts/dev-env.mjs|scripts/ensure-relay-certs.mjs|scripts/resolve-local-relay-url.mjs|examples/browser/examples/live-translate/*|examples/browser/tests/live-translate-e2e*|crates/wasm/*|services/live-translate/*|services/temporary-apps/*|crates/google-cloud/*|crates/http-server/*|services/relay/*|crates/auth-token/*|crates/telemetry/*|crates/telemetry-otlp/*|crates/moqt/*|crates/mediapack/*|crates/msf/*|crates/broadcast/*|services/vts/*|Cargo.toml|Cargo.lock|rust-toolchain)
+                  live_translate=true
                   ;;
               esac
 
@@ -333,6 +343,7 @@ jobs:
             echo "camera_detection=$camera_detection"
             echo "ptz_tracking=$ptz_tracking"
             echo "live_viewer=$live_viewer"
+            echo "live_translate=$live_translate"
             echo "meeting=$meeting"
             echo "console=$console"
             echo "compose_suites=$(jq -cn '$ARGS.positional | unique' --args "${compose_suites[@]}")"
@@ -546,6 +557,68 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: live-viewer-e2e-${{ matrix.name }}-artifacts
+          path: |
+            examples/browser/test-results
+            examples/browser/playwright-report
+          if-no-files-found: ignore
+
+  live_translate_e2e:
+    needs: changes
+    if: ${{ needs.changes.outputs.live_translate == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout repository
+        # actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 = v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        # actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 = v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.23.4
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: 1.99.1
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Install wasm-pack
+        uses: ./.github/actions/setup-wasm-pack
+
+      # live-translate links GStreamer.
+      - name: Install media build dependencies
+        uses: ./.github/actions/install-ffmpeg-deps
+
+      - name: Prepare media E2E environment
+        run: node tests/browser-e2e/setup-media-e2e.mjs
+
+      - name: Install Playwright Chromium
+        uses: ./.github/actions/install-playwright-chromium
+
+      - name: Run live translation E2E
+        env:
+          CI: "true"
+        run: node tests/browser-e2e/run-live-translate-e2e.mjs
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: live-translate-e2e-artifacts
           path: |
             examples/browser/test-results
             examples/browser/playwright-report
