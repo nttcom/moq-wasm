@@ -770,6 +770,7 @@ mod tests {
             .unregister_publish_namespace(withdrawn_session, withdrawn);
         PublishNamespaceDone::notify_local_subscribers(
             withdrawn_session,
+            true,
             withdrawn,
             &ctx.table,
             &ctx.forwarder,
@@ -1299,6 +1300,7 @@ mod tests {
         // Act
         PublishNamespaceDone::notify_local_subscribers(
             PUBLISHER_SESSION,
+            true,
             "room/alice",
             &ctx.table,
             &ctx.forwarder,

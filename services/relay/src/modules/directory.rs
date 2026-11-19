@@ -98,27 +98,24 @@ fn has_client(peers: &DashMap<SessionId, SessionPeer>) -> bool {
         .any(|peer| *peer.value() == SessionPeer::Client)
 }
 
-/// Returns the namespaces whose last client was the removed session; relay
-/// peers don't own Redis routes, so only those need route cleanup.
+/// Returns namespaces whose announcements or Redis routes may need withdrawal.
 fn remove_peer_from_namespaces(
     namespaces: &PeersByNamespace,
     session_id: SessionId,
 ) -> Vec<String> {
-    let mut last_client_left = Vec::new();
-    let mut empty_namespaces = Vec::new();
-    for entry in namespaces.iter() {
-        let removed_kind = entry.value().remove(&session_id).map(|(_, kind)| kind);
-        if removed_kind == Some(SessionPeer::Client) && !has_client(entry.value()) {
-            last_client_left.push(entry.key().clone());
+    let mut withdrawn = Vec::new();
+    namespaces.retain(|namespace, publishers| {
+        let withdraw = match publishers.remove(&session_id) {
+            Some((_, SessionPeer::Client)) => !has_client(publishers),
+            Some((_, SessionPeer::Relay)) => publishers.is_empty(),
+            None => false,
+        };
+        if withdraw {
+            withdrawn.push(namespace.clone());
         }
-        if entry.value().is_empty() {
-            empty_namespaces.push(entry.key().clone());
-        }
-    }
-    for namespace in empty_namespaces {
-        namespaces.remove(&namespace);
-    }
-    last_client_left
+        !publishers.is_empty()
+    });
+    withdrawn
 }
 
 /// The subscriptions to one prefix, one per session and interest: a draft-18
@@ -1870,17 +1867,19 @@ mod tests {
     }
 
     #[test]
-    fn remove_session_does_not_report_relay_only_publish_namespaces() {
-        // Arrange: Register only relay-origin publishers for the namespace.
+    fn remove_session_reports_a_relay_namespace_when_its_last_publisher_leaves() {
+        // Arrange
         let table = InMemoryLocalPubSubDirectory::new();
         table.register_publish_namespace(1, "room/member".to_string(), SessionPeer::Relay);
         table.register_publish_namespace(2, "room/member".to_string(), SessionPeer::Relay);
 
-        // Act: Disconnect one relay publisher.
-        let removed = table.remove_session(1);
+        // Act
+        let first = table.remove_session(1);
+        let last = table.remove_session(2);
 
-        // Assert: No Redis cleanup is requested because no client ever owned the route.
-        assert!(removed.publish_namespace_track_namespaces.is_empty());
+        // Assert
+        assert!(first.publish_namespace_track_namespaces.is_empty());
+        assert_eq!(last.publish_namespace_track_namespaces, ["room/member"]);
     }
 
     #[test]

@@ -72,15 +72,18 @@ async fn cleanup_removed_session(
             )
             .await;
         }
+    }
 
-        for track_namespace in removed.publish_namespace_track_namespaces {
-            PublishNamespaceDone::notify_local_subscribers(
-                removed_session_id,
-                &track_namespace,
-                table,
-                forwarder,
-            )
-            .await;
+    for track_namespace in removed.publish_namespace_track_namespaces {
+        PublishNamespaceDone::notify_local_subscribers(
+            removed_session_id,
+            was_client,
+            &track_namespace,
+            table,
+            forwarder,
+        )
+        .await;
+        if was_client {
             PublishNamespaceDone::withdraw_namespace_publication(
                 &track_namespace,
                 forwarder,
@@ -96,15 +99,48 @@ async fn cleanup_removed_session(
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use moqt::TerminationErrorCode;
+    use moqt::{QUIC, SessionEvent, TerminationErrorCode, Version};
 
     use crate::modules::{
-        auth::test_support::{app_token, connect_client, spawn_relay},
+        auth::test_support::{
+            app_token, client_endpoint, connect, connect_client, relay_server_offering,
+            relay_token, spawn_relay,
+        },
+        cascading::route_registry::NoopRelayRouteRegistry,
         test_support::{
-            relay_clients::{subscribe_namespace, within},
+            relay_clients::{next_event, publish_namespace, subscribe_namespace, within},
             stub_route_registry::StubRouteRegistry,
         },
     };
+
+    #[tokio::test]
+    async fn a_client_is_told_when_the_relay_publishing_its_namespace_disconnects() {
+        for version in [Version::Draft14, Version::Draft18] {
+            // Arrange
+            let relay =
+                relay_server_offering(relay_token(), Arc::new(NoopRelayRouteRegistry), &[version]);
+            let outer = relay.server.spawn_client_transport::<QUIC>(0).unwrap();
+            let inner = relay.server.spawn_inner_transport::<QUIC>(0).unwrap();
+            let watcher = connect(outer.local_port, client_endpoint(None)).await;
+            let publisher =
+                connect(inner.local_port, client_endpoint(Some("relay".to_string()))).await;
+            subscribe_namespace(&watcher, "anon/room").await;
+            publish_namespace(&publisher, "anon/room/camera").await;
+            let SessionEvent::PublishNamespace(announced) = next_event(&watcher).await else {
+                panic!("expected the camera namespace");
+            };
+            announced.ok().await.unwrap();
+
+            // Act
+            publisher.close_with_error(TerminationErrorCode::NoError, "leaving");
+
+            // Assert
+            let SessionEvent::PublishNamespaceDone(done) = next_event(&watcher).await else {
+                panic!("expected the camera namespace to be withdrawn");
+            };
+            assert_eq!(done.track_namespace, "anon/room/camera");
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disconnect_of_the_last_namespace_subscriber_removes_its_route() {

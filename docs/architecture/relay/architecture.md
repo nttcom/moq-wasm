@@ -320,7 +320,9 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
   subscription was the session's, see "Egress"), stop the session's ingress,
   forward upstream UNSUBSCRIBE / stop ingress for the upstream subscriptions
   the last downstream subscriber released, and withdraw namespace routes for
-  client sessions. Leaving the repository first closes the race with a
+  client sessions. When an inter-relay session closes, the relay notifies local
+  namespace subscribers if that session was the namespace's last publisher.
+  Leaving the repository first closes the race with a
   SUBSCRIBE_OK from this session that arrives concurrently in its
   `PendingProducerTask`. Either the directory removal finds the producer, or
   the check after adding it (`end_if_publisher_gone`) finds the session gone
