@@ -198,6 +198,23 @@ async fn a_track_whose_publisher_left_loses_its_persisted_objects_after_the_grac
 
 // current_thread: `tokio::time::pause` needs it.
 #[tokio::test]
+async fn a_downstream_relay_drops_the_track_of_a_publisher_gone_past_the_grace_period() {
+    // Arrange: a downstream relay's ingest, which keeps its objects in memory only
+    let track = disk_backed_track("publisher-left-downstream", u64::MAX, CacheStamp::default());
+    ingest_group(&track.harness, 0, b"ended").await;
+    track.harness.cache().publisher_left();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(10)).await;
+
+    // Act
+    track.harness.cache().evict(Duration::from_secs(60));
+
+    // Assert
+    assert!(track.harness.cache().is_empty());
+}
+
+// current_thread: `tokio::time::pause` needs it.
+#[tokio::test]
 async fn a_publisher_returning_within_the_grace_period_keeps_the_persisted_objects() {
     // Arrange
     let track = disk_backed_track("publisher-returned", u64::MAX, PERSIST);
