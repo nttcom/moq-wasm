@@ -63,7 +63,7 @@ pub(crate) async fn issue_token(
     scope: TokenScope,
     now: u64,
 ) -> anyhow::Result<Option<IssuedToken>> {
-    let apps = store.load().await?.apps;
+    let apps = store.load().await?;
     let Some(app) = apps.get(app_id).filter(|app| owned_by(app, sub)) else {
         return Ok(None);
     };

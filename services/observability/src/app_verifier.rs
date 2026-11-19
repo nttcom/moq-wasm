@@ -160,7 +160,7 @@ mod tests {
     async fn a_verified_token_is_answered_from_memory_until_it_expires() {
         // Arrange
         let exp = unix_now() + 30;
-        let (vts_url, mut vts_requests) =
+        let (vts_url, mut vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &answer(exp)).await;
         let verifier = AppVerifier::new(format!("{vts_url}/verify")).unwrap();
         let expired = SystemTime::UNIX_EPOCH + Duration::from_secs(exp + 61);
@@ -182,7 +182,7 @@ mod tests {
     #[tokio::test]
     async fn a_token_the_vts_signed_but_already_expired_is_unauthorized() {
         // Arrange
-        let (vts_url, _vts_requests) =
+        let (vts_url, _vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &answer(1_000)).await;
         let verifier = AppVerifier::new(format!("{vts_url}/verify")).unwrap();
 

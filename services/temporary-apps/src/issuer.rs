@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use auth_token::{
-    Claims, TEMPORARY_APP_ID_PREFIX, decode_unverified_payload, sign_token, verify_signature,
+    Claims, TEMPORARY_APP_ID_PREFIX, TemporaryAppTokenError, sign_token, temporary_app_id,
+    verify_signature,
 };
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
@@ -53,17 +54,10 @@ impl TemporaryApps {
     /// expired. `now` is Unix seconds.
     pub(crate) fn verify(&self, token: &str, now: u64) -> Result<String, RefreshError> {
         verify_signature(token, &self.secret).map_err(|_| RefreshError::NotIssuedHere)?;
-        let claims = decode_unverified_payload(token).ok_or(RefreshError::NotIssuedHere)?;
-        let app_id = claims
-            .get("appId")
-            .and_then(|value| value.as_str())
-            .filter(|app_id| app_id.starts_with(TEMPORARY_APP_ID_PREFIX))
-            .ok_or(RefreshError::NotIssuedHere)?;
-        let exp = claims.get("exp").and_then(|value| value.as_u64());
-        if exp.is_none_or(|exp| exp <= now) {
-            return Err(RefreshError::Expired);
-        }
-        Ok(app_id.to_owned())
+        temporary_app_id(token, now).map_err(|error| match error {
+            TemporaryAppTokenError::Expired => RefreshError::Expired,
+            _ => RefreshError::NotIssuedHere,
+        })
     }
 
     /// The launch token `bots` takes from an app server
@@ -105,7 +99,7 @@ fn random_app_id() -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use auth_token::sign_token;
+    use auth_token::{decode_unverified_payload, sign_token};
     use serde_json::json;
 
     use super::*;

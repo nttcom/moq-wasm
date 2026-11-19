@@ -10,7 +10,7 @@ use http_server::HttpServer;
 use hyper::{Response, StatusCode, body::Bytes, header::AUTHORIZATION};
 use reqwest::Url;
 use serde_json::{Value, json};
-use tokio::{net::TcpListener, task::JoinHandle};
+use tokio::net::TcpListener;
 
 pub(crate) const AUDIENCE: &str = "/projects/123/locations/region/services/console";
 pub(crate) const NOW: u64 = 1_760_900_000;
@@ -105,33 +105,6 @@ impl FakeIapKeys {
 
     pub(crate) fn fetches(&self) -> usize {
         self.server.requests().len()
-    }
-}
-
-pub(crate) struct SilentServer {
-    url: Url,
-    _accept_handle: JoinHandle<()>,
-}
-
-impl SilentServer {
-    pub(crate) async fn run() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = Url::parse(&format!("http://{}/keys", listener.local_addr().unwrap())).unwrap();
-        Self {
-            url,
-            _accept_handle: tokio::spawn(hold_connections(listener)),
-        }
-    }
-
-    pub(crate) fn url(&self) -> Url {
-        self.url.clone()
-    }
-}
-
-async fn hold_connections(listener: TcpListener) {
-    let mut connections = Vec::new();
-    loop {
-        connections.push(listener.accept().await.unwrap().0);
     }
 }
 

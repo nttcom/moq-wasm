@@ -1,19 +1,27 @@
 mod jwt;
-mod lifetime;
 mod signed_token;
+mod temporary_app;
 
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 pub use jwt::{SignatureError, decode_unverified_payload, sign_token, verify_signature};
-pub use lifetime::parse_lifetime;
 pub use signed_token::{Access, ClaimError, ClaimPolicy, SignedToken};
+pub use temporary_app::{TemporaryAppTokenError, temporary_app_id};
 
 /// The `appId` prefix of a temporary app: an app that exists only as the
 /// tokens issued for it, all signed with one shared secret instead of a
 /// registered one.
 pub const TEMPORARY_APP_ID_PREFIX: &str = "temp-";
+
+/// The current time in Unix seconds, the unit of `iat` and `exp`; 0 when the
+/// system clock is before the Unix epoch.
+pub fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

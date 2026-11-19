@@ -204,10 +204,11 @@ fn decode_json<T: DeserializeOwned>(segment: &str) -> anyhow::Result<T> {
 
 #[cfg(test)]
 mod tests {
+    use google_cloud::testing::SilentServer;
     use serde_json::json;
 
     use super::*;
-    use crate::test_support::{AUDIENCE, FakeIapKeys, NOW, SilentServer, TestIapKey, iap_claims};
+    use crate::test_support::{AUDIENCE, FakeIapKeys, NOW, TestIapKey, iap_claims};
 
     fn verifier(keys: &FakeIapKeys) -> IapVerifier {
         IapVerifier::new(AUDIENCE.into(), keys.url()).unwrap()
@@ -340,7 +341,8 @@ mod tests {
     async fn gives_up_within_the_request_timeout_when_the_key_server_never_answers() {
         // Arrange
         let server = SilentServer::run().await;
-        let verifier = IapVerifier::new(AUDIENCE.into(), server.url()).unwrap();
+        let verifier =
+            IapVerifier::new(AUDIENCE.into(), server.url().join("keys").unwrap()).unwrap();
         let assertion = TestIapKey::new("key-1").sign(&iap_claims("accounts.google.com:1"));
 
         // Act

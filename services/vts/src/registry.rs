@@ -9,7 +9,7 @@ pub struct Registry {
 
 impl Registry {
     pub async fn load(store: RegistryStore) -> anyhow::Result<Self> {
-        let apps = store.load().await?.apps;
+        let apps = store.load().await?;
         tracing::info!(apps = apps.len(), "registry loaded");
         Ok(Self {
             store,
@@ -19,8 +19,8 @@ impl Registry {
 
     pub(crate) async fn current(&self) -> Arc<Apps> {
         match self.store.load().await {
-            Ok(snapshot) => {
-                let apps = Arc::new(snapshot.apps);
+            Ok(apps) => {
+                let apps = Arc::new(apps);
                 *self.last_loaded() = apps.clone();
                 apps
             }

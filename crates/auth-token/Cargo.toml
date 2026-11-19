@@ -18,5 +18,5 @@ cli = ["dep:clap"]
 
 [[bin]]
 name = "auth-token"
-path = "src/bin/auth-token.rs"
+path = "src/bin/auth-token/main.rs"
 required-features = ["cli"]

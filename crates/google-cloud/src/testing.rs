@@ -104,8 +104,12 @@ impl SilentServer {
         }
     }
 
+    pub fn url(&self) -> Url {
+        self.url.clone()
+    }
+
     pub fn endpoint(&self) -> Endpoint {
-        Endpoint::Emulator(self.url.clone())
+        Endpoint::Emulator(self.url())
     }
 }
 

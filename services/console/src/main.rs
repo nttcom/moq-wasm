@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     })?
     .context("set CONSOLE_REGISTRY_FILE or CONSOLE_REGISTRY_BUCKET")?;
     let store = RegistryStore::new(location)?;
-    let apps = store.load().await?.apps;
+    let apps = store.load().await?;
     tracing::info!(apps = apps.len(), "registry loaded");
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;

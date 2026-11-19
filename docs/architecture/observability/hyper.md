@@ -10,8 +10,8 @@ Accepted
 
 ## What
 
-Add `hyper` (`http1`, `server`), `hyper-util` (`tokio`) and `http-body-util`
-as direct dependencies of the `observability` crate. `src/api_server.rs` serves
+Add `hyper` and `http-body-util` as direct dependencies of the `observability`
+crate; the accept loop is `http-server`'s. `src/api_server.rs` serves
 `GET /api/snapshots` (newest snapshot per relay, or the ones at `?at=` and `&previous=`) and
 `GET /api/series` (one metric family over a time range) to the topology page.
 
@@ -32,7 +32,7 @@ request body.
 
 ## Decision
 
-Use `hyper` the way `services/vts` already does: the three crates are in the
+Use `hyper` the way `services/vts` already does: both crates are in the
 workspace lock at the same versions, so no new crate enters the dependency
 tree, and the server follows the existing accept loop and JSON response
 helpers.

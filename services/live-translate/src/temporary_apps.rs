@@ -1,11 +1,7 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use auth_token::{TEMPORARY_APP_ID_PREFIX, decode_unverified_payload};
+use auth_token::{TemporaryAppTokenError, temporary_app_id, unix_now};
 use moqt::{CertificateVerification, ClientConfig};
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -61,7 +57,12 @@ impl TemporaryApps {
     /// `token`, so a streamer that starts again gets the token's whole
     /// lifetime; the languages its viewers were hearing end.
     pub(crate) async fn start(&self, token: &str) -> Result<(), Refusal> {
-        let app_id = temporary_app_id(token, unix_now())?;
+        // The signature is left to the relay, which refuses the session of a
+        // token it cannot verify.
+        let app_id = temporary_app_id(token, unix_now()).map_err(|error| match error {
+            TemporaryAppTokenError::Expired => Refusal::Expired,
+            _ => Refusal::NotATemporaryAppToken,
+        })?;
         let mut apps = self.apps.lock().await;
         if !apps.contains_key(&app_id) && apps.len() >= self.max_apps {
             return Err(Refusal::Full);
@@ -95,28 +96,6 @@ impl TemporaryApps {
     }
 }
 
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
-/// The signature is left to the relay, which refuses the session of a token
-/// it cannot verify.
-fn temporary_app_id(token: &str, now: u64) -> Result<String, Refusal> {
-    let payload = decode_unverified_payload(token).ok_or(Refusal::NotATemporaryAppToken)?;
-    let app_id = payload
-        .get("appId")
-        .and_then(|app_id| app_id.as_str())
-        .filter(|app_id| app_id.starts_with(TEMPORARY_APP_ID_PREFIX))
-        .ok_or(Refusal::NotATemporaryAppToken)?;
-    let expires_at = payload.get("exp").and_then(|exp| exp.as_u64());
-    if expires_at.is_none_or(|expires_at| expires_at <= now) {
-        return Err(Refusal::Expired);
-    }
-    Ok(app_id.to_string())
-}
-
 struct AppTranslation {
     join_handle: JoinHandle<()>,
 }
@@ -146,65 +125,5 @@ impl AppTranslation {
 impl Drop for AppTranslation {
     fn drop(&mut self) {
         self.join_handle.abort();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use auth_token::{Claims, sign_token};
-
-    use super::*;
-
-    const NOW: u64 = 1_800_000_000;
-
-    fn token(app_id: &str, exp: Option<u64>) -> String {
-        let claims = Claims {
-            app_id: app_id.to_string(),
-            publish: Some(String::new()),
-            bots: None,
-            subscribe: Some(String::new()),
-            iat: None,
-            exp,
-            relay_id: None,
-        };
-        sign_token(&claims, "s3cret").unwrap()
-    }
-
-    #[test]
-    fn a_live_token_of_a_temporary_app_names_the_app() {
-        // Act
-        let app_id = temporary_app_id(&token("temp-3f9a", Some(NOW + 1)), NOW);
-
-        // Assert
-        assert!(matches!(app_id, Ok(app_id) if app_id == "temp-3f9a"));
-    }
-
-    #[test]
-    fn a_token_of_a_registered_app_is_refused() {
-        // Act
-        let app_id = temporary_app_id(&token("app-1", Some(NOW + 1)), NOW);
-
-        // Assert
-        assert!(matches!(app_id, Err(Refusal::NotATemporaryAppToken)));
-    }
-
-    #[test]
-    fn text_that_is_not_a_token_is_refused() {
-        // Act / Assert
-        assert!(matches!(
-            temporary_app_id("not-a-token", NOW),
-            Err(Refusal::NotATemporaryAppToken)
-        ));
-    }
-
-    #[test]
-    fn an_expired_token_or_one_without_an_expiry_is_refused() {
-        // Act / Assert
-        for exp in [Some(NOW), None] {
-            assert!(matches!(
-                temporary_app_id(&token("temp-3f9a", exp), NOW),
-                Err(Refusal::Expired)
-            ));
-        }
     }
 }

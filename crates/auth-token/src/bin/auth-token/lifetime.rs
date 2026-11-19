@@ -4,7 +4,7 @@ use anyhow::anyhow;
 
 /// Reads a lifetime such as `15s`, `30m`, `12h` or `365d`. Fails without one of those units, on a
 /// count that is not a whole number, and on one too large for a `Duration`.
-pub fn parse_lifetime(text: &str) -> anyhow::Result<Duration> {
+pub(crate) fn parse_lifetime(text: &str) -> anyhow::Result<Duration> {
     let invalid = || anyhow!("invalid lifetime {text:?}, expected e.g. 30m, 12h, 365d");
     let unit_seconds = match text.as_bytes().last() {
         Some(b's') => 1,

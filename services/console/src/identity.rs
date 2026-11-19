@@ -4,7 +4,7 @@ use reqwest::Url;
 
 use crate::iap::IapVerifier;
 
-pub const IAP_ASSERTION_HEADER: &str = "x-goog-iap-jwt-assertion";
+pub(crate) const IAP_ASSERTION_HEADER: &str = "x-goog-iap-jwt-assertion";
 
 pub enum Identity {
     Iap(Box<IapVerifier>),

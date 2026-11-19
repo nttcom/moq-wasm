@@ -1,9 +1,10 @@
 use std::{
     net::{IpAddr, SocketAddr},
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::Instant,
 };
 
+use auth_token::unix_now;
 use http_body_util::Full;
 use http_server::{
     HttpServer, allow_any_origin, bearer_token, empty_response, error_response, json_response,
@@ -222,13 +223,6 @@ fn client_address(headers: &HeaderMap, peer: SocketAddr, trusted_proxy_hops: usi
         .checked_sub(trusted_proxy_hops)
         .and_then(|index| entries[index].parse().ok())
         .unwrap_or_else(|| peer.ip())
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("the system clock is after the Unix epoch")
-        .as_secs()
 }
 
 fn internal_error(error: &anyhow::Error) -> JsonResponse {

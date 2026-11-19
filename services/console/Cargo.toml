@@ -22,3 +22,4 @@ telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 
 [dev-dependencies]
 app-registry = { path = "../../crates/app-registry", features = ["testing"] }
+google-cloud = { path = "../../crates/google-cloud", features = ["testing"] }
