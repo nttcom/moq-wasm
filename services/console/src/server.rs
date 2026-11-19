@@ -26,7 +26,7 @@ use crate::{
     usage::{ObservabilityClient, UsageAnswer},
 };
 
-pub const CSRF_HEADER: &str = "x-console-request";
+pub(crate) const CSRF_HEADER: &str = "x-console-request";
 /// The console signs a token per read of an app's usage or recordings, so it
 /// only has to outlive that request.
 const READ_TOKEN_TTL_SECONDS: u64 = 60;
