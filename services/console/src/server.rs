@@ -1112,13 +1112,7 @@ mod tests {
         assert_eq!(requests.len(), 1);
         let (uri, authorization) = &requests[0];
         assert_eq!(uri, "/api/usage?from=1&to=2&points=30");
-        let token = authorization
-            .as_deref()
-            .unwrap()
-            .strip_prefix("Bearer ")
-            .unwrap();
-        auth_token::verify_signature(token, "s").unwrap();
-        let claims = auth_token::decode_unverified_payload(token).unwrap();
+        let claims = bearer_claims(authorization);
         assert_eq!(claims["appId"], "app-1");
         assert_eq!(claims["subscribe"], "");
         assert!(claims.get("publish").is_none());
