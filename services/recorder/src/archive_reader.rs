@@ -571,4 +571,102 @@ mod tests {
         entry["offset"] = json!("0");
         assert!(decode_object(&entry, &Bytes::new()).is_err());
     }
+
+    mod fetch_range_model {
+        use std::collections::BTreeSet;
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// Whether `[start, end)` names `at`: End Location is the last object
+        /// plus 1, and an Object of 0 names the entire group (draft-14
+        /// §9.16.1); the range is inclusive of the last object (draft-14
+        /// §9.16.3).
+        fn named(at: Location, start: Location, end: Location) -> bool {
+            let up_to_last = if end.object_id == 0 {
+                at.group_id <= end.group_id
+            } else {
+                let last = Location {
+                    group_id: end.group_id,
+                    object_id: end.object_id - 1,
+                };
+                at <= last
+            };
+            at >= start && up_to_last
+        }
+
+        /// The locations next to `start` and `end`, where `named` can change.
+        fn grid(start: Location, end: Location) -> Vec<Location> {
+            let near = |value: u64| {
+                [
+                    value.saturating_sub(1),
+                    value,
+                    value.saturating_add(1),
+                    0,
+                    1,
+                    u64::MAX,
+                ]
+            };
+            let groups: BTreeSet<u64> =
+                [start, end].iter().flat_map(|l| near(l.group_id)).collect();
+            let objects: BTreeSet<u64> = [start, end]
+                .iter()
+                .flat_map(|l| near(l.object_id))
+                .collect();
+            groups
+                .iter()
+                .flat_map(|&group_id| {
+                    objects.iter().map(move |&object_id| Location {
+                        group_id,
+                        object_id,
+                    })
+                })
+                .collect()
+        }
+
+        fn coordinate() -> impl Strategy<Value = u64> {
+            prop_oneof![0..4u64, Just(u64::MAX), Just(u64::MAX - 1), any::<u64>()]
+        }
+
+        fn any_location() -> impl Strategy<Value = Location> {
+            (coordinate(), coordinate()).prop_map(|(group_id, object_id)| Location {
+                group_id,
+                object_id,
+            })
+        }
+
+        fn fetch() -> impl Strategy<Value = (Location, Location)> {
+            any_location().prop_flat_map(|start| {
+                let group = prop_oneof![
+                    Just(start.group_id.saturating_sub(1)),
+                    Just(start.group_id),
+                    Just(start.group_id.saturating_add(1)),
+                ];
+                let object = prop_oneof![
+                    Just(0),
+                    Just(1),
+                    Just(start.object_id.saturating_sub(1)),
+                    Just(start.object_id),
+                    Just(start.object_id.saturating_add(1)),
+                    Just(u64::MAX),
+                ];
+                let near = (group, object).prop_map(|(group_id, object_id)| Location {
+                    group_id,
+                    object_id,
+                });
+                (Just(start), prop_oneof![3 => near, 1 => any_location()])
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn a_fetch_range_holds_exactly_the_objects_it_names((start, end) in fetch()) {
+                for at in grid(start, end) {
+                    // Act / Assert
+                    prop_assert_eq!(in_fetch_range(at, start, end), named(at, start, end), "at {:?}", at);
+                }
+            }
+        }
+    }
 }
