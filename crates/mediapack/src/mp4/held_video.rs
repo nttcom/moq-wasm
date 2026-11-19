@@ -16,7 +16,9 @@ impl HeldVideo {
     /// sample whose decode time is not after the previous one moves to one
     /// tick after it: a LOC publisher can repeat a capture time, and
     /// GStreamer's `av1parse` drops the PTS of a buffer that repeats the
-    /// previous PTS.
+    /// previous PTS. The duration is the difference of the two decode times
+    /// in ticks, each rounded as its fragment's decode time is, so a
+    /// fragment ends where the next one starts.
     pub(super) fn push(&mut self, sample: &VideoSample) -> Option<(VideoSample, u32)> {
         let mut sample = sample.clone();
         if let Some(previous) = &self.pending {
@@ -27,9 +29,9 @@ impl HeldVideo {
                 sample.dts = dts;
             }
         }
-        let next_dts = sample.dts;
+        let next_ticks = sample.dts.ticks(VIDEO_TIMESCALE);
         let previous = self.pending.replace(sample)?;
-        self.last_duration = next_dts.saturating_sub(previous.dts).ticks(VIDEO_TIMESCALE) as u32;
+        self.last_duration = (next_ticks - previous.dts.ticks(VIDEO_TIMESCALE)) as u32;
         Some((previous, self.last_duration))
     }
 
@@ -72,5 +74,69 @@ mod tests {
         // Assert: the repeated sample keeps its composition offset
         assert_eq!((times(&first), first_duration), ((0, 40_000), 1));
         assert_eq!((times(&repeated), repeated_duration), ((11, 40_011), 4_499));
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::{super::HeldVideo, sample};
+        use crate::{mp4::isobmff::VIDEO_TIMESCALE, sample::VideoSample};
+
+        /// The change from one decode time to the next in microseconds:
+        /// often a repeat, a step below one tick or a decrease, which
+        /// `HeldVideo` moves, or a frame gap near 30 fps that rounds
+        /// differently on each frame.
+        fn step() -> impl Strategy<Value = i64> {
+            prop_oneof![
+                Just(0i64),
+                -20..20i64,
+                33_300..33_400i64,
+                -100_000..0i64,
+                0..1_000_000i64,
+            ]
+        }
+
+        fn decode_times() -> impl Strategy<Value = Vec<u64>> {
+            (0..1u64 << 40, vec(step(), 0..32)).prop_map(|(start, steps)| {
+                let mut dts = start;
+                std::iter::once(start)
+                    .chain(steps.into_iter().map(|step| {
+                        dts = dts.saturating_add_signed(step);
+                        dts
+                    }))
+                    .collect()
+            })
+        }
+
+        fn ticks(sample: &VideoSample) -> u64 {
+            sample.dts.ticks(VIDEO_TIMESCALE)
+        }
+
+        proptest! {
+            #[test]
+            fn each_sample_lasts_until_the_next_one_starts(decode_times in decode_times()) {
+                // Arrange
+                let mut held = HeldVideo::default();
+
+                // Act
+                let mut out: Vec<(VideoSample, u32)> = decode_times
+                    .iter()
+                    .filter_map(|&dts| held.push(&sample(dts)))
+                    .collect();
+                out.extend(held.finish());
+
+                // Assert: every sample comes out, in strictly increasing ticks,
+                // ends where the next starts, and keeps its composition offset
+                prop_assert_eq!(out.len(), decode_times.len());
+                for pair in out.windows(2) {
+                    let [(previous, duration), (next, _)] = pair else { unreachable!() };
+                    prop_assert!(ticks(previous) < ticks(next));
+                    prop_assert_eq!(ticks(previous) + u64::from(*duration), ticks(next));
+                }
+                for (sample, _) in &out {
+                    prop_assert_eq!(sample.pts.micros() - sample.dts.micros(), 40_000);
+                }
+            }
+        }
     }
 }
