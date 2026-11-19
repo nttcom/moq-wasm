@@ -95,7 +95,7 @@ class TrackWriter:
         self._writer: _native.TrackWriter | None = None
         # Set once the track is registered, or will not be.
         self._settled = asyncio.Event()
-        self._on_bound: list[Callable[[], Awaitable[None]]] = []
+        self._on_bound: Callable[[], Awaitable[None]] | None = None
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> int | None:
         """`_native.TrackWriter.write`; None for an object dropped before the track is
@@ -127,8 +127,8 @@ class TrackWriter:
     async def _bind(self, writer: _native.TrackWriter) -> None:
         self._writer = writer
         self._settled.set()
-        for bound in self._on_bound:
-            await bound()
+        if self._on_bound is not None:
+            await self._on_bound()
 
     def _abandon(self) -> None:
         """The track will not be registered."""

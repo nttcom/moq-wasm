@@ -14,7 +14,7 @@ class EventTimeline:
 
     def __init__(self, writer: TrackWriter):
         self._writer = writer
-        writer._on_bound.append(self._open)
+        writer._on_bound = self._open
 
     async def append(self, record: EventRecord) -> None:
         await self._writer.write(_encode([record]))
