@@ -1304,6 +1304,62 @@ mod tests {
     }
 
     #[test]
+    fn a_subgroup_without_properties_takes_its_id_from_its_first_object() {
+        // Arrange: Subgroup ID mode 0b01, no properties, publisher priority 7;
+        // the second object states Normal status explicitly
+        let mut stream = BytesMut::new();
+        put_vi64(&mut stream, 0x10 | (0b01 << 1));
+        put_vi64(&mut stream, 9);
+        put_vi64(&mut stream, 3);
+        stream.extend_from_slice(&[7]);
+        put_vi64(&mut stream, 5);
+        put_vi64(&mut stream, 1);
+        stream.extend_from_slice(b"a");
+        put_vi64(&mut stream, 0);
+        put_vi64(&mut stream, 0);
+        put_vi64(&mut stream, 0x0);
+
+        // Act
+        let mut frames = frames(stream).into_iter();
+        let StreamFrame::SubgroupHeader(header) = frames.next().unwrap() else {
+            panic!("expected the subgroup header");
+        };
+        let mut state = SubgroupState::new(header);
+        let objects: Vec<Object> = frames
+            .map(|frame| match frame {
+                StreamFrame::SubgroupObject { field, .. } => state.object(field).unwrap(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+
+        // Assert
+        let with_priority_7 = |mut object: Object| {
+            object.publisher_priority = 7;
+            object
+        };
+        assert_eq!(
+            objects,
+            [
+                with_priority_7(object(3, 5, subgroup(5), b"a")),
+                with_priority_7(object(3, 6, subgroup(5), b"")),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_fetch_serialization_flags_are_rejected() {
+        // Arrange
+        let mut stream = encode_fetch_header(6);
+        put_vi64(&mut stream, 0x80);
+        stream.extend_from_slice(&[0; 8]);
+        let mut decoder = StreamDecoder::default();
+        decoder.decode(&mut stream).unwrap();
+
+        // Act / Assert
+        assert!(decoder.decode(&mut stream).is_err());
+    }
+
+    #[test]
     fn a_declared_length_above_the_limit_ends_the_stream() {
         let cases: [(&str, &[u8]); 3] = [
             // FETCH header, Request ID, serialization flags
