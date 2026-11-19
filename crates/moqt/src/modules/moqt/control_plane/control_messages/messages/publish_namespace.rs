@@ -51,7 +51,7 @@ impl PublishNamespace {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
+        payload.put_varint(self.request_id)?;
         payload.put_tuple(&self.track_namespace)?;
         let parameters: Vec<KeyValuePair> = self
             .authorization_token

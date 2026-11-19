@@ -34,8 +34,8 @@ impl PublishNamespaceCancel {
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_tuple(&self.track_namespace)?;
-        payload.put_varint(self.error_code);
-        util::put_reason_phrase(&mut payload, &self.error_reason);
+        payload.put_varint(self.error_code)?;
+        util::put_reason_phrase(&mut payload, &self.error_reason)?;
         Ok(payload)
     }
 }

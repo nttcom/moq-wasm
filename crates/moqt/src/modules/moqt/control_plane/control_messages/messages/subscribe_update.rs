@@ -55,10 +55,10 @@ impl SubscribeUpdate {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
-        payload.put_varint(self.subscription_request_id);
+        payload.put_varint(self.request_id)?;
+        payload.put_varint(self.subscription_request_id)?;
         payload.unsplit(self.start_location.encode()?);
-        payload.put_varint(self.end_group);
+        payload.put_varint(self.end_group)?;
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.forward as u8);
         let parameters: Vec<KeyValuePair> = self
@@ -152,14 +152,14 @@ mod tests {
         #[test]
         fn depacketize_rejects_invalid_forward_value() {
             let mut payload = BytesMut::new();
-            payload.put_varint(4); // Request ID
-            payload.put_varint(2); // Subscription Request ID
-            payload.put_varint(10); // Start Location: Group ID
-            payload.put_varint(5); // Start Location: Object ID
-            payload.put_varint(20); // End Group
+            payload.put_varint(4).unwrap(); // Request ID
+            payload.put_varint(2).unwrap(); // Subscription Request ID
+            payload.put_varint(10).unwrap(); // Start Location: Group ID
+            payload.put_varint(5).unwrap(); // Start Location: Object ID
+            payload.put_varint(20).unwrap(); // End Group
             payload.put_u8(128); // Subscriber Priority
             payload.put_u8(2); // Forward: only 0 and 1 are valid
-            payload.put_varint(0); // Number of Parameters
+            payload.put_varint(0).unwrap(); // Number of Parameters
 
             let mut cursor = std::io::Cursor::new(&payload[..]);
             let decoded = SubscribeUpdate::decode(&mut cursor);

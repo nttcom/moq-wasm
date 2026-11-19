@@ -150,7 +150,7 @@ mod tests {
         fn try_get_string_length_over_u32_failed() {
             // Arrange: the low 32 bits of the length are 1, and 1 byte follows
             let mut bytes = BytesMut::new();
-            bytes.put_varint((1 << 32) + 1);
+            bytes.put_varint((1 << 32) + 1).unwrap();
             bytes.extend_from_slice(b"a");
             let mut bytes = std::io::Cursor::new(&bytes[..]);
 

@@ -112,7 +112,7 @@ pub(crate) fn spawn_draft18_relay(token: VerifiedToken) -> RunningRelay {
     )
 }
 
-fn spawn_relay_offering(
+pub(crate) fn spawn_relay_offering(
     token: VerifiedToken,
     route_registry: Arc<dyn RelayRouteRegistry>,
     versions: &[moqt::Version],
@@ -210,6 +210,12 @@ pub(crate) async fn connect_client(relay: &RunningRelay) -> Session {
 
 pub(crate) async fn connect_draft18_client(relay: &RunningRelay) -> Session {
     let endpoint = client_endpoint_offering(Some("jwt".to_string()), &[moqt::Version::Draft18]);
+    connect(relay.port, endpoint).await
+}
+
+/// `connect_client` selects draft-18 on a relay that accepts it.
+pub(crate) async fn connect_draft14_client(relay: &RunningRelay) -> Session {
+    let endpoint = client_endpoint_offering(Some("jwt".to_string()), &[moqt::Version::Draft14]);
     connect(relay.port, endpoint).await
 }
 

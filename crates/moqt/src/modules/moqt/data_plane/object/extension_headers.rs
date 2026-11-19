@@ -62,7 +62,7 @@ impl ExtensionHeaders {
             kv_buf.unsplit(kv_pair.encode()?);
         }
         let mut buf = bytes::BytesMut::new();
-        buf.put_varint(kv_buf.len() as u64);
+        buf.put_varint(kv_buf.len() as u64)?;
         buf.unsplit(kv_buf);
         Ok(buf)
     }
@@ -196,7 +196,7 @@ mod tests {
     fn decode_length_over_limit_is_fatal() {
         // Arrange: no block bytes follow, so without the limit this is NeedMoreData
         let mut buf = bytes::BytesMut::new();
-        buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1);
+        buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1).unwrap();
 
         // Act
         let result = ExtensionHeaders::decode(&mut buf);

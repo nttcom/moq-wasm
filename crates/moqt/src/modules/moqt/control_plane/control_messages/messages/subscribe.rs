@@ -66,9 +66,9 @@ impl Subscribe {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
+        payload.put_varint(self.request_id)?;
         payload.put_tuple(&self.track_namespace)?;
-        payload.put_string(&self.track_name);
+        payload.put_string(&self.track_name)?;
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.forward as u8);

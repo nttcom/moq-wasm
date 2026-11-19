@@ -412,9 +412,9 @@ mod tests {
     fn decode_reason_phrase_over_1024_bytes_yields_fatal_error() {
         // Arrange: the encoder cuts a reason to 1024 bytes, so write the fields by hand
         let mut payload = BytesMut::new();
-        payload.put_varint(7);
-        payload.put_varint(1);
-        payload.put_string(&"a".repeat(1025));
+        payload.put_varint(7).unwrap();
+        payload.put_varint(1).unwrap();
+        payload.put_string(&"a".repeat(1025)).unwrap();
 
         // Act
         let message = decode_one(ControlMessageType::SubscribeError, payload);

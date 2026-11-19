@@ -65,10 +65,10 @@ impl Publish {
 
     pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
+        payload.put_varint(self.request_id)?;
         payload.put_tuple(&self.track_namespace_tuple)?;
-        payload.put_string(&self.track_name);
-        payload.put_varint(self.track_alias);
+        payload.put_string(&self.track_name)?;
+        payload.put_varint(self.track_alias)?;
         payload.put_u8(
             self.track_properties
                 .group_order()

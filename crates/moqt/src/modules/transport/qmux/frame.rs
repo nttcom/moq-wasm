@@ -250,18 +250,18 @@ impl Frame {
                 error_code,
                 final_size,
             } => {
-                out.put_varint(RESET_STREAM);
-                out.put_varint(*stream_id);
-                out.put_varint(*error_code);
-                out.put_varint(*final_size);
+                put_quic_varint(out, RESET_STREAM);
+                put_quic_varint(out, *stream_id);
+                put_quic_varint(out, *error_code);
+                put_quic_varint(out, *final_size);
             }
             Frame::StopSending {
                 stream_id,
                 error_code,
             } => {
-                out.put_varint(STOP_SENDING);
-                out.put_varint(*stream_id);
-                out.put_varint(*error_code);
+                put_quic_varint(out, STOP_SENDING);
+                put_quic_varint(out, *stream_id);
+                put_quic_varint(out, *error_code);
             }
             Frame::Stream {
                 stream_id,
@@ -273,85 +273,93 @@ impl Frame {
                 if *fin {
                     frame_type |= STREAM_FIN_BIT;
                 }
-                out.put_varint(frame_type);
-                out.put_varint(*stream_id);
-                out.put_varint(*offset);
-                out.put_varint(data.len() as u64);
+                put_quic_varint(out, frame_type);
+                put_quic_varint(out, *stream_id);
+                put_quic_varint(out, *offset);
+                put_quic_varint(out, data.len() as u64);
                 out.put_slice(data);
             }
             Frame::MaxData { maximum } => {
-                out.put_varint(MAX_DATA);
-                out.put_varint(*maximum);
+                put_quic_varint(out, MAX_DATA);
+                put_quic_varint(out, *maximum);
             }
             Frame::MaxStreamData { stream_id, maximum } => {
-                out.put_varint(MAX_STREAM_DATA);
-                out.put_varint(*stream_id);
-                out.put_varint(*maximum);
+                put_quic_varint(out, MAX_STREAM_DATA);
+                put_quic_varint(out, *stream_id);
+                put_quic_varint(out, *maximum);
             }
             Frame::MaxStreams {
                 bidirectional,
                 maximum,
             } => {
-                out.put_varint(if *bidirectional {
-                    MAX_STREAMS_BIDI
-                } else {
-                    MAX_STREAMS_UNI
-                });
-                out.put_varint(*maximum);
+                put_quic_varint(
+                    out,
+                    if *bidirectional {
+                        MAX_STREAMS_BIDI
+                    } else {
+                        MAX_STREAMS_UNI
+                    },
+                );
+                put_quic_varint(out, *maximum);
             }
             Frame::DataBlocked { limit } => {
-                out.put_varint(DATA_BLOCKED);
-                out.put_varint(*limit);
+                put_quic_varint(out, DATA_BLOCKED);
+                put_quic_varint(out, *limit);
             }
             Frame::StreamDataBlocked { stream_id, limit } => {
-                out.put_varint(STREAM_DATA_BLOCKED);
-                out.put_varint(*stream_id);
-                out.put_varint(*limit);
+                put_quic_varint(out, STREAM_DATA_BLOCKED);
+                put_quic_varint(out, *stream_id);
+                put_quic_varint(out, *limit);
             }
             Frame::StreamsBlocked {
                 bidirectional,
                 limit,
             } => {
-                out.put_varint(if *bidirectional {
-                    STREAMS_BLOCKED_BIDI
-                } else {
-                    STREAMS_BLOCKED_UNI
-                });
-                out.put_varint(*limit);
+                put_quic_varint(
+                    out,
+                    if *bidirectional {
+                        STREAMS_BLOCKED_BIDI
+                    } else {
+                        STREAMS_BLOCKED_UNI
+                    },
+                );
+                put_quic_varint(out, *limit);
             }
             Frame::ConnectionClose(ConnectionClose::Transport {
                 error_code,
                 frame_type,
                 reason,
             }) => {
-                out.put_varint(CONNECTION_CLOSE_TRANSPORT);
-                out.put_varint(*error_code);
-                out.put_varint(*frame_type);
-                out.put_string(reason);
+                put_quic_varint(out, CONNECTION_CLOSE_TRANSPORT);
+                put_quic_varint(out, *error_code);
+                put_quic_varint(out, *frame_type);
+                out.put_string(reason)
+                    .expect("a string is shorter than 2^62 bytes");
             }
             Frame::ConnectionClose(ConnectionClose::Application { error_code, reason }) => {
-                out.put_varint(CONNECTION_CLOSE_APPLICATION);
-                out.put_varint(*error_code);
-                out.put_string(reason);
+                put_quic_varint(out, CONNECTION_CLOSE_APPLICATION);
+                put_quic_varint(out, *error_code);
+                out.put_string(reason)
+                    .expect("a string is shorter than 2^62 bytes");
             }
             Frame::Datagram { data } => {
-                out.put_varint(DATAGRAM_WITH_LENGTH);
-                out.put_varint(data.len() as u64);
+                put_quic_varint(out, DATAGRAM_WITH_LENGTH);
+                put_quic_varint(out, data.len() as u64);
                 out.put_slice(data);
             }
             Frame::TransportParameters(parameters) => {
                 let encoded = parameters.encode();
-                out.put_varint(QX_TRANSPORT_PARAMETERS);
-                out.put_varint(encoded.len() as u64);
+                put_quic_varint(out, QX_TRANSPORT_PARAMETERS);
+                put_quic_varint(out, encoded.len() as u64);
                 out.put_slice(&encoded);
             }
             Frame::Ping { sequence } => {
-                out.put_varint(QX_PING);
-                out.put_varint(*sequence);
+                put_quic_varint(out, QX_PING);
+                put_quic_varint(out, *sequence);
             }
             Frame::PingResponse { sequence } => {
-                out.put_varint(QX_PING_RESPONSE);
-                out.put_varint(*sequence);
+                put_quic_varint(out, QX_PING_RESPONSE);
+                put_quic_varint(out, *sequence);
             }
         }
     }
@@ -371,6 +379,14 @@ pub(crate) fn stream_frame_overhead(stream_id: u64, offset: u64, data_len: usize
 /// The bytes a DATAGRAM frame adds to `data_len` bytes of payload.
 pub(crate) fn datagram_frame_overhead(data_len: usize) -> usize {
     1 + varint_len(data_len as u64)
+}
+
+/// Every value a QMux frame carries is below 2^62 (RFC 9000 §16): stream
+/// IDs, offsets and flow-control limits this endpoint counts, error codes it
+/// picks or decoded from a QUIC varint, and its PING sequence numbers.
+pub(super) fn put_quic_varint(out: &mut BytesMut, value: u64) {
+    out.put_varint(value)
+        .expect("a QMux frame value is below 2^62");
 }
 
 pub(crate) fn varint_len(value: u64) -> usize {
@@ -544,7 +560,7 @@ mod tests {
     fn the_transport_parameters_frame_type_is_the_documented_wire_bytes() {
         // Act
         let mut out = BytesMut::new();
-        out.put_varint(QX_TRANSPORT_PARAMETERS);
+        out.put_varint(QX_TRANSPORT_PARAMETERS).unwrap();
 
         // Assert
         assert_eq!(&out[..], b"\xffQS0\r\n\r\n");

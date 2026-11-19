@@ -189,7 +189,7 @@ impl SetupParameter {
             number_of_parameters += 1;
         }
         let mut result_bytes = BytesMut::new();
-        result_bytes.put_varint(number_of_parameters);
+        result_bytes.put_varint(number_of_parameters)?;
         result_bytes.unsplit(buf);
         Ok(result_bytes)
     }

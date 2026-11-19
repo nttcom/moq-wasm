@@ -38,9 +38,9 @@ impl RequestError {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
-        payload.put_varint(self.error_code);
-        util::put_reason_phrase(&mut payload, &self.reason_phrase);
+        payload.put_varint(self.request_id)?;
+        payload.put_varint(self.error_code)?;
+        util::put_reason_phrase(&mut payload, &self.reason_phrase)?;
         Ok(payload)
     }
 }

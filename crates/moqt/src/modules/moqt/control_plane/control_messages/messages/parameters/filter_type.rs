@@ -86,15 +86,15 @@ impl FilterType {
         let mut payload = BytesMut::new();
         match self {
             FilterType::LargestObject => {
-                payload.put_varint(FilterTypeValue::LatestObject.into());
+                payload.put_varint(FilterTypeValue::LatestObject.into())?;
                 Ok(payload)
             }
             FilterType::NextGroupStart => {
-                payload.put_varint(FilterTypeValue::LatestGroup.into());
+                payload.put_varint(FilterTypeValue::LatestGroup.into())?;
                 Ok(payload)
             }
             FilterType::AbsoluteStart { location } => {
-                payload.put_varint(FilterTypeValue::AbsoluteStart.into());
+                payload.put_varint(FilterTypeValue::AbsoluteStart.into())?;
                 let bytes = location.encode()?;
                 payload.unsplit(bytes);
                 Ok(payload)
@@ -103,10 +103,10 @@ impl FilterType {
                 location,
                 end_group,
             } => {
-                payload.put_varint(FilterTypeValue::AbsoluteRange.into());
+                payload.put_varint(FilterTypeValue::AbsoluteRange.into())?;
                 let bytes = location.encode()?;
                 payload.unsplit(bytes);
-                payload.put_varint(*end_group);
+                payload.put_varint(*end_group)?;
                 Ok(payload)
             }
         }

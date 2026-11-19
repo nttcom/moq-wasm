@@ -12,8 +12,8 @@ pub(super) fn get_reason_phrase(buf: &mut impl Buf) -> anyhow::Result<String> {
 }
 
 /// Truncates at a character boundary to the 1024 bytes §1.4.3 allows.
-pub(super) fn put_reason_phrase(buf: &mut BytesMut, reason: &str) {
-    buf.put_string(name_reader::truncate_reason_phrase(reason));
+pub(super) fn put_reason_phrase(buf: &mut BytesMut, reason: &str) -> anyhow::Result<()> {
+    buf.put_string(name_reader::truncate_reason_phrase(reason))
 }
 
 /// A Track Namespace or Track Namespace Prefix: 1 to 32 fields (§2.4.1, §9.28).

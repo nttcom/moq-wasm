@@ -55,9 +55,9 @@ impl ClientSetup {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.supported_versions.len() as u64);
+        payload.put_varint(self.supported_versions.len() as u64)?;
         for supported_version in &self.supported_versions {
-            payload.put_varint(*supported_version as u64);
+            payload.put_varint(*supported_version as u64)?;
         }
         payload.unsplit(self.setup_parameters.encode()?);
         Ok(payload)

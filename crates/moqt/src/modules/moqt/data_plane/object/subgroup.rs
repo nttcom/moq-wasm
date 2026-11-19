@@ -206,13 +206,13 @@ impl SubgroupHeader {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.put_varint(self.message_type.get_value());
-        buf.put_varint(self.track_alias);
-        buf.put_varint(self.group_id);
+        buf.put_varint(self.message_type.get_value())?;
+        buf.put_varint(self.track_alias)?;
+        buf.put_varint(self.group_id)?;
         if self.message_type.has_subgroup_id()
             && let SubgroupId::Value(id) = self.subgroup_id
         {
-            buf.put_varint(id);
+            buf.put_varint(id)?;
         }
         buf.put_u8(self.publisher_priority);
         Ok(buf)
@@ -333,15 +333,15 @@ impl SubgroupObjectHead {
 
     pub(crate) fn encode(&self, message_type: SubgroupHeaderType) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.put_varint(self.object_id_delta);
+        buf.put_varint(self.object_id_delta)?;
         if message_type.has_extensions() {
             buf.extend_from_slice(&self.extension_headers.encode()?);
         }
         match self.body {
-            ObjectBody::Payload { length } => buf.put_varint(length as u64),
+            ObjectBody::Payload { length } => buf.put_varint(length as u64)?,
             ObjectBody::Status { code } => {
-                buf.put_varint(0);
-                buf.put_varint(code);
+                buf.put_varint(0)?;
+                buf.put_varint(code)?;
             }
         }
         Ok(buf)
@@ -642,8 +642,8 @@ mod tests {
             // Arrange
             let header = SubgroupHeader::new(1, 2, SubgroupId::None, 128, false, false);
             let mut buf = BytesMut::new();
-            buf.put_varint(0);
-            buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1);
+            buf.put_varint(0).unwrap();
+            buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1).unwrap();
 
             // Act
             let result = SubgroupObjectHead::decode(

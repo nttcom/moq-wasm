@@ -36,7 +36,7 @@ impl ServerSetup {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.selected_version as u64);
+        payload.put_varint(self.selected_version as u64)?;
         payload.extend_from_slice(&self.setup_parameters.encode()?);
         Ok(payload)
     }

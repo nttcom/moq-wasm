@@ -29,7 +29,7 @@ impl GoAway {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_string(&self.new_session_uri);
+        payload.put_string(&self.new_session_uri)?;
         Ok(payload)
     }
 }
@@ -48,7 +48,7 @@ mod tests {
             let buf = message.encode().unwrap();
 
             let mut expected = BytesMut::new();
-            expected.put_varint(26); // New Session URI Length (i)
+            expected.put_varint(26).unwrap(); // New Session URI Length (i)
             expected.extend_from_slice(b"https://relay.example/next");
             assert_eq!(buf.as_ref(), expected.as_ref());
         }

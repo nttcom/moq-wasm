@@ -104,7 +104,7 @@ impl DatagramField {
             buf.put_slice(END_OF_GROUP_PREFIX);
         }
         if let Some(object_id) = self.object_id {
-            buf.put_varint(object_id);
+            buf.put_varint(object_id)?;
         }
         buf.put_u8(self.publisher_priority);
         if let Some(extension_headers) = extension_headers {
