@@ -4,8 +4,7 @@ use std::{
 };
 
 use moqt::{
-    AuthorizationToken, AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint,
-    NATIVE, Version,
+    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, NATIVE, Version,
     client::{self, FetchError, GroupStartOptions, PublishTrackOptions, SubscribeOptions},
     object::GroupOrder,
     publish::Retention,
@@ -29,10 +28,6 @@ use crate::{
     subscription::Subscription,
     track_writer::TrackWriter,
 };
-
-/// The relay takes a TRACK_STATUS that carries an AUTHORIZATION TOKEN as a
-/// token refresh; it reads neither the namespace `[app id]` nor this name.
-const REFRESH_TRACK_NAME: &str = "update_auth_token";
 
 /// Connects to a relay: `moqt://` for raw QUIC, `https://` for WebTransport.
 /// The session follows the relay's GOAWAY by itself, presenting the latest
@@ -362,11 +357,7 @@ impl Session {
         self.scope.future_into_py(py, async move {
             session
                 .subscriber()
-                .track_status(
-                    app_id,
-                    REFRESH_TRACK_NAME.to_string(),
-                    vec![AuthorizationToken::use_value_utf8(&token)],
-                )
+                .refresh_authorization_token(app_id, &token)
                 .await
                 .map_err(anyhow::Error::from)?;
             Ok(())

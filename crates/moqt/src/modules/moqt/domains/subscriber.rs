@@ -304,6 +304,24 @@ impl Subscriber {
         .await
     }
 
+    /// Sends `token` to the relay as a refresh of this session's token: a
+    /// TRACK_STATUS for namespace `[app_id]` carrying it as an AUTHORIZATION
+    /// TOKEN. The relay reads neither the namespace nor the track name. A
+    /// refused token fails with `RequestFailure::Rejected`.
+    pub async fn refresh_authorization_token(
+        &self,
+        app_id: String,
+        token: &str,
+    ) -> Result<(), RequestFailure> {
+        self.track_status(
+            app_id,
+            "update_auth_token".to_string(),
+            vec![AuthorizationToken::use_value_utf8(token)],
+        )
+        .await
+        .map(drop)
+    }
+
     #[tracing::instrument(
         level = "debug",
         name = "moqt.subscriber.track_status",
