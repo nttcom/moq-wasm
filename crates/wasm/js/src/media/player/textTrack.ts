@@ -5,7 +5,7 @@ import { TEXT_PRIORITY } from './trackPriority'
 
 export type TextTrackHandler = (text: string, groupId: bigint) => void
 
-export type TextTrackOptions = {
+type TextTrackOptions = {
   /// Reads the group the largest object is in from its first object too
   /// (SUBSCRIBE with a joining FETCH, draft-ietf-moq-msf-02 §5).
   currentGroup?: boolean

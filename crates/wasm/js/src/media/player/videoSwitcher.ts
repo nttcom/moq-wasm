@@ -10,7 +10,7 @@ export type VideoSwitchSubscriptions = Pick<
   'get' | 'open' | 'close' | 'handOver' | 'requestNewGroup' | 'endBeforeGroup' | 'retire'
 >
 
-export type VideoSwitchHost = {
+type VideoSwitchHost = {
   subscriptions: VideoSwitchSubscriptions
   play(trackName: string, groupId: bigint, object: ReceivedObject): void
   handedOver(next: TrackSubscription, start: SpliceStart): void

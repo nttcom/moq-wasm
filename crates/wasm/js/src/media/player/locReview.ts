@@ -8,7 +8,7 @@ import type { LogLevel } from './trackContext'
 const REVIEW_VIDEO_AHEAD_FRAMES = 30
 const REVIEW_HANDOVER_MICROS = 500_000
 
-export type LocReviewCallbacks = {
+type LocReviewCallbacks = {
   onFrameShown(captureMicros: number, playhead: Playhead | undefined): void
   onLog(level: LogLevel, message: string): void
 }

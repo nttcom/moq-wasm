@@ -93,7 +93,7 @@ export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList: MsfInitDat
 /// The Base64 init data of the `initDataList` entry a track's `initRef` names
 /// (draft-ietf-moq-msf-02 §5.2.14). A missing or non-`inline` entry returns
 /// `undefined` and logs a warning instead of rejecting the catalog.
-export function resolveInitData(catalog: unknown, track: Record<string, unknown>): string | undefined {
+function resolveInitData(catalog: unknown, track: Record<string, unknown>): string | undefined {
   const initRef = asString(track.initRef)
   if (!initRef) {
     return undefined

@@ -1,4 +1,4 @@
-export type LocValue = { varint: number } | { bytes: Uint8Array }
+type LocValue = { varint: number } | { bytes: Uint8Array }
 
 export type LocExtension = { id: number; value: LocValue }
 

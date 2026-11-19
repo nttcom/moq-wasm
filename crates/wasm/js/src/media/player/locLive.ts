@@ -15,7 +15,7 @@ const ARRIVAL_GAP_WINDOW_MS = 10_000
 
 export type DecodedFrameIds = { groupId: bigint; objectId: bigint }
 
-export type LocLiveCallbacks = {
+type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void
   onFrameShown(ids: DecodedFrameIds | undefined, captureMicros: number): void
   /// The decoder lost group `groupId` and drops its deltas until a keyframe.
