@@ -3,6 +3,7 @@
 
 import { temporaryAppToken, temporaryAppsUrl } from './access'
 import { icon } from './icon'
+import { getErrorMessage } from './page'
 
 export type BotState = 'starting' | 'running' | 'stopping' | 'finished' | 'failed'
 
@@ -137,7 +138,7 @@ export class RoomBotButton {
         this.notice.textContent =
           error instanceof BotsError && error.status === 503
             ? '空いているボットがありません'
-            : `ボットを起動できません: ${error instanceof Error ? error.message : String(error)}`
+            : `ボットを起動できません: ${getErrorMessage(error)}`
         this.notice.style.display = ''
       }
       this.render()
