@@ -544,11 +544,219 @@ pub(super) mod tests {
     }
 
     mod properties {
-        use bytes::{Buf, BytesMut};
-        use proptest::{prelude::*, sample::Index};
+        use bytes::{Buf, BufMut, Bytes, BytesMut};
+        use proptest::{
+            collection::vec,
+            option,
+            prelude::*,
+            sample::{Index, select},
+        };
 
-        use super::super::{get_vi64, put_vi64};
+        use super::super::{get_track_properties, get_vi64, put_track_properties, put_vi64};
+        use crate::modules::moqt::control_plane::control_messages::{
+            key_value_pair::{KeyValuePair, VariantType},
+            messages::parameters::{
+                group_order::GroupOrder,
+                track_properties::{
+                    DEFAULT_PUBLISHER_GROUP_ORDER, DEFAULT_PUBLISHER_PRIORITY, DYNAMIC_GROUPS,
+                    IMMUTABLE_PROPERTIES, MAX_CACHE_DURATION, OBJECT_DELIVERY_TIMEOUT,
+                    TrackProperties,
+                },
+            },
+        };
         use crate::modules::test_support::object_strategies::vi64;
+
+        /// Writes `value` in `len` bytes, which must hold it (§1.4.1).
+        fn put_vi64_in(buf: &mut BytesMut, value: u64, len: usize) {
+            if len == 9 {
+                buf.put_u8(0xFF);
+                buf.put_u64(value);
+                return;
+            }
+            let mut bytes = value.to_be_bytes();
+            bytes[8 - len] |= !(0xFF >> (len - 1));
+            buf.put_slice(&bytes[8 - len..]);
+        }
+
+        fn shortest_len(value: u64) -> usize {
+            (1..=8).find(|len| value < 1u64 << (7 * len)).unwrap_or(9)
+        }
+
+        fn shortest(value: u64) -> Bytes {
+            let mut buf = BytesMut::new();
+            put_vi64(&mut buf, value);
+            buf.freeze()
+        }
+
+        /// Writes `value` in its shortest encoding plus `padding` bytes, up
+        /// to the 9-byte form.
+        fn put_vi64_padded(buf: &mut BytesMut, value: u64, padding: usize) {
+            put_vi64_in(buf, value, (shortest_len(value) + padding).min(9));
+        }
+
+        /// How many bytes an integer takes beyond its shortest encoding:
+        /// mostly none, otherwise any up to the 9-byte form.
+        fn padding() -> impl Strategy<Value = usize> {
+            prop_oneof![3 => Just(0), 1 => 1..=8usize]
+        }
+
+        /// Mostly the types the accessors read, so a list often repeats one;
+        /// otherwise small types or any type.
+        fn property_type() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                3 => select(vec![
+                    OBJECT_DELIVERY_TIMEOUT,
+                    MAX_CACHE_DURATION,
+                    IMMUTABLE_PROPERTIES,
+                    DEFAULT_PUBLISHER_PRIORITY,
+                    DEFAULT_PUBLISHER_GROUP_ORDER,
+                    DYNAMIC_GROUPS,
+                ]),
+                1 => 0..0x40u64,
+                1 => vi64(),
+            ]
+        }
+
+        /// Mostly small values, which the setters often set again; otherwise any.
+        fn property_value() -> impl Strategy<Value = u64> {
+            prop_oneof![3 => 0..2u64, 1 => vi64()]
+        }
+
+        /// A received property and the bytes its Delta Type and value
+        /// arrived in.
+        #[derive(Debug, Clone)]
+        struct ReceivedProperty {
+            pair: KeyValuePair,
+            delta_type_bytes: Bytes,
+            value_bytes: Bytes,
+        }
+
+        /// Track Properties in ascending type order, each integer in any
+        /// encoding that holds it, and the properties they carry.
+        fn received_properties() -> impl Strategy<Value = (Bytes, Vec<ReceivedProperty>)> {
+            let property = (
+                property_type(),
+                property_value(),
+                vec(any::<u8>(), 0..6),
+                padding(),
+                padding(),
+            );
+            vec(property, 0..12).prop_map(|mut properties| {
+                properties.sort_by_key(|(key, ..)| *key);
+                let mut bytes = BytesMut::new();
+                let mut received = Vec::new();
+                let mut previous = 0;
+                for (key, integer, contents, delta_padding, value_padding) in properties {
+                    let mut delta_type_bytes = BytesMut::new();
+                    put_vi64_padded(&mut delta_type_bytes, key - previous, delta_padding);
+                    let mut value_bytes = BytesMut::new();
+                    let value = if key % 2 == 0 {
+                        put_vi64_padded(&mut value_bytes, integer, value_padding);
+                        VariantType::Even(integer)
+                    } else {
+                        put_vi64_padded(&mut value_bytes, contents.len() as u64, value_padding);
+                        value_bytes.put_slice(&contents);
+                        VariantType::Odd(Bytes::from(contents))
+                    };
+                    bytes.put_slice(&delta_type_bytes);
+                    bytes.put_slice(&value_bytes);
+                    received.push(ReceivedProperty {
+                        pair: KeyValuePair { key, value },
+                        delta_type_bytes: delta_type_bytes.freeze(),
+                        value_bytes: value_bytes.freeze(),
+                    });
+                    previous = key;
+                }
+                (bytes.freeze(), received)
+            })
+        }
+
+        #[derive(Debug, Clone)]
+        enum Setter {
+            DeliveryTimeout(Option<u64>),
+            MaxCacheDuration(Option<u64>),
+            GroupOrder(Option<GroupOrder>),
+            DynamicGroups(bool),
+        }
+
+        fn setter() -> impl Strategy<Value = Setter> {
+            let group_order = option::of(select(vec![
+                GroupOrder::Publisher,
+                GroupOrder::Ascending,
+                GroupOrder::Descending,
+            ]));
+            prop_oneof![
+                option::of(property_value()).prop_map(Setter::DeliveryTimeout),
+                option::of(property_value()).prop_map(Setter::MaxCacheDuration),
+                group_order.prop_map(Setter::GroupOrder),
+                any::<bool>().prop_map(Setter::DynamicGroups),
+            ]
+        }
+
+        impl Setter {
+            fn apply(&self, properties: &mut TrackProperties) {
+                match *self {
+                    Self::DeliveryTimeout(value) => properties.set_delivery_timeout(value),
+                    Self::MaxCacheDuration(value) => properties.set_max_cache_duration(value),
+                    Self::GroupOrder(value) => properties.set_group_order(value),
+                    Self::DynamicGroups(value) => properties.set_dynamic_groups(value),
+                }
+            }
+
+            /// The type it sets and the one value of that type it leaves,
+            /// `None` leaving none.
+            fn sets(&self) -> (u64, Option<u64>) {
+                match *self {
+                    Self::DeliveryTimeout(value) => (OBJECT_DELIVERY_TIMEOUT, value),
+                    Self::MaxCacheDuration(value) => (MAX_CACHE_DURATION, value),
+                    Self::GroupOrder(value) => (
+                        DEFAULT_PUBLISHER_GROUP_ORDER,
+                        match value {
+                            Some(GroupOrder::Ascending) => Some(1),
+                            Some(GroupOrder::Descending) => Some(2),
+                            Some(GroupOrder::Publisher) | None => None,
+                        },
+                    ),
+                    Self::DynamicGroups(value) => (DYNAMIC_GROUPS, value.then_some(1)),
+                }
+            }
+        }
+
+        /// A property expected to be sent: the index of the received
+        /// property it is, or `None` for one a setter added.
+        struct Expected {
+            pair: KeyValuePair,
+            received: Option<usize>,
+        }
+
+        /// A setter leaves the properties of its type alone when they are
+        /// already just its value, and otherwise replaces them with its value
+        /// after the smaller types.
+        fn expect_set(expected: &mut Vec<Expected>, (key, value): (u64, Option<u64>)) {
+            let wanted = value.map(|value| KeyValuePair {
+                key,
+                value: VariantType::Even(value),
+            });
+            let held: Vec<&KeyValuePair> = expected
+                .iter()
+                .map(|property| &property.pair)
+                .filter(|pair| pair.key == key)
+                .collect();
+            if held == Vec::from_iter(wanted.as_ref()) {
+                return;
+            }
+            expected.retain(|property| property.pair.key != key);
+            if let Some(pair) = wanted {
+                let at = expected.partition_point(|property| property.pair.key < key);
+                expected.insert(
+                    at,
+                    Expected {
+                        pair,
+                        received: None,
+                    },
+                );
+            }
+        }
 
         proptest! {
             #[test]
@@ -565,6 +773,67 @@ pub(super) mod tests {
                 // Assert
                 prop_assert_eq!(decoded.ok(), Some(value));
                 prop_assert_eq!(chunks.remaining(), 0);
+            }
+
+            #[test]
+            fn set_track_properties_go_out_afresh_and_the_others_in_their_received_bytes(
+                (bytes, received) in received_properties(),
+                setters in vec(setter(), 0..4),
+            ) {
+                // Arrange
+                let mut properties = get_track_properties(&mut bytes.clone()).unwrap();
+                prop_assert!(properties.iter().eq(received.iter().map(|property| &property.pair)));
+                let mut expected: Vec<Expected> = received
+                    .iter()
+                    .enumerate()
+                    .map(|(index, property)| Expected {
+                        pair: property.pair.clone(),
+                        received: Some(index),
+                    })
+                    .collect();
+
+                // Act
+                for setter in &setters {
+                    setter.apply(&mut properties);
+                    expect_set(&mut expected, setter.sets());
+                }
+                let mut sent = BytesMut::new();
+                put_track_properties(&mut sent, &properties).unwrap();
+
+                // Assert: §2.5, a property no setter changed goes out in the
+                // bytes it arrived in, its Delta Type too while the type
+                // before it is the same; a set one in the shortest encoding
+                if setters.is_empty() {
+                    prop_assert_eq!(&sent[..], &bytes[..]);
+                }
+                let sent = get_track_properties(&mut sent.freeze()).unwrap();
+                prop_assert!(sent.iter().eq(expected.iter().map(|property| &property.pair)));
+                let mut previous_key = 0;
+                for (entry, property) in sent.entries().iter().zip(&expected) {
+                    let encoding = entry.received.as_ref().unwrap();
+                    let delta = property.pair.key - previous_key;
+                    match property.received {
+                        Some(index) => {
+                            let received_previous_key =
+                                index.checked_sub(1).map_or(0, |previous| received[previous].pair.key);
+                            let delta_type_bytes = if received_previous_key == previous_key {
+                                received[index].delta_type_bytes.clone()
+                            } else {
+                                shortest(delta)
+                            };
+                            prop_assert_eq!(&encoding.delta_type_bytes, &delta_type_bytes);
+                            prop_assert_eq!(&encoding.value_bytes, &received[index].value_bytes);
+                        }
+                        None => {
+                            let VariantType::Even(value) = property.pair.value else {
+                                unreachable!("the setters set integer properties only");
+                            };
+                            prop_assert_eq!(&encoding.delta_type_bytes, &shortest(delta));
+                            prop_assert_eq!(&encoding.value_bytes, &shortest(value));
+                        }
+                    }
+                    previous_key = property.pair.key;
+                }
             }
         }
     }
