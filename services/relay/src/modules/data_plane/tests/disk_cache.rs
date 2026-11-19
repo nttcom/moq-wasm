@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use bytes::Bytes;
-use moqt::object::ObjectStatus;
+use moqt::{TrackProperties, object::ObjectStatus};
 
 use crate::modules::{
     data_plane::cache::{
@@ -204,9 +204,41 @@ async fn a_publisher_returning_within_the_grace_period_keeps_the_persisted_objec
     ingest_group(&track.harness, 0, b"resumed").await;
     wait_until_stored(track.harness.cache(), location(0, 0)).await;
     track.harness.cache().publisher_left();
-    track.harness.cache().begin_live_ingest();
+    track
+        .harness
+        .cache()
+        .publisher_started(2, TrackProperties::default());
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(10)).await;
+
+    // Act
+    track.harness.cache().evict(Duration::from_secs(60));
+
+    // Assert
+    assert_eq!(
+        track.harness.cache().largest_location(),
+        Some(location(0, 0))
+    );
+}
+
+// current_thread: `tokio::time::pause` needs it.
+#[tokio::test]
+async fn a_publisher_returning_after_the_grace_period_keeps_what_it_fills_before_its_first_live_object()
+ {
+    // Arrange: the publisher returns after the grace period and only a
+    // joining FETCH fills the cache, as for a catalog, which sends its next
+    // live object only when it changes
+    let track = disk_backed_track("publisher-returned-late", u64::MAX, PERSIST);
+    track.harness.cache().publisher_left();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(10)).await;
+    tokio::time::resume();
+    track
+        .harness
+        .cache()
+        .publisher_started(2, TrackProperties::default());
+    ingest_group(&track.harness, 0, b"catalog").await;
+    wait_until_stored(track.harness.cache(), location(0, 0)).await;
 
     // Act
     track.harness.cache().evict(Duration::from_secs(60));

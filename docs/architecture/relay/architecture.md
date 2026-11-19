@@ -1154,10 +1154,13 @@ owned by the track's `Producer`:
     FETCH stream or makes a live read skip the object.
   - End of a broadcast: a FETCH after it need not be served. Session cleanup
     and an upstream PUBLISH_DONE call `TrackCacheStore::publisher_left` for
-    a track no publisher serves any more; once 10 s pass without an ingest
-    beginning again, eviction drops the track's persisted objects with their
-    knowledge and sends `PurgeTrack`, which deletes the track's segments. A
-    publisher that reconnects within that time keeps them. A
+    a track no publisher serves any more; once 10 s pass without a
+    publisher's ingest starting again (`TrackCache::publisher_started`),
+    eviction drops the track's persisted objects with their knowledge and
+    sends `PurgeTrack`, which deletes the track's segments. A publisher that
+    reconnects within that time keeps them, and one that reconnects later
+    keeps what it fills in before its first live object, such as the catalog
+    a joining FETCH brought. A
     subscriber-driven upstream release is not a publisher leaving and purges
     nothing.
   - Nothing survives a restart: the index lives in memory, and startup deletes

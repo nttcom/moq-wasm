@@ -136,12 +136,14 @@ impl TrackCache {
 
     /// A publisher's ingest started with what its SUBSCRIBE_OK or PUBLISH
     /// said. Each set replaces the served one whole: draft-18 §2.5 forbids
-    /// merging sets.
+    /// merging sets. Cancels a pending purge from `publisher_left`, so the
+    /// objects the publisher fills in before its first live one stay.
     pub(crate) fn publisher_started(
         &self,
         publisher_session_id: SessionId,
         track_properties: TrackProperties,
     ) {
+        self.write().publisher_left_at = None;
         let mut served = self.served_track_properties();
         served
             .publishers
@@ -530,12 +532,11 @@ impl TrackCache {
 
     pub(crate) fn begin_live_ingest(&self) {
         self.live_ingest_count.fetch_add(1, AtomicOrdering::Relaxed);
-        self.write().publisher_left_at = None;
     }
 
     /// A FETCH after the broadcast ended need not be served, so eviction
-    /// drops the persisted objects and their disk segments once no ingest
-    /// came back within `PUBLISHER_GONE_GRACE`; a publisher reconnecting in
+    /// drops the persisted objects and their disk segments once no publisher
+    /// started within `PUBLISHER_GONE_GRACE`; a publisher reconnecting in
     /// that time keeps them.
     pub(crate) fn publisher_left(&self) {
         self.write().publisher_left_at = Some(Instant::now());
