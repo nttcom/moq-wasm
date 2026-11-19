@@ -1,6 +1,5 @@
 import { VideoJitterBuffer, type VideoJitterBufferEntry } from '../videoJitterBuffer'
 import type { SubgroupWorkerMessage } from '../jitterBufferTypes'
-import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
 import { differsOnlyInLevel } from './codecLevel'
 import { videoDecoderConfig } from './videoDecoderConfig'
@@ -9,10 +8,6 @@ import { workerLog } from '../../../core/log'
 import { KeyFrameWait } from './keyFrameWait'
 
 const TARGET = 'moq-wasm::media::video_decoder'
-
-const addVideoBytes = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', kbps })
-})
 
 const POP_INTERVAL_MS = 33
 const MISSING_META_WARN_SUPPRESS_AFTER_RESET_MS = 3000
@@ -231,7 +226,6 @@ self.onmessage = (event: MessageEvent<WorkerMessage>) => {
       return
     case 'object': {
       const { groupId, subgroupStreamObject: object } = data
-      addVideoBytes(object.objectPayloadLength)
       if (!object.objectPayloadLength) {
         return
       }
