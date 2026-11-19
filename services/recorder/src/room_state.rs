@@ -277,4 +277,83 @@ mod tests {
         legacy["format"] = json!(17);
         assert!(RoomRecord::from_json(&legacy).is_err());
     }
+
+    #[test]
+    fn a_record_and_a_composite_state_keep_their_json_shape() {
+        // Arrange
+        let record = RoomRecord {
+            id: "1700000000000-a1b2c3".to_string(),
+            namespace_prefix: "anon/research".to_string(),
+            layout: Layout::Combined,
+            format: RecordingFormat::Moq,
+            composite: false,
+            state: RoomState::Recording,
+            members: vec![MemberStatus {
+                namespace: "anon/research/ucchy".to_string(),
+                started_at_ms: 1_700_000_000_100,
+                finished: false,
+                error: None,
+            }],
+            updated_at_ms: 1_700_000_030_000,
+        };
+
+        // Act
+        let record_json = record.to_json().to_string();
+        let waiting = CompositeState::Waiting.to_json().to_string();
+        let skipped = CompositeState::Skipped("no media".to_string())
+            .to_json()
+            .to_string();
+
+        // Assert
+        assert_eq!(
+            record_json,
+            concat!(
+                r#"{"composite":false,"error":null,"format":"moq","id":"1700000000000-a1b2c3","#,
+                r#""layout":"combined","members":[{"error":null,"finished":false,"#,
+                r#""namespace":"anon/research/ucchy","started_at_ms":1700000000100}],"#,
+                r#""namespace_prefix":"anon/research","state":"recording","updated_at_ms":1700000030000}"#,
+            )
+        );
+        assert_eq!(waiting, r#"{"error":null,"state":"waiting"}"#);
+        assert_eq!(skipped, r#"{"error":"no media","state":"skipped"}"#);
+    }
+
+    #[test]
+    fn reads_a_record_with_only_its_required_fields() {
+        // Arrange: a member without finished or error, and a failed composite without error
+        let record = json!({
+            "id": "1700000000000-a1b2c3",
+            "namespace_prefix": "anon/research",
+            "layout": "per-track",
+            "state": "failed",
+            "members": [{ "namespace": "anon/research/ucchy", "started_at_ms": 1 }],
+        });
+        let composite = json!({ "state": "failed" });
+
+        // Act
+        let record = RoomRecord::from_json(&record).unwrap();
+        let composite = CompositeState::from_json(&composite).unwrap();
+
+        // Assert
+        assert_eq!(
+            record,
+            RoomRecord {
+                id: "1700000000000-a1b2c3".to_string(),
+                namespace_prefix: "anon/research".to_string(),
+                layout: Layout::PerTrack,
+                format: RecordingFormat::Mp4,
+                composite: false,
+                state: RoomState::Failed(String::new()),
+                members: vec![MemberStatus {
+                    namespace: "anon/research/ucchy".to_string(),
+                    started_at_ms: 1,
+                    finished: false,
+                    error: None,
+                }],
+                updated_at_ms: 0,
+            }
+        );
+        assert_eq!(composite, CompositeState::Failed(String::new()));
+        assert!(CompositeState::from_json(&json!({ "state": "lost" })).is_err());
+    }
 }

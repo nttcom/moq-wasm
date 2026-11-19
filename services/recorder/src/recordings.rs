@@ -396,4 +396,39 @@ mod tests {
             json!([{ "name": "a.mp4", "size_bytes": 3 }])
         );
     }
+
+    #[tokio::test]
+    async fn a_recording_view_keeps_its_json_shape() {
+        // Arrange: composited, but the composite job has not written its state yet
+        let recordings = recordings(1);
+        let record = RoomRecord {
+            id: "1700000000000-000001".to_string(),
+            namespace_prefix: "app/room".to_string(),
+            layout: Layout::PerTrack,
+            format: RecordingFormat::Mp4,
+            composite: true,
+            state: RoomState::Finished,
+            members: vec![MemberStatus {
+                namespace: "app/room/a".to_string(),
+                started_at_ms: 1_700_000_000_100,
+                finished: true,
+                error: Some("relay gone".to_string()),
+            }],
+            updated_at_ms: now_ms(),
+        };
+
+        // Act
+        let view = recordings.view(record).await.unwrap().to_string();
+
+        // Assert
+        assert_eq!(
+            view,
+            concat!(
+                r#"{"composite":{"error":null,"state":"waiting"},"error":null,"format":"mp4","#,
+                r#""id":"1700000000000-000001","layout":"per-track","members":[{"error":"relay gone","#,
+                r#""finished":true,"namespace":"app/room/a","started_at_ms":1700000000100}],"#,
+                r#""namespace_prefix":"app/room","requested_at_ms":1700000000000,"state":"finished"}"#,
+            )
+        );
+    }
 }

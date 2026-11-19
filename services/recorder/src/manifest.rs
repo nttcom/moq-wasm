@@ -137,6 +137,14 @@ mod tests {
 
         // Assert
         assert_eq!(
+            manifest.to_string(),
+            concat!(
+                r#"{"members":[{"files":[{"capture_origin_us":1000,"key":"1/anon/room/a/10-1.mp4"}],"#,
+                r#""namespace":"anon/room/a","screen_share_files":[{"capture_origin_us":3000,"#,
+                r#""key":"1/anon/room/a/screenshare/10-1.mp4"}]}]}"#,
+            )
+        );
+        assert_eq!(
             manifest,
             json!({ "members": [{
                 "namespace": "anon/room/a",
