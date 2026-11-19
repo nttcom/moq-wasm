@@ -911,20 +911,7 @@ fn update_baseline(
 }
 
 fn filter_range(filter: FilterType) -> (Location, u64) {
-    match filter {
-        FilterType::AbsoluteStart { location } => (location, 0),
-        FilterType::AbsoluteRange {
-            location,
-            end_group,
-        } => (location, end_group + 1),
-        FilterType::LargestObject | FilterType::NextGroupStart => (
-            Location {
-                group_id: 0,
-                object_id: 0,
-            },
-            0,
-        ),
-    }
+    (filter.start_location(None), filter.update_end_group())
 }
 
 /// §10.9: a REQUEST_UPDATE carries only the parameters that change, while
@@ -1394,5 +1381,26 @@ mod tests {
             }
         );
         assert_eq!(update.end_group, 8);
+    }
+
+    #[test]
+    fn a_range_to_the_largest_group_id_applies_as_an_open_end() {
+        // Arrange
+        let mut baseline = update_baseline(2, 10, true, FilterType::LargestObject, None);
+        let start = Location {
+            group_id: 4,
+            object_id: 1,
+        };
+        let parameters = vec![Parameter::SubscriptionFilter(FilterType::AbsoluteRange {
+            location: start,
+            end_group: u64::MAX,
+        })];
+
+        // Act
+        let (update, _) = apply_update(&mut baseline, 6, parameters);
+
+        // Assert: the last group plus 1 does not fit in a u64, and an open end holds the same groups
+        assert_eq!(update.start_location, start);
+        assert_eq!(update.end_group, 0);
     }
 }

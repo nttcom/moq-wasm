@@ -48,6 +48,17 @@ impl FilterType {
         }
     }
 
+    /// The End Group of a SUBSCRIBE_UPDATE stating this filter's range
+    /// (draft-14 §9.10): the last group plus 1, or 0 for an open end. A range
+    /// up to the largest Group ID holds the same groups as an open one, so
+    /// it is 0 too.
+    pub(crate) fn update_end_group(&self) -> u64 {
+        match self {
+            Self::AbsoluteRange { end_group, .. } => end_group.checked_add(1).unwrap_or(0),
+            Self::LargestObject | Self::NextGroupStart | Self::AbsoluteStart { .. } => 0,
+        }
+    }
+
     pub fn decode(bytes: &mut std::io::Cursor<&[u8]>) -> anyhow::Result<Self> {
         let filter_type_value = bytes.try_get_varint().context("filter type")?;
         let value = FilterTypeValue::try_from(filter_type_value).context("filter type value")?;

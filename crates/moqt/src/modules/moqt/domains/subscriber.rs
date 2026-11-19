@@ -1142,10 +1142,7 @@ fn repeated_update(subscription: &Subscription) -> SubscribeUpdateOption {
     let filter_type = subscription.filter_type();
     SubscribeUpdateOption {
         start_location: filter_type.start_location(largest),
-        end_group: match filter_type {
-            FilterType::AbsoluteRange { end_group, .. } => end_group + 1,
-            _ => 0,
-        },
+        end_group: filter_type.update_end_group(),
         subscriber_priority: subscription.subscriber_priority(),
         forward: subscription.forward(),
     }
