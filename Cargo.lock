@@ -549,6 +549,7 @@ dependencies = [
  "auth-token",
  "aws-lc-rs",
  "base64 0.23.1",
+ "google-cloud",
  "http-body-util",
  "http-server",
  "hyper",
