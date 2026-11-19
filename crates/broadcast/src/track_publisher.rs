@@ -535,6 +535,24 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn audio_published_again_after_its_removal_starts_a_group_at_once() {
+        // Arrange
+        let mut publisher = publisher();
+        let first = publisher.audio_group(0);
+        let audio = publisher.tracks.audio.clone();
+
+        // Act
+        publisher.remove_track(&audio).await.unwrap();
+        let again = publisher.audio_group(20_000);
+
+        // Assert
+        let Some(GroupBoundary::At(first)) = first else {
+            panic!("expected the first audio sample to start a group");
+        };
+        assert_eq!(again, Some(GroupBoundary::At(first + 1)));
+    }
+
     #[test]
     fn audio_waits_for_the_keyframe_a_rendition_numbered_before_the_video_configuration() {
         // Arrange

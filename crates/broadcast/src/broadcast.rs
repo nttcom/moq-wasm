@@ -779,8 +779,27 @@ mod tests {
         assert_eq!(alt_group("video"), alt_group("video_low"));
         assert_eq!(alt_group("screen"), alt_group("screen_low"));
         assert_ne!(alt_group("video"), alt_group("screen"));
-        assert_ne!(alt_group("video_cmaf"), alt_group("video"));
+        assert_eq!(
+            alt_group("video_cmaf"),
+            alt_group("video").map(|group| group + 1)
+        );
         assert_ne!(alt_group("video_cmaf"), alt_group("screen"));
+    }
+
+    #[test]
+    fn a_switching_set_of_one_video_takes_no_alt_group() {
+        // Arrange
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([("video".to_string(), video("video"))]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert
+        assert_eq!(track_named(&catalog, "video").alt_group, None);
+        assert_eq!(track_named(&catalog, "video_cmaf").alt_group, None);
     }
 
     #[test]
@@ -1110,6 +1129,57 @@ mod tests {
     }
 
     #[test]
+    fn a_video_without_a_bitrate_scales_the_largest_video_of_its_switching_set() {
+        // Arrange: scaled from the 360p instead, the 1080p would list 4.5 Mbps
+        let sized = |width, height, bitrate| VideoTrackInfo {
+            width,
+            height,
+            bitrate,
+            ..video("video")
+        };
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                ("video".to_string(), sized(1920, 1080, None)),
+                ("video_360p".to_string(), sized(640, 360, Some(500_000))),
+                ("video_720p".to_string(), sized(1280, 720, Some(3_000_000))),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert: the 720p's 3 Mbps scaled by the 2.25 times its pixels the 1080p has
+        assert_eq!(track_named(&catalog, "video").bitrate, Some(6_750_000));
+    }
+
+    #[test]
+    fn a_reference_video_without_pixels_is_not_scaled_from() {
+        // Arrange
+        let metadata = CatalogMetadata {
+            video_tracks: BTreeMap::from([
+                ("video".to_string(), video("video")),
+                (
+                    "video_empty".to_string(),
+                    VideoTrackInfo {
+                        width: 0,
+                        height: 0,
+                        bitrate: Some(1_000_000),
+                        ..video("video")
+                    },
+                ),
+            ]),
+            ..CatalogMetadata::default()
+        };
+
+        // Act
+        let catalog = build_catalog("live/test", &metadata).unwrap();
+
+        // Assert: 0.1 bit per pixel of H.264 at the nominal 30 fps
+        assert_eq!(track_named(&catalog, "video").bitrate, Some(691_200));
+    }
+
+    #[test]
     fn a_video_without_a_known_bitrate_in_its_switching_set_lists_an_estimate() {
         // Arrange
         let mut metadata = metadata_with_video_and_audio();
@@ -1221,6 +1291,7 @@ mod tests {
         assert_eq!(audio.mime_type.as_deref(), Some("audio/pcma"));
         assert_eq!(audio.sample_rate, Some(8_000));
         assert_eq!(audio.channel_config.as_deref(), Some("mono"));
+        assert_eq!(audio.bitrate, Some(64_000));
         assert_eq!(audio.init_ref, None);
         assert!(
             catalog

@@ -214,7 +214,9 @@ mod tests {
     use std::time::Duration;
 
     use bytes::Bytes;
-    use mediapack::{AudioConfig, AudioSample, Timestamp, VideoSample, aac::AudioSpecificConfig};
+    use mediapack::{
+        AudioConfig, AudioSample, StreamSet, Timestamp, VideoSample, aac::AudioSpecificConfig,
+    };
 
     use super::*;
 
@@ -234,6 +236,13 @@ mod tests {
             data: Bytes::from_static(b"aac"),
             pts: Timestamp::ZERO,
             audio_level: None,
+        })
+    }
+
+    fn streams() -> MediaEvent {
+        MediaEvent::Streams(StreamSet {
+            has_video: true,
+            has_audio: true,
         })
     }
 
@@ -419,6 +428,21 @@ mod tests {
         let events = queued(&mut consumer);
         assert_eq!(events.len(), SAMPLE_SLOTS - 4 + 1);
         assert_eq!(events[events.len() - 1], audio());
+    }
+
+    #[test]
+    fn queues_the_stream_set_only_while_there_is_room_for_samples() {
+        // Arrange
+        let (mut open, mut open_consumer) = PublishQueue::open(RelayConnection::new(None), None);
+        let (mut stalled, mut stalled_consumer) = stalled_queue();
+
+        // Act
+        open.push(streams()).unwrap();
+        stalled.push(streams()).unwrap();
+
+        // Assert
+        assert_eq!(queued(&mut open_consumer), [streams()]);
+        assert_eq!(queued(&mut stalled_consumer).len(), SAMPLE_SLOTS);
     }
 
     #[test]

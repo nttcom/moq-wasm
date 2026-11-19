@@ -144,6 +144,64 @@ mod tests {
     }
 
     #[test]
+    fn finish_leaves_the_groups_of_other_tracks_open() {
+        // Arrange
+        let ledger = StreamLedger::default();
+        ledger.open("video", 1);
+        ledger.open("audio", 1);
+
+        // Act
+        ledger.finish("video");
+
+        // Assert
+        let open: Vec<_> = ledger
+            .snapshot()
+            .into_iter()
+            .map(|record| (record.is_open(), record.track_name))
+            .collect();
+        assert_eq!(
+            open,
+            [(false, "video".to_string()), (true, "audio".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_stream_is_forgotten_once_it_has_been_finished_for_the_whole_retention() {
+        // Arrange: the group 1 stream finishes when group 2 opens
+        let ledger = StreamLedger::default();
+        let start = Duration::from_secs(100);
+        ledger.open_at("video", 1, start);
+        ledger.open_at("video", 2, start);
+
+        // Act
+        ledger.open_at(
+            "audio",
+            1,
+            start + FINISHED_RETENTION - Duration::from_millis(1),
+        );
+        let kept = ledger.records.lock().unwrap().len();
+        ledger.open_at("audio", 2, start + FINISHED_RETENTION);
+
+        // Assert
+        let groups: Vec<_> = ledger
+            .records
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|record| (record.track_name.clone(), record.group_id))
+            .collect();
+        assert_eq!(kept, 3);
+        assert_eq!(
+            groups,
+            [
+                ("video".to_string(), 2),
+                ("audio".to_string(), 1),
+                ("audio".to_string(), 2)
+            ]
+        );
+    }
+
+    #[test]
     fn opening_a_group_forgets_streams_finished_past_the_retention() {
         // Arrange
         let ledger = StreamLedger::default();
