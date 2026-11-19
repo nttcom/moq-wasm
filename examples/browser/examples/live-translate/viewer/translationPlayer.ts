@@ -130,7 +130,7 @@ export class TranslationPlayer {
         ...translations.map(({ trackName, audio }) => [trackName, audio?.receivedObjects ?? 0])
       ]),
       frameSize: live?.frameSize,
-      receivedVideoKbps: live?.receivedKbps ?? 0,
+      receivedVideoKbps: live?.receivedKbps.video ?? 0,
       droppedLateAudio:
         (live?.audioDroppedLateSamples ?? 0) +
         this.droppedLateTranslatedAudio +
