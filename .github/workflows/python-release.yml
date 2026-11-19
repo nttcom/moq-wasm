@@ -62,7 +62,7 @@ jobs:
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b
         with:
           maturin-version: v1.16.0
-          rust-toolchain: 1.99.1
+          rust-toolchain: 1.100.0
           manylinux: "2_28"
           working-directory: crates/python
           args: --release --locked --out dist
@@ -80,7 +80,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
       - name: Setup uv
         # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7

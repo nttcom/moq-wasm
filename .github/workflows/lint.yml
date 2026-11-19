@@ -41,7 +41,7 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     container:
-      image: rust:1.99.1@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc
+      image: rust:1.100.0@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
     env:
       RUSTFLAGS: "--cfg=tokio_unstable --cfg=web_sys_unstable_apis"
     steps:
@@ -98,7 +98,7 @@ jobs:
   cargo-audit:
     runs-on: ubuntu-latest
     container:
-      image: rust:1.99.1@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc
+      image: rust:1.100.0@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
     env:
       CARGO_AUDIT_VERSION: 0.22.2
       CARGO_HOME: /usr/local/cargo
@@ -112,7 +112,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: /usr/local/cargo/bin/cargo-audit
-          key: cargo-audit-${{ runner.os }}-rust-1.99.1-${{ env.CARGO_AUDIT_VERSION }}
+          key: cargo-audit-${{ runner.os }}-rust-1.100.0-${{ env.CARGO_AUDIT_VERSION }}
       - name: Install cargo-audit
         if: steps.cache-cargo-audit.outputs.cache-hit != 'true'
         run: cargo install --locked cargo-audit --version "$CARGO_AUDIT_VERSION"
@@ -134,7 +134,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     container:
-      image: rust:1.99.1@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc
+      image: rust:1.100.0@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8
     env:
       RUSTFLAGS: "--cfg=tokio_unstable --cfg=web_sys_unstable_apis"
       CARGO_LLVM_COV_VERSION: 0.9.1
@@ -155,7 +155,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: /usr/local/cargo/bin/cargo-llvm-cov
-          key: cargo-llvm-cov-${{ runner.os }}-rust-1.99.1-${{ env.CARGO_LLVM_COV_VERSION }}
+          key: cargo-llvm-cov-${{ runner.os }}-rust-1.100.0-${{ env.CARGO_LLVM_COV_VERSION }}
       - name: Install cargo-llvm-cov
         if: steps.cache-cargo-llvm-cov.outputs.cache-hit != 'true'
         run: cargo install --locked cargo-llvm-cov --version "$CARGO_LLVM_COV_VERSION"
@@ -218,7 +218,7 @@ jobs:
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          toolchain: 1.99.1
+          toolchain: 1.100.0
           targets: wasm32-unknown-unknown
       - name: Cache Rust build artifacts
         # Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 = v2.9.1
