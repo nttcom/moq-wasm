@@ -1403,4 +1403,124 @@ mod tests {
         assert_eq!(update.start_location, start);
         assert_eq!(update.end_group, 0);
     }
+
+    mod properties {
+        use bytes::BytesMut;
+        use proptest::{collection::vec, prelude::*};
+
+        use super::super::{apply_update, update_baseline};
+        use crate::modules::moqt::control_plane::control_messages::messages::{
+            parameters::{authorization_token::AuthorizationToken, filter_type::FilterType},
+            subscribe_update::SubscribeUpdate,
+        };
+        use crate::modules::moqt::version::draft18::{
+            messages::{Message, decode_message, encode_request_update, take_message},
+            parameters::Parameter,
+        };
+        use crate::modules::test_support::control_message_strategies::{
+            draft18_filter_type, draft18_subscribe_update,
+        };
+        use crate::modules::test_support::object_strategies::vi64;
+
+        fn decode_parameters(mut framed: BytesMut) -> (u64, Vec<Parameter>) {
+            let (message_type, payload) = take_message(&mut framed).unwrap();
+            match decode_message(message_type, payload) {
+                Ok(Message::RequestUpdate(update)) => (update.request_id, update.parameters),
+                decoded => panic!("decoded {decoded:?}"),
+            }
+        }
+
+        /// Why draft-18 cannot send an update of the model: a DELETE token
+        /// has no alias in the model (§10.2.2), and an `end_group` equal to
+        /// the start group, a range of no group, has no End Group Delta
+        /// (§5.1.2).
+        fn unsendable(update: &SubscribeUpdate) -> bool {
+            update
+                .authorization_tokens
+                .contains(&AuthorizationToken::Delete)
+                || (update.end_group != 0 && update.end_group - 1 < update.start_location.group_id)
+        }
+
+        /// Whether a filter holds `group`, as §5.1.2 states it.
+        fn filter_holds(filter: &FilterType, group: u64) -> bool {
+            match filter {
+                FilterType::AbsoluteStart { location } => group >= location.group_id,
+                FilterType::AbsoluteRange {
+                    location,
+                    end_group,
+                } => (location.group_id..=*end_group).contains(&group),
+                FilterType::LargestObject | FilterType::NextGroupStart => true,
+            }
+        }
+
+        /// Whether the model's range holds `group`: `end_group` is the last
+        /// group plus 1, or 0 for an open end.
+        fn update_holds(update: &SubscribeUpdate, group: u64) -> bool {
+            group >= update.start_location.group_id
+                && (update.end_group == 0 || group < update.end_group)
+        }
+
+        proptest! {
+            #[test]
+            fn request_updates_carry_the_model_updates_but_cannot_unset_a_delivery_timeout(
+                delivery_timeout in proptest::option::of(vi64()),
+                updates in vec(draft18_subscribe_update(), 1..8),
+            ) {
+                // Arrange
+                let mut baseline =
+                    update_baseline(2, 128, true, FilterType::LargestObject, delivery_timeout);
+                let mut expected = baseline.clone();
+
+                for update in updates {
+                    // Act
+                    let encoded = encode_request_update(update.request_id, &update);
+
+                    // Assert: a parameter a REQUEST_UPDATE omits keeps its value (§10.9), and NEW_GROUP_REQUEST goes in its own update
+                    prop_assert_eq!(encoded.is_err(), unsendable(&update));
+                    let Ok(framed) = encoded else { continue };
+                    let (request_id, parameters) = decode_parameters(framed);
+                    let (applied, _) = apply_update(&mut baseline, request_id, parameters);
+                    expected = SubscribeUpdate {
+                        subscription_request_id: expected.subscription_request_id,
+                        delivery_timeout: update.delivery_timeout.or(expected.delivery_timeout),
+                        new_group_request: None,
+                        ..update
+                    };
+                    prop_assert_eq!(&applied, &expected);
+                    prop_assert_eq!(&baseline, &expected);
+                }
+            }
+
+            #[test]
+            fn a_received_filter_holds_the_same_groups_once_applied(
+                filter in draft18_filter_type(),
+                group in vi64(),
+            ) {
+                // Arrange: a received range never ends before its start, as End Group Delta is unsigned
+                prop_assume!(!matches!(
+                    filter,
+                    FilterType::AbsoluteRange { location, end_group } if end_group < location.group_id
+                ));
+                let mut baseline = update_baseline(2, 128, true, FilterType::LargestObject, None);
+                let start = match filter {
+                    FilterType::AbsoluteStart { location } | FilterType::AbsoluteRange { location, .. } => location.group_id,
+                    FilterType::LargestObject | FilterType::NextGroupStart => 0,
+                };
+                let end = match filter {
+                    FilterType::AbsoluteRange { end_group, .. } => end_group,
+                    _ => u64::MAX,
+                };
+
+                // Act
+                let (applied, carried) =
+                    apply_update(&mut baseline, 4, vec![Parameter::SubscriptionFilter(filter)]);
+
+                // Assert: a relative filter's groups are decided by the publisher, so its range is every group
+                prop_assert_eq!(carried, Some(filter));
+                for group in [group, start.wrapping_sub(1), start, end, end.wrapping_add(1)] {
+                    prop_assert_eq!(update_holds(&applied, group), filter_holds(&filter, group), "group {}", group);
+                }
+            }
+        }
+    }
 }
