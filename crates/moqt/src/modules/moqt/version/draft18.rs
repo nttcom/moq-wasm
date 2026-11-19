@@ -1613,6 +1613,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscribe_with_an_empty_namespace_field_fails_and_leaves_the_session_open() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-empty-namespace-field", "moqt").await;
+
+        // Act
+        let refused = client
+            .subscriber()
+            .subscribe(
+                "live//room".into(),
+                "video".into(),
+                SubscribeOption::default(),
+            )
+            .await;
+        subscribed(&client, &server, SubscribeOption::default()).await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_fetch_returns_its_objects() {
         // Arrange
         let (client, server) = spawn_connected_draft18_sessions("draft18-fetch", "moqt").await;
@@ -3031,7 +3055,7 @@ mod tests {
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let mut payload = BytesMut::new();
         codec::put_vi64(&mut payload, connection.control.take_request_id().await);
-        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
+        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track").unwrap();
         codec::put_vi64(&mut payload, track_alias);
         parameters::put_parameters(&mut payload, &[]).unwrap();
         codec::put_key_value_pairs(&mut payload, track_properties).unwrap();

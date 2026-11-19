@@ -100,7 +100,7 @@ impl Parameter {
                     anyhow::bail!("draft-18 omits GROUP_ORDER for the publisher's order")
                 }
             }),
-            Self::TrackNamespacePrefix(prefix) => put_track_namespace(buf, prefix),
+            Self::TrackNamespacePrefix(prefix) => put_track_namespace(buf, prefix)?,
             Self::TraceContext(trace_context) => {
                 let value = trace_context.as_ref().map_or("", TraceContext::as_str);
                 put_vi64(buf, value.len() as u64);

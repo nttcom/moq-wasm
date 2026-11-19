@@ -596,7 +596,7 @@ fn encode_full_track_name_request(
 ) -> anyhow::Result<BytesMut> {
     let mut payload = BytesMut::new();
     put_vi64(&mut payload, request_id);
-    put_full_track_name(&mut payload, namespace, name);
+    put_full_track_name(&mut payload, namespace, name)?;
     put_parameters(&mut payload, parameters)?;
     frame(message_type, &payload)
 }
@@ -746,7 +746,7 @@ pub(crate) fn encode_publish(publish: &Publish) -> anyhow::Result<BytesMut> {
         &mut payload,
         &publish.track_namespace_tuple,
         &publish.track_name,
-    );
+    )?;
     put_vi64(&mut payload, publish.track_alias);
     put_parameters(&mut payload, &parameters)?;
     put_track_properties(&mut payload, &publish.track_properties)?;
@@ -822,7 +822,7 @@ pub(crate) fn encode_fetch(fetch: &Fetch) -> anyhow::Result<BytesMut> {
             end_location,
         } => {
             put_vi64(&mut payload, STANDALONE);
-            put_full_track_name(&mut payload, track_namespace, track_name);
+            put_full_track_name(&mut payload, track_namespace, track_name)?;
             put_location(&mut payload, start_location);
             put_location(&mut payload, end_location);
         }
@@ -865,7 +865,7 @@ fn encode_namespace_request(
     parameters.extend(trace_context_parameter(trace_context));
     let mut payload = BytesMut::new();
     put_vi64(&mut payload, request_id);
-    put_track_namespace(&mut payload, namespace);
+    put_track_namespace(&mut payload, namespace)?;
     put_parameters(&mut payload, &parameters)?;
     frame(message_type, &payload)
 }
@@ -896,7 +896,7 @@ pub(crate) fn encode_subscribe_tracks(
 ) -> anyhow::Result<BytesMut> {
     let mut payload = BytesMut::new();
     put_vi64(&mut payload, message.request_id);
-    put_track_namespace(&mut payload, &message.track_namespace_prefix);
+    put_track_namespace(&mut payload, &message.track_namespace_prefix)?;
     let mut parameters = token_parameters(&message.authorization_tokens);
     if !message.forward {
         parameters.push(Parameter::Forward(false));
@@ -915,13 +915,13 @@ pub(crate) fn encode_publish_blocked(
     track_name: &str,
 ) -> anyhow::Result<BytesMut> {
     let mut payload = BytesMut::new();
-    put_full_track_name(&mut payload, suffix, track_name);
+    put_full_track_name(&mut payload, suffix, track_name)?;
     frame(PUBLISH_BLOCKED, &payload)
 }
 
 pub(crate) fn encode_namespace(message_type: u64, suffix: &[String]) -> anyhow::Result<BytesMut> {
     let mut payload = BytesMut::new();
-    put_track_namespace(&mut payload, suffix);
+    put_track_namespace(&mut payload, suffix)?;
     frame(message_type, &payload)
 }
 
@@ -1928,7 +1928,7 @@ mod tests {
         subscribe_ok.put_slice(properties);
         let mut publish = BytesMut::new();
         put_vi64(&mut publish, 1);
-        put_full_track_name(&mut publish, &["ns".to_string()], "track");
+        put_full_track_name(&mut publish, &["ns".to_string()], "track").unwrap();
         put_vi64(&mut publish, 2);
         put_parameters(&mut publish, &[Parameter::Forward(true)]).unwrap();
         publish.put_slice(properties);

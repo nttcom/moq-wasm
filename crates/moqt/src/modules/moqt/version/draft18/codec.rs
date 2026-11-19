@@ -282,12 +282,22 @@ pub(crate) fn get_track_namespace(buf: &mut impl Buf) -> Result<Vec<String>, Dec
     Ok(namespace)
 }
 
-pub(crate) fn put_track_namespace(buf: &mut impl BufMut, namespace: &[String]) {
+/// Fails on an empty field, which §2.4.1 forbids; a namespace of no fields
+/// is written.
+pub(crate) fn put_track_namespace(
+    buf: &mut impl BufMut,
+    namespace: &[String],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !namespace.iter().any(String::is_empty),
+        "empty track namespace field"
+    );
     put_vi64(buf, namespace.len() as u64);
     for field in namespace {
         put_vi64(buf, field.len() as u64);
         buf.put_slice(field.as_bytes());
     }
+    Ok(())
 }
 
 pub(crate) fn get_full_track_name(
@@ -298,10 +308,15 @@ pub(crate) fn get_full_track_name(
     Ok((namespace, name))
 }
 
-pub(crate) fn put_full_track_name(buf: &mut impl BufMut, namespace: &[String], name: &str) {
-    put_track_namespace(buf, namespace);
+pub(crate) fn put_full_track_name(
+    buf: &mut impl BufMut,
+    namespace: &[String],
+    name: &str,
+) -> anyhow::Result<()> {
+    put_track_namespace(buf, namespace)?;
     put_vi64(buf, name.len() as u64);
     buf.put_slice(name.as_bytes());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -311,7 +326,7 @@ pub(super) mod tests {
     use super::{
         DecodeError, KeyValuePair, VariantType, get_full_track_name, get_key_value_pairs,
         get_reason_phrase, get_track_namespace, get_vi64, put_full_track_name, put_key_value_pairs,
-        put_reason_phrase, put_vi64,
+        put_reason_phrase, put_track_namespace, put_vi64,
     };
     use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 
@@ -534,11 +549,40 @@ pub(super) mod tests {
         let mut buf = BytesMut::new();
 
         // Act
-        put_full_track_name(&mut buf, &namespace, "video");
+        put_full_track_name(&mut buf, &namespace, "video").unwrap();
         let decoded = get_full_track_name(&mut buf.freeze());
 
         // Assert
         assert_eq!(decoded, Ok((namespace, "video".to_string())));
+    }
+
+    #[test]
+    fn a_namespace_or_full_track_name_with_an_empty_field_is_not_encoded() {
+        // Arrange
+        let namespace = vec!["live".to_string(), String::new()];
+        let mut buf = BytesMut::new();
+
+        // Act
+        let namespace_result = put_track_namespace(&mut buf, &namespace);
+        let full_name_result = put_full_track_name(&mut buf, &namespace, "video");
+
+        // Assert
+        assert!(namespace_result.is_err());
+        assert!(full_name_result.is_err());
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn a_namespace_of_no_fields_round_trips() {
+        // Arrange
+        let mut buf = BytesMut::new();
+
+        // Act
+        put_track_namespace(&mut buf, &[]).unwrap();
+        let decoded = get_track_namespace(&mut buf.freeze());
+
+        // Assert
+        assert_eq!(decoded, Ok(Vec::new()));
     }
 
     #[test]
@@ -566,7 +610,7 @@ pub(super) mod tests {
         // Arrange
         let namespace = vec!["n".repeat(4000)];
         let mut buf = BytesMut::new();
-        put_full_track_name(&mut buf, &namespace, &"t".repeat(97));
+        put_full_track_name(&mut buf, &namespace, &"t".repeat(97)).unwrap();
 
         // Act / Assert
         assert_eq!(
