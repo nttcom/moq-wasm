@@ -889,8 +889,16 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   `ClientTelemetry`）。10秒ごとと `pagehide` のとき（`sendBeacon`）に、session のトークンごとに
   1レポートにまとめる。401 が返ったトークンのレコードは、以後トークンなしで送る。`onLog` と
   `onSpan` も渡せば両方に届く。
-  - `telemetry.stats` を渡すと、送るたびに呼び、返ったプレイヤーの stats
+  - 送るたびに、`start` した `LivePlayer` の stats（`LiveStats`）を、その player の
+    `trackNamespace`（`/` でつないだ namespace）と `mediaSource`（`source` の video track 名、
+    `source` なしなら無し）とともに、player の session のトークンのレポートの `stats` に入れる。
+    `RemoteBroadcast` の view も `LivePlayer` なので同じく送る。player は生成時に
+    `registerPlayerStats` で `core/telemetry.ts` に自分を登録し、`dispose` で外す。`start` 前と
+    `stop` 後は何も返さない。session のトークンはログと同じく `core/log.ts` の `sessionToken` で
+    引くので、統計はログと同じ app に入る。`telemetry.playerStats: false` で止める（既定は送る）。
+  - `telemetry.stats` を渡すと、送るたびに呼び、返った stats
     （`{ trackNamespace?, mediaSource?, values }`）をトークンなしのレポートの `stats` に入れる。
+    `LivePlayer` 以外の統計を足すためのもの。
     `redact` は stats には効かない。値はページが自分で作るので、隠すならそこで隠す。
   - `telemetry.url` は関数でもよい。送るたびに呼ぶので、ユーザーが選んだ relay に合わせて
     送り先を変えるページ（`examples/browser` の `startPageTelemetry`）に使う。
@@ -940,6 +948,7 @@ export interface TelemetryOptions {
   url: string | (() => string)                                 // 関数なら送るたびに呼ぶ
   page: string
   redact?: (fields: LogRecord['fields']) => LogRecord['fields']
+  playerStats?: boolean                                        // 既定は true: LivePlayer の stats を送る
   stats?: () => TelemetryStatsSample[]                         // 送るたびに呼ぶ
 }
 export interface TelemetryStatsSample {

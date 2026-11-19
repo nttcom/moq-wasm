@@ -270,6 +270,8 @@ export interface TelemetryOptions {
     // (undocumented)
     page: string;
     // (undocumented)
+    playerStats?: boolean;
+    // (undocumented)
     redact?: (fields: LogRecord['fields']) => LogRecord['fields'];
     // (undocumented)
     stats?: () => TelemetryStatsSample[];

@@ -1,5 +1,6 @@
 import type { LiveStats } from '../media/player/locLive'
 import type { LogRecord, SpanRecord } from './init'
+import { type LogSession, sessionToken } from './log'
 
 /// The observability server takes at most this many logs, stats and spans each per report.
 const MAX_RECORDS = 100
@@ -15,7 +16,10 @@ export interface TelemetryOptions {
   /// Returns the fields a log or span is sent with, to mask or drop a value such as a
   /// `track_namespace` that holds a user id. Messages and span names are sent as they are.
   redact?: (fields: LogRecord['fields']) => LogRecord['fields']
-  /// Called at each send for the players' stats to send with the session-less records. `redact`
+  /// Sends each started `LivePlayer`'s stats, with its namespace and video source, under its
+  /// session's token. Defaults to `true`.
+  playerStats?: boolean
+  /// Called at each send for further stats to send with the session-less records. `redact`
   /// does not apply to them.
   stats?: () => TelemetryStatsSample[]
 }
@@ -29,6 +33,18 @@ export interface TelemetryStatsSample {
 }
 
 type Fields = LogRecord['fields']
+
+/// A player's stats with the session it plays from, whose token the report carries.
+export type PlayerStatsSample = TelemetryStatsSample & { session: LogSession }
+
+const players = new Set<() => PlayerStatsSample | undefined>()
+
+/// Adds `sample` to the stats `ClientTelemetry` sends, until the returned function is called.
+/// `sample` returns `undefined` while there is nothing to send.
+export function registerPlayerStats(sample: () => PlayerStatsSample | undefined): () => void {
+  players.add(sample)
+  return () => players.delete(sample)
+}
 
 type Batch = { logs: LogRecord[]; stats: (TelemetryStatsSample & { timeMs: number })[]; spans: SpanRecord[] }
 /// Resolves to the response's HTTP status, or `undefined` when there is none to read.
@@ -58,6 +74,11 @@ export class ClientTelemetry {
   /// Sends one report per token. `beacon` sends with `navigator.sendBeacon`, which outlives the page.
   flush(beacon = false): void {
     const timeMs = Date.now()
+    if (this.options.playerStats ?? true) {
+      for (const { session, ...sample } of [...players].flatMap((player) => player() ?? [])) {
+        keepNewest(this.batch(sessionToken(session)).stats, { timeMs, ...sample })
+      }
+    }
     for (const sample of this.options.stats?.() ?? []) {
       keepNewest(this.batch(undefined).stats, { timeMs, ...sample })
     }
