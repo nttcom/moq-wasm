@@ -272,4 +272,30 @@ mod tests {
             1
         );
     }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::Demuxer;
+        use crate::test_support::{FIXTURE_FLV, cuts, push_in_chunks};
+
+        fn demux(cuts: &[proptest::sample::Index]) -> Vec<crate::MediaEvent> {
+            let mut demuxer = Demuxer::new();
+            push_in_chunks(FIXTURE_FLV, cuts, |chunk| demuxer.push(chunk)).unwrap()
+        }
+
+        proptest! {
+            #[test]
+            fn the_events_do_not_depend_on_how_the_input_is_chunked(cuts in cuts()) {
+                // Arrange
+                let whole = demux(&[]);
+
+                // Act
+                let chunked = demux(&cuts);
+
+                // Assert
+                prop_assert_eq!(chunked, whole);
+            }
+        }
+    }
 }

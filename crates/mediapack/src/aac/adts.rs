@@ -193,4 +193,32 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].data.as_ref(), [9]);
     }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use super::AdtsReader;
+        use crate::test_support::{adts_frame, cuts, mono_48k, push_in_chunks};
+
+        proptest! {
+            #[test]
+            fn frames_read_back_however_the_stream_is_chunked(
+                payloads in vec(vec(any::<u8>(), 0..300), 1..8),
+                cuts in cuts(),
+            ) {
+                // Arrange
+                let stream: Vec<u8> = payloads.iter().flat_map(|payload| adts_frame(payload)).collect();
+                let mut reader = AdtsReader::new();
+
+                // Act
+                let frames = push_in_chunks(&stream, &cuts, |chunk| reader.push(chunk)).unwrap();
+
+                // Assert
+                let read: Vec<&[u8]> = frames.iter().map(|frame| &frame.data[..]).collect();
+                let written: Vec<&[u8]> = payloads.iter().map(Vec::as_slice).collect();
+                prop_assert_eq!(read, written);
+                prop_assert!(frames.iter().all(|frame| frame.config == mono_48k()));
+            }
+        }
+    }
 }
