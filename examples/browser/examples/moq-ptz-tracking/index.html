@@ -60,7 +60,7 @@
               </li>
               <li>
                 <h4>追従する対象を指定する</h4>
-                <p class="hint">Cloud relay-1 のまま Join</p>
+                <p class="hint">Cloud relay-1 のまま Join し、「bot を参加させる」を押す</p>
               </li>
             </ol>
           </details>
@@ -133,7 +133,7 @@
               </li>
               <li>
                 <h4>追従する対象を指定する</h4>
-                <p class="hint">Local relay-a で Join</p>
+                <p class="hint">Local relay-a で Join し、「bot を参加させる」を押す</p>
                 <pre><code>make chrome</code></pre>
               </li>
             </ol>
@@ -169,6 +169,9 @@
               </button>
               <button type="button" id="leaveBtn" data-testid="ptz-tracking-leave-button" disabled>
                 <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-out" /></svg>Leave
+              </button>
+              <button type="button" id="botBtn" class="secondary" data-testid="ptz-tracking-bot-button" disabled>
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plus" /></svg>bot を参加させる
               </button>
             </div>
             <div class="status-list">

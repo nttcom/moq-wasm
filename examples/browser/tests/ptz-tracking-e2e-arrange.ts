@@ -1,5 +1,6 @@
 import { type Locator, type Page, expect } from '@playwright/test'
 import { PTZ_TRACKING_PATH } from '../playwright.helpers'
+import { pressStartBot } from './room-bot'
 
 const moqtUrl = process.env.PTZ_TRACKING_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
 // The pages join the runner's temporary app, whose pages may start bots through temporary-apps.
@@ -29,6 +30,7 @@ export async function receivedCommands(): Promise<PtzCommand[]> {
 export async function joinCamera(page: Page): Promise<Locator> {
   await page.goto(`${PTZ_TRACKING_PATH}?${new URLSearchParams({ moqtUrl, temporaryAppsUrl })}${appFragment}`)
   await page.getByTestId('ptz-tracking-join-button').click()
+  await pressStartBot(page, 'ptz-tracking')
   await expect(page.locator('#tracker-status')).toHaveAttribute('data-state', 'ok', { timeout: 60_000 })
   return page.getByTestId('ptz-tracking-position')
 }

@@ -23,7 +23,7 @@ d1-2B の認証とデプロイは [moq-camera-detection](../moq-camera-detection
 ## 起動
 
 bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、ルームごとに `chat-moderation` 型の bot として起動します。
-一時アプリのページは Join するときに temporary-apps の `/bots/chat-moderation` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。
+一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/chat-moderation` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。
 ルームは URL の `room` で決まり、同じ URL を開くと同じルームに入ります。Public モードのページでは bot は動きません。
 
 手元では、`uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。

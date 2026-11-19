@@ -8,7 +8,7 @@ import {
 } from 'moq-wasm/media'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
 import { pageRoomId } from '../../utils/roomId'
-import { botNamespace, sameNamespace, startRoomBot } from '../../utils/roomBots'
+import { RoomBotButton, botNamespace, sameNamespace } from '../../utils/roomBots'
 import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { randomName } from '../../utils/randomName'
@@ -28,7 +28,7 @@ const muteButton = element<HTMLButtonElement>('muteBtn')
 const transcriptList = element<HTMLOListElement>('transcript')
 const transcriptEmpty = element<HTMLParagraphElement>('transcript-empty')
 const botPlayer = element<HTMLDivElement>('bot-player')
-const botRoomNotice = element<HTMLSpanElement>('bot-room')
+const botButton = new RoomBotButton(BOT_TYPE, ROOM_NAMESPACE, element('botBtn'), element('bot-room'))
 
 let session: MoqSession | undefined
 let audioContext: AudioContext | undefined
@@ -39,14 +39,12 @@ let muted = false
 
 startPageTelemetry('moq-ai-voice-agent', () => urlInput.value.trim())
 setUpRelayUrlControls(urlInput, element('urlPresets'))
-botRoomNotice.style.display = 'none'
 joinButton.addEventListener('click', () => void join())
 leaveButton.addEventListener('click', () => void leave('未接続', 'idle'))
 muteButton.addEventListener('click', () => void toggleMute())
 
 async function join(): Promise<void> {
   joinButton.disabled = true
-  botRoomNotice.style.display = 'none'
   transcriptList.replaceChildren()
   transcriptEmpty.hidden = false
   setStatus('connection-status', '接続中', 'review')
@@ -55,8 +53,6 @@ async function join(): Promise<void> {
     audioContext = new AudioContext()
     await audioContext.resume()
     const relayUrl = urlInput.value.trim()
-    // Starting before connecting lets the bot start while the page connects.
-    startBot()
     const joined = await MoqSession.connect(relayUrl, connectOptions())
     session = joined
     void joined.closed.then(() => {
@@ -79,30 +75,21 @@ async function join(): Promise<void> {
         remote.listen({ onSourceAdd: (view) => botPlayer.append(view.element) })
         void followTranscript(joined)
       },
-      onRemove: () => {
-        setBotStatus(false)
-        // A start sent while the previous bot was still leaving an empty room got 409, so start one
-        // again once it has left.
-        if (session === joined) {
-          startBot()
-        }
-      }
+      onRemove: () => setBotStatus(false)
     })
     setStatus('connection-status', '接続済み', 'ok')
     leaveButton.disabled = false
     muteButton.disabled = false
+    botButton.setInRoom(true)
   } catch (error) {
     await leave(`接続に失敗しました: ${getErrorMessage(error)}`, 'error')
   }
 }
 
-function startBot(): void {
-  void startRoomBot(BOT_TYPE, ROOM_NAMESPACE, botRoomNotice)
-}
-
 async function leave(text: string, state: StatusState): Promise<void> {
   const leaving = session
   session = undefined
+  botButton.setInRoom(false)
   await room?.close().catch(() => undefined)
   room = undefined
   await broadcast?.close().catch(() => undefined)
@@ -160,5 +147,6 @@ function showTurn(turn: TranscriptTurn): void {
 }
 
 function setBotStatus(joined: boolean): void {
+  botButton.setBotPresent(joined)
   setStatus('bot-status', joined ? 'bot 接続済み' : 'bot 未接続', joined ? 'ok' : 'idle')
 }

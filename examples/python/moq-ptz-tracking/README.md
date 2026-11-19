@@ -34,7 +34,7 @@ sequenceDiagram
 ## 起動
 
 bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、一時アプリごとに `ptz-tracking` 型の bot として起動します。
-一時アプリのページは Join するときに temporary-apps の `/bots/ptz-tracking` を呼び、bot はページが 30 秒いないか 1 時間たつと抜けます。
+一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/ptz-tracking` を呼び、bot はページが 30 秒いないか 1 時間たつと抜けます。
 ルームはアプリに 1 つ（`{app}/moq-ptz-tracking`）で、カメラもそのルームに配信します。Public モードのページでは bot は動きません。
 
 ONVIF カメラは手元のネットワークにあるため、`onvif-ingest` は常に手元で起動します。リポジトリのルートの `.env` に `ONVIF_IP`・`ONVIF_USERNAME`・`ONVIF_PASSWORD` を設定し、
