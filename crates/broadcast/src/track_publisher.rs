@@ -17,6 +17,7 @@ use crate::{
         AudioTrackInfo, Broadcast, SourceTracks, VideoTrackInfo, cmaf_track_name,
         timeline_track_name,
     },
+    cmaf_video::CmafVideo,
     group_alignment::GroupAlignment,
     media_timeline::MediaTimeline,
 };
@@ -63,7 +64,7 @@ pub(crate) struct TrackPublisher {
     timeline: MediaTimeline,
     timing: SharedTiming,
     video_codec: VideoCodec,
-    video_cmaf: Option<Fmp4TrackMuxer>,
+    video_cmaf: Option<CmafVideo>,
     audio_cmaf: Option<Fmp4TrackMuxer>,
 }
 
@@ -110,10 +111,7 @@ impl TrackPublisher {
             MediaEvent::VideoConfig(config) => {
                 self.video_published = true;
                 self.video_codec = VideoCodec::from(config);
-                self.video_cmaf = self
-                    .tracks
-                    .cmaf
-                    .then(|| Fmp4TrackMuxer::video(config.clone()));
+                self.video_cmaf = self.tracks.cmaf.then(|| CmafVideo::new(config.clone()));
                 let info = VideoTrackInfo {
                     cmaf: self.tracks.cmaf,
                     switching_set: self.tracks.switching_set.clone(),
@@ -196,12 +194,13 @@ impl TrackPublisher {
         let keyframe_group = sample
             .is_keyframe
             .then(|| self.timing.alignment.keyframe(sample.pts.micros()));
+        let group = keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At);
         let written = self
             .broadcast
             .send_object(
                 &self.tracks.video,
                 OutgoingObject {
-                    group: keyframe_group.map_or(GroupBoundary::Within, GroupBoundary::At),
+                    group,
                     extension_headers: to_extension_headers(&object.extensions),
                     payload: object.payload,
                 },
@@ -224,7 +223,7 @@ impl TrackPublisher {
                 keyframe = sample.is_keyframe
             );
         }
-        self.publish_cmaf_video(sample).await?;
+        self.publish_cmaf_video(sample, group).await?;
         let (Some(group_id), Some(captured_at)) = (keyframe_group, captured_at) else {
             return Ok(());
         };
@@ -232,27 +231,19 @@ impl TrackPublisher {
             .await
     }
 
-    async fn publish_cmaf_video(&mut self, sample: &VideoSample) -> Result<()> {
-        let Some(muxer) = &mut self.video_cmaf else {
+    async fn publish_cmaf_video(
+        &mut self,
+        sample: &VideoSample,
+        group: GroupBoundary,
+    ) -> Result<()> {
+        let Some(cmaf) = &mut self.video_cmaf else {
             return Ok(());
         };
-        let Some(fragment) = muxer.push(&MediaEvent::Video(sample.clone()))? else {
+        let Some(object) = cmaf.push(sample, group)? else {
             return Ok(());
-        };
-        let group = if fragment.is_keyframe {
-            GroupBoundary::At(
-                self.timing
-                    .alignment
-                    .keyframe(fragment.presentation_time.micros()),
-            )
-        } else {
-            GroupBoundary::Within
         };
         self.broadcast
-            .send_object(
-                &cmaf_track_name(&self.tracks.video),
-                OutgoingObject::plain(group, fragment.data),
-            )
+            .send_object(&cmaf_track_name(&self.tracks.video), object)
             .await?;
         Ok(())
     }
@@ -444,6 +435,15 @@ mod tests {
         })
     }
 
+    fn video_at(dts_us: u64, is_keyframe: bool) -> MediaEvent {
+        MediaEvent::Video(VideoSample {
+            data: Bytes::from_static(b"frame"),
+            is_keyframe,
+            pts: Timestamp::from_micros(dts_us),
+            dts: Timestamp::from_micros(dts_us),
+        })
+    }
+
     fn recorded(publisher: &TrackPublisher) -> Vec<(u64, u64)> {
         let records: Vec<(u64, (u64, u64), u64)> =
             serde_json::from_slice(&publisher.timeline.document().unwrap()).unwrap();
@@ -600,5 +600,37 @@ mod tests {
         // Assert
         assert_eq!(with_video, Some(GroupBoundary::At(keyframe)));
         assert_eq!(without_video, Some(GroupBoundary::At(keyframe + 1)));
+    }
+
+    #[tokio::test]
+    async fn the_cmaf_keyframe_whose_decode_time_repeats_takes_the_loc_keyframe_group() {
+        // Arrange: the CMAF muxer moves a keyframe that repeats the previous decode time one tick later
+        let mut publisher = TrackPublisher::new(
+            Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]),
+            SourceTracks {
+                cmaf: true,
+                ..SourceTracks::default()
+            },
+        );
+        let video = MediaEvent::VideoConfig(VideoConfig::Vp8(Vp8Config {
+            width: 64,
+            height: 48,
+        }));
+        publisher.push(&video).await.unwrap();
+        publisher.push(&opus_config()).await.unwrap();
+
+        // Act
+        for (dts_us, is_keyframe) in [(0, true), (40_000, false), (40_000, true), (80_000, false)] {
+            publisher
+                .push(&video_at(dts_us, is_keyframe))
+                .await
+                .unwrap();
+        }
+        publisher.push(&audio_at(60_000)).await.unwrap();
+
+        // Assert: no group is numbered beyond the LOC keyframe's, and the audio enters it
+        let keyframe = publisher.timing.alignment.aligned(40_000);
+        assert_eq!(publisher.timing.alignment.newest(), keyframe);
+        assert_eq!(publisher.audio_group_id, keyframe);
     }
 }

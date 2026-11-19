@@ -4,13 +4,13 @@ use anyhow::{Context, Result};
 use mediapack::{
     MediaEvent,
     loc::{VideoCodec, to_extension_headers},
-    mp4::Fmp4TrackMuxer,
 };
 use moqt::publish::{GroupBoundary, OutgoingObject, TrackDemand};
 use tokio::sync::{Notify, mpsc};
 
 use crate::{
     broadcast::{Broadcast, VideoTrackInfo, cmaf_track_name},
+    cmaf_video::CmafVideo,
     group_alignment::GroupAlignment,
     track_publisher::SharedTiming,
     writer::BroadcastWriter,
@@ -53,7 +53,7 @@ pub struct RenditionTrack {
     /// rendition's groups.
     source: String,
     video_codec: VideoCodec,
-    cmaf: Option<Fmp4TrackMuxer>,
+    cmaf: Option<CmafVideo>,
     /// The source's `SourceTracks::keyframe_requests`: the rendition keyframes
     /// on the same frames as the source.
     keyframe_requests: Option<Arc<Notify>>,
@@ -82,10 +82,7 @@ impl RenditionTrack {
         match event {
             MediaEvent::VideoConfig(config) => {
                 self.video_codec = VideoCodec::from(&config);
-                self.cmaf = self
-                    .config
-                    .cmaf
-                    .then(|| Fmp4TrackMuxer::video(config.clone()));
+                self.cmaf = self.config.cmaf.then(|| CmafVideo::new(config.clone()));
                 let info = VideoTrackInfo {
                     bitrate: self.config.bitrate,
                     framerate: self.config.framerate,
@@ -121,11 +118,11 @@ impl RenditionTrack {
                         "rendition keyframe has no aligned source keyframe; its frames are dropped until one aligns"
                     );
                 }
-                let fragment = match &mut self.cmaf {
-                    Some(muxer) => muxer.push(&MediaEvent::Video(sample.clone()))?,
+                let group = self.boundary(sample.is_keyframe, sample.pts.micros());
+                let cmaf_object = match &mut self.cmaf {
+                    Some(cmaf) => cmaf.push(&sample, group)?,
                     None => None,
                 };
-                let group = self.boundary(sample.is_keyframe, sample.pts.micros());
                 let muxer = match self.config.keyframes {
                     RenditionKeyframes::FollowSource => *self.timing.loc.get().context(
                         "rendition sample before the source seeded the LOC capture origin",
@@ -145,16 +142,11 @@ impl RenditionTrack {
                         )
                         .await?;
                 }
-                let Some(fragment) = fragment else {
+                let Some(object) = cmaf_object else {
                     return Ok(());
                 };
-                let group =
-                    self.boundary(fragment.is_keyframe, fragment.presentation_time.micros());
                 self.broadcast
-                    .send_object(
-                        &cmaf_track_name(track),
-                        OutgoingObject::plain(group, fragment.data),
-                    )
+                    .send_object(&cmaf_track_name(track), object)
                     .await?;
                 Ok(())
             }

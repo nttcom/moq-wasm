@@ -1,4 +1,5 @@
 mod broadcast;
+mod cmaf_video;
 mod group_alignment;
 mod media_timeline;
 mod publish_queue;
