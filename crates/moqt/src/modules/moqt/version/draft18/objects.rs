@@ -1316,8 +1316,7 @@ mod tests {
 
     #[test]
     fn a_subgroup_without_properties_takes_its_id_from_its_first_object() {
-        // Arrange: Subgroup ID mode 0b01, no properties, publisher priority 7;
-        // the second object states Normal status explicitly
+        // Arrange: Subgroup ID mode 0b01; the second object states Normal status explicitly
         let mut stream = BytesMut::new();
         put_vi64(&mut stream, 0x10 | (0b01 << 1));
         put_vi64(&mut stream, 9);
@@ -1625,21 +1624,22 @@ mod tests {
     #[test]
     fn fetch_objects_name_their_subgroup_in_the_shortest_form() {
         // Arrange
-        let objects = [0, 0, 1, 1, 5].map(|subgroup_id| object(2, 0, subgroup(subgroup_id), b"x"));
+        let objects: Vec<Object> = [0, 0, 1, 1, 5]
+            .into_iter()
+            .enumerate()
+            .map(|(object_id, subgroup_id)| {
+                object(2, object_id as u64, subgroup(subgroup_id), b"x")
+            })
+            .collect();
         let mut encoder = FetchEncoder::default();
 
         // Act
         let modes: Vec<u8> = objects
             .iter()
-            .enumerate()
-            .map(|(object_id, sent)| {
-                let mut sent = sent.clone();
-                sent.location.object_id = object_id as u64;
-                encoder.object(&sent).unwrap().unwrap()[0] & 0x03
-            })
+            .map(|sent| encoder.object(sent).unwrap().unwrap()[0] & 0x03)
             .collect();
 
-        // Assert: subgroup 0, then the prior subgroup, the next one, the prior one, and an explicit id
+        // Assert: subgroup 0 is 0x00 even when it repeats the prior one; then the next one, the prior one, and an explicit id
         assert_eq!(modes, [0x00, 0x00, 0x02, 0x01, 0x03]);
     }
 

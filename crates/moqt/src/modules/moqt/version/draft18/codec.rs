@@ -506,7 +506,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_reason_phrase_is_cut_before_a_character_the_1024_byte_limit_splits() {
-        // Arrange: byte 1024 falls inside the 512th "é"
+        // Arrange: the 1024-byte limit ends inside the 512th "é"
         let long = format!("a{}", "é".repeat(600));
         let mut sent = BytesMut::new();
 
