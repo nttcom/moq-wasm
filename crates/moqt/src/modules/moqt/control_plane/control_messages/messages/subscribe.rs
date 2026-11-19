@@ -14,6 +14,7 @@ use anyhow::Context;
 use bytes::{Buf, BufMut, BytesMut};
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub struct Subscribe {
     pub request_id: u64,
     pub track_namespace: Vec<String>,

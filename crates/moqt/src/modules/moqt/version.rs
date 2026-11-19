@@ -6,6 +6,8 @@
 //!
 //! draft-14 and draft-18 are implemented.
 
+#[cfg(test)]
+mod cross_draft_codec;
 pub(crate) mod draft14;
 pub(crate) mod draft18;
 mod update_answer;

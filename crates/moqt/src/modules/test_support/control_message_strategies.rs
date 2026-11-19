@@ -23,6 +23,7 @@ use crate::modules::moqt::control_plane::{
             },
             publish::Publish,
             publish_done::PublishDone,
+            publish_namespace::PublishNamespace,
             subscribe::Subscribe,
             subscribe_namespace::SubscribeNamespace,
             subscribe_update::SubscribeUpdate,
@@ -514,6 +515,262 @@ prop_compose! {
             forward,
             authorization_tokens,
             track_properties,
+            trace_context,
+        }
+    }
+}
+
+/// Integers of either draft: draft-14 variable-length integers stop below
+/// 2^62 (draft-14 §1.4.1), draft-18 ones reach `u64::MAX` (§1.4.1), so 0,
+/// the values on either side of 2^62 and the largest come often.
+fn cross_draft_integer() -> BoxedStrategy<u64> {
+    const DRAFT_EDGES: [u64; 5] = [0, (1 << 62) - 1, 1 << 62, u64::MAX - 1, u64::MAX];
+    prop_oneof![varint(), vi64(), proptest::sample::select(&DRAFT_EDGES[..])].boxed()
+}
+
+/// Namespaces either draft's receiver reads: 0 fields (draft-18 only,
+/// §2.4.1), 1 and 32 (both) often, and often with one field emptied
+/// (draft-14 only). More empty fields would hide the field counts, since
+/// draft-18 refuses a namespace with any.
+fn cross_draft_track_namespace() -> impl Strategy<Value = Vec<String>> {
+    prop_oneof![Just(0usize), Just(1), Just(32), 0..=32usize]
+        .prop_flat_map(|count| {
+            (
+                vec(
+                    vec(any::<char>(), 1..=16).prop_map(String::from_iter),
+                    count,
+                ),
+                option::of(any::<proptest::sample::Index>()),
+            )
+        })
+        .prop_map(|(mut namespace, emptied)| {
+            if let Some(index) = emptied.filter(|_| !namespace.is_empty()) {
+                let emptied = index.index(namespace.len());
+                namespace[emptied].clear();
+            }
+            namespace
+        })
+}
+
+/// A namespace and a Track Name, the name often filling the Full Track Name
+/// to one byte short of or exactly at the 4,096-byte limit both drafts'
+/// receivers hold to (§2.4.1).
+fn cross_draft_full_track_name() -> impl Strategy<Value = (Vec<String>, String)> {
+    cross_draft_track_namespace().prop_flat_map(|namespace| {
+        let used: usize = namespace.iter().map(String::len).sum();
+        let at_limit = move |offset: usize| "n".repeat((4095 + offset).saturating_sub(used));
+        let name = prop_oneof![
+            short_text().boxed(),
+            (0..=1usize).prop_map(at_limit).boxed(),
+        ];
+        (Just(namespace), name)
+    })
+}
+
+fn cross_draft_filter_type() -> impl Strategy<Value = FilterType> {
+    prop_oneof![
+        Just(FilterType::LargestObject),
+        Just(FilterType::NextGroupStart),
+        location(cross_draft_integer).prop_map(|location| FilterType::AbsoluteStart { location }),
+        location(cross_draft_integer).prop_flat_map(|location| {
+            prop_oneof![group_near(location.group_id).boxed(), cross_draft_integer()].prop_map(
+                move |end_group| FilterType::AbsoluteRange {
+                    location,
+                    end_group,
+                },
+            )
+        }),
+    ]
+}
+
+prop_compose! {
+    pub(crate) fn cross_draft_subscribe()(
+        request_id in cross_draft_integer(),
+        (track_namespace, track_name) in cross_draft_full_track_name(),
+        subscriber_priority in any::<u8>(),
+        group_order in group_order(),
+        forward in any::<bool>(),
+        filter_type in cross_draft_filter_type(),
+        authorization_tokens in authorization_tokens(cross_draft_integer),
+        delivery_timeout in option::of(cross_draft_integer()),
+        new_group_request in option::of(cross_draft_integer()),
+        trace_context in trace_context(),
+    ) -> Subscribe {
+        Subscribe {
+            request_id,
+            track_namespace,
+            track_name,
+            subscriber_priority,
+            group_order,
+            forward,
+            filter_type,
+            authorization_tokens,
+            delivery_timeout,
+            new_group_request,
+            trace_context,
+        }
+    }
+}
+
+prop_compose! {
+    pub(crate) fn cross_draft_subscribe_namespace()(
+        request_id in cross_draft_integer(),
+        track_namespace_prefix in cross_draft_track_namespace(),
+        authorization_token in authorization_tokens(cross_draft_integer),
+        trace_context in trace_context(),
+    ) -> SubscribeNamespace {
+        SubscribeNamespace {
+            request_id,
+            track_namespace_prefix,
+            authorization_token,
+            trace_context,
+        }
+    }
+}
+
+prop_compose! {
+    pub(crate) fn cross_draft_publish_namespace()(
+        request_id in cross_draft_integer(),
+        track_namespace in cross_draft_track_namespace(),
+        authorization_token in authorization_tokens(cross_draft_integer),
+        trace_context in trace_context(),
+    ) -> PublishNamespace {
+        PublishNamespace {
+            request_id,
+            track_namespace,
+            authorization_token,
+            trace_context,
+        }
+    }
+}
+
+/// Track Properties of either draft: draft-18's, then often the draft-14
+/// PUBLISH fields the model keeps there (draft-14 §9.13: Group Order,
+/// DELIVERY_TIMEOUT, MAX_CACHE_DURATION), set to any value.
+fn cross_draft_track_properties() -> impl Strategy<Value = TrackProperties> {
+    (
+        track_properties(),
+        option::of(group_order()),
+        option::of(option::of(cross_draft_integer())),
+        option::of(option::of(cross_draft_integer())),
+    )
+        .prop_map(
+            |(mut properties, group_order, delivery_timeout, max_cache_duration)| {
+                if let Some(group_order) = group_order {
+                    properties.set_group_order(Some(group_order));
+                }
+                if let Some(delivery_timeout) = delivery_timeout {
+                    properties.set_delivery_timeout(delivery_timeout);
+                }
+                if let Some(max_cache_duration) = max_cache_duration {
+                    properties.set_max_cache_duration(max_cache_duration);
+                }
+                properties
+            },
+        )
+}
+
+prop_compose! {
+    pub(crate) fn cross_draft_publish()(
+        request_id in cross_draft_integer(),
+        (track_namespace_tuple, track_name) in cross_draft_full_track_name(),
+        track_alias in cross_draft_integer(),
+        content_exists in prop_oneof![
+            Just(ContentExists::False),
+            location(cross_draft_integer).prop_map(|location| ContentExists::True { location }),
+        ],
+        forward in any::<bool>(),
+        authorization_tokens in authorization_tokens(cross_draft_integer),
+        track_properties in cross_draft_track_properties(),
+        trace_context in trace_context(),
+    ) -> Publish {
+        Publish {
+            request_id,
+            track_namespace_tuple,
+            track_name,
+            track_alias,
+            content_exists,
+            forward,
+            authorization_tokens,
+            track_properties,
+            trace_context,
+        }
+    }
+}
+
+/// Reason phrases within and just past the 1,024-byte limit both drafts
+/// share (draft-14 §1.4.3, draft-18 §1.4.4): also 1,020 to 1,025 ASCII
+/// bytes followed by nothing or one character of 2, 3 or 4 bytes, so the
+/// limit falls before, inside and after a multibyte character.
+fn cross_draft_reason_phrase() -> impl Strategy<Value = String> {
+    prop_oneof![
+        reason_phrase(),
+        (
+            1020..=1025usize,
+            proptest::sample::select(&["", "é", "あ", "😀"][..]),
+        )
+            .prop_map(|(ascii, tail)| "r".repeat(ascii) + tail),
+    ]
+}
+
+/// A PUBLISH_DONE of the model: its code, Stream Count and reason phrase.
+pub(crate) fn cross_draft_publish_done() -> impl Strategy<Value = (PublishDoneCode, u64, String)> {
+    (
+        publish_done_code(),
+        cross_draft_integer(),
+        cross_draft_reason_phrase(),
+    )
+}
+
+fn cross_draft_fetch_params() -> impl Strategy<Value = FetchParams> {
+    prop_oneof![
+        (
+            cross_draft_full_track_name(),
+            location(cross_draft_integer),
+            location(cross_draft_integer),
+        )
+            .prop_map(
+                |((track_namespace, track_name), start_location, end_location)| {
+                    FetchParams::Standalone {
+                        track_namespace,
+                        track_name,
+                        start_location,
+                        end_location,
+                    }
+                }
+            ),
+        (cross_draft_integer(), cross_draft_integer()).prop_map(
+            |(joining_request_id, joining_start)| FetchParams::RelativeJoining {
+                joining_request_id,
+                joining_start,
+            }
+        ),
+        (cross_draft_integer(), cross_draft_integer()).prop_map(
+            |(joining_request_id, joining_start)| FetchParams::AbsoluteJoining {
+                joining_request_id,
+                joining_start,
+            }
+        ),
+    ]
+}
+
+prop_compose! {
+    pub(crate) fn cross_draft_fetch()(
+        request_id in cross_draft_integer(),
+        subscriber_priority in any::<u8>(),
+        group_order in group_order(),
+        fetch_params in cross_draft_fetch_params(),
+        authorization_tokens in authorization_tokens(cross_draft_integer),
+        fill_timeout in option::of(cross_draft_integer()),
+        trace_context in trace_context(),
+    ) -> Fetch {
+        Fetch {
+            request_id,
+            subscriber_priority,
+            group_order,
+            fetch_params,
+            authorization_tokens,
+            fill_timeout,
             trace_context,
         }
     }
