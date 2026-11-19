@@ -1629,4 +1629,101 @@ mod tests {
             Err(DecodeError::Violation { .. })
         ));
     }
+
+    mod properties {
+        use bytes::BytesMut;
+        use proptest::prelude::*;
+
+        use super::super::{
+            Fetch, FetchEncoder, FetchState, StreamDecoder, StreamFrame, SubgroupEncoder,
+            SubgroupObjectField, SubgroupState, encode_fetch_header,
+        };
+        use crate::modules::moqt::data_plane::object::canonical_object::{Object, SubgroupStart};
+        use crate::modules::test_support::{cuts, decode_in_chunks, object_strategies};
+
+        /// The start and objects of a subgroup stream's frames, with each
+        /// payload handed out in pieces joined again.
+        fn subgroup_objects(frames: Vec<StreamFrame>) -> (Option<SubgroupStart>, Vec<Object>) {
+            let mut frames = frames.into_iter();
+            let Some(StreamFrame::SubgroupHeader(header)) = frames.next() else {
+                panic!("expected the subgroup header");
+            };
+            let mut state = SubgroupState::new(header);
+            let mut split: Option<(SubgroupObjectField, BytesMut)> = None;
+            let mut objects = Vec::new();
+            for frame in frames {
+                match frame {
+                    StreamFrame::SubgroupObject { field, .. } => {
+                        objects.push(state.object(field).unwrap());
+                    }
+                    StreamFrame::SubgroupObjectHead { field, .. } => {
+                        split = Some((field, BytesMut::new()));
+                    }
+                    StreamFrame::Payload { data, completed_in } => {
+                        let (_, payload) = split.as_mut().expect("a payload follows its head");
+                        payload.extend_from_slice(&data);
+                        if completed_in.is_some() {
+                            let (mut field, payload) = split.take().unwrap();
+                            field.payload = payload.freeze();
+                            objects.push(state.object(field).unwrap());
+                        }
+                    }
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+            (state.start(), objects)
+        }
+
+        proptest! {
+            #[test]
+            fn subgroup_objects_read_back_however_the_stream_is_chunked(
+                (start, objects) in object_strategies::draft18_subgroup(),
+                cuts in cuts(),
+            ) {
+                // Arrange
+                let mut encoder = SubgroupEncoder::new(9);
+                let mut stream = encoder.header(start);
+                for object in &objects {
+                    stream.extend_from_slice(&encoder.object(object).unwrap());
+                }
+
+                // Act
+                let frames = decode_in_chunks(StreamDecoder::default(), &stream, &cuts);
+
+                // Assert
+                prop_assert_eq!(subgroup_objects(frames), (Some(start), objects));
+            }
+
+            #[test]
+            fn fetch_objects_read_back_however_the_stream_is_chunked(
+                (group_order, objects) in object_strategies::draft18_fetch(),
+                cuts in cuts(),
+            ) {
+                // Arrange
+                let mut encoder = FetchEncoder::default();
+                let mut stream = encode_fetch_header(6);
+                for object in &objects {
+                    stream.extend_from_slice(&encoder.object(object).unwrap().unwrap());
+                }
+
+                // Act
+                let mut frames = decode_in_chunks(StreamDecoder::default(), &stream, &cuts).into_iter();
+
+                // Assert
+                prop_assert_eq!(frames.next(), Some(StreamFrame::FetchHeader { request_id: 6 }));
+                let mut state = FetchState::new();
+                state.group_order = group_order;
+                let decoded: Vec<Object> = frames
+                    .map(|frame| match frame {
+                        StreamFrame::FetchField(field) => match state.object(field).unwrap() {
+                            Some(Fetch::Object(object)) => object,
+                            other => panic!("unexpected {other:?}"),
+                        },
+                        other => panic!("unexpected {other:?}"),
+                    })
+                    .collect();
+                prop_assert_eq!(decoded, objects);
+            }
+        }
+    }
 }

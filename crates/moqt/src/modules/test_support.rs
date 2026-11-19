@@ -1,4 +1,5 @@
 pub(crate) mod control_message_strategies;
+pub(crate) mod object_strategies;
 
 use std::{
     collections::HashMap,
@@ -497,6 +498,44 @@ pub(crate) fn decode_stream<D: Decoder>(mut decoder: D, bytes: &[u8]) {
     if read(&mut buffer, false) {
         read(&mut buffer, true);
     }
+}
+
+/// Where to cut a byte stream into chunks: each `Index` picks an offset in
+/// `0..=len`.
+pub(crate) fn cuts() -> impl proptest::strategy::Strategy<Value = Vec<proptest::sample::Index>> {
+    proptest::collection::vec(proptest::prelude::any::<proptest::sample::Index>(), 0..16)
+}
+
+/// Decodes `bytes` as a stream that arrives in the chunks `cuts` makes and
+/// then ends, and returns every frame. Panics on a decode error, including
+/// bytes left when the stream ends.
+pub(crate) fn decode_in_chunks<D>(
+    mut decoder: D,
+    bytes: &[u8],
+    cuts: &[proptest::sample::Index],
+) -> Vec<D::Item>
+where
+    D: Decoder,
+    D::Error: std::fmt::Debug,
+{
+    let mut offsets: Vec<usize> = cuts
+        .iter()
+        .map(|cut| cut.index(bytes.len() + 1))
+        .chain([0, bytes.len()])
+        .collect();
+    offsets.sort_unstable();
+    let mut buffer = BytesMut::new();
+    let mut frames = Vec::new();
+    for chunk in offsets.windows(2) {
+        buffer.extend_from_slice(&bytes[chunk[0]..chunk[1]]);
+        while let Some(frame) = decoder.decode(&mut buffer).unwrap() {
+            frames.push(frame);
+        }
+    }
+    while let Some(frame) = decoder.decode_eof(&mut buffer).unwrap() {
+        frames.push(frame);
+    }
+    frames
 }
 
 /// Long enough for control messages already sent to reach a session that

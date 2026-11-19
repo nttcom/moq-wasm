@@ -1430,5 +1430,6 @@ Unit tests live in `#[cfg(test)] mod tests` inside the module under test
 (Arrange/Act/Assert, see `wire.rs` framing round-trip tests). Codec
 properties over generated messages are `proptest` tests in a `properties`
 module next to the example tests, with their strategies in
-`test_support/control_message_strategies.rs` (see `proptest.md`). Cross-crate
+`test_support/control_message_strategies.rs` and
+`test_support/object_strategies.rs` (see `proptest.md`). Cross-crate
 behaviour is covered by the workspace-level E2E suites under `tests/`.

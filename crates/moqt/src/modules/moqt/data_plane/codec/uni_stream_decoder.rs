@@ -105,4 +105,112 @@ mod tests {
             }
         }
     }
+
+    mod properties {
+        use bytes::BytesMut;
+        use proptest::prelude::*;
+
+        use super::super::{UniStreamData, UniStreamDecoder};
+        use crate::modules::moqt::data_plane::{
+            codec::{fetch_decoder::FetchFrame, subgroup_decoder::SubgroupFrame},
+            object::{
+                extension_headers::ExtensionHeaders,
+                fetch::{FetchHeader, FetchObjectField},
+                subgroup::{SubgroupHeader, SubgroupObject, SubgroupObjectField},
+            },
+        };
+        use crate::modules::test_support::{cuts, decode_in_chunks, object_strategies};
+
+        /// `SubgroupObjectField` has no `PartialEq`, so its fields are compared.
+        fn parts(field: SubgroupObjectField) -> (u64, ExtensionHeaders, SubgroupObject) {
+            (
+                field.object_id_delta,
+                field.extension_headers,
+                field.subgroup_object,
+            )
+        }
+
+        /// The header and objects of a subgroup stream's frames, with each
+        /// payload handed out in pieces joined again.
+        fn subgroup_objects(
+            frames: Vec<UniStreamData>,
+        ) -> (SubgroupHeader, Vec<(u64, ExtensionHeaders, SubgroupObject)>) {
+            let mut frames = frames.into_iter().map(|frame| match frame {
+                UniStreamData::Subgroup(frame) => frame,
+                other => panic!("unexpected {other:?}"),
+            });
+            let Some(SubgroupFrame::Header(header)) = frames.next() else {
+                panic!("expected the subgroup header");
+            };
+            let mut split = None;
+            let mut objects = Vec::new();
+            for frame in frames {
+                match frame {
+                    SubgroupFrame::Object { field, .. } => objects.push(parts(field)),
+                    SubgroupFrame::ObjectHead(head) => split = Some((head, BytesMut::new())),
+                    SubgroupFrame::Payload { data, completed_in } => {
+                        let (_, payload) = split.as_mut().expect("a payload follows its head");
+                        payload.extend_from_slice(&data);
+                        if completed_in.is_some() {
+                            let (head, payload) = split.take().unwrap();
+                            objects.push(parts(head.with_payload(payload.freeze())));
+                        }
+                    }
+                    SubgroupFrame::Header(_) => panic!("a second subgroup header"),
+                }
+            }
+            (header, objects)
+        }
+
+        proptest! {
+            #[test]
+            fn subgroup_objects_read_back_however_the_stream_is_chunked(
+                (header, objects) in object_strategies::draft14_subgroup(),
+                cuts in cuts(),
+            ) {
+                // Arrange
+                let mut stream = header.encode();
+                for object in &objects {
+                    stream.extend_from_slice(&object.encode(header.message_type));
+                }
+
+                // Act
+                let frames = decode_in_chunks(UniStreamDecoder::new(), &stream, &cuts);
+
+                // Assert
+                let expected: Vec<_> = objects.into_iter().map(parts).collect();
+                prop_assert_eq!(subgroup_objects(frames), (header, expected));
+            }
+
+            #[test]
+            fn fetch_objects_read_back_however_the_stream_is_chunked(
+                objects in object_strategies::draft14_fetch(),
+                cuts in cuts(),
+            ) {
+                // Arrange
+                let mut stream = FetchHeader::new(6).encode();
+                for object in &objects {
+                    stream.extend_from_slice(&object.encode());
+                }
+
+                // Act
+                let mut frames = decode_in_chunks(UniStreamDecoder::new(), &stream, &cuts)
+                    .into_iter()
+                    .map(|frame| match frame {
+                        UniStreamData::Fetch(frame) => frame,
+                        other => panic!("unexpected {other:?}"),
+                    });
+
+                // Assert
+                prop_assert!(matches!(frames.next(), Some(FetchFrame::Header(header)) if header == FetchHeader::new(6)));
+                let decoded: Vec<FetchObjectField> = frames
+                    .map(|frame| match frame {
+                        FetchFrame::Object(field) => field,
+                        other => panic!("unexpected {other:?}"),
+                    })
+                    .collect();
+                prop_assert_eq!(decoded, objects);
+            }
+        }
+    }
 }
