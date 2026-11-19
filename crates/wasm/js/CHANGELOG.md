@@ -1,5 +1,193 @@
 # Changelog
 
+## 0.7.0
+
+- Breaking: catalogs are now draft-ietf-moq-msf-02. `parseCatalog` rejects a catalog whose `version` is not `draft-02`, or whose namespace, `depends` or required fields (§5.2.4.1) are invalid. Publishers and players must be updated together.
+
+- Breaking: `MoqSession.subscribeGroupStart` takes `priority` and `deliveryTimeoutMs` in an options object instead of a positional `priority`:
+
+  ```ts
+  // before
+  await session.subscribeGroupStart(ns, track, 60, 7)
+  // after
+  await session.subscribeGroupStart(ns, track, 60, { priority: 7 })
+  ```
+
+- Breaking: `Mp4Broadcast` is created on a session with
+  `MoqSession.mp4Broadcast(namespace, index)` instead of
+  `new Mp4Broadcast(url, namespace, index)`, so it publishes with the
+  session's token and versions. It no longer has `close()`; close the session
+  instead.
+
+  ```ts
+  // before
+  const broadcast = new Mp4Broadcast(url, namespace, index)
+  await broadcast.close()
+  // after
+  const session = await MoqSession.connect(url, { token })
+  const broadcast = session.mp4Broadcast(namespace, index)
+  session.close()
+  ```
+
+- The stats of every started `LivePlayer`, including the players of a
+  `RemoteBroadcast`'s views, are sent with `init({ telemetry })` without any
+  code in the page: each under the token of the player's session, so they
+  land in that session's app instead of `anon`, with the player's namespace
+  as `trackNamespace` and its source's video track name as `mediaSource`.
+  Set `telemetry.playerStats: false` to stop them. A page that sends its
+  players' stats through `telemetry.stats` should drop them there, or they
+  are sent twice.
+
+- Fixed a `LivePlayer` track keeping the old Forward State when playback paused or resumed forwarding while its SUBSCRIBE was in flight: it stayed silent after a resume, or kept delivering during a review.
+
+- `moq-wasm/media` exports `SeekAxis`, `StatusState`, `CatalogTrackRole`, `LogLevel` and `ReviewFetchWindow`, the types `LivePlayer`, `PlayerStatus` and `extractCatalogTracks` refer to.
+
+- Fixed a video rendition of `publish()` logging a warning for every frame after the session ended; it now stops at the first failure and reports it as the main video does.
+
+- Fixed a source sometimes sending no video or audio to a subscriber when the relay asked for a track right after accepting its PUBLISH.
+
+- `depends` of a parsed catalog track lists track names; a `renderGroup` number is resolved to the names of its tracks.
+
+- The MSF catalog of a `MediaBroadcast` now lists a `bitrate` for every audio and video track and a `framerate` for every video track, estimated when the encoder does not set them (30 fps when the frame rate is not capped).
+
+- A player subscribes its catalog at Subscriber Priority 0, its text tracks (the media timeline, captions, `addTextTrack`) at 16 and its audio (`addAudioTrack` included) at 32; the catalog, the text tracks and an `addAudioTrack` track were at 128, the selected audio at 0. The media timeline also takes the player's `deliveryTimeoutMs` and `groupOrder`. On a congested downlink the unsent streams of the catalog and the media timeline no longer keep a prioritized video from being sent. `setVideoPriority` of 32 or less now puts a video level with or ahead of the audio, 16 the text tracks, 0 the catalog.
+
+- `MoqSession.subscribeCurrentGroup` takes the options of `subscribeGroupStart` (`priority`, `deliveryTimeoutMs`, `groupOrder`).
+
+- On draft-18 sessions, `MoqSubscription.setForward`, `setPriority` and `endBeforeGroup` now resolve once the relay has applied the update, so objects published right after `setForward(true)` are delivered. They reject if the relay refuses the update, does not answer within 10 s, or the subscription ends first.
+
+- `addSource` takes `cmaf: true` to also send the video and its renditions as
+  CMAF in `<track>_cmaf`, which a `LivePlayer` plays after
+  `setPackaging('cmaf')`. The audio stays LOC only, so CMAF playback is video
+  only.
+
+- `MoqSubscribeOptions`, `LivePlayerOptions` and `RemoteBroadcastOptions` take
+  `groupOrder` (`'ascending'` by default): the Group Order a SUBSCRIBE
+  carries. With `'descending'` a relay sends the newest group first when a
+  congested link holds more than one, so live playback jumps ahead instead
+  of falling behind.
+
+- `LivePlayer.setVideoPriority` called while the first video SUBSCRIBE is still unanswered is no longer dropped: the track kept its previous Subscriber Priority until the next change.
+
+- Added `deliveryTimeoutMs` to `MoqSubscribeOptions`, `LivePlayerOptions` and `RemoteBroadcastOptions`: the DELIVERY TIMEOUT a SUBSCRIBE carries. A relay that honours it gives up on an object that many milliseconds after receiving it and resets the stream of its group, so a congested downlink carries recent media instead of a growing backlog. A player applies it to its selected video and audio track, not to tracks added with `addAudioTrack`, and throws a `RangeError` unless it is an integer from 1 to 4294967295. Without it every object is delivered, as before.
+
+- `buildMsfCatalogJson(tracks, initDataList?)` and its `MsfTrack` / `MsfInitData` types are exported from `moq-wasm/media`, for a page that publishes its own media tracks with `publishTrack` and needs an MSF catalog `LivePlayer` can read.
+
+- A draft-14 server whose SERVER_SETUP carries a parameter that is not UTF-8 no longer crashes the page's wasm module.
+
+- Fixed: after a GOAWAY, the SDK no longer subscribes on the new relay to a track whose publisher ended it with PUBLISH_DONE.
+
+- Fixed: when the relay a GOAWAY names rejects a published track, the track now ends with an unsubscribe once the previous relay closes, instead of staying with no subscriber and failing every write.
+
+- Fixed: a subscription moved by GOAWAY from a draft-14 relay to a draft-18 relay no longer fails as a malformed track when it receives a datagram after a subgroup stream.
+
+- A session no longer queues an unlimited number of control messages while the application handles them slower than they arrive.
+
+- `setVideo`, `setAudio` and `setVideoEncoding` called while a `setVideo(false)` or `setAudio(false)` is still pending now apply after it. Before, an encoding change started an encoder for the removed video, and a track set during the removal was dropped from `source.stream` and not encoded again after an unmute.
+
+- An `addSource` still pending when `close()` is called now rejects with "the broadcast is closed" and stops the devices it captured, instead of resolving with a source that kept publishing on the closed broadcast.
+
+- `session.publishTrack(namespace, track, { datagram: true })` sends each object of the track in its own datagram instead of on a subgroup stream: a lost object is not resent and never delays the next one. Keep an object under about 1 KB; one larger than the path allows is dropped. It rejects for a track already written to on streams.
+
+- A FETCH response that arrives after its FETCH was cancelled, as when a
+  viewer leaves right after it joins, no longer logs an error, and the
+  response stream is stopped instead of being left open.
+
+- A session now closes with PROTOCOL_VIOLATION when the peer sends a datagram or unidirectional stream of an unknown type, or a malformed one, as draft-14 and draft-18 require.
+
+- The automatic quality of `LivePlayer` no longer waits about 13 s to step up when its container grows right after the video is subscribed, or when the catalog adds a rendition above the one playing.
+
+- A live LOC video no longer freezes when the page moves the player's
+  container to another element. The browser paused it, and it stayed paused
+  until the next resubscribe.
+
+- A seek right after `LivePlayer` switches video rendition no longer fails
+  with `Decoding error.`. The player passed the rest of the group before the
+  switch to the decoder.
+
+- `parseCatalog` throws on a delta update; `RemoteBroadcast` ignores a catalog `parseCatalog` rejects, and `LivePlayer` reports a catalog error.
+
+- Fixed: on a draft-14 session, a request whose control message is longer than
+  65,535 bytes, for example one with a very long authorization token or track
+  name, now fails instead of being sent with a truncated length, which broke
+  the session.
+
+- On draft-18 sessions, an object, a FETCH object or its properties declared longer than 16 MiB is refused, as on draft-14, instead of being buffered until all of it arrives.
+
+- `addSource()` takes a `codec` per rendition, the source's `encoding.codec` by default, so a source can publish H.265 video with an H.264 rendition for viewers that cannot decode H.265. A rendition the browser cannot encode is reported through `onError` and left out of the catalog.
+
+  ```ts
+  await local.addSource('camera', {
+    video: true,
+    encoding: { codec: 'h265' },
+    renditions: [{ name: 'avc', label: '720p', width: 1280, height: 720, bitrate: 2_000_000, codec: 'h264' }]
+  })
+  ```
+
+- `LivePlayer` picks video only from the tracks the browser can decode, and of renditions with the same size in one switching set it keeps the one with the lowest bitrate. Players of 0.6.0 and earlier do not check the codec and may pick a rendition they cannot decode.
+
+- `LivePlayer` switching to a rendition in another codec, such as from H.265 to H.264, now reconfigures its decoder at the rendition's first keyframe instead of decoding it with the previous codec.
+
+- `LivePlayer.addAudioTrack(name, listener)` plays another live LOC audio
+  track of the catalog next to the selected one, on the same clock. It
+  starts silent; `onFirstScheduled(dueMs)` tells when it has caught up, and
+  the returned `AddedAudioTrack` sets its volume and closes it.
+
+- `LivePlayer.addTextTrack(name, listener)` delivers the objects of a text
+  track, such as captions, when the live sound captured with them plays.
+
+- `LivePlayer.setLateSamples('drop' | 'move-clock')` chooses what a sample
+  that arrives after its time does, next to `setBufferPolicy` and
+  `setCatchUp`.
+
+- `LivePlayer.setVolume(volume, timeConstantSeconds)` takes the time
+  constant the live sound approaches the volume with.
+
+- `LivePlayer.stats()` adds `audioDroppedLateSamples`,
+  `videoDroppedLateFrames`, `audioCaptureMicros` and `audioObjects`.
+
+- `RemoteBroadcastOptions.keepLiveWhileReviewing` (also an option of
+  `watchBroadcasts`) keeps the live subscriptions of every view's player
+  forwarding behind a review, as `LivePlayerOptions.keepLiveWhileReviewing`
+  does, so going live shows the live picture at once.
+
+- `LivePlayer` asks for a new group once when it switches rendition, returns
+  to live or loses its group, instead of repeating the request every 2.2
+  seconds. Deploy a relay without the 2-second NEW_GROUP_REQUEST interval
+  before upgrading the SDK: an older relay can hold the request back, and the
+  picture then waits for the next keyframe.
+
+- `MoqSession.subscribeGroupStart()` sends its joining FETCH after the
+  SUBSCRIBE_OK instead of right behind the SUBSCRIBE, so it no longer sends a
+  FETCH it then cancels. A join that reads the current group takes one more
+  round trip.
+
+- A published video starts a new group on a viewer's request
+  (NEW_GROUP_REQUEST) only once its current group is 2 seconds old or holds
+  60 objects. A request that arrives earlier is answered when the group
+  reaches either.
+
+- Stepping a paused review no longer waits for a FETCH each time:
+  `LivePlayer` keeps each group a seek landed on, and the two groups ahead of
+  the last move, until it goes live, the tracks change or it stops.
+
+- `LivePlayer.state.seek.shownSeconds` is the capture time of the review
+  frame on screen, and undefined while the frame of a seek is being fetched.
+
+- Fixed: going live from a LOC review showed, for a moment, the frame the
+  live picture held when it was paused.
+
+- Fixed: a live LOC picture without sound waited 400 ms after a pause before
+  it showed a frame again.
+
+- When a source's publish queue overflows and drops video, the source is asked for a keyframe, so viewers get video back as soon as the queue drains instead of at the next periodic keyframe, up to 30 seconds later.
+
+- `LivePlayer` asks the publisher for a new group (NEW_GROUP_REQUEST) when its video decoder fails or loses its reference frames, so the picture comes back without waiting for the next keyframe.
+
+- `addSource` takes `encoding.codec: 'h265'` (Main Profile), or an `hvc1.*` / `hev1.*` codec string. H.265 needs a browser with a hardware encoder for it, such as Chrome on a Mac.
+
+- `LivePlayer` plays an H.265 track where the browser has a hardware decoder for it; other browsers show no picture.
+
 ## 0.6.0
 
 - Breaking: the video, each rendition and the audio of a source are encoded
