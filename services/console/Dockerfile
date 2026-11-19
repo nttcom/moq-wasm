@@ -5,7 +5,7 @@ RUN npm ci
 COPY services/console/web/ ./
 RUN npm run build
 
-FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-slim-trixie@sha256:f122e3c240d1c05668b07179cf6fa07647db2a79a110f4bb8a91d75f90d5b8e4 AS chef
+FROM lukemathwalker/cargo-chef:0.1.78-rust-1.100.0-slim-trixie@sha256:4d92a0744e1fc09016839c7658af38a00157c8d542a1684b32ce60f9a364fd31 AS chef
 WORKDIR /workspace
 
 FROM chef AS planner

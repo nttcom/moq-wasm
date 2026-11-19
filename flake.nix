@@ -22,7 +22,7 @@
           inherit system overlays;
         };
 
-        rustToolchain = pkgs.rust-bin.stable."1.99.1".minimal.override {
+        rustToolchain = pkgs.rust-bin.stable."1.100.0".minimal.override {
           extensions = [
             "clippy"
             "rustfmt"
