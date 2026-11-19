@@ -20,7 +20,7 @@ const CODEC_STRINGS: Record<VideoCodecName, string> = {
 }
 
 /// The WebCodecs codec string of `codec`: a name, or a codec string as given.
-export function codecString(codec: string): string {
+function codecString(codec: string): string {
   return Object.hasOwn(CODEC_STRINGS, codec) ? CODEC_STRINGS[codec as VideoCodecName] : codec
 }
 

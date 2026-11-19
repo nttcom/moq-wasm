@@ -10,6 +10,7 @@ import {
 import { type Recording, openRecording } from 'moq-wasm/recording'
 import 'moq-wasm/media/player.css'
 import { bearerToken } from '../../utils/access'
+import { getErrorMessage } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { offeredVersions } from '../../utils/moqtVersion'
 import { setUpRelayUrlControls } from '../../utils/relayPicker'
@@ -120,7 +121,7 @@ function hideNotice(): void {
 }
 
 function failure(error: unknown): void {
-  errorText = error instanceof Error ? error.message : String(error)
+  errorText = getErrorMessage(error)
   status.value = errorText
   showNotice(errorText, 'error')
 }

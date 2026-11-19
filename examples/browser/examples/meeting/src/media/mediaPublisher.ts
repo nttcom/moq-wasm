@@ -5,6 +5,7 @@ import { DEFAULT_SCREEN_SHARE_ENCODING_SETTINGS, type VideoEncodingSettings } fr
 import { CAMERA_RENDITIONS, INITIAL_CAMERA_ENCODING_SETTINGS, SCREEN_SHARE_RENDITIONS } from './meetingCatalog'
 import { SCREEN_SHARE_SOURCE } from '../utils/catalogTrackName'
 import { captureWithRetry } from './captureRetry'
+import { getErrorMessage } from '../../../../utils/page'
 
 type LocalStreamHandler = (stream: MediaStream | null) => void
 
@@ -51,7 +52,7 @@ export class MediaPublisher {
   async start(session: MoqSession): Promise<void> {
     this.broadcast = await createBroadcast(session, this.trackNamespace, {
       offerChat: true,
-      onError: (error) => this.handlers.onPublishError?.(error instanceof Error ? error.message : String(error))
+      onError: (error) => this.handlers.onPublishError?.(getErrorMessage(error))
     })
     this.camera = await this.broadcast.addSource('camera', {
       label: 'Camera',

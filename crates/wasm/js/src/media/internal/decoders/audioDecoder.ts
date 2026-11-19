@@ -1,7 +1,6 @@
 import { alawToAudioData, isPcmAlawCodec } from '../alaw'
 import { GroupOrderGate } from '../groupOrderGate'
 import type { AudioCatalogMessage, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../jitterBufferTypes'
-import { createBitrateLogger } from '../bitrate'
 import { readLocHeader } from '../loc'
 import { workerLog } from '../../../core/log'
 
@@ -13,10 +12,6 @@ type AudioConfig = {
   channels: number
   descriptionBase64?: string
 }
-
-const addAudioBytes = createBitrateLogger((kbps) => {
-  self.postMessage({ type: 'bitrate', kbps })
-})
 
 /// How far ahead of its hand-over to the audio output the group order gate
 /// releases an object, to cover the decode and the post to the page.
@@ -74,7 +69,6 @@ self.onmessage = (event: MessageEvent<AudioWorkerMessage>) => {
       )
       return
     case 'object':
-      addAudioBytes(data.subgroupStreamObject.objectPayloadLength)
       groupOrder.push(data.groupId, data.subgroupStreamObject)
   }
 }

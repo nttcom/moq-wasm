@@ -1,5 +1,6 @@
 import { latencyMsFromCaptureMicros } from '../internal/clock'
 import { parseAudioChannelCount } from '../internal/audioChannelConfig'
+import { createBitrateLogger } from '../internal/bitrate'
 import type { AudioCatalogMessage, SubgroupObjectWithLoc, SubgroupWorkerMessage } from '../internal/jitterBufferTypes'
 import type { BufferPolicy } from './jitterBuffer'
 import { LivePlayout } from './livePlayout'
@@ -14,7 +15,7 @@ const ARRIVAL_GAP_WINDOW_MS = 10_000
 
 export type DecodedFrameIds = { groupId: bigint; objectId: bigint }
 
-export type LocLiveCallbacks = {
+type LocLiveCallbacks = {
   onPresented(picture: HTMLElement): void
   onFrameShown(ids: DecodedFrameIds | undefined, captureMicros: number): void
   /// The decoder lost group `groupId` and drops its deltas until a keyframe.
@@ -68,6 +69,14 @@ export class LocLive {
   private readonly cachedFrameKeys = new Set<string>()
   private readonly arrivalsMs: Record<MediaKind, number[]> = { video: [], audio: [] }
   private readonly receivedKbps: Record<MediaKind, number> = { video: 0, audio: 0 }
+  private readonly addReceivedBytes: Record<MediaKind, (byteLength: number) => void> = {
+    video: createBitrateLogger((kbps) => {
+      this.receivedKbps.video = kbps
+    }),
+    audio: createBitrateLogger((kbps) => {
+      this.receivedKbps.audio = kbps
+    })
+  }
   shownCaptureMicros: number | undefined
   frameSize: { width: number; height: number } | undefined
 
@@ -101,10 +110,6 @@ export class LocLive {
       if (receiveWorkerLog(event.data, logSession())) {
         return
       }
-      if (event.data.type === 'bitrate') {
-        this.receivedKbps.video = event.data.kbps ?? this.receivedKbps.video
-        return
-      }
       if (event.data.type === 'keyFrameNeeded') {
         callbacks.onKeyFrameNeeded(event.data.groupId as bigint)
         return
@@ -122,10 +127,6 @@ export class LocLive {
     }
     this.audioWorker.onmessage = (event) => {
       if (receiveWorkerLog(event.data, logSession())) {
-        return
-      }
-      if (event.data.type === 'bitrate') {
-        this.receivedKbps.audio = event.data.kbps ?? this.receivedKbps.audio
         return
       }
       if (event.data.type === 'audioData') {
@@ -156,6 +157,7 @@ export class LocLive {
     codec: string | undefined,
     cached = false
   ): void {
+    this.addReceivedBytes[kind](object.objectPayloadLength)
     if (cached) {
       this.cachedFrameKeys.add(frameKey(groupId, object.objectId))
     } else {

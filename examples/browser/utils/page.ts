@@ -1,9 +1,7 @@
-import type { PlayerStatus } from 'moq-wasm/media'
+import type { StatusState } from 'moq-wasm/media'
 import { access } from './access'
 import { setUpRelayUrlControls } from './relayPicker'
 import { firstSearchParam } from './relayPresets'
-
-export type StatusState = PlayerStatus['state']
 
 export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
