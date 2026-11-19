@@ -3,13 +3,14 @@ import {
   type BroadcastWatch,
   type LocalBroadcast,
   type LocalSource,
+  type StatusState,
   createBroadcast,
   watchBroadcasts
 } from 'moq-wasm/media'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
 import { pageRoomId } from '../../utils/roomId'
 import { RoomBotButton, botNamespace, sameNamespace } from '../../utils/roomBots'
-import { type StatusState, element, getErrorMessage, setStatus } from '../../utils/page'
+import { element, getErrorMessage, setStatus } from '../../utils/page'
 import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { randomName } from '../../utils/randomName'
 import { setUpRelayUrlControls } from '../../utils/relayPicker'

@@ -4,12 +4,13 @@ import {
   type Mp4SampleTable,
   type Mp4VideoTrack,
   type Mp4AudioTrack,
+  type StatusState,
   monotonicUnixMicros
 } from 'moq-wasm/media'
 import { loadMoqt, MoqSession } from 'moq-wasm'
 import type { PublishPreview } from './publishPreview'
 import { StreamMonitor, type StreamRecord } from './streamMonitor'
-import { type StatusState, getErrorMessage } from '../../utils/page'
+import { getErrorMessage } from '../../utils/page'
 import { connectOptions } from '../../utils/access'
 
 const MILLIS_PER_MICRO = 1 / 1_000
