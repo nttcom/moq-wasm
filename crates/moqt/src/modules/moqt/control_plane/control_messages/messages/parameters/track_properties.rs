@@ -270,7 +270,10 @@ mod tests {
         properties.set_group_order(Some(GroupOrder::Ascending));
 
         // Assert
-        assert!(!properties.is_empty());
+        assert_eq!(
+            properties.iter().cloned().collect::<Vec<_>>(),
+            vec![varint(DEFAULT_PUBLISHER_GROUP_ORDER, 1)]
+        );
         assert_eq!(properties.group_order(), Some(GroupOrder::Ascending));
     }
 

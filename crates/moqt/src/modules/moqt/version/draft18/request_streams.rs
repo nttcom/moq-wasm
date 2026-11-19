@@ -1352,27 +1352,55 @@ mod tests {
             token_type: 1,
             token_value: Bytes::from_static(b"token"),
         };
+        let filter = FilterType::AbsoluteStart {
+            location: Location {
+                group_id: 4,
+                object_id: 1,
+            },
+        };
         let parameters = vec![
             Parameter::AuthorizationToken(token.clone()),
             Parameter::ObjectDeliveryTimeout(900),
-            Parameter::SubscriptionFilter(FilterType::AbsoluteRange {
-                location: Location {
-                    group_id: 4,
-                    object_id: 1,
-                },
-                end_group: 7,
-            }),
+            Parameter::SubscriptionFilter(filter),
         ];
 
         // Act
-        let (update, _) = apply_update(&mut baseline, 6, parameters);
+        let (update, updated_filter) = apply_update(&mut baseline, 6, parameters);
 
-        // Assert: the end group is the last group plus 1, as in draft-14's SUBSCRIBE_UPDATE
+        // Assert: the priority and forward state are kept from the baseline
         assert_eq!(update.request_id, 6);
+        assert_eq!(update.subscription_request_id, 2);
         assert_eq!(update.subscriber_priority, 10);
         assert!(update.forward);
         assert_eq!(update.authorization_tokens, vec![token]);
         assert_eq!(update.delivery_timeout, Some(900));
+        assert_eq!(
+            update.start_location,
+            Location {
+                group_id: 4,
+                object_id: 1
+            }
+        );
+        assert_eq!(update.end_group, 0);
+        assert_eq!(updated_filter, Some(filter));
+    }
+
+    #[test]
+    fn an_absolute_range_update_ends_one_group_past_its_last() {
+        // Arrange
+        let mut baseline = update_baseline(2, 10, true, FilterType::LargestObject, None);
+        let parameters = vec![Parameter::SubscriptionFilter(FilterType::AbsoluteRange {
+            location: Location {
+                group_id: 4,
+                object_id: 1,
+            },
+            end_group: 7,
+        })];
+
+        // Act
+        let (update, _) = apply_update(&mut baseline, 6, parameters);
+
+        // Assert: as in draft-14's SUBSCRIBE_UPDATE
         assert_eq!(
             update.start_location,
             Location {
