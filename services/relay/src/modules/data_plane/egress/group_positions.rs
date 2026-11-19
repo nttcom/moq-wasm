@@ -45,7 +45,11 @@ pub(super) struct GroupPosition {
 
 impl GroupPosition {
     pub(super) fn current(&self) -> u64 {
-        self.of(&self.running_receiver.borrow())
+        position_of(
+            &self.running_receiver.borrow(),
+            self.group_id,
+            self.group_order,
+        )
     }
 
     pub(super) async fn moved_from(&mut self, position: u64) {
@@ -56,10 +60,6 @@ impl GroupPosition {
             .running_receiver
             .wait_for(|running| at(running) != position)
             .await;
-    }
-
-    fn of(&self, running: &Running) -> u64 {
-        position_of(running, self.group_id, self.group_order)
     }
 }
 
