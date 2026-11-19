@@ -61,6 +61,7 @@ class RecordingSink:
         self.unanswered: list[tuple[UserImageRequestFrame, str]] = []
         self.events: list[tuple] = []
         self.received = asyncio.Event()
+        self.reported_error = asyncio.Event()
 
     def audio_in_sample_rate(self) -> int:
         return SAMPLE_RATE
@@ -82,6 +83,8 @@ class RecordingSink:
 
     async def event(self, name: str, *args: object) -> None:
         self.events.append((name, *args))
+        if name == "on_error":
+            self.reported_error.set()
 
 
 AUDIO_CATALOG = catalog_payload({"name": "audio", "role": "audio", "packaging": "loc", "codec": "opus", "bitrate": 64000, "samplerate": 48000, "channelConfig": "mono", "isLive": True})
@@ -195,6 +198,31 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
         ("on_client_connected", "alice"),
         ("on_track_subscribed", MoqWasmTrack("alice", "audio", "audio")),
     ]
+    await room.stop("input")
+    await session.close()
+
+
+async def test_a_refused_room_watch_reaches_on_error():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+
+    async def refuse(prefix: list[str]):
+        raise RuntimeError("NamespacePrefixOverlap")
+
+    native.watch_namespaces = refuse
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_in=True), sink)
+
+    # Act
+    await room.start("input")
+    await within(sink.reported_error.wait())
+
+    # Assert
+    assert sink.events[0] == ("on_connected",)
+    name, message, error = sink.events[1]
+    assert (name, message, str(error)) == ("on_error", f"cannot watch {ROOM}", "NamespacePrefixOverlap")
     await room.stop("input")
     await session.close()
 
