@@ -1,5 +1,6 @@
 import { type Page, expect } from '@playwright/test'
 import { CHAT_MODERATION_PATH } from '../playwright.helpers'
+import { pressStartBot } from './room-bot'
 import { leavePage } from './leave-all-pages'
 
 const moqtUrl = process.env.CHAT_MODERATION_E2E_MOQT_URL ?? 'https://127.0.0.1:4433'
@@ -17,6 +18,7 @@ export const REMOVED_MESSAGE_TEXT = 'モデレーターによって削除され�
 
 export async function joinChat(page: Page, room = ROOM) {
   const chat = await clickJoin(page, room)
+  await pressStartBot(page, 'chat-moderation')
   await expect(page.locator('#moderator-status')).toHaveAttribute('data-state', 'ok', { timeout: 60_000 })
   return chat
 }

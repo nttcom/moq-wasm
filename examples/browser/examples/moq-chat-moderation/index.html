@@ -43,7 +43,7 @@
             </summary>
             <ol class="setup-steps">
               <li>
-                <h4>Cloud relay-1 のまま Join</h4>
+                <h4>Cloud relay-1 のまま Join し、「bot を参加させる」を押す</h4>
               </li>
             </ol>
           </details>
@@ -109,7 +109,7 @@
                 </p>
               </li>
               <li>
-                <h4>Local relay-a で Join</h4>
+                <h4>Local relay-a で Join し、「bot を参加させる」を押す</h4>
                 <pre><code>make chrome</code></pre>
               </li>
             </ol>
@@ -160,6 +160,9 @@
               </button>
               <button type="button" id="leaveBtn" data-testid="chat-moderation-leave-button" disabled>
                 <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-log-out" /></svg>Leave
+              </button>
+              <button type="button" id="botBtn" class="secondary" data-testid="chat-moderation-bot-button" disabled>
+                <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-plus" /></svg>bot を参加させる
               </button>
             </div>
             <div class="status-list">

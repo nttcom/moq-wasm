@@ -1,6 +1,6 @@
 import { MoqSession, type TrackWriter } from 'moq-wasm'
 import { connectOptions } from './access'
-import { botNamespace, sameNamespace, startRoomBot } from './roomBots'
+import { RoomBotButton, botNamespace, sameNamespace } from './roomBots'
 import { SystemOneStatusView } from './systemOneStatus'
 import { type StatusState, element, getErrorMessage, setStatus } from './page'
 import { setUpRelayUrlControls } from './relayPicker'
@@ -9,7 +9,7 @@ const EVENT_TIMELINE_TRACK = 'eventtimeline'
 
 export type SystemOneBotPageOptions = {
   logTag: string
-  /// The room's namespace, `<app>/...`, which the page starts the bot in when it joins.
+  /// The room's namespace, `<app>/...`, which the bot button starts the bot in.
   room: string[]
   botType: string
   /// Called once connected, to announce the page's namespace and publish its tracks.
@@ -28,15 +28,13 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
   const joinButton = element<HTMLButtonElement>('joinBtn')
   const leaveButton = element<HTMLButtonElement>('leaveBtn')
   const systemOneStatus = new SystemOneStatusView(element('system-one-status'))
-  const botRoomNotice = element<HTMLSpanElement>('bot-room')
-  botRoomNotice.style.display = 'none'
+  const botButton = new RoomBotButton(options.botType, options.room, element('botBtn'), element('bot-room'))
   setUpRelayUrlControls(urlInput, element('urlPresets'))
   let session: MoqSession | undefined
 
-  const startBot = (): void => void startRoomBot(options.botType, options.room, botRoomNotice)
-
   const reset = async (connectionText: string, connectionState: StatusState): Promise<void> => {
     session = undefined
+    botButton.setInRoom(false)
     systemOneStatus.reset()
     await options.onReset()
     setStatus('connection-status', connectionText, connectionState)
@@ -57,12 +55,9 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
   const join = async (): Promise<void> => {
     joinButton.disabled = true
     setStatus('connection-status', '接続中', 'review')
-    botRoomNotice.style.display = 'none'
     try {
       await options.beforeConnect?.()
       const relayUrl = urlInput.value.trim()
-      // Starting before connecting lets the bot start while the page connects.
-      startBot()
       const joined = await MoqSession.connect(relayUrl, connectOptions())
       session = joined
       void joined.closed.then(() => {
@@ -78,13 +73,10 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
             continue
           }
           if (kind === 'withdrawn') {
+            botButton.setBotPresent(false)
             options.onBotLeft()
-            // A start sent while the previous bot was still leaving an empty room got 409, so start one
-            // again once it has left.
-            if (session === joined) {
-              startBot()
-            }
           } else {
+            botButton.setBotPresent(true)
             await followBot(joined).catch((error) => console.warn(`[${logTag}] bot subscribe failed`, error))
           }
         }
@@ -92,6 +84,7 @@ export function setUpSystemOneBotPage(options: SystemOneBotPageOptions): void {
       await options.afterConnect?.(joined)
       setStatus('connection-status', '接続済み', 'ok')
       leaveButton.disabled = false
+      botButton.setInRoom(true)
     } catch (error) {
       session?.close()
       await reset(`接続に失敗しました: ${getErrorMessage(error)}`, 'error')
