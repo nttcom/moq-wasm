@@ -32,7 +32,7 @@ mod new_group_requests;
 mod object_cache;
 mod object_numbering;
 
-pub use new_group_requests::{MIN_GROUP_DURATION, MIN_GROUP_OBJECTS};
+pub use new_group_requests::MIN_GROUP_OBJECTS;
 pub use object_cache::Retention;
 pub use object_numbering::{GroupBoundary, Placement};
 
@@ -294,7 +294,7 @@ impl Origin {
     /// SUBSCRIBE_OK say so, and `requested` is notified when a subscriber
     /// asks for a new group (NEW_GROUP_REQUEST, §10.2.13) that has not begun
     /// yet. The caller then starts one with the next object it writes. While
-    /// the open group is younger than `MIN_GROUP_DURATION` and holds fewer
+    /// the open group is younger than 2 s and holds fewer
     /// than `MIN_GROUP_OBJECTS` objects, the notification waits until the
     /// group reaches either, and is not sent when the caller starts a group
     /// before that. Call this before `publish` and before the track is
@@ -1077,6 +1077,7 @@ mod tests {
 
     use bytes::Bytes;
 
+    use super::new_group_requests::MIN_GROUP_DURATION;
     use super::*;
     use crate::modules::test_support::location;
     use crate::{

@@ -6,7 +6,7 @@ use super::{new_group_delay_task::NewGroupDelayTask, object_numbering::Placement
 
 /// A group this old is long enough to be ended on request
 /// (NEW_GROUP_REQUEST), as is one that holds `MIN_GROUP_OBJECTS` objects.
-pub const MIN_GROUP_DURATION: Duration = Duration::from_secs(2);
+pub(super) const MIN_GROUP_DURATION: Duration = Duration::from_secs(2);
 /// A group of this many objects is long enough to be ended on request, as is
 /// one `MIN_GROUP_DURATION` old.
 pub const MIN_GROUP_OBJECTS: u64 = 60;
