@@ -432,9 +432,8 @@ mod tests {
                     .into_iter()
                     .enumerate()
                     .map(|(index, (step, offset, keyframe))| {
-                        dts += step;
                         let is_keyframe = index == 0 || keyframe;
-                        VideoSample {
+                        let sample = VideoSample {
                             data: if is_keyframe {
                                 keyframe_annexb()
                             } else {
@@ -443,7 +442,9 @@ mod tests {
                             is_keyframe,
                             pts: ticks(dts + offset),
                             dts: ticks(dts),
-                        }
+                        };
+                        dts += step;
+                        sample
                     })
                     .collect()
             })
@@ -455,21 +456,25 @@ mod tests {
                 frames
                     .into_iter()
                     .map(|(step, data)| {
-                        pts += step;
-                        AudioSample {
+                        let sample = AudioSample {
                             data: Bytes::from(data),
                             pts: ticks(pts),
                             audio_level: None,
-                        }
+                        };
+                        pts += step;
+                        sample
                     })
                     .collect()
             })
         }
 
-        /// Starts below 2^32 ticks, so no timestamp reaches the 33-bit wrap,
-        /// which the demuxer does not unwrap.
+        /// Both tracks start at `start`, so no timestamp precedes the first one
+        /// the demuxer reads. Half the starts lie within 0.1 s before the
+        /// 33-bit wrap so the samples can cross it; uniform starts almost
+        /// never do.
         fn media() -> impl Strategy<Value = (Vec<VideoSample>, Vec<AudioSample>)> {
-            (0..1u64 << 32).prop_flat_map(|start| (video(start), audio(start)))
+            prop_oneof![0..1u64 << 33, (1u64 << 33) - 9_000..1u64 << 33]
+                .prop_flat_map(|start| (video(start), audio(start)))
         }
 
         proptest! {
