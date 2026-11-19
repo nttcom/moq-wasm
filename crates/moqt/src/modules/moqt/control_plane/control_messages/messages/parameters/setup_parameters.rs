@@ -117,7 +117,7 @@ impl SetupParameter {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         let mut number_of_parameters = 0;
 
@@ -127,7 +127,7 @@ impl SetupParameter {
                     key: SetupParameterType::Path as u64,
                     value: VariantType::Odd(Bytes::from(path.clone().into_bytes())),
                 }
-                .encode(),
+                .encode()?,
             );
             number_of_parameters += 1;
         }
@@ -136,17 +136,17 @@ impl SetupParameter {
                 key: SetupParameterType::MaxRequestID as u64,
                 value: VariantType::Even(self.max_request_id),
             }
-            .encode(),
+            .encode()?,
         );
         number_of_parameters += 1;
         for authorization_token in &self.authorization_token {
-            let auth_token = authorization_token.encode();
+            let auth_token = authorization_token.encode()?;
             buf.unsplit(
                 KeyValuePair {
                     key: SetupParameterType::AuthorizationToken as u64,
                     value: VariantType::Odd(auth_token.into()),
                 }
-                .encode(),
+                .encode()?,
             );
             number_of_parameters += 1;
         }
@@ -156,7 +156,7 @@ impl SetupParameter {
                     key: SetupParameterType::MaxAuthTokenCacheSize as u64,
                     value: VariantType::Even(*max_auth_token_cache_size),
                 }
-                .encode(),
+                .encode()?,
             );
             number_of_parameters += 1;
         }
@@ -166,7 +166,7 @@ impl SetupParameter {
                     key: SetupParameterType::Authority as u64,
                     value: VariantType::Odd(Bytes::from(authority.clone().into_bytes())),
                 }
-                .encode(),
+                .encode()?,
             );
             number_of_parameters += 1;
         }
@@ -176,7 +176,7 @@ impl SetupParameter {
                     key: SetupParameterType::MOQTimplementation as u64,
                     value: VariantType::Odd(Bytes::from(moq_implementation.clone().into_bytes())),
                 }
-                .encode(),
+                .encode()?,
             );
             number_of_parameters += 1;
         }
@@ -185,13 +185,13 @@ impl SetupParameter {
                 Some(traceparent) => traceparent.encode(),
                 None => KeyValuePair::odd(TRACE_CONTEXT, Bytes::new()),
             };
-            buf.unsplit(option.encode());
+            buf.unsplit(option.encode()?);
             number_of_parameters += 1;
         }
         let mut result_bytes = BytesMut::new();
         result_bytes.put_varint(number_of_parameters);
         result_bytes.unsplit(buf);
-        result_bytes
+        Ok(result_bytes)
     }
 }
 
@@ -252,7 +252,7 @@ mod tests {
                 traceparent: None,
             };
 
-            let buf = setup_parameter.encode();
+            let buf = setup_parameter.encode().unwrap();
 
             let expected_bytes_array = [
                 6, // Number of Parameters (i)
@@ -342,7 +342,7 @@ mod tests {
             };
 
             // Act
-            let buf = setup_parameter.encode();
+            let buf = setup_parameter.encode().unwrap();
             let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&buf[..])).unwrap();
 
             // Assert
@@ -375,7 +375,7 @@ mod tests {
             };
 
             // Act
-            let buf = setup_parameter.encode();
+            let buf = setup_parameter.encode().unwrap();
             let decoded = SetupParameter::decode(&mut std::io::Cursor::new(&buf[..])).unwrap();
 
             // Assert

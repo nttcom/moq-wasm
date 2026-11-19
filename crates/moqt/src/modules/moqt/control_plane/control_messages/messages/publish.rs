@@ -74,13 +74,15 @@ impl Publish {
                 .group_order()
                 .unwrap_or(GroupOrder::Ascending) as u8,
         );
-        payload.unsplit(self.content_exists.encode());
+        payload.unsplit(self.content_exists.encode()?);
         payload.put_u8(self.forward as u8);
 
         let parameters: Vec<KeyValuePair> = self
             .authorization_tokens
             .iter()
-            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .map(AuthorizationToken::parameter)
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
             .chain(
                 [
                     self.track_properties
@@ -95,7 +97,7 @@ impl Publish {
             )
             .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
-        payload.unsplit(KeyValuePair::encode_list(&parameters));
+        payload.unsplit(KeyValuePair::encode_list(&parameters)?);
 
         Ok(payload)
     }

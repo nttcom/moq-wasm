@@ -335,12 +335,9 @@ impl ControlChannel {
         subscribe_update: SubscribeUpdate,
     ) -> Result<(), TransportSendError> {
         debug_assert_eq!(subscribe_update.request_id, reservation.request_id());
-        self.send_with_request_id(
-            reservation,
-            ControlMessageType::SubscribeUpdate,
-            subscribe_update.encode(),
-        )
-        .await
+        let payload = subscribe_update.encode().map_err(encode_error)?;
+        self.send_with_request_id(reservation, ControlMessageType::SubscribeUpdate, payload)
+            .await
     }
 
     async fn send_with_request_id(
@@ -386,7 +383,9 @@ impl ControlChannel {
                 (error_message_type(kind), error.encode())
             }
         };
-        self.send_stream.send(message_type, payload).await
+        self.send_stream
+            .send(message_type, payload.map_err(encode_error)?)
+            .await
     }
 
     pub(super) async fn notify(
@@ -394,7 +393,7 @@ impl ControlChannel {
         notification: Notification,
     ) -> Result<(), TransportSendError> {
         let (message_type, payload) = match notification {
-            Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, Ok(m.encode())),
+            Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, m.encode()),
             Notification::PublishDone {
                 request_id,
                 code,
@@ -407,9 +406,9 @@ impl ControlChannel {
                     stream_count,
                     reason,
                 );
-                (ControlMessageType::PublishDone, Ok(publish_done.encode()))
+                (ControlMessageType::PublishDone, publish_done.encode())
             }
-            Notification::FetchCancel(m) => (ControlMessageType::FetchCancel, Ok(m.encode())),
+            Notification::FetchCancel(m) => (ControlMessageType::FetchCancel, m.encode()),
             Notification::PublishNamespaceDone(m) => {
                 (ControlMessageType::PublishNamespaceDone, m.encode())
             }
@@ -434,16 +433,13 @@ impl ControlChannel {
                 ControlMessageType::UnSubscribeNamespace,
                 UnsubscribeNamespace::new(track_namespace_prefix).encode(),
             ),
-            Notification::GoAway(m) => (ControlMessageType::GoAway, Ok(m.encode())),
-            Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, Ok(m.encode())),
-            Notification::RequestsBlocked(m) => {
-                (ControlMessageType::RequestsBlocked, Ok(m.encode()))
-            }
+            Notification::GoAway(m) => (ControlMessageType::GoAway, m.encode()),
+            Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, m.encode()),
+            Notification::RequestsBlocked(m) => (ControlMessageType::RequestsBlocked, m.encode()),
         };
-        let payload = payload.map_err(|error| TransportSendError::SessionError {
-            reason: error.to_string(),
-        })?;
-        self.send_stream.send(message_type, payload).await
+        self.send_stream
+            .send(message_type, payload.map_err(encode_error)?)
+            .await
     }
 
     /// `on_late_response` is the withdrawal to send if a success response arrives after abandonment.
@@ -495,6 +491,14 @@ impl ControlChannel {
         // No MAX_REQUEST_ID can arrive anymore: release blocked requests so
         // they fail like any request on a closed control stream.
         self.peer_request_id_limit.send_replace(RequestId::MAX);
+    }
+}
+
+/// A message draft-14 cannot carry fails like one longer than its Message
+/// Length allows (`BiStreamSender::send`).
+fn encode_error(error: anyhow::Error) -> TransportSendError {
+    TransportSendError::SessionError {
+        reason: error.to_string(),
     }
 }
 
@@ -1428,7 +1432,7 @@ mod tests {
             .send_stream
             .send(
                 ControlMessageType::MaxRequestId,
-                MaxRequestId::new(REQUEST_ID_WINDOW).encode(),
+                MaxRequestId::new(REQUEST_ID_WINDOW).encode().unwrap(),
             )
             .await
             .unwrap();

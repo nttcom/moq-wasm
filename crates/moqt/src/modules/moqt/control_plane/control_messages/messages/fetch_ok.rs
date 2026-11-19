@@ -53,20 +53,20 @@ impl FetchOk {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.end_of_track as u8);
-        payload.unsplit(self.end_location.encode());
+        payload.unsplit(self.end_location.encode()?);
         let parameters: Vec<KeyValuePair> = self
             .track_properties
             .max_cache_duration()
             .map(|value| KeyValuePair::even(0x04, value))
             .into_iter()
             .collect();
-        payload.unsplit(KeyValuePair::encode_list(&parameters));
-        payload
+        payload.unsplit(KeyValuePair::encode_list(&parameters)?);
+        Ok(payload)
     }
 }
 
@@ -87,7 +87,7 @@ mod tests {
                 },
                 track_properties: Default::default(),
             };
-            let result = fetch_ok.encode();
+            let result = fetch_ok.encode().unwrap();
             let expected = [
                 7,  // Request ID
                 1,  // Group Order = Ascending
@@ -133,7 +133,7 @@ mod tests {
                     properties
                 },
             };
-            let buf = expected.encode();
+            let buf = expected.encode().unwrap();
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let result = FetchOk::decode(&mut cursor).unwrap();
             assert_eq!(result, expected);

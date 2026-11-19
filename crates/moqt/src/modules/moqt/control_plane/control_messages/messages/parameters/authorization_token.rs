@@ -3,8 +3,9 @@ use std::fmt;
 
 use bytes::{Buf, Bytes};
 
-use crate::modules::extensions::{
-    buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum,
+use crate::modules::{
+    extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt, wire_enum::wire_enum},
+    moqt::control_plane::control_messages::key_value_pair::KeyValuePair,
 };
 
 wire_enum! {
@@ -121,12 +122,18 @@ impl AuthorizationToken {
             .ok()
     }
 
-    pub fn encode(&self) -> bytes::BytesMut {
+    /// The AUTHORIZATION TOKEN message parameter (draft-14 §9.2.1.1) that
+    /// carries this token.
+    pub(crate) fn parameter(&self) -> anyhow::Result<KeyValuePair> {
+        Ok(KeyValuePair::odd(0x03, self.encode()?.freeze()))
+    }
+
+    pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         match self {
             AuthorizationToken::Delete => {
                 let mut buf = bytes::BytesMut::new();
                 buf.put_varint(AliasType::Delete as u64);
-                buf
+                Ok(buf)
             }
             AuthorizationToken::Register {
                 token_alias,
@@ -138,13 +145,13 @@ impl AuthorizationToken {
                 buf.put_varint(*token_alias);
                 buf.put_varint(*token_type);
                 buf.extend_from_slice(token_value);
-                buf
+                Ok(buf)
             }
             AuthorizationToken::UseAlias { token_alias } => {
                 let mut buf = bytes::BytesMut::new();
                 buf.put_varint(AliasType::UseAlias as u64);
                 buf.put_varint(*token_alias);
-                buf
+                Ok(buf)
             }
             AuthorizationToken::UseValue {
                 token_type,
@@ -154,7 +161,7 @@ impl AuthorizationToken {
                 buf.put_varint(AliasType::UseValue as u64);
                 buf.put_varint(*token_type);
                 buf.extend_from_slice(token_value);
-                buf
+                Ok(buf)
             }
         }
     }

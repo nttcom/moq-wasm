@@ -108,7 +108,7 @@ impl DatagramField {
         }
         buf.put_u8(self.publisher_priority);
         if let Some(extension_headers) = extension_headers {
-            buf.unsplit(extension_headers.encode());
+            buf.unsplit(extension_headers.encode()?);
         }
         match &self.payload {
             ObjectDatagramPayload::Payload(payload) => buf.extend_from_slice(payload),

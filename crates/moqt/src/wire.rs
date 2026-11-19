@@ -78,7 +78,8 @@ mod tests {
                 traceparent: None,
             },
         )
-        .encode();
+        .encode()
+        .unwrap();
         let mut framed =
             encode_control_message(ControlMessageType::ClientSetup, payload.clone()).unwrap();
 

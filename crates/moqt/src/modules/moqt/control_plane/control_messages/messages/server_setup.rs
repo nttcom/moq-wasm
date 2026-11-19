@@ -34,11 +34,11 @@ impl ServerSetup {
         Ok(server_setup_message)
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.selected_version as u64);
-        payload.extend_from_slice(&self.setup_parameters.encode());
-        payload
+        payload.extend_from_slice(&self.setup_parameters.encode()?);
+        Ok(payload)
     }
 }
 
@@ -67,7 +67,7 @@ mod tests {
                 traceparent: None,
             };
             let server_setup = ServerSetup::new(selected_version, setup_parameters.clone());
-            let buf = server_setup.encode();
+            let buf = server_setup.encode().unwrap();
 
             let expected_bytes_array = [
                 192, // Selected Version (i): Length(11 of 2MSB)

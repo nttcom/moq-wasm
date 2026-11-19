@@ -13,10 +13,10 @@ impl NamespaceOk {
         Ok(NamespaceOk { request_id })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        payload
+        Ok(payload)
     }
 }
 
@@ -30,7 +30,7 @@ mod tests {
         fn packetize() {
             let request_id = 0;
             let announce_ok = NamespaceOk { request_id };
-            let buf = announce_ok.encode();
+            let buf = announce_ok.encode().unwrap();
 
             let expected_bytes_array = [
                 0, // Request ID(i)

@@ -204,7 +204,7 @@ impl SubgroupHeader {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         buf.put_varint(self.message_type.get_value());
         buf.put_varint(self.track_alias);
@@ -215,7 +215,7 @@ impl SubgroupHeader {
             buf.put_varint(id);
         }
         buf.put_u8(self.publisher_priority);
-        buf
+        Ok(buf)
     }
 }
 
@@ -251,7 +251,7 @@ impl SubgroupObjectField {
                 &[][..],
             ),
         };
-        let mut buf = head.encode(message_type);
+        let mut buf = head.encode(message_type).expect("a test field encodes");
         buf.extend_from_slice(payload);
         buf
     }
@@ -331,11 +331,11 @@ impl SubgroupObjectHead {
         })
     }
 
-    pub(crate) fn encode(&self, message_type: SubgroupHeaderType) -> BytesMut {
+    pub(crate) fn encode(&self, message_type: SubgroupHeaderType) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         buf.put_varint(self.object_id_delta);
         if message_type.has_extensions() {
-            buf.extend_from_slice(&self.extension_headers.encode());
+            buf.extend_from_slice(&self.extension_headers.encode()?);
         }
         match self.body {
             ObjectBody::Payload { length } => buf.put_varint(length as u64),
@@ -344,7 +344,7 @@ impl SubgroupObjectHead {
                 buf.put_varint(code);
             }
         }
-        buf
+        Ok(buf)
     }
 
     pub(crate) fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
@@ -399,7 +399,7 @@ mod tests {
                 false,
             );
 
-            let buf = header.encode();
+            let buf = header.encode().unwrap();
             let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
             let depacketized = SubgroupHeader::decode(&mut cursor).unwrap();
 
@@ -427,7 +427,7 @@ mod tests {
                 false,
             );
 
-            let buf = header.encode();
+            let buf = header.encode().unwrap();
             let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
             let depacketized = SubgroupHeader::decode(&mut cursor).unwrap();
 
@@ -450,7 +450,7 @@ mod tests {
         fn subgroup_header_packetize_and_depacketize_value_id() {
             let header = SubgroupHeader::new(5, 6, SubgroupId::Value(100), 32, true, true);
 
-            let buf = header.encode();
+            let buf = header.encode().unwrap();
             let mut cursor = std::io::Cursor::<&[u8]>::new(&buf);
             let depacketized = SubgroupHeader::decode(&mut cursor).unwrap();
 
@@ -559,19 +559,19 @@ mod tests {
         fn subgroup_header_type_selection() {
             // Case 1: No Subgroup ID, No Extensions, No End of Group -> 0x10
             let h = SubgroupHeader::new(0, 0, SubgroupId::None, 0, false, false);
-            let buf = h.encode();
+            let buf = h.encode().unwrap();
             assert_eq!(buf[0], 0x10);
 
             // Case 2: First Object ID, Extensions, No End of Group -> 0x13
             // (Previously buggy logic would have returned 0x15)
             let h = SubgroupHeader::new(0, 0, SubgroupId::FirstObjectIdDelta, 0, true, false);
-            let buf = h.encode();
+            let buf = h.encode().unwrap();
             assert_eq!(buf[0], 0x13);
 
             // Case 3: Value, Extensions, End of Group -> 0x1D
             // (Previously buggy logic would have returned 0x1B)
             let h = SubgroupHeader::new(0, 0, SubgroupId::Value(100), 0, true, true);
-            let buf = h.encode();
+            let buf = h.encode().unwrap();
             assert_eq!(buf[0], 0x1D);
         }
 

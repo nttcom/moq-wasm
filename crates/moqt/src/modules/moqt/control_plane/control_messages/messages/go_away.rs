@@ -27,10 +27,10 @@ impl GoAway {
         Ok(Self { new_session_uri })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_string(&self.new_session_uri);
-        payload
+        Ok(payload)
     }
 }
 
@@ -45,7 +45,7 @@ mod tests {
         fn packetize() {
             let message = GoAway::new("https://relay.example/next".to_string());
 
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut expected = BytesMut::new();
             expected.put_varint(26); // New Session URI Length (i)
@@ -56,7 +56,7 @@ mod tests {
         #[test]
         fn depacketize() {
             let message = GoAway::new("https://relay.example/next".to_string());
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = GoAway::decode(&mut cursor).unwrap();
@@ -66,7 +66,7 @@ mod tests {
 
         #[test]
         fn depacketize_empty_uri_keeps_current_session_uri() {
-            let buf = GoAway::new(String::new()).encode();
+            let buf = GoAway::new(String::new()).encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = GoAway::decode(&mut cursor).unwrap();
@@ -78,7 +78,7 @@ mod tests {
         fn depacketize_accepts_uri_of_maximum_length() {
             // Arrange
             let longest_uri = "a".repeat(MAX_NEW_SESSION_URI_LENGTH);
-            let buf = GoAway::new(longest_uri.clone()).encode();
+            let buf = GoAway::new(longest_uri.clone()).encode().unwrap();
             let mut cursor = std::io::Cursor::new(&buf[..]);
 
             // Act
@@ -91,7 +91,7 @@ mod tests {
         #[test]
         fn depacketize_rejects_uri_over_maximum_length() {
             let too_long_uri = "a".repeat(MAX_NEW_SESSION_URI_LENGTH + 1);
-            let buf = GoAway::new(too_long_uri).encode();
+            let buf = GoAway::new(too_long_uri).encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = GoAway::decode(&mut cursor);

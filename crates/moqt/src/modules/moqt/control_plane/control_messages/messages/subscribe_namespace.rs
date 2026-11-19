@@ -57,10 +57,12 @@ impl SubscribeNamespace {
         let parameters: Vec<KeyValuePair> = self
             .authorization_token
             .iter()
-            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .map(AuthorizationToken::parameter)
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
             .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
-        payload.unsplit(KeyValuePair::encode_list(&parameters));
+        payload.unsplit(KeyValuePair::encode_list(&parameters)?);
         Ok(payload)
     }
 }

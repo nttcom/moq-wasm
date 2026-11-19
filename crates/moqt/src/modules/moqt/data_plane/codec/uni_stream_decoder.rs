@@ -169,7 +169,7 @@ mod tests {
                 cuts in cuts(),
             ) {
                 // Arrange
-                let mut stream = header.encode();
+                let mut stream = header.encode().unwrap();
                 for object in &objects {
                     stream.extend_from_slice(&object.encode(header.message_type));
                 }
@@ -188,9 +188,9 @@ mod tests {
                 cuts in cuts(),
             ) {
                 // Arrange
-                let mut stream = FetchHeader::new(6).encode();
+                let mut stream = FetchHeader::new(6).encode().unwrap();
                 for object in &objects {
-                    stream.extend_from_slice(&object.encode());
+                    stream.extend_from_slice(&object.encode().unwrap());
                 }
 
                 // Act

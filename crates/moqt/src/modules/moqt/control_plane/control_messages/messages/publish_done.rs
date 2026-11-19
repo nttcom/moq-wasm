@@ -35,13 +35,13 @@ impl PublishDone {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.status_code);
         payload.put_varint(self.stream_count);
         util::put_reason_phrase(&mut payload, &self.error_reason);
-        payload
+        Ok(payload)
     }
 }
 
@@ -54,7 +54,7 @@ mod tests {
         fn packetize() {
             let message = PublishDone::new(7, 0x2, 2, "track ended".to_string());
 
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let expected = [
                 7,  // Request ID (i)
@@ -69,7 +69,7 @@ mod tests {
         #[test]
         fn depacketize() {
             let message = PublishDone::new(7, 0x2, 2, "track ended".to_string());
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = PublishDone::decode(&mut cursor).unwrap();
@@ -79,7 +79,9 @@ mod tests {
 
         #[test]
         fn depacketize_keeps_unknown_status_code() {
-            let buf = PublishDone::new(1, 0x3f, 0, String::new()).encode();
+            let buf = PublishDone::new(1, 0x3f, 0, String::new())
+                .encode()
+                .unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = PublishDone::decode(&mut cursor).unwrap();
@@ -98,7 +100,7 @@ mod tests {
             #[test]
             fn decoding_an_encoded_message_gives_it_back(message in control_message_strategies::publish_done()) {
                 // Arrange
-                let bytes = message.encode();
+                let bytes = message.encode().unwrap();
                 let mut cursor = std::io::Cursor::new(&bytes[..]);
 
                 // Act

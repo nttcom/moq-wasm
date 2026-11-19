@@ -2055,7 +2055,9 @@ mod tests {
         // Act
         send_raw_stream(
             &server,
-            &Version::Draft18.encode_fetch_header(handler.request_id()),
+            &Version::Draft18
+                .encode_fetch_header(handler.request_id())
+                .unwrap(),
         )
         .await;
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;

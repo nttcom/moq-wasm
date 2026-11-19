@@ -54,13 +54,13 @@ impl PublishOk {
         })
     }
 
-    pub fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_u8(self.forward as u8);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
-        payload.unsplit(self.filter_type.encode());
+        payload.unsplit(self.filter_type.encode()?);
         payload.put_varint(self.delivery_timeout.is_some() as u64);
         if let Some(delivery_timeout) = self.delivery_timeout {
             payload.unsplit(
@@ -68,11 +68,11 @@ impl PublishOk {
                     key: DELIVERY_TIMEOUT,
                     value: VariantType::Even(delivery_timeout),
                 }
-                .encode(),
+                .encode()?,
             );
         }
 
-        payload
+        Ok(payload)
     }
 }
 
@@ -86,7 +86,7 @@ mod tests {
         use bytes::Buf;
 
         fn round_trip(message: &PublishOk) -> PublishOk {
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = PublishOk::decode(&mut cursor).unwrap();
             assert_eq!(cursor.remaining(), 0);
@@ -174,7 +174,7 @@ mod tests {
             };
 
             // Act
-            let buf = publish_ok_message.encode();
+            let buf = publish_ok_message.encode().unwrap();
 
             // Assert
             let expected_bytes_array = [

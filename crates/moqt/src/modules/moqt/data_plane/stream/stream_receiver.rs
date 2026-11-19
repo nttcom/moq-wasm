@@ -139,6 +139,7 @@ mod tests {
         // length of 8 with no payload, then FIN
         let mut bytes = SubgroupHeader::new(1, 0, SubgroupId::None, 0, false, false)
             .encode()
+            .unwrap()
             .to_vec();
         bytes.extend_from_slice(&[0x00, 0x08]);
         let mut chunks = vec![bytes].into_iter();

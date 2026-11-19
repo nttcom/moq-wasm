@@ -72,18 +72,20 @@ impl Subscribe {
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.forward as u8);
-        payload.unsplit(self.filter_type.encode());
+        payload.unsplit(self.filter_type.encode()?);
         let parameters: Vec<KeyValuePair> = self
             .authorization_tokens
             .iter()
-            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .map(AuthorizationToken::parameter)
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
             .chain(
                 self.delivery_timeout
                     .map(|value| KeyValuePair::even(0x02, value)),
             )
             .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
-        payload.unsplit(KeyValuePair::encode_list(&parameters));
+        payload.unsplit(KeyValuePair::encode_list(&parameters)?);
 
         Ok(payload)
     }

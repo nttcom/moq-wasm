@@ -29,7 +29,7 @@ impl ContentExists {
         }
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         match self {
             ContentExists::False => {
@@ -37,11 +37,11 @@ impl ContentExists {
             }
             ContentExists::True { location } => {
                 payload.put_u8(1);
-                let bytes = location.encode();
+                let bytes = location.encode()?;
                 payload.unsplit(bytes);
             }
         }
-        payload
+        Ok(payload)
     }
 }
 

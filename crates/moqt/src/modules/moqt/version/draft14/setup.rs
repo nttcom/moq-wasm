@@ -46,7 +46,7 @@ async fn send_client_setup(
         trace_context: true,
         traceparent: current_traceparent(),
     };
-    let payload = ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode();
+    let payload = ClientSetup::new(vec![constants::MOQ_TRANSPORT_VERSION], setup_param).encode()?;
     send_stream
         .send(ControlMessageType::ClientSetup, payload)
         .await?;
@@ -113,7 +113,7 @@ async fn send_server_setup(send_stream: &mut BiStreamSender) -> anyhow::Result<(
         trace_context: server_declares_trace_context(),
         traceparent: None,
     };
-    let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode();
+    let payload = ServerSetup::new(MOQ_TRANSPORT_VERSION, setup_param).encode()?;
     Ok(send_stream
         .send(ControlMessageType::ServerSetup, payload)
         .await

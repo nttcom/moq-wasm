@@ -53,14 +53,14 @@ impl ClientSetup {
         Ok(client_setup_message)
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.supported_versions.len() as u64);
         for supported_version in &self.supported_versions {
             payload.put_varint(*supported_version as u64);
         }
-        payload.unsplit(self.setup_parameters.encode());
-        payload
+        payload.unsplit(self.setup_parameters.encode()?);
+        Ok(payload)
     }
 }
 
@@ -89,7 +89,7 @@ mod test {
                 traceparent: None,
             };
             let client_setup = ClientSetup::new(supported_versions, setup_params);
-            let buf = client_setup.encode();
+            let buf = client_setup.encode().unwrap();
 
             let expected_bytes_array = [
                 1,   // Number of Supported Versions (i)
