@@ -688,16 +688,6 @@ mod tests {
             .unwrap_or_else(|| panic!("missing track {name}"))
     }
 
-    fn init_data_of<'a>(catalog: &'a Catalog, track: &Track) -> Option<&'a str> {
-        let init_ref = track.init_ref.as_ref()?;
-        catalog
-            .init_data_list
-            .iter()
-            .flatten()
-            .find(|init_data| &init_data.id == init_ref)
-            .map(|init_data| init_data.data.as_str())
-    }
-
     #[test]
     fn only_the_cmaf_tracks_of_the_catalog_await_subscribe() {
         // Arrange
@@ -1027,7 +1017,7 @@ mod tests {
         assert_eq!((video.width, video.height), (Some(640), Some(360)));
         let cmaf = track_named(&catalog, &cmaf_track_name(VIDEO_TRACK_NAME));
         let init_segment = general_purpose::STANDARD
-            .decode(init_data_of(&catalog, cmaf).unwrap())
+            .decode(catalog.init_data(cmaf).unwrap())
             .unwrap();
         assert!(init_segment.windows(4).any(|window| window == b"vp09"));
     }
@@ -1057,7 +1047,11 @@ mod tests {
             !names.iter().any(|name| name.ends_with("_cmaf")),
             "{names:?}"
         );
-        assert!(init_data_of(&catalog, track_named(&catalog, AUDIO_TRACK_NAME)).is_some());
+        assert!(
+            catalog
+                .init_data(track_named(&catalog, AUDIO_TRACK_NAME))
+                .is_some()
+        );
     }
 
     #[test]
@@ -1079,7 +1073,7 @@ mod tests {
         assert_eq!(video_cmaf.max_grp_sap_starting_type, Some(1));
         let video_init_segment = &metadata.video_tracks[VIDEO_TRACK_NAME].init_segment;
         assert_eq!(
-            init_data_of(&catalog, video_cmaf),
+            catalog.init_data(video_cmaf),
             Some(video_init_segment.as_str())
         );
         let AudioConfig::Aac(config) = metadata.audio_tracks[AUDIO_TRACK_NAME].config.clone()
@@ -1087,7 +1081,7 @@ mod tests {
             panic!("the fixture audio is AAC");
         };
         assert_eq!(
-            init_data_of(&catalog, track_named(&catalog, "audio")),
+            catalog.init_data(track_named(&catalog, "audio")),
             Some(general_purpose::STANDARD.encode(config.to_bytes()).as_str())
         );
         let audio_cmaf = track_named(&catalog, "audio_cmaf");
@@ -1099,7 +1093,7 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(
-            init_data_of(&catalog, audio_cmaf),
+            catalog.init_data(audio_cmaf),
             Some(audio_init_segment.as_str())
         );
     }
