@@ -183,7 +183,7 @@ impl FetchHandler {
     /// Closes the session with PROTOCOL_VIOLATION instead of answering. Call it
     /// for a Joining Fetch of a subscription without the Largest Object filter
     /// (draft-14 §9.16.2).
-    pub fn close_for_protocol_violation(&self, reason: &str) {
+    pub(crate) fn close_for_protocol_violation(&self, reason: &str) {
         self.guard.mark_responded();
         self.guard
             .connection()

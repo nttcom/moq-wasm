@@ -35,7 +35,7 @@ impl TransportSendError {
             .find_map(|cause| cause.downcast_ref::<TransportSendError>())
     }
 
-    pub fn is_stopped_by_peer(error: &anyhow::Error) -> bool {
+    pub(crate) fn is_stopped_by_peer(error: &anyhow::Error) -> bool {
         matches!(
             Self::in_chain(error),
             Some(TransportSendError::Stopped { .. })

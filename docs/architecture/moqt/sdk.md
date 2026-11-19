@@ -60,7 +60,7 @@ Rust の列は `moqt` の今の API で同じことをする方法である。
 | `MoqSubscription.groups()` → `MoqGroup` | **無い** | `StreamDataReceiverFactory` |
 | `MoqSubscription.largest` | **無い** | `Subscription::content_exists`（SUBSCRIBE_OK の Largest Location） |
 | `MoqSubscription.done`（PUBLISH_DONE） | **無い**（iterator が終わるだけ） | `SessionEvent::PublishDone` をループで受ける |
-| `setForward(forward)` / `setPriority(priority)` / `endBeforeGroup(group)` | **無い** | `Subscriber::update_forward` / `update_priority` / `end_before_group` |
+| `setForward(forward)` / `setPriority(priority)` / `endBeforeGroup(group)` | **無い** | `client::Subscription::set_forward` / `set_priority` / `end_before_group` |
 | `MoqSubscription.close()`（UNSUBSCRIBE） | `Track.unsubscribe()` | `Subscriber::unsubscribe` |
 | `ReceivedObject` の `groupId`、`subgroupId`、`objectId`、`objectStatus`、`objectPayload`、`locHeader` | `Object` の `group_id`、`object_id`、`payload`。**subgroup、status、拡張ヘッダーが無い** | `TrackObject` |
 | `RequestError`（draft のエラーコード） | **無い**（`RuntimeError` の文字列） | `RequestFailure::Rejected { code, .. }` |

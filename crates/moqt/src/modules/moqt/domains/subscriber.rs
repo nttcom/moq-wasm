@@ -783,7 +783,7 @@ impl Subscriber {
 
     /// Changes the Subscriber Priority (draft-14 §7.1) and repeats the
     /// subscription's current Start Location, End Group and Forward State.
-    pub async fn update_priority(
+    pub(crate) async fn update_priority(
         &self,
         subscription: &Subscription,
         subscriber_priority: u8,

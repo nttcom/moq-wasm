@@ -316,7 +316,7 @@ impl Origin {
     /// track has one forwarding preference (§10), so call this before the
     /// first write. Fails for a track that is not registered or already has
     /// an object. A FETCH is still answered on a stream (§9.16).
-    pub async fn send_in_datagrams(&self, namespace: &str, track_name: &str) -> Result<()> {
+    pub(crate) async fn send_in_datagrams(&self, namespace: &str, track_name: &str) -> Result<()> {
         let key = track_key(namespace, track_name);
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
@@ -739,7 +739,7 @@ impl Origin {
     /// Serves a Standalone or Joining Fetch from the cache. A Joining Fetch
     /// names a SUBSCRIBE this origin accepted on the same session (draft-14
     /// §9.16.2).
-    pub async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
+    pub(crate) async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
         let mut state = self.state.lock().await;
         let (key, start_location, end_location) = match fetch_target(&state, &handler) {
             Ok(target) => target,
@@ -791,7 +791,7 @@ impl Origin {
         Ok(())
     }
 
-    pub async fn cancel_fetch(&self, handler: &FetchCancelHandler) {
+    pub(crate) async fn cancel_fetch(&self, handler: &FetchCancelHandler) {
         let request_key = (session_key(&handler.session_context), handler.request_id());
         if self
             .state
@@ -808,7 +808,7 @@ impl Origin {
         }
     }
 
-    pub async fn answer_track_status(&self, handler: TrackStatusHandler) -> Result<()> {
+    pub(crate) async fn answer_track_status(&self, handler: TrackStatusHandler) -> Result<()> {
         let key = (
             handler.track_namespace().to_string(),
             handler.track_name().to_string(),
