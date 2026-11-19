@@ -1328,6 +1328,13 @@ mod tests {
             },
             ..fetch.clone()
         };
+        let absolute_joining = Fetch {
+            fetch_params: FetchParams::AbsoluteJoining {
+                joining_request_id: 4,
+                joining_start: 3,
+            },
+            ..fetch.clone()
+        };
         let publish_namespace = PublishNamespace {
             request_id: 8,
             track_namespace: vec!["live".to_string()],
@@ -1363,6 +1370,10 @@ mod tests {
         assert_eq!(
             decode(encode_fetch(&joining).unwrap()),
             Message::Fetch(joining)
+        );
+        assert_eq!(
+            decode(encode_fetch(&absolute_joining).unwrap()),
+            Message::Fetch(absolute_joining)
         );
         assert_eq!(
             decode(encode_publish_namespace(&publish_namespace).unwrap()),
@@ -1625,6 +1636,32 @@ mod tests {
     }
 
     #[test]
+    fn a_go_away_uri_may_be_8192_bytes_but_no_longer() {
+        // Arrange
+        let go_away = |len| GoAwayMessage {
+            new_session_uri: "u".repeat(len),
+            request_id: None,
+        };
+
+        let decoded = |len| {
+            let mut framed = encode_go_away(&go_away(len)).unwrap();
+            let (message_type, payload) = take_message(&mut framed).unwrap();
+            decode_message(message_type, payload)
+        };
+
+        // Act
+        let longest = decoded(8192);
+        let too_long = decoded(8193);
+
+        // Assert
+        assert_eq!(longest, Ok(Message::GoAway(go_away(8192))));
+        assert!(
+            matches!(too_long, Err(DecodeError::Violation { .. })),
+            "{too_long:?}"
+        );
+    }
+
+    #[test]
     fn the_legacy_publish_ok_type_reads_as_request_ok() {
         // Act
         let decoded = decode_message(PUBLISH_OK, Bytes::from_static(&[0])).unwrap();
@@ -1737,6 +1774,21 @@ mod tests {
             properties.to_vec()
         )));
         assert!(!has_mandatory_track_property(&TrackProperties::default()));
+    }
+
+    #[test]
+    fn a_default_publisher_priority_of_255_is_read() {
+        // Arrange
+        let mut payload = BytesMut::new();
+        put_vi64(&mut payload, 1);
+        put_parameters(&mut payload, &[]).unwrap();
+        put_key_value_pairs(&mut payload, &[varint_property(0x0E, 255)]).unwrap();
+
+        // Act
+        let result = decode_message(SUBSCRIBE_OK, payload.freeze());
+
+        // Assert
+        assert!(result.is_ok(), "{result:?}");
     }
 
     #[test]

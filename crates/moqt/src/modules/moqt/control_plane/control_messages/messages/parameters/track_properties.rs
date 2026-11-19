@@ -244,6 +244,37 @@ mod tests {
     }
 
     #[test]
+    fn a_setter_drops_the_later_entries_even_when_the_first_holds_its_value() {
+        // Arrange
+        let mut properties = TrackProperties::from_pairs(vec![
+            varint(OBJECT_DELIVERY_TIMEOUT, 200),
+            varint(OBJECT_DELIVERY_TIMEOUT, 150),
+        ]);
+
+        // Act
+        properties.set_delivery_timeout(Some(200));
+
+        // Assert
+        assert_eq!(
+            properties.iter().cloned().collect::<Vec<_>>(),
+            vec![varint(OBJECT_DELIVERY_TIMEOUT, 200)]
+        );
+    }
+
+    #[test]
+    fn an_ascending_group_order_reads_back() {
+        // Arrange
+        let mut properties = TrackProperties::default();
+
+        // Act
+        properties.set_group_order(Some(GroupOrder::Ascending));
+
+        // Assert
+        assert!(!properties.is_empty());
+        assert_eq!(properties.group_order(), Some(GroupOrder::Ascending));
+    }
+
+    #[test]
     fn setting_none_removes_the_property() {
         // Arrange
         let mut properties = TrackProperties::from_pairs(vec![

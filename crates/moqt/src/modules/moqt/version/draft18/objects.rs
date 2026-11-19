@@ -1128,6 +1128,11 @@ mod tests {
                 value: VariantType::Even(5),
             },
         ]);
+        let mut empty_with_property = object(3, 2, subgroup(2), b"");
+        empty_with_property.extension_headers = ExtensionHeaders::new(vec![KeyValuePair {
+            key: 4,
+            value: VariantType::Even(1),
+        }]);
         let mut end_of_group = object(3, 4, subgroup(2), b"");
         end_of_group.status = ObjectStatus::EndOfGroup;
         let mut encoder = SubgroupEncoder::new(9);
@@ -1139,6 +1144,7 @@ mod tests {
         });
         stream.extend_from_slice(&encoder.object(&with_property).unwrap());
         stream.extend_from_slice(&encoder.object(&object(3, 1, subgroup(2), b"b")).unwrap());
+        stream.extend_from_slice(&encoder.object(&empty_with_property).unwrap());
         stream.extend_from_slice(&encoder.object(&end_of_group).unwrap());
 
         // Act
@@ -1170,7 +1176,12 @@ mod tests {
         sorted.extension_headers.key_value_pairs.reverse();
         assert_eq!(
             objects,
-            vec![sorted, object(3, 1, subgroup(2), b"b"), end_of_group]
+            vec![
+                sorted,
+                object(3, 1, subgroup(2), b"b"),
+                empty_with_property,
+                end_of_group
+            ]
         );
     }
 
@@ -1304,6 +1315,61 @@ mod tests {
     }
 
     #[test]
+    fn a_subgroup_without_properties_takes_its_id_from_its_first_object() {
+        // Arrange: Subgroup ID mode 0b01; the second object states Normal status explicitly
+        let mut stream = BytesMut::new();
+        put_vi64(&mut stream, 0x10 | (0b01 << 1));
+        put_vi64(&mut stream, 9);
+        put_vi64(&mut stream, 3);
+        stream.extend_from_slice(&[7]);
+        put_vi64(&mut stream, 5);
+        put_vi64(&mut stream, 1);
+        stream.extend_from_slice(b"a");
+        put_vi64(&mut stream, 0);
+        put_vi64(&mut stream, 0);
+        put_vi64(&mut stream, 0x0);
+
+        // Act
+        let mut frames = frames(stream).into_iter();
+        let StreamFrame::SubgroupHeader(header) = frames.next().unwrap() else {
+            panic!("expected the subgroup header");
+        };
+        let mut state = SubgroupState::new(header);
+        let objects: Vec<Object> = frames
+            .map(|frame| match frame {
+                StreamFrame::SubgroupObject { field, .. } => state.object(field).unwrap(),
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+
+        // Assert
+        let with_priority_7 = |mut object: Object| {
+            object.publisher_priority = 7;
+            object
+        };
+        assert_eq!(
+            objects,
+            [
+                with_priority_7(object(3, 5, subgroup(5), b"a")),
+                with_priority_7(object(3, 6, subgroup(5), b"")),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_fetch_serialization_flags_are_rejected() {
+        // Arrange
+        let mut stream = encode_fetch_header(6);
+        put_vi64(&mut stream, 0x80);
+        stream.extend_from_slice(&[0; 8]);
+        let mut decoder = StreamDecoder::default();
+        decoder.decode(&mut stream).unwrap();
+
+        // Act / Assert
+        assert!(decoder.decode(&mut stream).is_err());
+    }
+
+    #[test]
     fn a_declared_length_above_the_limit_ends_the_stream() {
         let cases: [(&str, &[u8]); 3] = [
             // FETCH header, Request ID, serialization flags
@@ -1353,10 +1419,12 @@ mod tests {
             key: 4,
             value: VariantType::Even(1),
         }]);
+        let mut empty_with_property = object(4, 3, ForwardingPreference::Datagram, b"");
+        empty_with_property.extension_headers = with_property.extension_headers.clone();
         let mut padding = BytesMut::new();
         put_vi64(&mut padding, 0x132B_3E29);
 
-        for sent in [ending, status, with_property] {
+        for sent in [ending, status, with_property, empty_with_property] {
             // Act
             let mut encoded = encode_datagram(11, &sent).unwrap().freeze();
             let decoded = decode_datagram(&mut encoded).unwrap();
@@ -1551,6 +1619,28 @@ mod tests {
             fetch_round_trip(&descending, GroupOrder::Descending),
             descending
         );
+    }
+
+    #[test]
+    fn fetch_objects_name_their_subgroup_in_the_shortest_form() {
+        // Arrange
+        let objects: Vec<Object> = [0, 0, 1, 1, 5]
+            .into_iter()
+            .enumerate()
+            .map(|(object_id, subgroup_id)| {
+                object(2, object_id as u64, subgroup(subgroup_id), b"x")
+            })
+            .collect();
+        let mut encoder = FetchEncoder::default();
+
+        // Act
+        let modes: Vec<u8> = objects
+            .iter()
+            .map(|sent| encoder.object(sent).unwrap().unwrap()[0] & 0x03)
+            .collect();
+
+        // Assert: subgroup 0 is 0x00 even when it repeats the prior one; then the next one, the prior one, and an explicit id
+        assert_eq!(modes, [0x00, 0x00, 0x02, 0x01, 0x03]);
     }
 
     #[test]

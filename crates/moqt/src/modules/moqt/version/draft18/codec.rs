@@ -452,6 +452,24 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_key_value_of_u16_max_bytes_is_read() {
+        // Arrange
+        let mut buf = BytesMut::new();
+        put_vi64(&mut buf, 1);
+        put_vi64(&mut buf, u64::from(u16::MAX));
+        buf.extend_from_slice(&[0; u16::MAX as usize]);
+
+        // Act
+        let pairs = get_key_value_pairs(&mut buf.freeze()).unwrap();
+
+        // Assert
+        assert!(matches!(
+            &pairs[..],
+            [KeyValuePair { key: 1, value: VariantType::Odd(value) }] if value.len() == usize::from(u16::MAX)
+        ));
+    }
+
+    #[test]
     fn a_key_value_length_beyond_u16_is_a_protocol_violation() {
         // Arrange
         let mut buf = BytesMut::new();
@@ -484,6 +502,20 @@ pub(super) mod tests {
             violation(get_reason_phrase(&mut received.freeze())),
             TerminationErrorCode::ProtocolViolation
         );
+    }
+
+    #[test]
+    fn a_reason_phrase_is_cut_before_a_character_the_1024_byte_limit_splits() {
+        // Arrange: the 1024-byte limit ends inside the 512th "é"
+        let long = format!("a{}", "é".repeat(600));
+        let mut sent = BytesMut::new();
+
+        // Act
+        put_reason_phrase(&mut sent, &long);
+        let read_back = get_reason_phrase(&mut sent.freeze()).unwrap();
+
+        // Assert
+        assert_eq!(read_back, long[..1023]);
     }
 
     #[test]
