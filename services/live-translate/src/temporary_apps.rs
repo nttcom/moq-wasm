@@ -1,11 +1,7 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use auth_token::{TemporaryAppTokenError, temporary_app_id};
+use auth_token::{TemporaryAppTokenError, temporary_app_id, unix_now};
 use moqt::{CertificateVerification, ClientConfig};
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -98,12 +94,6 @@ impl TemporaryApps {
         .await
         .context("the relay did not answer in time")?
     }
-}
-
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 struct AppTranslation {

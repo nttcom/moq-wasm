@@ -1,10 +1,7 @@
-use std::{
-    path::PathBuf,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{path::PathBuf, sync::Arc};
 
 use app_registry::{App, RegistryStore};
+use auth_token::unix_now;
 use http_body_util::Full;
 use http_server::{HttpServer, empty_response, error_response, json_response, query_params};
 use hyper::{
@@ -464,12 +461,6 @@ fn registry_unavailable(error: anyhow::Error) -> Refusal {
     Refusal(StatusCode::SERVICE_UNAVAILABLE, "registry_unavailable")
 }
 
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
 #[cfg(test)]
 mod tests {
     use app_registry::testing::TemporaryRegistryFile;
@@ -878,7 +869,7 @@ mod tests {
                 "console-static-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
+                    .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
                     .as_nanos()
             ));

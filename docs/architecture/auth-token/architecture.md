@@ -11,7 +11,7 @@ VTS verified, and a CLI that signs one.
 
 | Module | Responsibility |
 | --- | --- |
-| `lib.rs` | `Claims`, `Claims::issued`, which sets `iat` and an `exp` a lifetime later, and `TEMPORARY_APP_ID_PREFIX`, the `appId` prefix of a temporary app (see the VTS architecture). |
+| `lib.rs` | `Claims`, `Claims::issued`, which sets `iat` and an `exp` a lifetime later, `unix_now`, the current time in the unit of `iat` and `exp`, and `TEMPORARY_APP_ID_PREFIX`, the `appId` prefix of a temporary app (see the VTS architecture). |
 | `temporary_app.rs` | `temporary_app_id`: the `appId` of an unexpired temporary app token, read without checking the signature, failing with a `TemporaryAppTokenError`. `temporary-apps` checks the signature first; `live-translate` leaves it to the relay. |
 | `lifetime.rs` | `parse_lifetime` for `15s` / `30m` / `12h` / `365d`. |
 | `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `aws-lc-rs`. |
