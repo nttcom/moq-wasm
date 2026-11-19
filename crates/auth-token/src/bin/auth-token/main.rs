@@ -1,8 +1,12 @@
+mod lifetime;
+
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
-use auth_token::{Claims, parse_lifetime, sign_token};
+use auth_token::{Claims, sign_token};
 use clap::Parser;
+
+use crate::lifetime::parse_lifetime;
 
 const SECRET_ENV: &str = "AUTH_TOKEN_SECRET";
 

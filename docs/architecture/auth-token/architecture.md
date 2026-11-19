@@ -13,10 +13,9 @@ VTS verified, and a CLI that signs one.
 | --- | --- |
 | `lib.rs` | `Claims`, `Claims::issued`, which sets `iat` and an `exp` a lifetime later, `unix_now`, the current time in the unit of `iat` and `exp`, and `TEMPORARY_APP_ID_PREFIX`, the `appId` prefix of a temporary app (see the VTS architecture). |
 | `temporary_app.rs` | `temporary_app_id`: the `appId` of an unexpired temporary app token, read without checking the signature, failing with a `TemporaryAppTokenError`. `temporary-apps` checks the signature first; `live-translate` leaves it to the relay. |
-| `lifetime.rs` | `parse_lifetime` for `15s` / `30m` / `12h` / `365d`. |
 | `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `aws-lc-rs`. |
 | `signed_token.rs` | `SignedToken`, the VTS `/verify` answer (`appId`, `isRelay`, `claims`). `check` applies a `ClaimPolicy` (default: client tokens live at most 24 hours, clocks may differ by 60 seconds) and requires `iat`, `exp` and well-formed namespace paths, failing with a `ClaimError`; `covers` tells whether the `publish`, `subscribe` or `bots` claim covers a full namespace, element by element. |
-| `bin/auth-token.rs` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--ttl` and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |
+| `bin/auth-token/` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--ttl` (`15s` / `30m` / `12h` / `365d`, parsed in `lifetime.rs`) and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |
 
 The payload claims:
 
