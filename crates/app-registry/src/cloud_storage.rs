@@ -65,7 +65,7 @@ mod tests {
         registry.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
 
         // Act
-        let snapshot = registry.store().load().await.unwrap();
+        let snapshot = registry.store().load_snapshot().await.unwrap();
 
         // Assert
         assert_eq!(

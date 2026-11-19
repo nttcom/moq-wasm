@@ -81,10 +81,10 @@ mod tests {
         file.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
 
         // Act
-        let snapshot = file.store().load().await.unwrap();
+        let apps = file.store().load().await.unwrap();
 
         // Assert
-        assert_eq!(snapshot.apps.get("a").unwrap().secret, "s");
+        assert_eq!(apps.get("a").unwrap().secret, "s");
     }
 
     #[tokio::test]
@@ -93,13 +93,13 @@ mod tests {
         let file = TemporaryRegistryFile::new();
         file.put(&json!([]));
         let store = file.store();
-        let before = store.load().await.unwrap().generation;
+        let before = store.load_snapshot().await.unwrap().generation;
 
         // Act
         file.put(&json!([{ "appId": "a", "secret": "s", "isRelay": false }]));
 
         // Assert
-        assert_ne!(store.load().await.unwrap().generation, before);
+        assert_ne!(store.load_snapshot().await.unwrap().generation, before);
     }
 
     #[tokio::test]

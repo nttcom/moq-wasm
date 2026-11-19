@@ -10,4 +10,4 @@ pub mod testing;
 
 pub use app::{App, Apps};
 pub use location::{Location, LocationVariables};
-pub use store::{Generation, RegistryStore, Snapshot};
+pub use store::RegistryStore;

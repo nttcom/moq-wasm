@@ -51,9 +51,8 @@ impl BotTokenSigner {
                 .clone()
                 .context("no temporary app secret")?
         } else {
-            let snapshot = self.registry.load().await?;
-            let app = snapshot
-                .apps
+            let apps = self.registry.load().await?;
+            let app = apps
                 .get(app_id)
                 .with_context(|| format!("no app {app_id}"))?;
             ensure!(!app.is_relay, "{app_id} is a relay");

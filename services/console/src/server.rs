@@ -195,9 +195,11 @@ async fn me(headers: &HeaderMap, state: &ConsoleState) -> Result<JsonResponse, R
 
 async fn list_apps(headers: &HeaderMap, state: &ConsoleState) -> Result<JsonResponse, Refusal> {
     let caller = authenticate(headers, state).await?;
-    let snapshot = state.store.load().await.map_err(registry_unavailable)?;
-    let apps: Vec<Value> = snapshot
-        .apps
+    let apps: Vec<Value> = state
+        .store
+        .load()
+        .await
+        .map_err(registry_unavailable)?
         .iter()
         .filter(|app| apps::owned_by(app, &caller.sub))
         .map(app_json)

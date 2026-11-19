@@ -11,12 +11,12 @@ use crate::{
 const MAX_UPDATE_ATTEMPTS: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Generation(pub(crate) u64);
+pub(crate) struct Generation(pub(crate) u64);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Snapshot {
-    pub apps: Apps,
-    pub generation: Generation,
+pub(crate) struct Snapshot {
+    pub(crate) apps: Apps,
+    pub(crate) generation: Generation,
 }
 
 pub struct RegistryStore {
@@ -43,7 +43,11 @@ impl RegistryStore {
         Ok(Self { backend })
     }
 
-    pub async fn load(&self) -> anyhow::Result<Snapshot> {
+    pub async fn load(&self) -> anyhow::Result<Apps> {
+        Ok(self.load_snapshot().await?.apps)
+    }
+
+    pub(crate) async fn load_snapshot(&self) -> anyhow::Result<Snapshot> {
         match &self.backend {
             Backend::CloudStorage(object) => object.load().await,
             Backend::File(file) => file.load().await,
@@ -60,7 +64,7 @@ impl RegistryStore {
         mut change: impl FnMut(&mut Vec<App>) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         for _ in 0..MAX_UPDATE_ATTEMPTS {
-            let snapshot = self.load().await?;
+            let snapshot = self.load_snapshot().await?;
             let mut apps = snapshot.apps.clone().into_vec();
             let outcome = change(&mut apps)?;
             let apps = Apps::new(apps)?;
