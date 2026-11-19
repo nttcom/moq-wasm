@@ -69,6 +69,7 @@ function trackSubscription(name: string, track: MediaCatalogTrack): TrackSubscri
     id: 0n,
     handle: { largest: undefined } as unknown as MoqSubscription,
     priority: 128,
+    forward: true,
     name,
     track,
     forgotten: false
