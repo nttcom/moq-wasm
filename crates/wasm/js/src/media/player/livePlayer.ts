@@ -187,6 +187,9 @@ export class LivePlayer {
   private tracks: Record<MediaKind, MediaCatalogTrack[]> = { video: [], audio: [] }
   private cmafTracks: MediaCatalogTrack[] = []
   private selected: Record<MediaKind, string> = { video: '', audio: '' }
+  /// The kinds whose last SUBSCRIBE failed, retried at the next catalog: a
+  /// rejoining publisher may not publish yet the tracks its catalog lists.
+  private readonly failedKinds = new Set<MediaKind>()
   private packaging: Packaging = 'loc'
   private review: ReviewSession | undefined
   private group: GroupLink | undefined
@@ -992,9 +995,17 @@ export class LivePlayer {
   }
 
   private async subscribeReplacedTracks(changed: boolean): Promise<void> {
+    for (const kind of ['video', 'audio'] as const) {
+      if (!changed && !this.failedKinds.has(kind)) {
+        continue
+      }
+      try {
+        await this.resubscribe(kind)
+      } catch (error) {
+        this.context.log('warn', `${kind} SUBSCRIBE failed: ${getErrorMessage(error)}`)
+      }
+    }
     if (changed) {
-      await this.resubscribe('video')
-      await this.resubscribe('audio')
       await this.openLiveMse()
     }
     this.reconfigureDecoders()
@@ -1086,10 +1097,16 @@ export class LivePlayer {
     }
     // A SUBSCRIBE to a track that is not live delivers no object, so the
     // timeline of a VOD broadcast arrives through the joining FETCH alone.
-    await this.textTracks.subscribe(track.name, onTimeline, {
-      currentGroup: !this.timeline.live,
-      delivery: this.delivery
-    })
+    try {
+      await this.textTracks.subscribe(track.name, onTimeline, {
+        currentGroup: !this.timeline.live,
+        delivery: this.delivery
+      })
+    } catch (error) {
+      // The media plays without the timeline, which the next catalog retries.
+      this.timeline.forgetMediaTimeline()
+      this.context.log('warn', `media timeline SUBSCRIBE failed: ${getErrorMessage(error)}`)
+    }
   }
 
   private cmafSibling(track: MediaCatalogTrack): MediaCatalogTrack | undefined {
@@ -1117,11 +1134,19 @@ export class LivePlayer {
       this.timeline.audio.reset()
     }
     await this.subscriptions.unsubscribe(kind)
+    this.failedKinds.delete(kind)
     if (!played) {
       return
     }
+    try {
+      await this.subscribePlayed(kind, played)
+    } catch (error) {
+      this.failedKinds.add(kind)
+      throw error
+    }
+  }
 
-    const { name, track } = played
+  private async subscribePlayed(kind: MediaKind, { name, track }: PlayedTrack): Promise<void> {
     const groupStart = kind === 'video'
     if (this.packaging === 'cmaf') {
       await this.subscriptions.subscribe(
