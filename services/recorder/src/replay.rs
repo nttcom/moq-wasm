@@ -396,7 +396,7 @@ async fn send_fetch(
             return Err(error);
         }
     };
-    handler.ok(end == track.last().next(), end).await?;
+    handler.ok(end == track.last().end_after(), end).await?;
     let sender = session
         .publisher()
         .create_fetch_stream(handler.request_id)

@@ -2244,7 +2244,7 @@ mod tests {
                 let SessionEvent::Fetch(handler) = server_b.receive_event().await.unwrap() else {
                     panic!("expected FETCH");
                 };
-                handler.ok(false, largest.next()).await.unwrap();
+                handler.ok(false, largest.end_after()).await.unwrap();
                 handler.fetch.fetch_params
             }
         );
@@ -2261,7 +2261,7 @@ mod tests {
                     group_id: 3,
                     object_id: 0,
                 },
-                end_location: largest.next(),
+                end_location: largest.end_after(),
             }
         );
     }

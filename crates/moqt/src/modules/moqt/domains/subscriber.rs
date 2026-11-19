@@ -508,7 +508,7 @@ impl Subscriber {
                 track_namespace: namespace_tuple(&remainder.track_namespace),
                 track_name: remainder.track_name.clone(),
                 start_location: remainder.start,
-                end_location: location.next(),
+                end_location: location.end_after(),
             }
         };
         let track = (

@@ -33,6 +33,15 @@ impl Location {
             object_id: self.object_id + 1,
         }
     }
+
+    /// The End Location of a FETCH range whose last object is `self`. The
+    /// largest Object ID maps to Object 0, the entire group (draft-18 §10.12.1).
+    pub fn end_after(self) -> Self {
+        Self {
+            group_id: self.group_id,
+            object_id: self.object_id.checked_add(1).unwrap_or(0),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +94,38 @@ mod tests {
                 Location {
                     group_id: 10,
                     object_id: 6
+                }
+            );
+        }
+
+        #[test]
+        fn end_after_is_the_following_object_id() {
+            // Act / Assert
+            assert_eq!(
+                Location {
+                    group_id: 10,
+                    object_id: 5
+                }
+                .end_after(),
+                Location {
+                    group_id: 10,
+                    object_id: 6
+                }
+            );
+        }
+
+        #[test]
+        fn end_after_the_largest_object_id_is_the_entire_group() {
+            // Act / Assert
+            assert_eq!(
+                Location {
+                    group_id: 10,
+                    object_id: u64::MAX
+                }
+                .end_after(),
+                Location {
+                    group_id: 10,
+                    object_id: 0
                 }
             );
         }

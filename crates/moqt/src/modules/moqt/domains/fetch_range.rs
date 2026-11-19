@@ -24,7 +24,7 @@ pub fn resolve_fetch_range(
     requested_end: Location,
     largest: Option<Location>,
 ) -> Result<Location, FetchRangeError> {
-    if explicit_end_before_or_equal_start(start, requested_end) {
+    if start > last_object(requested_end) {
         return Err(FetchRangeError::EmptyRange);
     }
     let Some(largest) = largest else {
@@ -115,26 +115,24 @@ pub fn resolve_joining_fetch(
     if start > largest {
         return Err(JoiningFetchError::StartAfterLargest);
     }
-    Ok((start, largest.next()))
-}
-
-fn explicit_end_before_or_equal_start(start: Location, end: Location) -> bool {
-    start.group_id > end.group_id
-        || (start.group_id == end.group_id
-            && end.object_id != 0
-            && start.object_id >= end.object_id)
+    Ok((start, largest.end_after()))
 }
 
 fn response_end_location(requested_end: Location, largest: Location) -> Location {
-    let after_largest = largest.next();
-    let whole_largest_group = Location {
-        group_id: largest.group_id,
-        object_id: 0,
-    };
-    if requested_end == whole_largest_group {
-        after_largest
+    if last_object(requested_end) > largest {
+        largest.end_after()
     } else {
-        requested_end.min(after_largest)
+        requested_end
+    }
+}
+
+/// The last object `end` names, the inverse of `Location::end_after`. Object 0
+/// (the entire group) wraps to Object ID `u64::MAX`, the group's last possible
+/// object.
+fn last_object(end: Location) -> Location {
+    Location {
+        group_id: end.group_id,
+        object_id: end.object_id.wrapping_sub(1),
     }
 }
 
@@ -189,6 +187,26 @@ mod tests {
         assert_eq!(
             resolve_fetch_range(location(5, 0), location(5, 2), Some(location(5, 1))),
             Ok(location(5, 2))
+        );
+    }
+
+    #[test]
+    fn a_range_past_a_largest_object_with_the_largest_object_id_ends_with_its_group() {
+        // Act / Assert
+        assert_eq!(
+            resolve_fetch_range(location(5, 0), location(9, 3), Some(location(5, u64::MAX))),
+            Ok(location(5, 0))
+        );
+        assert_eq!(
+            resolve_fetch_range(location(5, 0), location(5, 7), Some(location(5, u64::MAX))),
+            Ok(location(5, 7))
+        );
+        assert_eq!(
+            resolve_joining_fetch(
+                JoiningStart::Relative(0),
+                JoinPoint::Largest(Some(location(5, u64::MAX)))
+            ),
+            Ok((location(5, 0), location(5, 0)))
         );
     }
 

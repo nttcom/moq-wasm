@@ -240,7 +240,10 @@ impl StoredRecording {
         let mut payloads = Vec::new();
         let mut cached_chunk = None;
         let mut data = Bytes::new();
-        for entry in self.entries(track, track.first, track.last.next()).await? {
+        for entry in self
+            .entries(track, track.first, track.last.end_after())
+            .await?
+        {
             if cached_chunk != Some(entry.chunk) {
                 data = self.data(&track.chunks[entry.chunk]).await?;
                 cached_chunk = Some(entry.chunk);
