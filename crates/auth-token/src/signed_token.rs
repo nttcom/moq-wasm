@@ -191,11 +191,15 @@ mod tests {
     }
 
     #[test]
-    fn issued_in_the_future_beyond_the_leeway_is_rejected() {
+    fn issue_time_is_judged_with_the_leeway() {
         // Act / Assert
         assert_eq!(
-            check(&signed(false, NOW_SECS + 120, NOW_SECS + 3600, None)),
+            check(&signed(false, NOW_SECS + 61, NOW_SECS + 3600, None)),
             Err(ClaimError::NotYetValid)
+        );
+        assert_eq!(
+            check(&signed(false, NOW_SECS + 60, NOW_SECS + 3600, None)),
+            Ok(())
         );
     }
 
@@ -205,6 +209,10 @@ mod tests {
         assert_eq!(
             check(&signed(false, NOW_SECS, NOW_SECS + 24 * 3600 + 1, None)),
             Err(ClaimError::TtlTooLong)
+        );
+        assert_eq!(
+            check(&signed(false, NOW_SECS, NOW_SECS + 24 * 3600, None)),
+            Ok(())
         );
         assert_eq!(
             check(&signed(
