@@ -70,17 +70,24 @@ impl ReorderBuffer {
         ordered
     }
 
+    /// B-frames send timestamps out of sequence order, so the span covers
+    /// every held timestamp. Offsets from the first held packet are signed, so
+    /// one before it across the 32-bit wrap counts as earlier.
     fn gap_expired(&self) -> bool {
         if self.pending.len() >= MAX_PENDING {
             return true;
         }
-        let (Some((_, (oldest, _))), Some((_, (newest, _)))) = (
-            self.pending.first_key_value(),
-            self.pending.last_key_value(),
-        ) else {
+        let Some((_, (first, _))) = self.pending.first_key_value() else {
             return false;
         };
-        newest.timestamp.wrapping_sub(oldest.timestamp) as u64 >= self.max_span_ticks
+        let offsets = self
+            .pending
+            .values()
+            .map(|(header, _)| i64::from(header.timestamp.wrapping_sub(first.timestamp) as i32));
+        let (min, max) = offsets.fold((0, 0), |(min, max), offset| {
+            (min.min(offset), max.max(offset))
+        });
+        (max - min) as u64 >= self.max_span_ticks
     }
 }
 
@@ -155,6 +162,22 @@ mod tests {
     }
 
     #[test]
+    fn a_b_frame_behind_a_gap_does_not_expire_it() {
+        // Arrange: 11 is a P-frame and 12 a B-frame presented before it
+        let mut buffer = ReorderBuffer::new(90_000);
+        buffer.push(header(9, 0), Bytes::new());
+        buffer.push(header(11, 9_000), Bytes::new());
+
+        // Act
+        let held = buffer.push(header(12, 3_000), Bytes::new());
+        let released = buffer.push(header(10, 6_000), Bytes::new());
+
+        // Assert
+        assert!(held.is_empty());
+        assert_eq!(sequences(&released), [10, 11, 12]);
+    }
+
+    #[test]
     fn finish_releases_everything_and_reports_the_gaps() {
         // Arrange
         let mut buffer = ReorderBuffer::new(48_000);
@@ -181,5 +204,68 @@ mod tests {
 
         // Assert
         assert_eq!(sequences(&released), [65_534, 65_535, 0, 1]);
+    }
+
+    mod properties {
+        use bytes::Bytes;
+        use proptest::{collection::vec, prelude::*};
+
+        use super::{header, sequences};
+        use crate::rtp::reorder::{Ordered, ReorderBuffer};
+
+        /// 150 ms at 90 kHz: every timestamp lies within it, so the held span
+        /// never reaches the 200 ms that makes a gap a loss.
+        const SPREAD: u32 = 13_500;
+
+        /// Consecutive sequence numbers from any start, timestamps anywhere in
+        /// the spread as B-frames send them, each arriving up to 7 places after
+        /// its turn; the first arrives first because the buffer takes it as the
+        /// start of the stream.
+        fn reordered() -> impl Strategy<Value = Vec<(u16, u32)>> {
+            (
+                any::<u16>(),
+                any::<u32>(),
+                vec((0..SPREAD, 0..8usize), 1..40),
+            )
+                .prop_map(|(first_sequence, first_timestamp, packets)| {
+                    let mut arrivals: Vec<(usize, u16, u32)> = packets
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (offset, delay))| {
+                            (
+                                if index == 0 { 0 } else { index + delay },
+                                first_sequence.wrapping_add(index as u16),
+                                first_timestamp.wrapping_add(offset),
+                            )
+                        })
+                        .collect();
+                    arrivals.sort_by_key(|(turn, _, _)| *turn);
+                    arrivals
+                        .into_iter()
+                        .map(|(_, sequence, timestamp)| (sequence, timestamp))
+                        .collect()
+                })
+        }
+
+        proptest! {
+            #[test]
+            fn packets_reordered_within_the_span_come_out_in_sequence(arrivals in reordered()) {
+                // Arrange
+                let mut buffer = ReorderBuffer::new(90_000);
+
+                // Act
+                let mut released: Vec<Ordered> = Vec::new();
+                for (sequence, timestamp) in &arrivals {
+                    released.extend(buffer.push(header(*sequence, *timestamp), Bytes::new()));
+                }
+                released.extend(buffer.finish());
+
+                // Assert
+                let expected: Vec<i64> = (0..arrivals.len() as u16)
+                    .map(|index| arrivals[0].0.wrapping_add(index) as i64)
+                    .collect();
+                prop_assert_eq!(sequences(&released), expected);
+            }
+        }
     }
 }
