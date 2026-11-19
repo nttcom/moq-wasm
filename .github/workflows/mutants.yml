@@ -1,0 +1,98 @@
+name: Mutants
+
+# Warns on each mutant the tests miss in a pull request's changed lines but
+# never fails it: some mutants no unit test can catch, so a reviewer judges
+# each one.
+on:
+  pull_request:
+    paths:
+      - "crates/moqt/src/**"
+      - "crates/msf/src/**"
+      - "crates/mediapack/src/**"
+      - "crates/broadcast/src/**"
+      - "crates/auth-token/src/**"
+      - ".cargo/mutants.toml"
+      - ".github/workflows/mutants.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The container's default `sh` is dash, which lacks `${var//…}`.
+    defaults:
+      run:
+        shell: bash
+    container:
+      image: rust:1.99.1@sha256:931c2c0531a8b143e044f0f3914dfe802f15bb3d1955f0b657e9359327ac2ffc
+    env:
+      RUSTFLAGS: "--cfg=tokio_unstable --cfg=web_sys_unstable_apis"
+      CARGO_MUTANTS_VERSION: 27.1.0
+      CARGO_HOME: /usr/local/cargo
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Cache cargo-mutants binary
+        id: cache-cargo-mutants
+        # actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 = v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: /usr/local/cargo/bin/cargo-mutants
+          key: cargo-mutants-${{ runner.os }}-rust-1.99.1-${{ env.CARGO_MUTANTS_VERSION }}
+      - name: Install cargo-mutants
+        if: steps.cache-cargo-mutants.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-mutants --version "$CARGO_MUTANTS_VERSION"
+      - name: Mutate the changed lines
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # HEAD is the pull request's merge commit, whose first parent is the base.
+          git diff HEAD^1 HEAD > pr.diff
+          status=0
+          cargo mutants --in-diff pr.diff --jobs 2 \
+            -f 'crates/moqt/src/**' -f 'crates/msf/src/**' -f 'crates/mediapack/src/**' \
+            -f 'crates/broadcast/src/**' -f 'crates/auth-token/src/**' || status=$?
+          # Exit 2 (missed) and 3 (timeout) are left for the next step to report.
+          case "$status" in 0|2|3) ;; *) exit "$status" ;; esac
+      - name: Report missed mutants
+        if: always()
+        run: |
+          set -eu
+          out=mutants.out
+          [ -d "$out" ] || exit 0
+          for kind in missed timeout; do
+            [ -s "$out/$kind.txt" ] || continue
+            # Each line reads `<file>:<line>:<column>: <mutation>`.
+            while IFS= read -r mutant; do
+              file="${mutant%%:*}"
+              rest="${mutant#*:}"
+              line="${rest%%:*}"
+              message="${mutant#*: }"
+              echo "::warning file=$file,line=$line,title=Mutant $kind::${message//%/%25}"
+            done < "$out/$kind.txt"
+          done
+          {
+            echo "## Mutants"
+            for kind in caught missed timeout unviable; do
+              count="$( [ -f "$out/$kind.txt" ] && grep -c . "$out/$kind.txt" || true )"
+              echo "- $kind: ${count:-0}"
+            done
+            if [ -s "$out/missed.txt" ]; then
+              echo
+              echo "### Missed"
+              echo '```'
+              cat "$out/missed.txt"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,4 @@
+# Excluded are mutants no unit test can catch: test helpers, CLI entry points,
+# formatting for logs and errors, and cleanup on drop.
+exclude_globs = ["**/test_support.rs", "**/test_support/**", "**/src/bin/**"]
+exclude_re = ["impl (fmt::|std::fmt::)?(Display|Debug) for", "impl Drop for"]
