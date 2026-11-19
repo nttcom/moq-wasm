@@ -46,13 +46,12 @@ impl Decoder for SubgroupDecoder {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let Some((message_type, splitter)) = &mut self.objects else {
             let mut cursor_buf = std::io::Cursor::new(&src[..]);
-            let subgroup = self.decode_header(&mut cursor_buf)?;
-            let pos = cursor_buf.position() as usize;
-            let _ = src.split_to(pos);
-            if let Some(SubgroupFrame::Header(header)) = &subgroup {
-                self.objects = Some((header.message_type, PayloadSplitter::after_header(src)));
-            }
-            return Ok(subgroup);
+            let Some(header) = self.decode_header(&mut cursor_buf)? else {
+                return Ok(None);
+            };
+            let _ = src.split_to(cursor_buf.position() as usize);
+            self.objects = Some((header.message_type, PayloadSplitter::after_header(src)));
+            return Ok(Some(SubgroupFrame::Header(header)));
         };
         let message_type = *message_type;
         let split = splitter.decode(src, |src| {
@@ -100,7 +99,7 @@ impl SubgroupDecoder {
     fn decode_header(
         &mut self,
         cursor: &mut std::io::Cursor<&[u8]>,
-    ) -> Result<Option<SubgroupFrame>, std::io::Error> {
+    ) -> Result<Option<SubgroupHeader>, std::io::Error> {
         // The first frame should always be a subgroup header.
         let subgroup_header = match SubgroupHeader::decode(cursor) {
             Ok(header) => header,
@@ -119,7 +118,7 @@ impl SubgroupDecoder {
                 }
             }
         };
-        Ok(Some(SubgroupFrame::Header(subgroup_header)))
+        Ok(Some(subgroup_header))
     }
 
     fn decode_head(
@@ -188,6 +187,27 @@ mod tests {
 
     fn decode_all(decoder: &mut SubgroupDecoder, src: &mut BytesMut) -> Vec<SubgroupFrame> {
         std::iter::from_fn(|| decoder.decode(src).unwrap()).collect()
+    }
+
+    #[test]
+    fn a_header_split_across_reads_is_decoded_once_it_is_complete() {
+        // Arrange: a two-byte Track Alias, cut after the stream type
+        let header = SubgroupHeader::new(64, 47, SubgroupId::None, 2, false, false);
+        let encoded = header.encode();
+        let mut decoder = SubgroupDecoder::new();
+        let mut src = BytesMut::from(&encoded[..1]);
+        assert!(decoder.decode(&mut src).unwrap().is_none());
+
+        // Act
+        src.extend_from_slice(&encoded[1..]);
+        let frame = decoder.decode(&mut src).unwrap();
+
+        // Assert
+        assert!(
+            matches!(&frame, Some(SubgroupFrame::Header(decoded)) if *decoded == header),
+            "{frame:?}"
+        );
+        assert!(src.is_empty());
     }
 
     /// How long the object completed in `frames` took to arrive.
