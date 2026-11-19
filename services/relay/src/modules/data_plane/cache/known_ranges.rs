@@ -51,7 +51,7 @@ impl KnownRanges {
 
     pub(crate) fn remove_locations(&mut self, locations: &[Location]) {
         for &at in locations {
-            let cut_end = Self::after(at);
+            let cut_end = following(at);
             let Some((&range_start, &range_end)) = self.ranges.range(..=at).next_back() else {
                 continue;
             };
@@ -87,13 +87,6 @@ impl KnownRanges {
     pub(crate) fn end_of_range_containing(&self, location: Location) -> Option<Location> {
         let (_, &range_end) = self.ranges.range(..=location).next_back()?;
         (location < range_end).then_some(range_end)
-    }
-
-    fn after(at: Location) -> Location {
-        Location {
-            group_id: at.group_id,
-            object_id: at.object_id.saturating_add(1),
-        }
     }
 
     pub(crate) fn exclusive_end(location: Location) -> Location {
@@ -186,6 +179,18 @@ mod tests {
     }
 
     #[test]
+    fn removing_a_groups_last_object_id_forgets_only_that_position() {
+        // Arrange
+        let mut ranges = KnownRanges::default();
+        ranges.insert(location(0, 0), location(0, 0));
+        // Act
+        ranges.remove_locations(&[location(0, u64::MAX)]);
+        // Assert
+        assert_eq!(ranges.end_of_range_containing(location(0, u64::MAX)), None);
+        assert!(ranges.covers_until(location(0, 0), location(0, u64::MAX)));
+    }
+
+    #[test]
     fn sparse_object_ids_each_keep_their_own_range() {
         // Arrange
         let mut ranges = KnownRanges::default();
@@ -193,14 +198,14 @@ mod tests {
         // Act
         for object_id in 0..object_count {
             let at = location(0, object_id * 2);
-            ranges.insert(at, KnownRanges::after(at));
+            ranges.insert(at, following(at));
         }
         // Assert
         for object_id in 0..object_count {
             let at = location(0, object_id * 2);
             let gap = location(0, object_id * 2 + 1);
             assert!(ranges.contains_range(at, gap));
-            assert!(!ranges.contains_range(gap, KnownRanges::after(gap)));
+            assert!(!ranges.contains_range(gap, following(gap)));
             assert_eq!(ranges.end_of_range_containing(at), Some(gap));
             assert_eq!(ranges.end_of_range_containing(gap), None);
         }
