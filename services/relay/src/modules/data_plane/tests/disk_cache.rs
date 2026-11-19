@@ -14,6 +14,7 @@ use crate::modules::{
     test_support::relay_harness::{
         FetchSent, RelayHarness,
         fixtures::{
+            cached_object::stream_object_with_payload,
             data_object::make_status_object,
             disk_cache::{TempDir, wait_until_stored},
             location,
@@ -295,4 +296,60 @@ async fn store_occupancy_reports_the_disk_cap() {
 
     // Assert
     assert_eq!(occupancy.disk_max_bytes, 5 * 1024);
+}
+
+async fn store_object(track: &DiskBackedTrack, payload: &'static [u8]) {
+    track
+        .harness
+        .cache()
+        .insert(PERSIST.apply(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(payload),
+        )))
+        .unwrap();
+    wait_until_stored(track.harness.cache(), location(0, 0)).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_duplicate_of_a_stored_payload_still_in_memory_is_compared_byte_for_byte() {
+    // Arrange
+    let track = disk_backed_track("duplicate-in-memory", u64::MAX, PERSIST);
+    store_object(&track, b"first").await;
+
+    // Act
+    let inserted = track.harness.cache().insert(stream_object_with_payload(
+        0,
+        0,
+        Bytes::from_static(b"other"),
+    ));
+
+    // Assert
+    assert!(inserted.is_err());
+    assert!(track.harness.cache().is_malformed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_duplicate_of_a_payload_only_on_disk_is_compared_by_length() {
+    let cases: [(&str, &'static [u8], bool); 2] = [
+        ("duplicate-on-disk-same-length", b"other", true),
+        ("duplicate-on-disk-other-length", b"longer", false),
+    ];
+    for (name, duplicate, accepted) in cases {
+        // Arrange: "first" is on disk only
+        let track = disk_backed_track(name, u64::MAX, PERSIST);
+        store_object(&track, b"first").await;
+        evict_past_memory_ttl(&track.harness).await;
+
+        // Act
+        let inserted = track.harness.cache().insert(stream_object_with_payload(
+            0,
+            0,
+            Bytes::from_static(duplicate),
+        ));
+
+        // Assert: a different payload of the same length is not detected
+        assert_eq!(inserted.is_ok(), accepted, "{name}");
+        assert_eq!(track.harness.cache().is_malformed(), !accepted, "{name}");
+    }
 }
