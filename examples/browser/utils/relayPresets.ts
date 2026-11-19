@@ -27,13 +27,6 @@ export function relayUrlFromQuery(): string | undefined {
   return urlFromQuery(window.location.search, RELAY_URL_PARAM_NAMES)
 }
 
-function getLocalRelayUrls(): { relayAUrl: string; relayBUrl: string } {
-  return {
-    relayAUrl: urlFromQuery(window.location.search, ['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL,
-    relayBUrl: urlFromQuery(window.location.search, ['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
-  }
-}
-
 export function firstSearchParam(paramNames: string[]): string | null {
   const params = new URLSearchParams(window.location.search)
   for (const name of paramNames) {
@@ -46,7 +39,8 @@ export function firstSearchParam(paramNames: string[]): string | null {
 }
 
 export function buildLocalRelayPresets(): RelayPreset[] {
-  const { relayAUrl, relayBUrl } = getLocalRelayUrls()
+  const relayAUrl = urlFromQuery(window.location.search, ['relayAUrl']) ?? DEFAULT_LOCAL_RELAY_A_URL
+  const relayBUrl = urlFromQuery(window.location.search, ['relayBUrl']) ?? DEFAULT_LOCAL_RELAY_B_URL
   return [
     {
       label: 'relay-a',
