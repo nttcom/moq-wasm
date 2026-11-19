@@ -28,7 +28,7 @@ use crate::modules::{
 };
 
 use super::{
-    group_sequence::{GroupSequence, current_tick},
+    group_positions::{GroupPosition, GroupPositions},
     runner::Downstream,
     scheduler::GroupSendTask,
 };
@@ -49,7 +49,7 @@ pub(crate) struct GroupSender {
     receiver: mpsc::Receiver<GroupSendTask>,
     delivery_stats: Arc<DeliveryStats>,
     delivery_control_receiver: watch::Receiver<DeliveryControl>,
-    group_sequence: GroupSequence,
+    group_positions: GroupPositions,
     /// Set once the scheduler has scheduled its last task.
     schedule_over_sender: watch::Sender<bool>,
 }
@@ -64,6 +64,8 @@ struct SubgroupSource {
     /// `DeliveryControl::resumes` the task last delivered under.
     resumes: u64,
     schedule_over_receiver: watch::Receiver<bool>,
+    /// `None` for a datagram task, which opens no stream.
+    position: Option<GroupPosition>,
 }
 
 enum SubgroupNext {
@@ -77,9 +79,9 @@ enum SubgroupNext {
     /// §11.4.3), and the subgroup may continue on a new stream (see
     /// `SubgroupSource::held`).
     Held,
-    /// The Subscriber Priority changed to this while the subgroup's stream is
-    /// open (draft-14 §7.1).
-    Reprioritized(u8),
+    /// The Subscriber Priority (draft-14 §7.1) or the group's position in the
+    /// subscription changed while the subgroup's stream is open.
+    Reprioritized,
 }
 
 /// What `control` does to a subgroup of `group_id` whose task last delivered
@@ -97,7 +99,18 @@ fn interruption(
     } else {
         stream_priority
             .is_some_and(|priority| priority != control.subscriber_priority)
-            .then_some(SubgroupNext::Reprioritized(control.subscriber_priority))
+            .then_some(SubgroupNext::Reprioritized)
+    }
+}
+
+/// Never resolves when either argument is `None`.
+async fn position_moved(
+    position: Option<&mut GroupPosition>,
+    priority: Option<moqt::object::StreamPriority>,
+) {
+    match (position, priority) {
+        (Some(position), Some(priority)) => position.moved_from(priority.group_position).await,
+        _ => std::future::pending().await,
     }
 }
 
@@ -109,11 +122,17 @@ impl SubgroupSource {
         Some(received_at + timeout)
     }
 
-    /// `stream_priority` is the Subscriber Priority of the stream the task
-    /// has open for the subgroup.
-    async fn next(&mut self, object_id: u64, stream_priority: Option<u8>) -> SubgroupNext {
+    /// `stream_priority` is `None` while the task has no stream open for the
+    /// subgroup.
+    async fn next(
+        &mut self,
+        object_id: u64,
+        stream_priority: Option<moqt::object::StreamPriority>,
+    ) -> SubgroupNext {
         let group_id = self.key.group_id();
         let resumes = self.resumes;
+        let moved = position_moved(self.position.as_mut(), stream_priority);
+        let stream_priority = stream_priority.map(|priority| priority.subscriber_priority);
         let receiver = &mut self.delivery_control_receiver;
         let interrupted = async {
             let of = |control: &DeliveryControl| {
@@ -133,6 +152,7 @@ impl SubgroupSource {
         tokio::select! {
             biased;
             interruption = interrupted => interruption,
+            () = moved => SubgroupNext::Reprioritized,
             next = self.cache.next_subgroup_object_or_wait(self.key, self.generation, object_id) => {
                 match next {
                     Ok(next) => SubgroupNext::Cache(next),
@@ -192,13 +212,11 @@ struct StreamSendTask {
     object_id: u64,
     factory: SharedStreamSenderFactory,
     delivery_stats: Arc<DeliveryStats>,
-    group_order: moqt::object::GroupOrder,
-    group_sequence: u64,
 }
 
 impl StreamSendTask {
     /// The priority of a stream opened now, with the subscription's current
-    /// Subscriber Priority.
+    /// Subscriber Priority and the group's current position.
     fn stream_priority(
         &self,
         publisher_priority: u8,
@@ -211,8 +229,11 @@ impl StreamSendTask {
                 .borrow()
                 .subscriber_priority,
             publisher_priority,
-            group_order: self.group_order,
-            group_sequence: self.group_sequence,
+            group_position: self
+                .source
+                .position
+                .as_ref()
+                .map_or(0, GroupPosition::current),
             subgroup_id,
         }
     }
@@ -228,18 +249,18 @@ impl GroupSender {
         delivery_control_receiver: watch::Receiver<DeliveryControl>,
     ) -> Self {
         Self {
+            group_positions: GroupPositions::new(downstream.subscription.group_order()),
             track_key,
             cache,
             downstream,
             receiver,
             delivery_stats,
             delivery_control_receiver,
-            group_sequence: GroupSequence::new(),
             schedule_over_sender: watch::channel(false).0,
         }
     }
 
-    fn source(&self, task: &GroupSendTask) -> SubgroupSource {
+    fn source(&self, task: &GroupSendTask, position: Option<GroupPosition>) -> SubgroupSource {
         SubgroupSource {
             key: task.key,
             generation: task.generation,
@@ -247,6 +268,7 @@ impl GroupSender {
             delivery_control_receiver: self.delivery_control_receiver.clone(),
             resumes: task.resumes,
             schedule_over_receiver: self.schedule_over_sender.subscribe(),
+            position,
         }
     }
 
@@ -269,7 +291,6 @@ impl GroupSender {
         let mut stream_factory: Option<SharedStreamSenderFactory> = None;
         let mut joinset = JoinSet::<()>::new();
         let track_alias = self.downstream.subscription.track_alias();
-        let group_order = self.downstream.subscription.group_order();
         // draft-14 §10 gives a track one forwarding preference; a draft-18
         // upstream may mix them (§11).
         let keeps_one_preference = !self.downstream.publisher.mixes_forwarding_preferences();
@@ -301,7 +322,7 @@ impl GroupSender {
                     match (task.key, as_datagram) {
                         (SubgroupKey::Stream { group_id, subgroup_id }, false) => {
                             let factory = self.stream_factory(&mut stream_factory);
-                            let group_sequence = self.group_sequence.sequence_of(group_id, current_tick());
+                            let position = self.group_positions.enter(group_id);
                             let span = tracing::debug_span!(
                                 "relay.dataplane.egress.stream",
                                 track_namespace = %self.track_key.track_namespace, track_name = %self.track_key.track_name,
@@ -317,12 +338,10 @@ impl GroupSender {
                             joinset.spawn(
                                 Self::send_stream_task(
                                     StreamSendTask {
-                                        source: self.source(&task),
+                                        source: self.source(&task, Some(position)),
                                         object_id: task.object_id,
                                         factory,
                                         delivery_stats: self.delivery_stats.clone(),
-                                        group_order,
-                                        group_sequence,
                                     },
                                     span.clone(),
                                 )
@@ -332,14 +351,12 @@ impl GroupSender {
                         }
                         (SubgroupKey::Datagram { group_id }, false) => {
                             let factory = self.stream_factory(&mut stream_factory);
-                            let group_sequence = self.group_sequence.sequence_of(group_id, current_tick());
+                            let position = self.group_positions.enter(group_id);
                             joinset.spawn(Self::send_datagrams_on_streams(StreamSendTask {
-                                source: self.source(&task),
+                                source: self.source(&task, Some(position)),
                                 object_id: task.object_id,
                                 factory,
                                 delivery_stats: self.delivery_stats.clone(),
-                                group_order,
-                                group_sequence,
                             }));
                         }
                         (_, true) => {
@@ -349,7 +366,7 @@ impl GroupSender {
                                 .new_datagram(&self.downstream.subscription);
                             joinset.spawn(Self::send_datagram_task(
                                 track_alias,
-                                self.source(&task),
+                                self.source(&task, None),
                                 task.object_id,
                                 sender,
                                 self.delivery_stats.clone(),
@@ -399,8 +416,7 @@ impl GroupSender {
         let mut stream_priority: Option<moqt::object::StreamPriority> = None;
         let mut last_deadline: Option<Instant> = None;
         loop {
-            let subscriber_priority = stream_priority.map(|priority| priority.subscriber_priority);
-            let next = task.source.next(sent.unsent, subscriber_priority).await;
+            let next = task.source.next(sent.unsent, stream_priority).await;
             let (next, (object_id, publisher_priority), deadline) = match next {
                 SubgroupNext::Cache(NextObject::Object(object)) => {
                     let first = &object.object;
@@ -422,10 +438,8 @@ impl GroupSender {
                         sent.end_reason = "cache_closed";
                         // A closed stream's data stays in the connection's shared send buffer until
                         // it is acknowledged, so the delivery timeout still covers it.
-                        if let Some(deadline) = last_deadline
-                            && tokio::time::timeout_at(deadline, sender.acknowledged())
-                                .await
-                                .is_err()
+                        if !Self::drained(&mut sender, &mut task, stream_priority, last_deadline)
+                            .await
                         {
                             sent.end_reason = Self::timed_out(Some(sender), &task).await;
                         }
@@ -460,19 +474,12 @@ impl GroupSender {
                     sent.end_reason = "left_range";
                     return sent;
                 }
-                SubgroupNext::Reprioritized(subscriber_priority) => {
+                SubgroupNext::Reprioritized => {
                     if let (Some(sender), Some(priority)) =
                         (sender.as_mut(), stream_priority.as_mut())
                     {
-                        priority.subscriber_priority = subscriber_priority;
-                        tracing::debug!(
-                            transport_priority = priority.transport_priority(),
-                            "subscriber priority updated; reprioritizing egress stream"
-                        );
                         // A stream that did not take it fails at its next send.
-                        if let Err(error) = sender.set_priority(*priority).await {
-                            tracing::debug!(?error, "failed to reprioritize egress stream");
-                        }
+                        Self::reprioritize(&task, sender, priority).await;
                     }
                     continue;
                 }
@@ -591,6 +598,52 @@ impl GroupSender {
         }
     }
 
+    /// Waits until the transport acknowledges every byte of the closed stream,
+    /// re-ranking it as its group's position moves, since its unacknowledged data
+    /// still competes for sending. False if `deadline` passes first.
+    async fn drained(
+        sender: &mut Box<dyn DataSender>,
+        task: &mut StreamSendTask,
+        mut priority: Option<moqt::object::StreamPriority>,
+        deadline: Option<Instant>,
+    ) -> bool {
+        loop {
+            {
+                let moved = position_moved(task.source.position.as_mut(), priority);
+                tokio::select! {
+                    biased;
+                    () = sender.acknowledged() => return true,
+                    () = async {
+                        match deadline {
+                            Some(deadline) => tokio::time::sleep_until(deadline).await,
+                            None => std::future::pending().await,
+                        }
+                    } => return false,
+                    () = moved => {}
+                }
+            }
+            if let Some(priority) = priority.as_mut() {
+                Self::reprioritize(task, sender, priority).await;
+            }
+        }
+    }
+
+    async fn reprioritize(
+        task: &StreamSendTask,
+        sender: &mut Box<dyn DataSender>,
+        priority: &mut moqt::object::StreamPriority,
+    ) {
+        *priority = task.stream_priority(priority.publisher_priority, priority.subgroup_id);
+        tracing::debug!(
+            group_position = priority.group_position,
+            transport_priority = priority.transport_priority(),
+            "stream priority changed; reprioritizing egress stream"
+        );
+        if let Err(error) = sender.set_priority(*priority).await {
+            tracing::debug!(?error, "failed to reprioritize egress stream");
+        }
+    }
+
     /// Resets the stream of a subgroup whose object passed its delivery
     /// deadline (draft-14 §9.2.1.2) and returns the subgroup's end reason.
     async fn timed_out(sender: Option<Box<dyn DataSender>>, task: &StreamSendTask) -> &'static str {
@@ -617,7 +670,7 @@ impl GroupSender {
     ) -> Result<(Box<dyn DataSender>, moqt::object::StreamPriority), &'static str> {
         let priority = task.stream_priority(publisher_priority, subgroup_id);
         tracing::debug!(
-            group_sequence = task.group_sequence,
+            group_position = priority.group_position,
             transport_priority = priority.transport_priority(),
             "opening egress uni stream"
         );
@@ -1107,6 +1160,30 @@ mod tests {
             next_end(&mut observers.sent).await,
             Sent::Reset(moqt::object::DataStreamResetCode::DeliveryTimeout)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_closed_stream_without_a_delivery_timeout_still_moves_with_its_group() {
+        // Arrange: group 0 is open; group 1 is closed but unacknowledged behind it
+        let cache = Arc::new(TrackCache::new());
+        let first_group = open_group(&cache, 0, &[0]);
+        open_group(&cache, 1, &[0]).finish();
+        let (publisher, mut observers) = MockPublisher::channel();
+        let task_sender = run_group_sender(&cache, publisher.withholding_acknowledgements());
+        task_sender.send(send_task(0)).await.unwrap();
+        task_sender.send(send_task(1)).await.unwrap();
+        assert!(matches!(next_end(&mut observers.sent).await, Sent::Closed));
+
+        // Act: group 0 ends upstream without a FIN
+        drop(first_group);
+
+        // Assert
+        let reprioritized = loop {
+            if let Sent::Reprioritized(priority) = next_end(&mut observers.sent).await {
+                break priority;
+            }
+        };
+        assert_eq!(reprioritized.group_position, 0);
     }
 
     #[tokio::test]
