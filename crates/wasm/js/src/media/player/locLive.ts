@@ -32,8 +32,7 @@ export type LiveStats = {
   outputLatencyMs: number
   arrivalSpreadMs: number | undefined
   fastestArrivalDelayMs: number | undefined
-  receivedKbps: number
-  receivedAudioKbps: number
+  receivedKbps: Record<MediaKind, number>
   syncOffsetMs: number | undefined
   audioBreaks: number
   audioConcealedMs: number
@@ -68,8 +67,7 @@ export class LocLive {
   private readonly decodedFrameIds = new Map<number, DecodedFrameIds>()
   private readonly cachedFrameKeys = new Set<string>()
   private readonly arrivalsMs: Record<MediaKind, number[]> = { video: [], audio: [] }
-  receivedKbps = 0
-  receivedAudioKbps = 0
+  private readonly receivedKbps: Record<MediaKind, number> = { video: 0, audio: 0 }
   shownCaptureMicros: number | undefined
   frameSize: { width: number; height: number } | undefined
 
@@ -104,7 +102,7 @@ export class LocLive {
         return
       }
       if (event.data.type === 'bitrate') {
-        this.receivedKbps = event.data.kbps ?? this.receivedKbps
+        this.receivedKbps.video = event.data.kbps ?? this.receivedKbps.video
         return
       }
       if (event.data.type === 'keyFrameNeeded') {
@@ -127,7 +125,7 @@ export class LocLive {
         return
       }
       if (event.data.type === 'bitrate') {
-        this.receivedAudioKbps = event.data.kbps ?? this.receivedAudioKbps
+        this.receivedKbps.audio = event.data.kbps ?? this.receivedKbps.audio
         return
       }
       if (event.data.type === 'audioData') {
@@ -208,8 +206,7 @@ export class LocLive {
       outputLatencyMs: this.playout.outputLatencyMs(),
       arrivalSpreadMs: this.playout.arrivalSpreadMs(),
       fastestArrivalDelayMs: this.playout.fastestArrivalDelayMs(),
-      receivedKbps: this.receivedKbps,
-      receivedAudioKbps: this.receivedAudioKbps,
+      receivedKbps: { ...this.receivedKbps },
       syncOffsetMs: this.playout.syncOffsetMs(),
       audioBreaks: this.playout.audioBreaks(),
       audioConcealedMs: this.playout.audioConcealedMs(),
@@ -292,7 +289,7 @@ export function formatLiveStats(stats: LiveStats): string {
       ? ''
       : ` · buffer ${Math.round(stats.bufferMs)} ms (${stats.fixedBuffer ? 'fixed' : `target ${Math.round(stats.targetBufferMs)}`})`
   return (
-    `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps)} kbps · audio ${Math.round(stats.receivedAudioKbps)} kbps` +
+    `${size}${delay}${buffer} · video ${Math.round(stats.receivedKbps.video)} kbps · audio ${Math.round(stats.receivedKbps.audio)} kbps` +
     ` · A/V ${formatSyncOffset(stats.syncOffsetMs)} · audio breaks ${stats.audioBreaks}` +
     ` · concealed ${Math.round(stats.audioConcealedMs)} ms · video ${stats.videoDroppedFrames} dropped / ${stats.videoLateFrames} late` +
     ` · shed ${Math.round(stats.shedMs)} ms` +

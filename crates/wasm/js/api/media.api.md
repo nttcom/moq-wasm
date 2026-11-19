@@ -292,8 +292,7 @@ export type LiveStats = {
     outputLatencyMs: number;
     arrivalSpreadMs: number | undefined;
     fastestArrivalDelayMs: number | undefined;
-    receivedKbps: number;
-    receivedAudioKbps: number;
+    receivedKbps: Record<MediaKind, number>;
     syncOffsetMs: number | undefined;
     audioBreaks: number;
     audioConcealedMs: number;

@@ -71,8 +71,8 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
     title: 'Video Bitrate (kbps)',
     scale: VIDEO_BITRATE_SCALE,
     series: [
-      { label: 'Camera', accessor: (sample) => sample.camera?.receivedKbps, colorClass: 'text-chart-cyan' },
-      { label: 'Screen', accessor: (sample) => sample.screenshare?.receivedKbps, colorClass: 'text-chart-orange' }
+      { label: 'Camera', accessor: (sample) => sample.camera?.receivedKbps.video, colorClass: 'text-chart-cyan' },
+      { label: 'Screen', accessor: (sample) => sample.screenshare?.receivedKbps.video, colorClass: 'text-chart-orange' }
     ]
   },
   {
@@ -80,7 +80,7 @@ const REMOTE_MEMBER_CHART_CONFIGS: SampleChartConfig<RemoteStatsSample>[] = [
     title: 'Audio Bitrate (kbps)',
     scale: AUDIO_BITRATE_SCALE,
     series: [
-      { label: 'Audio', accessor: (sample) => sample.camera?.receivedAudioKbps, colorClass: 'text-chart-emerald' }
+      { label: 'Audio', accessor: (sample) => sample.camera?.receivedKbps.audio, colorClass: 'text-chart-emerald' }
     ]
   },
   {
@@ -139,13 +139,13 @@ const RECEIVE_METRICS: ReceiveMetric[] = [
     key: 'video-bitrate',
     title: 'Video Bitrate (kbps)',
     scale: VIDEO_BITRATE_SCALE,
-    value: (stats) => stats.receivedKbps
+    value: (stats) => stats.receivedKbps.video
   },
   {
     key: 'audio-bitrate',
     title: 'Audio Bitrate (kbps)',
     scale: AUDIO_BITRATE_SCALE,
-    value: (stats) => stats.receivedAudioKbps,
+    value: (stats) => stats.receivedKbps.audio,
     cameraOnly: true
   },
   {

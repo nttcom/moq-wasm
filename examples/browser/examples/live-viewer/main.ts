@@ -55,7 +55,7 @@ setInterval(() => {
       targetMs: buffering ? stats.targetBufferMs : undefined,
       outputLatencyMs: buffering ? stats.outputLatencyMs : undefined,
       spreadMs: buffering ? stats.arrivalSpreadMs : undefined,
-      kbps: stats.receivedKbps,
+      kbps: stats.receivedKbps.video,
       syncMs: stats.syncOffsetMs
     })
   }

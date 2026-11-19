@@ -1,6 +1,6 @@
 //! The body clients post to the observability server's `/api/client-telemetry`.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 /// The observability server rejects a report carrying more logs, stats or
@@ -104,9 +104,10 @@ pub struct PlayerStats {
 pub struct PlayerStatValues {
     pub viewer_delay_ms: Option<f64>,
     pub buffer_ms: Option<f64>,
-    /// The video track's received bitrate.
-    pub received_kbps: Option<f64>,
-    pub received_audio_kbps: Option<f64>,
+    /// A value of another shape, such as the number moq-wasm 0.7.0 and earlier
+    /// send, is read as empty instead of rejecting the report.
+    #[serde(default, deserialize_with = "per_media_kind_or_default")]
+    pub received_kbps: PerMediaKind,
     pub audio_breaks: Option<f64>,
     pub audio_concealed_ms: Option<f64>,
     pub shed_ms: Option<f64>,
@@ -126,11 +127,18 @@ pub struct PerMediaKind {
     pub audio: Option<f64>,
 }
 
+fn per_media_kind_or_default<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PerMediaKind, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(PerMediaKind::deserialize(value).unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{ClientLog, ClientSpan};
+    use super::{ClientLog, ClientSpan, PlayerStatValues};
 
     #[test]
     fn a_log_and_a_span_without_ids_leave_them_out() {
@@ -167,5 +175,19 @@ mod tests {
             span,
             json!({ "traceId": "t", "spanId": "s", "name": "n", "startTimeMs": 1, "endTimeMs": 2, "fields": {} })
         );
+    }
+
+    #[test]
+    fn a_received_bitrate_of_another_shape_is_left_out_instead_of_failing() {
+        // Arrange
+        let values = json!({ "bufferMs": 120, "receivedKbps": 1500 });
+
+        // Act
+        let values: PlayerStatValues = serde_json::from_value(values).unwrap();
+
+        // Assert
+        assert_eq!(values.buffer_ms, Some(120.0));
+        assert_eq!(values.received_kbps.video, None);
+        assert_eq!(values.received_kbps.audio, None);
     }
 }
