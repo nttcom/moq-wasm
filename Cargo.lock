@@ -2229,6 +2229,7 @@ dependencies = [
  "gstreamer-app",
  "mediapack",
  "moqt",
+ "proptest",
  "rand 0.10.3",
  "reqwest",
  "roxmltree",

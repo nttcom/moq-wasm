@@ -249,4 +249,151 @@ mod tests {
         assert_eq!(pts_of(&video_frame), 1_800_000);
         assert_eq!(pts_of(&audio_packet), 1_800_000);
     }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        enum Kind {
+            Video,
+            Audio,
+        }
+
+        #[derive(Debug, Clone)]
+        struct Sample {
+            kind: Kind,
+            pts_us: u64,
+            arrival_us: i64,
+        }
+
+        fn video_duration_us() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                3 => Just(33_333u64),
+                3 => Just(40_000u64),
+                1 => 1_000u64..=40_000,
+            ]
+        }
+
+        fn audio_duration_us() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                2 => Just(5_000u64),
+                2 => Just(10_000u64),
+                2 => Just(20_000u64),
+                1 => 1_000u64..=40_000,
+            ]
+        }
+
+        fn timeline(kind: Kind, duration_us: u64, count: usize) -> Vec<(Kind, u64)> {
+            (0..count as u64)
+                .map(|index| (kind, index * duration_us))
+                .collect()
+        }
+
+        /// One RTSP session: a video and an audio track interleaved in
+        /// presentation order, each sample arriving after a random network
+        /// jitter, the first one late by up to half a second.
+        fn session() -> impl Strategy<Value = Vec<Sample>> {
+            (
+                video_duration_us(),
+                audio_duration_us(),
+                1usize..=60,
+                0u64..=40_000,
+                prop_oneof![Just(0i64), 0i64..=500_000],
+            )
+                .prop_flat_map(
+                    |(
+                        video_duration_us,
+                        audio_duration_us,
+                        frames,
+                        audio_start_us,
+                        first_late_us,
+                    )| {
+                        let span_us = frames as u64 * video_duration_us;
+                        let audio_count =
+                            (span_us.saturating_sub(audio_start_us) / audio_duration_us) as usize;
+                        let mut events = timeline(Kind::Video, video_duration_us, frames);
+                        events.extend(
+                            timeline(Kind::Audio, audio_duration_us, audio_count)
+                                .into_iter()
+                                .map(|(kind, pts_us)| (kind, pts_us + audio_start_us)),
+                        );
+                        events.sort_by_key(|&(_, pts_us)| pts_us);
+                        let len = events.len();
+                        (
+                            Just(events),
+                            proptest::collection::vec(prop_oneof![Just(0i64), 0i64..=30_000], len),
+                            Just(first_late_us),
+                        )
+                    },
+                )
+                .prop_map(|(events, jitters_us, first_late_us)| {
+                    let mut last_arrival_us = i64::MIN;
+                    events
+                        .into_iter()
+                        .zip(jitters_us)
+                        .enumerate()
+                        .map(|(index, ((kind, pts_us), jitter_us))| {
+                            let late_us = if index == 0 { first_late_us } else { 0 };
+                            // The wall clock is read as each event is handled, so
+                            // it never runs backwards.
+                            last_arrival_us =
+                                last_arrival_us.max(START_US + pts_us as i64 + jitter_us + late_us);
+                            Sample {
+                                kind,
+                                pts_us,
+                                arrival_us: last_arrival_us,
+                            }
+                        })
+                        .collect()
+                })
+        }
+
+        fn event(sample: &Sample) -> MediaEvent {
+            match sample.kind {
+                Kind::Video => video(sample.pts_us),
+                Kind::Audio => audio(sample.pts_us),
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn each_track_keeps_increasing_and_settles_no_later_than_arrival(
+                samples in session(),
+            ) {
+                // Arrange
+                let mut clamp = ArrivalClamp::default();
+                let origin_us = samples[0].arrival_us - samples[0].pts_us as i64;
+                let mut last_pts_us = [None::<u64>; 2];
+
+                for sample in &samples {
+                    // Act
+                    let mut event = event(sample);
+                    clamp.apply(&mut event, sample.arrival_us);
+                    let pts_us = pts_of(&event);
+
+                    // Assert: a track's presentation times strictly increase
+                    let last = &mut last_pts_us[sample.kind as usize];
+                    if let Some(last) = *last {
+                        prop_assert!(
+                            last < pts_us,
+                            "{:?} went from {last} to {pts_us} at input {}",
+                            sample.kind,
+                            sample.pts_us
+                        );
+                    }
+                    *last = Some(pts_us);
+                    // Assert: once the track's shift has settled, no capture time lies after arrival
+                    let track = match sample.kind {
+                        Kind::Video => &clamp.video,
+                        Kind::Audio => &clamp.audio,
+                    };
+                    if track.shift_us == clamp.target_shift_us {
+                        prop_assert!(origin_us + pts_us as i64 <= sample.arrival_us);
+                    }
+                }
+            }
+        }
+    }
 }
