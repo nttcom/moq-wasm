@@ -50,14 +50,6 @@ impl OnvifClient {
         &self.device_endpoint
     }
 
-    pub(crate) fn media_endpoint(&self) -> &str {
-        &self.media_endpoint
-    }
-
-    pub(crate) fn ptz_endpoint(&self) -> &str {
-        &self.ptz_endpoint
-    }
-
     pub(crate) fn profile_token(&self) -> &str {
         &self.profile_token
     }
@@ -97,15 +89,7 @@ impl OnvifClient {
         tracing::info!("[GetToken]");
         tracing::info!("  [GetConfigurations]");
         let cmd = onvif_requests::get_configurations();
-        let response = self.send_ptz(&cmd).await?;
-        soap_client::log_response("GetConfigurations", self.ptz_endpoint(), &response);
-        if response.status >= 400 {
-            return Err(anyhow!(
-                "get configurations failed with HTTP {}",
-                response.status
-            ));
-        }
-        let body = response.body;
+        let body = self.send_ptz(&cmd).await?;
         let tokens = ptz_config::extract_tokens(&body);
         let token = select_ptz_config_token(&tokens, token_hint)
             .ok_or_else(|| anyhow!("PTZ configuration token not found in response"))?;
@@ -115,45 +99,23 @@ impl OnvifClient {
     async fn fetch_ptz_config_options(&self, token: &str) -> Result<String> {
         tracing::info!("[GetConfigurationOptions]");
         let cmd = onvif_requests::get_configuration_options(token);
-        let response = self.send_ptz(&cmd).await?;
-        soap_client::log_response("GetConfigurationOptions", self.ptz_endpoint(), &response);
-        if response.status >= 400 {
-            return Err(anyhow!(
-                "get configuration options failed with HTTP {}",
-                response.status
-            ));
-        }
-        Ok(response.body)
+        self.send_ptz(&cmd).await
     }
 
-    pub(crate) async fn send_device(
-        &self,
-        command: &OnvifRequest,
-    ) -> Result<soap_client::SoapResponse> {
+    pub(crate) async fn send_device(&self, command: &OnvifRequest) -> Result<String> {
         self.send_to(&self.device_endpoint, command).await
     }
 
-    pub(crate) async fn send_media(
-        &self,
-        command: &OnvifRequest,
-    ) -> Result<soap_client::SoapResponse> {
+    pub(crate) async fn send_media(&self, command: &OnvifRequest) -> Result<String> {
         self.send_to(&self.media_endpoint, command).await
     }
 
-    pub(crate) async fn send_ptz(
-        &self,
-        command: &OnvifRequest,
-    ) -> Result<soap_client::SoapResponse> {
+    pub(crate) async fn send_ptz(&self, command: &OnvifRequest) -> Result<String> {
         self.send_to(&self.ptz_endpoint, command).await
     }
 
-    async fn send_to(
-        &self,
-        endpoint: &str,
-        command: &OnvifRequest,
-    ) -> Result<soap_client::SoapResponse> {
-        let action = format!("{}/{}", command.namespace, command.operation);
-        soap_client::send(&self.client, &self.target, endpoint, &action, &command.body).await
+    async fn send_to(&self, endpoint: &str, command: &OnvifRequest) -> Result<String> {
+        soap_client::send(&self.client, &self.target, endpoint, command).await
     }
 }
 

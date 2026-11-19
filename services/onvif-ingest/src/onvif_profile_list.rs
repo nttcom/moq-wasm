@@ -1,4 +1,4 @@
-use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text, soap_client};
+use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text};
 use anyhow::{anyhow, Result};
 use roxmltree::Document;
 
@@ -14,12 +14,8 @@ pub(crate) struct ProfileSummary {
 
 pub(crate) async fn fetch(onvif: &OnvifClient) -> Result<Vec<ProfileSummary>> {
     let cmd = onvif_requests::get_profiles();
-    let response = onvif.send_media(&cmd).await?;
-    if response.status >= 400 {
-        soap_client::log_response("GetProfiles", onvif.media_endpoint(), &response);
-        return Err(anyhow!("get profiles failed with HTTP {}", response.status));
-    }
-    let profiles = extract_profiles(&response.body)?;
+    let body = onvif.send_media(&cmd).await?;
+    let profiles = extract_profiles(&body)?;
     log_profiles(&profiles);
     Ok(profiles)
 }
