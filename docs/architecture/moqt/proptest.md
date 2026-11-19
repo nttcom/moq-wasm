@@ -27,7 +27,10 @@ codecs over generated messages and objects instead of a few hand-picked ones:
   a setter changed are encoded afresh;
 - during a session migration, `GroupCutover` takes each group from at most
   one subscription, every object of it or none, and from the current one
-  only from its start while the previous one may still deliver it.
+  only from its start while the previous one may still deliver it;
+- `ObjectLedger` rejects a copy of an object exactly when it conflicts with
+  a copy the ledger accepted earlier, so an object is malformed when any two
+  of its copies conflict, whatever order they arrive in.
 
 The strategies live in `modules/test_support/control_message_strategies.rs`
 and `modules/test_support/object_strategies.rs`, shared by the tests of each

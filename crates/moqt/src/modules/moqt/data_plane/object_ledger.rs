@@ -956,4 +956,224 @@ mod tests {
             })
         );
     }
+
+    mod properties {
+        use std::collections::BTreeSet;
+
+        use bytes::Bytes;
+        use proptest::{collection::vec, prelude::*, sample::select};
+
+        use super::super::{CopySource, ObjectLedger};
+        use crate::{
+            Version,
+            object::{
+                ExtensionHeaders, ForwardingPreference, Location, MalformedTrackError, Object,
+                ObjectStatus,
+            },
+        };
+
+        #[derive(Debug, Clone)]
+        struct ReceivedCopy {
+            object: Object,
+            source: CopySource,
+        }
+
+        impl ReceivedCopy {
+            /// The forwarding preferences the object may have: a draft-14
+            /// FETCH copy in the subgroup of its Object ID may be a datagram
+            /// (§10.4.4).
+            fn preferences(&self) -> Vec<ForwardingPreference> {
+                let mut preferences = vec![self.object.forwarding];
+                if matches!(self.source, CopySource::Fetch(Version::Draft14))
+                    && self.object.forwarding
+                        == (ForwardingPreference::Subgroup {
+                            subgroup_id: self.object.location.object_id,
+                        })
+                {
+                    preferences.push(ForwardingPreference::Datagram);
+                }
+                preferences
+            }
+
+            /// Two copies of one object conflict when no forwarding
+            /// preference fits both, their priorities differ, or, when
+            /// neither says the object does not exist, their payloads or, on
+            /// draft-14, their statuses differ (draft-14 §8.1, draft-18 §9.1).
+            fn conflicts_with(&self, other: &Self, version: Version) -> bool {
+                let (status, other_status) = (self.object.status, other.object.status);
+                let both_exist = status != ObjectStatus::DoesNotExist
+                    && other_status != ObjectStatus::DoesNotExist;
+                !self
+                    .preferences()
+                    .iter()
+                    .any(|preference| other.preferences().contains(preference))
+                    || self.object.publisher_priority != other.object.publisher_priority
+                    || (both_exist
+                        && (self.object.payload != other.object.payload
+                            || (version == Version::Draft14 && status != other_status)))
+            }
+        }
+
+        /// Mostly `usual`, sometimes `other`, so that most copies of an
+        /// object agree and a conflict comes from one or two fields.
+        fn usually<T: Clone + std::fmt::Debug + 'static>(
+            usual: T,
+            other: T,
+        ) -> impl Strategy<Value = T> {
+            prop_oneof![6 => Just(usual), 1 => Just(other)]
+        }
+
+        /// A copy from a subscription or a FETCH of `version`, of object 0
+        /// or 1 of group 0: few objects, so their copies meet. Subgroup IDs
+        /// 0 and 1 often equal the Object ID, where a draft-14 FETCH copy
+        /// matches a datagram.
+        fn copy(version: Version) -> impl Strategy<Value = ReceivedCopy> {
+            let source = select(vec![
+                CopySource::Subscription(version),
+                CopySource::Fetch(version),
+            ]);
+            let status = select(vec![
+                ObjectStatus::DoesNotExist,
+                ObjectStatus::DoesNotExist,
+                ObjectStatus::Normal,
+                ObjectStatus::Normal,
+                ObjectStatus::EndOfGroup,
+                ObjectStatus::EndOfTrack,
+            ]);
+            (
+                source,
+                0..2u64,
+                any::<bool>(),
+                0..2u64,
+                usually(7u8, 8),
+                status,
+                usually(Bytes::from_static(b"payload"), Bytes::from_static(b"other")),
+            )
+                .prop_map(
+                    |(source, object_id, datagram, subgroup_id, priority, status, payload)| {
+                        // A draft-14 FETCH copy is always in a subgroup.
+                        let forwarding =
+                            if datagram && !matches!(source, CopySource::Fetch(Version::Draft14)) {
+                                ForwardingPreference::Datagram
+                            } else {
+                                ForwardingPreference::Subgroup { subgroup_id }
+                            };
+                        let payload = if status == ObjectStatus::Normal {
+                            payload
+                        } else {
+                            Bytes::new()
+                        };
+                        ReceivedCopy {
+                            object: Object {
+                                location: Location {
+                                    group_id: 0,
+                                    object_id,
+                                },
+                                forwarding,
+                                publisher_priority: priority,
+                                status,
+                                extension_headers: ExtensionHeaders::default(),
+                                payload,
+                                ends_group: false,
+                            },
+                            source,
+                        }
+                    },
+                )
+        }
+
+        /// The copies of one session's version, and the same copies in
+        /// another order.
+        fn arrivals() -> impl Strategy<Value = (Version, Vec<ReceivedCopy>, Vec<ReceivedCopy>)> {
+            select(vec![Version::Draft14, Version::Draft18]).prop_flat_map(|version| {
+                vec(copy(version), 1..16).prop_flat_map(move |copies| {
+                    (
+                        Just(version),
+                        Just(copies.clone()),
+                        Just(copies).prop_shuffle(),
+                    )
+                })
+            })
+        }
+
+        /// The locations of the objects two of whose copies conflict, in
+        /// whatever order they arrive.
+        fn malformed_in_model(copies: &[ReceivedCopy], version: Version) -> BTreeSet<Location> {
+            copies
+                .iter()
+                .enumerate()
+                .filter(|(index, copy)| {
+                    copies[index + 1..].iter().any(|other| {
+                        other.object.location == copy.object.location
+                            && copy.conflicts_with(other, version)
+                    })
+                })
+                .map(|(_, copy)| copy.object.location)
+                .collect()
+        }
+
+        /// Whether each copy, arriving in order, conflicts with a copy of
+        /// its object that arrived before it and was not rejected.
+        fn rejected_in_model(copies: &[ReceivedCopy], version: Version) -> Vec<bool> {
+            let mut accepted: Vec<&ReceivedCopy> = Vec::new();
+            copies
+                .iter()
+                .map(|copy| {
+                    let rejected = accepted.iter().any(|earlier| {
+                        earlier.object.location == copy.object.location
+                            && earlier.conflicts_with(copy, version)
+                    });
+                    if !rejected {
+                        accepted.push(copy);
+                    }
+                    rejected
+                })
+                .collect()
+        }
+
+        fn rejected_by_ledger(copies: &[ReceivedCopy]) -> Vec<bool> {
+            let ledger = ObjectLedger::new();
+            copies
+                .iter()
+                .map(|copy| match ledger.check(&copy.object, copy.source) {
+                    Ok(()) => false,
+                    Err(MalformedTrackError::ConflictingDuplicate { location }) => {
+                        assert_eq!(location, copy.object.location);
+                        true
+                    }
+                    Err(error) => panic!("{error:?}"),
+                })
+                .collect()
+        }
+
+        fn rejected_locations(copies: &[ReceivedCopy], rejected: &[bool]) -> BTreeSet<Location> {
+            copies
+                .iter()
+                .zip(rejected)
+                .filter(|(_, rejected)| **rejected)
+                .map(|(copy, _)| copy.object.location)
+                .collect()
+        }
+
+        proptest! {
+            #[test]
+            fn a_copy_is_rejected_when_it_conflicts_with_any_accepted_copy(
+                (version, copies, shuffled) in arrivals()
+            ) {
+                // Arrange
+                let malformed = malformed_in_model(&copies, version);
+
+                // Act
+                let in_order = rejected_by_ledger(&copies);
+                let reordered = rejected_by_ledger(&shuffled);
+
+                // Assert: an object is malformed when any two of its copies
+                // conflict, whichever arrived first
+                prop_assert_eq!(&in_order, &rejected_in_model(&copies, version));
+                prop_assert_eq!(&reordered, &rejected_in_model(&shuffled, version));
+                prop_assert_eq!(rejected_locations(&copies, &in_order), malformed.clone());
+                prop_assert_eq!(rejected_locations(&shuffled, &reordered), malformed);
+            }
+        }
+    }
 }
