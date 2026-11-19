@@ -1139,8 +1139,8 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   connection the copy came on (`CopySource`). Extension headers are not
   compared and a move to or from Does Not Exist passes. A draft-14 FETCH
   carries no preference, so its copy in the subgroup of its Object ID matches
-  a datagram until a copy with a known preference arrives. Its
-  `std::sync::Mutex` is never held across an await.
+  a datagram until a copy with a known preference arrives, before or after
+  it. Its `std::sync::Mutex` is never held across an await.
 - `codec/*` — incremental decoders (`ControlMessageDecoder`,
   `UniStreamDecoder`, `SubgroupDecoder`, `FetchDecoder`) over a shared
   `tokio_reader`.

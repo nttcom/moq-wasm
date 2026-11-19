@@ -104,12 +104,19 @@ impl ObjectLedger {
                         location: object.location,
                     });
                 }
+                // A preference a copy carried outranks one a draft-14 FETCH
+                // inferred, whichever copy arrived first.
+                let forwarding = if received.forwarding_inferred() {
+                    *recorded
+                } else {
+                    received
+                };
                 if recorded.status() == ObjectStatus::DoesNotExist {
                     *recorded = received;
-                } else if recorded.forwarding_inferred() && !received.forwarding_inferred() {
-                    recorded.subgroup = received.subgroup;
-                    recorded.packed &= !FORWARDING_INFERRED;
                 }
+                recorded.subgroup = forwarding.subgroup;
+                recorded.packed = (recorded.packed & !FORWARDING_INFERRED)
+                    | (forwarding.packed & FORWARDING_INFERRED);
             }
         }
         Ok(())
@@ -534,6 +541,23 @@ mod tests {
         ledger.check(&live, LIVE).unwrap();
         // Act / Assert: a subgroup copy with a known preference
         assert_eq!(ledger.check(&fetched, LIVE), conflict(&live));
+    }
+
+    #[test]
+    fn a_draft14_fetched_copy_of_a_missing_datagram_keeps_it_a_datagram() {
+        // Arrange: the FETCH copy replaces the Does Not Exist one
+        let live = datagram();
+        let missing = Object {
+            status: ObjectStatus::DoesNotExist,
+            payload: Bytes::new(),
+            ..live.clone()
+        };
+        let in_subgroup = fetched_in(&live, live.location.object_id);
+        let ledger = ObjectLedger::new();
+        ledger.check(&missing, LIVE).unwrap();
+        ledger.check(&in_subgroup, DRAFT14_FETCH).unwrap();
+        // Act / Assert
+        assert_eq!(ledger.check(&in_subgroup, LIVE), conflict(&live));
     }
 
     #[test]
