@@ -21,7 +21,10 @@ codecs over generated messages and objects instead of a few hand-picked ones:
 - framed control messages decode to the same messages however the stream is
   cut into chunks;
 - the objects written to a subgroup stream or a FETCH response of either
-  draft read back the same however the stream is cut into chunks.
+  draft read back the same however the stream is cut into chunks;
+- received draft-18 Track Properties, in any encoding that holds each
+  integer, go out byte-identical, and after any setters only the properties
+  a setter changed are encoded afresh.
 
 The strategies live in `modules/test_support/control_message_strategies.rs`
 and `modules/test_support/object_strategies.rs`, shared by the tests of each
