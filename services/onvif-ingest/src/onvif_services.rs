@@ -6,16 +6,14 @@ pub(crate) struct ServiceEndpoints {
 }
 pub(crate) async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints {
     let (mut media, mut ptz) = match onvif.send_device(&onvif_requests::get_services()).await {
-        Ok(services) if services.status < 400 => parse_services(&services.body),
+        Ok(body) => parse_services(&body),
         _ => (None, None),
     };
     if media.is_none() || ptz.is_none() {
-        if let Ok(caps) = onvif.send_device(&onvif_requests::get_capabilities()).await {
-            if caps.status < 400 {
-                let (caps_media, caps_ptz) = parse_capabilities(&caps.body);
-                media = media.or(caps_media);
-                ptz = ptz.or(caps_ptz);
-            }
+        if let Ok(body) = onvif.send_device(&onvif_requests::get_capabilities()).await {
+            let (caps_media, caps_ptz) = parse_capabilities(&body);
+            media = media.or(caps_media);
+            ptz = ptz.or(caps_ptz);
         }
     }
     let fallback = onvif.device_endpoint().to_string();

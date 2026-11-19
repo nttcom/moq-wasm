@@ -8,6 +8,7 @@ use std::{
 use anyhow::Result;
 use auth_token::TEMPORARY_APP_ID_PREFIX;
 use hyper::HeaderMap;
+use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, OnceCell};
 
@@ -15,6 +16,7 @@ use crate::{
     ServeArgs,
     api_auth::{self, AuthError},
     archive_reader::StoredRecording,
+    recording::Layout,
     relay::ServiceToken,
     replay::{RENEW_AFTER, ReplayLease, ReplayTask},
     room_state::{CompositeState, MemberStatus, RecordingFormat, RoomRecord, RoomState},
@@ -261,19 +263,31 @@ impl Recordings {
         } else {
             None
         };
-        let (state_name, error) = state.parts();
-        Ok(json!({
-            "id": record.id,
-            "requested_at_ms": minted_ms(&record.id),
-            "namespace_prefix": record.namespace_prefix,
-            "layout": record.layout.name(),
-            "format": record.format.name(),
-            "state": state_name,
-            "error": error,
-            "members": record.members.iter().map(MemberStatus::to_json).collect::<Vec<_>>(),
-            "composite": composite.as_ref().map(CompositeState::to_json),
-        }))
+        Ok(serde_json::to_value(RecordingView {
+            requested_at_ms: minted_ms(&record.id),
+            id: record.id,
+            namespace_prefix: record.namespace_prefix,
+            layout: record.layout,
+            format: record.format,
+            state,
+            members: record.members,
+            composite,
+        })?)
     }
+}
+
+/// A recording as the recordings API returns it.
+#[derive(Serialize)]
+struct RecordingView {
+    id: String,
+    requested_at_ms: Option<u64>,
+    namespace_prefix: String,
+    layout: Layout,
+    format: RecordingFormat,
+    #[serde(flatten)]
+    state: RoomState,
+    members: Vec<MemberStatus>,
+    composite: Option<CompositeState>,
 }
 
 fn effective_state(record: &RoomRecord, now_ms: u64) -> RoomState {
@@ -302,10 +316,7 @@ mod tests {
     use object_store::{ObjectStoreExt, PutPayload};
 
     use super::*;
-    use crate::{
-        recording::Layout,
-        test_support::{TEMPORARY_APPS_URL, recordings},
-    };
+    use crate::test_support::{TEMPORARY_APPS_URL, recordings};
 
     #[tokio::test]
     async fn refuses_to_replay_an_mp4_recording() {
@@ -394,6 +405,41 @@ mod tests {
         assert_eq!(
             listed[0]["files"],
             json!([{ "name": "a.mp4", "size_bytes": 3 }])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_recording_view_keeps_its_json_shape() {
+        // Arrange: composited, but the composite job has not written its state yet
+        let recordings = recordings(1);
+        let record = RoomRecord {
+            id: "1700000000000-000001".to_string(),
+            namespace_prefix: "app/room".to_string(),
+            layout: Layout::PerTrack,
+            format: RecordingFormat::Mp4,
+            composite: true,
+            state: RoomState::Finished,
+            members: vec![MemberStatus {
+                namespace: "app/room/a".to_string(),
+                started_at_ms: 1_700_000_000_100,
+                finished: true,
+                error: Some("relay gone".to_string()),
+            }],
+            updated_at_ms: now_ms(),
+        };
+
+        // Act
+        let view = recordings.view(record).await.unwrap().to_string();
+
+        // Assert
+        assert_eq!(
+            view,
+            concat!(
+                r#"{"composite":{"error":null,"state":"waiting"},"error":null,"format":"mp4","#,
+                r#""id":"1700000000000-000001","layout":"per-track","members":[{"error":"relay gone","#,
+                r#""finished":true,"namespace":"app/room/a","started_at_ms":1700000000100}],"#,
+                r#""namespace_prefix":"app/room","requested_at_ms":1700000000000,"state":"finished"}"#,
+            )
         );
     }
 }

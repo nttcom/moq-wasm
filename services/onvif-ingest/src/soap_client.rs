@@ -1,12 +1,8 @@
 use crate::app_config::Target;
+use crate::onvif_requests::OnvifRequest;
 use crate::wsse_auth;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use reqwest::Client;
-
-pub(crate) struct SoapResponse {
-    pub(crate) status: u16,
-    pub(crate) body: String,
-}
 
 pub(crate) fn build(target: &Target) -> Result<Client> {
     Client::builder()
@@ -15,23 +11,17 @@ pub(crate) fn build(target: &Target) -> Result<Client> {
         .context("http client build failed")
 }
 
-pub(crate) fn log_response(action: &str, endpoint: &str, response: &SoapResponse) {
-    let status = response.status;
-    if status == 200 {
-        tracing::info!("SOAP response ({action}): {endpoint} -> HTTP {status} (OK)");
-    } else {
-        tracing::warn!("SOAP response ({action}): {endpoint} -> HTTP {status} (NG)");
-    }
-}
-
+/// Returns the response body; an HTTP status of 400 or above is logged and returned
+/// as an error.
 pub(crate) async fn send(
     client: &Client,
     target: &Target,
     endpoint: &str,
-    action: &str,
-    body: &str,
-) -> Result<SoapResponse> {
-    let envelope = build_envelope(target, body)?;
+    command: &OnvifRequest,
+) -> Result<String> {
+    let action = format!("{}/{}", command.namespace, command.operation);
+    let operation = command.operation;
+    let envelope = build_envelope(target, &command.body)?;
     let content_type = "text/xml; charset=utf-8";
     let request = client
         .post(endpoint)
@@ -43,8 +33,11 @@ pub(crate) async fn send(
         .with_context(|| format!("soap request failed for {} -> {}", action, endpoint))?;
     let status = response.status().as_u16();
     let body = response.text().await.unwrap_or_default();
-
-    Ok(SoapResponse { status, body })
+    if status >= 400 {
+        tracing::warn!("SOAP response ({operation}): {endpoint} -> HTTP {status} (NG)");
+        bail!("{operation} failed with HTTP {status}");
+    }
+    Ok(body)
 }
 
 fn build_envelope(target: &Target, body: &str) -> Result<String> {

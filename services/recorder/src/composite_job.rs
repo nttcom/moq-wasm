@@ -8,7 +8,7 @@ use tokio::io::AsyncWriteExt;
 use crate::{
     CompositeArgs,
     composite::{MemberFiles, composite_room},
-    manifest::parse_manifest,
+    manifest::ManifestFile,
     recording::RecordedFile,
     room_state::CompositeState,
     store::RecordingStore,
@@ -56,7 +56,7 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
         .await
         .with_context(|| format!("cannot create {}", work_dir.display()))?;
     let mut members = Vec::new();
-    for member in parse_manifest(&manifest)? {
+    for member in manifest.members {
         members.push(MemberFiles {
             namespace: member.namespace,
             files: download_all(store, member.files, work_dir).await,
@@ -82,11 +82,13 @@ async fn composite(store: &RecordingStore, id: &str, work_dir: &LocalPath) -> Re
 /// Leaves out a file that cannot be downloaded.
 async fn download_all(
     store: &RecordingStore,
-    listed: Vec<(Path, Timestamp)>,
+    listed: Vec<ManifestFile>,
     work_dir: &LocalPath,
 ) -> Vec<RecordedFile> {
     let mut files = Vec::new();
-    for (key, capture_origin) in listed {
+    for file in listed {
+        let key = Path::from(file.key);
+        let capture_origin = Timestamp::from_micros(file.capture_origin_us);
         let path = work_dir.join(key.as_ref().replace('/', "_"));
         match download(store, &key, &path).await {
             Ok(()) => files.push(RecordedFile {

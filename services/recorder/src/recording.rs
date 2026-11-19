@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use clap::ValueEnum;
 use mediapack::Timestamp;
 use moqt::TrackObject;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     file_writer::{ClosedFile, RecordingFile, suffixed_path},
@@ -16,22 +17,13 @@ use crate::{
     upload_task::{Upload, UploadQueue},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum Layout {
     /// The video and the audio in one file.
     Combined,
     /// Each track in its own file, `<stem>-<track>.mp4`.
     PerTrack,
-}
-
-impl Layout {
-    /// The value `--layout` and the recording API take.
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Combined => "combined",
-            Self::PerTrack => "per-track",
-        }
-    }
 }
 
 /// About 10 s of 20 ms frames, well past the one group the audio can lead

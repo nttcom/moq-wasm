@@ -3,7 +3,7 @@ use crate::onvif_client::OnvifClient;
 use crate::onvif_requests;
 use crate::ptz_config::PtzRange;
 use crate::soap_client;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use serde::Deserialize;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
@@ -151,13 +151,7 @@ fn send_ptz_command(
     onvif: &OnvifClient,
     command: onvif_requests::OnvifRequest,
 ) -> Result<()> {
-    let operation = command.operation;
-    let response = runtime.block_on(onvif.send_ptz(&command))?;
-    if response.status >= 400 {
-        soap_client::log_response(operation, onvif.ptz_endpoint(), &response);
-        return Err(anyhow!("{operation} failed with HTTP {}", response.status));
-    }
-    Ok(())
+    runtime.block_on(onvif.send_ptz(&command)).map(drop)
 }
 struct Position {
     pan: f32,
