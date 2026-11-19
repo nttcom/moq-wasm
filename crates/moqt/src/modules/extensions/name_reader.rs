@@ -1,5 +1,6 @@
 //! Readers of the Reason Phrase, Track Namespace and Track Name with the
-//! limits draft-14 (§1.4.3, §2.4.1) and draft-18 (§1.4.4, §2.4.1) share.
+//! limits draft-14 (§1.4.3, §2.4.1) and draft-18 (§1.4.4, §2.4.1) share,
+//! and the cut a Reason Phrase gets before it is written.
 
 use std::ops::RangeInclusive;
 
@@ -49,6 +50,15 @@ pub(crate) fn get_reason_phrase<B: Buf>(buf: &mut B, get: GetInt<B>) -> Result<S
         ));
     }
     Ok(String::from_utf8_lossy(&take(buf, len as usize)?).into_owned())
+}
+
+/// Cuts `reason` at a character boundary to the 1024 bytes a receiver accepts.
+pub(crate) fn truncate_reason_phrase(reason: &str) -> &str {
+    let mut len = reason.len().min(MAX_REASON_PHRASE_LENGTH as usize);
+    while !reason.is_char_boundary(len) {
+        len -= 1;
+    }
+    &reason[..len]
 }
 
 /// `fields` is the number of fields the draft allows.
@@ -142,5 +152,29 @@ mod tests {
             matches!(result, Err(NameError::ProtocolViolation(_))),
             "{result:?}"
         );
+    }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::super::{MAX_REASON_PHRASE_LENGTH, truncate_reason_phrase};
+        use crate::modules::test_support::control_message_strategies::reason_phrase;
+
+        proptest! {
+            #[test]
+            fn a_reason_phrase_is_cut_to_its_longest_prefix_within_1024_bytes(
+                reason in reason_phrase(),
+            ) {
+                // Act
+                let cut = truncate_reason_phrase(&reason);
+
+                // Assert
+                let limit = MAX_REASON_PHRASE_LENGTH as usize;
+                prop_assert!(reason.starts_with(cut));
+                prop_assert!(cut.len() <= limit);
+                let next = reason[cut.len()..].chars().next();
+                prop_assert!(next.is_none_or(|next| cut.len() + next.len_utf8() > limit));
+            }
+        }
     }
 }

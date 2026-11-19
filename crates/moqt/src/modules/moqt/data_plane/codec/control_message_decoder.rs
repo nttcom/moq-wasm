@@ -205,6 +205,7 @@ impl ControlMessageDecoder {
 }
 #[cfg(test)]
 mod tests {
+    use crate::modules::extensions::buf_put_ext::BufPutExt;
     use bytes::{BufMut, BytesMut};
     use tokio_util::codec::Decoder;
 
@@ -406,15 +407,14 @@ mod tests {
 
     #[test]
     fn decode_reason_phrase_over_1024_bytes_yields_fatal_error() {
-        // Arrange
-        let error = RequestError {
-            request_id: 7,
-            error_code: 1,
-            reason_phrase: "a".repeat(1025),
-        };
+        // Arrange: the encoder cuts a reason to 1024 bytes, so write the fields by hand
+        let mut payload = BytesMut::new();
+        payload.put_varint(7);
+        payload.put_varint(1);
+        payload.put_string(&"a".repeat(1025));
 
         // Act
-        let message = decode_one(ControlMessageType::SubscribeError, error.encode());
+        let message = decode_one(ControlMessageType::SubscribeError, payload);
 
         // Assert: draft-14 §1.4.3 PROTOCOL_VIOLATION
         assert!(

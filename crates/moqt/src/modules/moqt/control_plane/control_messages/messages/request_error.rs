@@ -40,7 +40,7 @@ impl RequestError {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.error_code);
-        payload.put_string(&self.reason_phrase);
+        util::put_reason_phrase(&mut payload, &self.reason_phrase);
         payload
     }
 }
@@ -97,6 +97,24 @@ mod tests {
             };
 
             assert_eq!(depacketized_announce_error, expected_announce_error);
+        }
+
+        #[test]
+        fn a_reason_phrase_over_1024_bytes_is_cut_before_the_character_the_limit_splits() {
+            // Arrange: the 1024-byte limit ends inside the 512th "é"
+            let reason_phrase = format!("a{}", "é".repeat(600));
+            let message = RequestError {
+                request_id: 0,
+                error_code: 1,
+                reason_phrase: reason_phrase.clone(),
+            };
+
+            // Act
+            let buf = message.encode();
+            let decoded = RequestError::decode(&mut std::io::Cursor::new(buf.as_ref())).unwrap();
+
+            // Assert
+            assert_eq!(decoded.reason_phrase, reason_phrase[..1023]);
         }
     }
 }

@@ -35,7 +35,7 @@ impl PublishNamespaceCancel {
         let mut payload = BytesMut::new();
         payload.put_tuple(&self.track_namespace)?;
         payload.put_varint(self.error_code);
-        payload.put_string(&self.error_reason);
+        util::put_reason_phrase(&mut payload, &self.error_reason);
         Ok(payload)
     }
 }
