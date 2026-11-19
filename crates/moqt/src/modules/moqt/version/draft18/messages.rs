@@ -2127,4 +2127,137 @@ mod tests {
         let [expected, _, _] = messages_ending_with(&[0x04, 0x32, 0x34, 0x80, 0x05]);
         assert_eq!(sent, expected);
     }
+
+    mod properties {
+        use bytes::BytesMut;
+        use proptest::prelude::*;
+
+        use super::super::{
+            DecodeError, Message, decode_message, encode_fetch, encode_publish,
+            encode_publish_done, encode_subscribe, encode_subscribe_namespace, take_message,
+        };
+        use crate::modules::extensions::name_reader::MAX_REASON_PHRASE_LENGTH;
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::{
+            authorization_token::AuthorizationToken, filter_type::FilterType,
+            group_order::GroupOrder,
+        };
+        use crate::modules::test_support::control_message_strategies::{
+            draft18_fetch, draft18_publish, draft18_subscribe, draft18_subscribe_namespace,
+            publish_done_code, reason_phrase,
+        };
+        use crate::modules::test_support::object_strategies::vi64;
+
+        /// Decodes one framed message that fills `framed`.
+        fn decode(mut framed: BytesMut) -> Result<Message, DecodeError> {
+            let (message_type, payload) = take_message(&mut framed)?;
+            if !framed.is_empty() {
+                return Err(DecodeError::protocol_violation("bytes after the message"));
+            }
+            decode_message(message_type, payload)
+        }
+
+        /// The model holds a DELETE token without the alias draft-18 sends
+        /// with it (§10.2.2), so a message carrying one is not encoded.
+        fn has_delete(tokens: &[AuthorizationToken]) -> bool {
+            tokens.contains(&AuthorizationToken::Delete)
+        }
+
+        /// A range ending before its start group has no End Group Delta
+        /// (§5.1.2), so it is not encoded.
+        fn ends_before_start(filter: &FilterType) -> bool {
+            matches!(filter, FilterType::AbsoluteRange { location, end_group } if *end_group < location.group_id)
+        }
+
+        proptest! {
+            #[test]
+            fn a_subscribe_decodes_to_itself_unless_it_cannot_be_sent(subscribe in draft18_subscribe()) {
+                // Arrange
+                let unsendable = has_delete(&subscribe.authorization_tokens)
+                    || ends_before_start(&subscribe.filter_type);
+
+                // Act
+                let encoded = encode_subscribe(&subscribe);
+
+                // Assert
+                prop_assert_eq!(encoded.is_err(), unsendable);
+                if let Ok(framed) = encoded {
+                    prop_assert_eq!(decode(framed), Ok(Message::Subscribe(subscribe)));
+                }
+            }
+
+            #[test]
+            fn a_subscribe_namespace_decodes_to_itself_unless_it_cannot_be_sent(
+                message in draft18_subscribe_namespace(),
+            ) {
+                // Arrange
+                let unsendable = has_delete(&message.authorization_token);
+
+                // Act
+                let encoded = encode_subscribe_namespace(&message);
+
+                // Assert
+                prop_assert_eq!(encoded.is_err(), unsendable);
+                if let Ok(framed) = encoded {
+                    prop_assert_eq!(decode(framed), Ok(Message::SubscribeNamespace(message)));
+                }
+            }
+
+            #[test]
+            fn a_publish_decodes_to_itself_unless_it_cannot_be_sent(publish in draft18_publish()) {
+                // Arrange
+                let unsendable = has_delete(&publish.authorization_tokens);
+
+                // Act
+                let encoded = encode_publish(&publish);
+
+                // Assert
+                prop_assert_eq!(encoded.is_err(), unsendable);
+                if let Ok(framed) = encoded {
+                    prop_assert_eq!(decode(framed), Ok(Message::Publish { publish }));
+                }
+            }
+
+            #[test]
+            fn a_fetch_decodes_to_itself_with_the_publishers_order_read_as_ascending(
+                fetch in draft18_fetch(),
+            ) {
+                // Arrange: §10.2.8, an omitted GROUP_ORDER in FETCH is Ascending, and draft-18 has no value for the publisher's order
+                let unsendable = has_delete(&fetch.authorization_tokens);
+                let mut expected = fetch.clone();
+                if expected.group_order == GroupOrder::Publisher {
+                    expected.group_order = GroupOrder::Ascending;
+                }
+
+                // Act
+                let encoded = encode_fetch(&fetch);
+
+                // Assert
+                prop_assert_eq!(encoded.is_err(), unsendable);
+                if let Ok(framed) = encoded {
+                    prop_assert_eq!(decode(framed), Ok(Message::Fetch(expected)));
+                }
+            }
+
+            #[test]
+            fn a_publish_done_decodes_to_itself_with_its_reason_cut_to_1024_bytes(
+                code in publish_done_code(),
+                stream_count in vi64(),
+                reason in reason_phrase(),
+            ) {
+                // Act
+                let decoded = decode(encode_publish_done(code, stream_count, &reason).unwrap());
+
+                // Assert: §1.4.4, the longest prefix within 1,024 bytes that ends on a character
+                let Ok(Message::PublishDone(done)) = decoded else {
+                    return Err(TestCaseError::fail(format!("decoded {decoded:?}")));
+                };
+                prop_assert_eq!(done.code, code);
+                prop_assert_eq!(done.stream_count, stream_count);
+                prop_assert!(reason.starts_with(&done.reason));
+                let limit = MAX_REASON_PHRASE_LENGTH as usize;
+                let next = reason[done.reason.len()..].chars().next();
+                prop_assert!(next.is_none_or(|next| done.reason.len() + next.len_utf8() > limit));
+            }
+        }
+    }
 }

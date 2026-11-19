@@ -25,6 +25,14 @@ codecs over generated messages and objects instead of a few hand-picked ones:
 - received draft-18 Track Properties, in any encoding that holds each
   integer, go out byte-identical, and after any setters only the properties
   a setter changed are encoded afresh;
+- a draft-18 SUBSCRIBE, SUBSCRIBE_NAMESPACE, PUBLISH, FETCH or PUBLISH_DONE
+  decodes to the message encoded, up to what draft-18 cannot carry (FETCH
+  reads the publisher's group order as Ascending, a reason phrase is cut
+  at 1,024 bytes), and encoding fails only for a DELETE authorization
+  token or a range ending before its start;
+- a sequence of model SUBSCRIBE_UPDATEs sent as draft-18 REQUEST_UPDATEs
+  and applied to the receiver's baseline leaves the model's state, and a
+  received Subscription Filter holds the same groups once applied;
 - during a session migration, `GroupCutover` takes each group from at most
   one subscription, every object of it or none, and from the current one
   only from its start while the previous one may still deliver it.
