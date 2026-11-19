@@ -104,7 +104,9 @@ pub struct PlayerStats {
 pub struct PlayerStatValues {
     pub viewer_delay_ms: Option<f64>,
     pub buffer_ms: Option<f64>,
+    /// The video track's received bitrate.
     pub received_kbps: Option<f64>,
+    pub received_audio_kbps: Option<f64>,
     pub audio_breaks: Option<f64>,
     pub audio_concealed_ms: Option<f64>,
     pub shed_ms: Option<f64>,

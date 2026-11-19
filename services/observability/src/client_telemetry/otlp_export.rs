@@ -16,7 +16,7 @@ const RESERVED_ATTRIBUTES: [&str; 3] = ["app_id", "client_id", "target"];
 /// Name, unit, kind and value of one player data point.
 type Measurement = (&'static str, &'static str, Kind, Option<f64>);
 
-fn player_measurements(values: &PlayerStatValues) -> [Measurement; 10] {
+fn player_measurements(values: &PlayerStatValues) -> [Measurement; 9] {
     [
         (
             "client.player.viewer_delay",
@@ -25,12 +25,6 @@ fn player_measurements(values: &PlayerStatValues) -> [Measurement; 10] {
             values.viewer_delay_ms,
         ),
         ("client.player.buffer", "ms", Gauge, values.buffer_ms),
-        (
-            "client.player.received",
-            "kbit/s",
-            Gauge,
-            values.received_kbps,
-        ),
         (
             "client.player.audio_breaks",
             "{break}",
@@ -122,21 +116,32 @@ pub(super) fn metrics_request(report: &ClientReport, app_id: &str) -> Option<Val
         for measurement in player_measurements(&stats.values) {
             add(measurement, &identity);
         }
+        let values = &stats.values;
         let per_media_kind = [
             (
+                "client.player.received",
+                "kbit/s",
+                values.received_kbps,
+                values.received_audio_kbps,
+            ),
+            (
                 "client.player.max_arrival_gap",
-                &stats.values.max_arrival_gap_ms,
+                "ms",
+                values.max_arrival_gap_ms.video,
+                values.max_arrival_gap_ms.audio,
             ),
             (
                 "client.player.arrival_delay",
-                &stats.values.arrival_delay_ms,
+                "ms",
+                values.arrival_delay_ms.video,
+                values.arrival_delay_ms.audio,
             ),
         ];
-        for (name, values) in per_media_kind {
-            for (media_kind, value) in [("video", values.video), ("audio", values.audio)] {
+        for (name, unit, video, audio) in per_media_kind {
+            for (media_kind, value) in [("video", video), ("audio", audio)] {
                 let mut attributes = identity.clone();
                 attributes.push(string_attribute("media_kind", media_kind));
-                add((name, "ms", Gauge, value), &attributes);
+                add((name, unit, Gauge, value), &attributes);
             }
         }
     }
@@ -453,6 +458,8 @@ mod tests {
                     "audioBreaks": 3,
                     "syncOffsetMs": -6.5,
                     "videoDroppedFrames": 4,
+                    "receivedKbps": 1500,
+                    "receivedAudioKbps": 64,
                     "maxArrivalGapMs": { "audio": 25 },
                     "arrivalDelayMs": { "audio": 8, "video": 2254 },
                 },
@@ -480,6 +487,20 @@ mod tests {
         assert_eq!(sync_offset["dataPoints"][0]["asDouble"], -6.5);
         let dropped = &metric(&request, "client.player.video_dropped")["sum"];
         assert_eq!(dropped["dataPoints"][0]["asDouble"], 4.0);
+        let received = metric(&request, "client.player.received")["gauge"]["dataPoints"]
+            .as_array()
+            .unwrap();
+        assert_eq!(received.len(), 2);
+        assert_eq!(
+            received[0]["attributes"][2]["value"]["stringValue"],
+            "video"
+        );
+        assert_eq!(received[0]["asDouble"], 1500.0);
+        assert_eq!(
+            received[1]["attributes"][2]["value"]["stringValue"],
+            "audio"
+        );
+        assert_eq!(received[1]["asDouble"], 64.0);
         let gaps = metric(&request, "client.player.max_arrival_gap")["gauge"]["dataPoints"]
             .as_array()
             .unwrap();
