@@ -314,6 +314,10 @@ impl ControlChannel {
                 },
             ),
         };
+        // §2.4.1: the peer closes the session on a namespace of no fields,
+        // which draft-18 allows.
+        let payload = payload
+            .map_err(|_| RequestFailure::ProtocolViolation("request could not be encoded"))?;
         debug_assert_eq!(request_id, reservation.request_id());
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let registered = self.register(connection, request_id, sender, on_late_response);
@@ -390,7 +394,7 @@ impl ControlChannel {
         notification: Notification,
     ) -> Result<(), TransportSendError> {
         let (message_type, payload) = match notification {
-            Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, m.encode()),
+            Notification::Unsubscribe(m) => (ControlMessageType::UnSubscribe, Ok(m.encode())),
             Notification::PublishDone {
                 request_id,
                 code,
@@ -403,9 +407,9 @@ impl ControlChannel {
                     stream_count,
                     reason,
                 );
-                (ControlMessageType::PublishDone, publish_done.encode())
+                (ControlMessageType::PublishDone, Ok(publish_done.encode()))
             }
-            Notification::FetchCancel(m) => (ControlMessageType::FetchCancel, m.encode()),
+            Notification::FetchCancel(m) => (ControlMessageType::FetchCancel, Ok(m.encode())),
             Notification::PublishNamespaceDone(m) => {
                 (ControlMessageType::PublishNamespaceDone, m.encode())
             }
@@ -430,10 +434,15 @@ impl ControlChannel {
                 ControlMessageType::UnSubscribeNamespace,
                 UnsubscribeNamespace::new(track_namespace_prefix).encode(),
             ),
-            Notification::GoAway(m) => (ControlMessageType::GoAway, m.encode()),
-            Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, m.encode()),
-            Notification::RequestsBlocked(m) => (ControlMessageType::RequestsBlocked, m.encode()),
+            Notification::GoAway(m) => (ControlMessageType::GoAway, Ok(m.encode())),
+            Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, Ok(m.encode())),
+            Notification::RequestsBlocked(m) => {
+                (ControlMessageType::RequestsBlocked, Ok(m.encode()))
+            }
         };
+        let payload = payload.map_err(|error| TransportSendError::SessionError {
+            reason: error.to_string(),
+        })?;
         self.send_stream.send(message_type, payload).await
     }
 
@@ -801,6 +810,7 @@ mod tests {
                         parameters::{content_exists::ContentExists, filter_type::FilterType},
                         publish_ok::PublishOk,
                         subscribe::Subscribe,
+                        subscribe_namespace::SubscribeNamespace,
                         subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
@@ -1123,7 +1133,7 @@ mod tests {
             .send_stream
             .send(
                 ControlMessageType::TrackStatus,
-                track_status(request_id).encode(),
+                track_status(request_id).encode().unwrap(),
             )
             .await
             .unwrap();
@@ -1265,6 +1275,35 @@ mod tests {
 
         // Assert
         assert!(send.is_none(), "wrote past the held control stream");
+        let next = channel.reserve_request_id().await.unwrap();
+        assert_eq!(next.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_request_with_a_namespace_of_no_fields_fails_and_leaves_its_request_id_unused() {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("namespace-of-no-fields").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::SubscribeNamespace(SubscribeNamespace {
+            request_id: reservation.request_id(),
+            track_namespace_prefix: vec![],
+            authorization_token: vec![],
+            trace_context: None,
+        });
+
+        // Act
+        let refused = channel
+            .send_request(&connection, reservation, request)
+            .await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{:?}",
+            refused.err()
+        );
         let next = channel.reserve_request_id().await.unwrap();
         assert_eq!(next.request_id(), 0);
     }

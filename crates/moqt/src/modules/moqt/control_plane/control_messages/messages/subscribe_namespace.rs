@@ -50,10 +50,10 @@ impl SubscribeNamespace {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        payload.put_tuple(&self.track_namespace_prefix);
+        payload.put_tuple(&self.track_namespace_prefix)?;
         let parameters: Vec<KeyValuePair> = self
             .authorization_token
             .iter()
@@ -61,7 +61,7 @@ impl SubscribeNamespace {
             .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
-        payload
+        Ok(payload)
     }
 }
 
@@ -82,7 +82,7 @@ mod tests {
                 track_namespace_prefix.clone(),
                 authorization_tokens,
             );
-            let buf = subscribe_announces.encode();
+            let buf = subscribe_announces.encode().unwrap();
 
             let expected_bytes_array = [
                 0, // Request ID(i)
@@ -130,7 +130,7 @@ mod tests {
             };
 
             // Act
-            let bytes = message.encode();
+            let bytes = message.encode().unwrap();
             let decoded =
                 SubscribeNamespace::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
 
@@ -150,7 +150,7 @@ mod tests {
             #[test]
             fn decoding_an_encoded_message_gives_it_back(message in control_message_strategies::subscribe_namespace()) {
                 // Arrange
-                let bytes = message.encode();
+                let bytes = message.encode().unwrap();
                 let mut cursor = std::io::Cursor::new(&bytes[..]);
 
                 // Act

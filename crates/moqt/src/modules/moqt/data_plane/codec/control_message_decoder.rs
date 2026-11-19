@@ -297,7 +297,7 @@ mod tests {
     fn decode_waits_for_full_frame_then_completes() {
         let mut decoder = ControlMessageDecoder;
         let subscribe = make_subscribe();
-        let framed = frame(ControlMessageType::Subscribe, subscribe.encode());
+        let framed = frame(ControlMessageType::Subscribe, subscribe.encode().unwrap());
 
         let mut buf = BytesMut::from(&framed[..framed.len() - 1]);
         let result = decoder.decode(&mut buf).expect("decode should not fail");
@@ -324,7 +324,10 @@ mod tests {
         let unsubscribe = Unsubscribe { request_id: 7 };
 
         let mut buf = BytesMut::new();
-        buf.unsplit(frame(ControlMessageType::Subscribe, subscribe.encode()));
+        buf.unsplit(frame(
+            ControlMessageType::Subscribe,
+            subscribe.encode().unwrap(),
+        ));
         buf.unsplit(frame(ControlMessageType::UnSubscribe, unsubscribe.encode()));
 
         let first = decoder
@@ -422,15 +425,21 @@ mod tests {
 
     #[test]
     fn decode_track_namespace_of_0_or_33_fields_yields_fatal_error() {
-        for fields in [0, 33] {
-            // Arrange
-            let subscribe = Subscribe {
-                track_namespace: vec!["n".to_string(); fields],
-                ..make_subscribe()
-            };
+        // Arrange: the encoder refuses 0 fields, so set the count byte to 0 and cut the field "test" out of an encoded SUBSCRIBE
+        let one_field = make_subscribe().encode().unwrap();
+        let mut no_fields = BytesMut::from(&one_field[..1]);
+        no_fields.put_u8(0);
+        no_fields.extend_from_slice(&one_field[7..]);
+        let thirty_three_fields = Subscribe {
+            track_namespace: vec!["n".to_string(); 33],
+            ..make_subscribe()
+        }
+        .encode()
+        .unwrap();
 
+        for (fields, payload) in [(0, no_fields), (33, thirty_three_fields)] {
             // Act
-            let message = decode_one(ControlMessageType::Subscribe, subscribe.encode());
+            let message = decode_one(ControlMessageType::Subscribe, payload);
 
             // Assert: draft-14 §2.4.1 PROTOCOL_VIOLATION
             assert!(
@@ -450,7 +459,7 @@ mod tests {
         };
 
         // Act
-        let message = decode_one(ControlMessageType::Subscribe, subscribe.encode());
+        let message = decode_one(ControlMessageType::Subscribe, subscribe.encode().unwrap());
 
         // Assert: draft-14 §2.4.1 PROTOCOL_VIOLATION
         assert!(
@@ -491,11 +500,12 @@ mod tests {
         buf.unsplit(frame(
             ControlMessageType::PublishNamespaceCancel,
             PublishNamespaceCancel::new(vec!["room".to_string()], 1, "expired".to_string())
-                .encode(),
+                .encode()
+                .unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::TrackStatus,
-            make_subscribe().encode(),
+            make_subscribe().encode().unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::TrackStatusOk,
@@ -562,7 +572,7 @@ mod tests {
                 // Arrange
                 let stream: Vec<u8> = messages
                     .iter()
-                    .flat_map(|message| frame(ControlMessageType::Subscribe, message.encode()))
+                    .flat_map(|message| frame(ControlMessageType::Subscribe, message.encode().unwrap()))
                     .collect();
 
                 // Act

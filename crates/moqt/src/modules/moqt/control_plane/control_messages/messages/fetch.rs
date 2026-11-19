@@ -94,7 +94,7 @@ impl FetchParams {
         }
     }
 
-    fn encode(&self) -> BytesMut {
+    fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         match self {
             FetchParams::Standalone {
@@ -104,7 +104,7 @@ impl FetchParams {
                 end_location,
             } => {
                 payload.put_varint(FetchTypeValue::Standalone as u64);
-                payload.put_tuple(track_namespace);
+                payload.put_tuple(track_namespace)?;
                 payload.put_string(track_name);
                 payload.unsplit(start_location.encode());
                 payload.unsplit(end_location.encode());
@@ -126,7 +126,7 @@ impl FetchParams {
                 payload.put_varint(*joining_start);
             }
         }
-        payload
+        Ok(payload)
     }
 }
 
@@ -180,12 +180,12 @@ impl Fetch {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
-        payload.unsplit(self.fetch_params.encode());
+        payload.unsplit(self.fetch_params.encode()?);
         let parameters: Vec<KeyValuePair> = self
             .authorization_tokens
             .iter()
@@ -193,7 +193,7 @@ impl Fetch {
             .chain(self.trace_context.as_ref().map(TraceContext::encode))
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
-        payload
+        Ok(payload)
     }
 }
 
@@ -225,7 +225,7 @@ mod tests {
                 fill_timeout: None,
                 trace_context: None,
             };
-            let buf = fetch.encode();
+            let buf = fetch.encode().unwrap();
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let result = Fetch::decode(&mut cursor).unwrap();
             assert_eq!(result, fetch);
@@ -253,7 +253,7 @@ mod tests {
                 fill_timeout: None,
                 trace_context: None,
             };
-            let result = fetch.encode();
+            let result = fetch.encode().unwrap();
             let expected = [
                 1,   // Request ID
                 128, // Subscriber Priority
@@ -326,7 +326,7 @@ mod tests {
                 fill_timeout: None,
                 trace_context: None,
             };
-            let result = fetch.encode();
+            let result = fetch.encode().unwrap();
             let expected = [
                 5, // Request ID
                 0, // Subscriber Priority
@@ -381,7 +381,7 @@ mod tests {
                 fill_timeout: None,
                 trace_context: None,
             };
-            let result = fetch.encode();
+            let result = fetch.encode().unwrap();
             let expected = [
                 7, // Request ID
                 0, // Subscriber Priority
@@ -439,7 +439,7 @@ mod tests {
             };
 
             // Act
-            let bytes = message.encode();
+            let bytes = message.encode().unwrap();
             let decoded = Fetch::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
 
             // Assert

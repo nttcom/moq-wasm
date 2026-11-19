@@ -64,10 +64,10 @@ impl Subscribe {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
-        payload.put_tuple(&self.track_namespace);
+        payload.put_tuple(&self.track_namespace)?;
         payload.put_string(&self.track_name);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
@@ -85,7 +85,7 @@ impl Subscribe {
             .collect();
         payload.unsplit(KeyValuePair::encode_list(&parameters));
 
-        payload
+        Ok(payload)
     }
 }
 
@@ -130,7 +130,7 @@ mod tests {
                 new_group_request: None,
             };
 
-            let buf = subscribe.encode();
+            let buf = subscribe.encode().unwrap();
 
             let expected_bytes_array = [
                 0, // Subscribe ID (i)
@@ -180,7 +180,7 @@ mod tests {
                 new_group_request: None,
             };
 
-            let buf = subscribe.encode();
+            let buf = subscribe.encode().unwrap();
 
             let expected_bytes_array = [
                 0, // Subscribe ID (i)
@@ -233,7 +233,7 @@ mod tests {
                 new_group_request: None,
             };
 
-            let buf = subscribe.encode();
+            let buf = subscribe.encode().unwrap();
 
             let expected_bytes_array = [
                 0, // Subscribe ID (i)
@@ -439,7 +439,7 @@ mod tests {
                 new_group_request: None,
             };
 
-            let buf = subscribe.encode();
+            let buf = subscribe.encode().unwrap();
             let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized_subscribe = Subscribe::decode(&mut buf).unwrap();
 
@@ -464,7 +464,7 @@ mod tests {
             };
 
             // Act
-            let bytes = message.encode();
+            let bytes = message.encode().unwrap();
             let decoded = Subscribe::decode(&mut std::io::Cursor::new(&bytes[..])).unwrap();
 
             // Assert
@@ -483,7 +483,7 @@ mod tests {
             #[test]
             fn decoding_an_encoded_message_gives_it_back(message in control_message_strategies::subscribe()) {
                 // Arrange
-                let bytes = message.encode();
+                let bytes = message.encode().unwrap();
                 let mut cursor = std::io::Cursor::new(&bytes[..]);
 
                 // Act
