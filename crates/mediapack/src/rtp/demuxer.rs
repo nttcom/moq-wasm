@@ -730,4 +730,312 @@ mod tests {
         assert!(Demuxer::new(&description).is_err());
         assert!(Demuxer::new(&duplicated).is_err());
     }
+
+    mod properties {
+        use bytes::Bytes;
+        use proptest::{collection::vec, prelude::*};
+
+        use super::{demux, mux};
+        use crate::{
+            aac::AudioSpecificConfig,
+            h264::annexb::with_start_codes,
+            rtp::{
+                muxer::{MAX_PAYLOAD, StreamPacket, VIDEO_CLOCK_RATE},
+                packet::{HEADER_LENGTH, Header},
+                sdp::{MediaKind, SessionDescription},
+            },
+            sample::{AudioConfig, AudioSample, MediaEvent, StreamSet, Timestamp, VideoSample},
+            test_support::{
+                FIXTURE_PPS, FIXTURE_SPS, audio_samples, fixture_video_config, video_samples,
+            },
+        };
+
+        const IDR_HEADER: u8 = 0x65;
+        /// Non-IDR slice headers of each nal_ref_idc an FU-A indicator copies.
+        const NON_IDR_HEADERS: [u8; 3] = [0x41, 0x21, 0x01];
+
+        /// `length` bytes, none of them zero, so a NAL unit holds no start
+        /// code and ends in no zero byte. Their 255-byte period does not
+        /// divide a fragment, so fragments out of order read differently.
+        fn pattern(length: usize, seed: u8) -> impl Iterator<Item = u8> {
+            (0..length).map(move |index| ((seed as usize + index) % 255) as u8 + 1)
+        }
+
+        /// NAL unit lengths, header byte included, weighted toward the 1200-byte
+        /// payload: whole units of 1197 to 1203 bytes, and FU-A units whose
+        /// 1198-byte fragments leave the last one within 3 bytes of full.
+        fn nal_length() -> impl Strategy<Value = usize> {
+            prop_oneof![
+                1..=16usize,
+                1_197..=1_203usize,
+                (1..=4usize, 0..=6usize)
+                    .prop_map(|(fragments, delta)| 1 + 1_198 * fragments + delta - 3),
+                1..=6_000usize,
+            ]
+        }
+
+        /// AAC access unit lengths, weighted toward full 1196-byte fragments
+        /// after the 4-byte AU header section, and toward the 8191 bytes the
+        /// 13-bit AU-size holds.
+        fn aac_length() -> impl Strategy<Value = usize> {
+            prop_oneof![
+                1..=16usize,
+                (1..=6usize, 0..=6usize)
+                    .prop_map(|(fragments, delta)| 1_196 * fragments + delta - 3),
+                8_188..=8_191usize,
+                1..=8_191usize,
+            ]
+        }
+
+        /// Each sample with the data the demuxer plays it as: a keyframe sent
+        /// without parameter sets gets those of the session description.
+        fn video(start: u64) -> impl Strategy<Value = Vec<(VideoSample, Bytes)>> {
+            let slice = (nal_length(), any::<u8>(), 0..NON_IDR_HEADERS.len());
+            let frame = (
+                1..=100_000u64,
+                any::<bool>(),
+                any::<bool>(),
+                vec(slice, 1..4),
+            );
+            vec(frame, 1..12).prop_map(move |frames| {
+                let mut pts = start;
+                frames
+                    .into_iter()
+                    .map(|(step, is_keyframe, in_band, slices)| {
+                        let slices: Vec<Vec<u8>> = slices
+                            .into_iter()
+                            .map(|(length, seed, reference)| {
+                                let header = if is_keyframe {
+                                    IDR_HEADER
+                                } else {
+                                    NON_IDR_HEADERS[reference]
+                                };
+                                std::iter::once(header)
+                                    .chain(pattern(length - 1, seed))
+                                    .collect()
+                            })
+                            .collect();
+                        let slices = slices.iter().map(Vec::as_slice);
+                        let parameter_sets = [&FIXTURE_SPS[..], &FIXTURE_PPS];
+                        let played = if is_keyframe {
+                            with_start_codes(parameter_sets.into_iter().chain(slices.clone()))
+                        } else {
+                            with_start_codes(slices.clone())
+                        };
+                        let sample = VideoSample {
+                            data: if in_band {
+                                played.clone()
+                            } else {
+                                with_start_codes(slices)
+                            },
+                            is_keyframe,
+                            pts: Timestamp::from_micros(pts),
+                            dts: Timestamp::from_micros(pts),
+                        };
+                        pts += step;
+                        (sample, played)
+                    })
+                    .collect()
+            })
+        }
+
+        fn audio(start: u64) -> impl Strategy<Value = Vec<AudioSample>> {
+            vec((1..=100_000u64, aac_length(), any::<u8>()), 1..12).prop_map(move |frames| {
+                let mut pts = start;
+                frames
+                    .into_iter()
+                    .map(|(step, length, seed)| {
+                        let sample = AudioSample {
+                            data: pattern(length, seed).collect(),
+                            pts: Timestamp::from_micros(pts),
+                            audio_level: None,
+                        };
+                        pts += step;
+                        sample
+                    })
+                    .collect()
+            })
+        }
+
+        #[derive(Debug)]
+        struct Media {
+            video: Vec<(VideoSample, Bytes)>,
+            audio: Vec<AudioSample>,
+            audio_config: AudioSpecificConfig,
+        }
+
+        /// Starts reach past the 2^32 ticks of the 90 kHz clock, so the muxer
+        /// truncates them to the 32-bit RTP timestamp.
+        fn media() -> impl Strategy<Value = Media> {
+            let sample_rate = prop_oneof![Just(48_000u32), Just(44_100), Just(16_000)];
+            (0..100_000_000_000u64, sample_rate).prop_flat_map(|(start, sample_rate)| {
+                (video(start), audio(start)).prop_map(move |(video, audio)| Media {
+                    video,
+                    audio,
+                    audio_config: AudioSpecificConfig::new(2, sample_rate, 1),
+                })
+            })
+        }
+
+        /// The first sequence number and timestamp of a stream. Half of them
+        /// lie just below the 16-bit and 32-bit wraps so the stream crosses
+        /// them; uniform starts almost never do.
+        fn stream_start() -> impl Strategy<Value = (u16, u32)> {
+            (
+                prop_oneof![u16::MAX - 64..=u16::MAX, any::<u16>()],
+                prop_oneof![u32::MAX - 100_000..=u32::MAX, any::<u32>()],
+            )
+        }
+
+        /// The muxer's packets with each stream moved to start at the given
+        /// sequence number and timestamp, as if the muxer had drawn them.
+        fn muxed(
+            media: &Media,
+            starts: [(u16, u32); 2],
+        ) -> (Vec<StreamPacket>, SessionDescription) {
+            let mut events = vec![
+                MediaEvent::Streams(StreamSet {
+                    has_video: true,
+                    has_audio: true,
+                }),
+                MediaEvent::VideoConfig(fixture_video_config()),
+                MediaEvent::AudioConfig(AudioConfig::Aac(media.audio_config.clone())),
+            ];
+            let mut samples: Vec<MediaEvent> = media
+                .video
+                .iter()
+                .map(|(sample, _)| MediaEvent::Video(sample.clone()))
+                .chain(media.audio.iter().cloned().map(MediaEvent::Audio))
+                .collect();
+            samples.sort_by_key(|event| match event {
+                MediaEvent::Video(sample) => sample.pts,
+                MediaEvent::Audio(sample) => sample.pts,
+                _ => Timestamp::ZERO,
+            });
+            events.extend(samples);
+            let (mut packets, description) = mux(&events);
+            for (kind, (sequence_number, timestamp)) in
+                [MediaKind::Video, MediaKind::Audio].into_iter().zip(starts)
+            {
+                let mut shift = None;
+                for packet in packets.iter_mut().filter(|packet| packet.kind == kind) {
+                    let (header, payload) = Header::parse(&packet.data).unwrap();
+                    let (sequence_shift, timestamp_shift) = *shift.get_or_insert((
+                        sequence_number.wrapping_sub(header.sequence_number),
+                        timestamp.wrapping_sub(header.timestamp),
+                    ));
+                    packet.data = Header {
+                        sequence_number: header.sequence_number.wrapping_add(sequence_shift),
+                        timestamp: header.timestamp.wrapping_add(timestamp_shift),
+                        ..header
+                    }
+                    .encode(payload);
+                }
+            }
+            (packets, description)
+        }
+
+        /// `pts` as the demuxer reads it back: the whole ticks of `clock_rate`
+        /// the muxer rounded it to, counted from the stream's first sample.
+        fn on_rtp_clock(pts: Timestamp, first: Timestamp, clock_rate: u32) -> Timestamp {
+            Timestamp::from_ticks(pts.ticks(clock_rate) - first.ticks(clock_rate), clock_rate)
+        }
+
+        fn expected_video(media: &Media) -> Vec<VideoSample> {
+            let first = media.video[0].0.pts;
+            media
+                .video
+                .iter()
+                .map(|(sample, played)| {
+                    let pts = on_rtp_clock(sample.pts, first, VIDEO_CLOCK_RATE);
+                    VideoSample {
+                        data: played.clone(),
+                        is_keyframe: sample.is_keyframe,
+                        pts,
+                        dts: pts,
+                    }
+                })
+                .collect()
+        }
+
+        fn expected_audio(media: &Media) -> Vec<AudioSample> {
+            let first = media.audio[0].pts;
+            let clock_rate = media.audio_config.sample_rate;
+            media
+                .audio
+                .iter()
+                .map(|sample| AudioSample {
+                    pts: on_rtp_clock(sample.pts, first, clock_rate),
+                    ..sample.clone()
+                })
+                .collect()
+        }
+
+        /// Swaps the packets of each stream in disjoint adjacent pairs, one
+        /// flag per pair start. The first packet of a stream stays first: the
+        /// demuxer starts the stream there and drops earlier packets as late.
+        fn swap_adjacent(packets: Vec<StreamPacket>, swaps: &[bool]) -> Vec<StreamPacket> {
+            [MediaKind::Video, MediaKind::Audio]
+                .into_iter()
+                .flat_map(|kind| {
+                    let mut stream: Vec<StreamPacket> = packets
+                        .iter()
+                        .filter(|packet| packet.kind == kind)
+                        .cloned()
+                        .collect();
+                    let mut index = 1;
+                    while index + 1 < stream.len() {
+                        if swaps.get(index).copied().unwrap_or(false) {
+                            stream.swap(index, index + 1);
+                            index += 2;
+                        } else {
+                            index += 1;
+                        }
+                    }
+                    stream
+                })
+                .collect()
+        }
+
+        proptest! {
+            #[test]
+            fn demuxing_muxed_samples_gives_them_back(
+                media in media(),
+                video_start in stream_start(),
+                audio_start in stream_start(),
+            ) {
+                // Arrange
+                let (packets, description) = muxed(&media, [video_start, audio_start]);
+
+                // Act
+                let (events, discontinuities) = demux(&packets, &description);
+
+                // Assert: every packet also fits the payload bound
+                prop_assert!(packets.iter().all(|packet| packet.data.len() <= HEADER_LENGTH + MAX_PAYLOAD));
+                prop_assert_eq!(discontinuities, 0);
+                prop_assert_eq!(video_samples(&events).into_iter().cloned().collect::<Vec<_>>(), expected_video(&media));
+                prop_assert_eq!(audio_samples(&events).into_iter().cloned().collect::<Vec<_>>(), expected_audio(&media));
+            }
+
+            #[test]
+            fn demuxing_gives_the_samples_back_when_adjacent_packets_swap(
+                media in media(),
+                video_start in stream_start(),
+                audio_start in stream_start(),
+                swaps in vec(any::<bool>(), 0..256),
+            ) {
+                // Arrange
+                let (packets, description) = muxed(&media, [video_start, audio_start]);
+                let packets = swap_adjacent(packets, &swaps);
+
+                // Act
+                let (events, discontinuities) = demux(&packets, &description);
+
+                // Assert
+                prop_assert_eq!(discontinuities, 0);
+                prop_assert_eq!(video_samples(&events).into_iter().cloned().collect::<Vec<_>>(), expected_video(&media));
+                prop_assert_eq!(audio_samples(&events).into_iter().cloned().collect::<Vec<_>>(), expected_audio(&media));
+            }
+        }
+    }
 }

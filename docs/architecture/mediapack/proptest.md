@@ -17,8 +17,9 @@ the byte-stream demuxers:
 - the MPEG-TS, FLV, fragmented MP4 and Annex-B demuxers report the same
   events from a fixture however it is cut into chunks, and the ADTS reader
   reads back generated frames however their stream is cut;
-- demuxing what the MPEG-TS muxer wrote gives back generated video and audio
-  samples, with their timestamps.
+- demuxing what the MPEG-TS and RTP muxers wrote gives back generated video
+  and audio samples, with their timestamps, and the RTP demuxer gives them
+  back when adjacent packets swap.
 
 `test_support::cuts` and `test_support::push_in_chunks` cut the input and feed
 it to a demuxer, shared by the tests of each format.

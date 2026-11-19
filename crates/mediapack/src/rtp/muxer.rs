@@ -25,7 +25,7 @@ pub const VIDEO_PAYLOAD_TYPE: u8 = 96;
 pub const AUDIO_PAYLOAD_TYPE: u8 = 97;
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
 /// Leaves room for the IP, UDP and RTP headers inside a 1280-byte IPv6 MTU.
-const MAX_PAYLOAD: usize = 1_200;
+pub(crate) const MAX_PAYLOAD: usize = 1_200;
 
 /// An RTP packet from [`Muxer::push`], sent to [`Destination::rtp`], or an
 /// RTCP compound packet from [`Muxer::sender_reports`], sent to [`Destination::rtcp`].
