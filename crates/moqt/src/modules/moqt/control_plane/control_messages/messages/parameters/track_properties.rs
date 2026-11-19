@@ -111,7 +111,7 @@ impl TrackProperties {
         self.varint(OBJECT_DELIVERY_TIMEOUT)
     }
 
-    pub fn set_delivery_timeout(&mut self, milliseconds: Option<u64>) {
+    pub(crate) fn set_delivery_timeout(&mut self, milliseconds: Option<u64>) {
         self.set_varint(OBJECT_DELIVERY_TIMEOUT, milliseconds);
     }
 
@@ -126,7 +126,7 @@ impl TrackProperties {
     }
 
     /// `Publisher` and `None` both remove it.
-    pub fn set_group_order(&mut self, group_order: Option<GroupOrder>) {
+    pub(crate) fn set_group_order(&mut self, group_order: Option<GroupOrder>) {
         let value = group_order
             .filter(|order| *order != GroupOrder::Publisher)
             .map(|order| u64::from(u8::from(order)));
@@ -134,7 +134,7 @@ impl TrackProperties {
     }
 
     /// DEFAULT PUBLISHER PRIORITY (draft-18 §12.4).
-    pub fn default_publisher_priority(&self) -> Option<u8> {
+    pub(crate) fn default_publisher_priority(&self) -> Option<u8> {
         self.varint(DEFAULT_PUBLISHER_PRIORITY)
             .and_then(|priority| u8::try_from(priority).ok())
     }

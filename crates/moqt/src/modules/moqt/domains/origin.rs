@@ -32,7 +32,7 @@ mod new_group_requests;
 mod object_cache;
 mod object_numbering;
 
-pub use new_group_requests::{MIN_GROUP_DURATION, MIN_GROUP_OBJECTS};
+pub use new_group_requests::MIN_GROUP_OBJECTS;
 pub use object_cache::Retention;
 pub use object_numbering::{GroupBoundary, Placement};
 
@@ -294,7 +294,7 @@ impl Origin {
     /// SUBSCRIBE_OK say so, and `requested` is notified when a subscriber
     /// asks for a new group (NEW_GROUP_REQUEST, §10.2.13) that has not begun
     /// yet. The caller then starts one with the next object it writes. While
-    /// the open group is younger than `MIN_GROUP_DURATION` and holds fewer
+    /// the open group is younger than 2 s and holds fewer
     /// than `MIN_GROUP_OBJECTS` objects, the notification waits until the
     /// group reaches either, and is not sent when the caller starts a group
     /// before that. Call this before `publish` and before the track is
@@ -316,7 +316,7 @@ impl Origin {
     /// track has one forwarding preference (§10), so call this before the
     /// first write. Fails for a track that is not registered or already has
     /// an object. A FETCH is still answered on a stream (§9.16).
-    pub async fn send_in_datagrams(&self, namespace: &str, track_name: &str) -> Result<()> {
+    pub(crate) async fn send_in_datagrams(&self, namespace: &str, track_name: &str) -> Result<()> {
         let key = track_key(namespace, track_name);
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
@@ -739,7 +739,7 @@ impl Origin {
     /// Serves a Standalone or Joining Fetch from the cache. A Joining Fetch
     /// names a SUBSCRIBE this origin accepted on the same session (draft-14
     /// §9.16.2).
-    pub async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
+    pub(crate) async fn serve_fetch(&self, handler: FetchHandler) -> Result<()> {
         let mut state = self.state.lock().await;
         let (key, start_location, end_location) = match fetch_target(&state, &handler) {
             Ok(target) => target,
@@ -791,7 +791,7 @@ impl Origin {
         Ok(())
     }
 
-    pub async fn cancel_fetch(&self, handler: &FetchCancelHandler) {
+    pub(crate) async fn cancel_fetch(&self, handler: &FetchCancelHandler) {
         let request_key = (session_key(&handler.session_context), handler.request_id());
         if self
             .state
@@ -808,7 +808,7 @@ impl Origin {
         }
     }
 
-    pub async fn answer_track_status(&self, handler: TrackStatusHandler) -> Result<()> {
+    pub(crate) async fn answer_track_status(&self, handler: TrackStatusHandler) -> Result<()> {
         let key = (
             handler.track_namespace().to_string(),
             handler.track_name().to_string(),
@@ -1077,6 +1077,7 @@ mod tests {
 
     use bytes::Bytes;
 
+    use super::new_group_requests::MIN_GROUP_DURATION;
     use super::*;
     use crate::modules::test_support::location;
     use crate::{

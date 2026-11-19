@@ -1,19 +1,17 @@
-use std::sync::Arc;
-
 use tokio::sync::watch;
 
 /// Counts the subgroup streams of one subscription that a connection handed
 /// to the application and that have not ended.
 #[derive(Clone)]
-pub(crate) struct OpenSubgroups(Arc<watch::Sender<usize>>);
+pub(crate) struct OpenSubgroups(watch::Sender<usize>);
 
 /// Keeps a stream counted in its `OpenSubgroups` until dropped.
 #[derive(Debug)]
-pub(crate) struct OpenSubgroup(Arc<watch::Sender<usize>>);
+pub(crate) struct OpenSubgroup(watch::Sender<usize>);
 
 impl OpenSubgroups {
     pub(crate) fn new() -> Self {
-        Self(Arc::new(watch::Sender::new(0)))
+        Self(watch::Sender::new(0))
     }
 
     pub(crate) fn open(&self) -> OpenSubgroup {

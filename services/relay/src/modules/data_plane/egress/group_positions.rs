@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::Bound, sync::Arc};
+use std::{collections::BTreeMap, ops::Bound};
 
 use moqt::object::GroupOrder;
 use tokio::sync::watch;
@@ -11,14 +11,14 @@ type Running = BTreeMap<u64, usize>;
 /// ties with the others' (draft-14 §7.2 leaves their order to the
 /// implementation and expects every subscription to send some data).
 pub(super) struct GroupPositions {
-    running_sender: Arc<watch::Sender<Running>>,
+    running_sender: watch::Sender<Running>,
     group_order: GroupOrder,
 }
 
 impl GroupPositions {
     pub(super) fn new(group_order: GroupOrder) -> Self {
         Self {
-            running_sender: Arc::new(watch::channel(Running::new()).0),
+            running_sender: watch::Sender::new(Running::new()),
             group_order,
         }
     }
@@ -37,7 +37,7 @@ impl GroupPositions {
 }
 
 pub(super) struct GroupPosition {
-    running_sender: Arc<watch::Sender<Running>>,
+    running_sender: watch::Sender<Running>,
     running_receiver: watch::Receiver<Running>,
     group_id: u64,
     group_order: GroupOrder,
@@ -45,7 +45,11 @@ pub(super) struct GroupPosition {
 
 impl GroupPosition {
     pub(super) fn current(&self) -> u64 {
-        self.of(&self.running_receiver.borrow())
+        position_of(
+            &self.running_receiver.borrow(),
+            self.group_id,
+            self.group_order,
+        )
     }
 
     pub(super) async fn moved_from(&mut self, position: u64) {
@@ -56,10 +60,6 @@ impl GroupPosition {
             .running_receiver
             .wait_for(|running| at(running) != position)
             .await;
-    }
-
-    fn of(&self, running: &Running) -> u64 {
-        position_of(running, self.group_id, self.group_order)
     }
 }
 
