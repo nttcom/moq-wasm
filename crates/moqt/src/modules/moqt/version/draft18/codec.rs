@@ -542,4 +542,30 @@ pub(super) mod tests {
             TerminationErrorCode::ProtocolViolation
         );
     }
+
+    mod properties {
+        use bytes::{Buf, BytesMut};
+        use proptest::{prelude::*, sample::Index};
+
+        use super::super::{get_vi64, put_vi64};
+        use crate::modules::test_support::object_strategies::vi64;
+
+        proptest! {
+            #[test]
+            fn an_integer_reads_back_however_its_bytes_are_split(value in vi64(), split in any::<Index>()) {
+                // Arrange
+                let mut bytes = BytesMut::new();
+                put_vi64(&mut bytes, value);
+                let (head, tail) = bytes.split_at(split.index(bytes.len() + 1));
+                let mut chunks = head.chain(tail);
+
+                // Act
+                let decoded = get_vi64(&mut chunks);
+
+                // Assert
+                prop_assert_eq!(decoded.ok(), Some(value));
+                prop_assert_eq!(chunks.remaining(), 0);
+            }
+        }
+    }
 }

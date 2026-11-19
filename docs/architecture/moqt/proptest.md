@@ -11,19 +11,23 @@ Accepted
 ## What
 
 Add `proptest` as a dev-dependency of the `moqt` crate, with default features
-off and only `std` on. The tests use it to state properties of the draft-14
-wire codec over generated messages instead of a few hand-picked ones:
+off and only `std` on. The tests use it to state properties of the wire
+codecs over generated messages and objects instead of a few hand-picked ones:
 
-- decoding an encoded control message gives back the same message and reads
-  every byte of it;
-- a variable-length integer reads back however its bytes are split across
-  chunks;
+- decoding an encoded draft-14 control message gives back the same message
+  and reads every byte of it;
+- a variable-length integer of either draft reads back however its bytes are
+  split across chunks;
 - framed control messages decode to the same messages however the stream is
-  cut into chunks.
+  cut into chunks;
+- the objects written to a subgroup stream or a FETCH response of either
+  draft read back the same however the stream is cut into chunks.
 
-The strategies that generate the messages live in
-`modules/test_support/control_message_strategies.rs`, shared by the tests of
-each message.
+The strategies live in `modules/test_support/control_message_strategies.rs`
+and `modules/test_support/object_strategies.rs`, shared by the tests of each
+codec. They favour the values where an encoding changes: the edges of each
+integer length, and object and group gaps of 0 to 3, where a codec omits or
+shortens a delta. Uniform values almost never reach them.
 
 ## Context
 
