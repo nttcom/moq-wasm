@@ -55,6 +55,11 @@ export class SeekTimeline {
     return true
   }
 
+  /// Lets the next `followMediaTimeline` subscribe again, after its SUBSCRIBE failed.
+  forgetMediaTimeline(): void {
+    this.mediaTrack = undefined
+  }
+
   /// The groups the timeline lists become seek targets only while it depends
   /// on `videoTrackName`, the video track played: another source numbers its
   /// groups on its own.

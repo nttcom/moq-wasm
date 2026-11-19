@@ -26,6 +26,19 @@ test('a later catalog updates the tracks the followed timeline depends on', () =
   expect(seek.stampedByMediaTimeline('screenshare')).toBe(false)
 })
 
+test('a timeline whose SUBSCRIBE failed is followed again at the next catalog', () => {
+  // Arrange
+  const seek = new SeekTimeline()
+  seek.followMediaTimeline(timeline('video_timeline', ['video']))
+
+  // Act
+  seek.forgetMediaTimeline()
+  const again = seek.followMediaTimeline(timeline('video_timeline', ['video']))
+
+  // Assert
+  expect(again).toBe(true)
+})
+
 test('a seek reaches a group only the media timeline lists', () => {
   // Arrange
   const seek = followingVideoTimeline()
