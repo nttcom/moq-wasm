@@ -690,25 +690,11 @@ impl ControlChannel {
             tracing::error!(%error, "a request could not be encoded for draft-18");
             RequestFailure::ProtocolViolation("request could not be encoded")
         };
-        if let OutgoingRequest::PublishNamespace(publish_namespace) = &request
-            && let Some(accepted) = self
-                .advertise_namespace(
-                    publish_namespace.request_id,
-                    &publish_namespace.track_namespace,
-                )
-                .await?
-        {
-            return Ok(accepted);
-        }
-        let publish_stream = match &request {
-            OutgoingRequest::Publish(publish) => Some(
-                self.open_publish_stream(
-                    connection,
-                    &publish.track_namespace_tuple,
-                    &publish.track_name,
-                )
-                .await?,
-            ),
+        let published_track = match &request {
+            OutgoingRequest::Publish(publish) => Some((
+                publish.track_namespace_tuple.clone(),
+                publish.track_name.clone(),
+            )),
             _ => None,
         };
         let (request_id, kind, message, group_order) = match request {
@@ -765,8 +751,18 @@ impl ControlChannel {
                 None,
             ),
         };
-        let (send_stream, receive_stream) = match publish_stream {
-            Some(streams) => streams,
+        if let RequestStreamKind::PublishNamespace(track_namespace) = &kind
+            && let Some(accepted) = self
+                .advertise_namespace(request_id, track_namespace)
+                .await?
+        {
+            return Ok(accepted);
+        }
+        let (send_stream, receive_stream) = match published_track {
+            Some((track_namespace, track_name)) => {
+                self.open_publish_stream(connection, &track_namespace, &track_name)
+                    .await?
+            }
             None => connection
                 .transport
                 .open_bi()
@@ -1609,6 +1605,30 @@ mod tests {
                 })
             ),
             "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_with_an_empty_namespace_field_fails_and_leaves_the_session_open() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-empty-namespace-field", "moqt").await;
+
+        // Act
+        let refused = client
+            .subscriber()
+            .subscribe(
+                "live//room".into(),
+                "video".into(),
+                SubscribeOption::default(),
+            )
+            .await;
+        subscribed(&client, &server, SubscribeOption::default()).await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{refused:?}"
         );
     }
 
@@ -2460,6 +2480,39 @@ mod tests {
         assert_eq!(withdrawn.track_namespace(), "live/room");
     }
 
+    #[tokio::test]
+    async fn a_held_namespace_with_an_empty_field_is_refused_and_the_others_still_arrive() {
+        // Arrange: the SUBSCRIBE_NAMESPACE is unanswered, so namespaces are held
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-held-empty-field", "moqt").await;
+        let (request, handlers) =
+            namespace_requests(&client, &server, NamespaceInterest::Namespaces, 1).await;
+
+        // Act
+        let refused = server
+            .publisher()
+            .publish_namespace("live//room".into())
+            .await;
+        server
+            .publisher()
+            .publish_namespace("live/room".into())
+            .await
+            .unwrap();
+        handlers[0].ok().await.unwrap();
+        request.await.unwrap().unwrap();
+        let announced = next_event(&client).await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{refused:?}"
+        );
+        let SessionEvent::PublishNamespace(announced) = announced else {
+            panic!("expected PUBLISH_NAMESPACE, got {announced:?}");
+        };
+        assert_eq!(announced.track_namespace, "live/room");
+    }
+
     /// Sends SUBSCRIBE_TRACKS for `prefix` on a request stream `client`
     /// opens by hand, and returns the stream with the handler `server`
     /// receives.
@@ -3031,7 +3084,7 @@ mod tests {
         let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
         let mut payload = BytesMut::new();
         codec::put_vi64(&mut payload, connection.control.take_request_id().await);
-        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track");
+        codec::put_full_track_name(&mut payload, &["ns".to_string()], "track").unwrap();
         codec::put_vi64(&mut payload, track_alias);
         parameters::put_parameters(&mut payload, &[]).unwrap();
         codec::put_key_value_pairs(&mut payload, track_properties).unwrap();
