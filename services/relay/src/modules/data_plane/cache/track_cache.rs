@@ -25,7 +25,7 @@ use crate::modules::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct TrackMalformed;
 
-/// How long a track's persisted objects outlive its publisher.
+/// How long a track's objects outlive its publisher.
 const PUBLISHER_GONE_GRACE: Duration = Duration::from_secs(10);
 
 pub(crate) fn location(group_id: u64, object_id: u64) -> moqt::object::Location {
@@ -407,7 +407,7 @@ impl TrackCache {
 
     /// Visits only the objects that expired, lost their disk copy or passed
     /// the memory TTL since the last call. The end-of-broadcast purge walks
-    /// every persisted object once.
+    /// every object once.
     pub(crate) fn evict(&self, ttl: Duration) {
         let removed_count = {
             let mut guard = self.write();
@@ -433,13 +433,8 @@ impl TrackCache {
             };
             if purge {
                 ledger.publisher_left_at = None;
-                let persisted: Vec<_> = ledger
-                    .objects
-                    .iter()
-                    .filter(|(_, object)| object.persisted)
-                    .map(|(at, _)| *at)
-                    .collect();
-                for at in persisted {
+                let cached: Vec<_> = ledger.objects.keys().copied().collect();
+                for at in cached {
                     remove(ledger, at);
                 }
                 ledger.eviction_queues.forget_segments();
@@ -535,7 +530,7 @@ impl TrackCache {
     }
 
     /// A FETCH after the broadcast ended need not be served, so eviction
-    /// drops the persisted objects and their disk segments once no publisher
+    /// drops the objects and their disk segments once no publisher
     /// started within `PUBLISHER_GONE_GRACE`; a publisher reconnecting in
     /// that time keeps them.
     pub(crate) fn publisher_left(&self) {

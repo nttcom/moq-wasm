@@ -1156,8 +1156,12 @@ owned by the track's `Producer`:
     and an upstream PUBLISH_DONE call `TrackCacheStore::publisher_left` for
     a track no publisher serves any more; once 10 s pass without a
     publisher's ingest starting again (`TrackCache::publisher_started`),
-    eviction drops the track's persisted objects with their knowledge and
-    sends `PurgeTrack`, which deletes the track's segments. A publisher that
+    eviction drops the track's objects with their knowledge and sends
+    `PurgeTrack`, which deletes the track's segments. A downstream relay
+    keeps its objects in memory only and drops them at the same time, so no
+    relay serves a subscriber of the publisher's next session the ended
+    session's newest object, such as a catalog listing the ended session's
+    tracks. A publisher that
     reconnects within that time keeps them, and one that reconnects later
     keeps what it fills in before its first live object, such as the catalog
     a joining FETCH brought. A
