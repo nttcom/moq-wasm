@@ -11,8 +11,6 @@ default = ["console_error_panic_hook"]
 
 [dependencies]
 anyhow = "1.0.102"
-broadcast = { path = "../broadcast" }
-telemetry-report = { path = "../telemetry-report" }
 bytes = "1.11.1"
 console_error_panic_hook = { version = "0.1.7", optional = true }
 js-sys = "0.3.100"
@@ -22,8 +20,12 @@ msf = { path = "../msf" }
 serde-wasm-bindgen = "0.6.5"
 tokio = { version = "1.52.3", features = ["macros", "sync"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 wasm-bindgen = "0.2.123"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+broadcast = { path = "../broadcast" }
+telemetry-report = { path = "../telemetry-report" }
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["registry", "std"] }
 wasm-bindgen-futures = "0.4.73"
 
 [package.metadata.wasm-pack.profile.release]
