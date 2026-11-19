@@ -51,7 +51,7 @@ Timestamps are `Timestamp` values in microseconds.
 | Module | Contents |
 | --- | --- |
 | `h264`, `hevc` | NAL unit types, SPS parsing, Annex-B/AVCC conversion |
-| `elementary_stream` | `ElementaryStreamDemuxer`: splits a raw Annex-B stream into access units; `h264::ElementaryStreamDemuxer` reads H.264 |
+| `elementary_stream` | `ElementaryStreamDemuxer`: splits a raw Annex-B stream into access units |
 | `parameter_sets` | `ParameterSetTracker`: reports a changed configuration and completes a keyframe that lacks its parameter sets |
 | `vp8`, `vp9`, `av1` | Keyframe detection and the configuration a keyframe carries |
 | `aac` | AudioSpecificConfig and ADTS parsing |
