@@ -210,4 +210,81 @@ mod tests {
             assert_eq!(ranges.end_of_range_containing(gap), None);
         }
     }
+
+    mod properties {
+        use std::collections::BTreeSet;
+
+        use proptest::{collection::vec, prelude::*};
+
+        use super::*;
+        use crate::modules::test_support::location_strategies::{
+            bound, object_location, positions,
+        };
+
+        const GROUPS: u64 = 4;
+
+        #[derive(Debug, Clone)]
+        enum Operation {
+            InsertUntil(Location, Location),
+            RemoveLocations(Vec<Location>),
+        }
+
+        fn operation() -> impl Strategy<Value = Operation> {
+            prop_oneof![
+                (bound(GROUPS), bound(GROUPS))
+                    .prop_map(|(start, end)| Operation::InsertUntil(start, end)),
+                vec(object_location(GROUPS), 0..4).prop_map(Operation::RemoveLocations),
+            ]
+        }
+
+        /// Every stand-in position, then the first position after them.
+        fn bounds() -> Vec<Location> {
+            let mut bounds = positions(GROUPS);
+            bounds.push(location(GROUPS, 0));
+            bounds
+        }
+
+        proptest! {
+            #[test]
+            fn queries_match_a_set_of_known_positions(operations in vec(operation(), 1..12)) {
+                // Arrange
+                let mut ranges = KnownRanges::default();
+                let mut model = BTreeSet::new();
+
+                // Act
+                for operation in operations {
+                    match operation {
+                        Operation::InsertUntil(start, end) => {
+                            ranges.insert_until(start, end);
+                            model.extend(positions(GROUPS).into_iter().filter(|p| start <= *p && *p < end));
+                        }
+                        Operation::RemoveLocations(locations) => {
+                            ranges.remove_locations(&locations);
+                            for at in locations {
+                                model.remove(&at);
+                            }
+                        }
+                    }
+                }
+
+                // Assert: the ranges are disjoint, non-empty and never adjacent
+                for ((start, end), (next_start, _)) in ranges.ranges.iter().zip(ranges.ranges.iter().skip(1)) {
+                    prop_assert!(start < end);
+                    prop_assert!(end < next_start);
+                }
+                for start in bounds() {
+                    for end in bounds() {
+                        let covered = positions(GROUPS).iter().filter(|p| start <= **p && **p < end).all(|p| model.contains(p));
+                        prop_assert_eq!(ranges.covers_until(start, end), covered, "{:?}..{:?}", start, end);
+                    }
+                }
+                for at in positions(GROUPS) {
+                    let range_end = model.contains(&at).then(|| {
+                        bounds().into_iter().find(|p| *p > at && !model.contains(p)).expect("the last bound is never known")
+                    });
+                    prop_assert_eq!(ranges.end_of_range_containing(at), range_end, "{:?}", at);
+                }
+            }
+        }
+    }
 }
