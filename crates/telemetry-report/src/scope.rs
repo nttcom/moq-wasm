@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::future::Future;
+use std::mem::DropGuard;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -31,13 +32,9 @@ impl<F: Future> Future for Scoped<F> {
 }
 
 pub fn in_scope<R>(scope: u64, f: impl FnOnce() -> R) -> R {
-    struct Restore(Option<u64>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            TASK_SCOPE.set(self.0);
-        }
-    }
-    let _restore = Restore(TASK_SCOPE.replace(Some(scope)));
+    let _restore = DropGuard::new(TASK_SCOPE.replace(Some(scope)), |previous| {
+        TASK_SCOPE.set(previous)
+    });
     f()
 }
 
