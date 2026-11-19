@@ -544,4 +544,56 @@ mod tests {
         );
         assert!(buf.is_empty());
     }
+
+    mod properties {
+        use bytes::BytesMut;
+        use proptest::{collection::vec, prelude::*, sample::Index};
+        use tokio_util::codec::Decoder;
+
+        use super::{super::ControlMessageDecoder, frame};
+        use crate::modules::moqt::control_plane::control_messages::control_message_type::ControlMessageType;
+        use crate::modules::moqt::data_plane::stream::received_message::ReceivedMessage;
+        use crate::modules::test_support::control_message_strategies;
+
+        proptest! {
+            #[test]
+            fn messages_decode_the_same_however_the_stream_is_split(
+                messages in vec(control_message_strategies::subscribe(), 1..4),
+                splits in vec(any::<Index>(), 0..8),
+            ) {
+                // Arrange
+                let stream: Vec<u8> = messages
+                    .iter()
+                    .flat_map(|message| frame(ControlMessageType::Subscribe, message.encode()))
+                    .collect();
+                let mut cuts: Vec<usize> = splits
+                    .iter()
+                    .map(|split| split.index(stream.len() + 1))
+                    .chain([0, stream.len()])
+                    .collect();
+                cuts.sort_unstable();
+
+                // Act
+                let mut buffer = BytesMut::new();
+                let mut decoded = Vec::new();
+                for chunk in cuts.windows(2) {
+                    buffer.extend_from_slice(&stream[chunk[0]..chunk[1]]);
+                    while let Some(message) = ControlMessageDecoder.decode(&mut buffer).unwrap() {
+                        decoded.push(message);
+                    }
+                }
+
+                // Assert
+                let decoded: Vec<_> = decoded
+                    .into_iter()
+                    .map(|message| match message {
+                        ReceivedMessage::Subscribe(subscribe) => subscribe,
+                        other => panic!("expected Subscribe, got {other:?}"),
+                    })
+                    .collect();
+                prop_assert_eq!(decoded, messages);
+                prop_assert!(buffer.is_empty());
+            }
+        }
+    }
 }

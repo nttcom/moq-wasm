@@ -84,4 +84,30 @@ mod tests {
             assert_eq!(result, "abcd");
         }
     }
+
+    mod properties {
+        use bytes::{Buf, BytesMut};
+        use proptest::{prelude::*, sample::Index};
+
+        use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+        use crate::modules::test_support::control_message_strategies::varint;
+
+        proptest! {
+            #[test]
+            fn a_varint_reads_back_however_its_bytes_are_split(value in varint(), split in any::<Index>()) {
+                // Arrange
+                let mut bytes = BytesMut::new();
+                bytes.put_varint(value);
+                let (head, tail) = bytes.split_at(split.index(bytes.len() + 1));
+                let mut chunks = head.chain(tail);
+
+                // Act
+                let decoded = chunks.try_get_varint();
+
+                // Assert
+                prop_assert_eq!(decoded, Ok(value));
+                prop_assert_eq!(chunks.remaining(), 0);
+            }
+        }
+    }
 }

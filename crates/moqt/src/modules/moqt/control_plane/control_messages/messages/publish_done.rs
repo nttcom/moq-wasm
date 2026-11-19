@@ -87,4 +87,27 @@ mod tests {
             assert_eq!(decoded.status_code, 0x3f);
         }
     }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use super::super::PublishDone;
+        use crate::modules::test_support::control_message_strategies;
+
+        proptest! {
+            #[test]
+            fn decoding_an_encoded_message_gives_it_back(message in control_message_strategies::publish_done()) {
+                // Arrange
+                let bytes = message.encode();
+                let mut cursor = std::io::Cursor::new(&bytes[..]);
+
+                // Act
+                let decoded = PublishDone::decode(&mut cursor).unwrap();
+
+                // Assert: every byte is read, as the frame's Message Length requires
+                prop_assert_eq!(decoded, message);
+                prop_assert_eq!(cursor.position(), bytes.len() as u64);
+            }
+        }
+    }
 }

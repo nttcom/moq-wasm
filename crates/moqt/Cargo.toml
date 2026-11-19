@@ -65,6 +65,7 @@ telemetry-otlp = { path = "../telemetry-otlp", features = ["testing"] }
 rcgen = { version = "0.14.8", default-features = false, features = ["pem", "aws_lc_rs"] }
 tokio = { version = "1.52.3", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(tokio_unstable)"] }
