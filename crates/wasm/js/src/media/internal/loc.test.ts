@@ -31,6 +31,17 @@ test('a Timestamp with a Timescale is read as media time in microseconds', () =>
   expect(meta).toEqual({ timestampMicros: 2_000_000, mediaTime: true })
 })
 
+test('a media time between two microseconds is rounded down to a whole one', () => {
+  // Arrange: one 29.97 fps frame at the 90 kHz video clock
+  const header = [
+    { id: TIMESCALE_ID, value: { varint: 90_000 } },
+    { id: TIMESTAMP_ID, value: { varint: 3_003 } }
+  ]
+
+  // Act / Assert
+  expect(readLocHeader(header).timestampMicros).toBe(33_366)
+})
+
 test('a Timestamp with a Timescale of 0 is not read', () => {
   // Arrange
   const header = [

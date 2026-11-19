@@ -24,7 +24,7 @@ export type LocMetadata = {
   audioLevel?: AudioLevel
 }
 
-const MICROS_PER_SECOND = 1_000_000
+const MICROS_PER_SECOND = 1_000_000n
 export const VOICE_ACTIVITY_BIT = 0x80
 export const LEVEL_MASK = 0x7f
 
@@ -39,7 +39,7 @@ export function readLocHeader(header?: LocHeader): LocMetadata {
     } else if (ext.id === TIMESTAMP_ID && 'varint' in ext.value && ticksPerSecond === undefined) {
       meta.timestampMicros = ext.value.varint
     } else if (ext.id === TIMESTAMP_ID && 'varint' in ext.value && ticksPerSecond) {
-      meta.timestampMicros = (ext.value.varint * MICROS_PER_SECOND) / ticksPerSecond
+      meta.timestampMicros = ticksToMicros(ext.value.varint, ticksPerSecond)
       meta.mediaTime = true
     } else if (ext.id === AUDIO_LEVEL_ID && 'varint' in ext.value) {
       meta.audioLevel = {
@@ -49,4 +49,11 @@ export function readLocHeader(header?: LocHeader): LocMetadata {
     }
   }
   return meta
+}
+
+/// Rounds down to a whole microsecond, as the Rust LOC reader does: WebCodecs
+/// timestamps are integers, so a fraction would not match the timestamp a
+/// decoded frame comes back with.
+function ticksToMicros(ticks: number, ticksPerSecond: number): number {
+  return Number((BigInt(ticks) * MICROS_PER_SECOND) / BigInt(ticksPerSecond))
 }
