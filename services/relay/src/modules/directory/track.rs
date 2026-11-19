@@ -185,6 +185,8 @@ pub(crate) struct Track {
     /// answer adds or drops the producer.
     subscribing: HashSet<SessionId>,
     last_failure: Option<CreationFailure>,
+    /// Read only while the track has no producer; every way the last
+    /// producer leaves sets it again or removes the track.
     last_producer_end: Option<PublishDoneReason>,
     reservations: Reservations,
     /// Sessions a forwarded PUBLISH is on its way to.
@@ -254,10 +256,6 @@ impl Track {
         }
         self.last_producer_end = Some(end);
         true
-    }
-
-    pub(crate) fn forget_last_producer_end(&mut self) {
-        self.last_producer_end = None;
     }
 
     /// One upstream SUBSCRIBE ended without a producer. When it was the last
