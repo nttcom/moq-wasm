@@ -73,6 +73,8 @@ export class MoqFetch implements AsyncIterable<ReceivedObject> {
     // (undocumented)
     [Symbol.asyncIterator](): AsyncIterator<ReceivedObject>;
     // Warning: (ae-forgotten-export) The symbol "WasmStream" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
     constructor(inner: WasmStream);
 }
 
@@ -81,6 +83,8 @@ export class MoqGroup implements AsyncIterable<ReceivedObject> {
     // (undocumented)
     [Symbol.asyncIterator](): AsyncIterator<ReceivedObject>;
     // Warning: (ae-forgotten-export) The symbol "WasmGroup" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
     constructor(inner: WasmGroup);
     // (undocumented)
     readonly groupId: bigint;
@@ -99,6 +103,8 @@ export class MoqNamespaceWatch implements AsyncIterable<NamespaceEvent> {
     // (undocumented)
     [Symbol.asyncIterator](): AsyncIterator<NamespaceEvent>;
     // Warning: (ae-forgotten-export) The symbol "WasmNamespaceWatch" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
     constructor(inner: WasmNamespaceWatch);
     // (undocumented)
     close(): Promise<void>;
@@ -107,6 +113,8 @@ export class MoqNamespaceWatch implements AsyncIterable<NamespaceEvent> {
 // @public (undocumented)
 export class MoqSession {
     // Warning: (ae-forgotten-export) The symbol "WasmSession" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
     constructor(inner: WasmSession);
     // Warning: (ae-forgotten-export) The symbol "Moqt" needs to be exported by the entry point index.d.ts
     //
@@ -159,6 +167,8 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
     // (undocumented)
     [Symbol.asyncIterator](): AsyncIterator<ReceivedObject>;
     // Warning: (ae-forgotten-export) The symbol "WasmSubscription" needs to be exported by the entry point index.d.ts
+    //
+    // @internal
     constructor(inner: WasmSubscription, session?: MoqSession | undefined);
     // (undocumented)
     close(): Promise<void>;
@@ -259,10 +269,8 @@ export interface SpanRecord {
 export interface TelemetryOptions {
     // (undocumented)
     page: string;
-    // Warning: (ae-forgotten-export) The symbol "Fields" needs to be exported by the entry point index.d.ts
-    //
     // (undocumented)
-    redact?: (fields: Fields) => Fields;
+    redact?: (fields: LogRecord['fields']) => LogRecord['fields'];
     // (undocumented)
     stats?: () => TelemetryStatsSample[];
     // (undocumented)

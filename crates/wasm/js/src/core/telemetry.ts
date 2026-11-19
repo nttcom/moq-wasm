@@ -14,7 +14,7 @@ export interface TelemetryOptions {
   page: string
   /// Returns the fields a log or span is sent with, to mask or drop a value such as a
   /// `track_namespace` that holds a user id. Messages and span names are sent as they are.
-  redact?: (fields: Fields) => Fields
+  redact?: (fields: LogRecord['fields']) => LogRecord['fields']
   /// Called at each send for the players' stats to send with the session-less records. `redact`
   /// does not apply to them.
   stats?: () => TelemetryStatsSample[]

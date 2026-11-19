@@ -101,6 +101,9 @@ export function buildMsfCatalogJson(tracks: MsfTrack[], initDataList?: MsfInitDa
 export const CATALOG_TRACK_NAME = "catalog";
 
 // @public (undocumented)
+export type CatalogTrackRole = 'video' | 'audio' | 'mediatimeline';
+
+// @public (undocumented)
 export type CatchUp = 'speed-up' | 'skip' | 'off';
 
 // @public (undocumented)
@@ -140,8 +143,6 @@ export type EncodedVideoStats = EncodedRateStats & {
     } | undefined;
 };
 
-// Warning: (ae-forgotten-export) The symbol "CatalogTrackRole" needs to be exported by the entry point index.d.ts
-//
 // @public (undocumented)
 export function extractCatalogTracks(catalog: unknown, role?: CatalogTrackRole): MediaCatalogTrack[];
 
@@ -302,8 +303,8 @@ export type LiveStats = {
     videoDroppedLateFrames: number;
     audioCaptureMicros: number | undefined;
     shedMs: number;
-    maxArrivalGapMs: Record<MediaKind_2, number | undefined>;
-    arrivalDelayMs: Record<MediaKind_2, number | undefined>;
+    maxArrivalGapMs: Record<MediaKind, number | undefined>;
+    arrivalDelayMs: Record<MediaKind, number | undefined>;
 };
 
 // @public (undocumented)
@@ -359,6 +360,9 @@ export type LocalSourceListener = {
     onTrackEnded?(kind: MediaKind): void;
     onEnded?(): void;
 };
+
+// @public (undocumented)
+export type LogLevel = 'info' | 'warn' | 'error';
 
 // @public (undocumented)
 export type MainVideo = {
@@ -630,6 +634,21 @@ export type RenditionSize = {
 };
 
 // @public (undocumented)
+export type ReviewFetchWindow = {
+    video?: bigint;
+    audio?: bigint;
+};
+
+// @public (undocumented)
+export type SeekAxis = {
+    liveEdgeSeconds: number;
+    replayableStartSeconds: number;
+    broadcastStartSeconds: number | undefined;
+    replayableSeconds: number;
+    seekable: boolean;
+};
+
+// @public (undocumented)
 export type SourceInput = Omit<SourceOptions, 'videoLabel'> & {
     label?: string;
     video?: TrackInput;
@@ -692,6 +711,9 @@ export type SourceViewState = {
 };
 
 // @public (undocumented)
+export type StatusState = 'idle' | 'ok' | 'review' | 'error';
+
+// @public (undocumented)
 export type StreamKind = 'subscribe' | 'fetch';
 
 // @public (undocumented)
@@ -731,11 +753,6 @@ export type WatchBroadcastsOptions = RemoteBroadcastOptions & {
 // Warnings were encountered during analysis:
 //
 // types/media/player/addedAudioTrack.d.ts:7:5 - (ae-forgotten-export) The symbol "PublishDone" needs to be exported by the entry point index.d.ts
-// types/media/player/broadcastCatalog.d.ts:6:5 - (ae-forgotten-export) The symbol "LogLevel" needs to be exported by the entry point index.d.ts
-// types/media/player/livePlayer.d.ts:38:5 - (ae-forgotten-export) The symbol "StatusState" needs to be exported by the entry point index.d.ts
-// types/media/player/livePlayer.d.ts:64:5 - (ae-forgotten-export) The symbol "SeekAxis" needs to be exported by the entry point index.d.ts
-// types/media/player/livePlayer.d.ts:73:9 - (ae-forgotten-export) The symbol "ReviewFetchWindow" needs to be exported by the entry point index.d.ts
-// types/media/player/locLive.d.ts:40:5 - (ae-forgotten-export) The symbol "MediaKind_2" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

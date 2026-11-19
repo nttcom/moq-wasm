@@ -5,7 +5,7 @@ import type { MediaCatalogTrack } from '../catalog'
 
 export type Packaging = 'loc' | 'cmaf'
 
-export type MediaKind = 'video' | 'audio'
+export type { MediaKind } from '../internal/encoders/sourceEncoding'
 
 export type LogLevel = 'info' | 'warn' | 'error'
 

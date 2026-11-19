@@ -41,6 +41,10 @@ export {
   type PlayerStatus,
   LivePlayer
 } from './player/livePlayer'
+export type { LogLevel } from './player/trackContext'
+export type { SeekAxis } from './player/seekTimeline'
+export type { ReviewFetchWindow } from './player/reviewSession'
+export type { StatusState } from './internal/status'
 export {
   type BroadcastCatalogListener,
   type BroadcastCatalogOptions,
@@ -65,6 +69,7 @@ export { monotonicUnixMicros } from './internal/clock'
 export { PlayerControls } from './controls/playerControls'
 export {
   CATALOG_TRACK_NAME,
+  type CatalogTrackRole,
   type LiveSource,
   type MediaCatalogTrack,
   type MsfInitData,

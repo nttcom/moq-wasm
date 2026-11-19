@@ -119,6 +119,7 @@ export class MoqSession {
   readonly closed: Promise<CloseInfo>
   private open = true
 
+  /** @internal */
   constructor(private readonly inner: WasmSession) {
     bindLogToken(this, () => inner.token)
     this.closed = inner.closed.then((close: Moqt.CloseInfo) => {
@@ -276,6 +277,7 @@ export class MoqSubscription implements AsyncIterable<ReceivedObject> {
   private closed = false
   private freed = false
 
+  /** @internal */
   constructor(
     private readonly inner: WasmSubscription,
     private readonly session?: MoqSession
@@ -375,6 +377,7 @@ export class MoqNamespaceWatch implements AsyncIterable<NamespaceEvent> {
   private calls = 0
   private freed = false
 
+  /** @internal */
   constructor(private readonly inner: WasmNamespaceWatch) {}
 
   async *[Symbol.asyncIterator](): AsyncIterator<NamespaceEvent> {
@@ -423,6 +426,7 @@ export class MoqGroup implements AsyncIterable<ReceivedObject> {
   readonly groupId: bigint
   readonly subgroupId: bigint
 
+  /** @internal */
   constructor(private readonly inner: WasmGroup) {
     this.groupId = inner.groupId
     this.subgroupId = inner.subgroupId
@@ -440,6 +444,7 @@ export class MoqGroup implements AsyncIterable<ReceivedObject> {
 
 /// The objects of one FETCH response; throws when the publisher resets it.
 export class MoqFetch implements AsyncIterable<ReceivedObject> {
+  /** @internal */
   constructor(private readonly inner: WasmStream) {}
 
   async *[Symbol.asyncIterator](): AsyncIterator<ReceivedObject> {
