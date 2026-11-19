@@ -1,22 +1,15 @@
-use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::recording::Layout;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub(crate) enum RecordingFormat {
+    #[default]
     Mp4,
     Moq,
-}
-
-impl RecordingFormat {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Mp4 => "mp4",
-            Self::Moq => "moq",
-        }
-    }
 }
 
 /// How a room is recorded: the `options` `bots` passes on.
@@ -57,7 +50,16 @@ impl RecordingOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+/// The `state` and `error` fields a record and a composite state are written
+/// with.
+#[derive(Serialize, Deserialize)]
+struct StateFields {
+    state: String,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(into = "StateFields", try_from = "StateFields")]
 pub(crate) enum RoomState {
     /// Requested; the recording job has not connected yet.
     Starting,
@@ -71,60 +73,50 @@ impl RoomState {
     pub(crate) fn is_active(&self) -> bool {
         matches!(self, Self::Starting | Self::Recording | Self::Stopping)
     }
+}
 
-    pub(crate) fn parts(&self) -> (&'static str, Option<&str>) {
-        match self {
-            Self::Starting => ("starting", None),
-            Self::Recording => ("recording", None),
-            Self::Stopping => ("stopping", None),
-            Self::Finished => ("finished", None),
-            Self::Failed(error) => ("failed", Some(error)),
+impl From<RoomState> for StateFields {
+    fn from(state: RoomState) -> Self {
+        let (state, error) = match state {
+            RoomState::Starting => ("starting", None),
+            RoomState::Recording => ("recording", None),
+            RoomState::Stopping => ("stopping", None),
+            RoomState::Finished => ("finished", None),
+            RoomState::Failed(error) => ("failed", Some(error)),
+        };
+        Self {
+            state: state.to_string(),
+            error,
         }
     }
+}
 
-    fn from_parts(state: &str, error: Option<&str>) -> Result<Self> {
-        Ok(match state {
+impl TryFrom<StateFields> for RoomState {
+    type Error = String;
+
+    fn try_from(fields: StateFields) -> Result<Self, String> {
+        Ok(match fields.state.as_str() {
             "starting" => Self::Starting,
             "recording" => Self::Recording,
             "stopping" => Self::Stopping,
             "finished" => Self::Finished,
-            "failed" => Self::Failed(error.unwrap_or_default().to_string()),
-            other => bail!("unknown recording state {other}"),
+            "failed" => Self::Failed(fields.error.unwrap_or_default()),
+            other => return Err(format!("unknown recording state {other}")),
         })
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MemberStatus {
     pub(crate) namespace: String,
     pub(crate) started_at_ms: u64,
+    #[serde(default)]
     pub(crate) finished: bool,
     pub(crate) error: Option<String>,
 }
 
-impl MemberStatus {
-    pub(crate) fn to_json(&self) -> Value {
-        json!({
-            "namespace": self.namespace,
-            "started_at_ms": self.started_at_ms,
-            "finished": self.finished,
-            "error": self.error,
-        })
-    }
-
-    fn from_json(value: &Value) -> Result<Self> {
-        Ok(Self {
-            namespace: string(value, "namespace")?,
-            started_at_ms: value["started_at_ms"]
-                .as_u64()
-                .context("member without started_at_ms")?,
-            finished: value["finished"].as_bool().unwrap_or_default(),
-            error: value["error"].as_str().map(str::to_string),
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(into = "StateFields", try_from = "StateFields")]
 pub(crate) enum CompositeState {
     /// While the room is recorded and until the composite starts.
     Waiting,
@@ -134,96 +126,63 @@ pub(crate) enum CompositeState {
     Failed(String),
 }
 
-impl CompositeState {
-    pub(crate) fn to_json(&self) -> Value {
-        let (state, error) = match self {
-            Self::Waiting => ("waiting", None),
-            Self::Composing => ("composing", None),
-            Self::Done => ("done", None),
-            Self::Skipped(reason) => ("skipped", Some(reason.as_str())),
-            Self::Failed(error) => ("failed", Some(error.as_str())),
+impl From<CompositeState> for StateFields {
+    fn from(state: CompositeState) -> Self {
+        let (state, error) = match state {
+            CompositeState::Waiting => ("waiting", None),
+            CompositeState::Composing => ("composing", None),
+            CompositeState::Done => ("done", None),
+            CompositeState::Skipped(reason) => ("skipped", Some(reason)),
+            CompositeState::Failed(error) => ("failed", Some(error)),
         };
-        json!({ "state": state, "error": error })
+        Self {
+            state: state.to_string(),
+            error,
+        }
     }
+}
 
-    pub(crate) fn from_json(value: &Value) -> Result<Self> {
-        let error = value["error"].as_str().unwrap_or_default().to_string();
-        Ok(match value["state"].as_str() {
-            Some("waiting") => Self::Waiting,
-            Some("composing") => Self::Composing,
-            Some("done") => Self::Done,
-            Some("skipped") => Self::Skipped(error),
-            Some("failed") => Self::Failed(error),
-            other => bail!("unknown composite state {other:?}"),
+impl TryFrom<StateFields> for CompositeState {
+    type Error = String;
+
+    fn try_from(fields: StateFields) -> Result<Self, String> {
+        let error = fields.error.unwrap_or_default();
+        Ok(match fields.state.as_str() {
+            "waiting" => Self::Waiting,
+            "composing" => Self::Composing,
+            "done" => Self::Done,
+            "skipped" => Self::Skipped(error),
+            "failed" => Self::Failed(error),
+            other => return Err(format!("unknown composite state {other}")),
         })
     }
 }
 
 /// A room recording as `state/<id>.json` holds it. The recording job writes
 /// it, first as `Starting`, stamping `updated_at_ms` (Unix ms) each time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RoomRecord {
     pub(crate) id: String,
     pub(crate) namespace_prefix: String,
     pub(crate) layout: Layout,
+    /// `mp4` in a record written before MoQ recordings.
+    #[serde(default)]
     pub(crate) format: RecordingFormat,
     /// Whether the room is composited once the recording ends.
+    #[serde(default)]
     pub(crate) composite: bool,
+    #[serde(flatten)]
     pub(crate) state: RoomState,
+    #[serde(default)]
     pub(crate) members: Vec<MemberStatus>,
+    #[serde(default)]
     pub(crate) updated_at_ms: u64,
-}
-
-impl RoomRecord {
-    pub(crate) fn to_json(&self) -> Value {
-        let (state, error) = self.state.parts();
-        json!({
-            "id": self.id,
-            "namespace_prefix": self.namespace_prefix,
-            "layout": self.layout.name(),
-            "format": self.format.name(),
-            "composite": self.composite,
-            "state": state,
-            "error": error,
-            "members": self.members.iter().map(MemberStatus::to_json).collect::<Vec<_>>(),
-            "updated_at_ms": self.updated_at_ms,
-        })
-    }
-
-    pub(crate) fn from_json(value: &Value) -> Result<Self> {
-        let layout = string(value, "layout")?;
-        Ok(Self {
-            id: string(value, "id")?,
-            namespace_prefix: string(value, "namespace_prefix")?,
-            layout: Layout::from_str(&layout, false)
-                .map_err(|error| anyhow::anyhow!("layout {layout}: {error}"))?,
-            format: match value.get("format") {
-                None => RecordingFormat::Mp4,
-                Some(Value::String(format)) => RecordingFormat::from_str(format, false)
-                    .map_err(|error| anyhow::anyhow!("recording format {format}: {error}"))?,
-                Some(_) => bail!("recording format must be a string"),
-            },
-            composite: value["composite"].as_bool().unwrap_or_default(),
-            state: RoomState::from_parts(&string(value, "state")?, value["error"].as_str())?,
-            members: value["members"]
-                .as_array()
-                .map(|members| members.iter().map(MemberStatus::from_json).collect())
-                .transpose()?
-                .unwrap_or_default(),
-            updated_at_ms: value["updated_at_ms"].as_u64().unwrap_or_default(),
-        })
-    }
-}
-
-fn string(value: &Value, key: &str) -> Result<String> {
-    value[key]
-        .as_str()
-        .map(str::to_string)
-        .with_context(|| format!("no {key}"))
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{from_value, json, to_value};
+
     use super::*;
 
     #[test]
@@ -264,18 +223,18 @@ mod tests {
         };
 
         // Act
-        let read = RoomRecord::from_json(&record.to_json()).unwrap();
+        let read: RoomRecord = from_value(to_value(&record).unwrap()).unwrap();
 
         // Assert
         assert_eq!(read, record);
-        let mut legacy = record.to_json();
+        let mut legacy = to_value(&record).unwrap();
         legacy.as_object_mut().unwrap().remove("format");
         assert_eq!(
-            RoomRecord::from_json(&legacy).unwrap().format,
+            from_value::<RoomRecord>(legacy.clone()).unwrap().format,
             RecordingFormat::Mp4
         );
         legacy["format"] = json!(17);
-        assert!(RoomRecord::from_json(&legacy).is_err());
+        assert!(from_value::<RoomRecord>(legacy).is_err());
     }
 
     #[test]
@@ -298,10 +257,10 @@ mod tests {
         };
 
         // Act
-        let record_json = record.to_json().to_string();
-        let waiting = CompositeState::Waiting.to_json().to_string();
-        let skipped = CompositeState::Skipped("no media".to_string())
-            .to_json()
+        let record_json = to_value(&record).unwrap().to_string();
+        let waiting = to_value(CompositeState::Waiting).unwrap().to_string();
+        let skipped = to_value(CompositeState::Skipped("no media".to_string()))
+            .unwrap()
             .to_string();
 
         // Assert
@@ -320,7 +279,7 @@ mod tests {
 
     #[test]
     fn reads_a_record_with_only_its_required_fields() {
-        // Arrange: a member without finished or error, and a failed composite without error
+        // Arrange
         let record = json!({
             "id": "1700000000000-a1b2c3",
             "namespace_prefix": "anon/research",
@@ -331,8 +290,8 @@ mod tests {
         let composite = json!({ "state": "failed" });
 
         // Act
-        let record = RoomRecord::from_json(&record).unwrap();
-        let composite = CompositeState::from_json(&composite).unwrap();
+        let record: RoomRecord = from_value(record).unwrap();
+        let composite: CompositeState = from_value(composite).unwrap();
 
         // Assert
         assert_eq!(
@@ -354,6 +313,6 @@ mod tests {
             }
         );
         assert_eq!(composite, CompositeState::Failed(String::new()));
-        assert!(CompositeState::from_json(&json!({ "state": "lost" })).is_err());
+        assert!(from_value::<CompositeState>(json!({ "state": "lost" })).is_err());
     }
 }

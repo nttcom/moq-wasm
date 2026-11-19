@@ -7,11 +7,11 @@ use object_store::{
     path::Path,
     signer::{Method, Signer},
 };
-use serde_json::Value;
+use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 
 use crate::{
-    manifest::MANIFEST_NAME,
+    manifest::{MANIFEST_NAME, Manifest},
     room_state::{CompositeState, RoomRecord},
 };
 
@@ -77,20 +77,16 @@ impl RecordingStore {
     }
 
     pub(crate) async fn write_state(&self, record: &RoomRecord) -> Result<()> {
-        self.put_json(&self.state_key(&record.id, "json"), &record.to_json())
+        self.put_json(&self.state_key(&record.id, "json"), record)
             .await
     }
 
     pub(crate) async fn read_state(&self, id: &str) -> Result<Option<RoomRecord>> {
-        self.get_json(&self.state_key(id, "json"))
-            .await?
-            .map(|value| RoomRecord::from_json(&value))
-            .transpose()
-            .with_context(|| format!("malformed state of recording {id}"))
+        self.get_json(&self.state_key(id, "json")).await
     }
 
     pub(crate) async fn write_composite(&self, id: &str, state: &CompositeState) -> Result<()> {
-        self.put_json(&self.state_key(id, "composite.json"), &state.to_json())
+        self.put_json(&self.state_key(id, "composite.json"), state)
             .await
     }
 
@@ -98,7 +94,7 @@ impl RecordingStore {
         &self,
         namespace_prefix: &str,
         id: &str,
-    ) -> Result<Option<Value>> {
+    ) -> Result<Option<Manifest>> {
         self.get_json(
             &self
                 .recording_prefix(namespace_prefix, id)
@@ -108,11 +104,7 @@ impl RecordingStore {
     }
 
     pub(crate) async fn read_composite(&self, id: &str) -> Result<Option<CompositeState>> {
-        self.get_json(&self.state_key(id, "composite.json"))
-            .await?
-            .map(|value| CompositeState::from_json(&value))
-            .transpose()
-            .with_context(|| format!("malformed composite state of recording {id}"))
+        self.get_json(&self.state_key(id, "composite.json")).await
     }
 
     pub(crate) async fn add_to_room(&self, namespace_prefix: &str, id: &str) -> Result<()> {
@@ -220,18 +212,21 @@ impl RecordingStore {
         Ok(objects)
     }
 
-    async fn put_json(&self, key: &Path, value: &Value) -> Result<()> {
+    /// Goes through a `Value` so that objects are written with their keys
+    /// sorted, whatever the order of the struct fields.
+    async fn put_json(&self, key: &Path, value: &impl Serialize) -> Result<()> {
+        let json = serde_json::to_value(value)?.to_string();
         self.store
-            .put(key, PutPayload::from(value.to_string()))
+            .put(key, PutPayload::from(json))
             .await
             .with_context(|| format!("cannot write {key}"))?;
         Ok(())
     }
 
-    async fn get_json(&self, key: &Path) -> Result<Option<Value>> {
+    async fn get_json<T: DeserializeOwned>(&self, key: &Path) -> Result<Option<T>> {
         self.get(key)
             .await?
-            .map(|bytes| serde_json::from_slice(&bytes).with_context(|| format!("{key}")))
+            .map(|bytes| serde_json::from_slice(&bytes).with_context(|| format!("malformed {key}")))
             .transpose()
     }
 

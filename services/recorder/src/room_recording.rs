@@ -18,7 +18,7 @@ use crate::{
     archive::{record_broadcast as record_archive, record_event_track},
     archive_chunks::ChunkWriter,
     composite::MemberFiles,
-    manifest::{MANIFEST_NAME, manifest_json},
+    manifest::{MANIFEST_NAME, manifest},
     recorder::{BroadcastOptions, Content, UploadTarget, default_output_path, record_broadcast},
     recording::RecordedFile,
     recording_clock::RecordingClock,
@@ -131,7 +131,7 @@ pub(crate) async fn record(
     }
     let key = config.prefix.clone().join(MANIFEST_NAME);
     let manifest = match config.format {
-        RecordingFormat::Mp4 => manifest_json(&members, &failed_uploads),
+        RecordingFormat::Mp4 => serde_json::to_value(manifest(&members, &failed_uploads))?,
         RecordingFormat::Moq => serde_json::json!({
             "version": 2,
             "format": "moq",

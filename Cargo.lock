@@ -2874,6 +2874,7 @@ dependencies = [
  "msf",
  "object_store",
  "reqwest",
+ "serde",
  "serde_json",
  "sha2",
  "telemetry-otlp",
