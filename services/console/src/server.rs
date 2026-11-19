@@ -6,7 +6,7 @@ use std::{
 
 use app_registry::{App, RegistryStore};
 use http_body_util::Full;
-use http_server::{HttpServer, query_params};
+use http_server::{HttpServer, empty_response, error_response, json_response, query_params};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
     body::{Bytes, Incoming},
@@ -123,6 +123,9 @@ async fn handle(request: Request<Incoming>, state: Arc<ConsoleState>) -> JsonRes
         HeaderValue::from_static(CONTENT_SECURITY),
     );
     headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers
+        .entry(CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store"));
     response
 }
 
@@ -189,7 +192,7 @@ async fn me(headers: &HeaderMap, state: &ConsoleState) -> Result<JsonResponse, R
     let caller = authenticate(headers, state).await?;
     Ok(json_response(
         StatusCode::OK,
-        json!({ "email": caller.email, "relayUrl": state.relay_url }),
+        &json!({ "email": caller.email, "relayUrl": state.relay_url }),
     ))
 }
 
@@ -202,7 +205,7 @@ async fn list_apps(headers: &HeaderMap, state: &ConsoleState) -> Result<JsonResp
         .filter(|app| apps::owned_by(app, &caller.sub))
         .map(app_json)
         .collect();
-    Ok(json_response(StatusCode::OK, json!({ "apps": apps })))
+    Ok(json_response(StatusCode::OK, &json!({ "apps": apps })))
 }
 
 async fn create_app(
@@ -221,7 +224,7 @@ async fn create_app(
             tracing::info!(app_id = %app.app_id, "app created");
             Ok(json_response(
                 StatusCode::CREATED,
-                app_with_secret_json(&app),
+                &app_with_secret_json(&app),
             ))
         }
         Creation::LimitReached => Err(Refusal(StatusCode::BAD_REQUEST, "too_many_apps")),
@@ -243,7 +246,7 @@ async fn issue_token(
             tracing::info!(app_id, expires_at = issued.expires_at, "token issued");
             json_response(
                 StatusCode::OK,
-                json!({ "token": issued.token, "expiresAt": issued.expires_at }),
+                &json!({ "token": issued.token, "expiresAt": issued.expires_at }),
             )
         },
     )
@@ -259,7 +262,7 @@ async fn rotate_secret(
         apps::rotate_secret(&state.store, &caller.sub, app_id, unix_now()).await,
         |app| {
             tracing::info!(app_id = %app.app_id, "secret rotated");
-            json_response(StatusCode::OK, app_with_secret_json(&app))
+            json_response(StatusCode::OK, &app_with_secret_json(&app))
         },
     )
 }
@@ -383,7 +386,7 @@ fn passed_on_json(body: Bytes) -> JsonResponse {
     response
         .headers_mut()
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    no_store(response)
+    response
 }
 
 async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Caller, Refusal> {
@@ -465,25 +468,6 @@ fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
-}
-
-fn error_response(status: StatusCode, error: &str) -> JsonResponse {
-    no_store(http_server::error_response(status, error))
-}
-
-fn json_response(status: StatusCode, body: Value) -> JsonResponse {
-    no_store(http_server::json_response(status, &body))
-}
-
-fn empty_response(status: StatusCode) -> JsonResponse {
-    no_store(http_server::empty_response(status))
-}
-
-fn no_store(mut response: JsonResponse) -> JsonResponse {
-    response
-        .headers_mut()
-        .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
 }
 
 #[cfg(test)]

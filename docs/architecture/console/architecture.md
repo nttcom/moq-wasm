@@ -126,7 +126,7 @@ or opened, because the recorder signs each one with a call to IAM.
 - Every response carries a Content-Security-Policy that allows only
   same-origin resources, besides media from `storage.googleapis.com` for a
   recording's signed URL, and no framing, and `X-Content-Type-Options: nosniff`.
-  API answers are `no-store`; `index.html` is `no-cache`; files under
+  Every answer other than a static file is `no-store`, set once in `handle`; `index.html` is `no-cache`; files under
   `assets/`, whose names carry a content hash, are cached for a year.
 - A static path can name nothing outside `CONSOLE_STATIC_DIR` and nothing that
   is not a page asset, so a stray file such as a registry is never served.
