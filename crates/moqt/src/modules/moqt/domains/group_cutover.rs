@@ -260,4 +260,154 @@ mod tests {
         assert!(!current_mid_group);
         assert!(current_start);
     }
+
+    mod properties {
+        use std::collections::{BTreeSet, HashMap};
+
+        use proptest::{collection::vec, option, prelude::*};
+
+        use super::super::GroupCutover;
+
+        /// The groups both subscriptions carry, numbered alike by the one
+        /// publisher: few, so the subscriptions often meet in a group.
+        const GROUPS: u64 = 10;
+
+        #[derive(Debug, Clone)]
+        enum Event {
+            /// The previous subscription delivers an object of a group.
+            Previous {
+                group_id: u64,
+            },
+            /// The current subscription delivers an object; a subgroup
+            /// stream arrives as its group's object 0.
+            Current {
+                group_id: u64,
+                object_id: u64,
+            },
+            ReleasePrevious,
+            PreviousEnded,
+        }
+
+        /// The previous subscription handed out the groups up to `newest`.
+        /// The current one joins `joined` mid-way when `joins_mid_way`, and
+        /// delivers every later group whole, from `current_start`.
+        #[derive(Debug, Clone)]
+        struct Migration {
+            newest: Option<u64>,
+            joined: u64,
+            joins_mid_way: bool,
+            events: Vec<Event>,
+        }
+
+        impl Migration {
+            fn current_start(&self) -> u64 {
+                self.joined + u64::from(self.joins_mid_way)
+            }
+        }
+
+        fn migration() -> impl Strategy<Value = Migration> {
+            (option::of(0..6u64), 0..6u64, any::<bool>()).prop_flat_map(
+                |(newest, joined, joins_mid_way)| {
+                    let event = prop_oneof![
+                        4 => (0..GROUPS).prop_map(|group_id| Event::Previous { group_id }),
+                        4 => (joined..joined + 4, 0..3u64).prop_map(|(group_id, object_id)| {
+                            Event::Current {
+                                group_id,
+                                object_id,
+                            }
+                        }),
+                        1 => Just(Event::ReleasePrevious),
+                        1 => Just(Event::PreviousEnded),
+                    ];
+                    vec(event, 0..24).prop_map(move |events| Migration {
+                        newest,
+                        joined,
+                        joins_mid_way,
+                        events,
+                    })
+                },
+            )
+        }
+
+        proptest! {
+            #[test]
+            fn each_group_comes_whole_from_one_subscription(migration in migration()) {
+                // Arrange
+                let current_start = migration.current_start();
+                let mut cutover = GroupCutover::waiting_after(migration.newest, current_start);
+                // The groups up to `newest` count as handed out already.
+                let mut previous_taken: BTreeSet<u64> =
+                    (0..migration.newest.map_or(0, |newest| newest + 1)).collect();
+                let mut current_taken = BTreeSet::new();
+                // (from the previous subscription, group ID) → taken
+                let mut decisions = HashMap::new();
+                let mut previous_ended = false;
+                // Released while the previous subscription had handed out
+                // nothing, which fixes the cutover at group 0.
+                let mut released_empty = false;
+
+                for event in migration.events {
+                    match event {
+                        Event::Previous { group_id } => {
+                            if previous_ended {
+                                continue;
+                            }
+                            // Act
+                            let taken = cutover.take_previous(group_id);
+
+                            // Assert: a subscription either takes every
+                            // object of a group or none
+                            prop_assert_eq!(*decisions.entry((true, group_id)).or_insert(taken), taken);
+                            if taken {
+                                prop_assert!(!current_taken.contains(&group_id), "group {} taken from both", group_id);
+                                previous_taken.insert(group_id);
+                            }
+                        }
+                        Event::Current { group_id, object_id } => {
+                            // Act
+                            let taken = cutover.take_current(group_id, object_id);
+
+                            // Assert: a group the current subscription joined
+                            // mid-way is taken only once the previous one can
+                            // no longer deliver it
+                            prop_assert_eq!(*decisions.entry((false, group_id)).or_insert(taken), taken);
+                            if taken {
+                                prop_assert!(
+                                    !previous_taken.contains(&group_id),
+                                    "group {} taken from both", group_id
+                                );
+                                prop_assert!(
+                                    group_id >= current_start || previous_ended || released_empty,
+                                    "group {} taken without its start", group_id
+                                );
+                                current_taken.insert(group_id);
+                            }
+                        }
+                        Event::ReleasePrevious => {
+                            let waiting = !cutover.is_cut_over();
+
+                            // Act
+                            let released = cutover.release_previous();
+
+                            // Assert
+                            prop_assert_eq!(cutover.is_cut_over(), released);
+                            released_empty |= waiting && released && previous_taken.is_empty();
+                        }
+                        Event::PreviousEnded => {
+                            if !cutover.is_cut_over() {
+                                // It forgets what the previous subscription handed
+                                // out, as the publisher may number the groups on the
+                                // current one lower.
+                                previous_taken.clear();
+                            }
+
+                            // Act
+                            cutover.previous_ended();
+                            previous_ended = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
