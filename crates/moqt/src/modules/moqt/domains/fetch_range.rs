@@ -324,4 +324,190 @@ mod tests {
             Some(RequestErrorCode::InvalidRange)
         );
     }
+
+    mod model {
+        use std::collections::BTreeSet;
+
+        use proptest::prelude::*;
+
+        use super::*;
+
+        /// Whether `[start, end)` names `at`, read from the draft text: End
+        /// Location is the last object plus 1, and an Object of 0 names the
+        /// entire group (draft-14 §9.16.1, draft-18 §10.12.1); the range is
+        /// inclusive of the last object (draft-14 §9.16.3).
+        fn named(at: Location, start: Location, end: Location) -> bool {
+            let up_to_last = if end.object_id == 0 {
+                at.group_id <= end.group_id
+            } else {
+                let last = Location {
+                    group_id: end.group_id,
+                    object_id: end.object_id - 1,
+                };
+                at <= last
+            };
+            at >= start && up_to_last
+        }
+
+        /// The locations next to the given ones, where `named` can change.
+        fn grid(locations: &[Location]) -> Vec<Location> {
+            let near = |value: u64| {
+                [
+                    value.saturating_sub(1),
+                    value,
+                    value.saturating_add(1),
+                    0,
+                    1,
+                    u64::MAX,
+                ]
+            };
+            let groups: BTreeSet<u64> = locations.iter().flat_map(|l| near(l.group_id)).collect();
+            let objects: BTreeSet<u64> = locations.iter().flat_map(|l| near(l.object_id)).collect();
+            groups
+                .iter()
+                .flat_map(|&group_id| {
+                    objects.iter().map(move |&object_id| Location {
+                        group_id,
+                        object_id,
+                    })
+                })
+                .collect()
+        }
+
+        fn coordinate() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                0..4u64,
+                Just(u64::MAX),
+                Just(u64::MAX - 1),
+                Just((1 << 62) - 1),
+                any::<u64>(),
+            ]
+        }
+
+        fn any_location() -> impl Strategy<Value = Location> {
+            (coordinate(), coordinate()).prop_map(|(group_id, object_id)| Location {
+                group_id,
+                object_id,
+            })
+        }
+
+        /// A location in the group before, of or after `anchor`, at object
+        /// 0, 1, or one off `anchor`'s.
+        fn near(anchor: Location) -> impl Strategy<Value = Location> {
+            let group = prop_oneof![
+                Just(anchor.group_id.saturating_sub(1)),
+                Just(anchor.group_id),
+                Just(anchor.group_id.saturating_add(1)),
+            ];
+            let object = prop_oneof![
+                Just(0),
+                Just(1),
+                Just(anchor.object_id.saturating_sub(1)),
+                Just(anchor.object_id),
+                Just(anchor.object_id.saturating_add(1)),
+                Just(u64::MAX),
+            ];
+            (group, object).prop_map(|(group_id, object_id)| Location {
+                group_id,
+                object_id,
+            })
+        }
+
+        fn either_near(a: Location, b: Location) -> BoxedStrategy<Location> {
+            prop_oneof![near(a), near(b), any_location()].boxed()
+        }
+
+        fn fetch() -> impl Strategy<Value = (Location, Location, Option<Location>)> {
+            any_location()
+                .prop_flat_map(|start| {
+                    (
+                        Just(start),
+                        prop_oneof![3 => near(start), 1 => any_location()],
+                    )
+                })
+                .prop_flat_map(|(start, end)| {
+                    (
+                        Just(start),
+                        Just(end),
+                        proptest::option::weighted(0.9, either_near(start, end)),
+                    )
+                })
+        }
+
+        proptest! {
+            #[test]
+            fn a_standalone_fetch_covers_the_named_objects_up_to_the_largest(
+                (start, end, largest) in fetch(),
+            ) {
+                // Arrange
+                let points = grid(&[start, end, largest.unwrap_or(start)]);
+
+                // Act
+                let resolved = resolve_fetch_range(start, end, largest);
+
+                // Assert: an empty request, an empty track and a start past the largest fail in that order; otherwise the End Location names exactly the requested objects up to the largest
+                let expected_error = if !named(start, start, end) {
+                    Some(FetchRangeError::EmptyRange)
+                } else if let Some(largest) = largest {
+                    (start > largest).then_some(FetchRangeError::StartAfterLargest)
+                } else {
+                    Some(FetchRangeError::NothingPublished)
+                };
+                match (expected_error, resolved) {
+                    (Some(expected), resolved) => prop_assert_eq!(resolved, Err(expected)),
+                    (None, Err(error)) => prop_assert!(false, "unexpected {:?}", error),
+                    (None, Ok(response_end)) => {
+                        let largest = largest.unwrap();
+                        for at in points {
+                            prop_assert_eq!(
+                                named(at, start, response_end),
+                                named(at, start, end) && at <= largest,
+                                "at {:?}, response end {:?}",
+                                at,
+                                response_end
+                            );
+                        }
+                    }
+                }
+            }
+
+            #[test]
+            fn a_joining_fetch_covers_its_start_group_up_to_the_joined_largest(
+                largest in any_location(),
+                relative in any::<bool>(),
+                groups in prop_oneof![0..3u64, Just(u64::MAX), any::<u64>()],
+            ) {
+                // Arrange
+                let (joining_start, start_group_id) = if relative {
+                    (JoiningStart::Relative(groups), largest.group_id.saturating_sub(groups))
+                } else {
+                    let group_id = largest.group_id.saturating_add(groups % 3).saturating_sub(1);
+                    (JoiningStart::Absolute(group_id), group_id)
+                };
+                let start = Location { group_id: start_group_id, object_id: 0 };
+                let points = grid(&[start, largest]);
+
+                // Act
+                let resolved = resolve_joining_fetch(joining_start, JoinPoint::Largest(Some(largest)));
+
+                // Assert: the range runs from Object 0 of the start group through the joined Largest Location, and a start group past it fails
+                if start_group_id > largest.group_id {
+                    prop_assert_eq!(resolved, Err(JoiningFetchError::StartAfterLargest));
+                } else {
+                    prop_assert!(resolved.is_ok(), "unexpected {:?}", resolved);
+                    let (resolved_start, resolved_end) = resolved.unwrap();
+                    prop_assert_eq!(resolved_start, start);
+                    for at in points {
+                        prop_assert_eq!(
+                            named(at, resolved_start, resolved_end),
+                            at >= start && at <= largest,
+                            "at {:?}, end {:?}",
+                            at,
+                            resolved_end
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
