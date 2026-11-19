@@ -14,7 +14,7 @@ import {
   summarizeStreams
 } from './streamMonitor'
 import { element, getErrorMessage, parseTrackNamespace, setStatus, initializeMediaExamplePage } from '../../utils/page'
-import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import {
   CATALOG_TRACK_NAME,
   type LivePictureKind,
@@ -31,11 +31,7 @@ import 'moq-wasm/media/controls.css'
 const STREAM_RENDER_INTERVAL_MS = 100
 
 let session: MoqSession | undefined
-startPageTelemetry(
-  'live-viewer',
-  () => element<HTMLInputElement>('url').value.trim(),
-  () => playerSamples(player)
-)
+startPageTelemetry('live-viewer', () => element<HTMLInputElement>('url').value.trim())
 const streamMonitor = new StreamMonitor()
 const stage = element<HTMLDivElement>('stage')
 let streamWindowSeconds = DEFAULT_WINDOW_SECONDS

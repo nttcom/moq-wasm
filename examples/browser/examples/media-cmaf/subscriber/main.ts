@@ -3,7 +3,7 @@ import { LivePlayer, formatLiveStats } from 'moq-wasm/media'
 import 'moq-wasm/media/player.css'
 import { connectOptions } from '../../../utils/access'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
-import { playerSamples, startPageTelemetry } from '../../../utils/pageTelemetry'
+import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
@@ -19,11 +19,7 @@ const player = new LivePlayer({
     }
   }
 })
-startPageTelemetry(
-  'media-cmaf-subscriber',
-  () => form.url.value,
-  () => playerSamples(player)
-)
+startPageTelemetry('media-cmaf-subscriber', () => form.url.value)
 
 function renderPlayer(): void {
   stage.toggleAttribute('data-started', player.state.started)

@@ -1,7 +1,7 @@
 import { MoqSession, reportLog } from 'moq-wasm'
 import { connectOptions } from '../../utils/access'
 import type { TrackWriter } from 'moq-wasm'
-import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import { LivePlayer, PlayerControls, formatLiveStats } from 'moq-wasm/media'
 import { LOAD_BALANCED_RELAY_PRESET, relayUrlFromQuery } from '../../utils/relayPresets'
 import { createRelayPicker } from '../../utils/relayPicker'
@@ -53,11 +53,7 @@ const DEFAULT_VALUES: Record<FieldKey, number> = {
 let session: MoqSession | undefined
 let relayUrl = relayUrlFromQuery() ?? LOAD_BALANCED_RELAY_PRESET.value
 const stage = element<HTMLDivElement>('stage')
-startPageTelemetry(
-  'onvif',
-  () => relayUrl,
-  () => playerSamples(player)
-)
+startPageTelemetry('onvif', () => relayUrl)
 const player = new LivePlayer({
   container: stage,
   callbacks: { onStateChange: renderPlayer, onLiveFrame: renderVideoStats, onLog: log }

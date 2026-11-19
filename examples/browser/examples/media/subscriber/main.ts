@@ -4,7 +4,7 @@ import 'moq-wasm/media/player.css'
 import { connectOptions } from '../../../utils/access'
 import { element, parseTrackNamespace, setStatusText, initializeMediaExamplePage } from '../../../utils/page'
 import { setUpCatalogPicker } from '../catalogPicker'
-import { playerSamples, startPageTelemetry } from '../../../utils/pageTelemetry'
+import { startPageTelemetry } from '../../../utils/pageTelemetry'
 
 let session: MoqSession | undefined
 const form = element<HTMLFormElement>('form')
@@ -20,11 +20,7 @@ const player = new LivePlayer({
     }
   }
 })
-startPageTelemetry(
-  'media-subscriber',
-  () => form.url.value,
-  () => playerSamples(player)
-)
+startPageTelemetry('media-subscriber', () => form.url.value)
 const catalogPicker = setUpCatalogPicker(() => session, form)
 
 function renderPlayer(): void {

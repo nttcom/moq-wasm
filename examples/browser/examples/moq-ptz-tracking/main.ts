@@ -5,7 +5,7 @@ import { latestRecordForPrompt, onEachSubscriber, setUpSystemOneBotPage } from '
 import { type BoxEdges, boxColor, drawBoxes } from '../../utils/boxOverlay'
 import { icon } from '../../utils/icon'
 import { element, setStatus } from '../../utils/page'
-import { playerSamples, startPageTelemetry } from '../../utils/pageTelemetry'
+import { startPageTelemetry } from '../../utils/pageTelemetry'
 import 'moq-wasm/media/player.css'
 
 // One room per app: onvif-ingest publishes the camera at `<room>/onvif/client` and follows the
@@ -21,11 +21,7 @@ type Prompt = { targets: string[]; video?: string }
 /// [index into the prompt's targets, edges]
 type TargetBox = [number, BoxEdges]
 
-startPageTelemetry(
-  'moq-ptz-tracking',
-  () => element<HTMLInputElement>('url').value.trim(),
-  () => playerSamples(player)
-)
+startPageTelemetry('moq-ptz-tracking', () => element<HTMLInputElement>('url').value.trim())
 const stage = element<HTMLDivElement>('stage')
 const player = new LivePlayer({
   container: stage,
