@@ -63,6 +63,7 @@ pub(crate) async fn viewer_app(
 
 #[cfg(test)]
 mod tests {
+    use http_server::HttpServer;
     use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
     use tokio::sync::mpsc;
 
@@ -78,15 +79,18 @@ mod tests {
         headers
     }
 
-    /// The VTS's request receiver must outlive the verifier's requests.
+    /// The VTS, with its request receiver, must outlive the verifier's requests.
     async fn verifier_answering(
         status: StatusCode,
         body: &str,
-    ) -> (AppVerifier, mpsc::UnboundedReceiver<(String, String)>) {
-        let (vts_url, vts_requests) = fake_http_server_answering(status, body).await;
+    ) -> (
+        AppVerifier,
+        (mpsc::UnboundedReceiver<(String, String)>, HttpServer),
+    ) {
+        let (vts_url, vts_requests, vts) = fake_http_server_answering(status, body).await;
         (
             AppVerifier::new(format!("{vts_url}/verify")).unwrap(),
-            vts_requests,
+            (vts_requests, vts),
         )
     }
 

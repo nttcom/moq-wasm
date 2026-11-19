@@ -166,6 +166,7 @@ impl ClientTelemetry {
 mod tests {
     use std::sync::Arc;
 
+    use http_server::HttpServer;
     use hyper::StatusCode;
     use serde_json::{Value, json};
     use tokio::sync::mpsc;
@@ -185,13 +186,15 @@ mod tests {
     struct Collector {
         url: String,
         request_receiver: mpsc::UnboundedReceiver<(String, String)>,
+        _server: HttpServer,
     }
 
     async fn collector() -> Collector {
-        let (url, request_receiver) = fake_http_server().await;
+        let (url, request_receiver, server) = fake_http_server().await;
         Collector {
             url,
             request_receiver,
+            _server: server,
         }
     }
 
@@ -270,7 +273,7 @@ mod tests {
     async fn a_verified_token_names_the_app_of_the_report() {
         // Arrange
         let mut collector = collector().await;
-        let (vts_url, _vts_requests) =
+        let (vts_url, _vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &vts_answer("app-1", None)).await;
         let observability = observability(&collector, Some(format!("{vts_url}/verify"))).await;
 
@@ -287,7 +290,7 @@ mod tests {
     async fn a_rejected_token_forwards_nothing() {
         // Arrange
         let mut collector = collector().await;
-        let (vts_url, _vts_requests) =
+        let (vts_url, _vts_requests, _vts) =
             fake_http_server_answering(StatusCode::UNAUTHORIZED, r#"{"error":"bad"}"#).await;
         let observability = observability(&collector, Some(format!("{vts_url}/verify"))).await;
 

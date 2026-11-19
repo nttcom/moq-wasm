@@ -2185,7 +2185,6 @@ dependencies = [
  "http-body-util",
  "http-server",
  "hyper",
- "hyper-util",
  "reqwest",
  "serde",
  "serde_json",

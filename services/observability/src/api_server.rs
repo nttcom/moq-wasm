@@ -293,7 +293,7 @@ mod tests {
     #[tokio::test]
     async fn a_stats_request_with_a_token_short_of_its_whole_app_reads_nothing() {
         // Arrange
-        let (vts_url, _vts_requests) =
+        let (vts_url, _vts_requests, _vts) =
             fake_http_server_answering(StatusCode::OK, &vts_answer("app-1", Some("room"))).await;
         let verifier = Arc::new(AppVerifier::new(format!("{vts_url}/verify")).unwrap());
         let (url, _api) = api_server(|clickhouse| ApiState {
