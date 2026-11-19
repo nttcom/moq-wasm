@@ -32,6 +32,8 @@ pub struct Demuxer {
     pending_bytes: usize,
     video: VideoTrack,
     audio_config: Option<AudioSpecificConfig>,
+    /// The last `StreamSet` reported, so a repeated PMT reports none.
+    announced_streams: Option<StreamSet>,
     discontinuities: u64,
 }
 
@@ -187,7 +189,8 @@ impl Demuxer {
         for dropped in previous.values() {
             self.pending_bytes -= dropped.pending.len();
         }
-        if !self.streams.is_empty() && !events.iter().any(|e| matches!(e, MediaEvent::Streams(_))) {
+        if !self.streams.is_empty() && self.announced_streams != Some(stream_set) {
+            self.announced_streams = Some(stream_set);
             events.push(MediaEvent::Streams(stream_set));
         }
     }
@@ -360,6 +363,23 @@ mod tests {
         let mut events = demuxer.push(stream).unwrap();
         events.extend(demuxer.finish().unwrap());
         (demuxer, events)
+    }
+
+    #[test]
+    fn a_pmt_repeated_in_a_later_push_reports_no_streams_again() {
+        // Arrange
+        let stream = hand_built_stream().build();
+        let mut demuxer = Demuxer::new();
+        demuxer.push(&stream).unwrap();
+
+        // Act
+        let events = demuxer.push(&stream).unwrap();
+
+        // Assert
+        assert_eq!(
+            count_events(&events, |event| matches!(event, MediaEvent::Streams(_))),
+            0
+        );
     }
 
     #[test]
