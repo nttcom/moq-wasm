@@ -72,6 +72,29 @@ mod tests {
 
     use super::*;
 
+    fn system_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn unix_now_reads_the_system_clock_in_seconds() {
+        // Arrange
+        let before = system_secs();
+
+        // Act
+        let now = unix_now();
+
+        // Assert
+        let after = system_secs();
+        assert!(
+            (before..=after).contains(&now),
+            "{before} <= {now} <= {after}"
+        );
+    }
+
     #[test]
     fn issued_claims_expire_the_lifetime_after_now() {
         // Act
