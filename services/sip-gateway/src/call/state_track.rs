@@ -20,7 +20,7 @@ pub(crate) enum EndReason {
     /// The trunk's final response to the INVITE, or the status the gateway
     /// would have refused an unusable answer with.
     Status(u16),
-    /// BYE from the trunk, or the peer ended its broadcast.
+    /// BYE from the trunk, or the peer's `hangup` or end of its broadcast.
     Hangup,
     /// Not answered within the ringing timeout, or no audio from the trunk.
     Timeout,

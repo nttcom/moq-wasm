@@ -49,7 +49,7 @@ A call is a room member. The gateway publishes the phone leg as the broadcast
 `<room>/phone/<call_id>` with an MSF catalog, one Opus audio track and one
 `call` track (below), and subscribes to the one broadcast the call is bridged
 to (the *peer*): a broadcast the page publishes for this call alone, with its
-microphone audio and a `dtmf` track. A page sees the phone appear and
+microphone audio and a `control` track. A page sees the phone appear and
 leave with PUBLISH_NAMESPACE and PUBLISH_NAMESPACE_DONE, as it sees any
 member.
 
@@ -105,7 +105,7 @@ sequenceDiagram
     G->>T: ACK
     G->>R: SUBSCRIBE <peer> audio
     Note over G,T: SRTP ⇄ Opus objects
-    P->>R: PUBLISH_NAMESPACE_DONE <peer> (PhoneCall.hangUp)
+    P->>R: control: hangup (PhoneCall.hangUp)
     G->>T: BYE
     G->>R: call: ended, PUBLISH_NAMESPACE_DONE
 ```
@@ -202,8 +202,15 @@ Call control stays an application protocol on ordinary MOQT objects; no call
 semantics are added to MOQT, and the presence of a namespace never means
 "ringing" by itself.
 
-The page's `dtmf` track carries one object per digit, which the gateway sends
-to the phone as RFC 4733 events. The page hangs up by ending its broadcast.
+The page's `control` track carries one JSON object per command, each a group
+of its own: `{"event":"hangup"}`, and `{"event":"dtmf","digit":"1"}`, which
+the gateway sends to the phone as an RFC 4733 event. The gateway reads it from
+its current group on, so a `hangup` written before the gateway subscribed
+still ends the call. The page hangs up with `hangup` rather than by ending
+its broadcast: `LocalBroadcast` keeps its namespace announced until the
+session closes, and a page's session carries its other broadcasts too. A
+page whose session closes (the tab closed, or lost) ends its broadcast, and
+the gateway hangs up on the PUBLISH_NAMESPACE_DONE.
 
 ### Browser SDK
 `moq-wasm/media` gains `PhoneCall`, which publishes the peer broadcast, plays
@@ -217,13 +224,14 @@ const call = await PhoneCall.join(session, {
   audio: microphoneTrack,
 })
 call.listen((state, reason) => {}) // dialing | ringing | answered | ended
-call.sendDtmf('1')
-await call.hangUp() // closes the peer broadcast
+await call.sendDtmf('1')
+await call.hangUp() // writes hangup on the control track
 ```
 
-`PhoneCall` is built from `createBroadcast` and `RemoteBroadcast`; the
-`dtmf` and `call` tracks need a JSON object track on both, which the chat
-track (`offerChat`) is the precedent for.
+`PhoneCall` is built from `createBroadcast` (the microphone), `RemoteBroadcast`
+(the phone's audio) and the core API: `publishTrack` and `writeGroup` for the
+`control` track, `subscribeCurrentGroup` for the `call` track
+(docs/architecture/wasm/browser-sdk.md).
 
 ### Media
 - **Phone to MoQT.** Each RTP packet (20 ms) is decoded from G.711, resampled
@@ -244,10 +252,10 @@ track (`offerChat`) is the precedent for.
   40-60 ms.
 
 ### Session timers and teardown
-A call ends on BYE from either side, on the peer's PUBLISH_NAMESPACE_DONE
-(also while it rings: the gateway sends CANCEL), without an answer within
-60 s, on RTP silence from the trunk for 30 s, at the maximum duration, and on
-SIGTERM (every call gets BYE or CANCEL first, and the process waits for them).
+A call ends on BYE from either side, on the peer's `hangup` or
+PUBLISH_NAMESPACE_DONE (also while it rings: the gateway sends CANCEL),
+without an answer within 60 s, on RTP silence from the trunk for 30 s, at the
+maximum duration, and on SIGTERM (every call gets BYE or CANCEL first, and the process waits for them).
 
 Session timers (RFC 4028), which `rsipstack` leaves to the application, are
 not implemented yet: a trunk that asks for them gets no refresh. When added,
@@ -268,6 +276,7 @@ call.rs          one call: INVITE, answer, bridge, teardown
   state_track    the `call` track
   phone_audio    trunk audio → Opus → the broadcast's `audio` track
   peer_audio     the peer's broadcast → G.711 → one RTP packet per 20 ms
+  peer_control   the peer's `control` track
 sip_trunk.rs     rsipstack endpoint, TLS listener, INVITE, in-dialog requests,
                  INVITEs from the trunk's signalling addresses
   address_range  IP addresses and CIDR blocks
@@ -335,10 +344,12 @@ Each step is its own pull request, stacked:
 3. `sip-gateway`: outbound calls against the local Asterisk over TLS and
    SDES-SRTP, with the ADRs for `rsipstack`, `rustrtc` and GStreamer.
 4. `sip-gateway`: inbound calls and the webhook.
-5. Browser SDK: the JSON object track, then `PhoneCall`.
-6. An example page and an E2E test against a local PBX.
-7. `sip-gateway`: the page's `dtmf` track as RFC 4733 events, and session
-   timers.
+5. Browser SDK: `PhoneCall`, on the core API's track writer and joining
+   SUBSCRIBE (no new track type).
+6. `sip-gateway`: the page's `control` track and its `hangup`; then an example
+   page and an E2E test against a local PBX.
+7. `sip-gateway`: `dtmf` on the `control` track as RFC 4733 events, and
+   session timers.
 
 ## Open questions
 - Against Twilio once there is an account: the SRTP crypto suites it accepts,
