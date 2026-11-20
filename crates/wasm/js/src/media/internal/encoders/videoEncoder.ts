@@ -2,7 +2,7 @@ import { monotonicUnixMicros } from '../clock'
 import { avcCodecForSize } from './avcLevel'
 import { CaptureTimestamps } from './captureTimestamps'
 import { EncoderWarmUp } from './encoderWarmUp'
-import { fitEncodeSize } from './encodeSize'
+import { fallbackBounds, fitEncodeSize, fitWithinBounds, type Size } from './encodeSize'
 import { FrameRateLimit } from './frameRateLimit'
 import { KeyframeSchedule } from './keyframeSchedule'
 import {
@@ -39,6 +39,8 @@ class Rendition {
   readonly captureTimestamps = new CaptureTimestamps()
   config = videoEncoderConfig()
   private scaleResolutionDownBy: number | undefined
+  // The fallback bounds in use; undefined while the encoder takes the frame's own size.
+  private bounds: Size | undefined
   frameRateLimit: FrameRateLimit | undefined
 
   constructor(
@@ -51,6 +53,7 @@ class Rendition {
   setConfig({ scaleResolutionDownBy, ...config }: RenditionEncoderConfig): void {
     this.config = videoEncoderConfig(config)
     this.scaleResolutionDownBy = scaleResolutionDownBy
+    this.bounds = undefined
     this.frameRateLimit = frameRateLimit(this.config, config)
     this.configuredFrameSize = null
   }
@@ -63,17 +66,8 @@ class Rendition {
         self.postMessage({ type: 'encoderError', message: e.message, rendition: this.index })
       }
     }
-    const config = this.configFor(frame)
-    try {
-      const supported = await VideoEncoder.isConfigSupported(config)
-      if (!supported.supported) {
-        workerLog('error', TARGET, 'encoder config unsupported', { config, rendition: this.index })
-        this.postConfigError('unsupported', config)
-        return false
-      }
-    } catch (e) {
-      workerLog('error', TARGET, 'encoder config support check failed', { error: e, config, rendition: this.index })
-      this.postConfigError('unsupported', config, e)
+    const config = await this.supportedConfig(frame)
+    if (!config) {
       return false
     }
     const encoder = new VideoEncoder(init)
@@ -100,7 +94,7 @@ class Rendition {
       return false
     }
     this.configuredFrameSize = size
-    const config = this.configFor(frame)
+    const config = this.configFor(frame, this.bounds)
     try {
       this.encoder.configure(config)
     } catch (e) {
@@ -111,17 +105,53 @@ class Rendition {
     return true
   }
 
+  /// Tries the frame's own size, then each fallback bounds, and keeps the first
+  /// one supported in `this.bounds` for later frames. Posts a `configError` and
+  /// returns undefined when none is supported.
+  private async supportedConfig(frame: VideoFrame): Promise<VideoEncoderConfig | undefined> {
+    const requested = this.configFor(frame, undefined)
+    try {
+      for (const bounds of fallbackBounds(requested)) {
+        const config = this.configFor(frame, bounds)
+        if ((await VideoEncoder.isConfigSupported(config)).supported) {
+          this.bounds = bounds
+          if (bounds) {
+            workerLog('warn', TARGET, 'encoder size reduced', {
+              requested_width: requested.width,
+              requested_height: requested.height,
+              config,
+              rendition: this.index
+            })
+          }
+          return config
+        }
+      }
+    } catch (e) {
+      workerLog('error', TARGET, 'encoder config support check failed', {
+        error: e,
+        config: requested,
+        rendition: this.index
+      })
+      this.postConfigError('unsupported', requested, e)
+      return undefined
+    }
+    workerLog('error', TARGET, 'encoder config unsupported', { config: requested, rendition: this.index })
+    this.postConfigError('unsupported', requested)
+    return undefined
+  }
+
   private postConfigError(reason: 'unsupported' | 'reconfigure_failed', config: VideoEncoderConfig, error?: unknown) {
     const cause = error === undefined ? '' : `: ${error instanceof Error ? error.message : String(error)}`
     const message = `${reason} ${config.codec} ${config.width}x${config.height} at ${config.framerate} fps${cause}`
     self.postMessage({ type: 'configError', reason, message, config, rendition: this.index })
   }
 
-  private configFor(frame: VideoFrame): VideoEncoderConfig {
-    const size = fitEncodeSize(
+  private configFor(frame: VideoFrame, bounds: Size | undefined): VideoEncoderConfig {
+    const fitted = fitEncodeSize(
       { width: this.config.width, height: this.config.height, scaleResolutionDownBy: this.scaleResolutionDownBy },
       { width: frame.displayWidth, height: frame.displayHeight }
     )
+    const size = bounds ? fitWithinBounds(fitted, bounds) : fitted
     const codec = avcCodecForSize(this.config.codec, size, this.config.framerate ?? 30)
     return { ...this.config, ...size, codec }
   }
