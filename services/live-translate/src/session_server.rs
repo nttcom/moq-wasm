@@ -93,8 +93,6 @@ fn empty_response(status: StatusCode) -> ServerResponse {
     http_server::empty_response(status).map(BodyExt::boxed)
 }
 
-/// `GET /events`: a server-sent event stream of heartbeat comments only; a
-/// page holds it open for the reason on `SessionServer`.
 fn events() -> ServerResponse {
     let mut response = Response::new(Heartbeat::new().boxed());
     let headers = response.headers_mut();

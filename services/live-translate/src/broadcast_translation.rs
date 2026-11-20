@@ -383,8 +383,7 @@ impl Serving {
         Ok(())
     }
 
-    /// Also called at every policy check, so a start refused for capacity, or
-    /// failed, is retried.
+    /// Also called at every policy check, so a refused start is retried.
     fn start_always_on(&mut self) {
         for language in self.policy.always_on.clone() {
             if self.languages.contains_key(language.code) {
