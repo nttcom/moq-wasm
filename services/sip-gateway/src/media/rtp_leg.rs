@@ -8,7 +8,10 @@ use rustrtc::{
     rtp::{RtpHeader, RtpPacket},
 };
 
-use crate::media::g711::{G711, SAMPLES_PER_PACKET};
+use crate::media::{
+    dtmf::EventPacket,
+    g711::{G711, SAMPLES_PER_PACKET},
+};
 
 /// The phone side of a call's media: one SDES-SRTP audio stream
 /// (RTP/SAVP, RFC 4568) with the trunk, without ICE or DTLS.
@@ -20,6 +23,8 @@ pub(crate) struct RtpLeg {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Negotiated {
     pub(crate) codec: G711,
+    /// The payload type of RFC 4733 events, when the answer accepts them.
+    pub(crate) telephone_event: Option<u8>,
 }
 
 impl RtpLeg {
@@ -60,12 +65,11 @@ impl RtpLeg {
         peer_connection
             .set_local_description(answer.clone())
             .context("apply SDP answer")?;
-        let codec = negotiated_codec(&answer)?;
-        Ok((
-            Self { peer_connection },
-            answer.to_sdp_string(),
-            Negotiated { codec },
-        ))
+        let negotiated = Negotiated {
+            codec: negotiated_codec(&answer)?,
+            telephone_event: telephone_event(&answer),
+        };
+        Ok((Self { peer_connection }, answer.to_sdp_string(), negotiated))
     }
 
     /// Applies the trunk's answer. Fails when the answer is not SRTP keyed
@@ -73,12 +77,15 @@ impl RtpLeg {
     pub(crate) async fn answer(&self, answer: &str) -> Result<Negotiated> {
         let description =
             SessionDescription::parse(SdpType::Answer, answer).context("parse SDP answer")?;
-        let codec = negotiated_codec(&description)?;
+        let negotiated = Negotiated {
+            codec: negotiated_codec(&description)?,
+            telephone_event: telephone_event(&description),
+        };
         self.peer_connection
             .set_remote_description(description)
             .await
             .context("apply SDP answer")?;
-        Ok(Negotiated { codec })
+        Ok(negotiated)
     }
 
     pub(crate) fn sender(&self, codec: G711) -> RtpSender {
@@ -88,6 +95,7 @@ impl RtpLeg {
             ssrc: random_u32(),
             sequence_number: random_u32() as u16,
             timestamp: random_u32(),
+            event_timestamp: 0,
         }
     }
 
@@ -125,6 +133,8 @@ pub(crate) struct RtpSender {
     ssrc: u32,
     sequence_number: u16,
     timestamp: u32,
+    /// The timestamp of the event being sent: its first packet's.
+    event_timestamp: u32,
 }
 
 impl RtpSender {
@@ -135,6 +145,28 @@ impl RtpSender {
             self.timestamp,
             self.ssrc,
         );
+        self.send_packet(header, payload).await
+    }
+
+    /// Sends one RFC 4733 event packet in the place of a 20 ms audio packet,
+    /// in the same stream. Every packet of an event carries its first packet's
+    /// timestamp, while the stream's timestamp still advances 20 ms per packet,
+    /// so the audio after the event resumes at the time that passed.
+    pub(crate) async fn send_event(&mut self, payload_type: u8, packet: EventPacket) -> Result<()> {
+        if packet.starts {
+            self.event_timestamp = self.timestamp;
+        }
+        let mut header = RtpHeader::new(
+            payload_type,
+            self.sequence_number,
+            self.event_timestamp,
+            self.ssrc,
+        );
+        header.marker = packet.starts;
+        self.send_packet(header, packet.payload.to_vec()).await
+    }
+
+    async fn send_packet(&mut self, header: RtpHeader, payload: Vec<u8>) -> Result<()> {
         self.sequence_number = self.sequence_number.wrapping_add(1);
         self.timestamp = self.timestamp.wrapping_add(SAMPLES_PER_PACKET as u32);
         self.peer_connection
@@ -184,6 +216,29 @@ fn negotiated_codec(description: &SessionDescription) -> Result<G711> {
         .context("no G.711 codec is listed")
 }
 
+/// The payload type `a=rtpmap` gives `telephone-event/8000` in the audio
+/// section.
+fn telephone_event(description: &SessionDescription) -> Option<u8> {
+    let audio = description
+        .media_sections
+        .iter()
+        .find(|section| section.kind == MediaKind::Audio && section.port != 0)?;
+    audio.attributes.iter().find_map(|attribute| {
+        let (payload_type, encoding) = attribute
+            .value
+            .as_deref()
+            .filter(|_| attribute.key == "rtpmap")?
+            .split_once(' ')?;
+        let payload_type: u8 = payload_type.parse().ok()?;
+        (encoding.eq_ignore_ascii_case("telephone-event/8000")
+            && audio
+                .formats
+                .iter()
+                .any(|format| format == &payload_type.to_string()))
+        .then_some(payload_type)
+    })
+}
+
 fn random_u32() -> u32 {
     let mut bytes = [0u8; 4];
     aws_lc_rs::rand::fill(&mut bytes).expect("the system random number generator works");
@@ -217,6 +272,16 @@ mod tests {
             negotiated_codec(&answer("RTP/SAVP", "0 101", true)).unwrap(),
             G711::Pcmu
         );
+    }
+
+    #[test]
+    fn telephone_event_takes_the_payload_type_the_answer_lists() {
+        // Act / Assert
+        assert_eq!(
+            telephone_event(&answer("RTP/SAVP", "0 101", true)),
+            Some(101)
+        );
+        assert_eq!(telephone_event(&answer("RTP/SAVP", "0", true)), None);
     }
 
     #[test]

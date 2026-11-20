@@ -8,7 +8,12 @@ use moqt::client;
 use tokio::{sync::mpsc, task::JoinHandle, time::MissedTickBehavior};
 
 use super::peer_control::{Command, read_commands};
-use crate::media::{g711::G711, playout::Playout, rtp_leg::RtpSender, transcoder::Transcoder};
+use crate::media::{
+    dtmf::DtmfTone,
+    playout::Playout,
+    rtp_leg::{Negotiated, RtpSender},
+    transcoder::Transcoder,
+};
 
 /// Opus waiting for the call to be answered is dropped beyond this.
 const PEER_AUDIO_CAPACITY: usize = 64;
@@ -138,18 +143,23 @@ async fn forward(
 }
 
 /// Sends the peer's audio to the phone as one G.711 packet every 20 ms,
-/// silence while there is none.
+/// silence while there is none, and the peer's DTMF digits as RFC 4733
+/// events in the place of the audio while each lasts.
 pub(crate) struct PlayoutTask {
     join_handle: JoinHandle<()>,
 }
 
 impl PlayoutTask {
     pub(crate) fn run(
-        codec: G711,
+        call_id: String,
+        negotiated: Negotiated,
         mut sender: RtpSender,
         mut audio_receiver: mpsc::Receiver<PeerAudio>,
+        mut digit_receiver: mpsc::UnboundedReceiver<char>,
     ) -> Self {
+        let codec = negotiated.codec;
         let join_handle = tokio::spawn(async move {
+            let mut tone: Option<DtmfTone> = None;
             let (g711_sender, mut g711_receiver) = mpsc::unbounded_channel::<Vec<u8>>();
             let mut transcoder = None;
             let mut playout = Playout::new(codec);
@@ -160,7 +170,24 @@ impl PlayoutTask {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        if let Err(error) = sender.send(playout.next_packet()).await {
+                        // The audio of the tick an event takes is dropped.
+                        let audio = playout.next_packet();
+                        if tone.is_none()
+                            && let Ok(digit) = digit_receiver.try_recv()
+                        {
+                            tone = start_tone(&call_id, negotiated.telephone_event, digit);
+                        }
+                        let event = negotiated
+                            .telephone_event
+                            .zip(tone.as_mut().and_then(DtmfTone::next_packet));
+                        let sent = match event {
+                            Some((payload_type, packet)) => sender.send_event(payload_type, packet).await,
+                            None => {
+                                tone = None;
+                                sender.send(audio).await
+                            }
+                        };
+                        if let Err(error) = sent {
                             tracing::warn!(%error, "audio to the phone dropped");
                         }
                     }
@@ -184,6 +211,19 @@ impl PlayoutTask {
         });
         Self { join_handle }
     }
+}
+
+/// The tone of `digit`, unless the trunk accepts no RFC 4733 events.
+fn start_tone(call_id: &str, telephone_event: Option<u8>, digit: char) -> Option<DtmfTone> {
+    if telephone_event.is_none() {
+        tracing::warn!(
+            call_id,
+            "DTMF dropped: the trunk accepts no telephone-event"
+        );
+        return None;
+    }
+    tracing::info!(call_id, "DTMF tone started");
+    DtmfTone::new(digit)
 }
 
 impl Drop for PlayoutTask {

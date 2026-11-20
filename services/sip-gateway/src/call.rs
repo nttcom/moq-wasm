@@ -322,10 +322,13 @@ impl Call {
             last_audio_sender,
         );
         let peer_audio = self.peer_audio.take().expect("a call is bridged once");
+        let (digit_sender, digits) = mpsc::unbounded_channel();
         let _playout = PlayoutTask::run(
-            negotiated.codec,
+            self.call_id.clone(),
+            negotiated,
             self.leg.sender(negotiated.codec),
             peer_audio,
+            digits,
         );
         let limit = Instant::now() + context.max_duration;
         loop {
@@ -352,11 +355,17 @@ impl Call {
                     hang_up_dialog(&self.dialog).await;
                     return EndReason::Gateway;
                 }
-                Some(Command::Hangup) = self.peer_commands.recv() => {
-                    tracing::info!(call_id = %self.call_id, "the peer hung up");
-                    hang_up_dialog(&self.dialog).await;
-                    return EndReason::Hangup;
-                }
+                Some(command) = self.peer_commands.recv() => match command {
+                    Command::Hangup => {
+                        tracing::info!(call_id = %self.call_id, "the peer hung up");
+                        hang_up_dialog(&self.dialog).await;
+                        return EndReason::Hangup;
+                    }
+                    Command::Dtmf { digit } => {
+                        let _ = digit_sender.send(digit);
+                    }
+                    Command::Other => {}
+                },
             }
         }
     }
