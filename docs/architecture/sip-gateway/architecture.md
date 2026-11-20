@@ -63,11 +63,26 @@ with the app's secret, carrying one new claim:
 | --- | --- |
 | `calls` | Relative namespace path under which the token may place, answer and end calls; absent means not allowed |
 
-The gateway verifies the token through the VTS. The destination must match the
-app's allowed number patterns in the registry; the gateway enforces a
-per-app concurrent-call limit and a maximum call duration. The gateway joins
-the relay with a client token it signs for the app (`Claims::issued`), scoped
-to `publish: <room>/phone/<call_id>` and `subscribe: <peer>`.
+The gateway verifies the token through the VTS. The destination must be
+E.164 and start with one of the app's `allowedDestinations` in the registry;
+the gateway enforces a per-app concurrent-call limit and a maximum call
+duration. The gateway joins the relay with a client token it signs for the
+app (`Claims::issued`), scoped to `publish: <room>/phone/<call_id>` and
+`subscribe: <peer>`, which outlives the maximum duration by five minutes. An
+INVITE shows the app's first number as its caller, or `anonymous`.
+
+`POST /calls` takes `{to, namespace_prefix, peer}`: `namespace_prefix` is the
+room the `calls` claim must cover, and `peer` a broadcast in it (not under
+`<room>/phone`). It answers `201 {call_id, namespace}` as soon as the call is
+started, and refuses with:
+
+| Status | `error` | When |
+| --- | --- | --- |
+| 400 | `invalid_request`, `invalid_destination`, `invalid_peer` | malformed body, `to` not E.164, `peer` outside the room |
+| 401 | `invalid_token`, `invalid_token_lifetime` | the VTS refuses the token, or it lives longer than 5 minutes |
+| 403 | `forbidden`, `destination_not_allowed` | no `calls` claim for the room or a relay's token; the app's phone settings do not allow `to` |
+| 429 | `too_many_calls` | the app has its maximum of calls in progress |
+| 503 | `vts_unavailable`, `registry_unavailable` | |
 
 ### Outbound call
 ```mermaid
@@ -125,27 +140,37 @@ credentials and its signalling addresses are settings, so another trunk with
 the same shape needs no code; REGISTER waits for a trunk that needs it.
 
 ### Local trunk
-`tests/sip-gateway/` runs Asterisk (PJSIP) in a container as the trunk:
+`tests/sip-gateway-e2e/` runs Asterisk (PJSIP, `andrius/asterisk:22-cert`)
+in a container as the trunk:
 
-- a TLS transport on 5061 with a self-signed certificate the gateway trusts
-  through a setting, and `media_encryption=sdes`;
+- a TLS transport on 5061 with a certificate from a CA the run creates
+  (rustls refuses a self-signed certificate as its own trust anchor), and
+  `media_encryption=sdes`;
 - an endpoint for the gateway identified by its address and challenging its
   INVITEs with digest (Twilio's IP ACL plus credential list), with
   `allow=ulaw,alaw` and `dtmf_mode=rfc4733`;
-- a dialplan that stands in for the phone network: one extension answers
-  with `Echo()`, one plays a file and reads DTMF, one calls the gateway back
-  (an inbound call).
+- a dialplan that stands in for the phone network: one number answers with
+  `Echo()`, one plays a 1 kHz tone, one is busy, one hangs up two seconds
+  after answering.
 
-The E2E test drives a page through `PhoneCall` against these extensions.
+`run.sh` starts it with a VTS, a relay and the gateway, and a Rust client
+acts as the page: it publishes a 700 Hz tone as the peer, checks the call's
+states, hears the tone back from the echo, hangs up by closing its session,
+and checks `486` and a hangup from the phone. Until `PhoneCall` exists the
+client stands in for it; the browser E2E test replaces it in step 6.
 
 ### The `call` track
-A JSON object per state change, so a page shows the call's progress and a
-late subscriber reads the current state from the latest object:
+A JSON object per state change, each a group of its own whose stream ends at
+once (`Broadcast::send_group`), so a page shows the call's progress, a late
+subscriber reads the current state by joining the current group (a Joining
+FETCH, `subscribe_current_group`), and `ended` reaches the relay although the
+gateway closes its session right after: `moqt::Session::close` waits for the
+peer to acknowledge the streams that ended:
 
 | Field | Meaning |
 | --- | --- |
 | `state` | `dialing`, `ringing`, `answered`, `ended` |
-| `reason` | when `ended`: the SIP status or `hangup`, `timeout`, `limit` |
+| `reason` | when `ended`: the trunk's final status (`486`, …, or `488` for an answer without SDES-SRTP or G.711); `hangup` (BYE from the trunk, or the peer ended its broadcast); `timeout` (no answer within 60 s, or no audio from the trunk for 30 s); `limit` (the maximum duration); `gateway` (SIGTERM, or a failure of the gateway's own) |
 
 Call control stays an application protocol on ordinary MOQT objects; no call
 semantics are added to MOQT, and the presence of a namespace never means
@@ -193,13 +218,50 @@ track (`offerChat`) is the precedent for.
   40-60 ms.
 
 ### Session timers and teardown
-The gateway implements session timers (RFC 4028), which `rsipstack` leaves to
-the application: it offers `Supported: timer`, accepts the interval the trunk
-asks for (answering `422` with its minimum when the offer is shorter), and,
-when it is the refresher, sends re-INVITE (or UPDATE) at half the interval. A
-call whose refresh is not answered ends with BYE. A call ends on BYE from either
-side, on the peer's PUBLISH_NAMESPACE_DONE, on RTP silence from the trunk for
-30 s, at the maximum duration, and on SIGTERM (every call gets BYE first).
+A call ends on BYE from either side, on the peer's PUBLISH_NAMESPACE_DONE
+(also while it rings: the gateway sends CANCEL), without an answer within
+60 s, on RTP silence from the trunk for 30 s, at the maximum duration, and on
+SIGTERM (every call gets BYE or CANCEL first, and the process waits for them).
+
+Session timers (RFC 4028), which `rsipstack` leaves to the application, are
+not implemented yet: a trunk that asks for them gets no refresh. When added,
+the gateway offers `Supported: timer`, accepts the interval the trunk asks for
+(answering `422` with its minimum when the offer is shorter), and, when it is
+the refresher, sends re-INVITE (or UPDATE) at half the interval; a call whose
+refresh is not answered ends with BYE.
+
+### Modules
+```
+main.rs          settings from the environment, SIGTERM
+server.rs        POST /calls, GET /healthz
+call_auth.rs     the call token through the VTS, the app's phone settings
+calls.rs         calls in progress, the per-app limit, the relay token
+call.rs          one call: INVITE, answer, bridge, teardown
+  state_track    the `call` track
+  phone_audio    trunk audio → Opus → the broadcast's `audio` track
+  peer_audio     the peer's broadcast → G.711 → one RTP packet per 20 ms
+sip_trunk.rs     rsipstack endpoint, TLS listener, INVITE, in-dialog requests
+media/
+  rtp_leg        rustrtc PeerConnection: SDP offer/answer, SRTP, RTP
+  transcoder     GStreamer G.711 ⇄ Opus
+  playout        the 40–120 ms buffer in front of the 20 ms RTP clock
+  g711           PCMU/PCMA payload types, caps, silence
+```
+
+### Settings
+| Variable | Meaning |
+| --- | --- |
+| `PORT` | HTTP port, 8099 by default |
+| `SIP_GATEWAY_SIP_ADDRESS` / `SIP_GATEWAY_SIP_PUBLIC_ADDRESS` | the TLS listener (`0.0.0.0:5061` by default), and the address the trunk reaches it at, which is the Via and Contact of every request |
+| `SIP_GATEWAY_TLS_CERT_FILE` / `SIP_GATEWAY_TLS_KEY_FILE` | the listener's PEM certificate chain and key |
+| `SIP_GATEWAY_TRUNK_HOST` | `host[:port]` of the trunk's TLS signalling, also the host of every Request-URI |
+| `SIP_GATEWAY_TRUNK_CA_FILE` | PEM roots the trunk's certificate is verified against |
+| `SIP_GATEWAY_TRUNK_USERNAME` / `SIP_GATEWAY_TRUNK_PASSWORD` | digest credentials for 401/407 |
+| `SIP_GATEWAY_MEDIA_ADDRESS` | the address the SDP offers for media, when it is not the bound one |
+| `SIP_GATEWAY_RELAY_URL` / `SIP_GATEWAY_RELAY_INSECURE_SKIP_TLS_VERIFY` | the relay calls join |
+| `SIP_GATEWAY_VTS_URL`, `SIP_GATEWAY_REGISTRY_FILE` or `SIP_GATEWAY_REGISTRY_BUCKET`/`_OBJECT` | call token verification and the apps' phone settings |
+| `SIP_GATEWAY_INSECURE_SKIP_AUTH` | `true` accepts every request and destination and joins with no token (a relay without authorization only) |
+| `SIP_GATEWAY_MAX_CALLS_PER_APP` / `SIP_GATEWAY_MAX_CALL_SECONDS` | 2 and 3600 by default |
 
 ### Deployment
 SIP and SRTP need inbound traffic on a stable public address that the trunk
@@ -208,11 +270,13 @@ a UDP port range for SRTP. Cloud Run cannot receive them. The gateway should run
 the region of the relay it joins.
 
 ### Telemetry
-New log fields, added to the vocabulary in `AGENTS.md` before use: `call_id`
-(the gateway's id, also the namespace element), `sip_call_id` (the SIP
-Call-ID, to join with the trunk's logs), `sip_status`, `direction`
-(`inbound` / `outbound`). Each SIP request and final response the gateway
-sends or receives is one INFO event.
+New log fields, added to the vocabulary in `AGENTS.md`: `call_id` (the
+gateway's id, also the namespace element and, for an outbound call, the SIP
+Call-ID), `sip_call_id` (the SIP Call-ID, to join with the trunk's logs),
+`sip_status`, `direction` (`inbound` / `outbound`), `call_end_reason` (the
+`reason` of the `ended` state). Each SIP request and final response the
+gateway sends or receives is one INFO event; `rsipstack`'s own logs stay at
+WARN, since at INFO they carry every message whole, SRTP keys included.
 
 ## Alternatives
 - **`mediapack::rtp` instead of `rustrtc`** (by the author of `rsipstack`):
@@ -238,10 +302,12 @@ Each step is its own pull request, stacked:
 2. `auth-token` / `app-registry`: the `calls` claim, the app's numbers, number
    patterns and webhook URL.
 3. `sip-gateway`: outbound calls against the local Asterisk over TLS and
-   SDES-SRTP, with the ADRs for `rsipstack` and `rustrtc`.
+   SDES-SRTP, with the ADRs for `rsipstack`, `rustrtc` and GStreamer.
 4. `sip-gateway`: inbound calls and the webhook.
 5. Browser SDK: the JSON object track, then `PhoneCall`.
 6. An example page and an E2E test against a local PBX.
+7. `sip-gateway`: the page's `dtmf` track as RFC 4733 events, and session
+   timers.
 
 ## Open questions
 - Against Twilio once there is an account: the SRTP crypto suites it accepts,

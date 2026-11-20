@@ -50,6 +50,7 @@ Application and integration components (draft reference is normally not required
 | `services/temporary-apps` | Issues anyone the tokens of temporary apps, the isolated namespace roots the examples run under, and calls `bots` as their app server |
 | `services/bots` | Bot service: starts, stops and reports the bots of a room (`recorder`, the AI bots) for an app's server, and signs the tokens the bots join with |
 | `services/console` | Backend of the internal console: identifies an employee through IAP and serves their apps from `app-registry` |
+| `services/sip-gateway` | Places telephone calls through a SIP trunk (rsipstack, SIP over TLS, SDES-SRTP with rustrtc) and bridges each call's G.711 audio, transcoded to Opus, to a broadcast in a MoQT room, for an app's server |
 | `services/live-translate` | Live translation service: a MoQT client that translates the audio of each live broadcast under `anon/live-translate`, or under the temporary app a streamer hands it the token of, with Gemini Live Translate and publishes per-language Opus tracks and transcripts under the broadcast's `translated` namespace with their MSF catalog |
 | `examples/` | Usage examples and test clients |
 
@@ -90,6 +91,7 @@ Application and integration components (draft reference is normally not required
 - E2E Test (auth): `./tests/auth-e2e/run.sh`
 - E2E Test (console): `node tests/browser-e2e/run-console-e2e.mjs`
 - E2E Test (live-translate): `node tests/browser-e2e/run-live-translate-e2e.mjs`
+- E2E Test (sip-gateway): `./tests/sip-gateway-e2e/run.sh`
 - After making changes, run `cargo test -p <package_name>` for the affected package to verify no regressions.
 
 ## 6. Testing Guidelines
@@ -127,6 +129,8 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_namespace` / `track_name` | The track (not `track_key` or `namespace`) |
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
 | `media_source` | The source of a broadcast a browser plays, named by its video track (`camera`, `screen`, …) |
+| `call_id` / `direction` / `call_end_reason` | A phone call the SIP gateway placed or answered, whether it is `outbound` or `inbound`, and why it ended (`hangup`, `timeout`, `limit`, `gateway` or the SIP status) |
+| `sip_call_id` / `sip_status` | The SIP Call-ID of a call's dialog, and the status of a SIP response |
 | `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
 | `track_alias` | The track alias on the session the log is about |
 | `group_id` / `subgroup_id` / `object_id` | The Group ID, Subgroup ID and Object ID of the object the event is about |
