@@ -62,7 +62,8 @@ impl Phone {
     }
 }
 
-fn is_e164(number: &str) -> bool {
+/// Whether `number` is `+` and 1 to 15 digits (ITU-T E.164).
+pub fn is_e164(number: &str) -> bool {
     number.strip_prefix('+').is_some_and(|digits| {
         (1..=15).contains(&digits.len()) && digits.bytes().all(|byte| byte.is_ascii_digit())
     })
