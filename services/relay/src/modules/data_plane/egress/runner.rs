@@ -19,8 +19,9 @@ use super::{
 };
 
 pub(crate) enum RunnerExit {
-    /// The runner delivered the whole range of its subscription and sent
-    /// PUBLISH_DONE; its registration is still to be removed.
+    /// The runner ended its subscription and sent PUBLISH_DONE: it delivered
+    /// the whole range, or the subscriber's draft cannot carry an object's
+    /// location. Its registration is still to be removed.
     SubscriptionEnded,
     /// The registration was removed, or the track ended delivery.
     Stopped,
@@ -93,11 +94,13 @@ impl EgressRunner {
                 (reason.ok(), RunnerExit::Stopped)
             }
             reason = delivery.run() => {
-                let exit = match &reason {
-                    Some(reason) if reason.status_code == PublishDoneCode::SubscriptionEnded => {
+                let exit = match reason.as_ref().map(|reason| reason.status_code) {
+                    Some(PublishDoneCode::SubscriptionEnded) => {
                         tracing::info!("downstream subscription reached its End Group");
                         RunnerExit::SubscriptionEnded
                     }
+                    // Only `Unencodable::refuse` ends a delivery with INTERNAL_ERROR.
+                    Some(PublishDoneCode::InternalError) => RunnerExit::SubscriptionEnded,
                     _ => RunnerExit::Stopped,
                 };
                 (reason, exit)
@@ -173,6 +176,7 @@ impl Delivery {
         }
 
         let (sender, receiver) = mpsc::channel(64);
+        let (subscription_end_sender, mut subscription_end_receiver) = mpsc::channel(1);
         let group_order = downstream.subscription.group_order();
         let scheduler = EgressScheduler::new(
             cache.clone(),
@@ -188,9 +192,13 @@ impl Delivery {
             receiver,
             delivery_stats,
             delivery_control_receiver,
+            subscription_end_sender,
         );
 
         tokio::select! {
+            // Drops the send tasks without draining their streams: the task that
+            // asked already reset its own.
+            Some(reason) = subscription_end_receiver.recv() => Some(reason),
             (exit, ()) = async { tokio::join!(scheduler.run(ready_sender), group_sender.run()) } => {
                 // The scheduler dropping its task sender lets the group sender
                 // finish only after every stream it opened has been closed or

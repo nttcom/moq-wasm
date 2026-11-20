@@ -28,6 +28,16 @@ impl PublishDoneReason {
         }
     }
 
+    /// The subscriber's draft cannot carry an object's Group ID or Object ID
+    /// (a draft-18 value of 2^62 or more toward draft-14), so no later object
+    /// of the group can be sent; none of the draft-14 §13.1.3 codes says so.
+    pub(crate) fn unencodable_object() -> Self {
+        Self {
+            status_code: PublishDoneCode::InternalError,
+            error_reason: "object cannot be encoded for the subscriber's draft".to_string(),
+        }
+    }
+
     /// draft-18 §10.9.1: a REQUEST_UPDATE that failed ends its subscription.
     pub(crate) fn update_failed() -> Self {
         Self {

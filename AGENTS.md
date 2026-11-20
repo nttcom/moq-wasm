@@ -129,6 +129,7 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `media_source` | The source of a broadcast a browser plays, named by its video track (`camera`, `screen`, …) |
 | `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
 | `track_alias` | The track alias on the session the log is about |
+| `group_id` / `subgroup_id` / `object_id` | The Group ID, Subgroup ID and Object ID of the object the event is about |
 | `forward` | The Forward State a message sets or a subscription is in |
 | `new_group_request` | The value of a NEW_GROUP_REQUEST: the largest Group ID its sender knows plus 1, or 0 |
 | `supported_versions` / `selected_version` | The MoQT versions a CLIENT_SETUP offers, and the one its SERVER_SETUP picks |

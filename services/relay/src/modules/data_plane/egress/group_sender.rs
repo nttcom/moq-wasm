@@ -1,6 +1,9 @@
 use moqt::{
     TransportSendError,
-    object::{DataStreamResetCode, DatagramDelivery, ForwardingPreference, SubgroupPart},
+    object::{
+        DataStreamResetCode, DatagramDelivery, ForwardingPreference, SubgroupPart,
+        UnencodableObject,
+    },
 };
 use std::{sync::Arc, time::Duration};
 
@@ -19,6 +22,8 @@ use crate::modules::{
     domain::{
         delivery_control::DeliveryControl,
         delivery_stats::DeliveryStats,
+        publish_done_reason::PublishDoneReason,
+        session_id::SessionId,
         single_preference::{SinglePreference, converted_datagram_subgroup},
         track_key::TrackKey,
     },
@@ -55,6 +60,80 @@ pub(crate) struct GroupSender {
     group_positions: GroupPositions,
     /// Set once the scheduler has scheduled its last task.
     schedule_over_sender: watch::Sender<bool>,
+    unencodable: Unencodable,
+}
+
+/// Refuses an object the subscriber's draft cannot carry.
+#[derive(Clone)]
+struct Unencodable {
+    track_key: TrackKey,
+    session_id: SessionId,
+    request_id: u64,
+    subscription_end_sender: mpsc::Sender<PublishDoneReason>,
+}
+
+/// What a send task loses to an object its subscriber's draft cannot carry.
+#[derive(Debug, PartialEq, Eq)]
+enum Refusal {
+    /// Only the object: the next one of the subgroup can be sent.
+    Object,
+    /// The rest of its stream: the subgroup, or the whole subscription.
+    Stream,
+}
+
+impl Unencodable {
+    /// Logs the refusal; for a Group ID or Object ID, also asks the runner to
+    /// end the subscription with PUBLISH_DONE INTERNAL_ERROR.
+    fn refuse(&self, field: UnencodableObject, group_id: u64, object_id: Option<u64>) -> Refusal {
+        let (track_namespace, track_name) =
+            (&self.track_key.track_namespace, &self.track_key.track_name);
+        match field {
+            UnencodableObject::ExtensionHeaders { .. } => {
+                tracing::warn!(
+                    session_id = %self.session_id, request_id = self.request_id,
+                    %track_namespace, %track_name, group_id, object_id, error = %field,
+                    "object skipped: the subscriber's draft cannot carry its extension headers"
+                );
+                Refusal::Object
+            }
+            UnencodableObject::SubgroupId { subgroup_id } => {
+                tracing::warn!(
+                    session_id = %self.session_id, request_id = self.request_id,
+                    %track_namespace, %track_name, group_id, subgroup_id, error = %field,
+                    "subgroup not sent: the subscriber's draft cannot carry its Subgroup ID"
+                );
+                Refusal::Stream
+            }
+            _ => {
+                tracing::warn!(
+                    session_id = %self.session_id, request_id = self.request_id,
+                    %track_namespace, %track_name, group_id, object_id, error = %field,
+                    "subscription ended: the subscriber's draft cannot carry an object's location"
+                );
+                // A failed send means an earlier refusal already queued the end, or the runner is gone.
+                let _ = self
+                    .subscription_end_sender
+                    .try_send(PublishDoneReason::unencodable_object());
+                Refusal::Stream
+            }
+        }
+    }
+
+    /// `refuse`, then resets `sender` with INTERNAL_ERROR.
+    async fn refuse_and_reset(
+        &self,
+        field: UnencodableObject,
+        group_id: u64,
+        object_id: Option<u64>,
+        sender: Option<Box<dyn DataSender>>,
+        delivery_stats: &DeliveryStats,
+    ) -> Refusal {
+        let refusal = self.refuse(field, group_id, object_id);
+        if let Some(sender) = sender {
+            GroupSender::reset(sender, delivery_stats, DataStreamResetCode::InternalError).await;
+        }
+        refusal
+    }
 }
 
 /// Where a send task reads its subgroup from: the cache, while the
@@ -215,6 +294,7 @@ struct StreamSendTask {
     object_id: u64,
     factory: SharedStreamSenderFactory,
     delivery_stats: Arc<DeliveryStats>,
+    unencodable: Unencodable,
 }
 
 impl StreamSendTask {
@@ -250,9 +330,16 @@ impl GroupSender {
         receiver: mpsc::Receiver<GroupSendTask>,
         delivery_stats: Arc<DeliveryStats>,
         delivery_control_receiver: watch::Receiver<DeliveryControl>,
+        subscription_end_sender: mpsc::Sender<PublishDoneReason>,
     ) -> Self {
         Self {
             group_positions: GroupPositions::new(downstream.subscription.group_order()),
+            unencodable: Unencodable {
+                track_key: track_key.clone(),
+                session_id: downstream.session_id,
+                request_id: downstream.subscription.request_id(),
+                subscription_end_sender,
+            },
             track_key,
             cache,
             downstream,
@@ -345,6 +432,7 @@ impl GroupSender {
                                         object_id: task.object_id,
                                         factory,
                                         delivery_stats: self.delivery_stats.clone(),
+                                        unencodable: self.unencodable.clone(),
                                     },
                                     span.clone(),
                                 )
@@ -360,6 +448,7 @@ impl GroupSender {
                                 object_id: task.object_id,
                                 factory,
                                 delivery_stats: self.delivery_stats.clone(),
+                                unencodable: self.unencodable.clone(),
                             }));
                         }
                         (_, true) => {
@@ -368,11 +457,14 @@ impl GroupSender {
                                 .publisher
                                 .new_datagram(&self.downstream.subscription);
                             joinset.spawn(Self::send_datagram_task(
-                                track_alias,
-                                self.source(&task, None),
-                                task.object_id,
-                                sender,
-                                self.delivery_stats.clone(),
+                                DatagramSendTask {
+                                    track_alias,
+                                    source: self.source(&task, None),
+                                    object_id: task.object_id,
+                                    sender,
+                                    delivery_stats: self.delivery_stats.clone(),
+                                    unencodable: self.unencodable.clone(),
+                                },
                             ));
                         }
                     }
@@ -536,12 +628,24 @@ impl GroupSender {
                         match written {
                             Some(Ok(())) => {}
                             Some(Err(error)) => {
-                                sent.end_reason = send_failure_reason(
+                                match Self::object_send_failed(
+                                    &task,
+                                    &mut sender,
                                     &error,
-                                    Some(object_id),
-                                    "send_object_failed",
-                                );
-                                return sent;
+                                    object_id,
+                                )
+                                .await
+                                {
+                                    Some(end_reason) => {
+                                        sent.end_reason = end_reason;
+                                        return sent;
+                                    }
+                                    None => {
+                                        stream_priority = None;
+                                        sent.unsent = object_id.saturating_add(1);
+                                        continue;
+                                    }
+                                }
                             }
                             None => {
                                 sent.end_reason = Self::timed_out(sender, &task).await;
@@ -586,9 +690,19 @@ impl GroupSender {
                             return sent;
                         }
                         Err(PartialForwardFailure::SendFailed(error)) => {
-                            sent.end_reason =
-                                send_failure_reason(&error, Some(object_id), "send_object_failed");
-                            return sent;
+                            match Self::object_send_failed(&task, &mut sender, &error, object_id)
+                                .await
+                            {
+                                Some(end_reason) => {
+                                    sent.end_reason = end_reason;
+                                    return sent;
+                                }
+                                None => {
+                                    stream_priority = None;
+                                    sent.unsent = object_id.saturating_add(1);
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
@@ -598,6 +712,40 @@ impl GroupSender {
             }
             last_deadline = deadline;
             sent.unsent = object_id.saturating_add(1);
+        }
+    }
+
+    /// The end reason of the subgroup after sending `object_id` failed, or
+    /// `None` when the subscriber's draft cannot carry only that object: the
+    /// stream is then reset and gone, and the rest of the subgroup goes on a
+    /// new one (draft-14 §10.4.2 forbids skipping an object on the same stream).
+    async fn object_send_failed(
+        task: &StreamSendTask,
+        sender: &mut Option<Box<dyn DataSender>>,
+        error: &anyhow::Error,
+        object_id: u64,
+    ) -> Option<&'static str> {
+        let Some(field) = UnencodableObject::in_chain(error) else {
+            return Some(send_failure_reason(
+                error,
+                Some(object_id),
+                "send_object_failed",
+            ));
+        };
+        let group_id = task.source.key.group_id();
+        match task
+            .unencodable
+            .refuse_and_reset(
+                field,
+                group_id,
+                Some(object_id),
+                sender.take(),
+                &task.delivery_stats,
+            )
+            .await
+        {
+            Refusal::Object => None,
+            Refusal::Stream => Some("unencodable_object"),
         }
     }
 
@@ -709,7 +857,13 @@ impl GroupSender {
         };
         tracing::debug!("egress sending subgroup header");
         if let Err(error) = sender.send_object(SubgroupPart::Header(start)).await {
-            return Err(send_failure_reason(&error, None, "send_header_failed"));
+            let Some(field) = UnencodableObject::in_chain(&error) else {
+                return Err(send_failure_reason(&error, None, "send_header_failed"));
+            };
+            task.unencodable
+                .refuse_and_reset(field, group_id, None, Some(sender), &task.delivery_stats)
+                .await;
+            return Err("unencodable_object");
         }
         Ok((sender, priority))
     }
@@ -794,25 +948,42 @@ impl GroupSender {
                 sender.close().await
             };
             if let Err(error) = sent.await {
-                tracing::error!(
-                    ?error,
-                    object_id,
-                    "failed to send datagram object on a stream"
-                );
-                return;
+                let Some(field) = UnencodableObject::in_chain(&error) else {
+                    tracing::error!(
+                        ?error,
+                        object_id,
+                        "failed to send datagram object on a stream"
+                    );
+                    return;
+                };
+                let refusal = task
+                    .unencodable
+                    .refuse_and_reset(
+                        field,
+                        group_id,
+                        Some(object_id),
+                        Some(sender),
+                        &task.delivery_stats,
+                    )
+                    .await;
+                if refusal == Refusal::Stream {
+                    return;
+                }
             }
             task.delivery_stats
                 .record_object_sent(object.payload_len(), object.received_at);
         }
     }
 
-    async fn send_datagram_task(
-        track_alias: u64,
-        mut source: SubgroupSource,
-        object_id: u64,
-        mut sender: Box<dyn DatagramSender>,
-        delivery_stats: Arc<DeliveryStats>,
-    ) {
+    async fn send_datagram_task(task: DatagramSendTask) {
+        let DatagramSendTask {
+            track_alias,
+            mut source,
+            object_id,
+            mut sender,
+            delivery_stats,
+            unencodable,
+        } = task;
         let mut cursor = object_id;
         loop {
             let object = match source.next(cursor, None).await {
@@ -847,10 +1018,28 @@ impl GroupSender {
                 Ok(_) => {
                     delivery_stats.record_object_sent(object.payload_len(), object.received_at)
                 }
-                Err(_) => return,
+                Err(error) => {
+                    let Some(field) = UnencodableObject::in_chain(&error) else {
+                        send_failure_reason(&error, Some(object_id), "send_datagram_failed");
+                        return;
+                    };
+                    let group_id = source.key.group_id();
+                    if unencodable.refuse(field, group_id, Some(object_id)) == Refusal::Stream {
+                        return;
+                    }
+                }
             }
         }
     }
+}
+
+struct DatagramSendTask {
+    track_alias: u64,
+    source: SubgroupSource,
+    object_id: u64,
+    sender: Box<dyn DatagramSender>,
+    delivery_stats: Arc<DeliveryStats>,
+    unencodable: Unencodable,
 }
 
 /// What a stream task sent, and why it ended.
@@ -996,6 +1185,7 @@ mod tests {
             task_receiver,
             Arc::default(),
             watch::channel(control).1,
+            mpsc::channel(1).0,
         );
         tokio::spawn(group_sender.run());
         task_sender
