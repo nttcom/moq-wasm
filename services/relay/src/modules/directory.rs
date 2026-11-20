@@ -1075,7 +1075,6 @@ impl InMemoryLocalPubSubDirectory {
             return false;
         }
         track.producers.insert(publisher_session_id, producer);
-        track.forget_last_producer_end();
         track.mark_created();
         true
     }
