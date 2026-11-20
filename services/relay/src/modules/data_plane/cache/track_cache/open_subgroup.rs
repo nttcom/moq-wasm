@@ -682,6 +682,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stream_left_from_a_finished_subgroup_does_not_close_it_once_reopened() {
+        // Arrange: the empty group is forgotten once finished, so the subgroup opens again
+        let cache = TrackCache::new();
+        let first = cache.open_subgroup(stream_key(0));
+        let left_behind = cache.open_subgroup(stream_key(0));
+        first.finish();
+        cache.evict(Duration::from_secs(10));
+        let _reopened = cache.open_subgroup(stream_key(0));
+        // Act
+        drop(left_behind);
+        // Assert: still open, so a waiter keeps waiting
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(50),
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn a_publisher_resetting_a_subgroup_another_still_delivers_does_not_abort_it() {
         // Arrange
         let cache = TrackCache::new();
@@ -928,6 +950,59 @@ mod tests {
         // Assert
         assert!(
             matches!(&next, NextObject::Partial(partial) if partial.object.location == location(0, 0)),
+            "{next:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cached_object_before_an_arriving_one_is_the_next_object() {
+        // Arrange
+        let cache = TrackCache::new();
+        let open = open_group(&cache, 0, &[0]);
+        let _writer = open.begin_object(arriving_object(0, 1), 8);
+
+        // Act
+        let next = next_at(&cache, 0).await;
+
+        // Assert
+        assert!(
+            matches!(&next, NextObject::Object(object) if object.object.location == location(0, 0)),
+            "{next:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_object_arriving_before_a_cached_one_is_the_next_object() {
+        // Arrange: one stream cached object 2 while another still receives object 1
+        let cache = TrackCache::new();
+        let _first = open_group(&cache, 0, &[2]);
+        let second = cache.open_subgroup(stream_key(0));
+        let _writer = second.begin_object(arriving_object(0, 1), 8);
+
+        // Act
+        let next = next_at(&cache, 1).await;
+
+        // Assert
+        assert!(
+            matches!(&next, NextObject::Partial(partial) if partial.object.location == location(0, 1)),
+            "{next:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_object_another_stream_completed_is_read_from_the_cache_while_still_arriving() {
+        // Arrange: the first stream still receives object 0, the second cached it whole
+        let cache = TrackCache::new();
+        let first = cache.open_subgroup(stream_key(0));
+        let _writer = first.begin_object(arriving_object(0, 0), 8);
+        let _second = open_group(&cache, 0, &[0]);
+
+        // Act
+        let next = next_at(&cache, 0).await;
+
+        // Assert
+        assert!(
+            matches!(&next, NextObject::Object(object) if object.object.location == location(0, 0)),
             "{next:?}"
         );
     }
