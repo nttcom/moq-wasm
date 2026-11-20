@@ -1522,12 +1522,7 @@ mod tests {
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-publish-done-final", "moqt").await;
         let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
-        let stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&subscription.request_id())
-            .cloned()
-            .unwrap();
+        let stream = incoming_stream(&server, subscription.request_id());
         let publish_done =
             messages::encode_publish_done(PublishDoneCode::TrackEnded, 0, "done").unwrap();
 
@@ -2201,12 +2196,7 @@ mod tests {
             .await;
             let (_subscriber, mut receiver, handler, _sender) =
                 fetch_with_open_response(&client, &server).await;
-            let request_stream = ControlChannel::of(&server.publisher().session.connection())
-                .requests()
-                .incoming
-                .get(&handler.request_id)
-                .cloned()
-                .unwrap();
+            let request_stream = incoming_stream(&server, handler.request_id);
 
             // Act: STOP_SENDING alone, the requester's half left open
             outgoing_stream(&client, receiver.request_id)
@@ -2242,12 +2232,7 @@ mod tests {
             .outgoing
             .remove(&receiver.request_id)
             .unwrap();
-        let request_stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&handler.request_id)
-            .cloned()
-            .unwrap();
+        let request_stream = incoming_stream(server, handler.request_id);
         drop(receiver);
         let response_stream = request_stream.fetch_response.clone().unwrap();
         let stopped = tokio::time::timeout(HANDSHAKE_TIMEOUT, response_stream.stopped()).await;
@@ -2964,12 +2949,7 @@ mod tests {
             spawn_connected_draft18_sessions("draft18-wrong-response-kind", "moqt").await;
         let (request, handler) =
             subscribe_requested(&client, &server, SubscribeOption::default()).await;
-        let stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&handler.request_id())
-            .cloned()
-            .unwrap();
+        let stream = incoming_stream(&server, handler.request_id());
 
         // Act: a SUBSCRIBE is answered by SUBSCRIBE_OK, not REQUEST_OK (§10.5)
         stream
@@ -3091,12 +3071,7 @@ mod tests {
     ) {
         let (request, handler) =
             subscribe_requested(client, server, SubscribeOption::default()).await;
-        let stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&handler.request_id())
-            .cloned()
-            .unwrap();
+        let stream = incoming_stream(server, handler.request_id());
         let mut payload = BytesMut::new();
         codec::put_vi64(&mut payload, track_alias);
         parameters::put_parameters(&mut payload, &[]).unwrap();
@@ -3532,6 +3507,15 @@ mod tests {
         );
     }
 
+    fn incoming_stream(session: &crate::Session, request_id: u64) -> super::RequestStream {
+        ControlChannel::of(&session.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&request_id)
+            .cloned()
+            .unwrap()
+    }
+
     fn outgoing_stream(session: &crate::Session, request_id: u64) -> super::RequestStream {
         ControlChannel::of(&session.publisher().session.connection())
             .requests()
@@ -3933,6 +3917,358 @@ mod tests {
 
         // Assert: §10.1 INVALID_REQUEST_ID
         assert_eq!(close.code, Some(0x4), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_publish_done_from_the_subscriber_of_a_publish_closes_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-done-from-subscriber", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let stream = incoming_stream(&track.server, track.accepted.request_id());
+        let done = messages::encode_publish_done(PublishDoneCode::TrackEnded, 0, "").unwrap();
+
+        // Act: only the publisher of a track sends PUBLISH_DONE (§10.11)
+        stream.sender.send(&done).await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, track.server.closed())
+            .await
+            .unwrap();
+
+        // Assert: PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_fin_on_a_subscribe_stream_reaches_the_publisher_as_unsubscribe() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscribe-fin", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = outgoing_stream(&client, subscription.request_id());
+
+        // Act: ending a request stream terminates its subscription (§11.4.1)
+        stream.sender.close().await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert
+        let SessionEvent::Unsubscribe(unsubscribe) = event else {
+            panic!("expected UNSUBSCRIBE, got {event:?}");
+        };
+        assert_eq!(unsubscribe.subscribe_id(), subscription.request_id());
+    }
+
+    /// The raw stream of a PUBLISH, read past its PUBLISH_OK.
+    async fn accepted_raw_publish(
+        publisher: &crate::Session,
+        subscriber: &crate::Session,
+    ) -> (StreamSender, MessageReceiver, crate::Subscription) {
+        let ((sender, mut receiver), accepted) =
+            tokio::join!(raw_publish(publisher, 1, &[]), accept_publish(subscriber));
+        let publish_ok = within(receiver.receive()).await.unwrap();
+        assert!(
+            matches!(publish_ok, Some(messages::Message::RequestOk(_))),
+            "{publish_ok:?}"
+        );
+        (sender, receiver, accepted)
+    }
+
+    async fn answer_request_update(
+        sender: &StreamSender,
+        receiver: &mut MessageReceiver,
+        answer: BytesMut,
+    ) {
+        let update = within(receiver.receive()).await.unwrap();
+        assert!(
+            matches!(update, Some(messages::Message::RequestUpdate(_))),
+            "{update:?}"
+        );
+        sender.send(&answer).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_request_update_from_the_publisher_of_a_publish_gets_request_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publisher-update", "moqt").await;
+        let (sender, mut receiver, _accepted) = accepted_raw_publish(&client, &server).await;
+        let request_id = client
+            .publisher()
+            .session
+            .connection()
+            .control
+            .take_request_id()
+            .await;
+
+        // Act: the sender of a PUBLISH can update it (§10.9)
+        sender.send(&request_update(request_id, &[])).await.unwrap();
+        let answer = within(receiver.receive()).await;
+
+        // Assert
+        assert!(
+            matches!(answer, Ok(Some(messages::Message::RequestOk(_)))),
+            "{answer:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_request_update_on_a_publish_fails_and_its_publish_done_follows() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-update-rejected", "moqt").await;
+        let (sender, mut receiver, accepted) = accepted_raw_publish(&client, &server).await;
+        let subscriber = server.subscriber();
+        let rejection =
+            messages::encode_request_error(RequestErrorCode::InternalError, "no").unwrap();
+        let done = messages::encode_publish_done(PublishDoneCode::UpdateFailed, 0, "").unwrap();
+
+        // Act: a publisher that fails an update ends the subscription (§10.9.1)
+        let (rejected, ()) = tokio::join!(
+            subscriber.update_forward(&accepted, false),
+            answer_request_update(&sender, &mut receiver, rejection)
+        );
+        sender.send(&done).await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert
+        assert!(rejected.is_err());
+        let SessionEvent::PublishDone(done) = event else {
+            panic!("expected PUBLISH_DONE, got {event:?}");
+        };
+        assert_eq!(done.status_code(), PublishDoneCode::UpdateFailed);
+    }
+
+    #[tokio::test]
+    async fn a_request_update_from_the_publisher_of_a_subscribe_closes_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-update-from-publisher", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = incoming_stream(&server, subscription.request_id());
+        let request_id = server
+            .publisher()
+            .session
+            .connection()
+            .control
+            .take_request_id()
+            .await;
+
+        // Act: only the subscriber updates a SUBSCRIBE (§10.9)
+        stream
+            .sender
+            .send(&request_update(request_id, &[]))
+            .await
+            .unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server.closed())
+            .await
+            .unwrap();
+
+        // Assert: PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    fn rejection_code<T>(result: Result<T, RequestFailure>) -> RequestErrorCode {
+        match result {
+            Err(RequestFailure::Rejected { code, .. }) => code,
+            Err(failure) => panic!("expected a rejection, got {failure:?}"),
+            Ok(_) => panic!("expected a rejection, got an answer"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_track_status_is_answered_with_its_track_status_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-track-status-ok", "moqt").await;
+        let largest = Location {
+            group_id: 4,
+            object_id: 2,
+        };
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .track_status("ns".into(), "track".into(), vec![])
+                .await
+        });
+        let SessionEvent::TrackStatus(handler) = next_event(&server).await else {
+            panic!("expected TRACK_STATUS");
+        };
+
+        // Act
+        handler
+            .ok(
+                0,
+                ContentExists::True { location: largest },
+                TrackProperties::default(),
+            )
+            .await
+            .unwrap();
+        let status = within(request).await.unwrap().unwrap();
+
+        // Assert: the Largest Object the SUBSCRIBE_OK would carry (§10.14)
+        assert_eq!(
+            status.content_exists,
+            ContentExists::True { location: largest }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_track_status_fails_with_its_code() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-track-status-rejected", "moqt").await;
+        let subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .track_status("ns".into(), "track".into(), vec![])
+                .await
+        });
+        let SessionEvent::TrackStatus(handler) = next_event(&server).await else {
+            panic!("expected TRACK_STATUS");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::TrackDoesNotExist, "no such track".into())
+            .await
+            .unwrap();
+        let result = within(request).await.unwrap();
+
+        // Assert
+        assert_eq!(rejection_code(result), RequestErrorCode::TrackDoesNotExist);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_fetch_fails_with_its_code() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-rejected", "moqt").await;
+        let mut subscriber = client.subscriber();
+        let request = tokio::spawn(async move {
+            subscriber
+                .fetch(
+                    "ns".into(),
+                    "track".into(),
+                    Location {
+                        group_id: 0,
+                        object_id: 0,
+                    },
+                    Location {
+                        group_id: 1,
+                        object_id: 0,
+                    },
+                    FetchOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Fetch(handler) = next_event(&server).await else {
+            panic!("expected FETCH");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::TrackDoesNotExist, "no such track".into())
+            .await
+            .unwrap();
+        let result = within(request).await.unwrap();
+
+        // Assert
+        assert_eq!(rejection_code(result), RequestErrorCode::TrackDoesNotExist);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_publish_fails_with_its_code() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-rejected", "moqt").await;
+        let publisher = client.publisher();
+        let request = tokio::spawn(async move {
+            publisher
+                .publish("ns".into(), "track".into(), PublishOption::default())
+                .await
+        });
+        let SessionEvent::Publish(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::Unauthorized, "not allowed".into())
+            .await
+            .unwrap();
+        let result = within(request).await.unwrap();
+
+        // Assert
+        assert_eq!(rejection_code(result), RequestErrorCode::Unauthorized);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_publish_namespace_fails_with_its_code() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-rejected", "moqt").await;
+        let publisher = client.publisher();
+        let request =
+            tokio::spawn(async move { publisher.publish_namespace("live/room".into()).await });
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::Unauthorized, "not allowed".into())
+            .await
+            .unwrap();
+        let result = within(request).await.unwrap();
+
+        // Assert
+        assert_eq!(rejection_code(result), RequestErrorCode::Unauthorized);
+    }
+
+    #[tokio::test]
+    async fn the_subscriber_ending_a_publish_stream_reaches_the_publisher_as_unsubscribe() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-stream-ended", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let stream = incoming_stream(&track.server, track.accepted.request_id());
+
+        // Act: ending a request stream terminates its subscription (§11.4.1)
+        stream.sender.close().await.unwrap();
+        let event = next_event(&track.client).await;
+
+        // Assert
+        let SessionEvent::Unsubscribe(unsubscribe) = event else {
+            panic!("expected UNSUBSCRIBE, got {event:?}");
+        };
+        assert_eq!(unsubscribe.subscribe_id(), track.published.request_id());
+    }
+
+    #[tokio::test]
+    async fn the_peer_ending_a_publish_namespace_stream_cancels_the_namespace() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-stream-ended", "moqt").await;
+        let pending = client
+            .publisher()
+            .begin_publish_namespace("live/room".into())
+            .await
+            .unwrap();
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        within(pending.accepted()).await.unwrap();
+        let stream = incoming_stream(&server, handler.request_id());
+
+        // Act: the subscriber revokes its acceptance by ending the stream (§6.2, §11.4.1)
+        stream.sender.close().await.unwrap();
+        let event = next_event(&client).await;
+
+        // Assert
+        let SessionEvent::PublishNamespaceCancel(cancel) = event else {
+            panic!("expected PUBLISH_NAMESPACE_CANCEL, got {event:?}");
+        };
+        assert_eq!(cancel.track_namespace(), "live/room");
     }
 
     #[tokio::test]
