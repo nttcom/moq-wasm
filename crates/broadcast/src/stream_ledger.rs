@@ -3,7 +3,7 @@ use std::{
     time::Duration,
 };
 
-use moqt::executor;
+use moqt::{executor, publish::WriteOutcome};
 
 const FINISHED_RETENTION: Duration = Duration::from_secs(5);
 
@@ -77,6 +77,26 @@ impl StreamLedger {
                 record.finished_at = Some(now);
             }
         }
+    }
+
+    /// Records a group `Origin::write_group` wrote: opened and finished at
+    /// once. `true` only for `WriteOutcome::Sent`.
+    pub(crate) fn record_group(
+        &self,
+        track_name: &str,
+        outcome: &WriteOutcome,
+        bytes: usize,
+    ) -> bool {
+        let (WriteOutcome::Sent(placement) | WriteOutcome::Stopped(placement)) = outcome else {
+            return false;
+        };
+        self.open(track_name, placement.location.group_id);
+        let sent = matches!(outcome, WriteOutcome::Sent(_));
+        if sent {
+            self.add_object(track_name, bytes);
+        }
+        self.finish(track_name);
+        sent
     }
 
     pub(crate) fn snapshot(&self) -> Vec<StreamRecord> {

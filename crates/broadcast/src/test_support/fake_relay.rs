@@ -17,7 +17,7 @@ pub(crate) struct FakeRelay {
     pub(crate) session: oneshot::Receiver<Arc<Session>>,
     pub(crate) requests: mpsc::UnboundedReceiver<String>,
     pub(crate) published: mpsc::UnboundedReceiver<Subscription>,
-    video_objects: mpsc::UnboundedReceiver<TrackObject>,
+    pub(crate) video_objects: mpsc::UnboundedReceiver<TrackObject>,
     pub(crate) catalog_objects: mpsc::UnboundedReceiver<TrackObject>,
 }
 
