@@ -6,6 +6,10 @@
 `moqt::client` の公開 API、Python モジュールの公開 API、配布の手順を変える変更で、
 このファイルも同時に更新する。
 
+Rust について、決定事項の 2 と 3、tag の表の Rust の行、移行計画の手順 9 と 10 は
+`docs/architecture/moq-wasm/sdk.md` に置き換えた。Rust の SDK は `moqt::client` を
+re-export する crate `moq-wasm`（`crates/moq-wasm`）で、tag は `rust-sdk-v*` である。
+
 ## 目標
 ブラウザ SDK（`docs/architecture/wasm/browser-sdk.md`）と同じことを、Python と Rust
 でも同じ形で書けるようにする。relay に接続し、track を購読し、track を配信し、
@@ -318,7 +322,9 @@ Linux aarch64、macOS arm64 の abi3 wheel（Python 3.11 以上）で、
 1. **Python の wheel: Linux x86_64、Linux aarch64、macOS arm64。** ほかの
    プラットフォームは、git source からのソースビルドで使える（動作の保証はしない）。
 2. **Rust の入口: `moqt` の中の `client` module。** 新しい crate は作らない。
+   （`docs/architecture/moq-wasm/sdk.md` で置き換えた。）
 3. **名前: JS と Python の SDK は `moq-wasm`、Rust の crate は `moqt`。**
+   （Rust も `moq-wasm` にした。`docs/architecture/moq-wasm/sdk.md` を参照。）
 
 ## 移行計画
 1手順を1 PR にする。リファクタの PR は、それに依存する機能の PR より先に出し、依存
