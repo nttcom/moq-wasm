@@ -4117,6 +4117,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "sip-gateway-e2e"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "broadcast",
+ "bytes",
+ "gstreamer",
+ "gstreamer-app",
+ "mediapack",
+ "moqt",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
