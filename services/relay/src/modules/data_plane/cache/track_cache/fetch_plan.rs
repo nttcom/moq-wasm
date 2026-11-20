@@ -3,11 +3,8 @@ use std::sync::Arc;
 use tokio::time::Instant;
 
 use crate::modules::{
-    data_plane::cache::{
-        cached_object::CachedObject,
-        known_ranges::{KnownRanges, following},
-    },
-    domain::object_cursor::ObjectCursor,
+    data_plane::cache::{cached_object::CachedObject, known_ranges::KnownRanges},
+    domain::{location_cursor::LocationCursor, object_cursor::ObjectCursor},
 };
 
 use super::{TrackCache, location};
@@ -37,7 +34,7 @@ impl TrackCache {
     ) -> Vec<PlannedFetch> {
         let region = Region {
             start,
-            end: KnownRanges::exclusive_end(end),
+            end: LocationCursor::fetch_end(end),
             descending: matches!(group_order, moqt::object::GroupOrder::Descending),
         };
         let ledger = self.read();
@@ -52,7 +49,7 @@ impl TrackCache {
         for group_id in groups {
             for object in ledger
                 .group_objects(group_id, ObjectCursor::At(region.first_in(group_id)))
-                .take_while(|object| object.object.location < region.end)
+                .take_while(|object| LocationCursor::At(object.object.location) < region.end)
             {
                 if object.is_expired(now) {
                     expired_in_gap = true;
@@ -81,7 +78,7 @@ impl TrackCache {
 /// The positions a FETCH response covers, `end` exclusive.
 struct Region {
     start: moqt::object::Location,
-    end: moqt::object::Location,
+    end: LocationCursor,
     descending: bool,
 }
 
@@ -95,19 +92,23 @@ impl Region {
     }
 
     fn last_in(&self, group_id: u64) -> moqt::object::Location {
-        if group_id == self.end.group_id {
-            location(group_id, self.end.object_id - 1)
-        } else {
-            location(group_id, u64::MAX)
+        match self.end {
+            LocationCursor::At(end) if end.group_id == group_id => {
+                location(group_id, end.object_id - 1)
+            }
+            _ => location(group_id, u64::MAX),
         }
     }
 
     /// The last position the response covers.
     fn last(&self) -> moqt::object::Location {
-        match (self.descending, self.end.object_id) {
+        match (self.descending, self.end) {
             (true, _) => self.last_in(self.start.group_id),
-            (false, 0) => self.last_in(self.end.group_id - 1),
-            (false, _) => self.last_in(self.end.group_id),
+            (false, LocationCursor::PastLast) => moqt::object::Location::MAX,
+            (false, LocationCursor::At(end)) if end.object_id == 0 => {
+                self.last_in(end.group_id - 1)
+            }
+            (false, LocationCursor::At(end)) => self.last_in(end.group_id),
         }
     }
 
@@ -116,6 +117,8 @@ impl Region {
         if next.object_id > self.first_in(next.group_id) {
             return location(next.group_id, next.object_id - 1);
         }
+        // The previous position lies in a neighbouring group of the
+        // response, so the ± 1 below stays in range.
         if self.descending {
             self.last_in(next.group_id + 1)
         } else {
@@ -131,31 +134,39 @@ impl Region {
         prev: Option<moqt::object::Location>,
         next: Option<moqt::object::Location>,
     ) -> bool {
+        let after_prev = prev.map(LocationCursor::after);
+        let at_next = next.map(LocationCursor::At);
         if !self.descending {
-            return known
-                .covers_until(prev.map_or(self.start, following), next.unwrap_or(self.end));
+            return known.covers_until(
+                after_prev.unwrap_or(LocationCursor::At(self.start)),
+                at_next.unwrap_or(self.end),
+            );
         }
         // Descending: the rest of prev's group, then the groups below it,
         // then next's group up to next.
         if let (Some(prev), Some(next)) = (prev, next)
             && prev.group_id == next.group_id
         {
-            return known.covers_until(following(prev), next);
+            return known.covers_until(LocationCursor::after(prev), LocationCursor::At(next));
         }
         let rest_of_prev_group = prev.is_none_or(|prev| {
             known.covers_until(
-                following(prev),
-                self.end.min(location(prev.group_id + 1, 0)),
+                LocationCursor::after(prev),
+                self.end.min(LocationCursor::after_group(prev.group_id)),
             )
         });
-        let below = prev.map_or(self.end, |prev| location(prev.group_id, 0));
+        let below = prev.map_or(self.end, |prev| {
+            LocationCursor::At(location(prev.group_id, 0))
+        });
         let lower_groups = match next {
             Some(next) => {
-                known.covers_until(location(next.group_id + 1, 0), below)
-                    && known
-                        .covers_until(location(next.group_id, self.first_in(next.group_id)), next)
+                known.covers_until(LocationCursor::after_group(next.group_id), below)
+                    && known.covers_until(
+                        LocationCursor::At(location(next.group_id, self.first_in(next.group_id))),
+                        LocationCursor::At(next),
+                    )
             }
-            None => known.covers_until(self.start, below),
+            None => known.covers_until(LocationCursor::At(self.start), below),
         };
         rest_of_prev_group && lower_groups
     }
@@ -274,6 +285,86 @@ mod tests {
         assert_eq!(planned_steps(plan), vec![Err((7, u64::MAX))]);
     }
 
+    #[test]
+    fn a_fetch_through_the_last_group_plans_its_objects_in_either_order() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, u64::MAX - 1, &[0, 1]);
+        insert_closed_group(&cache, u64::MAX, &[0, 1]);
+
+        // Act
+        let ascending = cache.plan_fetch(
+            location(u64::MAX - 1, 0),
+            location(u64::MAX, 0),
+            moqt::object::GroupOrder::Ascending,
+        );
+        let descending = cache.plan_fetch(
+            location(u64::MAX - 1, 0),
+            location(u64::MAX, 0),
+            moqt::object::GroupOrder::Descending,
+        );
+
+        // Assert
+        assert_eq!(
+            planned_steps(ascending),
+            vec![
+                Ok((u64::MAX - 1, 0)),
+                Ok((u64::MAX - 1, 1)),
+                Ok((u64::MAX, 0)),
+                Ok((u64::MAX, 1)),
+            ]
+        );
+        assert_eq!(
+            planned_steps(descending),
+            vec![
+                Ok((u64::MAX, 0)),
+                Ok((u64::MAX, 1)),
+                Ok((u64::MAX - 1, 0)),
+                Ok((u64::MAX - 1, 1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_descending_fetch_ending_inside_the_last_group_plans_its_objects() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, u64::MAX, &[0, 1]);
+
+        // Act
+        let plan = cache.plan_fetch(
+            location(u64::MAX, 0),
+            location(u64::MAX, 5),
+            moqt::object::GroupOrder::Descending,
+        );
+
+        // Assert
+        assert_eq!(
+            planned_steps(plan),
+            vec![Ok((u64::MAX, 0)), Ok((u64::MAX, 1))]
+        );
+    }
+
+    #[test]
+    fn an_unseen_last_group_is_planned_as_unknown_through_the_last_location() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, u64::MAX - 1, &[0]);
+
+        // Act
+        let plan = cache.plan_fetch(
+            location(u64::MAX - 1, 0),
+            location(u64::MAX, 0),
+            moqt::object::GroupOrder::Ascending,
+        );
+
+        // Assert
+        assert_eq!(
+            planned_steps(plan),
+            vec![Ok((u64::MAX - 1, 0)), Err((u64::MAX, u64::MAX))]
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn an_expired_object_is_planned_as_unknown() {
         // Arrange: a fill of {0,0}..{0,3} whose object {0,1} expires first
@@ -318,9 +409,7 @@ mod tests {
         };
 
         use super::*;
-        use crate::modules::test_support::location_strategies::{
-            bound, last_held, object_location, positions, stand_in,
-        };
+        use crate::modules::test_support::location_strategies::{Groups, groups, last_held};
 
         /// The groups the cache holds objects and known ranges in.
         const GROUPS: u64 = 6;
@@ -331,20 +420,18 @@ mod tests {
         /// position before the next object, or the last position, for any
         /// run of positions holding an expired object or not known.
         fn expected_steps(
+            groups: Groups,
             objects: &BTreeMap<Location, bool>,
-            known: &[(Location, Location)],
+            known: &[(LocationCursor, LocationCursor)],
             start: Location,
             end: Location,
             descending: bool,
         ) -> Vec<Result<(u64, u64), (u64, u64)>> {
-            let end = if end.object_id == 0 {
-                location(end.group_id + 1, 0)
-            } else {
-                end
-            };
-            let mut covered: Vec<Location> = positions(GROUPS + 3)
+            let end = LocationCursor::fetch_end(end);
+            let mut covered: Vec<Location> = groups
+                .positions()
                 .into_iter()
-                .filter(|p| start <= *p && *p < end)
+                .filter(|p| start <= *p && LocationCursor::At(*p) < end)
                 .collect();
             if descending {
                 covered.sort_by_key(|p| (Reverse(p.group_id), p.object_id));
@@ -365,7 +452,9 @@ mod tests {
                     }
                     Some(true) => unknown = true,
                     None => {
-                        unknown |= !known.iter().any(|(from, until)| *from <= at && at < *until)
+                        unknown |= !known
+                            .iter()
+                            .any(|(from, until)| (*from..*until).contains(&LocationCursor::At(at)))
                     }
                 }
                 previous = Some(at);
@@ -377,11 +466,25 @@ mod tests {
             steps
         }
 
-        /// A FETCH's `start` and its `end` in FETCH_OK End Location encoding,
-        /// where Object ID 0 stands for the whole group.
-        fn fetch_range() -> impl Strategy<Value = (Location, Location)> {
-            stand_in(GROUPS).prop_flat_map(|start| {
-                let ends: Vec<Location> = positions(start.group_id + 3)
+        #[derive(Debug)]
+        struct Case {
+            groups: Groups,
+            /// Each cached object and whether it expired.
+            objects: BTreeMap<Location, bool>,
+            known: Vec<(LocationCursor, LocationCursor)>,
+            start: Location,
+            /// In FETCH_OK End Location encoding, where Object ID 0 stands
+            /// for the whole group.
+            end: Location,
+            descending: bool,
+        }
+
+        /// A FETCH's `start` and a valid `end` for it, drawn by construction
+        /// so no input is discarded.
+        fn fetch_range(groups: Groups) -> impl Strategy<Value = (Location, Location)> {
+            groups.stand_in().prop_flat_map(move |start| {
+                let ends: Vec<Location> = groups
+                    .positions()
                     .into_iter()
                     .filter(|end| {
                         end.group_id >= start.group_id && (end.object_id == 0 || start < *end)
@@ -391,39 +494,64 @@ mod tests {
             })
         }
 
+        fn case() -> impl Strategy<Value = Case> {
+            groups(GROUPS).prop_flat_map(|groups| {
+                (
+                    btree_map(groups.object_location(), any::<bool>(), 0..16),
+                    vec((groups.bound(), groups.bound()), 0..5),
+                    fetch_range(groups),
+                    any::<bool>(),
+                )
+                    .prop_map(move |(objects, known, (start, end), descending)| {
+                        Case {
+                            groups,
+                            objects,
+                            known,
+                            start,
+                            end,
+                            descending,
+                        }
+                    })
+            })
+        }
+
         proptest! {
             #[test]
             fn the_plan_is_the_unexpired_objects_with_an_unknown_stretch_for_each_undecided_gap(
-                objects in btree_map(object_location(GROUPS), any::<bool>(), 0..16),
-                known in vec((bound(GROUPS), bound(GROUPS)), 0..5),
-                (start, end) in fetch_range(),
-                descending in any::<bool>(),
+                case in case(),
             ) {
-                // Arrange: `objects` maps each cached object to whether it expired
+                // Arrange
                 let cache = TrackCache::new();
-                for (&at, &expired) in &objects {
+                for (&at, &expired) in &case.objects {
                     let mut object = stream_object(at.group_id, at.object_id);
                     if expired {
                         object.expires_at = Some(object.received_at);
                     }
                     cache.insert(object).expect("no conflict");
                 }
-                for &(from, until) in &known {
+                for &(from, until) in &case.known {
                     cache.insert_known_until(from, until);
                 }
-                let group_order = if descending {
+                let group_order = if case.descending {
                     moqt::object::GroupOrder::Descending
                 } else {
                     moqt::object::GroupOrder::Ascending
                 };
 
                 // Act
-                let plan = cache.plan_fetch(start, end, group_order);
+                let plan = cache.plan_fetch(case.start, case.end, group_order);
 
                 // Assert
                 prop_assert_eq!(
                     planned_steps(plan),
-                    expected_steps(&objects, &known, start, end, descending)
+                    expected_steps(
+                        case.groups,
+                        &case.objects,
+                        &case.known,
+                        case.start,
+                        case.end,
+                        case.descending
+                    )
                 );
             }
         }

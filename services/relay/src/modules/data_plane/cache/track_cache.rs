@@ -24,7 +24,8 @@ use crate::modules::{
         disk_cache::{DiskSink, StoredPayload},
     },
     domain::{
-        object_cursor::ObjectCursor, session_id::SessionId, single_preference::SinglePreference,
+        location_cursor::LocationCursor, object_cursor::ObjectCursor, session_id::SessionId,
+        single_preference::SinglePreference,
     },
 };
 
@@ -506,11 +507,7 @@ impl TrackCache {
         self.write().known_ranges.insert(start, end);
     }
 
-    pub(crate) fn insert_known_until(
-        &self,
-        start: moqt::object::Location,
-        end: moqt::object::Location,
-    ) {
+    pub(crate) fn insert_known_until(&self, start: LocationCursor, end: LocationCursor) {
         self.write().known_ranges.insert_until(start, end);
     }
 
@@ -660,6 +657,9 @@ impl TrackCache {
                 .end_of_range_containing(location(group_id, 0))
             else {
                 return false;
+            };
+            let LocationCursor::At(range_end) = range_end else {
+                return true;
             };
             // When knowledge of a group stops inside the range, only an open
             // subgroup of that group can bring the rest.
@@ -1108,6 +1108,39 @@ mod tests {
 
         // Assert
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn a_closed_last_group_is_known_and_served_whole() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, u64::MAX, &[0, 1]);
+        let whole_group = location(u64::MAX, 0);
+
+        // Act
+        let resolution = cache.resolve_fetch_range(whole_group, whole_group, None);
+
+        // Assert: a Joining FETCH at Joining Location {MAX, MAX} asks for
+        // this range (draft-18 §10.12.2.1)
+        assert!(cache.covers(whole_group, whole_group));
+        assert_eq!(
+            resolution,
+            FetchRangeResolution::Serve {
+                end_location: whole_group
+            }
+        );
+    }
+
+    #[test]
+    fn a_live_object_at_the_last_location_is_known() {
+        // Arrange
+        let cache = TrackCache::new();
+
+        // Act
+        let _ = cache.insert_live(stream_object(u64::MAX, u64::MAX));
+
+        // Assert: {MAX, MAX} through End Location {MAX, 0} is that one position
+        assert!(cache.covers(location(u64::MAX, u64::MAX), location(u64::MAX, 0)));
     }
 
     #[tokio::test(start_paused = true)]

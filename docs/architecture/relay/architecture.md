@@ -1013,9 +1013,12 @@ owned by the track's `Producer`:
   that opening, so a stream that outlived the subgroup's close cannot close a
   later opening — the only non-data state besides the aborted / finished
   marks), and `KnownRanges` (§9.2.1.3 / §9.16 unknown-status
-  semantics). One `Notify` per track wakes every waiter on insert, open and
-  close; waiters re-check the ledger under a single read guard, so there is no
-  check-order race between "object present" and "subgroup closed".
+  semantics). A known range ends at a `LocationCursor`, before a Location
+  or past the last one, so a range through group `u64::MAX` (draft-18 Group
+  IDs are vi64) needs no Location after it. One `Notify` per track wakes
+  every waiter on insert, open and close; waiters re-check the ledger under a
+  single read guard, so there is no check-order race between "object
+  present" and "subgroup closed".
 - Arriving objects (`track_cache/partial_object.rs`): a subgroup stream reader
   gets each object whose payload had not arrived with it as an object start
   and payload pieces (`moqt::object::SubgroupPartReceiver`). The reader calls

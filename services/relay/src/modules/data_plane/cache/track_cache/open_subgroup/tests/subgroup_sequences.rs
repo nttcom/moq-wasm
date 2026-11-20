@@ -17,7 +17,7 @@ use std::{
 };
 
 use moqt::object::Location;
-use proptest::{collection::vec, prelude::*};
+use proptest::{collection::vec, prelude::*, sample::select};
 use tokio::sync::broadcast::Receiver;
 
 use crate::modules::{
@@ -31,7 +31,8 @@ use crate::modules::{
     },
 };
 
-const GROUPS: u64 = 2;
+/// The first group and the last two a draft-18 publisher can send.
+const GROUP_IDS: [u64; 3] = [0, u64::MAX - 1, u64::MAX];
 const SUBGROUPS: u64 = 2;
 const STREAMS: usize = 4;
 /// The sequence number of a subgroup's last object.
@@ -98,13 +99,13 @@ fn operation() -> impl Strategy<Value = Operation> {
     // Mostly the next object, sometimes a skipped id or a late start.
     let step = prop_oneof![6 => Just(1u64), 2 => Just(2u64), 1 => Just(3u64)];
     prop_oneof![
-        4 => (stream.clone(), 0..GROUPS, 0..SUBGROUPS).prop_map(|(stream, group_id, subgroup_id)| {
+        4 => (stream.clone(), select(GROUP_IDS.to_vec()), 0..SUBGROUPS).prop_map(|(stream, group_id, subgroup_id)| {
             Operation::Open { stream, group_id, subgroup_id }
         }),
         8 => (stream.clone(), step).prop_map(|(stream, step)| Operation::Deliver { stream, step }),
         3 => stream.clone().prop_map(|stream| Operation::Finish { stream }),
         2 => stream.prop_map(|stream| Operation::Reset { stream }),
-        1 => (0..GROUPS, 0..SUBGROUPS, 0..=LAST_SEQUENCE).prop_map(
+        1 => (select(GROUP_IDS.to_vec()), 0..SUBGROUPS, 0..=LAST_SEQUENCE).prop_map(
             |(group_id, subgroup_id, sequence)| Operation::Fill { group_id, subgroup_id, sequence }
         ),
         1 => Just(Operation::Evict),
@@ -168,7 +169,8 @@ impl<'a> Harness<'a> {
             runtime,
             subgroup_opened_receiver: cache.subscribe_subgroup_opened(),
             streams: (0..STREAMS).map(|_| None).collect(),
-            subgroups: (0..GROUPS)
+            subgroups: GROUP_IDS
+                .into_iter()
                 .flat_map(|group_id| (0..SUBGROUPS).map(move |subgroup_id| (group_id, subgroup_id)))
                 .map(|subgroup| (subgroup, ModelSubgroup::default()))
                 .collect(),
@@ -233,7 +235,7 @@ impl<'a> Harness<'a> {
                     self.known.remove(&(group_id, object_id));
                 }
                 // A group with neither objects nor open subgroups is forgotten.
-                for group_id in 0..GROUPS {
+                for group_id in GROUP_IDS {
                     if !self.group_is_live(group_id) {
                         for subgroup_id in 0..SUBGROUPS {
                             self.subgroups
@@ -434,7 +436,7 @@ impl<'a> Harness<'a> {
                 }
             }
         }
-        for group_id in 0..GROUPS {
+        for group_id in GROUP_IDS {
             for position in positions() {
                 let at = location(group_id, position);
                 prop_assert_eq!(

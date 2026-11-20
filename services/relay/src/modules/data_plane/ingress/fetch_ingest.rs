@@ -8,12 +8,11 @@ use crate::modules::{
     data_plane::{
         cache::{
             cached_object::{CacheStamp, CachedObject},
-            known_ranges::{KnownRanges, following},
             track_cache::TrackCache,
         },
         egress::fetch_delivery::{EgressFetchRequest, FetchDeliveryTask, FetchWait},
     },
-    domain::{session_id::SessionId, track_key::TrackKey},
+    domain::{location_cursor::LocationCursor, session_id::SessionId, track_key::TrackKey},
     session::{session_event::SessionEvent, session_repository::SessionRepository},
 };
 
@@ -77,10 +76,10 @@ impl FillBudget {
 /// What an ascending fill has shown known: every position from the start of
 /// the range up to `next`, except the ranges the response marked unknown.
 struct FillProgress {
-    known: Vec<Range<moqt::object::Location>>,
-    known_from: moqt::object::Location,
+    known: Vec<Range<LocationCursor>>,
+    known_from: LocationCursor,
     /// The position after the last object or marker received.
-    next: moqt::object::Location,
+    next: LocationCursor,
     unknown_seen: bool,
 }
 
@@ -88,31 +87,28 @@ impl FillProgress {
     fn new(start: moqt::object::Location) -> Self {
         Self {
             known: Vec::new(),
-            known_from: start,
-            next: start,
+            known_from: LocationCursor::At(start),
+            next: LocationCursor::At(start),
             unknown_seen: false,
         }
     }
 
     fn object(&mut self, at: moqt::object::Location) {
-        self.next = self.next.max(following(at));
+        self.next = self.next.max(LocationCursor::after(at));
     }
 
     /// draft-18 §11.4.4.2: the positions from `next` through `last` may hold
     /// objects.
     fn unknown(&mut self, last: moqt::object::Location) {
         self.known.push(self.known_from..self.next);
-        self.next = self.next.max(following(last));
+        self.next = self.next.max(LocationCursor::after(last));
         self.known_from = self.next;
         self.unknown_seen = true;
     }
 
     /// The known ranges once the response ended at `end` (exclusive), or
     /// stopped early when `end` is `None`.
-    fn into_known(
-        mut self,
-        end: Option<moqt::object::Location>,
-    ) -> Vec<Range<moqt::object::Location>> {
+    fn into_known(mut self, end: Option<LocationCursor>) -> Vec<Range<LocationCursor>> {
         self.known.push(self.known_from..end.unwrap_or(self.next));
         self.known
     }
@@ -213,7 +209,7 @@ impl FetchIngest {
         let end = match filled {
             Ok(result) => {
                 result?;
-                Some(KnownRanges::exclusive_end(start.egress_start.end_location))
+                Some(LocationCursor::fetch_end(start.egress_start.end_location))
             }
             Err(_) => {
                 tracing::info!(
@@ -956,32 +952,50 @@ mod tests {
         use proptest::{collection::btree_map, option, prelude::*};
 
         use super::*;
-        use crate::modules::test_support::location_strategies::{
-            bound, object_location, positions, stand_in,
-        };
+        use crate::modules::test_support::location_strategies::{Groups, groups};
 
         const GROUPS: u64 = 4;
+
+        /// (groups, start, steps, end): a step maps a position to whether it
+        /// ends an unknown stretch rather than holding an object.
+        type Case = (
+            Groups,
+            Location,
+            BTreeMap<Location, bool>,
+            Option<LocationCursor>,
+        );
+
+        fn case() -> impl Strategy<Value = Case> {
+            groups(GROUPS).prop_flat_map(|groups| {
+                (
+                    Just(groups),
+                    groups.stand_in(),
+                    btree_map(groups.object_location(), any::<bool>(), 0..10),
+                    option::of(groups.bound()),
+                )
+            })
+        }
 
         proptest! {
             #[test]
             fn the_known_ranges_are_the_range_less_its_unknown_stretches(
-                start in stand_in(GROUPS),
-                steps in btree_map(object_location(GROUPS), any::<bool>(), 0..10),
-                end in option::of(bound(GROUPS)),
+                (groups, start, steps, end) in case(),
             ) {
-                // Arrange: `steps` maps the position of each object, or the last
-                // position of each unknown stretch, to whether it is the latter
+                // Arrange
                 let steps: BTreeMap<Location, bool> =
                     steps.into_iter().filter(|(at, _)| start <= *at).collect();
                 let last_step = steps.keys().next_back().copied();
-                let end = end.filter(|end| start <= *end && last_step.is_none_or(|last| last < *end));
+                let end = end.filter(|end| {
+                    LocationCursor::At(start) <= *end
+                        && last_step.is_none_or(|last| LocationCursor::At(last) < *end)
+                });
                 let mut progress = FillProgress::new(start);
                 let mut unknown = BTreeSet::new();
                 let mut previous = None;
                 for (&at, &is_unknown) in &steps {
                     if is_unknown {
                         progress.unknown(at);
-                        unknown.extend(positions(GROUPS).into_iter().filter(|p| {
+                        unknown.extend(groups.positions().into_iter().filter(|p| {
                             previous.is_none_or(|previous| previous < *p) && *p <= at
                         }));
                     } else {
@@ -989,11 +1003,12 @@ mod tests {
                     }
                     previous = Some(at);
                 }
-                let expected: BTreeSet<Location> = positions(GROUPS)
+                let expected: BTreeSet<Location> = groups
+                    .positions()
                     .into_iter()
                     .filter(|p| start <= *p && !unknown.contains(p))
                     .filter(|p| match end {
-                        Some(end) => *p < end,
+                        Some(end) => LocationCursor::At(*p) < end,
                         None => last_step.is_some_and(|last| *p <= last),
                     })
                     .collect();
@@ -1002,9 +1017,10 @@ mod tests {
                 let known = progress.into_known(end);
 
                 // Assert
-                let known: BTreeSet<Location> = positions(GROUPS)
+                let known: BTreeSet<Location> = groups
+                    .positions()
                     .into_iter()
-                    .filter(|p| known.iter().any(|range| range.contains(p)))
+                    .filter(|p| known.iter().any(|range| range.contains(&LocationCursor::At(*p))))
                     .collect();
                 prop_assert_eq!(known, expected);
             }

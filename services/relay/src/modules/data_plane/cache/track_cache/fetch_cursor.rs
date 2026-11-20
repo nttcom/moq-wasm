@@ -4,7 +4,7 @@ use tokio::time::Instant;
 
 use crate::modules::{
     data_plane::cache::{cached_object::CachedObject, track_cache::NextObject},
-    domain::object_cursor::ObjectCursor,
+    domain::{location_cursor::LocationCursor, object_cursor::ObjectCursor},
 };
 
 use super::{FetchInterrupted, TrackCache, location};
@@ -124,9 +124,10 @@ impl<'a> FetchCursor<'a> {
         let known_prefix_end = ledger
             .known_ranges
             .end_of_range_containing(location(group_id, 0));
-        let fully_known = matches!(known_prefix_end, Some(end) if end.group_id > group_id);
+        let fully_known = known_prefix_end
+            .is_some_and(|end| end > LocationCursor::At(location(group_id, u64::MAX)));
         let frontier = match known_prefix_end {
-            Some(end) if end.group_id == group_id => Some(end.object_id),
+            Some(LocationCursor::At(end)) if end.group_id == group_id => Some(end.object_id),
             _ => None,
         };
         let next = if group_id == self.start.group_id {

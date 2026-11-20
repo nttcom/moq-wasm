@@ -9,12 +9,9 @@ use tokio::time::Instant;
 use crate::modules::{
     data_plane::{
         cache::subgroup_key::SubgroupKey,
-        cache::{
-            cached_object::CachedObject,
-            known_ranges::{KnownRanges, following},
-        },
+        cache::{cached_object::CachedObject, known_ranges::KnownRanges},
     },
-    domain::object_cursor::ObjectCursor,
+    domain::{location_cursor::LocationCursor, object_cursor::ObjectCursor},
 };
 
 use super::{
@@ -213,8 +210,10 @@ impl Ledger {
     /// skipped by a non-zero delta cannot be inferred); the rest of the group is
     /// decided when its last subgroup closes.
     pub(super) fn register_live_object(&mut self, location: moqt::object::Location) {
-        self.known_ranges
-            .insert_until(location, following(location));
+        self.known_ranges.insert_until(
+            LocationCursor::At(location),
+            LocationCursor::after(location),
+        );
         if let Some(live) = self.live_groups.get_mut(&location.group_id) {
             live.knowledge_frontier = live
                 .knowledge_frontier
@@ -321,10 +320,10 @@ impl Ledger {
         end: moqt::object::Location,
         now: Instant,
     ) -> bool {
-        let range = start..KnownRanges::exclusive_end(end);
+        let range = LocationCursor::At(start)..LocationCursor::fetch_end(end);
         self.eviction_queues
             .expired_candidates(now)
-            .filter(|at| range.contains(at))
+            .filter(|at| range.contains(&LocationCursor::At(*at)))
             .any(|at| {
                 self.objects
                     .get(&at)
@@ -337,10 +336,10 @@ impl Ledger {
         start: moqt::object::Location,
         end: moqt::object::Location,
     ) -> impl Iterator<Item = &Arc<CachedObject>> {
-        let end = KnownRanges::exclusive_end(end);
-        (start < end)
-            .then(|| self.objects.range(start..end).map(|(_, object)| object))
-            .into_iter()
-            .flatten()
+        let end = LocationCursor::fetch_end(end);
+        self.objects
+            .range(start..)
+            .take_while(move |(at, _)| LocationCursor::At(**at) < end)
+            .map(|(_, object)| object)
     }
 }
