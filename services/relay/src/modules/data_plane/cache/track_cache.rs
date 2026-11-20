@@ -12,7 +12,11 @@ use tokio::{
     time::Instant,
 };
 
-use moqt::{TrackProperties, object::ForwardingPreference};
+use moqt::{
+    TrackProperties,
+    fetch::{FetchRangeError, resolve_fetch_range},
+    object::ForwardingPreference,
+};
 
 use crate::modules::{
     data_plane::cache::{
@@ -575,21 +579,21 @@ impl TrackCache {
         end: moqt::object::Location,
         upstream_largest: Option<moqt::object::Location>,
     ) -> FetchRangeResolution {
-        if Self::explicit_end_before_or_equal_start(start, end) {
-            return FetchRangeResolution::InvalidRange;
-        }
-
         let ledger = self.read();
-        let Some(largest) = ledger.largest_location() else {
-            return FetchRangeResolution::NotCovered;
+        let end_location = match Self::fetch_end_location(&ledger, start, end) {
+            Ok(end_location) => end_location,
+            Err(FetchRangeError::EmptyRange) => return FetchRangeResolution::InvalidRange,
+            Err(FetchRangeError::StartAfterLargest) => {
+                let largest = ledger.largest_location();
+                let known_largest = upstream_largest.max(largest);
+                let live = self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0;
+                if live && known_largest.is_some_and(|known| start > known) {
+                    return FetchRangeResolution::InvalidRange;
+                }
+                return FetchRangeResolution::NotCovered;
+            }
+            Err(_) => return FetchRangeResolution::NotCovered,
         };
-
-        let known_largest = upstream_largest.map_or(largest, |reported| reported.max(largest));
-        if start > known_largest && self.live_ingest_count.load(AtomicOrdering::Relaxed) > 0 {
-            return FetchRangeResolution::InvalidRange;
-        }
-
-        let end_location = Self::resolve_fetch_end_location(&ledger, end, largest);
         // draft-14 §9.2.1.3: an expired object's status is unknown again, so
         // a range holding one is re-requested upstream.
         if ledger.has_expired_object_in(start, end_location, Instant::now()) {
@@ -618,9 +622,25 @@ impl TrackCache {
         start: moqt::object::Location,
         end: moqt::object::Location,
     ) -> Option<moqt::object::Location> {
-        let ledger = self.read();
-        let largest = ledger.largest_location()?;
-        (start <= largest).then(|| Self::resolve_fetch_end_location(&ledger, end, largest))
+        Self::fetch_end_location(&self.read(), start, end).ok()
+    }
+
+    /// Unlike `moqt`, ends a request for the whole largest group at the group
+    /// once the cache knows all of it.
+    fn fetch_end_location(
+        ledger: &Ledger,
+        start: moqt::object::Location,
+        end: moqt::object::Location,
+    ) -> Result<moqt::object::Location, FetchRangeError> {
+        let end_location = resolve_fetch_range(start, end, ledger.largest_location())?;
+        let whole_group = location(end.group_id, 0);
+        if end == whole_group
+            && end_location.group_id == end.group_id
+            && ledger.known_ranges.contains_range(whole_group, whole_group)
+        {
+            return Ok(end);
+        }
+        Ok(end_location)
     }
 
     fn serves_after_in_flight_wait(
@@ -657,42 +677,6 @@ impl TrackCache {
             group_id = range_end.group_id + u64::from(range_end.object_id != 0);
         }
         true
-    }
-
-    fn explicit_end_before_or_equal_start(
-        start: moqt::object::Location,
-        end: moqt::object::Location,
-    ) -> bool {
-        start.group_id > end.group_id
-            || (start.group_id == end.group_id
-                && end.object_id != 0
-                && start.object_id >= end.object_id)
-    }
-
-    fn resolve_fetch_end_location(
-        ledger: &Ledger,
-        requested_end: moqt::object::Location,
-        largest: moqt::object::Location,
-    ) -> moqt::object::Location {
-        if requested_end.group_id > largest.group_id
-            || (requested_end.group_id == largest.group_id
-                && requested_end.object_id != 0
-                && requested_end.object_id > largest.object_id.saturating_add(1))
-        {
-            return after(largest);
-        }
-
-        if requested_end.object_id == 0 {
-            let whole_group = location(requested_end.group_id, 0);
-            if requested_end.group_id < largest.group_id
-                || ledger.known_ranges.contains_range(whole_group, whole_group)
-            {
-                return requested_end;
-            }
-            return after(largest);
-        }
-
-        requested_end
     }
 }
 
@@ -1381,6 +1365,18 @@ mod fetch_tests {
             FetchRangeResolution::Serve {
                 end_location: location(0, 0)
             }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_sends_a_range_after_the_largest_object_upstream() {
+        // Arrange: no live ingest, so the cache does not know Largest Object
+        let cache = TrackCache::new();
+        insert_closed_group(&cache, 0, &[0, 1, 2]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 5), location(0, 0), None),
+            FetchRangeResolution::NotCovered
         );
     }
 
