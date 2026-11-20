@@ -78,7 +78,9 @@ field in a record. The app's server issues the robot a token with
 Every non-media track is an MSF event timeline (draft-ietf-moq-msf-02 §8)
 indexed by wallclock (`T`, milliseconds since the Unix epoch on the robot's
 clock unless noted). Its `data` is a JSON object whose structure the
-track's `eventType` defines (§5.2.6).
+track's `eventType` defines (§5.2.6): `com.skyway.robotics.<track>.v1`, such
+as `com.skyway.robotics.state.v1`, after the existing `com.skyway.chat.v1`.
+Milliseconds are fine enough for control loops up to a few hundred hertz.
 
 | Broadcast | Track | Packaging | Groups | Content |
 | --- | --- | --- | --- | --- |
@@ -105,8 +107,8 @@ as it stores any camera.
 ```json
 {"T": 1763600000123, "data": {"seq": 4512, "joints": [0.12, -0.40, 1.05, 0.0, 0.33, 0.0], "gripper": 0.8}}
 ```
-`data` beyond `seq` is the robot's own schema; the catalog names it by
-`eventType`, and the exporter maps it to dataset columns by configuration.
+`data` beyond `seq` is the robot's own schema, and the exporter maps it to
+dataset columns by configuration.
 
 `action`:
 ```json
@@ -143,7 +145,10 @@ a subscriber aligns them without knowing the robot's offset either.
 ### Driving and holding still
 `robotics::Robot` runs on the robot and owns arbitration and the dead-man
 rule. The application gives it the namespaces that may drive, their
-precedence, and two durations, and receives the actions to execute:
+precedence, and two durations, `max_action_age` (300 ms by default) and
+`hold_timeout` (500 ms by default), and receives the actions to execute.
+The defaults are starting points, to be tuned on the example over a real
+network:
 
 - **Candidates.** Operators (`operators/*`) take precedence over the policy
   (`bots/policy`). An operator drives after its `intent` `take` and until
@@ -295,11 +300,5 @@ Each step is its own pull request, stacked:
 9. Later: MCAP export, and a ROS 2 bridge (its own design).
 
 ## Open questions
-- The `eventType` names (§5.2.6 asks for reverse domain notation): which
-  domain this repository uses.
-- Whether `T` in milliseconds is fine enough for the robots in view, or
-  records need a microsecond field beside it.
 - How fast the replay serves FETCH for a long recording, which sets how long
   an export takes.
-- Default values of `max_action_age` and `hold_timeout`, to be measured on
-  the example over a real network (starting point: 300 ms and 500 ms).
