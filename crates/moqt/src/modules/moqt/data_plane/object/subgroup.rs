@@ -227,7 +227,7 @@ pub struct SubgroupObjectField {
 }
 
 impl SubgroupObjectField {
-    pub fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
+    pub fn resolve_object_id(&self, prev: Option<u64>) -> Option<u64> {
         object_id_from_delta(self.object_id_delta, prev)
     }
 
@@ -257,10 +257,12 @@ impl SubgroupObjectField {
     }
 }
 
-fn object_id_from_delta(object_id_delta: u64, prev: Option<u64>) -> u64 {
+/// The Object ID an Object ID Delta names after `prev` (draft-14 §10.4.2),
+/// or `None` when it passes `u64::MAX`.
+pub(crate) fn object_id_from_delta(object_id_delta: u64, prev: Option<u64>) -> Option<u64> {
     match prev {
-        None => object_id_delta,
-        Some(prev) => prev + 1 + object_id_delta,
+        None => Some(object_id_delta),
+        Some(prev) => prev.checked_add(object_id_delta)?.checked_add(1),
     }
 }
 
@@ -347,7 +349,7 @@ impl SubgroupObjectHead {
         Ok(buf)
     }
 
-    pub(crate) fn resolve_object_id(&self, prev: Option<u64>) -> u64 {
+    pub(crate) fn resolve_object_id(&self, prev: Option<u64>) -> Option<u64> {
         object_id_from_delta(self.object_id_delta, prev)
     }
 
@@ -590,8 +592,8 @@ mod tests {
         #[test]
         fn resolve_object_id_first_object() {
             // First object: delta IS the object_id
-            assert_eq!(make_field(0).resolve_object_id(None), 0);
-            assert_eq!(make_field(5).resolve_object_id(None), 5);
+            assert_eq!(make_field(0).resolve_object_id(None), Some(0));
+            assert_eq!(make_field(5).resolve_object_id(None), Some(5));
         }
 
         #[test]
@@ -600,8 +602,8 @@ mod tests {
             let mut prev = None;
             for expected in 0..4 {
                 let id = make_field(0).resolve_object_id(prev);
-                assert_eq!(id, expected);
-                prev = Some(id);
+                assert_eq!(id, Some(expected));
+                prev = id;
             }
         }
 
@@ -609,11 +611,20 @@ mod tests {
         fn resolve_object_id_with_gap() {
             // 0, 5, 10: deltas are 0, 4, 4
             let id0 = make_field(0).resolve_object_id(None);
-            assert_eq!(id0, 0);
-            let id1 = make_field(4).resolve_object_id(Some(id0));
-            assert_eq!(id1, 5);
-            let id2 = make_field(4).resolve_object_id(Some(id1));
-            assert_eq!(id2, 10);
+            assert_eq!(id0, Some(0));
+            let id1 = make_field(4).resolve_object_id(id0);
+            assert_eq!(id1, Some(5));
+            let id2 = make_field(4).resolve_object_id(id1);
+            assert_eq!(id2, Some(10));
+        }
+
+        #[test]
+        fn a_delta_past_u64_max_resolves_to_no_object_id() {
+            // Act
+            let id = make_field(0).resolve_object_id(Some(u64::MAX));
+
+            // Assert
+            assert_eq!(id, None);
         }
     }
 
@@ -653,6 +664,99 @@ mod tests {
 
             // Assert
             assert!(matches!(result, Err(DecodeError::Fatal(_))));
+        }
+    }
+
+    mod properties {
+        use proptest::{collection::vec, prelude::*};
+
+        use crate::modules::moqt::data_plane::object::{
+            extension_headers::ExtensionHeaders,
+            subgroup::{SubgroupHeaderType, SubgroupObjectHead, object_id_from_delta},
+        };
+        use crate::modules::test_support::control_message_strategies::varint;
+
+        /// Previous Object IDs at the edges a delta overflows from: the
+        /// largest varint, and `u64::MAX` and just below it.
+        fn prev_object_id() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                Just(0),
+                Just(1),
+                Just((1 << 62) - 1),
+                (0..=3u64).prop_map(|below| u64::MAX - below),
+                any::<u64>(),
+            ]
+        }
+
+        proptest! {
+            #[test]
+            fn an_object_id_from_a_delta_is_prev_plus_1_plus_delta_or_none_past_u64_max(
+                prev in proptest::option::of(prev_object_id()),
+                object_id_delta in prop_oneof![varint(), prev_object_id()],
+            ) {
+                // Arrange: the sum without overflow
+                let model = match prev {
+                    None => u128::from(object_id_delta),
+                    Some(prev) => u128::from(prev) + 1 + u128::from(object_id_delta),
+                };
+
+                // Act
+                let object_id = object_id_from_delta(object_id_delta, prev);
+
+                // Assert
+                prop_assert_eq!(object_id, u64::try_from(model).ok());
+            }
+
+            // Four deltas of the largest varint reach `u64::MAX`, so the
+            // generator favours it for a stream to pass `u64::MAX` at all.
+            #[test]
+            fn decoded_deltas_give_back_the_object_ids_up_to_the_first_past_u64_max(
+                object_id_deltas in vec(prop_oneof![varint(), Just((1 << 62) - 1)], 1..12),
+            ) {
+                // Arrange: the Object IDs the deltas name, without overflow
+                let message_type = SubgroupHeaderType::new(0x10).unwrap();
+                let mut model = Vec::new();
+                for &delta in &object_id_deltas {
+                    let next = model.last().map_or(0, |prev: &u128| prev + 1) + u128::from(delta);
+                    model.push(next);
+                }
+                let wire: Vec<_> = object_id_deltas
+                    .iter()
+                    .map(|&delta| {
+                        SubgroupObjectHead::payload(delta, ExtensionHeaders::default(), 1)
+                            .encode(message_type)
+                            .unwrap()
+                    })
+                    .collect();
+
+                // Act
+                let mut prev = None;
+                let mut object_ids = Vec::new();
+                for bytes in &wire {
+                    let head = SubgroupObjectHead::decode(
+                        message_type,
+                        &mut std::io::Cursor::new(&bytes[..]),
+                    )
+                    .unwrap();
+                    prev = head.resolve_object_id(prev);
+                    object_ids.push(prev);
+                    if prev.is_none() {
+                        break;
+                    }
+                }
+
+                // Assert
+                let expected: Vec<_> = model
+                    .iter()
+                    .map(|&id| u64::try_from(id).ok())
+                    .scan(false, |past_max, id| {
+                        let emit = !*past_max;
+                        *past_max |= id.is_none();
+                        emit.then_some(id)
+                    })
+                    .collect();
+                prop_assert_eq!(object_ids, expected);
+            }
         }
     }
 }

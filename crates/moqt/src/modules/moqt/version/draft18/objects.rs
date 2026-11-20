@@ -24,6 +24,7 @@ use crate::modules::moqt::{
             canonical_object::{ForwardingPreference, Object, SubgroupStart},
             extension_headers::ExtensionHeaders,
             object_status::ObjectStatus,
+            subgroup::object_id_from_delta,
         },
         stream::{
             fetch_data_receiver::{Fetch, FetchDataReceiver},
@@ -427,13 +428,8 @@ impl SubgroupState {
     }
 
     pub(crate) fn object(&mut self, field: SubgroupObjectField) -> Result<Object, DecodeError> {
-        let object_id = match self.prev_object_id {
-            None => field.object_id_delta,
-            Some(prev) => prev
-                .checked_add(field.object_id_delta)
-                .and_then(|id| id.checked_add(1))
-                .ok_or(DecodeError::protocol_violation("object id overflows"))?,
-        };
+        let object_id = object_id_from_delta(field.object_id_delta, self.prev_object_id)
+            .ok_or(DecodeError::protocol_violation("object id overflows"))?;
         self.prev_object_id = Some(object_id);
         let subgroup_id = *self.header.subgroup_id.get_or_insert(object_id);
         let status = match field.status {
