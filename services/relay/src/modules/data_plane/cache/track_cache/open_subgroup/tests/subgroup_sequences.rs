@@ -36,23 +36,24 @@ const SUBGROUPS: u64 = 2;
 const STREAMS: usize = 4;
 /// The sequence number of a subgroup's last object.
 const LAST_SEQUENCE: u64 = 5;
-/// Stands in for every Object ID from `MIDDLE` to `u64::MAX - SUBGROUPS - 1`,
-/// where no object is.
+/// The Object ID of subgroup 0's last object; the last subgroup's is
+/// `u64::MAX`.
+const TOP: u64 = u64::MAX - SUBGROUPS + 1;
+/// Stands in for every Object ID from `MIDDLE` to `TOP - 1`, where no object
+/// is.
 const MIDDLE: u64 = SUBGROUPS * LAST_SEQUENCE;
 const TTL: Duration = Duration::from_secs(10);
 
-/// Every position of a group the model decides, in order; only a group
-/// closing decides `u64::MAX`.
+/// Every position of a group the model decides, in order.
 fn positions() -> impl Iterator<Item = u64> {
-    (0..MIDDLE).chain([MIDDLE, u64::MAX - 2, u64::MAX - 1, u64::MAX])
+    (0..=MIDDLE).chain(TOP..=u64::MAX)
 }
 
-/// Subgroup `s` holds `SUBGROUPS * n + s` below `LAST_SEQUENCE` and
-/// `u64::MAX - SUBGROUPS + s` at it, so subgroups of one group never share an
-/// ID and no object is at `u64::MAX`.
+/// Subgroup `s` holds `SUBGROUPS * n + s` below `LAST_SEQUENCE` and `TOP + s`
+/// at it, so subgroups of one group never share an ID.
 fn object_id(subgroup_id: u64, sequence: u64) -> u64 {
     if sequence == LAST_SEQUENCE {
-        u64::MAX - SUBGROUPS + subgroup_id
+        TOP + subgroup_id
     } else {
         SUBGROUPS * sequence + subgroup_id
     }
@@ -62,7 +63,7 @@ fn object_id(subgroup_id: u64, sequence: u64) -> u64 {
 /// `u64::MAX` it is Object ID 0, which ends with the group.
 fn end_of(group_id: u64, position: u64) -> Location {
     match position {
-        MIDDLE => location(group_id, u64::MAX - SUBGROUPS),
+        MIDDLE => location(group_id, TOP),
         u64::MAX => location(group_id, 0),
         _ => location(group_id, position + 1),
     }
@@ -124,13 +125,13 @@ struct ModelSubgroup {
     opening: Option<ModelOpening>,
     finished: bool,
     aborted: bool,
-    /// The first object of each run after the first.
-    reopened_runs: Vec<u64>,
+    /// Where each run after the first starts.
+    reopened_runs: Vec<ObjectCursor>,
 }
 
 impl ModelSubgroup {
-    fn latest_run_first_object_id(&self) -> u64 {
-        self.reopened_runs.last().copied().unwrap_or(0)
+    fn latest_run_start(&self) -> ObjectCursor {
+        self.reopened_runs.last().copied().unwrap_or_default()
     }
 }
 
@@ -154,9 +155,9 @@ struct Harness<'a> {
     objects: BTreeSet<(u64, u64, u64)>,
     /// Known positions of `positions()`.
     known: BTreeSet<(u64, u64)>,
-    /// Per live group, one past the largest Object ID a stream delivered
+    /// Per live group, right after the largest Object ID a stream delivered
     /// while the group was live.
-    live_frontiers: BTreeMap<u64, u64>,
+    live_frontiers: BTreeMap<u64, ObjectCursor>,
     next_opening_id: u64,
 }
 
@@ -255,7 +256,7 @@ impl<'a> Harness<'a> {
         let announced = self.subgroup_opened_receiver.try_recv().ok();
         let after_cached_objects = self
             .last_cached_object_id(group_id, subgroup_id)
-            .map_or(0, |object_id| object_id.saturating_add(1));
+            .map_or(ObjectCursor::default(), ObjectCursor::after);
         let group_was_live = self.group_is_live(group_id);
         let subgroup = self
             .subgroups
@@ -268,9 +269,8 @@ impl<'a> Harness<'a> {
             if subgroup.opening.is_none() && subgroup.aborted {
                 // The new run starts past every object the earlier runs left.
                 subgroup.aborted = false;
-                let first_object_id =
-                    after_cached_objects.max(subgroup.latest_run_first_object_id());
-                subgroup.reopened_runs.push(first_object_id);
+                let start = after_cached_objects.max(subgroup.latest_run_start());
+                subgroup.reopened_runs.push(start);
             }
             let opening = subgroup.opening.get_or_insert_with(|| {
                 self.next_opening_id += 1;
@@ -286,11 +286,12 @@ impl<'a> Harness<'a> {
         let expected = opening_id.map(|_| SubgroupRun {
             key: key(group_id, subgroup_id),
             generation: subgroup.reopened_runs.len(),
-            first_object_id: ObjectCursor::At(subgroup.latest_run_first_object_id()),
+            first_object_id: subgroup.latest_run_start(),
         });
         prop_assert_eq!(announced, expected, "run announced on opening");
         if !group_was_live && opening_id.is_some() {
-            self.live_frontiers.insert(group_id, 0);
+            self.live_frontiers
+                .insert(group_id, ObjectCursor::default());
         }
         self.streams[stream] = Some(Stream {
             guard,
@@ -339,7 +340,7 @@ impl<'a> Harness<'a> {
         // A live object proves only its own position (§10.4.2).
         self.known.insert((group_id, object_id));
         if let Some(frontier) = self.live_frontiers.get_mut(&group_id) {
-            *frontier = (*frontier).max(object_id.saturating_add(1));
+            *frontier = (*frontier).max(ObjectCursor::after(object_id));
         }
     }
 
@@ -391,7 +392,7 @@ impl<'a> Harness<'a> {
             // from the live frontier on.
             self.known.extend(
                 positions()
-                    .filter(|position| *position >= frontier)
+                    .filter(|position| ObjectCursor::At(*position) >= frontier)
                     .map(|position| (group_id, position)),
             );
         }
@@ -404,7 +405,7 @@ impl<'a> Harness<'a> {
             .objects
             .range((group_id, subgroup_id, from)..=(group_id, subgroup_id, u64::MAX))
             .map(|(_, _, object_id)| *object_id)
-            .find(|object_id| run_end.is_none_or(|end| *object_id < end));
+            .find(|object_id| run_end.is_none_or(|end| ObjectCursor::At(*object_id) < end));
         match next {
             Some(object_id) => Next::Object(object_id),
             // A superseded run never continues into the next one (§10.4.3).
