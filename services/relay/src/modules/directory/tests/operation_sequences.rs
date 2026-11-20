@@ -248,9 +248,6 @@ struct Harness {
     upstream_subscribes: Vec<UpstreamSubscribe>,
     blocked_publishes: BTreeSet<(SessionId, usize)>,
     malformed_tracks: BTreeSet<usize>,
-    /// PUBLISHes whose upstream subscription a malformed track removed:
-    /// `remove_upstream_track` leaves their handlers registered.
-    malformed_publishes: BTreeSet<(SessionId, usize)>,
     draining: bool,
 }
 
@@ -276,7 +273,6 @@ impl Harness {
             upstream_subscribes: Vec::new(),
             blocked_publishes: BTreeSet::new(),
             malformed_tracks: BTreeSet::new(),
-            malformed_publishes: BTreeSet::new(),
             draining: false,
         }
     }
@@ -647,8 +643,6 @@ impl Harness {
                     .retain(|(subscriber, _, _), _| *subscriber != session_id);
                 self.blocked_publishes
                     .retain(|(subscriber, _)| *subscriber != session_id);
-                self.malformed_publishes
-                    .retain(|(publisher, _)| *publisher != session_id);
                 self.check_session_forgotten(session_id)?;
                 self.slots[slot].session_id = self.next_session_id;
                 self.next_session_id += 1;
@@ -693,10 +687,6 @@ impl Harness {
                         publisher_session_id,
                         producer.state.subscription.request_id(),
                     )?;
-                    if producer.state.origin == ProducerOrigin::Publish {
-                        self.malformed_publishes
-                            .insert((publisher_session_id, track));
-                    }
                 }
                 self.malformed_tracks.insert(track);
                 return Ok(vec![SilentEnd::Track(track)]);
@@ -1007,7 +997,7 @@ impl Harness {
         prop_assert_eq!(producers, self.producers.clone(), "upstream subscriptions");
 
         // A PUBLISH handler is registered exactly while its PUBLISH feeds
-        // the track, except the `malformed_publishes`.
+        // the track.
         let mut handlers: Vec<_> = directory
             .published_handlers
             .read()
@@ -1031,19 +1021,7 @@ impl Harness {
             .map(|((track, publisher), _)| (*publisher, *track))
             .collect();
         expected_handlers.sort();
-        let (mut registered_handlers, unexpected_handlers): (Vec<_>, Vec<_>) = handlers
-            .iter()
-            .copied()
-            .partition(|handler| expected_handlers.contains(handler));
-        registered_handlers.dedup_by(|a, b| a == b && self.malformed_publishes.contains(a));
-        prop_assert_eq!(&registered_handlers, &expected_handlers, "PUBLISH handlers");
-        prop_assert!(
-            unexpected_handlers
-                .iter()
-                .all(|handler| self.malformed_publishes.contains(handler)),
-            "PUBLISH handlers {:?} outlive their PUBLISH",
-            unexpected_handlers
-        );
+        prop_assert_eq!(&handlers, &expected_handlers, "PUBLISH handlers");
 
         // The upstream publishers of a track are the clients publishing its
         // namespace or PUBLISHing it.
