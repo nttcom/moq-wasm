@@ -78,8 +78,9 @@ field in a record. The app's server issues the robot a token with
 Every non-media track is an MSF event timeline (draft-ietf-moq-msf-02 §8)
 indexed by wallclock (`T`, milliseconds since the Unix epoch on the robot's
 clock unless noted). Its `data` is a JSON object whose structure the
-track's `eventType` defines (§5.2.6): `com.skyway.robotics.<track>.v1`, such
-as `com.skyway.robotics.state.v1`, after the existing `com.skyway.chat.v1`.
+track's `eventType` defines (§5.2.6): `io.skyway.research.moqt.robotics.<track>.v1`,
+such as `io.skyway.research.moqt.robotics.state.v1`, in the reverse of the
+relay's domain as the chat's `io.skyway.research.moqt.chat.v1` is.
 Milliseconds are fine enough for control loops up to a few hundred hertz.
 
 | Broadcast | Track | Packaging | Groups | Content |
@@ -295,9 +296,9 @@ Each step is its own pull request, stacked:
    `examples/browser` (cameras, keyboard or gamepad actions, take and
    release), with an E2E test.
 6. `recorder`: archive every broadcast's event timelines in a room.
-7. The LeRobot exporter.
-8. `bot-dispatcher`: the `policy` bot type and an example policy bot.
-9. Later: MCAP export, and a ROS 2 bridge (its own design).
+7. `bot-dispatcher`: the `policy` bot type and an example policy bot.
+8. Later: the LeRobot exporter, MCAP export, and a ROS 2 bridge (its own
+   design).
 
 ## Open questions
 - How fast the replay serves FETCH for a long recording, which sets how long
