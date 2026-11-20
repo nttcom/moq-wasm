@@ -119,6 +119,7 @@ session.close().await;
 | `TrackWriter` | `TrackWriter` | `Origin` に書く `write`（拡張ヘッダーは `ExtensionHeaders`）、`write_group`、`next_subscriber` |
 | `EventHandler` | なし | 下記 |
 | `RequestError` | `RequestError` | `kind`（`RequestKind`）、`failure`（`RequestFailure`）、`code()`（draft のエラーコード）、`reason()` |
+| `PublishTrackError` | なし（`Error` の文字列） | `publish_track` の `anyhow::Error` に入る。`OtherDelivery`: 登録し直したトラックが、もう一方の `datagram` でオブジェクトを送っていた |
 
 決めごと:
 

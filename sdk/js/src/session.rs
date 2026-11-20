@@ -291,9 +291,10 @@ impl Session {
     /// (60 s by default), or only the newest one when it is 0. With `publish`,
     /// the track is also sent with PUBLISH (draft-14 §9.13); announce the
     /// namespace first. With `datagram`, each object is sent in its own
-    /// datagram (draft-14 §10.3) instead of on subgroup streams; rejects for a
-    /// track already written to on streams. `priority` is the Publisher
-    /// Priority (draft-14 §7.1), 128 by default.
+    /// datagram (draft-14 §10.3) instead of on subgroup streams. A track
+    /// registered again keeps its objects, so once it has one, registering it
+    /// with the other `datagram` rejects and changes nothing. `priority` is
+    /// the Publisher Priority (draft-14 §7.1), 128 by default.
     #[wasm_bindgen(js_name = publishTrack)]
     pub async fn publish_track(
         &self,
