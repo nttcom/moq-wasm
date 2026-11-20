@@ -431,7 +431,21 @@ impl Archive {
         Ok(archive)
     }
 
+    /// Skips, with a WARN, an object whose extension headers the archive's
+    /// draft-14 encoding cannot carry (a draft-18 value of 2^62 or more).
     async fn write_event(&mut self, track: &str, event: Event) -> Result<()> {
+        if let Event::Object(object) = &event
+            && let Err(error) = object.extension_headers.encode()
+        {
+            tracing::warn!(
+                track_name = track,
+                group_id = object.location.group_id,
+                object_id = object.location.object_id,
+                %error,
+                "object not recorded: draft-14 cannot carry its extension headers"
+            );
+            return Ok(());
+        }
         if let Some(chunks) = &mut self.chunks {
             chunks.push(track, &event).await?;
         }
@@ -589,6 +603,43 @@ mod tests {
         assert_eq!(ExtensionHeaders::decode(&mut &encoded[..]), Ok(headers));
         assert_eq!(lines[2]["complete"], true);
         assert!(Archive::create(Some(path), "other", None).await.is_err());
+        tokio::fs::remove_dir_all(dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn skips_an_object_whose_extension_headers_draft14_cannot_carry() {
+        // Arrange
+        let dir = scratch_dir();
+        let path = dir.join("archive.jsonl");
+        let mut unencodable = stored_object(0, 0, "skipped".to_string());
+        unencodable
+            .extension_headers
+            .push_prior_group_id_gap(1 << 62);
+        let next = stored_object(0, 1, "recorded".to_string());
+        let mut archive = Archive::create(Some(path.clone()), "anon/test", None)
+            .await
+            .unwrap();
+
+        // Act
+        let skipped = archive
+            .write_event("video", Event::Object(unencodable))
+            .await;
+        archive
+            .write_event("video", Event::Object(next))
+            .await
+            .unwrap();
+        archive.finish().await.unwrap();
+        let text = tokio::fs::read_to_string(&path).await.unwrap();
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+
+        // Assert: the recording goes on without the object
+        assert!(skipped.is_ok());
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[1]["object"], "1");
+        assert_eq!(lines[2]["complete"], true);
         tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 

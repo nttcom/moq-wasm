@@ -410,7 +410,9 @@ manifest lists each chunk with its object range, its Timestamp range and the
 first object of each group it holds media of with its Timestamp, so the
 replay finds a track's recorded groups without reading the indexes.
 Duplicate object identities retain the first payload; conflicting duplicates
-fail the recording.
+fail the recording. Extension headers are stored in their draft-14 encoding,
+so an object with a draft-18 extension value of 2^62 or more, which that
+encoding cannot carry, is left out with a WARN and the recording goes on.
 
 A room recording stores its archives on one clock, time since the recording
 started (`recording_clock::RecordingClock`), whose start the room manifest
