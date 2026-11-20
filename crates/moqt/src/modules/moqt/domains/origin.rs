@@ -344,7 +344,7 @@ impl Origin {
     /// carry (draft-14 §7.1). Call this before the track is subscribed to: an
     /// open subscription keeps the priority it began with. Fails for a track
     /// that is not registered.
-    pub(crate) async fn set_publisher_priority(
+    pub async fn set_publisher_priority(
         &self,
         namespace: &str,
         track_name: &str,
