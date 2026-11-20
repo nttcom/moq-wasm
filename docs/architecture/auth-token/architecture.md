@@ -23,7 +23,7 @@ The payload claims:
 | --- | --- |
 | `appId` | The registered app whose secret signed the token; also the namespace root |
 | `publish` / `subscribe` | Relative namespace path the token may publish / subscribe under; `""` is the whole app root; absent means not allowed |
-| `bots` | Relative namespace path under which the token may start, stop and list bots on the bot service (docs/architecture/bots/architecture.md); `""` is the whole app root; absent on client tokens |
+| `bots` | Relative namespace path under which the token may start, stop and list bots on the bot service (docs/architecture/bot-dispatcher/architecture.md); `""` is the whole app root; absent on client tokens |
 | `iat` / `exp` | Unix seconds; judged by `SignedToken::check` with the reader's `ClaimPolicy`, never by the VTS |
 | `relayId` | The `RELAY_ID` of the relay presenting a relay app's token; the accepting relay records it as `peer_relay_id`. Absent on client tokens |
 

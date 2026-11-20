@@ -4,26 +4,26 @@ from collections.abc import Awaitable, Callable
 
 import moq_wasm
 from loguru import logger
-from moq_bot_job.bot_job import Bots
+from moq_bot_job.bot_job import BotDispatcher
 
 RECONNECT_DELAY_SECONDS = 2.0
 
 
 async def stay_connected(
-    args: argparse.Namespace, bots: Bots, in_session: Callable[[moq_wasm.Session], Awaitable[None]]
+    args: argparse.Namespace, dispatcher: BotDispatcher, in_session: Callable[[moq_wasm.Session], Awaitable[None]]
 ) -> None:
     """Runs `in_session` on a relay session with the bot's token until it returns. Retries the first
     connection, and runs `in_session` again on a new session when `in_session` raises
     RuntimeError. Raises what ended the session, such as `moq_wasm.ConnectionLost` or
     `moq_wasm.TokenExpired`."""
-    token = await bots.token()
+    token = await dispatcher.token()
     while True:
         try:
             session = await moq_wasm.connect(
                 args.relay_url,
                 verify_certificate=not args.insecure,
                 token=token,
-                refresh_token=bots.refresh if token else None,
+                refresh_token=dispatcher.refresh if token else None,
             )
         except RuntimeError as error:
             logger.warning(f"cannot connect to {args.relay_url}: {error}")

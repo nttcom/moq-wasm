@@ -4,7 +4,7 @@ import { type TranscriberStatus, type TranscriptRecord, freshCaptions, transcrip
 import type { LocalSession } from '../session/localSession'
 import { TRANSCRIBER_AVAILABLE, TRANSCRIBER_BOT_TYPE } from '../session/trackNamespace'
 
-/// How often a page that started the transcriber asks `bots` whether it failed before joining the room.
+/// How often a page that started the transcriber asks `bot-dispatcher` whether it failed before joining the room.
 const STARTING_POLL_INTERVAL_MS = 5_000
 
 /// The recognizers the deployed transcriber offers (docs/architecture/ai-bots/meeting-transcriber.md).

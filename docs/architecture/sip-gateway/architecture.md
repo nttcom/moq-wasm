@@ -55,7 +55,7 @@ member.
 
 ### Who may call
 A call costs money and an outbound call can be abused for toll fraud, so a
-page never starts one. As with bots (docs/architecture/bots/architecture.md),
+page never starts one. As with bots (docs/architecture/bot-dispatcher/architecture.md),
 the app's server decides and calls the gateway with a short-lived token signed
 with the app's secret, carrying one new claim:
 

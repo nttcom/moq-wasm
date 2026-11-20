@@ -11,10 +11,10 @@ use moqt::{
 use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal};
 
 /// The token a recording or a replay presents to the relay: the one the
-/// caller of the API sent, or the one `bots` signed for the recording.
+/// caller of the API sent, or the one `bot-dispatcher` signed for the recording.
 #[derive(Clone)]
 pub(crate) struct ServiceToken {
-    /// `None` only with `--insecure-skip-auth` or a `bots` without authorization.
+    /// `None` only with `--insecure-skip-auth` or a `bot-dispatcher` without authorization.
     pub(crate) token: Option<String>,
     /// Without it the relay ends the session when `token` expires.
     pub(crate) renewal: Option<TokenRenewal>,

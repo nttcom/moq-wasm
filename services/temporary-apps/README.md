@@ -28,7 +28,7 @@ GET /healthz -> 200 { "status": "ok" }
 - A refresh needs an unexpired token this service signed, so an app lives as
   long as someone keeps refreshing it.
 - `POST /tokens` is limited to 30 new apps per client address per hour.
-- `/bots/{type}` passes a page's call on to `bots` as the app server of its
+- `/bots/{type}` passes a page's call on to `bot-dispatcher` as the app server of its
   temporary app; `POST` is limited to 10 calls per client address per hour.
 
 ## Configuration
@@ -37,7 +37,7 @@ GET /healthz -> 200 { "status": "ok" }
 | --- | --- | --- |
 | `TEMPORARY_APPS_SECRET` | — | Secret the tokens are signed with; the VTS's `VTS_TEMPORARY_APP_SECRET` must be the same value |
 | `TEMPORARY_APPS_TRUSTED_PROXY_HOPS` | `0` | Proxies in front that append to `X-Forwarded-For`; `0` takes the connection's peer address |
-| `TEMPORARY_APPS_BOTS_URL` | — | Base URL of `bots` the pages reach through `/bots/{type}`; without it those routes are `404` |
+| `TEMPORARY_APPS_BOT_DISPATCHER_URL` | — | Base URL of `bot-dispatcher` the pages reach through `/bots/{type}`; without it those routes are `404` |
 | `TEMPORARY_APPS_BOT_TYPES` | — | Comma-separated bot types a temporary app may start, e.g. `recorder` |
 | `PORT` | `8083` | Listen port |
 

@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::{
     RoomArgs,
-    bots_client::BotsClient,
+    bot_dispatcher_client::BotDispatcherClient,
     recorder::{BroadcastOptions, Content},
     relay::ServiceToken,
     room_recording::{RecordingLimits, RoomConfig, RoomStatus, lock, record},
@@ -20,7 +20,7 @@ use crate::{
     store::RecordingStore,
 };
 
-/// A room recording `bots` started.
+/// A room recording `bot-dispatcher` started.
 pub(crate) struct RecordingJob {
     pub(crate) store: RecordingStore,
     pub(crate) store_url: Url,
@@ -33,11 +33,11 @@ pub(crate) struct RecordingJob {
     pub(crate) output_dir: PathBuf,
     /// Holds the room; the recording reports to it and publishes its
     /// presence.
-    pub(crate) bots: Arc<BotsClient>,
+    pub(crate) dispatcher: Arc<BotDispatcherClient>,
 }
 
 /// Records the room and keeps its state in the store while it runs, reports
-/// the end to `bots`, then starts the composite if one was requested.
+/// the end to `bot-dispatcher`, then starts the composite if one was requested.
 pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
     let RecordingJob {
         store,
@@ -48,7 +48,7 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         limits,
         token,
         output_dir,
-        bots,
+        dispatcher,
     } = job;
     let id = record_state.id.clone();
     let prefix = record_state.namespace_prefix.clone();
@@ -62,7 +62,7 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         record_state.clone(),
         Arc::clone(&status),
         stop_sender,
-        Arc::clone(&bots),
+        Arc::clone(&dispatcher),
     )?;
     let config = RoomConfig {
         relay: room.relay.clone(),
@@ -84,7 +84,7 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         },
         format: record_state.format,
         limits,
-        presence: format!("{prefix}/bots/{}", bots.bot_type()),
+        presence: format!("{prefix}/bots/{}", dispatcher.bot_type()),
     };
     let result = record(config, stop, &status).await;
     sync.finish().await;
@@ -108,10 +108,13 @@ pub(crate) async fn record_room(job: RecordingJob) -> Result<()> {
         RoomState::Failed(error) => Some(error.as_str()),
         _ => None,
     };
-    if let Err(error) = bots.heartbeat(bot_state(&finished.state), error).await {
+    if let Err(error) = dispatcher
+        .heartbeat(bot_state(&finished.state), error)
+        .await
+    {
         tracing::warn!(
             error = format!("{error:#}"),
-            "cannot report the end to bots"
+            "cannot report the end to bot-dispatcher"
         );
     }
     tracing::info!(%id, state = ?finished.state, "recording job finished");

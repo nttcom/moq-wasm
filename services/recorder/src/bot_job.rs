@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::{
     BotArgs,
-    bots_client::{BotState, BotsClient},
+    bot_dispatcher_client::{BotDispatcherClient, BotState},
     launcher::composite_launcher,
     record_job::{RecordingJob, record_room},
     recordings::recording_id,
@@ -17,22 +17,22 @@ use crate::{
     token_refresh_task::TokenRenewal,
 };
 
-/// Records the room `bots` started the bot for, under a new recording that
+/// Records the room `bot-dispatcher` started the bot for, under a new recording that
 /// `recorder serve` lists like any other.
 pub(crate) async fn run(args: BotArgs) -> Result<()> {
-    let bots = Arc::new(BotsClient::from_env(
-        args.bots_url.clone(),
+    let dispatcher = Arc::new(BotDispatcherClient::from_env(
+        args.bot_dispatcher_url.clone(),
         args.bot_type.clone(),
         args.bot_id.clone(),
     ));
-    let job = match prepare(args, &bots).await {
+    let job = match prepare(args, &dispatcher).await {
         Ok(job) => job,
         Err(error) => {
             let message = format!("{error:#}");
-            if let Err(report) = bots.heartbeat(BotState::Failed, Some(&message)).await {
+            if let Err(report) = dispatcher.heartbeat(BotState::Failed, Some(&message)).await {
                 tracing::warn!(
                     error = format!("{report:#}"),
-                    "cannot report the failure to bots"
+                    "cannot report the failure to bot-dispatcher"
                 );
             }
             return Err(error);
@@ -41,7 +41,7 @@ pub(crate) async fn run(args: BotArgs) -> Result<()> {
     record_room(job).await
 }
 
-async fn prepare(args: BotArgs, bots: &Arc<BotsClient>) -> Result<RecordingJob> {
+async fn prepare(args: BotArgs, dispatcher: &Arc<BotDispatcherClient>) -> Result<RecordingJob> {
     let options: Value = match &args.options {
         Some(options) => serde_json::from_str(options).context("--options is not JSON")?,
         None => Value::Object(Default::default()),
@@ -51,7 +51,10 @@ async fn prepare(args: BotArgs, bots: &Arc<BotsClient>) -> Result<RecordingJob> 
         !(options.composite && options.format == RecordingFormat::Moq),
         "composite requires mp4 format"
     );
-    let token = bots.token().await.context("cannot get a token from bots")?;
+    let token = dispatcher
+        .token()
+        .await
+        .context("cannot get a token from bot-dispatcher")?;
     let store = RecordingStore::open(&args.store)?;
     let record_state = RoomRecord {
         id: recording_id(),
@@ -87,10 +90,10 @@ async fn prepare(args: BotArgs, bots: &Arc<BotsClient>) -> Result<RecordingJob> 
         token: ServiceToken {
             renewal: token
                 .is_some()
-                .then(|| TokenRenewal::Bots(Arc::clone(bots))),
+                .then(|| TokenRenewal::BotDispatcher(Arc::clone(dispatcher))),
             token,
         },
         output_dir: args.output_dir,
-        bots: Arc::clone(bots),
+        dispatcher: Arc::clone(dispatcher),
     })
 }

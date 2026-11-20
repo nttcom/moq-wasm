@@ -1,4 +1,4 @@
-# object_store for the bots' state
+# object_store for bot-dispatcher's state
 
 ## Status
 
@@ -10,13 +10,13 @@ Accepted
 
 ## What
 
-Add `object_store` (`gcp`, `fs`) and `url` as direct dependencies of `bots`.
+Add `object_store` (`gcp`, `fs`) and `url` as direct dependencies of `bot-dispatcher`.
 `store.rs` keeps the bot records, stop requests and room holders in a
 Cloud Storage bucket or a local directory.
 
 ## Context
 
-`bots` scales to zero and runs any number of instances, so its state lives
+`bot-dispatcher` scales to zero and runs any number of instances, so its state lives
 outside the process. One room runs at most one bot of each type, which needs
 a create-if-absent and a replace-if-unchanged write.
 

@@ -89,7 +89,7 @@ services:
     depends_on:
       - live-ingest
 
-  # The voice agent page asks temporary-apps for its bot, which bots launches as a local process.
+  # The voice agent page asks temporary-apps for its bot, which bot-dispatcher launches as a local process.
   temporary-apps:
     image: moqt-temporary-apps:local
     build:
@@ -100,15 +100,15 @@ services:
     environment:
       PORT: "8083"
       TEMPORARY_APPS_SECRET: *temporary-app-secret
-      TEMPORARY_APPS_BOTS_URL: http://bots:8098
+      TEMPORARY_APPS_BOT_DISPATCHER_URL: http://bot-dispatcher:8098
       TEMPORARY_APPS_BOT_TYPES: voice-agent
     ports:
       - "8083:8083"
     depends_on:
-      - bots
+      - bot-dispatcher
 
-  bots:
-    image: moqt-python-bots:demo
+  bot-dispatcher:
+    image: moqt-bot-dispatcher:demo
     build:
       context: .
       dockerfile: examples/python/Dockerfile
@@ -116,12 +116,12 @@ services:
     profiles:
       - voice-agent
     environment:
-      BOTS_PUBLIC_URL: http://bots:8098
-      BOTS_STORE_URL: file:///tmp/
-      BOTS_VTS_URL: http://vts:8081/verify
-      BOTS_REGISTRY_FILE: /etc/vts/apps.json
-      BOTS_TEMPORARY_APP_SECRET: *temporary-app-secret
-      BOTS_TYPES: >-
+      BOT_DISPATCHER_PUBLIC_URL: http://bot-dispatcher:8098
+      BOT_DISPATCHER_STORE_URL: file:///tmp/
+      BOT_DISPATCHER_VTS_URL: http://vts:8081/verify
+      BOT_DISPATCHER_REGISTRY_FILE: /etc/vts/apps.json
+      BOT_DISPATCHER_TEMPORARY_APP_SECRET: *temporary-app-secret
+      BOT_DISPATCHER_TYPES: >-
         {"voice-agent": {"launcher": {"kind": "local", "program": "/app/moq-ai-voice-agent/.venv/bin/python"},
         "args": ["-m", "moq_ai_voice_agent.bot", "--relay-url", "https://relay:4433", "--insecure", "--no-telemetry"],
         "grace_seconds": 30, "max_seconds": 3600, "max_running": 4}}

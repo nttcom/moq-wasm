@@ -12,20 +12,20 @@ use tokio::{
 };
 
 use crate::{
-    bots_client::{BotState, BotsClient},
+    bot_dispatcher_client::{BotDispatcherClient, BotState},
     room_recording::{RoomStatus, lock, stopping},
     room_state::{RoomRecord, RoomState},
     store::RecordingStore,
 };
 
-/// How often the job reports to `bots` and writes changed progress.
+/// How often the job reports to `bot-dispatcher` and writes changed progress.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How often the state is written even when nothing changed, so that the
 /// API can tell a running job from one that died.
 pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Keeps a recording job's `state/<id>.json` in sync with its `RoomStatus`,
-/// reports it to `bots`, and turns a stop request from `bots`, SIGTERM (Cloud
+/// reports it to `bot-dispatcher`, and turns a stop request from `bot-dispatcher`, SIGTERM (Cloud
 /// Run stopping the job) or SIGINT into `stop_sender`.
 pub(crate) struct StateSyncTask {
     handle: JoinHandle<()>,
@@ -38,7 +38,7 @@ impl StateSyncTask {
         record: RoomRecord,
         status: Arc<Mutex<RoomStatus>>,
         stop_sender: watch::Sender<bool>,
-        bots: Arc<BotsClient>,
+        dispatcher: Arc<BotDispatcherClient>,
     ) -> Result<Self> {
         let mut terminate = signal(SignalKind::terminate())?;
         let mut interrupt = signal(SignalKind::interrupt())?;
@@ -54,13 +54,16 @@ impl StateSyncTask {
                     _ = terminate.recv() => request_stop(&status, &stop_sender, "SIGTERM"),
                     _ = interrupt.recv() => request_stop(&status, &stop_sender, "SIGINT"),
                 }
-                // Every poll, so a stop through `bots` takes effect within it.
+                // Every poll, so a stop through `bot-dispatcher` takes effect within it.
                 let state = bot_state(&lock(&status).state);
-                match bots.heartbeat(state, None).await {
-                    Ok(true) => request_stop(&status, &stop_sender, "bots"),
+                match dispatcher.heartbeat(state, None).await {
+                    Ok(true) => request_stop(&status, &stop_sender, "bot-dispatcher"),
                     Ok(false) => {}
                     Err(error) => {
-                        tracing::warn!(error = format!("{error:#}"), "cannot report to bots")
+                        tracing::warn!(
+                            error = format!("{error:#}"),
+                            "cannot report to bot-dispatcher"
+                        )
                     }
                 }
                 let current = with_status(&record, &lock(&status));

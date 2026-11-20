@@ -32,11 +32,11 @@ bot が聞くのは、ルームにいる参加者のうち最も早く入った 
 
 ## 起動
 
-bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、ルームごとに `voice-agent` 型の bot として起動します。
+bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-dispatcher/architecture.md)）が、ルームごとに `voice-agent` 型の bot として起動します。
 一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/voice-agent` を呼び、bot はルームに誰もいない状態が 30 秒続くか 1 時間たつと抜けます。Public モードのページでは bot は動きません。
 
-手元では、[Google AI Studio](https://aistudio.google.com/apikey) で Gemini API キーを取得して `uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
-bots は自分の環境変数を bot に引き継ぐので、bots を `GOOGLE_API_KEY=<API キー>` で起動します。
+手元では、[Google AI Studio](https://aistudio.google.com/apikey) で Gemini API キーを取得して `uv sync` で `.venv` を作り、`bot-dispatcher` の `BOT_DISPATCHER_TYPES` に次を足します（`bot-dispatcher` の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。
+`bot-dispatcher` は自分の環境変数を bot に引き継ぐので、`bot-dispatcher` を `GOOGLE_API_KEY=<API キー>` で起動します。
 
 ```json
 {

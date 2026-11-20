@@ -1,5 +1,5 @@
-"""A bot that the bot service (services/bots) launched for one room: its arguments, its calls back to
-the service, and the run that reports its state and ends it (docs/architecture/bots/architecture.md)."""
+"""A bot that the bot service (services/bot-dispatcher) launched for one room: its arguments, its calls back to
+the service, and the run that reports its state and ends it (docs/architecture/bot-dispatcher/architecture.md)."""
 
 import argparse
 import asyncio
@@ -17,7 +17,7 @@ from moq_bot_job.identity_token import IdentityToken, metadata_identity_token
 from moq_bot_job.relay import add_relay_arguments
 from moq_bot_job.telemetry import add_telemetry_arguments, report_logs, telemetry_endpoint
 
-BOT_KEY_ENV = "BOTS_BOT_KEY"
+BOT_KEY_ENV = "BOT_DISPATCHER_BOT_KEY"
 # A stop the app asked for is learnt at the next heartbeat.
 HEARTBEAT_SECONDS = 5.0
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
@@ -39,7 +39,7 @@ class BotJob:
 
     bot_type: str
     bot_id: str
-    bots_url: str
+    bot_dispatcher_url: str
     namespace_prefix: list[str]
     grace_seconds: float
     options: dict
@@ -57,7 +57,7 @@ def add_bot_job_arguments(parser: argparse.ArgumentParser) -> None:
     add_relay_arguments(parser)
     parser.add_argument("--bot-type", required=True)
     parser.add_argument("--bot-id", required=True)
-    parser.add_argument("--bots-url", required=True)
+    parser.add_argument("--bot-dispatcher-url", required=True)
     parser.add_argument("--namespace-prefix", required=True, help="the room, such as <app>/<room>")
     parser.add_argument("--grace-seconds", type=float, required=True)
     parser.add_argument("--max-seconds", type=float)
@@ -68,28 +68,28 @@ def bot_job_from_arguments(args: argparse.Namespace) -> BotJob:
     return BotJob(
         bot_type=args.bot_type,
         bot_id=args.bot_id,
-        bots_url=args.bots_url.rstrip("/"),
+        bot_dispatcher_url=args.bot_dispatcher_url.rstrip("/"),
         namespace_prefix=args.namespace_prefix.split("/"),
         grace_seconds=args.grace_seconds,
         options=args.options,
     )
 
 
-class Bots:
-    """The bot's calls to the bot service. It presents the key the service gave it in `BOTS_BOT_KEY`
+class BotDispatcher:
+    """The bot's calls to the bot service. It presents the key the service gave it in `BOT_DISPATCHER_BOT_KEY`
     when it was launched locally, and otherwise the Google ID token of the job's service account for
     the service's URL."""
 
     def __init__(self, http: aiohttp.ClientSession, job: BotJob, key: str | None, identity: IdentityToken | None):
         self._http = http
-        self._url = f"{job.bots_url}/bots/{job.bot_type}/{job.bot_id}"
+        self._url = f"{job.bot_dispatcher_url}/bots/{job.bot_type}/{job.bot_id}"
         self._key = key
         self._identity = identity
 
     @classmethod
-    def from_env(cls, http: aiohttp.ClientSession, job: BotJob) -> "Bots":
+    def from_env(cls, http: aiohttp.ClientSession, job: BotJob) -> "BotDispatcher":
         key = os.environ.get(BOT_KEY_ENV) or None
-        return cls(http, job, key, None if key else metadata_identity_token(http, job.bots_url))
+        return cls(http, job, key, None if key else metadata_identity_token(http, job.bot_dispatcher_url))
 
     async def token(self) -> str | None:
         """A new token for the relay; None from a service without authorization, whose bots join
@@ -126,18 +126,18 @@ class Bots:
 
 
 # Runs the bot in the job's room until it is cancelled, or returns once nobody is in the room. It
-# joins with `Bots.token` and keeps the token fresh with `Bots.refresh`.
-RunRoom = Callable[[BotJob, Bots], Awaitable[None]]
+# joins with `BotDispatcher.token` and keeps the token fresh with `BotDispatcher.refresh`.
+RunRoom = Callable[[BotJob, BotDispatcher], Awaitable[None]]
 
 
-async def run_bot_job(job: BotJob, bots: Bots, run_room: RunRoom) -> None:
+async def run_bot_job(job: BotJob, dispatcher: BotDispatcher, run_room: RunRoom) -> None:
     """Runs `run_room` and sends heartbeats until it returns or the bot service asks the bot to stop,
     then reports how the bot ended. Cancelling it, as a signal does, reports the bot finished. Raises
     what `run_room` raised, after reporting it."""
     try:
-        running = asyncio.ensure_future(run_room(job, bots))
+        running = asyncio.ensure_future(run_room(job, dispatcher))
         try:
-            while not running.done() and not await _asked_to_stop(bots):
+            while not running.done() and not await _asked_to_stop(dispatcher):
                 await asyncio.wait([running], timeout=HEARTBEAT_SECONDS)
         finally:
             running.cancel()
@@ -151,16 +151,16 @@ async def run_bot_job(job: BotJob, bots: Bots, run_room: RunRoom) -> None:
         logger.info(f"bot ended by the bot service: {error}")
         return
     except Exception as error:
-        await _report(bots, BotState.FAILED, repr(error))
+        await _report(dispatcher, BotState.FAILED, repr(error))
         raise
-    await _report(bots, BotState.FINISHED)
+    await _report(dispatcher, BotState.FINISHED)
 
 
-async def _asked_to_stop(bots: Bots) -> bool:
+async def _asked_to_stop(dispatcher: BotDispatcher) -> bool:
     """A heartbeat the service did not answer is not a reason to stop: it takes the bot as failed
     only once heartbeats stop for 90 s."""
     try:
-        stop = await bots.heartbeat(BotState.RUNNING)
+        stop = await dispatcher.heartbeat(BotState.RUNNING)
     except (aiohttp.ClientError, TimeoutError) as error:
         logger.warning(f"cannot send a heartbeat to the bot service: {error!r}")
         return False
@@ -169,9 +169,9 @@ async def _asked_to_stop(bots: Bots) -> bool:
     return stop
 
 
-async def _report(bots: Bots, state: BotState, error: str | None = None) -> None:
+async def _report(dispatcher: BotDispatcher, state: BotState, error: str | None = None) -> None:
     try:
-        await bots.heartbeat(state, error)
+        await dispatcher.heartbeat(state, error)
     except (BotEnded, aiohttp.ClientError, TimeoutError) as report:
         logger.warning(f"cannot report {state} to the bot service: {report!r}")
 
@@ -187,4 +187,4 @@ async def serve_bot_job(args: argparse.Namespace, run_room: RunRoom) -> None:
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(signum, task.cancel)
-        await run_bot_job(job, Bots.from_env(http, job), run_room)
+        await run_bot_job(job, BotDispatcher.from_env(http, job), run_room)

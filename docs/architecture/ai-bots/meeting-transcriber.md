@@ -9,7 +9,7 @@ Accepted
 ## Scope
 A new pipecat bot `examples/python/moq-meeting-transcriber`, which the bot
 service starts as the bot type `transcriber`
-(see [the bots design](../bots/architecture.md)), and the Meeting page
+(see [the bot-dispatcher design](../bot-dispatcher/architecture.md)), and the Meeting page
 (`examples/browser/examples/meeting`).
 The bot reaches the relay through this repository's Python bindings
 (`crates/python`, see [its design](../python/architecture.md)).
@@ -66,21 +66,21 @@ sequenceDiagram
 ### Rooms it serves
 The page starts the transcriber through the temporary-apps service, the app
 server of temporary apps (see "Temporary apps" in
-[the bots design](../bots/architecture.md)), so the captions button shows only
+[the bot-dispatcher design](../bot-dispatcher/architecture.md)), so the captions button shows only
 in a temporary app's room. A registered app's server can start it in its own
-rooms through `bots`.
+rooms through `bot-dispatcher`.
 
 ### Starting and stopping
 The Meeting page gains a captions button in the bottom bar. Choosing a model
 from it sends `POST /bots/transcriber` with the room as `namespace_prefix` and
-the model as the option `asr`; `bots` launches one bot per room, and answers
-`409` while the room runs one. The bot joins the room with the token `bots`
+the model as the option `asr`; `bot-dispatcher` launches one bot per room, and answers
+`409` while the room runs one. The bot joins the room with the token `bot-dispatcher`
 signs for it and sends a heartbeat every 5 s. Until the bot's namespace
-appears, the page asks `bots` for the room's latest transcriber every 5 s and
+appears, the page asks `bot-dispatcher` for the room's latest transcriber every 5 s and
 shows `transcriber failed to start` if it failed.
 
 The bot ends by itself 30 s after the room's last participant withdraws their
-namespace, counted from its start too, and at the hour `bots` allows it. Stop
+namespace, counted from its start too, and at the hour `bot-dispatcher` allows it. Stop
 transcription in the button's menu asks for confirmation, then sends
 `DELETE /bots/transcriber/{id}`, which the bot learns at its next heartbeat;
 it then leaves the room for every page.
@@ -171,7 +171,7 @@ recognizers:
 
 ### Choosing the speech recognizer
 The page sends its choice as the launch's option, `{"asr": "qwen3-asr"}`, which
-`bots` hands to the bot in `--options`. The bot accepts its CPU recognizers and
+`bot-dispatcher` hands to the bot in `--options`. The bot accepts its CPU recognizers and
 the names the bot type's arguments name (`--asr qwen3-asr=<service URL>`, once
 per GPU service), and fails on anything else, so a request cannot point the
 bot at another server. A room runs with the choice of the launch that started

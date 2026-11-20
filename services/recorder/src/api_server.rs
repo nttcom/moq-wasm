@@ -18,8 +18,8 @@ use crate::{
     replay_stream::ReplayStream,
 };
 
-/// Serves the recordings that `recorder bot` jobs made; `bots` starts and
-/// stops them (docs/architecture/bots/architecture.md):
+/// Serves the recordings that `recorder bot` jobs made; `bot-dispatcher` starts and
+/// stops them (docs/architecture/bot-dispatcher/architecture.md):
 /// - `POST /recordings/{id}/publish` exposes a finished recording through relay FETCH
 ///   while its answer stays open (see [`ReplayStream`])
 /// - `GET /recordings/{id}` and `GET /recordings?namespace_prefix=` report it

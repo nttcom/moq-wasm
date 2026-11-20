@@ -4,8 +4,8 @@ mod archive;
 mod archive_chunks;
 mod archive_reader;
 mod archive_receiver;
+mod bot_dispatcher_client;
 mod bot_job;
-mod bots_client;
 mod catalog_reader;
 mod composite;
 mod composite_job;
@@ -176,22 +176,22 @@ pub(crate) struct ServeArgs {
     pub(crate) insecure_skip_tls_verify: bool,
 }
 
-/// Record a room as the bot `bots` started, then exit
-/// (docs/architecture/bots/architecture.md)
+/// Record a room as the bot `bot-dispatcher` started, then exit
+/// (docs/architecture/bot-dispatcher/architecture.md)
 #[derive(Parser, Debug)]
 #[command(name = "recorder bot", bin_name = "recorder bot", version)]
 pub(crate) struct BotArgs {
-    /// Type `bots` started the bot as, the name in its types file
+    /// Type `bot-dispatcher` started the bot as, the name in its types file
     #[arg(long)]
     pub(crate) bot_type: String,
 
-    /// Id `bots` gave the bot
+    /// Id `bot-dispatcher` gave the bot
     #[arg(long)]
     pub(crate) bot_id: String,
 
-    /// URL of `bots`, which signs the bot's token and takes its heartbeats
+    /// URL of `bot-dispatcher`, which signs the bot's token and takes its heartbeats
     #[arg(long)]
-    pub(crate) bots_url: String,
+    pub(crate) bot_dispatcher_url: String,
 
     /// The room: every broadcast under this prefix is recorded
     #[arg(long)]

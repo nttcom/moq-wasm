@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
         .context("TEMPORARY_APPS_TRUSTED_PROXY_HOPS must be a number")?
         .unwrap_or(0);
 
-    let bots = non_empty_env("TEMPORARY_APPS_BOTS_URL").map(|url| {
+    let bots = non_empty_env("TEMPORARY_APPS_BOT_DISPATCHER_URL").map(|url| {
         let types = non_empty_env("TEMPORARY_APPS_BOT_TYPES")
             .unwrap_or_default()
             .split(',')

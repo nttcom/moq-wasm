@@ -9,7 +9,7 @@ use tokio::{
 use crate::{ServeArgs, api_server::ApiServer, recordings::Recordings, store::RecordingStore};
 
 /// Serves the recording API until SIGINT or SIGTERM. The recordings run as
-/// jobs `bots` starts and go on after the server exits.
+/// jobs `bot-dispatcher` starts and go on after the server exits.
 pub(crate) async fn serve(mut args: ServeArgs) -> Result<()> {
     let store = RecordingStore::open(&args.store)?;
     let listen = args.listen;

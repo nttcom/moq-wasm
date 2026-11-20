@@ -18,7 +18,7 @@ static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) fn temporary_store() -> BotStore {
     let dir = std::env::temp_dir().join(format!(
-        "bots-store-{}-{}",
+        "bot-dispatcher-store-{}-{}",
         std::process::id(),
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
@@ -49,7 +49,7 @@ pub(crate) fn test_bots() -> TestBots {
         store.clone(),
         Some(BotTokenSigner::new(registry.store(), None)),
         None,
-        "http://bots.test".to_string(),
+        "http://bot-dispatcher.test".to_string(),
     );
     TestBots {
         bots,

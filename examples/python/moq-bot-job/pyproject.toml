@@ -1,7 +1,7 @@
 [project]
 name = "moq-bot-job"
 version = "0.1.0"
-description = "What a MoQ bot that the bot service (services/bots) launches for one room needs: its calls to the service, its relay arguments, identity tokens and log reporting"
+description = "What a MoQ bot that the bot service (services/bot-dispatcher) launches for one room needs: its calls to the service, its relay arguments, identity tokens and log reporting"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.11",

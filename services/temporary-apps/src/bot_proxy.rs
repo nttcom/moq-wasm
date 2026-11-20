@@ -6,20 +6,20 @@ use serde_json::Value;
 
 use crate::rate_limit::RateLimit;
 
-/// Calls `bots` for the pages of temporary apps, as an app server calls it for
-/// its own pages (docs/architecture/bots/architecture.md "Temporary apps").
+/// Calls `bot-dispatcher` for the pages of temporary apps, as an app server calls it for
+/// its own pages (docs/architecture/bot-dispatcher/architecture.md "Temporary apps").
 pub struct BotProxy {
     client: reqwest::Client,
-    bots_url: String,
+    bot_dispatcher_url: String,
     types: Vec<String>,
     launch_limit: RateLimit,
 }
 
 impl BotProxy {
-    pub fn new(bots_url: String, types: Vec<String>, launch_limit: RateLimit) -> Self {
+    pub fn new(bot_dispatcher_url: String, types: Vec<String>, launch_limit: RateLimit) -> Self {
         Self {
             client: reqwest::Client::new(),
-            bots_url: bots_url.trim_end_matches('/').to_string(),
+            bot_dispatcher_url: bot_dispatcher_url.trim_end_matches('/').to_string(),
             types,
             launch_limit,
         }
@@ -33,8 +33,8 @@ impl BotProxy {
         self.launch_limit.allow(client, now)
     }
 
-    /// Sends the request to the same path of `bots` with `launch_token` and
-    /// returns its status and body unchanged. Fails only when `bots` cannot
+    /// Sends the request to the same path of `bot-dispatcher` with `launch_token` and
+    /// returns its status and body unchanged. Fails only when `bot-dispatcher` cannot
     /// be reached.
     pub(crate) async fn forward(
         &self,
@@ -43,7 +43,7 @@ impl BotProxy {
         launch_token: &str,
         body: Option<Value>,
     ) -> Result<(StatusCode, Bytes)> {
-        let url = format!("{}{path_and_query}", self.bots_url);
+        let url = format!("{}{path_and_query}", self.bot_dispatcher_url);
         let mut request = self.client.request(method, &url).bearer_auth(launch_token);
         if let Some(body) = body {
             request = request.json(&body);

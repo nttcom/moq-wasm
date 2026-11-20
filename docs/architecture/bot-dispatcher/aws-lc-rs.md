@@ -10,14 +10,14 @@ Accepted
 
 ## What
 
-Add `aws-lc-rs` as a direct dependency of `bots`. `id_token.rs` verifies the
+Add `aws-lc-rs` as a direct dependency of `bot-dispatcher`. `id_token.rs` verifies the
 RS256 signature of a Google ID token with `RsaPublicKeyComponents`, and
 `bots.rs` draws bot ids and local bot keys from `SystemRandom`, hashes a key
 with SHA-256 and compares it in constant time.
 
 ## Context
 
-A bot authenticates to `bots` with the ID token of its job's service account
+A bot authenticates to `bot-dispatcher` with the ID token of its job's service account
 or, launched locally, with a random key. Verifying the first needs RSA; the
 second needs random bytes and a hash.
 

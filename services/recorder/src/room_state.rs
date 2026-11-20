@@ -12,7 +12,7 @@ pub(crate) enum RecordingFormat {
     Moq,
 }
 
-/// How a room is recorded: the `options` `bots` passes on.
+/// How a room is recorded: the `options` `bot-dispatcher` passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RecordingOptions {
     pub(crate) layout: Layout,

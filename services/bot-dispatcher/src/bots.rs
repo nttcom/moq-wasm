@@ -22,7 +22,7 @@ const HEARTBEAT_TIMEOUT_MS: u64 = 90_000;
 /// for the AI bots' image.
 const STARTUP_TIMEOUT_MS: u64 = 300_000;
 /// The environment variable a locally launched bot finds its key in.
-const BOT_KEY_ENV: &str = "BOTS_BOT_KEY";
+const BOT_KEY_ENV: &str = "BOT_DISPATCHER_BOT_KEY";
 
 #[derive(Debug)]
 pub(crate) enum StartError {
@@ -78,7 +78,7 @@ pub(crate) struct Bots {
     signer: Option<BotTokenSigner>,
     /// `None` accepts only locally launched bots, which present their key.
     id_tokens: Option<IdTokenVerifier>,
-    /// The URL a bot calls back, passed to it as `--bots-url`.
+    /// The URL a bot calls back, passed to it as `--bot-dispatcher-url`.
     public_url: String,
 }
 
@@ -170,7 +170,7 @@ impl Bots {
             bot_type.to_string(),
             "--bot-id".to_string(),
             id.clone(),
-            "--bots-url".to_string(),
+            "--bot-dispatcher-url".to_string(),
             self.public_url.clone(),
             "--namespace-prefix".to_string(),
             namespace_prefix.to_string(),

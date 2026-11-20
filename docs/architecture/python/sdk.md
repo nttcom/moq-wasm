@@ -342,7 +342,7 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   broadcast, `[*room, participant_id]` or the namespace `broadcast` names, is
   not a participant. A `broadcast` such as `[*room, "bots", "chat-moderation"]`
   puts it where the bot service lets its bots publish
-  (docs/architecture/bots/architecture.md "Bots in the room").
+  (docs/architecture/bot-dispatcher/architecture.md "Bots in the room").
 - **Audio in.** For each participant, the Opus LOC audio track of its catalog
   with the lowest bitrate, decoded and resampled to `audio_in_sample_rate`,
   is pushed as `UserAudioRawFrame` with the participant id as `user_id`. The

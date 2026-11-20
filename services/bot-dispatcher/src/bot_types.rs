@@ -8,7 +8,7 @@ use serde::Deserialize;
 /// What one kind of bot is and how it runs, read from the types file.
 pub(crate) struct BotType {
     pub(crate) launcher: JobLauncher,
-    /// The job's arguments before the ones `bots` adds.
+    /// The job's arguments before the ones `bot-dispatcher` adds.
     pub(crate) args: Vec<String>,
     /// How long the room may have no human member before the bot ends.
     pub(crate) grace: Duration,

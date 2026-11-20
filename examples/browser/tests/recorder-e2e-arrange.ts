@@ -17,10 +17,10 @@ import { liveViewerE2EConfig } from './live-viewer-e2e-arrange'
 const REPO_ROOT = resolve(__dirname, '..', '..', '..')
 /// Built by the runner that starts the relay.
 const RECORDER_BINARY = join(REPO_ROOT, 'target', 'debug', 'recorder')
-const BOTS_BINARY = join(REPO_ROOT, 'target', 'debug', 'bots')
+const BOT_DISPATCHER_BINARY = join(REPO_ROOT, 'target', 'debug', 'bot-dispatcher')
 const RECORDER_START_TIMEOUT_MS = 180_000
 const RECORDER_SERVE_PORT = Number(process.env.RECORDER_E2E_PORT ?? 8096)
-const BOTS_PORT = Number(process.env.BOTS_E2E_PORT ?? 8098)
+const BOT_DISPATCHER_PORT = Number(process.env.BOT_DISPATCHER_E2E_PORT ?? 8098)
 /// The recorder bot learns of a stop from its heartbeat every 5 s, then waits up to 10 s for the participants'
 /// tracks to end.
 const RECORDING_FINISH_TIMEOUT_MS = 30_000
@@ -94,11 +94,11 @@ export function recordingPlayerPath(recorderUrl: string, id: string): string {
 
 type RecorderServe = Awaited<ReturnType<typeof startRecorderServe>>
 
-/// `recorder serve` over a directory store, and `bots` without authorization, which the fixture calls as an app
+/// `recorder serve` over a directory store, and `bot-dispatcher` without authorization, which the fixture calls as an app
 /// server would to start each recording as a `recorder bot` child process.
 async function startRecorderServe() {
   const url = `http://127.0.0.1:${RECORDER_SERVE_PORT}`
-  const botsUrl = `http://127.0.0.1:${BOTS_PORT}`
+  const dispatcherUrl = `http://127.0.0.1:${BOT_DISPATCHER_PORT}`
   const dir = mkdtempSync(join(tmpdir(), 'moqt-recorder-serve-e2e-'))
   const storeDir = join(dir, 'store')
   const storeUrl = pathToFileURL(storeDir).href + '/'
@@ -139,25 +139,25 @@ async function startRecorderServe() {
     ],
     { cwd: REPO_ROOT, env, stdio: 'inherit' }
   )
-  const bots = spawn(BOTS_BINARY, [], {
+  const dispatcher = spawn(BOT_DISPATCHER_BINARY, [], {
     cwd: REPO_ROOT,
     env: {
       ...env,
-      PORT: String(BOTS_PORT),
-      BOTS_PUBLIC_URL: botsUrl,
-      BOTS_TYPES: botTypes,
-      BOTS_STORE_URL: pathToFileURL(join(dir, 'bots')).href + '/',
-      BOTS_INSECURE_SKIP_AUTH: 'true'
+      PORT: String(BOT_DISPATCHER_PORT),
+      BOT_DISPATCHER_PUBLIC_URL: dispatcherUrl,
+      BOT_DISPATCHER_TYPES: botTypes,
+      BOT_DISPATCHER_STORE_URL: pathToFileURL(join(dir, 'bot-dispatcher')).href + '/',
+      BOT_DISPATCHER_INSECURE_SKIP_AUTH: 'true'
     },
     stdio: 'inherit'
   })
   const exited = Promise.all(
-    [recorder, bots].map((child) => new Promise<number | null>((resolveExit) => child.on('exit', resolveExit)))
+    [recorder, dispatcher].map((child) => new Promise<number | null>((resolveExit) => child.on('exit', resolveExit)))
   )
   const deadline = Date.now() + RECORDER_START_TIMEOUT_MS
   for (const [child, healthz] of [
     [recorder, `${url}/healthz`],
-    [bots, `${botsUrl}/healthz`]
+    [dispatcher, `${dispatcherUrl}/healthz`]
   ] as const) {
     while (
       !(await fetch(healthz)
@@ -191,7 +191,7 @@ async function startRecorderServe() {
       format: RecordingFormat = 'mp4'
     ): Promise<RoomRecording> {
       const before = new Set((await listRecordings(api, namespacePrefix)).map((recording) => recording.id))
-      const bot = await jsonRequest<{ id: string }>(`${botsUrl}/bots/recorder`, {
+      const bot = await jsonRequest<{ id: string }>(`${dispatcherUrl}/bots/recorder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ namespace_prefix: namespacePrefix, options: { layout, composite, format } })
@@ -213,7 +213,7 @@ async function startRecorderServe() {
     },
     /// The stop request returns before the MP4 files are closed; wait until the recording reports `finished`.
     async stop(recording: RoomRecording): Promise<string[]> {
-      await jsonRequest(`${botsUrl}/bots/recorder/${botIds.get(recording.id)}`, { method: 'DELETE' })
+      await jsonRequest(`${dispatcherUrl}/bots/recorder/${botIds.get(recording.id)}`, { method: 'DELETE' })
       const deadline = Date.now() + RECORDING_FINISH_TIMEOUT_MS
       for (;;) {
         const state = (await current(recording))?.state
@@ -268,7 +268,7 @@ async function startRecorderServe() {
     },
     async close(): Promise<void> {
       recorder.kill('SIGINT')
-      bots.kill('SIGINT')
+      dispatcher.kill('SIGINT')
       await exited
     }
   }

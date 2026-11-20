@@ -4,11 +4,11 @@ use anyhow::{Context, Result, bail};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// The environment variable `bots` passes a locally launched bot its key in.
-const BOT_KEY_ENV: &str = "BOTS_BOT_KEY";
+/// The environment variable `bot-dispatcher` passes a locally launched bot its key in.
+const BOT_KEY_ENV: &str = "BOT_DISPATCHER_BOT_KEY";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What a bot reports to `bots` at every heartbeat.
+/// What a bot reports to `bot-dispatcher` at every heartbeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BotState {
     Running,
@@ -28,12 +28,12 @@ impl BotState {
     }
 }
 
-/// The calls a recording started by `bots` makes back to it
-/// (docs/architecture/bots/architecture.md): its token, and its heartbeat.
-/// It authenticates with the key `bots` gave it in `BOTS_BOT_KEY` when it was
+/// The calls a recording started by `bot-dispatcher` makes back to it
+/// (docs/architecture/bot-dispatcher/architecture.md): its token, and its heartbeat.
+/// It authenticates with the key `bot-dispatcher` gave it in `BOT_DISPATCHER_BOT_KEY` when it was
 /// launched locally, and otherwise with the Google ID token of the job's
-/// service account for the bots URL.
-pub(crate) struct BotsClient {
+/// service account for the bot-dispatcher URL.
+pub(crate) struct BotDispatcherClient {
     http: reqwest::Client,
     url: String,
     bot_type: String,
@@ -41,7 +41,7 @@ pub(crate) struct BotsClient {
     key: Option<String>,
 }
 
-impl BotsClient {
+impl BotDispatcherClient {
     pub(crate) fn from_env(url: String, bot_type: String, id: String) -> Self {
         let key = std::env::var(BOT_KEY_ENV)
             .ok()
@@ -59,28 +59,28 @@ impl BotsClient {
         }
     }
 
-    /// The type `bots` started the bot as, the last element of the namespace
+    /// The type `bot-dispatcher` started the bot as, the last element of the namespace
     /// its token may publish: `<room>/bots/<type>`.
     pub(crate) fn bot_type(&self) -> &str {
         &self.bot_type
     }
 
-    /// A new token for the relay; `None` from a `bots` without authorization,
-    /// whose bots join with no token. Fails when `bots` refuses, as it does
+    /// A new token for the relay; `None` from a `bot-dispatcher` without authorization,
+    /// whose bots join with no token. Fails when `bot-dispatcher` refuses, as it does
     /// once the bot has ended.
     pub(crate) async fn token(&self) -> Result<Option<String>> {
         let (status, body) = self.post("token", None).await?;
         if !status.is_success() {
-            bail!("bots answered {status}: {}", body["error"]);
+            bail!("bot-dispatcher answered {status}: {}", body["error"]);
         }
         match &body["token"] {
             Value::String(token) => Ok(Some(token.clone())),
             Value::Null => Ok(None),
-            _ => bail!("bots answered without a token"),
+            _ => bail!("bot-dispatcher answered without a token"),
         }
     }
 
-    /// `true` when `bots` asks the bot to stop, or takes it as ended.
+    /// `true` when `bot-dispatcher` asks the bot to stop, or takes it as ended.
     pub(crate) async fn heartbeat(&self, state: BotState, error: Option<&str>) -> Result<bool> {
         let body = json!({ "state": state.as_str(), "error": error });
         let (status, body) = self.post("heartbeat", Some(body)).await?;
@@ -88,7 +88,7 @@ impl BotsClient {
             return Ok(true);
         }
         if !status.is_success() {
-            bail!("bots answered {status}: {}", body["error"]);
+            bail!("bot-dispatcher answered {status}: {}", body["error"]);
         }
         Ok(body["stop"].as_bool().unwrap_or(false))
     }
@@ -130,9 +130,9 @@ mod tests {
 
     type Calls = Arc<Mutex<Vec<(String, String)>>>;
 
-    /// A `bots` that answers every heartbeat `410 Gone` and every token call
+    /// A `bot-dispatcher` that answers every heartbeat `410 Gone` and every token call
     /// with `jwt`, and keeps the path and the `Authorization` of each call.
-    async fn bots() -> (BotsClient, Calls, HttpServer) {
+    async fn bot_dispatcher() -> (BotDispatcherClient, Calls, HttpServer) {
         let calls: Calls = Arc::default();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/", listener.local_addr().unwrap());
@@ -155,16 +155,16 @@ mod tests {
             }
         });
         (
-            BotsClient::new(url, "recorder".into(), "b1".into(), Some("key".into())),
+            BotDispatcherClient::new(url, "recorder".into(), "b1".into(), Some("key".into())),
             calls,
             server,
         )
     }
 
     #[tokio::test]
-    async fn a_bot_presents_its_key_and_stops_once_bots_takes_it_as_ended() {
+    async fn a_bot_presents_its_key_and_stops_once_bot_dispatcher_takes_it_as_ended() {
         // Arrange
-        let (client, calls, _server) = bots().await;
+        let (client, calls, _server) = bot_dispatcher().await;
 
         // Act
         let token = client.token().await.unwrap();

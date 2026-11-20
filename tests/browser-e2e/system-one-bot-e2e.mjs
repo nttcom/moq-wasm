@@ -17,7 +17,7 @@ import {
   getDefaultMoqtUrl,
   jsDir,
 } from "./helpers.mjs";
-import { localPythonBot, startBots, temporaryAppSecret } from "./bots-dev.mjs";
+import { localPythonBot, startBotDispatcher, temporaryAppSecret } from "./bot-dispatcher-dev.mjs";
 import { startRelayAndPage } from "./relay-dev.mjs";
 
 /// A fake System One answering each POST with `{ answers: answer(body, settings) }`. `PUT /<key>`
@@ -44,7 +44,7 @@ async function startFakeSystemOne(answer, settings) {
   return server;
 }
 
-/// Starts the VTS, the relay, vite and a fake System One, then `bots`, which launches the bot in
+/// Starts the VTS, the relay, vite and a fake System One, then `bot-dispatcher`, which launches the bot in
 /// `examples/python/moq-<name>` as the type `<name>` for the pages of a temporary app, then runs
 /// `npm run e2e:<name>`, whose pages join that app. `startBeforeBot` starts whatever else the bot
 /// needs once the relay is up and returns the extra environment for the test. `maxRunning` is the
@@ -87,7 +87,7 @@ async function run({
 
     // The first run builds the moq-wasm SDK into the bot's environment.
     await runCommand(resolveCommandName("uv"), ["sync"], { cwd: botDir });
-    const temporaryAppsUrl = await startBots(
+    const temporaryAppsUrl = await startBotDispatcher(
       {
         [name]: {
           ...localPythonBot(botDir, `moq_${name.replaceAll("-", "_")}.bot`, [
