@@ -656,7 +656,12 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
-    use moqt::{ClientConfig, NATIVE, Subscription, publish::GroupBoundary};
+    use moqt::{
+        AuthorizationToken, ClientConfig, NATIVE, Subscription,
+        fetch::{Fetch, FetchOption},
+        object::Location,
+        publish::GroupBoundary,
+    };
     use std::collections::BTreeSet;
 
     use msf::Catalog;
@@ -872,7 +877,15 @@ mod tests {
         let catalog = catalog
             .expect("relay B must get the catalog")
             .expect("relay B keeps reading the catalog");
-        assert!(serde_json::from_slice::<Catalog>(&catalog.payload).is_ok());
+        let catalog: Catalog = serde_json::from_slice(&catalog.payload).unwrap();
+        assert!(
+            catalog
+                .tracks
+                .iter()
+                .flatten()
+                .any(|track| track.name == VIDEO_TRACK_NAME),
+            "{catalog:?}"
+        );
     }
 
     #[tokio::test]
@@ -1452,5 +1465,170 @@ mod tests {
             .await
             .expect("relay A must be closed once it unsubscribed");
         assert_eq!(close.code, Some(0x0));
+    }
+
+    async fn relay_fetch_group_ids(
+        relay_session: &Session,
+        track: &str,
+        start: Location,
+        end: Location,
+    ) -> Vec<u64> {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut subscriber = relay_session.subscriber();
+            let handle = subscriber
+                .fetch(
+                    "live/cam".to_string(),
+                    track.to_string(),
+                    start,
+                    end,
+                    FetchOption::default(),
+                )
+                .await
+                .unwrap();
+            let mut receiver = subscriber.accept_fetch_receiver(&handle).await.unwrap();
+            let mut group_ids = Vec::new();
+            while let Fetch::Object(object) = receiver.receive().await.unwrap() {
+                group_ids.push(object.location.group_id);
+            }
+            group_ids
+        })
+        .await
+        .expect("the FETCH must be answered")
+    }
+
+    #[tokio::test]
+    async fn a_fetch_reaches_media_groups_older_than_the_newest() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("fetch-media");
+        let (_connection, broadcast) = connected_broadcast(&relay).await;
+        for object in [keyframe_object(1), delta_object(), keyframe_object(2)] {
+            broadcast
+                .send_object(VIDEO_TRACK_NAME, object)
+                .await
+                .unwrap();
+        }
+        let relay_session = relay.session().await;
+
+        // Act
+        let group_ids = relay_fetch_group_ids(
+            &relay_session,
+            VIDEO_TRACK_NAME,
+            Location {
+                group_id: 1,
+                object_id: 0,
+            },
+            Location {
+                group_id: 2,
+                object_id: 0,
+            },
+        )
+        .await;
+
+        // Assert
+        assert_eq!(group_ids, [1, 1, 2]);
+    }
+
+    #[tokio::test]
+    async fn the_relay_session_carries_the_target_s_authorization_token() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("authorization-token");
+        let broadcast = live_cam(RelayConnection::new(Some(MoqtTarget {
+            url: relay.url.clone(),
+            auth_token: Some("secret".to_string()),
+            verify_certificate: false,
+        })));
+
+        // Act
+        broadcast.announce().await.unwrap();
+        let tokens = tokio::time::timeout(TEST_TIMEOUT, &mut relay.authorization_tokens)
+            .await
+            .expect("the publisher must connect")
+            .unwrap();
+
+        // Assert
+        assert!(
+            tokens.iter().any(|token| matches!(
+                token,
+                AuthorizationToken::UseValue { token_value, .. }
+                    if token_value.as_ref() == b"secret"
+            )),
+            "{tokens:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn streams_lists_the_groups_sent_to_the_relay() {
+        // Arrange
+        let relay = FakeRelay::spawn("streams");
+        let (connection, broadcast) = connected_broadcast(&relay).await;
+
+        // Act
+        broadcast
+            .send_object(VIDEO_TRACK_NAME, keyframe_object(1))
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(
+            connection
+                .streams()
+                .iter()
+                .any(|record| record.track_name == VIDEO_TRACK_NAME && record.group_id == 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn close_ends_the_session_the_connection_opened() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("close-owned");
+        let (connection, _broadcast) = connected_broadcast(&relay).await;
+        let relay_session = relay.session().await;
+
+        // Act
+        connection.close().await;
+
+        // Assert
+        assert!(
+            tokio::time::timeout(TEST_TIMEOUT, relay_session.closed())
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_declared_track_takes_a_subscribe_before_any_catalog() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("declared-track");
+        let broadcast = live_cam(connection_to(&relay));
+        broadcast
+            .declare_tracks(&["video/profile_1".to_string()])
+            .await
+            .unwrap();
+        let relay_session = relay.session().await;
+
+        // Act
+        let subscribed = relay_subscribe(&relay_session, "live/cam", "video/profile_1").await;
+
+        // Assert
+        assert!(subscribed);
+    }
+
+    #[tokio::test]
+    async fn a_wait_for_a_subscriber_stays_pending_until_a_subscribe_arrives() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("wait-for-subscriber");
+        let (_connection, broadcast) = connected_broadcast(&relay).await;
+        let relay_session = relay.session().await;
+
+        // Act
+        let before_subscribe =
+            tokio::time::timeout(Duration::from_millis(200), broadcast.wait_for_subscriber()).await;
+        relay_subscribe(&relay_session, "live/cam", CATALOG_TRACK_NAME).await;
+        let after_subscribe =
+            tokio::time::timeout(TEST_TIMEOUT, broadcast.wait_for_subscriber()).await;
+
+        // Assert
+        assert!(before_subscribe.is_err());
+        assert!(after_subscribe.is_ok_and(|waited| waited.is_ok()));
     }
 }

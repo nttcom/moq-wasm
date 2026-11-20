@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use moqt::{
-    Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject, TrackReader,
-    subscribe::FilterType,
+    AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
+    TrackReader, subscribe::FilterType,
 };
 use msf::CATALOG_TRACK_NAME;
 use tokio::sync::{mpsc, oneshot};
@@ -15,6 +15,8 @@ use crate::broadcast::VIDEO_TRACK_NAME;
 pub(crate) struct FakeRelay {
     pub(crate) url: String,
     pub(crate) session: oneshot::Receiver<Arc<Session>>,
+    /// The AUTHORIZATION TOKEN parameters of the publisher's CLIENT_SETUP.
+    pub(crate) authorization_tokens: oneshot::Receiver<Vec<AuthorizationToken>>,
     pub(crate) requests: mpsc::UnboundedReceiver<String>,
     pub(crate) published: mpsc::UnboundedReceiver<Subscription>,
     video_objects: mpsc::UnboundedReceiver<TrackObject>,
@@ -36,6 +38,7 @@ impl FakeRelay {
         let endpoint = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
         let (session_sender, session) = oneshot::channel();
+        let (authorization_tokens_sender, authorization_tokens) = oneshot::channel();
         let (request_sender, requests) = mpsc::unbounded_channel();
         let (published_sender, published) = mpsc::unbounded_channel();
         let (video_object_sender, video_objects) = mpsc::unbounded_channel();
@@ -44,6 +47,7 @@ impl FakeRelay {
             let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
             let mut published_tracks = HashMap::new();
             let handshake = endpoint.accept().await.unwrap().await.unwrap();
+            let _ = authorization_tokens_sender.send(handshake.authorization_tokens().to_vec());
             let session = Arc::new(handshake.accept(&tracing::Span::current()).await.unwrap());
             let _ = session_sender.send(session.clone());
             while let Ok(event) = session.receive_event().await {
@@ -119,6 +123,7 @@ impl FakeRelay {
         Self {
             url,
             session,
+            authorization_tokens,
             requests,
             published,
             video_objects,
