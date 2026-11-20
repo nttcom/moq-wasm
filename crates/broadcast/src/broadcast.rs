@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose};
+use bytes::Bytes;
 use mediapack::{AudioConfig, VideoConfig, loc::VideoCodec, mp4::Fmp4TrackMuxer};
 use moqt::{
     executor,
@@ -87,6 +88,16 @@ impl Broadcast {
             return Ok(false);
         };
         relay.send_object(&self.namespace, track_name, object).await
+    }
+
+    /// Sends `payload` as a group of its own whose stream ends at once, so
+    /// `moqt::Session::close` waits for the peer to acknowledge it. `false`
+    /// when nothing was sent, as for `send_object`.
+    pub async fn send_group(&self, track_name: &str, payload: Bytes) -> Result<bool> {
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(false);
+        };
+        relay.send_group(&self.namespace, track_name, payload).await
     }
 
     /// Registers the keyframe requests and the demand of a video track its

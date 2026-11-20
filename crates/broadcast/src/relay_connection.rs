@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
+use bytes::Bytes;
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, RequestErrorCode, Session, SessionEvent,
     TransportStats,
@@ -400,11 +401,7 @@ impl ConnectedRelay {
         track_name: &str,
         object: OutgoingObject,
     ) -> Result<bool> {
-        let key = (namespace.join("/"), track_name.to_string());
-        if self.state.lock().await.disconnected {
-            bail!("MoQ publisher disconnected");
-        }
-        ensure_origin_track(&self.origin, &key).await;
+        let key = self.origin_track(namespace, track_name).await?;
         let bytes = object.payload.len();
         match self.origin.write(&key.0, &key.1, object).await? {
             WriteOutcome::Sent(placement) => {
@@ -423,6 +420,28 @@ impl ConnectedRelay {
             }
             WriteOutcome::NotSent => Ok(false),
         }
+    }
+
+    pub(crate) async fn send_group(
+        &self,
+        namespace: &[String],
+        track_name: &str,
+        payload: Bytes,
+    ) -> Result<bool> {
+        let key = self.origin_track(namespace, track_name).await?;
+        let bytes = payload.len();
+        let outcome = self.origin.write_group(&key.0, &key.1, payload).await?;
+        Ok(self.ledger.record_group(&key.1, &outcome, bytes))
+    }
+
+    /// The track's key, registered with the origin. Fails once disconnected.
+    async fn origin_track(&self, namespace: &[String], track_name: &str) -> Result<TrackKey> {
+        let key = (namespace.join("/"), track_name.to_string());
+        if self.state.lock().await.disconnected {
+            bail!("MoQ publisher disconnected");
+        }
+        ensure_origin_track(&self.origin, &key).await;
+        Ok(key)
     }
 
     pub(crate) async fn accept_new_group_requests(
@@ -734,7 +753,7 @@ mod tests {
         (connection, broadcast)
     }
 
-    /// The sleep gives relay B's answer to the PUBLISH time to arrive.
+    /// The sleep gives the relay's answer to the PUBLISH time to arrive.
     async fn wait_until_moved(relay_b: &mut FakeRelay) {
         relay_b
             .wait_for_request(&format!("PUBLISH live/cam/{VIDEO_TRACK_NAME}"))
@@ -930,6 +949,35 @@ mod tests {
             .unwrap()
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_group_sent_whole_reaches_the_relay_with_its_stream_finished() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("send-group");
+        let (connection, broadcast) = connected_broadcast(&relay).await;
+        wait_until_moved(&mut relay).await;
+
+        // Act
+        let sent = broadcast
+            .send_group(VIDEO_TRACK_NAME, Bytes::from_static(b"state"))
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(sent);
+        let object = tokio::time::timeout(TEST_TIMEOUT, relay.video_objects.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&object.payload[..], b"state");
+        let streams = connection.streams();
+        let video = streams
+            .iter()
+            .find(|record| record.track_name == VIDEO_TRACK_NAME)
+            .unwrap();
+        assert_eq!((video.group_id, video.bytes), (object.group_id, 5));
+        assert!(!video.is_open());
     }
 
     #[tokio::test]
