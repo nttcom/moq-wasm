@@ -103,6 +103,10 @@ class UtteranceSTTService(SegmentedSTTService):
     async def _recognize(self, audio: bytes) -> str:
         # A graceful stop of the pipeline waits for every queued utterance, and a CancelFrame queued
         # after it waits too, so dropping the utterances is what ends such a stop at once.
+        # Checked before the recognizer is called: an in-process model's thread runs on once its
+        # call is cancelled, and the lock it took is then released for the next call.
+        if self._dropped.is_set():
+            return ""
         recognition = asyncio.ensure_future(self._recognizer.recognize(audio))
         dropped = asyncio.ensure_future(self._dropped.wait())
         try:

@@ -100,10 +100,11 @@ async def test_a_recognizer_that_answers_at_once_gets_no_notice():
 
 
 async def speak_while_the_recognizer_is_busy(
-    monkeypatch, recognizer: HeldRecognizer, grace_seconds: float, *, leave: bool
+    monkeypatch, recognizer: HeldRecognizer, grace_seconds: float, *, leave: bool, utterances: int = 1
 ):
-    """Follows a room alice joins, and leaves if `leave`, while the recognizer works on her utterance."""
-    hear_utterances(monkeypatch)
+    """Follows a room alice joins, and leaves if `leave`, while the recognizer works on the first of
+    her `utterances`."""
+    hear_utterances(monkeypatch, utterances)
     session = NamespaceEvents()
     room = Room(refuse_connection, ROOM, recognizer, grace_seconds)
     following, transcript, _ = await follow_participants(room, session)
@@ -131,6 +132,23 @@ async def test_a_room_that_stops_drops_what_was_said_without_waiting_for_the_rec
     assert done == {following}
     assert following.cancelled()
     assert texts(transcript) == []
+
+
+@pytest.mark.parametrize("leave", [False, True])
+async def test_a_room_that_stops_starts_no_recognition_of_the_utterances_still_queued(monkeypatch, leave):
+    # Arrange: the second and third utterances wait while the recognizer works on the first
+    recognizer = HeldRecognizer("一", "二", "三")
+    following, _, _ = await speak_while_the_recognizer_is_busy(
+        monkeypatch, recognizer, 60, leave=leave, utterances=3
+    )
+
+    # Act
+    following.cancel()
+    await asyncio.wait([following], timeout=5)
+
+    # Assert
+    assert following.cancelled()
+    assert recognizer.calls == 1
 
 
 async def test_a_room_that_empties_still_transcribes_what_a_participant_who_left_said(monkeypatch):

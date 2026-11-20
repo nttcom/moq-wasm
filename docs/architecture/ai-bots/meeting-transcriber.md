@@ -106,7 +106,8 @@ it then leaves the room for every page.
   room keeps their pipeline transcribing the utterances it already heard, so
   what they said before leaving reaches the transcript; the bot leaves the room
   only after those. Stopping the bot drops them instead, those of a
-  participant who already left included, without waiting for the recognizer.
+  participant who already left included, without waiting for the recognizer
+  or handing it any more of them.
 
 ### Transcription
 Each participant gets a pipeline of `VADProcessor(SileroVADAnalyzer())` and an
