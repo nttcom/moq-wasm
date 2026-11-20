@@ -726,7 +726,7 @@ mod tests {
         video.bitrate = Some(1_000_000);
         video.framerate = Some(30.0);
         let mut chat = msf::Track::new("chat", KnownPackaging::EventTimeline, true);
-        chat.event_type = Some("com.skyway.chat.v1".into());
+        chat.event_type = Some("io.skyway.research.moqt.chat.v1".into());
         let mut timeline = msf::Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
         timeline.depends = Some(vec!["video".into()]);
         let catalog = serde_json::to_vec(&Catalog::new(vec![video, chat, timeline], 0)).unwrap();

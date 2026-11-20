@@ -17,7 +17,7 @@ use crate::{
     track_selection,
 };
 
-const TRANSCRIPT_EVENT_TYPE: &str = "com.skyway.transcript.v1";
+const TRANSCRIPT_EVENT_TYPE: &str = "io.skyway.research.moqt.transcript.v1";
 
 const BUILT_LOCATION: Location = Location {
     group_id: 0,
@@ -697,7 +697,7 @@ mod tests {
         let catalog: Catalog = serde_json::from_slice(&catalog.object.payload).unwrap();
         let tracks = catalog.tracks.unwrap();
         let mut transcript = Track::new("transcript", KnownPackaging::EventTimeline, false);
-        transcript.event_type = Some("com.skyway.transcript.v1".to_string());
+        transcript.event_type = Some("io.skyway.research.moqt.transcript.v1".to_string());
         transcript.role = Some(KnownTrackRole::Subtitle.into());
         transcript.label = Some("Transcript".to_string());
         transcript.depends = Some(vec!["video_timeline".into()]);

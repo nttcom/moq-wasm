@@ -5,9 +5,12 @@ export type EventKind = 'chat' | 'transcript'
 export type TimelineEvent = { at: number; kind: EventKind; speaker: string; text: string }
 
 /// The kind of each `eventType` (draft-ietf-moq-msf-02 §5.2.6) the page shows.
+/// `com.skyway.chat.v1` is the chat of moq-wasm 0.8.0 and earlier, which a
+/// replay still serves from the catalogs it stored.
 export const EVENT_KINDS: Readonly<Record<string, EventKind>> = {
+  'io.skyway.research.moqt.chat.v1': 'chat',
   'com.skyway.chat.v1': 'chat',
-  'com.skyway.transcript.v1': 'transcript'
+  'io.skyway.research.moqt.transcript.v1': 'transcript'
 }
 
 /// How long a transcribed utterance stays on its speaker's tile.

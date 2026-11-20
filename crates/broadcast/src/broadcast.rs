@@ -24,7 +24,7 @@ const AUDIO_TRACK_NAME: &str = "audio";
 const CMAF_TRACK_SUFFIX: &str = "_cmaf";
 const TIMELINE_TRACK_SUFFIX: &str = "_timeline";
 const CHAT_TRACK_NAME: &str = "chat";
-const CHAT_EVENT_TYPE: &str = "com.skyway.chat.v1";
+const CHAT_EVENT_TYPE: &str = "io.skyway.research.moqt.chat.v1";
 /// The `framerate` listed for a video whose source does not cap its rate.
 const NOMINAL_FRAMERATE: u32 = 30;
 /// Upper estimates of the bitrate an encoder spends on one channel.
