@@ -696,7 +696,9 @@ Relays do not use it; they
 forward from their own cache through the raw stream senders.
 
 - Per track (`ensure_track(namespace, name, first_group_id, retention)`):
-  `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`),
+  `ObjectNumbering` (`GroupBoundary::{Within, Next, At}` → `Placement`;
+  a group or object after one numbered u64::MAX fails the write instead of
+  wrapping),
   an `ObjectCache` with `Retention::For(duration)` or `Retention::NewestOnly`,
   and one outlet per subscription to
   the track (a SUBSCRIBE served or a PUBLISH sent): its publication state and

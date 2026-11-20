@@ -17,7 +17,7 @@ use crate::{
     modules::{executor, moqt::domains::session_context::SessionContext},
     object::{
         ContentExists, DatagramDelivery, DatagramSender, ExtensionHeaders, ForwardingPreference,
-        Location, Object, ObjectStatus,
+        Location, Object, ObjectStatus, StreamDataSenderFactory,
     },
     publish::PublishOption,
     subscribe::{
@@ -404,17 +404,13 @@ impl Origin {
         };
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
-        let next_group_id = track.numbering.next_group_id();
         let start = FilterType::NextGroupStart.start_location(track.numbering.largest());
         track.outlets.push(Outlet {
             request,
             publication: Publication::Published,
             start,
             forward,
-            writer: Some(TrackWriter::new(
-                publisher.create_stream(&subscription),
-                next_group_id,
-            )),
+            writer: Some(outlet_writer(publisher.create_stream(&subscription))),
             publisher,
             subscription,
         });
@@ -610,7 +606,6 @@ impl Origin {
             session: context.clone(),
         };
         let track = state.track_mut(&key)?;
-        let next_group_id = track.numbering.next_group_id();
         let start = handler
             .filter_type
             .start_location(track.numbering.largest());
@@ -620,10 +615,7 @@ impl Origin {
             publication: Publication::Subscribed,
             start,
             forward: handler.forward,
-            writer: Some(TrackWriter::new(
-                publisher.create_stream(&subscription),
-                next_group_id,
-            )),
+            writer: Some(outlet_writer(publisher.create_stream(&subscription))),
             publisher,
             subscription,
         });
@@ -1039,6 +1031,12 @@ fn content_exists(largest: Option<Location>) -> ContentExists {
 
 fn starts_at_or_before(start: Option<Location>, location: Location) -> bool {
     start.is_some_and(|start| start <= location)
+}
+
+/// The 0 is never used: `send_placed` and `Origin::write_group` open every
+/// group at the Group ID the numbering placed.
+fn outlet_writer(factory: StreamDataSenderFactory) -> TrackWriter {
+    TrackWriter::new(factory, 0)
 }
 
 /// A writer that has sent nothing joins the group the object is in, and so
@@ -2174,6 +2172,43 @@ mod tests {
             assert_eq!(ids(&cached), [(FIRST_GROUP_ID + 1, 0)]);
             assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
         }
+    }
+
+    #[tokio::test]
+    async fn a_draft18_origin_writes_the_largest_group_id_and_fails_a_group_after_it() {
+        // Arrange
+        let peers = origin_with_track("origin-largest-group-id", RETENTION, Version::Draft18).await;
+        let origin = &peers.origin;
+        let accepted = publish(&peers).await;
+
+        // Act
+        let last = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::At(u64::MAX), b"a"))
+            .await
+            .unwrap();
+        let in_group = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b"))
+            .await
+            .unwrap();
+        let after = origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"c"))
+            .await;
+        let mut reader = subscribed_track_reader(&peers.server, &accepted).await;
+        let received_last = within(reader.next_object()).await.unwrap().unwrap();
+        let received_in_group = within(reader.next_object()).await.unwrap().unwrap();
+
+        // Assert
+        assert_eq!(last, sent(u64::MAX, 0, true));
+        assert_eq!(in_group, sent(u64::MAX, 1, false));
+        assert!(after.is_err());
+        assert_eq!(
+            (received_last.group_id, received_last.object_id),
+            (u64::MAX, 0)
+        );
+        assert_eq!(
+            (received_in_group.group_id, received_in_group.object_id),
+            (u64::MAX, 1)
+        );
     }
 
     #[tokio::test]

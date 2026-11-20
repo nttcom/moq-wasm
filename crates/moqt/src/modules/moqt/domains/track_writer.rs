@@ -10,11 +10,13 @@ use crate::{
 };
 
 const PUBLISHER_PRIORITY: u8 = 128;
+const NO_GROUP_AFTER_MAX: &str = "no group follows group u64::MAX";
 
 pub struct TrackWriter {
     factory: StreamDataSenderFactory,
     first_group_id: u64,
-    next_group_id: u64,
+    /// `None` once group u64::MAX opened: no group follows it.
+    next_group_id: Option<u64>,
     group: Option<GroupSender>,
     /// A group left by `abandon_group`.
     abandoned: Option<GroupSender>,
@@ -27,7 +29,7 @@ impl TrackWriter {
         Self {
             factory,
             first_group_id,
-            next_group_id: first_group_id,
+            next_group_id: Some(first_group_id),
             group: None,
             abandoned: None,
             pending_group_gap: None,
@@ -57,7 +59,7 @@ impl TrackWriter {
             return Ok(());
         };
         self.reset_abandoned_group().await;
-        self.next_group_id = group_id;
+        self.next_group_id = Some(group_id);
         let mut group = self.open_group().await?;
         group.next_object_id = object_id;
         self.group = Some(group);
@@ -108,16 +110,16 @@ impl TrackWriter {
         if self.groups() == 0 {
             self.first_group_id = group_id;
         } else {
+            let next_group_id = self.next_group_id.context(NO_GROUP_AFTER_MAX)?;
             ensure!(
-                group_id >= self.next_group_id,
-                "group {group_id} precedes the next group {}",
-                self.next_group_id
+                group_id >= next_group_id,
+                "group {group_id} precedes the next group {next_group_id}"
             );
-            if group_id > self.next_group_id {
-                self.pending_group_gap = Some(group_id - self.next_group_id);
+            if group_id > next_group_id {
+                self.pending_group_gap = Some(group_id - next_group_id);
             }
         }
-        self.next_group_id = group_id;
+        self.next_group_id = Some(group_id);
         Ok(())
     }
 
@@ -192,12 +194,17 @@ impl TrackWriter {
         self.opened_streams
     }
 
+    /// The number of Group IDs from the first group to the last one opened,
+    /// saturating at u64::MAX when that span is all 2^64 of them.
     pub fn groups(&self) -> u64 {
-        self.next_group_id - self.first_group_id
+        match self.next_group_id {
+            Some(next_group_id) => next_group_id - self.first_group_id,
+            None => (u64::MAX - self.first_group_id).saturating_add(1),
+        }
     }
 
     pub fn current_group_id(&self) -> Option<u64> {
-        self.group.as_ref().map(|_| self.next_group_id - 1)
+        self.group.as_ref().map(|group| group.group_id)
     }
 
     fn with_pending_group_gap(
@@ -223,7 +230,7 @@ impl TrackWriter {
     }
 
     async fn open_group(&mut self) -> anyhow::Result<GroupSender> {
-        let group_id = self.next_group_id;
+        let group_id = self.next_group_id.context(NO_GROUP_AFTER_MAX)?;
         let stream = self.factory.next().await?;
         self.opened_streams += 1;
         let sender = stream
@@ -234,7 +241,7 @@ impl TrackWriter {
                 ends_group: false,
             })
             .await?;
-        self.next_group_id += 1;
+        self.next_group_id = group_id.checked_add(1);
         Ok(GroupSender {
             sender,
             group_id,
@@ -298,7 +305,7 @@ mod tests {
     use bytes::Bytes;
 
     use crate::{
-        TrackWriter,
+        Session, Subscription, TrackWriter, Version,
         modules::test_support::{
             DRAFTS, HANDSHAKE_TIMEOUT, accept_publish, connected_sessions, data_receiver,
             next_subgroup, subscribed_track_reader,
@@ -306,6 +313,27 @@ mod tests {
         object::{ExtensionHeaders, KeyValuePair, Subgroup, VariantType},
         publish::PublishOption,
     };
+
+    /// A draft-18 writer of a track the client published and the server
+    /// accepted: the client, the server, the server's subscription and the
+    /// writer.
+    async fn published_writer(
+        name: &str,
+        first_group_id: u64,
+    ) -> (Session, Session, Subscription, TrackWriter) {
+        let (client, server) = connected_sessions(name, Version::Draft18).await;
+        let publisher = client.publisher();
+        let (published, accepted) = tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+            tokio::join!(
+                publisher.publish("ns".into(), "track".into(), PublishOption::default()),
+                accept_publish(&server)
+            )
+        })
+        .await
+        .unwrap();
+        let writer = TrackWriter::new(publisher.create_stream(&published.unwrap()), first_group_id);
+        (client, server, accepted, writer)
+    }
 
     #[tokio::test]
     async fn objects_arrive_with_their_immutable_extensions_and_ids() {
@@ -422,6 +450,71 @@ mod tests {
             assert_eq!((third.group_id, third.object_id), (6, 1));
             assert!(third.extension_headers.prior_group_id_gap().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn the_largest_group_id_opens_and_no_group_follows_it() {
+        // Arrange
+        let (_client, server, accepted, mut writer) =
+            published_writer("track-writer-largest-group-id", 0).await;
+
+        // Act
+        writer.start_group_at(0).await.unwrap();
+        writer
+            .write(Bytes::from_static(b"a"), vec![])
+            .await
+            .unwrap();
+        writer.start_group_at(u64::MAX).await.unwrap();
+        writer
+            .write(Bytes::from_static(b"b"), vec![])
+            .await
+            .unwrap();
+        let after = writer.start_group().await;
+        let chosen_after = writer.start_group_at(u64::MAX).await;
+        let groups = writer.groups();
+        writer.finish().await.unwrap();
+        let mut reader = subscribed_track_reader(&server, &accepted).await;
+        let first = reader.next_object().await.unwrap().unwrap();
+        let last = reader.next_object().await.unwrap().unwrap();
+
+        // Assert: `groups` saturates at the span of all 2^64 Group IDs
+        assert!(after.is_err());
+        assert!(chosen_after.is_err());
+        assert_eq!(groups, u64::MAX);
+        assert_eq!((first.group_id, first.object_id), (0, 0));
+        assert_eq!((last.group_id, last.object_id), (u64::MAX, 0));
+        assert_eq!(
+            last.extension_headers.prior_group_id_gap(),
+            vec![u64::MAX - 1]
+        );
+    }
+
+    #[tokio::test]
+    async fn next_group_reaches_the_largest_group_id() {
+        // Arrange
+        let (_client, server, accepted, mut writer) =
+            published_writer("track-writer-next-largest-group-id", u64::MAX - 1).await;
+
+        // Act
+        writer.write_group(Bytes::from_static(b"a")).await.unwrap();
+        writer.start_group_at(u64::MAX).await.unwrap();
+        writer
+            .write(Bytes::from_static(b"b"), vec![])
+            .await
+            .unwrap();
+        let after = writer.write_group(Bytes::from_static(b"c")).await;
+        let groups = writer.groups();
+        writer.finish().await.unwrap();
+        let mut reader = subscribed_track_reader(&server, &accepted).await;
+        let first = reader.next_object().await.unwrap().unwrap();
+        let last = reader.next_object().await.unwrap().unwrap();
+
+        // Assert: choosing the next Group ID skips none, so no gap is announced
+        assert!(after.is_err());
+        assert_eq!(groups, 2);
+        assert_eq!(first.group_id, u64::MAX - 1);
+        assert_eq!(last.group_id, u64::MAX);
+        assert!(last.extension_headers.prior_group_id_gap().is_empty());
     }
 
     #[tokio::test]
