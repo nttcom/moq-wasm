@@ -1,5 +1,6 @@
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import cast
 
 from moq_wasm import Session, TrackWriter
@@ -14,6 +15,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.filters.identity_filter import IdentityFilter
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from moq_meeting_transcriber import participant
 from moq_meeting_transcriber.audio import SAMPLE_RATE
 
 
@@ -47,6 +49,34 @@ class NamedRecognizer:
 class SessionRefusingNamespaces:
     async def watch_namespaces(self, prefix: list[str]):
         raise RuntimeError("SUBSCRIBE_NAMESPACE refused")
+
+
+class NamespaceEvents:
+    """A session whose SUBSCRIBE_NAMESPACE yields the namespaces `publish` and `withdraw` announce."""
+
+    def __init__(self):
+        self._events: asyncio.Queue[SimpleNamespace] = asyncio.Queue()
+
+    def publish(self, namespace: list[str]) -> None:
+        self._events.put_nowait(SimpleNamespace(namespace=namespace, active=True))
+
+    def withdraw(self, namespace: list[str]) -> None:
+        self._events.put_nowait(SimpleNamespace(namespace=namespace, active=False))
+
+    async def watch_namespaces(self, prefix: list[str]):
+        return self
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> SimpleNamespace:
+        return await self._events.get()
+
+    async def close(self) -> None:
+        pass
+
+    def _publishes(self, namespace: list[str]) -> bool:
+        return False
 
 
 class HeldRecognizer(NamedRecognizer):
@@ -91,3 +121,14 @@ class UtterancesInput(FrameProcessor):
 def passing_vad(vad_analyzer) -> FrameProcessor:
     """Stands in for `VADProcessor`: `UtterancesInput` frames the speech itself."""
     return IdentityFilter()
+
+
+def hear_utterances(monkeypatch, count: int = 1) -> None:
+    """Makes each participant's pipeline hear `count` utterances, framed by `UtterancesInput`."""
+    monkeypatch.setattr(participant, "MoqWasmParticipantInput", UtterancesInput)
+    monkeypatch.setattr(UtterancesInput, "count", count)
+    monkeypatch.setattr(participant, "VADProcessor", passing_vad)
+
+
+def texts(transcript: RecordingPublication) -> list[str]:
+    return [record["data"]["text"] for _, records in transcript.writes for record in records]
