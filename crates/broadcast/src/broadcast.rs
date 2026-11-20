@@ -171,9 +171,10 @@ impl Broadcast {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
+        let chat = chat_track(&Some(self.namespace.join("/")));
         relay
             .update_metadata(&self.namespace, |metadata| {
-                !std::mem::replace(&mut metadata.chat_offered, true)
+                metadata.offer_event_timeline(chat)
             })
             .await
     }
@@ -182,6 +183,7 @@ impl Broadcast {
     /// PUBLISH_DONE every track that catalog no longer lists: the track, its
     /// CMAF sibling, the media timeline of a source left without tracks and,
     /// when it was the last default track, the `audio` placeholder and the
+    /// chat unless it was offered. `track_name` may also name the offered
     /// chat. Stop sending the track's objects first. Updating its catalog
     /// again publishes it again. Fails when the relay session has ended.
     pub async fn remove_track(&self, track_name: &str) -> Result<()> {
@@ -316,16 +318,24 @@ pub(crate) fn timeline_track_name(source: &str) -> String {
     format!("{source}{TIMELINE_TRACK_SUFFIX}")
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CatalogMetadata {
     pub(crate) video_tracks: BTreeMap<String, VideoTrackInfo>,
     pub(crate) audio_tracks: BTreeMap<String, AudioTrackInfo>,
     /// The default `audio` was removed, so no placeholder stands in for it.
     default_audio_removed: bool,
-    chat_offered: bool,
+    /// The event timelines the publisher offered, by name, listed as given.
+    event_timelines: BTreeMap<String, Track>,
 }
 
 impl CatalogMetadata {
+    /// Whether the catalog changed.
+    pub(crate) fn offer_event_timeline(&mut self, track: Track) -> bool {
+        self.event_timelines
+            .insert(track.name.clone(), track.clone())
+            != Some(track)
+    }
+
     /// Whether the catalog changed.
     pub(crate) fn remove_track(&mut self, track_name: &str) -> bool {
         if track_name == AUDIO_TRACK_NAME && !self.default_audio_removed {
@@ -335,6 +345,7 @@ impl CatalogMetadata {
         }
         self.video_tracks.remove(track_name).is_some()
             || self.audio_tracks.remove(track_name).is_some()
+            || self.event_timelines.remove(track_name).is_some()
     }
 
     fn has_default_tracks(&self) -> bool {
@@ -444,7 +455,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         })
         .collect();
     tracks.extend(timelines);
-    if metadata.has_default_tracks() || metadata.chat_offered {
+    tracks.extend(metadata.event_timelines.values().cloned());
+    if metadata.has_default_tracks() && !metadata.event_timelines.contains_key(CHAT_TRACK_NAME) {
         tracks.push(chat_track(&namespace));
     }
 
@@ -710,10 +722,8 @@ mod tests {
     #[test]
     fn an_offered_chat_is_listed_without_default_tracks() {
         // Arrange
-        let metadata = CatalogMetadata {
-            chat_offered: true,
-            ..CatalogMetadata::default()
-        };
+        let mut metadata = CatalogMetadata::default();
+        metadata.offer_event_timeline(chat_track(&Some("live/test".to_string())));
 
         // Act
         let catalog = build_catalog("live/test", &metadata).unwrap();
@@ -948,7 +958,7 @@ mod tests {
         metadata
             .video_tracks
             .insert("screen".to_string(), video("screen"));
-        metadata.chat_offered = true;
+        metadata.offer_event_timeline(chat_track(&Some("live/test".to_string())));
         let catalog = build_catalog("live/test", &metadata).unwrap();
 
         // Act
@@ -1381,6 +1391,7 @@ mod tests {
             "{catalog:?}"
         );
     }
+
     #[tokio::test]
     async fn an_updated_audio_track_is_sent_in_a_catalog() {
         // Arrange
