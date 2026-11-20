@@ -1,9 +1,9 @@
 //! Checks the directory's bookkeeping against a model after every
 //! operation, over random sequences of the calls the control plane makes on
-//! it. A SUBSCRIBE runs in steps, as its handler awaits between its calls,
-//! and each upstream SUBSCRIBE of a `PendingProducerTask` is claimed and
-//! answered in steps of its own, so other sessions' calls interleave with
-//! them.
+//! it. A SUBSCRIBE and a PUBLISH run in steps, as their handlers await
+//! between their calls, and each upstream SUBSCRIBE of a
+//! `PendingProducerTask` is claimed and answered in steps of its own, so
+//! other sessions' calls interleave with them.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -97,6 +97,7 @@ enum Operation {
     UnsubscribeNamespace {
         pick: Index,
     },
+    /// The first step of a PUBLISH: its upstream subscription is registered.
     Publish {
         slot: usize,
         track: usize,
@@ -108,7 +109,7 @@ enum Operation {
         track: usize,
         forward: bool,
     },
-    /// The next step of the slot's SUBSCRIBE.
+    /// The next step of the slot's SUBSCRIBE, or the end of its PUBLISH.
     Advance {
         slot: usize,
     },
@@ -196,6 +197,10 @@ struct Slot {
     /// The SUBSCRIBE the session's worker is handling; it handles no other
     /// event meanwhile.
     in_flight: Option<PendingSubscribe>,
+    /// Whether the worker is between the two steps of a PUBLISH: its upstream
+    /// subscription is registered and it awaits the UNSUBSCRIBE of the
+    /// subscription it replaced before it sends PUBLISH_OK.
+    publishing: bool,
 }
 
 struct UpstreamSubscribe {
@@ -265,6 +270,7 @@ impl Harness {
                     session_id: index as SessionId + 1,
                     peer: *peer,
                     in_flight: None,
+                    publishing: false,
                 })
                 .collect(),
             next_session_id: SLOT_PEERS.len() as SessionId + 1,
@@ -289,15 +295,13 @@ impl Harness {
     /// The slot's session when its worker can take an event.
     fn idle_session(&self, slot: usize) -> Option<(SessionId, SessionPeer)> {
         let slot = &self.slots[slot];
-        slot.in_flight
-            .is_none()
-            .then_some((slot.session_id, slot.peer))
+        (slot.in_flight.is_none() && !slot.publishing).then_some((slot.session_id, slot.peer))
     }
 
     fn is_idle_session(&self, session_id: SessionId) -> bool {
-        self.slots
-            .iter()
-            .any(|slot| slot.session_id == session_id && slot.in_flight.is_none())
+        self.slots.iter().any(|slot| {
+            slot.session_id == session_id && slot.in_flight.is_none() && !slot.publishing
+        })
     }
 
     fn remove_producer(
@@ -527,10 +531,16 @@ impl Harness {
                     on_demand,
                     ..active_upstream(ProducerOrigin::Publish)
                 });
-                let (_, replaced) = self.directory.register_upstream_subscription(
+                let (namespace, name) = TRACKS[track];
+                let (_, replaced) = self.directory.register_published_subscription(
                     track_key(track),
                     session_id,
                     producer,
+                    Arc::new(MockPublishHandler::new(
+                        NAMESPACES[namespace],
+                        name,
+                        request_id,
+                    )),
                 );
                 let expected = self
                     .producers
@@ -541,16 +551,7 @@ impl Harness {
                     expected,
                     "PUBLISH replaced another upstream subscription than the session's earlier one"
                 );
-                let (namespace, name) = TRACKS[track];
-                self.directory.register_publish(
-                    session_id,
-                    peer,
-                    Arc::new(MockPublishHandler::new(
-                        NAMESPACES[namespace],
-                        name,
-                        request_id,
-                    )),
-                );
+                self.slots[slot].publishing = true;
             }
             Operation::Subscribe {
                 slot,
@@ -572,6 +573,10 @@ impl Harness {
                 }
             }
             Operation::Advance { slot } => {
+                if self.slots[slot].publishing {
+                    self.slots[slot].publishing = false;
+                    return Ok(Vec::new());
+                }
                 let session_id = self.slots[slot].session_id;
                 let peer = self.slots[slot].peer;
                 let pending = self.slots[slot].in_flight.take();
