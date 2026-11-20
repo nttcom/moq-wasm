@@ -41,6 +41,7 @@ mod tests {
             app_id: app_id.to_string(),
             publish: Some(String::new()),
             bots: None,
+            calls: None,
             subscribe: Some(String::new()),
             iat: None,
             exp,
