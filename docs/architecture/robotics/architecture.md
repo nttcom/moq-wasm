@@ -143,31 +143,45 @@ a subscriber aligns them without knowing the robot's offset either.
 
 ### Driving and holding still
 `robotics::Robot` runs on the robot and owns arbitration and the dead-man
-rule. The application gives it the namespaces that may drive, their
-precedence, and two durations, `max_action_age` (300 ms by default) and
+rule. The rules live in `robotics::Arbiter`, a synchronous state machine
+without I/O or a clock of its own: each call passes the robot's time, and
+`Robot` feeds it the events it reads from MoQT and acts on what it returns
+(apply an action entry, publish `control`, hold). The application gives
+`Robot` two durations, `max_action_age` (300 ms by default) and
 `hold_timeout` (500 ms by default), and receives the actions to execute.
 The defaults are starting points, to be tuned on the example over a real
 network:
 
-- **Candidates.** Operators (`operators/*`) take precedence over the policy
-  (`bots/policy`). An operator's fresh action makes it the driver while
-  nobody or the policy drives; it drives until its actions go stale or its
-  PUBLISH_NAMESPACE_DONE, and another operator's actions are dropped
-  meanwhile. The policy drives while no operator does and an episode is
-  open with the policy enabled, so an operator's action while the policy
-  drives is an intervention, which the `control` record shows, and the
-  policy drives again once the operator's actions go stale.
+- **Candidates.** Operators (`operators/<id>`) take precedence over the
+  policy (`bots/policy`); any other namespace never drives. An operator's
+  fresh action makes it the driver while nobody or the policy drives; it
+  drives until its actions go stale or its PUBLISH_NAMESPACE_DONE, and
+  another operator's actions are dropped meanwhile. The policy drives while
+  no operator does and an episode is open with the policy enabled, so it
+  starts at the episode's start and again when the driving operator goes
+  stale or leaves; its PUBLISH_NAMESPACE_DONE stops it until the next
+  episode. An operator's action while the policy drives is an
+  intervention; the `control` record shows it.
 - **Freshness.** An action is applied only when its sender may drive, its
-  `seq` is above the last one applied from it and `now − basis ≤
-  max_action_age`; within a chunk, entries whose time has passed are
-  skipped. Other actions are dropped.
-- **Dead man.** When no action has been applied for `hold_timeout`, the
-  robot calls the application's hold handler (hold position, stop motors:
-  the application's choice) and publishes `control` with reason `stale`.
-  A stale operator stops driving; the policy stays the driver, and its next
-  fresh action resumes control.
+  `seq` is above the last one applied from the same namespace and
+  `0 ≤ now − basis ≤ max_action_age`; within a chunk, entries whose time has
+  passed are skipped. A chunk with no entry left moved nothing: it counts
+  neither as applied for the dead man nor for `seq`, and makes nobody the
+  driver. Other actions are dropped. A namespace's last `seq` is forgotten
+  with its PUBLISH_NAMESPACE_DONE, so a publisher that returns may start
+  over.
+- **Dead man.** When the driver has applied no action for `hold_timeout`
+  since its last applied one or since it became driver, the robot calls the
+  application's hold handler (hold position, stop motors: the application's
+  choice) and publishes `control` with reason `stale`. A stale operator
+  stops driving, handing back to the policy during an episode that enables
+  it; the policy stays the driver, once stale until its next applied action.
+  When nobody drives any more, the robot holds at once. The hold handler is
+  called once per hold: not again before an action is applied.
 - **Session loss.** When the robot's session to the relay ends, it holds at
-  once, without waiting for `hold_timeout`.
+  once, without waiting for `hold_timeout`, even when it already holds
+  because the driver went stale, and forgets the drivers, the episode and
+  every `seq`; it publishes no `control`, which could not reach anyone.
 
 `Robot` publishes `state` from the values the application hands it at each
 control tick, `control` on each change, and `episode` on the application's
