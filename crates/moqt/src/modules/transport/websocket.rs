@@ -17,7 +17,8 @@ use crate::modules::{executor, transport::qmux::session_state::wait_until};
 
 /// The TLS ALPN of the HTTP/1.1 connection a WebSocket upgrades.
 pub(crate) const HTTP11_ALPN: &[u8] = b"http/1.1";
-/// TCP, TLS, the HTTP upgrade and the QMux transport parameters together.
+/// TLS, the HTTP upgrade and the QMux transport parameters of a connection
+/// the listener accepted.
 pub(crate) const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Messages are QMux records of at most `max_record_size` (16382 by
