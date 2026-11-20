@@ -35,6 +35,10 @@ pub struct Claims {
     /// bots on the bot service; `""` is the whole app root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bots: Option<String>,
+    /// Relative namespace path under which the token may place, answer and
+    /// end phone calls on the SIP gateway; `""` is the whole app root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calls: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iat: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -59,6 +63,7 @@ impl Claims {
             publish,
             subscribe,
             bots: None,
+            calls: None,
             iat: Some(now),
             exp: Some(now + lifetime.as_secs()),
             relay_id: None,
@@ -118,6 +123,7 @@ mod tests {
             "publish": "site1/cam1",
             "subscribe": "",
             "bots": "site1",
+            "calls": "site1/phone",
             "iat": 1,
             "exp": 2,
             "relayId": "relay-a",
@@ -135,6 +141,7 @@ mod tests {
                 publish: Some("site1/cam1".into()),
                 subscribe: Some(String::new()),
                 bots: Some("site1".into()),
+                calls: Some("site1/phone".into()),
                 iat: Some(1),
                 exp: Some(2),
                 relay_id: Some("relay-a".into()),
@@ -155,6 +162,7 @@ mod tests {
                 publish: None,
                 subscribe: None,
                 bots: None,
+                calls: None,
                 iat: None,
                 exp: None,
                 relay_id: None,
@@ -176,6 +184,7 @@ mod tests {
             publish: Some(String::new()),
             subscribe: None,
             bots: None,
+            calls: None,
             iat: Some(1),
             exp: Some(2),
             relay_id: None,
