@@ -1,4 +1,3 @@
-use crate::modules::extensions::buf_put_ext::BufPutExt;
 use crate::modules::moqt::control_plane::control_messages::util;
 use anyhow::Context;
 use bytes::BytesMut;
@@ -26,7 +25,7 @@ impl UnsubscribeNamespace {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_tuple(&self.track_namespace_prefix)?;
+        util::put_track_namespace(&mut payload, &self.track_namespace_prefix)?;
         Ok(payload)
     }
 }

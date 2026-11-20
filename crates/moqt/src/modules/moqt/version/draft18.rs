@@ -1624,6 +1624,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_subscribe_with_33_namespace_fields_fails_and_leaves_the_session_open() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-33-namespace-fields", "moqt").await;
+        let namespace = vec!["n"; 33].join("/");
+
+        // Act
+        let refused = client
+            .subscriber()
+            .subscribe(namespace, "video".into(), SubscribeOption::default())
+            .await;
+        subscribed(&client, &server, SubscribeOption::default()).await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{refused:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_fetch_returns_its_objects() {
         // Arrange
         let (client, server) = spawn_connected_draft18_sessions("draft18-fetch", "moqt").await;

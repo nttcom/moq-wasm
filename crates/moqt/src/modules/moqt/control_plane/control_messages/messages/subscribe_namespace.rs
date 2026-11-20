@@ -53,7 +53,7 @@ impl SubscribeNamespace {
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id)?;
-        payload.put_tuple(&self.track_namespace_prefix)?;
+        util::put_track_namespace(&mut payload, &self.track_namespace_prefix)?;
         let parameters: Vec<KeyValuePair> = self
             .authorization_token
             .iter()

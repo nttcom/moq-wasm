@@ -7,8 +7,6 @@ pub trait BufPutExt: BufMut {
     fn put_varint(&mut self, value: u64) -> anyhow::Result<()>;
     /// Fails like `put_varint` on a string of 2^62 bytes or more.
     fn put_string(&mut self, value: &str) -> anyhow::Result<()>;
-    /// Fails on a tuple of no fields, which draft-14 §2.4.1 forbids.
-    fn put_tuple(&mut self, value: &[String]) -> anyhow::Result<()>;
 }
 
 impl BufPutExt for BytesMut {
@@ -31,15 +29,6 @@ impl BufPutExt for BytesMut {
         let length = value.len() as u64;
         self.put_varint(length)?;
         self.extend_from_slice(value.as_bytes());
-        Ok(())
-    }
-
-    fn put_tuple(&mut self, value: &[String]) -> anyhow::Result<()> {
-        anyhow::ensure!(!value.is_empty(), "track namespace of no fields");
-        self.put_varint(value.len() as u64)?;
-        for element in value {
-            self.put_string(element)?;
-        }
         Ok(())
     }
 }
@@ -107,19 +96,6 @@ mod tests {
 
             // Act
             let result = bytes.put_varint(1 << 62);
-
-            // Assert
-            assert!(result.is_err());
-            assert!(bytes.is_empty());
-        }
-
-        #[test]
-        fn put_tuple_of_no_fields_fails_and_writes_nothing() {
-            // Arrange
-            let mut bytes = BytesMut::new();
-
-            // Act
-            let result = bytes.put_tuple(&[]);
 
             // Assert
             assert!(result.is_err());

@@ -315,7 +315,8 @@ impl ControlChannel {
             ),
         };
         // A value draft-14 cannot carry fails only this request: a namespace
-        // of no fields (§2.4.1), or a draft-18 vi64 of 2^62 or more.
+        // of no fields or more than 32, a Full Track Name over 4096 bytes
+        // (§2.4.1), or a draft-18 vi64 of 2^62 or more.
         let payload = payload
             .map_err(|_| RequestFailure::ProtocolViolation("request could not be encoded"))?;
         debug_assert_eq!(request_id, reservation.request_id());
@@ -1299,6 +1300,35 @@ mod tests {
             track_namespace_prefix: vec![],
             authorization_token: vec![],
             trace_context: None,
+        });
+
+        // Act
+        let refused = channel
+            .send_request(&connection, reservation, request)
+            .await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{:?}",
+            refused.err()
+        );
+        let next = channel.reserve_request_id().await.unwrap();
+        assert_eq!(next.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_request_with_a_full_track_name_of_4097_bytes_fails_and_leaves_its_request_id_unused()
+    {
+        // Arrange
+        let (client, _server) = spawn_connected_native_sessions("full-track-name-4097").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::Subscribe(Subscribe {
+            track_namespace: vec!["n".repeat(4000)],
+            track_name: "t".repeat(97),
+            ..track_status(reservation.request_id())
         });
 
         // Act
