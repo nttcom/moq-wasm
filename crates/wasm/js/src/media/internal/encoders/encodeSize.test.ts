@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { fitEncodeSize } from './encodeSize'
+import { fallbackBounds, fitEncodeSize, fitWithinBounds } from './encodeSize'
 
 test('a 16:10 screen keeps its aspect ratio within a 16:9 request', () => {
   // Arrange
@@ -66,4 +66,41 @@ test('a scale below 1 does not scale the frame up', () => {
     width: 640,
     height: 360
   })
+})
+
+test('a 5K screen fits 4K bounds at its own aspect ratio', () => {
+  // Act / Assert
+  expect(fitWithinBounds({ width: 5120, height: 2880 }, { width: 3840, height: 2160 })).toEqual({
+    width: 3840,
+    height: 2160
+  })
+})
+
+test('a portrait frame fits the bounds turned on their side', () => {
+  // Act / Assert
+  expect(fitWithinBounds({ width: 2880, height: 5120 }, { width: 3840, height: 2160 })).toEqual({
+    width: 2160,
+    height: 3840
+  })
+})
+
+test('a 5K screen is tried at its own size, then 4K, then full HD', () => {
+  // Act
+  const attempts = fallbackBounds({ width: 5120, height: 2880 })
+
+  // Assert
+  expect(attempts).toEqual([undefined, { width: 3840, height: 2160 }, { width: 1920, height: 1080 }])
+})
+
+test('bounds that do not make the size smaller are not tried', () => {
+  // Act
+  const attempts = fallbackBounds({ width: 2560, height: 1440 })
+
+  // Assert: 2560x1440 already fits 3840x2160
+  expect(attempts).toEqual([undefined, { width: 1920, height: 1080 }])
+})
+
+test('a full HD frame has no smaller bounds to fall back to', () => {
+  // Act / Assert
+  expect(fallbackBounds({ width: 1920, height: 1080 })).toEqual([undefined])
 })
