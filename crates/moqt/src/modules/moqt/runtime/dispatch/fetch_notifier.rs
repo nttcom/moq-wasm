@@ -49,7 +49,8 @@ mod tests {
         modules::{
             moqt::control_plane::error_codes::DataStreamResetCode,
             test_support::{
-                DRAFTS, capture_telemetry, connected_sessions, location, send_until_stopped, within,
+                DRAFTS, capture_telemetry, connected_sessions, location, next_event,
+                send_until_stopped, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -83,7 +84,7 @@ mod tests {
                     FetchOption::default(),
                 ),
                 async {
-                    let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+                    let SessionEvent::Fetch(handler) = next_event(server).await else {
                         panic!("expected FETCH from the client");
                     };
                     handler.ok(false, location(1, 0)).await.unwrap();
@@ -103,7 +104,7 @@ mod tests {
             connected_sessions("fetch-notifier-cancelled", Version::Draft14).await;
         let (handle, handler) = answered_fetch(&client, &server).await;
         client.subscriber().fetch_cancel(&handle).await.unwrap();
-        let SessionEvent::FetchCancel(_) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::FetchCancel(_) = next_event(&server).await else {
             panic!("expected FETCH_CANCEL from the client");
         };
 

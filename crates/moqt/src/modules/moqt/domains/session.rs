@@ -215,7 +215,7 @@ mod tests {
         CertificateVerification, ClientConfig, SessionEvent, TerminationErrorCode,
         modules::test_support::{
             DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, connect_sessions, connected_sessions,
-            native_client_with_config, published_track_over, receive_disconnected,
+            native_client_with_config, next_event, published_track_over, receive_disconnected,
             spawn_native_server,
         },
     };
@@ -390,7 +390,7 @@ mod tests {
                 .unwrap();
 
             // Assert
-            let SessionEvent::GoAway(go_away) = client.receive_event().await.unwrap() else {
+            let SessionEvent::GoAway(go_away) = next_event(&client).await else {
                 panic!("expected GOAWAY from the server");
             };
             assert_eq!(go_away.new_session_uri(), "moqt://relay-b.example:4433");
@@ -403,10 +403,7 @@ mod tests {
             // Arrange
             let (client, server) = connected_sessions("session-go-away-twice", version).await;
             server.go_away(String::new()).await.unwrap();
-            assert!(matches!(
-                client.receive_event().await.unwrap(),
-                SessionEvent::GoAway(_)
-            ));
+            assert!(matches!(next_event(&client).await, SessionEvent::GoAway(_)));
 
             // Act
             server.go_away(String::new()).await.unwrap();
@@ -494,7 +491,7 @@ mod tests {
             client.go_away(String::new()).await.unwrap();
 
             // Assert
-            let SessionEvent::GoAway(go_away) = server.receive_event().await.unwrap() else {
+            let SessionEvent::GoAway(go_away) = next_event(&server).await else {
                 panic!("expected GOAWAY from the client");
             };
             assert_eq!(go_away.new_session_uri(), "");

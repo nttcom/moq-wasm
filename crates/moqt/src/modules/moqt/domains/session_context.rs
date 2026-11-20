@@ -632,8 +632,8 @@ mod tests {
     use crate::modules::{
         moqt::runtime::dispatch::incoming_object::IncomingObject,
         test_support::{
-            DRAFTS, connected_sessions, datagram_object, notify_datagram,
-            register_and_take_data_receiver, spawn_connected_native_sessions, subscription, within,
+            DRAFTS, connected_sessions, datagram_object, next_event, notify_datagram,
+            register_and_take_data_receiver, spawn_connected_native_sessions, subscription,
         },
     };
 
@@ -686,8 +686,7 @@ mod tests {
             .collect();
         let mut request_ids = Vec::new();
         for _ in 0..REQUESTS {
-            let SessionEvent::TrackStatus(handler) = within(server.receive_event()).await.unwrap()
-            else {
+            let SessionEvent::TrackStatus(handler) = next_event(&server).await else {
                 panic!("expected TRACK_STATUS from the client");
             };
             request_ids.push(handler.request_id());

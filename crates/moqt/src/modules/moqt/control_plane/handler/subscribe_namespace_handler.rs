@@ -97,7 +97,7 @@ impl SubscribeNamespaceHandler {
 mod tests {
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_native_server},
+        modules::test_support::{connect_sessions, next_event, spawn_native_server},
         namespace::NamespaceInterest,
     };
 
@@ -116,8 +116,7 @@ mod tests {
         });
 
         // Act
-        let SessionEvent::SubscribeNameSpace(handler) = server.receive_event().await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE_NAMESPACE from the client");
         };
 
@@ -143,8 +142,7 @@ mod tests {
             });
 
             // Act
-            let SessionEvent::SubscribeNameSpace(handler) = server.receive_event().await.unwrap()
-            else {
+            let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
                 panic!("expected SUBSCRIBE_NAMESPACE from the client");
             };
 

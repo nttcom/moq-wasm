@@ -189,7 +189,8 @@ mod tests {
     use crate::{
         RequestErrorCode, RequestFailure, SessionEvent,
         modules::test_support::{
-            DRAFTS, connected_sessions, mandatory_track_properties, spawn_connected_native_sessions,
+            DRAFTS, connected_sessions, mandatory_track_properties, next_event,
+            spawn_connected_native_sessions,
         },
         object::{ContentExists, GroupOrder},
     };
@@ -208,7 +209,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Subscribe(mut handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
         handler.track_properties = mandatory_track_properties();
@@ -243,7 +244,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
 
@@ -282,7 +283,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Subscribe(handler) = next_event(&server).await else {
                 panic!("expected SUBSCRIBE from the client");
             };
 
@@ -311,7 +312,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Subscribe(mut handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Subscribe(mut handler) = next_event(&server).await else {
                 panic!("expected SUBSCRIBE from the client");
             };
             handler.track_properties.set_max_cache_duration(Some(2_000));
@@ -345,7 +346,7 @@ mod tests {
             });
 
             // Act
-            let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Subscribe(handler) = next_event(&server).await else {
                 panic!("expected SUBSCRIBE from the client");
             };
 

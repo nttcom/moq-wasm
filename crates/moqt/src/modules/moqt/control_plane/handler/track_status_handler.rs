@@ -137,7 +137,7 @@ mod tests {
         RequestFailure, Session, SessionEvent,
         modules::{
             moqt::control_plane::control_messages::messages::parameters::authorization_token::AuthorizationToken,
-            test_support::{connect_sessions, rejection, spawn_native_server},
+            test_support::{connect_sessions, next_event, rejection, spawn_native_server},
         },
         object::{ContentExists, KeyValuePair, Location, VariantType},
         wire::TrackStatusOk,
@@ -174,7 +174,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::TrackStatus(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::TrackStatus(handler) = next_event(&server).await else {
             panic!("expected TRACK_STATUS from the client");
         };
         TrackStatusExchange {

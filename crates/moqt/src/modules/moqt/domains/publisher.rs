@@ -414,8 +414,8 @@ mod tests {
             moqt::runtime::tasks::publish_done_expiry_task::PUBLISH_DONE_GRACE_PERIOD,
             test_support::{
                 DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, capture_telemetry, connected_sessions,
-                data_receiver, first_subgroup_stream, mandatory_track_properties, next_subgroup,
-                object_with_extensions, read_subgroup_objects, send_subgroup_object,
+                data_receiver, first_subgroup_stream, mandatory_track_properties, next_event,
+                next_subgroup, object_with_extensions, read_subgroup_objects, send_subgroup_object,
                 send_without_waiting, spawn_connected_draft18_sessions,
                 spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
                 wait_for_control_delivery, within,
@@ -460,7 +460,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Publish(handler) = next_event(&server).await else {
                 panic!("expected PUBLISH from the client");
             };
 
@@ -518,8 +518,7 @@ mod tests {
         let publisher = client.publisher();
         let session = publisher.session.clone();
         let published = tokio::spawn(async move { publisher.publish_namespace("a".into()).await });
-        let SessionEvent::PublishNamespace(handler) = within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE from the client");
         };
 
@@ -558,8 +557,7 @@ mod tests {
             .await
             .expect("sending PUBLISH_NAMESPACE should not wait for the answer")
             .unwrap();
-            let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap()
-            else {
+            let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
                 panic!("expected PUBLISH_NAMESPACE from the client");
             };
 
@@ -595,7 +593,7 @@ mod tests {
                 .publish_namespace_done("live/room".into())
                 .await
                 .unwrap();
-            let event = within(server.receive_event()).await.unwrap();
+            let event = next_event(&server).await;
 
             // Assert
             let SessionEvent::PublishNamespaceDone(done) = event else {
@@ -614,7 +612,7 @@ mod tests {
         let publisher = client.publisher();
         let request =
             tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE from the client");
         };
 
@@ -649,8 +647,7 @@ mod tests {
             .unwrap();
 
         // Assert
-        let SessionEvent::PublishNamespaceCancel(cancel) = server.receive_event().await.unwrap()
-        else {
+        let SessionEvent::PublishNamespaceCancel(cancel) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE_CANCEL from the client");
         };
         assert_eq!(cancel.track_namespace(), "live/room");
@@ -673,7 +670,7 @@ mod tests {
                 .publish("ns".to_string(), track_name, PublishOption::default())
                 .await
         });
-        let SessionEvent::Publish(handler) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Publish(handler) = next_event(server).await else {
             panic!("expected PUBLISH from the client");
         };
         (request, handler)
@@ -709,7 +706,7 @@ mod tests {
                     .ok(128, FilterType::LargestObject, true)
                     .await
                     .unwrap();
-                let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
+                let SessionEvent::PublishDone(done) = next_event(&server).await else {
                     panic!("expected PUBLISH_DONE after the late PUBLISH_OK");
                 };
                 let (published, accepted) = active_publish(&client, &server, "later").await;
@@ -751,7 +748,7 @@ mod tests {
 
         // Act
         drop(request);
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
 
         // Assert
         let SessionEvent::PublishDone(done) = event else {
@@ -795,7 +792,7 @@ mod tests {
                     )
                     .await
                     .unwrap();
-                let SessionEvent::PublishDone(done) = server.receive_event().await.unwrap() else {
+                let SessionEvent::PublishDone(done) = next_event(&server).await else {
                     panic!("expected PUBLISH_DONE for the ended publication");
                 };
                 done

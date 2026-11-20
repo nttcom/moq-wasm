@@ -1241,9 +1241,9 @@ mod tests {
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
                 DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
-                datagram_object, mandatory_track_properties, next_datagram, next_subgroup,
-                notify_datagram, published_track_between, read_fetch_objects, sent_update,
-                spawn_connected_draft18_sessions, subscribed_track_reader,
+                datagram_object, mandatory_track_properties, next_datagram, next_event,
+                next_subgroup, notify_datagram, published_track_between, read_fetch_objects,
+                sent_update, spawn_connected_draft18_sessions, subscribed_track_reader,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
             },
             transport::transport_send_stream::TransportSendError,
@@ -1378,13 +1378,6 @@ mod tests {
             matches!(notification, IncomingObjectNotification::Discarded),
             "{notification:?}"
         );
-    }
-
-    async fn next_event(session: &crate::Session) -> SessionEvent {
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, session.receive_event())
-            .await
-            .expect("no session event")
-            .unwrap()
     }
 
     /// Spawns a SUBSCRIBE from `client` and returns it with the handler
@@ -1694,7 +1687,10 @@ mod tests {
 
         // Assert
         assert_eq!(received, objects);
-        assert!(matches!(receiver.receive().await.unwrap(), Fetch::End));
+        assert!(matches!(
+            within(receiver.receive()).await.unwrap(),
+            Fetch::End
+        ));
     }
 
     /// More FETCHes than the 1000 concurrent bidirectional streams a
@@ -1874,7 +1870,7 @@ mod tests {
         sender.close().await.unwrap();
         let mut received = Vec::new();
         loop {
-            let fetched = receiver.receive().await.unwrap();
+            let fetched = within(receiver.receive()).await.unwrap();
             let end = fetched == Fetch::End;
             received.push(fetched);
             if end {
@@ -1923,8 +1919,8 @@ mod tests {
         // what it has not read (RFC 9000 §3.2)
         sender.send_object(&object(0)).await.unwrap();
         sender.send_object(&object(1)).await.unwrap();
-        let first = receiver.receive().await.unwrap();
-        let second = receiver.receive().await.unwrap();
+        let first = within(receiver.receive()).await.unwrap();
+        let second = within(receiver.receive()).await.unwrap();
         let reported = sender
             .report_unknown_range(Location {
                 group_id: 0,
@@ -1932,7 +1928,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let end = receiver.receive().await;
+        let end = within(receiver.receive()).await;
 
         // Assert: §11.4.4.2 cannot end a range in the prior object's group, so
         // the response is reset with UNKNOWN_OBJECT_STATUS (§10.12) after the
@@ -2555,7 +2551,7 @@ mod tests {
             let (_sender, mut receiver, handler) =
                 subscribe_tracks_requested(&client, &server, "live", forward).await;
             handler.ok().await.unwrap();
-            let response = receiver.receive().await.unwrap();
+            let response = within(receiver.receive()).await.unwrap();
 
             // Assert: §6.1 leaves out the subscriber's own tracks
             assert_eq!(handler.track_namespace_prefix, "live");
@@ -2576,7 +2572,7 @@ mod tests {
         let (_sender, mut receiver, handler) =
             subscribe_tracks_requested(&client, &server, "live", true).await;
         handler.ok().await.unwrap();
-        receiver.receive().await.unwrap();
+        within(receiver.receive()).await.unwrap();
 
         // Act
         let publisher = server.publisher();
@@ -3259,7 +3255,7 @@ mod tests {
         handler.ok(0, ContentExists::False).await.unwrap();
 
         // Assert: §2.5 / §12.5, no DEFAULT PUBLISHER GROUP ORDER is added
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
         let Some(messages::Message::SubscribeOk(subscribe_ok)) = response else {
             panic!("expected SUBSCRIBE_OK, got {response:?}");
         };
@@ -3316,7 +3312,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         )
         .await;
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
 
         // Assert
         let Some(messages::Message::RequestError(error)) = response else {
@@ -3337,7 +3333,7 @@ mod tests {
 
         // Act
         let (_sender, mut receiver) = raw_publish(&client, 6, &properties).await;
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
 
         // Assert: §12.7, §2.4.2; the application, e.g. a relay, never sees
         // the PUBLISH, so it has no track to latch
@@ -3635,7 +3631,7 @@ mod tests {
     ) -> (StreamSender, MessageReceiver) {
         let (sender, mut receiver, handler) = raw_subscribe(client, server).await;
         handler.ok(0, ContentExists::False).await.unwrap();
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
         assert!(
             matches!(response, Some(messages::Message::SubscribeOk(_))),
             "{response:?}"
@@ -3683,7 +3679,7 @@ mod tests {
 
         // Act
         let told = handler.ok(Some(largest));
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.2.11 LARGEST_OBJECT
         assert_eq!(told, UpdateAnswer::Accepted { largest_told: true });
@@ -3706,7 +3702,7 @@ mod tests {
 
         // Act
         drop(handler);
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
 
         // Assert
         let Some(messages::Message::RequestOk(ok)) = response else {
@@ -3970,7 +3966,7 @@ mod tests {
         let (sender, mut receiver, handler) =
             raw_namespace_subscription_requested(client, server, tracks).await;
         handler.ok().await.unwrap();
-        let response = receiver.receive().await.unwrap();
+        let response = within(receiver.receive()).await.unwrap();
         assert!(
             matches!(response, Some(messages::Message::RequestOk(_))),
             "{response:?}"
@@ -3992,8 +3988,8 @@ mod tests {
             .publish_namespace("live/room".into())
             .await;
         handler.ok().await.unwrap();
-        let first = receiver.receive().await.unwrap();
-        let second = receiver.receive().await.unwrap();
+        let first = within(receiver.receive()).await.unwrap();
+        let second = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.18
         assert!(published.is_ok(), "{published:?}");
@@ -4030,8 +4026,8 @@ mod tests {
             .publish_namespace("live/hall".into())
             .await
             .unwrap();
-        let first = receiver.receive().await.unwrap();
-        let second = receiver.receive().await.unwrap();
+        let first = within(receiver.receive()).await.unwrap();
+        let second = within(receiver.receive()).await.unwrap();
 
         // Assert: "live/room" was withdrawn, so only "live/hall" follows the REQUEST_OK
         assert!(
@@ -4062,8 +4058,8 @@ mod tests {
             .error(RequestErrorCode::Unauthorized, "refused".to_string())
             .await
             .unwrap();
-        let first = receiver.receive().await.unwrap();
-        let second = receiver.receive().await.unwrap();
+        let first = within(receiver.receive()).await.unwrap();
+        let second = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.18, REQUEST_ERROR and then FIN
         assert!(
@@ -4114,13 +4110,13 @@ mod tests {
 
         // Act
         handler.ok().await;
-        let answer = receiver.receive().await.unwrap();
+        let answer = within(receiver.receive()).await.unwrap();
         server
             .publisher()
             .publish_namespace("live/room/alice".into())
             .await
             .unwrap();
-        let announced = receiver.receive().await.unwrap();
+        let announced = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.9.2 suffixes follow the updated prefix after the REQUEST_OK
         assert_eq!(handler.track_namespace_prefix(), "live");
@@ -4146,7 +4142,7 @@ mod tests {
         let handler =
             requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
         handler.ok().await;
-        receiver.receive().await.unwrap();
+        within(receiver.receive()).await.unwrap();
         let _streams = use_up_bidi_streams(&server).await;
 
         // Act
@@ -4158,7 +4154,7 @@ mod tests {
                 PublishOption::default(),
             )
             .await;
-        let blocked = receiver.receive().await.unwrap();
+        let blocked = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.9.2 / §10.20, the suffix follows the prefix the subscriber last heard of
         assert!(
@@ -4188,8 +4184,8 @@ mod tests {
         handler
             .error(RequestErrorCode::NamespacePrefixOverlap, String::new())
             .await;
-        let answer = receiver.receive().await.unwrap();
-        let end = receiver.receive().await.unwrap();
+        let answer = within(receiver.receive()).await.unwrap();
+        let end = within(receiver.receive()).await.unwrap();
         let event = next_event(&server).await;
 
         // Assert: §10.2.14 PREFIX_OVERLAP, and §10.9.1 closes the stream
@@ -4217,8 +4213,8 @@ mod tests {
 
         // Act
         drop(handler);
-        let answer = receiver.receive().await.unwrap();
-        let end = receiver.receive().await.unwrap();
+        let answer = within(receiver.receive()).await.unwrap();
+        let end = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.6 NOT_SUPPORTED, and §10.9.1 closes the stream
         let Some(messages::Message::RequestError(error)) = answer else {
@@ -4244,7 +4240,7 @@ mod tests {
 
         // Act
         sender.send(&request_update(request_id, &[])).await.unwrap();
-        let answer = receiver.receive().await.unwrap();
+        let answer = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.9, a parameter the update leaves out keeps its value
         assert!(
@@ -4264,11 +4260,11 @@ mod tests {
             .publish_namespace("live/bob".into())
             .await
             .unwrap();
-        receiver.receive().await.unwrap();
+        within(receiver.receive()).await.unwrap();
         let handler =
             requested_namespace_update(&client, &server, &sender, &["live", "room"]).await;
         handler.ok().await;
-        receiver.receive().await.unwrap();
+        within(receiver.receive()).await.unwrap();
 
         // Act
         server
@@ -4281,7 +4277,7 @@ mod tests {
             .publish_namespace("live/room/alice".into())
             .await
             .unwrap();
-        let next = receiver.receive().await.unwrap();
+        let next = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.9.2, a suffix of the new prefix cannot name "live/bob"
         assert_eq!(
@@ -4321,8 +4317,8 @@ mod tests {
         assert!(futures::poll!(&mut refused).is_pending());
         first.ok().await;
         refused.await;
-        let first_answer = receiver.receive().await.unwrap();
-        let second_answer = receiver.receive().await.unwrap();
+        let first_answer = within(receiver.receive()).await.unwrap();
+        let second_answer = within(receiver.receive()).await.unwrap();
 
         // Assert: §10.9, one answer per update in the order they arrived
         assert!(
@@ -4427,7 +4423,7 @@ mod tests {
         let mut read = 0;
         within(async {
             while read < 2 * REQUESTS_PER_ROUND {
-                if let SessionEvent::TrackStatus(_) = server.receive_event().await.unwrap() {
+                if let SessionEvent::TrackStatus(_) = next_event(&server).await {
                     read += 1;
                 }
             }
@@ -4468,7 +4464,7 @@ mod tests {
         let mut read = 0;
         within(async {
             while read < NAMESPACES {
-                if let SessionEvent::PublishNamespace(_) = client.receive_event().await.unwrap() {
+                if let SessionEvent::PublishNamespace(_) = next_event(&client).await {
                     read += 1;
                 }
             }

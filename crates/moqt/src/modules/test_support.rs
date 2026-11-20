@@ -159,7 +159,8 @@ pub(crate) async fn assert_both_sides_open_bi_streams(
 
 /// Starts a NATIVE server on a free port whose accept loop resolves the first
 /// incoming handshake (CLIENT_SETUP received, SERVER_SETUP not yet sent);
-/// returns the port and the accept task.
+/// returns the port and the accept task. The task panics when no handshake
+/// arrives within `HANDSHAKE_TIMEOUT` of the spawn.
 pub(crate) fn spawn_native_server_handshake(
     name: &str,
 ) -> (u16, tokio::task::JoinHandle<Handshake>) {
@@ -176,7 +177,9 @@ pub(crate) fn spawn_native_server_handshake_offering(
     };
     let server = Endpoint::<NATIVE>::create_server(&server_config).unwrap();
     let port = server.local_port().unwrap();
-    let accept = tokio::spawn(async move { server.accept().await.unwrap().await.unwrap() });
+    let accept = tokio::spawn(async move {
+        within(async { server.accept().await.unwrap().await.unwrap() }).await
+    });
     (port, accept)
 }
 
@@ -562,6 +565,11 @@ pub(crate) async fn within<F: Future>(future: F) -> F::Output {
         .expect("the exchange timed out")
 }
 
+/// Panics when no event arrives within `HANDSHAKE_TIMEOUT`.
+pub(crate) async fn next_event(session: &Session) -> SessionEvent {
+    within(session.receive_event()).await.unwrap()
+}
+
 /// Whether `notify` holds a permit, which this takes.
 pub(crate) fn is_notified(notify: &Notify) -> bool {
     notify.notified().now_or_never().is_some()
@@ -594,7 +602,7 @@ pub(crate) async fn wait_for_control_delivery(sender: &Session, receiver: &Sessi
         .begin_publish_namespace("delivery-marker".to_string())
         .await
         .unwrap();
-    let SessionEvent::PublishNamespace(_) = within(receiver.receive_event()).await.unwrap() else {
+    let SessionEvent::PublishNamespace(_) = next_event(receiver).await else {
         panic!("expected the PUBLISH_NAMESPACE sent as a delivery marker");
     };
 }
@@ -655,7 +663,7 @@ async fn connected_sessions_over(name: &str, version: Version, scheme: &str) -> 
 }
 
 pub(crate) async fn accept_namespace(server: &Session) {
-    let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+    let SessionEvent::PublishNamespace(handler) = next_event(server).await else {
         panic!("expected PUBLISH_NAMESPACE");
     };
     handler.ok().await.unwrap();
@@ -694,9 +702,7 @@ pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Sess
     let (subscribed, ()) = tokio::join!(
         subscriber.subscribe_namespace(prefix.into(), NamespaceInterest::NamespacesAndTracks),
         async {
-            let SessionEvent::SubscribeNameSpace(handler) =
-                within(server.receive_event()).await.unwrap()
-            else {
+            let SessionEvent::SubscribeNameSpace(handler) = next_event(server).await else {
                 panic!("expected SUBSCRIBE_NAMESPACE");
             };
             handler.ok().await.unwrap();
@@ -708,7 +714,7 @@ pub(crate) async fn subscribe_namespace_accepted(client: &Session, server: &Sess
 /// Answers the client's PUBLISH with PUBLISH_OK and registers the object
 /// receiver for its track alias.
 pub(crate) async fn accept_publish(server: &Session) -> Subscription {
-    let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+    let SessionEvent::Publish(handler) = next_event(server).await else {
         panic!("expected PUBLISH from the client");
     };
     let subscription = handler
@@ -771,7 +777,7 @@ pub(crate) async fn subscribed_track(name: &str, version: Version) -> Subscribed
         tokio::join!(
             subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
             async {
-                let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+                let SessionEvent::Subscribe(handler) = next_event(&server).await else {
                     panic!("expected SUBSCRIBE from the client");
                 };
                 handler
@@ -1027,7 +1033,7 @@ pub(crate) async fn fetch_answered_with(
             async {
                 // An earlier FETCH whose receiver is gone may be cancelled first.
                 let handler = loop {
-                    match track.client.receive_event().await.unwrap() {
+                    match next_event(&track.client).await {
                         SessionEvent::Fetch(handler) => break handler,
                         SessionEvent::FetchCancel(_) => continue,
                         _ => panic!("expected FETCH from the server"),
@@ -1210,7 +1216,7 @@ async fn fetched_stream_between(client: Session, server: Session) -> FetchedStre
                 FetchOption::default(),
             ),
             async {
-                let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+                let SessionEvent::Fetch(handler) = next_event(&server).await else {
                     panic!("expected FETCH from the client");
                 };
                 handler.ok(true, end).await.unwrap();

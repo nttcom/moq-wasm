@@ -210,7 +210,8 @@ mod tests {
         modules::{
             moqt::control_plane::control_messages::messages::parameters::trace_context::TEST_TRACEPARENT,
             test_support::{
-                capture_telemetry, provide_trace_context, spawn_connected_native_sessions, within,
+                capture_telemetry, next_event, provide_trace_context,
+                spawn_connected_native_sessions, within,
             },
         },
         object::ContentExists,
@@ -273,9 +274,7 @@ mod tests {
         let (subscription, served) = tokio::join!(
             within(client.subscribe(&["ns"], "track", SubscribeOptions::default())),
             async {
-                let SessionEvent::Subscribe(handler) =
-                    within(server.receive_event()).await.unwrap()
-                else {
+                let SessionEvent::Subscribe(handler) = next_event(&server).await else {
                     panic!("expected SUBSCRIBE");
                 };
                 let alias = handler.ok(0, ContentExists::False).await.unwrap();

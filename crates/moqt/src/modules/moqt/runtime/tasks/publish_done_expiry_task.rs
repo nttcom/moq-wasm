@@ -106,7 +106,8 @@ mod tests {
                 runtime::dispatch::incoming_object::{IncomingObject, IncomingObjectReceiver},
             },
             test_support::{
-                DRAFTS, connected_sessions, open_subgroup, send_payload, take_data_receiver, within,
+                DRAFTS, connected_sessions, next_event, open_subgroup, send_payload,
+                take_data_receiver, within,
             },
         },
         object::ContentExists,
@@ -128,8 +129,7 @@ mod tests {
             tokio::join!(
                 subscriber.subscribe("ns".into(), "track".into(), SubscribeOption::default()),
                 async {
-                    let SessionEvent::Subscribe(handler) = client.receive_event().await.unwrap()
-                    else {
+                    let SessionEvent::Subscribe(handler) = next_event(&client).await else {
                         panic!("expected SUBSCRIBE from the server");
                     };
                     let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
@@ -161,9 +161,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let SessionEvent::PublishDone(_) =
-            within(subscription.server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::PublishDone(_) = next_event(&subscription.server).await else {
             panic!("expected PUBLISH_DONE from the client");
         };
     }

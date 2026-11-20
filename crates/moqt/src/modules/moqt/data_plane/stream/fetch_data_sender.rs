@@ -195,7 +195,9 @@ mod tests {
                 },
                 version::Version,
             },
-            test_support::{spawn_connected_draft18_sessions, spawn_connected_native_sessions},
+            test_support::{
+                next_event, spawn_connected_draft18_sessions, spawn_connected_native_sessions,
+            },
             transport::transport_send_stream::MockTransportSendStream,
         },
     };
@@ -241,7 +243,7 @@ mod tests {
                 )
                 .await;
         });
-        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
             panic!("expected FETCH");
         };
         let (connection, wire_request_id) = server

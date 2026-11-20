@@ -1087,8 +1087,8 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject, Version,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_subgroup,
-            read_fetch_objects, rejection, subscribed_track_reader, within,
+            DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_event,
+            next_subgroup, read_fetch_objects, rejection, subscribed_track_reader, within,
         },
         object::{DataReceiver, GroupOrder, Object, ObjectStatus, StreamDataReceiver, Subgroup},
         subscribe::{FilterType, SubscribeOption},
@@ -1153,9 +1153,7 @@ mod tests {
         let subscriber = peers.server.subscriber();
         let (unsubscribed, released) = within(async {
             tokio::join!(subscriber.unsubscribe(subscription), async {
-                let SessionEvent::Unsubscribe(handler) =
-                    peers.client.receive_event().await.unwrap()
-                else {
+                let SessionEvent::Unsubscribe(handler) = next_event(&peers.client).await else {
                     panic!("expected UNSUBSCRIBE from the relay");
                 };
                 peers.origin.release(&handler).await
@@ -1180,9 +1178,7 @@ mod tests {
             tokio::join!(
                 subscriber.subscribe(NAMESPACE.to_string(), TRACK.to_string(), option),
                 async {
-                    let SessionEvent::Subscribe(handler) =
-                        peers.client.receive_event().await.unwrap()
-                    else {
+                    let SessionEvent::Subscribe(handler) = next_event(&peers.client).await else {
                         panic!("expected SUBSCRIBE from the relay");
                     };
                     peers.origin.accept_subscribe(handler).await.unwrap();
@@ -1197,8 +1193,7 @@ mod tests {
     async fn served<T>(peers: &Peers, request: impl Future<Output = T>) -> T {
         let (result, ()) = within(async {
             tokio::join!(request, async {
-                let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
-                else {
+                let SessionEvent::Fetch(handler) = next_event(&peers.client).await else {
                     panic!("expected FETCH from the relay");
                 };
                 peers.origin.serve_fetch(handler).await.unwrap();
@@ -1264,9 +1259,7 @@ mod tests {
             tokio::join!(
                 subscriber.track_status(NAMESPACE.to_string(), track_name.to_string(), vec![]),
                 async {
-                    let SessionEvent::TrackStatus(handler) =
-                        peers.client.receive_event().await.unwrap()
-                    else {
+                    let SessionEvent::TrackStatus(handler) = next_event(&peers.client).await else {
                         panic!("expected TRACK_STATUS from the relay");
                     };
                     peers.origin.answer_track_status(handler).await.unwrap();
@@ -1280,8 +1273,7 @@ mod tests {
     async fn end_track(peers: &Peers) -> crate::publish::PublishDoneHandler {
         let (ended, done) = within(async {
             tokio::join!(peers.origin.end_track(NAMESPACE, TRACK), async {
-                let SessionEvent::PublishDone(done) = peers.server.receive_event().await.unwrap()
-                else {
+                let SessionEvent::PublishDone(done) = next_event(&peers.server).await else {
                     panic!("expected PUBLISH_DONE");
                 };
                 done
@@ -1304,9 +1296,7 @@ mod tests {
             tokio::join!(
                 peers.origin.publish(&peers.client, NAMESPACE, TRACK),
                 async {
-                    let SessionEvent::Publish(handler) =
-                        peers.server.receive_event().await.unwrap()
-                    else {
+                    let SessionEvent::Publish(handler) = next_event(&peers.server).await else {
                         panic!("expected PUBLISH from the client");
                     };
                     let accepted = handler
@@ -1329,7 +1319,7 @@ mod tests {
         let subscriber = peers.server.subscriber();
         let (updated, ()) = within(async {
             tokio::join!(subscriber.update_forward(subscription, forward), async {
-                let event = peers.client.receive_event().await.unwrap();
+                let event = next_event(&peers.client).await;
                 assert!(matches!(event, SessionEvent::SubscribeUpdate(_)));
                 peers.origin.handle(event).await;
             })
@@ -1448,7 +1438,7 @@ mod tests {
             let subscriber = peers.server.subscriber();
             let (updated, published) = within(async {
                 tokio::join!(subscriber.update_forward(&accepted, true), async {
-                    let event = peers.client.receive_event().await.unwrap();
+                    let event = next_event(&peers.client).await;
                     assert!(matches!(event, SessionEvent::SubscribeUpdate(_)));
                     let (_, published) = tokio::join!(origin.handle(event), &mut published);
                     published
@@ -1555,8 +1545,7 @@ mod tests {
         // Act
         let (published, (written, accepted)) = within(async {
             tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
-                let SessionEvent::Publish(handler) = peers.server.receive_event().await.unwrap()
-                else {
+                let SessionEvent::Publish(handler) = next_event(&peers.server).await else {
                     panic!("expected PUBLISH from the client");
                 };
                 let written = origin
@@ -1912,9 +1901,7 @@ mod tests {
             // Act
             let (published, (ended, (accepted, done))) = within(async {
                 tokio::join!(origin.publish(&peers.client, NAMESPACE, TRACK), async {
-                    let SessionEvent::Publish(handler) =
-                        peers.server.receive_event().await.unwrap()
-                    else {
+                    let SessionEvent::Publish(handler) = next_event(&peers.server).await else {
                         panic!("expected PUBLISH from the client");
                     };
                     tokio::join!(origin.end_track(NAMESPACE, TRACK), async {
@@ -1923,8 +1910,7 @@ mod tests {
                             .await
                             .unwrap();
                         handler.accept_data_receiver().await;
-                        let SessionEvent::PublishDone(done) =
-                            peers.server.receive_event().await.unwrap()
+                        let SessionEvent::PublishDone(done) = next_event(&peers.server).await
                         else {
                             panic!("expected PUBLISH_DONE");
                         };
@@ -2325,12 +2311,11 @@ mod tests {
             tokio::join!(
                 subscriber.fetch_relative_joining(&subscription, 0, FetchOption::default()),
                 async {
-                    let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
-                    else {
+                    let SessionEvent::Fetch(handler) = next_event(&peers.client).await else {
                         panic!("expected FETCH from the relay");
                     };
                     peers.origin.serve_fetch(handler).await.unwrap();
-                    peers.client.receive_event().await.unwrap()
+                    next_event(&peers.client).await
                 }
             )
         })
@@ -2364,7 +2349,7 @@ mod tests {
                         FetchOption::default()
                     ),
                     async {
-                        let SessionEvent::Fetch(handler) = peers.client.receive_event().await.unwrap()
+                        let SessionEvent::Fetch(handler) = next_event(&peers.client).await
                         else {
                             panic!("expected FETCH from the relay");
                         };
@@ -2454,7 +2439,7 @@ mod tests {
                         subscribe_option(FilterType::NextGroupStart)
                     ),
                     async {
-                        let event = peers.client.receive_event().await.unwrap();
+                        let event = next_event(&peers.client).await;
                         peers.origin.handle(event).await
                     }
                 )
@@ -2493,7 +2478,7 @@ mod tests {
                         subscribe_option(FilterType::NextGroupStart)
                     ),
                     async {
-                        let event = peers.client.receive_event().await.unwrap();
+                        let event = next_event(&peers.client).await;
                         let Some(SessionEvent::Subscribe(handler)) =
                             peers.origin.handle(event).await
                         else {
@@ -2526,7 +2511,7 @@ mod tests {
             // Act
             let (published, unhandled) = within(async {
                 tokio::join!(publisher.publish_namespace("other".to_string()), async {
-                    let event = peers.client.receive_event().await.unwrap();
+                    let event = next_event(&peers.client).await;
                     let unhandled = peers.origin.handle(event).await;
                     if let Some(SessionEvent::PublishNamespace(handler)) = &unhandled {
                         handler.ok().await.unwrap();
@@ -2568,7 +2553,7 @@ mod tests {
             .await
             .unwrap();
         assert!(sent);
-        let event = within(peers.client.receive_event()).await.unwrap();
+        let event = next_event(&peers.client).await;
         let returned = peers.origin.handle(event).await;
         assert!(matches!(returned, Some(SessionEvent::SubscribeUpdate(_))));
     }
@@ -2657,7 +2642,7 @@ mod tests {
             tokio::join!(
                 subscriber.subscribe(NAMESPACE.to_string(), TRACK.to_string(), option),
                 async {
-                    let event = peers.client.receive_event().await.unwrap();
+                    let event = next_event(&peers.client).await;
                     assert!(peers.origin.handle(event).await.is_none());
                 }
             )

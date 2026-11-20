@@ -177,8 +177,8 @@ mod tests {
         modules::{
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
-                DRAFTS, connected_sessions, notify_datagram, register_and_take_data_receiver,
-                spawn_connected_native_sessions,
+                DRAFTS, connected_sessions, next_event, notify_datagram,
+                register_and_take_data_receiver, spawn_connected_native_sessions,
             },
         },
     };
@@ -207,7 +207,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Publish(handler) = next_event(&server).await else {
             panic!("expected PUBLISH from the client");
         };
 
@@ -244,7 +244,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Publish(handler) = next_event(&server).await else {
             panic!("expected PUBLISH from the client");
         };
 
@@ -281,7 +281,7 @@ mod tests {
         });
 
         // Act
-        let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Publish(handler) = next_event(&server).await else {
             panic!("expected PUBLISH from the client");
         };
 
@@ -307,7 +307,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Publish(handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Publish(handler) = next_event(&server).await else {
                 panic!("expected PUBLISH from the client");
             };
             let context = server.subscriber().session;

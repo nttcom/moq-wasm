@@ -71,14 +71,14 @@ impl NamespaceWatchers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::test_support::{spawn_connected_native_sessions, within};
+    use crate::modules::test_support::{next_event, spawn_connected_native_sessions};
 
     fn namespace(path: &str) -> Vec<String> {
         path.split('/').map(str::to_string).collect()
     }
 
     async fn handle_next(client: &crate::Session, watchers: &NamespaceWatchers) {
-        let event = within(client.receive_event()).await.unwrap();
+        let event = next_event(client).await;
         assert!(watchers.handle(event).await.is_none());
     }
 

@@ -141,7 +141,7 @@ impl Drop for ResponseGuard {
 mod tests {
     use crate::{
         RequestErrorCode, SessionEvent,
-        modules::test_support::{capture_telemetry, spawn_connected_native_sessions},
+        modules::test_support::{capture_telemetry, next_event, spawn_connected_native_sessions},
     };
 
     #[tokio::test]
@@ -152,7 +152,7 @@ mod tests {
         let publisher = client.publisher();
         let request =
             tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE from the client");
         };
 
@@ -176,7 +176,7 @@ mod tests {
         let publisher = client.publisher();
         let request =
             tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE from the client");
         };
 
@@ -204,7 +204,7 @@ mod tests {
         let publisher = client.publisher();
         let request =
             tokio::spawn(async move { publisher.publish_namespace("a/b".to_string()).await });
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE from the client");
         };
 
