@@ -118,6 +118,11 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `remote_address` / `previous_remote_address` | The peer's address on a session's connection (or a SIP trunk's, on its TLS connection), and the one it replaced when the peer migrated |
 | `duration_ms` | Milliseconds from writing a request to receiving its response |
 | `wasm_load_wait_ms` | Milliseconds a browser's `MoqSession.connect` waited for the wasm module to load |
+| `driver` | The namespace driving a robot, relative to its room (`operators/<id>`, `bots/policy`); absent while nobody drives |
+| `hold_reason` | Why a robot holds still: `stale` (no fresh action from its driver, or no driver) or `session` (its relay session ended) |
+| `control_reason` | The `reason` of a robot's `control` record: `action`, `left`, `stale` or `episode` |
+| `episode_id` | The id of a robot's open episode |
+| `loop_latency_ms` | `now − basis` of an action a robot applied: milliseconds from the observation it answers to its arrival, on the robot's clock |
 
 A span that lives longer than the request that starts it (a track, a session) roots its own trace and links to the request's span: a span closes only after its children, so a long-lived child would hold its parent's trace unexported. A relay's request span continues the client's trace when the request carries `TRACE_CONTEXT`.
 
