@@ -4,7 +4,7 @@ use moqt::{
     AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
     TrackReader, Version, server::ServerConfig, subscribe::FilterType,
 };
-use msf::CATALOG_TRACK_NAME;
+use msf::{CATALOG_TRACK_NAME, Catalog};
 use tokio::sync::{mpsc, oneshot};
 
 use super::{TEST_TIMEOUT, self_signed_server_config};
@@ -220,6 +220,16 @@ impl FakeRelay {
             catalogs.push(object);
         }
         catalogs
+    }
+
+    /// The newest catalog received within the wait of `received_catalogs`.
+    pub(crate) async fn newest_catalog(&mut self) -> Catalog {
+        let catalogs = self.received_catalogs().await;
+        let newest = catalogs
+            .iter()
+            .max_by_key(|object| object.group_id)
+            .expect("a catalog must arrive");
+        serde_json::from_slice(&newest.payload).unwrap()
     }
 
     pub(crate) fn received_requests(&mut self) -> Vec<String> {

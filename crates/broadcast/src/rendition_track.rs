@@ -178,9 +178,17 @@ mod tests {
     use super::*;
     use crate::{
         broadcast::SourceTracks,
+        broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
         relay_connection::RelayConnection,
-        test_support::{FakeRelay, TEST_TIMEOUT},
+        test_support::{FakeRelay, TEST_TIMEOUT, keyframe_at},
     };
+
+    fn vp8_config() -> VideoConfig {
+        VideoConfig::Vp8(Vp8Config {
+            width: 64,
+            height: 48,
+        })
+    }
 
     fn rendition(writer: &BroadcastWriter, keyframes: RenditionKeyframes) -> RenditionTrack {
         RenditionTrack::new(
@@ -251,10 +259,7 @@ mod tests {
 
         // Act
         rendition
-            .push(MediaEvent::VideoConfig(VideoConfig::Vp8(Vp8Config {
-                width: 64,
-                height: 48,
-            })))
+            .push(MediaEvent::VideoConfig(vp8_config()))
             .await
             .unwrap();
         let demand = tokio::time::timeout(TEST_TIMEOUT, demand_receiver.recv()).await;
@@ -264,5 +269,89 @@ mod tests {
             .expect("the rendition must report its demand")
             .unwrap();
         assert_eq!(demand.track_name, "video_low");
+    }
+    #[tokio::test]
+    async fn a_rendition_is_listed_with_its_config_in_its_source_s_switching_set() {
+        // Arrange: the source is a camera profile, as `onvif-ingest` names it
+        let mut relay = FakeRelay::spawn("rendition-catalog");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        let source = SourceTracks {
+            video: "video/profile_1".to_string(),
+            switching_set: "profile_1".to_string(),
+            ..SourceTracks::default()
+        };
+        broadcast
+            .update_video_catalog(
+                &source.video,
+                VideoTrackInfo {
+                    switching_set: source.switching_set.clone(),
+                    source: source.video.clone(),
+                    cmaf: false,
+                    ..VideoTrackInfo::from_config(&vp8_config(), "Profile 1".to_string()).unwrap()
+                },
+            )
+            .await
+            .unwrap();
+        let writer = BroadcastWriter::run(broadcast, source);
+        let mut rendition = RenditionTrack::new(
+            &writer,
+            RenditionConfig {
+                track: "video_low".to_string(),
+                label: "Low".to_string(),
+                bitrate: Some(300_000),
+                framerate: Some(15),
+                cmaf: false,
+                keyframes: RenditionKeyframes::SameFrames,
+            },
+        );
+
+        // Act
+        rendition
+            .push(MediaEvent::VideoConfig(vp8_config()))
+            .await
+            .unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        let tracks = catalog.tracks.unwrap();
+        let track = |name: &str| tracks.iter().find(|track| track.name == name);
+        let low = track("video_low").expect("the rendition must be listed");
+        let profile = track("video/profile_1").unwrap();
+        assert_eq!(low.bitrate, Some(300_000));
+        assert_eq!(low.framerate, Some(15.0));
+        assert!(low.alt_group.is_some() && low.alt_group == profile.alt_group);
+        assert!(track("video_low_cmaf").is_none());
+        assert!(track("video/profile_1_timeline").is_some());
+        assert!(track("video_timeline").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_rendition_sends_its_samples_to_the_relay() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("rendition-samples");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        let writer = BroadcastWriter::run(broadcast, SourceTracks::default());
+        let mut rendition = RenditionTrack::new(
+            &writer,
+            RenditionConfig {
+                track: VIDEO_TRACK_NAME.to_string(),
+                label: "Video".to_string(),
+                bitrate: None,
+                framerate: None,
+                cmaf: false,
+                keyframes: RenditionKeyframes::SameFrames,
+            },
+        );
+        rendition
+            .push(MediaEvent::VideoConfig(vp8_config()))
+            .await
+            .unwrap();
+
+        // Act
+        rendition.push(keyframe_at(40_000)).await.unwrap();
+
+        // Assert
+        let group_id = writer.shared_timing().alignment.keyframe(40_000);
+        relay.wait_for_video_group(group_id).await;
     }
 }

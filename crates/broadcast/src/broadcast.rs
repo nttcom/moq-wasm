@@ -649,6 +649,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::test_support::FakeRelay;
 
     const FIXTURE_SPS: [u8; 24] = [
         0x67, 0x42, 0xd0, 0x0b, 0xda, 0x0a, 0x37, 0xe4, 0xc0, 0x44, 0x00, 0x00, 0x03, 0x00, 0x04,
@@ -1346,6 +1347,61 @@ mod tests {
                 "audio/profile_1_cmaf",
                 "video/profile_1_timeline"
             ]
+        );
+    }
+    #[test]
+    fn namespace_is_the_one_the_broadcast_was_made_with() {
+        // Arrange
+        let namespace = vec!["live".to_string(), "cam".to_string()];
+
+        // Act
+        let broadcast = Broadcast::new(RelayConnection::new(None), namespace.clone());
+
+        // Assert
+        assert_eq!(broadcast.namespace(), namespace);
+    }
+
+    #[tokio::test]
+    async fn an_offered_chat_is_sent_in_a_catalog() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("offer-chat");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+
+        // Act
+        broadcast.offer_chat().await.unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        assert!(
+            catalog
+                .tracks
+                .iter()
+                .flatten()
+                .any(|track| track.name == CHAT_TRACK_NAME),
+            "{catalog:?}"
+        );
+    }
+    #[tokio::test]
+    async fn an_updated_audio_track_is_sent_in_a_catalog() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("audio-catalog");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+
+        // Act
+        broadcast
+            .update_audio_catalog("audio_en", aac_audio(VIDEO_TRACK_NAME))
+            .await
+            .unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        assert!(
+            catalog
+                .tracks
+                .iter()
+                .flatten()
+                .any(|track| track.name == "audio_en"),
+            "{catalog:?}"
         );
     }
 }

@@ -405,7 +405,9 @@ mod tests {
     use tokio::sync::Notify;
 
     use super::*;
-    use crate::{broadcast::VIDEO_TRACK_NAME, relay_connection::RelayConnection};
+    use crate::{
+        broadcast::VIDEO_TRACK_NAME, relay_connection::RelayConnection, test_support::keyframe_at,
+    };
 
     fn publisher() -> TrackPublisher {
         TrackPublisher::new(
@@ -426,15 +428,6 @@ mod tests {
             data: Bytes::from_static(b"opus"),
             pts: Timestamp::from_micros(pts_us),
             audio_level: None,
-        })
-    }
-
-    fn keyframe_at(pts_us: u64) -> MediaEvent {
-        MediaEvent::Video(VideoSample {
-            data: Bytes::from_static(b"nal"),
-            is_keyframe: true,
-            pts: Timestamp::from_micros(pts_us),
-            dts: Timestamp::from_micros(pts_us),
         })
     }
 
