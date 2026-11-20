@@ -54,13 +54,13 @@ impl SubscribeOk {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.track_alias);
         payload.put_varint(self.expires);
         payload.put_u8(self.group_order as u8);
-        payload.unsplit(self.content_exists.encode());
+        payload.unsplit(self.content_exists.encode()?);
         let parameters: Vec<KeyValuePair> = [
             self.track_properties
                 .delivery_timeout()
@@ -72,8 +72,8 @@ impl SubscribeOk {
         .into_iter()
         .flatten()
         .collect();
-        payload.unsplit(KeyValuePair::encode_list(&parameters));
-        payload
+        payload.unsplit(KeyValuePair::encode_list(&parameters)?);
+        Ok(payload)
     }
 }
 
@@ -105,7 +105,7 @@ mod tests {
                 content_exists,
                 track_properties: Default::default(),
             };
-            let buf = subscribe_ok.encode();
+            let buf = subscribe_ok.encode().unwrap();
 
             let expected_bytes_array = [
                 0, // Request ID (i)
@@ -139,7 +139,7 @@ mod tests {
                 content_exists,
                 track_properties: Default::default(),
             };
-            let buf = subscribe_ok.encode();
+            let buf = subscribe_ok.encode().unwrap();
 
             let expected_bytes_array = [
                 0,  // Request ID (i)

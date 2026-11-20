@@ -53,25 +53,27 @@ impl SubscribeUpdate {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.subscription_request_id);
-        payload.unsplit(self.start_location.encode());
+        payload.unsplit(self.start_location.encode()?);
         payload.put_varint(self.end_group);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.forward as u8);
         let parameters: Vec<KeyValuePair> = self
             .authorization_tokens
             .iter()
-            .map(|token| KeyValuePair::odd(0x03, token.encode().freeze()))
+            .map(AuthorizationToken::parameter)
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
             .chain(
                 self.delivery_timeout
                     .map(|value| KeyValuePair::even(0x02, value)),
             )
             .collect();
-        payload.unsplit(KeyValuePair::encode_list(&parameters));
-        payload
+        payload.unsplit(KeyValuePair::encode_list(&parameters)?);
+        Ok(payload)
     }
 }
 
@@ -102,7 +104,7 @@ mod tests {
         fn packetize() {
             let message = subscribe_update();
 
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let expected = [
                 4,   // Request ID (i)
@@ -120,7 +122,7 @@ mod tests {
         #[test]
         fn depacketize() {
             let message = subscribe_update();
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = SubscribeUpdate::decode(&mut cursor).unwrap();
@@ -132,7 +134,7 @@ mod tests {
         fn depacketize_with_delivery_timeout() {
             let mut message = subscribe_update();
             message.delivery_timeout = Some(2000);
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = SubscribeUpdate::decode(&mut cursor).unwrap();
@@ -176,7 +178,7 @@ mod tests {
             #[test]
             fn decoding_an_encoded_message_gives_it_back(message in control_message_strategies::subscribe_update()) {
                 // Arrange
-                let bytes = message.encode();
+                let bytes = message.encode().unwrap();
                 let mut cursor = std::io::Cursor::new(&bytes[..]);
 
                 // Act

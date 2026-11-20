@@ -259,10 +259,11 @@ impl Version {
         Ok(version)
     }
 
-    pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> BytesMut {
+    /// Fails when draft-14 cannot carry `request_id`.
+    pub(crate) fn encode_fetch_header(self, request_id: RequestId) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14 => draft14::objects::encode_fetch_header(request_id),
-            Self::Draft18 => draft18::objects::encode_fetch_header(request_id),
+            Self::Draft18 => Ok(draft18::objects::encode_fetch_header(request_id)),
         }
     }
 
@@ -420,14 +421,16 @@ impl SubgroupEncoder {
         }
     }
 
-    pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
+    /// Fails when draft-14 cannot carry the header's fields.
+    pub(crate) fn header(&mut self, start: SubgroupStart) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.header(start),
-            Self::Draft18(encoder) => encoder.header(start),
+            Self::Draft18(encoder) => Ok(encoder.header(start)),
         }
     }
 
-    /// Fails when the object id is not greater than the previous object's.
+    /// Fails when the object id is not greater than the previous object's, or
+    /// when draft-14 cannot carry the object's fields.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object(object),
@@ -479,10 +482,11 @@ impl FetchEncoder {
         }
     }
 
-    /// `Ok(None)` for an object the draft cannot carry in a FETCH response.
+    /// `Ok(None)` for an object the draft cannot carry in a FETCH response;
+    /// fails when draft-14 cannot carry the object's fields.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
         match self {
-            Self::Draft14 => Ok(Some(draft14::objects::encode_fetch_object(object))),
+            Self::Draft14 => draft14::objects::encode_fetch_object(object).map(Some),
             Self::Draft18(encoder) => encoder.object(object),
         }
     }

@@ -44,7 +44,7 @@ impl KeyValuePair {
         }
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub(crate) fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         buf.put_varint(self.key);
         match &self.value {
@@ -56,7 +56,7 @@ impl KeyValuePair {
                 buf.put_varint(*value);
             }
         }
-        buf
+        Ok(buf)
     }
 
     pub(crate) fn decode_list(bytes: &mut impl Buf) -> anyhow::Result<Vec<Self>> {
@@ -64,11 +64,13 @@ impl KeyValuePair {
         (0..length).map(|_| Self::decode(bytes)).collect()
     }
 
-    pub(crate) fn encode_list(pairs: &[Self]) -> BytesMut {
+    pub(crate) fn encode_list(pairs: &[Self]) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         buf.put_varint(pairs.len() as u64);
-        pairs.iter().for_each(|pair| buf.unsplit(pair.encode()));
-        buf
+        for pair in pairs {
+            buf.unsplit(pair.encode()?);
+        }
+        Ok(buf)
     }
 
     pub(crate) fn even(key: u64, value: u64) -> Self {
@@ -122,7 +124,7 @@ mod tests {
                 value: VariantType::Even(10),
             };
 
-            let buf = kv_pair.encode();
+            let buf = kv_pair.encode().unwrap();
             let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized = KeyValuePair::decode(&mut buf).unwrap();
 
@@ -140,7 +142,7 @@ mod tests {
                 value: VariantType::Odd(Bytes::from(vec![0x01, 0x02, 0x03])),
             };
 
-            let buf = kv_pair.encode();
+            let buf = kv_pair.encode().unwrap();
             let mut buf = std::io::Cursor::new(&buf[..]);
             let depacketized = KeyValuePair::decode(&mut buf).unwrap();
 
@@ -158,7 +160,7 @@ mod tests {
                 value: VariantType::Even(10),
             };
 
-            let buf = kv_pair.encode();
+            let buf = kv_pair.encode().unwrap();
 
             // key (0x3c) + value (10)
             let expected_bytes = vec![0x3c, 0x0a];
@@ -172,7 +174,7 @@ mod tests {
                 value: VariantType::Odd(Bytes::from(vec![0x01, 0x02, 0x03])),
             };
 
-            let buf = kv_pair.encode();
+            let buf = kv_pair.encode().unwrap();
 
             // key (0x0b) + value length (3) + value ([0x01, 0x02, 0x03])
             let expected_bytes = vec![0x0b, 0x03, 0x01, 0x02, 0x03];
@@ -189,7 +191,7 @@ mod tests {
             ];
 
             // Act
-            let buf = KeyValuePair::encode_list(&pairs);
+            let buf = KeyValuePair::encode_list(&pairs).unwrap();
             let decoded = KeyValuePair::decode_list(&mut std::io::Cursor::new(&buf[..])).unwrap();
 
             // Assert

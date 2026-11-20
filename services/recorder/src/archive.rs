@@ -477,7 +477,7 @@ impl Archive {
                     "priority": object.publisher_priority,
                     "status": object.status as u8,
                     "ends_group": object.ends_group,
-                    "extensions": STANDARD.encode(object.extension_headers.encode()),
+                    "extensions": STANDARD.encode(object.extension_headers.encode()?),
                     "payload": STANDARD.encode(&object.payload),
                     "capture_us": capture,
                 }))
@@ -802,7 +802,7 @@ mod tests {
             STANDARD
                 .decode(stored["extensions"].as_str().unwrap())
                 .unwrap(),
-            frame.extension_headers.encode().to_vec()
+            frame.extension_headers.encode().unwrap().to_vec()
         );
         assert!(
             !entries

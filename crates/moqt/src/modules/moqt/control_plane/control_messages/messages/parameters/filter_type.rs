@@ -82,32 +82,32 @@ impl FilterType {
         }
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         match self {
             FilterType::LargestObject => {
                 payload.put_varint(FilterTypeValue::LatestObject.into());
-                payload
+                Ok(payload)
             }
             FilterType::NextGroupStart => {
                 payload.put_varint(FilterTypeValue::LatestGroup.into());
-                payload
+                Ok(payload)
             }
             FilterType::AbsoluteStart { location } => {
                 payload.put_varint(FilterTypeValue::AbsoluteStart.into());
-                let bytes = location.encode();
+                let bytes = location.encode()?;
                 payload.unsplit(bytes);
-                payload
+                Ok(payload)
             }
             FilterType::AbsoluteRange {
                 location,
                 end_group,
             } => {
                 payload.put_varint(FilterTypeValue::AbsoluteRange.into());
-                let bytes = location.encode();
+                let bytes = location.encode()?;
                 payload.unsplit(bytes);
                 payload.put_varint(*end_group);
-                payload
+                Ok(payload)
             }
         }
     }
@@ -146,7 +146,7 @@ mod tests {
 
         for filter_type in filter_types {
             // Act
-            let decoded = decode(&filter_type.encode());
+            let decoded = decode(&filter_type.encode().unwrap());
 
             // Assert
             assert_eq!(decoded, Some(filter_type));

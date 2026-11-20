@@ -66,7 +66,7 @@ impl FetchDataSender {
             anyhow::bail!("FETCH {request_id} is no longer open");
         }
         stream_sender
-            .send(&version.encode_fetch_header(request_id))
+            .send(&version.encode_fetch_header(request_id)?)
             .await?;
         Ok(Self {
             version,

@@ -54,15 +54,17 @@ impl ExtensionHeaders {
         Ok(Self { key_value_pairs })
     }
 
-    pub fn encode(&self) -> bytes::BytesMut {
+    /// The draft-14 Extension Headers Length and Key-Value-Pairs. Fails when
+    /// a key or value exceeds a draft-14 varint.
+    pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         let mut kv_buf = bytes::BytesMut::new();
         for kv_pair in &self.key_value_pairs {
-            kv_buf.unsplit(kv_pair.encode());
+            kv_buf.unsplit(kv_pair.encode()?);
         }
         let mut buf = bytes::BytesMut::new();
         buf.put_varint(kv_buf.len() as u64);
         buf.unsplit(kv_buf);
-        buf
+        Ok(buf)
     }
 
     pub fn prior_group_id_gap(&self) -> Vec<u64> {
@@ -134,7 +136,7 @@ mod tests {
             },
         ]);
 
-        let mut encoded = headers.encode();
+        let mut encoded = headers.encode().unwrap();
         let decoded = ExtensionHeaders::decode(&mut encoded).unwrap();
 
         assert_eq!(decoded, headers);

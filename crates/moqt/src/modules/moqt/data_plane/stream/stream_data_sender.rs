@@ -153,8 +153,11 @@ impl StreamDataSender<Uninitialized> {
         tracing::debug!(?start, "Sending new subgroup header");
         let mut results = Vec::with_capacity(self.streams.len());
         for stream in &mut self.streams {
-            let header = stream.encoder.header(start);
-            results.push(stream.stream_sender.send(&header).await.map_err(Into::into));
+            let result = match stream.encoder.header(start) {
+                Ok(header) => stream.stream_sender.send(&header).await.map_err(Into::into),
+                Err(error) => Err(error),
+            };
+            results.push(result);
         }
         self.settle(results)?;
         Ok(self.into_header_sent())
@@ -173,7 +176,7 @@ impl StreamDataSender<Uninitialized> {
             let SubgroupEncoder::Draft14(encoder) = &mut stream.encoder else {
                 panic!("raw draft-14 fields need a draft-14 session");
             };
-            let bytes = encoder.raw_header(group_id, subgroup_id.clone(), publisher_priority);
+            let bytes = encoder.raw_header(group_id, subgroup_id.clone(), publisher_priority)?;
             results.push(stream.stream_sender.send(&bytes).await.map_err(Into::into));
         }
         self.settle(results)?;

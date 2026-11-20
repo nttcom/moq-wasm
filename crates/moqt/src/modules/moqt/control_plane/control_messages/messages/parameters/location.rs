@@ -20,11 +20,11 @@ impl Location {
         })
     }
 
-    pub fn encode(&self) -> bytes::BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.group_id);
         payload.put_varint(self.object_id);
-        payload
+        Ok(payload)
     }
 
     pub fn next(self) -> Self {
@@ -58,7 +58,7 @@ mod tests {
                 object_id: 5,
             };
 
-            let buf = location.encode();
+            let buf = location.encode().unwrap();
             let mut cursor = std::io::Cursor::new(&buf[..]);
 
             // depacketize
@@ -76,7 +76,7 @@ mod tests {
             };
 
             let mut buf = BytesMut::new();
-            buf.extend(location.encode());
+            buf.extend(location.encode().unwrap());
 
             let expected_bytes = vec![10, 5];
             assert_eq!(buf.as_ref(), expected_bytes.as_slice());

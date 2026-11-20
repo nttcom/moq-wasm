@@ -17,10 +17,10 @@ impl RequestsBlocked {
         Ok(Self { maximum_request_id })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.maximum_request_id);
-        payload
+        Ok(payload)
     }
 }
 
@@ -33,7 +33,7 @@ mod tests {
         fn packetize() {
             let message = RequestsBlocked::new(10);
 
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             assert_eq!(buf.as_ref(), [10].as_slice());
         }
@@ -41,7 +41,7 @@ mod tests {
         #[test]
         fn depacketize() {
             let message = RequestsBlocked::new(10);
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
 
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let decoded = RequestsBlocked::decode(&mut cursor).unwrap();

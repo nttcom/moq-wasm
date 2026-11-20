@@ -329,7 +329,10 @@ mod tests {
             ControlMessageType::Subscribe,
             subscribe.encode().unwrap(),
         ));
-        buf.unsplit(frame(ControlMessageType::UnSubscribe, unsubscribe.encode()));
+        buf.unsplit(frame(
+            ControlMessageType::UnSubscribe,
+            unsubscribe.encode().unwrap(),
+        ));
 
         let first = decoder
             .decode(&mut buf)
@@ -381,7 +384,7 @@ mod tests {
     fn decode_payload_longer_than_its_fields_yields_fatal_error() {
         // Arrange
         let mut decoder = ControlMessageDecoder;
-        let mut payload = Unsubscribe { request_id: 7 }.encode();
+        let mut payload = Unsubscribe { request_id: 7 }.encode().unwrap();
         payload.put_u32(0);
         let mut buf = frame(ControlMessageType::UnSubscribe, payload);
 
@@ -475,27 +478,31 @@ mod tests {
         let mut buf = BytesMut::new();
         buf.unsplit(frame(
             ControlMessageType::GoAway,
-            GoAway::new("https://relay.example/next".to_string()).encode(),
+            GoAway::new("https://relay.example/next".to_string())
+                .encode()
+                .unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::MaxRequestId,
-            MaxRequestId::new(100).encode(),
+            MaxRequestId::new(100).encode().unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::RequestsBlocked,
-            RequestsBlocked::new(100).encode(),
+            RequestsBlocked::new(100).encode().unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::SubscribeUpdate,
-            make_subscribe_update().encode(),
+            make_subscribe_update().encode().unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::PublishDone,
-            PublishDone::new(7, 2, 1, "track ended".to_string()).encode(),
+            PublishDone::new(7, 2, 1, "track ended".to_string())
+                .encode()
+                .unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::FetchCancel,
-            FetchCancel::new(3).encode(),
+            FetchCancel::new(3).encode().unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::PublishNamespaceCancel,
@@ -517,7 +524,8 @@ mod tests {
                 content_exists: ContentExists::False,
                 track_properties: Default::default(),
             }
-            .encode(),
+            .encode()
+            .unwrap(),
         ));
         buf.unsplit(frame(
             ControlMessageType::TrackStatusError,
@@ -526,7 +534,8 @@ mod tests {
                 error_code: 1,
                 reason_phrase: "no such track".to_string(),
             }
-            .encode(),
+            .encode()
+            .unwrap(),
         ));
 
         let decoded: Vec<String> = std::iter::from_fn(|| {

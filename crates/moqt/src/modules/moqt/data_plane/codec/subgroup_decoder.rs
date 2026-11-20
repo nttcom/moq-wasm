@@ -176,7 +176,7 @@ mod tests {
 
     fn decoder_after_header(src: &[u8]) -> (SubgroupDecoder, BytesMut) {
         let mut decoder = SubgroupDecoder::new();
-        let mut buf = header().encode();
+        let mut buf = header().encode().unwrap();
         buf.extend_from_slice(src);
         assert!(matches!(
             decoder.decode(&mut buf).unwrap(),
@@ -193,7 +193,7 @@ mod tests {
     fn a_header_split_across_reads_is_decoded_once_it_is_complete() {
         // Arrange: a two-byte Track Alias, cut after the stream type
         let header = SubgroupHeader::new(64, 47, SubgroupId::None, 2, false, false);
-        let encoded = header.encode();
+        let encoded = header.encode().unwrap();
         let mut decoder = SubgroupDecoder::new();
         let mut src = BytesMut::from(&encoded[..1]);
         assert!(decoder.decode(&mut src).unwrap().is_none());

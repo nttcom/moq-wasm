@@ -39,11 +39,11 @@ impl FetchHeader {
         Ok(Self { request_id })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         buf.put_varint(Self::TYPE);
         buf.put_varint(self.request_id);
-        buf
+        Ok(buf)
     }
 }
 
@@ -176,13 +176,13 @@ impl FetchObjectField {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         buf.put_varint(self.group_id);
         buf.put_varint(self.subgroup_id);
         buf.put_varint(self.object_id);
         buf.put_u8(self.publisher_priority);
-        let ext_headers_buf = self.extension_headers.encode();
+        let ext_headers_buf = self.extension_headers.encode()?;
         buf.extend_from_slice(&ext_headers_buf);
         match &self.fetch_object {
             FetchObject::Payload(payload) => {
@@ -194,7 +194,7 @@ impl FetchObjectField {
                 buf.put_varint(u8::from(*status) as u64);
             }
         }
-        buf
+        Ok(buf)
     }
 }
 
@@ -207,7 +207,7 @@ mod tests {
         #[test]
         fn fetch_header_packetize() {
             let header = FetchHeader::new(42);
-            let result = header.encode();
+            let result = header.encode().unwrap();
             let expected = [
                 0x05, // Type
                 42,   // Request ID
@@ -227,7 +227,7 @@ mod tests {
         #[test]
         fn fetch_header_round_trip() {
             let expected = FetchHeader::new(12345);
-            let buf = expected.encode();
+            let buf = expected.encode().unwrap();
             let mut cursor = std::io::Cursor::new(&buf[..]);
             let result = FetchHeader::decode(&mut cursor).unwrap();
             assert_eq!(result, expected);
@@ -247,7 +247,7 @@ mod tests {
         #[test]
         fn packetize_with_payload() {
             let fields = sample_fields(FetchObject::Payload(Bytes::from_static(b"abcd")));
-            let result = fields.encode();
+            let result = fields.encode().unwrap();
             let expected = vec![
                 1,   // Group ID
                 2,   // Subgroup ID
@@ -273,7 +273,7 @@ mod tests {
         #[test]
         fn round_trip_with_payload() {
             let expected = sample_fields(FetchObject::Payload(Bytes::from_static(b"hello")));
-            let mut buf = expected.encode();
+            let mut buf = expected.encode().unwrap();
             let result = FetchObjectField::decode(&mut buf).unwrap();
             assert_eq!(result, expected);
         }
@@ -281,7 +281,7 @@ mod tests {
         #[test]
         fn round_trip_with_status() {
             let expected = sample_fields(FetchObject::Status(ObjectStatus::DoesNotExist));
-            let mut buf = expected.encode();
+            let mut buf = expected.encode().unwrap();
             let result = FetchObjectField::decode(&mut buf).unwrap();
             assert_eq!(result, expected);
         }

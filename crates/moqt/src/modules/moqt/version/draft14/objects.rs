@@ -59,7 +59,7 @@ impl SubgroupEncoder {
 
     /// Subgroup 0 omits the Subgroup ID field. Extensions are declared
     /// present, so every object may carry them.
-    pub(crate) fn header(&mut self, start: SubgroupStart) -> BytesMut {
+    pub(crate) fn header(&mut self, start: SubgroupStart) -> anyhow::Result<BytesMut> {
         let subgroup_id = match start.subgroup_id {
             0 => SubgroupId::None,
             subgroup_id => SubgroupId::Value(subgroup_id),
@@ -80,7 +80,7 @@ impl SubgroupEncoder {
         group_id: u64,
         subgroup_id: SubgroupId,
         publisher_priority: u8,
-    ) -> BytesMut {
+    ) -> anyhow::Result<BytesMut> {
         self.encode_header(SubgroupHeader::new(
             self.track_alias,
             group_id,
@@ -91,10 +91,10 @@ impl SubgroupEncoder {
         ))
     }
 
-    fn encode_header(&mut self, header: SubgroupHeader) -> BytesMut {
-        let bytes = header.encode();
+    fn encode_header(&mut self, header: SubgroupHeader) -> anyhow::Result<BytesMut> {
+        let bytes = header.encode()?;
         self.header = Some(header);
-        bytes
+        Ok(bytes)
     }
 
     /// Fails when the object id is not greater than the previous object's. An
@@ -124,7 +124,7 @@ impl SubgroupEncoder {
         } else {
             SubgroupObjectHead::payload(object_id_delta, extension_headers, payload_len)
         };
-        let bytes = head.encode(self.message_type());
+        let bytes = head.encode(self.message_type())?;
         self.prev_object_id = Some(object_id);
         Ok(bytes)
     }
@@ -175,11 +175,11 @@ pub(crate) fn encode_datagram(track_alias: u64, object: &Object) -> anyhow::Resu
     ObjectDatagram::from_object(track_alias, object).encode()
 }
 
-pub(crate) fn encode_fetch_header(request_id: u64) -> BytesMut {
+pub(crate) fn encode_fetch_header(request_id: u64) -> anyhow::Result<BytesMut> {
     FetchHeader::new(request_id).encode()
 }
 
-pub(crate) fn encode_fetch_object(object: &Object) -> BytesMut {
+pub(crate) fn encode_fetch_object(object: &Object) -> anyhow::Result<BytesMut> {
     FetchObjectField::from_object(object).encode()
 }
 
@@ -399,12 +399,14 @@ mod tests {
 
     fn encoder() -> SubgroupEncoder {
         let mut encoder = SubgroupEncoder::new(1);
-        encoder.header(SubgroupStart {
-            group_id: 0,
-            subgroup_id: 0,
-            publisher_priority: 0,
-            ends_group: false,
-        });
+        encoder
+            .header(SubgroupStart {
+                group_id: 0,
+                subgroup_id: 0,
+                publisher_priority: 0,
+                ends_group: false,
+            })
+            .unwrap();
         encoder
     }
 
@@ -431,7 +433,7 @@ mod tests {
         let mut encoder = encoder();
         let object = object(2, ObjectStatus::Normal, b"frame");
         let mut expected = BytesMut::from(&[2u8][..]);
-        expected.extend_from_slice(&object.extension_headers.encode());
+        expected.extend_from_slice(&object.extension_headers.encode().unwrap());
         expected.extend_from_slice(&[5]);
         expected.extend_from_slice(b"frame");
 
@@ -451,7 +453,7 @@ mod tests {
             .unwrap();
         let object = object(1, ObjectStatus::EndOfGroup, b"");
         let mut expected = BytesMut::from(&[0u8][..]);
-        expected.extend_from_slice(&object.extension_headers.encode());
+        expected.extend_from_slice(&object.extension_headers.encode().unwrap());
         expected.extend_from_slice(&[0, 3]);
 
         // Act

@@ -63,7 +63,7 @@ impl ChunkWriter {
         });
         if let Event::Object(object) = event {
             let identity = (object.location.group_id, object.location.object_id);
-            let fingerprint = object_fingerprint(object);
+            let fingerprint = object_fingerprint(object)?;
             if let Some(first) = track.seen.get(&identity) {
                 anyhow::ensure!(
                     *first == fingerprint,
@@ -122,7 +122,7 @@ impl ChunkWriter {
                     "priority": object.publisher_priority, "status": object.status as u8,
                     "ends_group": object.ends_group,
                     "timestamp_us": timestamp,
-                    "extensions": STANDARD.encode(object.extension_headers.encode()),
+                    "extensions": STANDARD.encode(object.extension_headers.encode()?),
                     "offset": offset.to_string(), "length": length.to_string(),
                 }));
             }
@@ -242,7 +242,7 @@ pub(crate) fn digest(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn object_fingerprint(object: &moqt::object::Object) -> [u8; 32] {
+fn object_fingerprint(object: &moqt::object::Object) -> Result<[u8; 32]> {
     let mut hash = Sha256::new();
     match object.forwarding {
         moqt::object::ForwardingPreference::Datagram => hash.update([0]),
@@ -256,9 +256,9 @@ fn object_fingerprint(object: &moqt::object::Object) -> [u8; 32] {
         object.status as u8,
         u8::from(object.ends_group),
     ]);
-    hash.update(object.extension_headers.encode());
+    hash.update(object.extension_headers.encode()?);
     hash.update(&object.payload);
-    hash.finalize().into()
+    Ok(hash.finalize().into())
 }
 
 #[cfg(test)]

@@ -36,12 +36,12 @@ impl RequestError {
         })
     }
 
-    pub fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
         payload.put_varint(self.request_id);
         payload.put_varint(self.error_code);
         util::put_reason_phrase(&mut payload, &self.reason_phrase);
-        payload
+        Ok(payload)
     }
 }
 
@@ -62,7 +62,7 @@ mod tests {
                 error_code,
                 reason_phrase: reason_phrase.clone(),
             };
-            let buf = announce_error.encode();
+            let buf = announce_error.encode().unwrap();
             let expected_bytes_array = [
                 0,  // Request ID(i)
                 1,  // Error Code (i)
@@ -110,7 +110,7 @@ mod tests {
             };
 
             // Act
-            let buf = message.encode();
+            let buf = message.encode().unwrap();
             let decoded = RequestError::decode(&mut std::io::Cursor::new(buf.as_ref())).unwrap();
 
             // Assert
