@@ -1372,12 +1372,13 @@ mod tests {
             moqt::domains::connection::IncomingObjectNotification,
             test_support::{
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, capture_telemetry,
-                connected_sessions, data_receiver, first_subgroup_stream, location, next_subgroup,
-                notify_datagram, object_with_extensions, read_fetch_objects, read_subgroup_objects,
-                receive_disconnected, send_subgroup_object, send_until_stopped,
-                send_without_waiting, sent_update, spawn_connected_draft18_sessions,
-                spawn_connected_native_sessions, spawn_connected_native_sessions_following_go_away,
-                subscribe_namespace_accepted, subscribed_track, wait_for_control_delivery, within,
+                connected_sessions, data_receiver, first_subgroup_stream, location, next_event,
+                next_subgroup, notify_datagram, object_with_extensions, read_fetch_objects,
+                read_subgroup_objects, receive_disconnected, send_subgroup_object,
+                send_until_stopped, send_without_waiting, sent_update,
+                spawn_connected_draft18_sessions, spawn_connected_native_sessions,
+                spawn_connected_native_sessions_following_go_away, subscribe_namespace_accepted,
+                subscribed_track, wait_for_control_delivery, within,
             },
             transport::transport_send_stream::TransportSendError,
         },
@@ -1436,7 +1437,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
             panic!("expected FETCH from the client");
         };
         (request, handler)
@@ -1537,7 +1538,7 @@ mod tests {
     }
 
     async fn receive_fetch_cancel(server: &Session) -> FetchCancelHandler {
-        let SessionEvent::FetchCancel(cancel) = server.receive_event().await.unwrap() else {
+        let SessionEvent::FetchCancel(cancel) = next_event(server).await else {
             panic!("expected FETCH_CANCEL from the client");
         };
         cancel
@@ -1938,7 +1939,7 @@ mod tests {
                 .subscribe("ns".to_string(), track_name, option)
                 .await
         });
-        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
         (request, handler)
@@ -1968,8 +1969,7 @@ mod tests {
             let cancelled = request.await.unwrap_err();
             let unsubscribe = within(async {
                 handler.ok(0, ContentExists::False).await.unwrap();
-                let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
-                else {
+                let SessionEvent::Unsubscribe(unsubscribe) = next_event(&server).await else {
                     panic!("expected UNSUBSCRIBE after a late SUBSCRIBE_OK");
                 };
                 unsubscribe
@@ -2038,8 +2038,7 @@ mod tests {
             // Act
             let (unsubscribe, received_alias, objects) = within(async {
                 client.subscriber().unsubscribe(&cancelled).await.unwrap();
-                let SessionEvent::Unsubscribe(unsubscribe) = server.receive_event().await.unwrap()
-                else {
+                let SessionEvent::Unsubscribe(unsubscribe) = next_event(&server).await else {
                     panic!("expected UNSUBSCRIBE from the client");
                 };
                 send_subgroup_object(&server, &kept_handler.into_subscription(kept_alias), &after)
@@ -2152,7 +2151,7 @@ mod tests {
     }
 
     async fn receive_subscribe_update(server: &Session) -> SubscribeUpdateHandler {
-        let SessionEvent::SubscribeUpdate(update) = server.receive_event().await.unwrap() else {
+        let SessionEvent::SubscribeUpdate(update) = next_event(server).await else {
             panic!("expected SUBSCRIBE_UPDATE from the client");
         };
         update
@@ -2201,8 +2200,7 @@ mod tests {
                 tokio::join!(
                     subscriber.fetch_relative_joining(&subscription, 1, FetchOption::default()),
                     async {
-                        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap()
-                        else {
+                        let SessionEvent::Fetch(handler) = next_event(&server).await else {
                             panic!("expected FETCH from the client");
                         };
                         serve_fetch(&server, &handler, location(3, 2), &joined).await;
@@ -2666,7 +2664,7 @@ mod tests {
 
         // Act
         drop(request);
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
 
         // Assert
         let SessionEvent::Unsubscribe(unsubscribe) = event else {
@@ -2698,7 +2696,7 @@ mod tests {
         // Act
         drop(request);
         drop(receiver_map);
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
         let notification = notify_datagram(&session, track_alias).await;
 
         // Assert: the receiver installed before the drop no longer takes objects
@@ -2727,7 +2725,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Subscribe(_) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Subscribe(_) = next_event(&server).await else {
                 panic!("expected SUBSCRIBE from the client");
             };
 
@@ -2765,8 +2763,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(mut handler) = within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::Subscribe(mut handler) = next_event(server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
         handler.track_properties.set_dynamic_groups(dynamic_groups);
@@ -2804,7 +2801,7 @@ mod tests {
                 .subscribe("ns".to_string(), TRACK.to_string(), option)
                 .await
         });
-        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
 
@@ -2835,7 +2832,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
 
@@ -2873,7 +2870,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
 
@@ -2906,7 +2903,7 @@ mod tests {
         // Act
         let (mut reader, served) =
             start_subscribe_group_start(&client, &server, largest(3, 1), true).await;
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
         let SessionEvent::Fetch(fetch) = event else {
             panic!("expected the joining FETCH, got {event:?}");
         };
@@ -2936,7 +2933,7 @@ mod tests {
         // Act
         let _subscribed =
             start_subscribe_group_start(&client, &server, largest(3, NEW_GROUP_AFTER), false).await;
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
 
         // Assert: §10.2.13 forbids NEW_GROUP_REQUEST without DYNAMIC_GROUPS
         assert!(matches!(event, SessionEvent::Fetch(_)), "{event:?}");
@@ -2962,7 +2959,7 @@ mod tests {
 
     /// The REQUEST_UPDATE the client sends next, with no FETCH before it.
     async fn next_request_update(server: &Session) -> SubscribeUpdateHandler {
-        match within(server.receive_event()).await.unwrap() {
+        match next_event(server).await {
             SessionEvent::SubscribeUpdate(update) => update,
             event => panic!("expected REQUEST_UPDATE, got {event:?}"),
         }
@@ -2999,7 +2996,7 @@ mod tests {
         send_subgroup_object(&server, &served, &fetch_object(location(3, 6), b"rest")).await;
 
         // Act: the publisher starts no new group
-        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Fetch(fetch) = next_event(&server).await else {
             panic!("expected the joining FETCH");
         };
         serve_fetch(
@@ -3034,15 +3031,14 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(subscribe) = within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::Subscribe(subscribe) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
 
         // Act
         let nothing_before_subscribe_ok = receives_no_event(&server).await;
         subscribe.ok(0, largest(3, 1)).await.unwrap();
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
 
         // Assert
         assert!(nothing_before_subscribe_ok);
@@ -3090,7 +3086,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(handler) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
         let alias = handler.ok(0, content_exists).await.unwrap();
@@ -3125,7 +3121,7 @@ mod tests {
         send_subgroup_object(&server, &served, &fetch_object(location(3, 2), b"live")).await;
 
         // Act
-        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Fetch(fetch) = next_event(&server).await else {
             panic!("expected the joining FETCH");
         };
         serve_fetch(
@@ -3163,7 +3159,7 @@ mod tests {
             },
         )
         .await;
-        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Fetch(fetch) = next_event(&server).await else {
             panic!("expected the joining FETCH");
         };
 
@@ -3194,13 +3190,12 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Subscribe(subscribe) = within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::Subscribe(subscribe) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
 
         // Act: the SUBSCRIBE is left unanswered
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
 
         // Assert
         let SessionEvent::Fetch(fetch) = event else {
@@ -3221,7 +3216,7 @@ mod tests {
         let (client, server) = spawn_connected_native_sessions("subscriber-current-empty").await;
         let (mut reader, served) =
             start_subscribe_current_group(&client, &server, ContentExists::False).await;
-        let SessionEvent::Fetch(fetch) = within(server.receive_event()).await.unwrap() else {
+        let SessionEvent::Fetch(fetch) = next_event(&server).await else {
             panic!("expected the joining FETCH");
         };
 
@@ -3250,7 +3245,7 @@ mod tests {
             .unsubscribe_namespace("room/a".to_string())
             .await
             .unwrap();
-        let event = within(server.receive_event()).await.unwrap();
+        let event = next_event(&server).await;
 
         // Assert
         let SessionEvent::UnsubscribeNamespace(handler) = event else {
@@ -3288,9 +3283,7 @@ mod tests {
                 .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
                 .await
         });
-        let SessionEvent::SubscribeNameSpace(_first_handler) =
-            within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(_first_handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE_NAMESPACE from the client");
         };
 
@@ -3316,9 +3309,7 @@ mod tests {
                 .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
                 .await
         });
-        let SessionEvent::SubscribeNameSpace(handler) =
-            within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE_NAMESPACE from the client");
         };
 
@@ -3350,9 +3341,7 @@ mod tests {
                 .subscribe_namespace("a".into(), NamespaceInterest::NamespacesAndTracks)
                 .await
         });
-        let SessionEvent::SubscribeNameSpace(handler) =
-            within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
             panic!("expected SUBSCRIBE_NAMESPACE from the client");
         };
 
@@ -3391,21 +3380,17 @@ mod tests {
             })
         };
         let rejected = subscribe(client.subscriber());
-        let SessionEvent::SubscribeNameSpace(first) = within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(first) = next_event(&server).await else {
             panic!("expected SUBSCRIBE_NAMESPACE from the client");
         };
         within(client.subscriber().unsubscribe_namespace("a".into()))
             .await
             .unwrap();
-        let SessionEvent::UnsubscribeNamespace(_) = within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::UnsubscribeNamespace(_) = next_event(&server).await else {
             panic!("expected UNSUBSCRIBE_NAMESPACE from the client");
         };
         let _accepted = subscribe(client.subscriber());
-        let SessionEvent::SubscribeNameSpace(_second) =
-            within(server.receive_event()).await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(_second) = next_event(&server).await else {
             panic!("expected the second SUBSCRIBE_NAMESPACE from the client");
         };
 

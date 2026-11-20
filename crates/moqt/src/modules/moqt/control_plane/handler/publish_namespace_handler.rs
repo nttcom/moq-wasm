@@ -78,7 +78,7 @@ impl PublishNamespaceHandler {
 mod tests {
     use crate::{
         SessionEvent,
-        modules::test_support::{connect_sessions, spawn_native_server},
+        modules::test_support::{connect_sessions, next_event, spawn_native_server},
     };
 
     #[tokio::test]
@@ -96,7 +96,7 @@ mod tests {
         });
 
         // Act
-        let SessionEvent::PublishNamespace(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
             panic!("expected PUBLISH_NAMESPACE from the client");
         };
 

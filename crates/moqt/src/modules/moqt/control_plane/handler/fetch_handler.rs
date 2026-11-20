@@ -201,7 +201,7 @@ mod tests {
         fetch::{FetchOption, JoiningStart},
         modules::moqt::version::Version,
         modules::test_support::{
-            DRAFTS, connect_sessions, connected_sessions, mandatory_track_properties,
+            DRAFTS, connect_sessions, connected_sessions, mandatory_track_properties, next_event,
             spawn_connected_draft18_sessions, spawn_connected_native_sessions, spawn_native_server,
         },
         object::{ContentExists, GroupOrder, Location},
@@ -237,7 +237,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Fetch(handler) = next_event(&server).await else {
                 panic!("expected FETCH from the client");
             };
 
@@ -265,7 +265,7 @@ mod tests {
                 .fetch("ns".to_string(), "track".to_string(), START, END, option)
                 .await;
         });
-        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
             panic!("expected FETCH from the client");
         };
         handler
@@ -287,7 +287,7 @@ mod tests {
                 )
                 .await
         });
-        let SessionEvent::Fetch(mut handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Fetch(mut handler) = next_event(&server).await else {
             panic!("expected FETCH from the client");
         };
         handler.track_properties = mandatory_track_properties();
@@ -396,7 +396,7 @@ mod tests {
                     )
                     .await
             });
-            let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+            let SessionEvent::Fetch(handler) = next_event(&server).await else {
                 panic!("expected FETCH from the client");
             };
 
@@ -491,7 +491,7 @@ mod tests {
                 .fetch_relative_joining(&subscription, 2, FetchOption::default())
                 .await;
         });
-        let SessionEvent::Subscribe(subscribe) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Subscribe(subscribe) = next_event(&server).await else {
             panic!("expected SUBSCRIBE from the client");
         };
         subscribe
@@ -500,7 +500,7 @@ mod tests {
             .unwrap();
 
         // Act
-        let SessionEvent::Fetch(fetch) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Fetch(fetch) = next_event(&server).await else {
             panic!("expected FETCH from the client");
         };
 

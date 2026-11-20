@@ -839,7 +839,7 @@ mod tests {
                 },
             },
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, notify_datagram,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, next_event, notify_datagram,
                 register_and_take_data_receiver, spawn_connected_native_sessions,
                 spawn_connected_native_sessions_following_go_away, unread_events_at_the_limit,
                 use_up_bidi_streams, within,
@@ -970,7 +970,7 @@ mod tests {
                 .publish("ns".into(), "track".into(), PublishOption::default())
                 .await
         });
-        let SessionEvent::Publish(_) = within(client.receive_event()).await.unwrap() else {
+        let SessionEvent::Publish(_) = next_event(&client).await else {
             panic!("expected PUBLISH");
         };
 
@@ -985,7 +985,7 @@ mod tests {
         .await;
 
         // Assert
-        let SessionEvent::PublishDone(publish_done) = client.receive_event().await.unwrap() else {
+        let SessionEvent::PublishDone(publish_done) = next_event(&client).await else {
             panic!("expected PUBLISH_DONE");
         };
         assert_eq!(publish_done.request_id(), REQUEST_ID);
@@ -1010,7 +1010,7 @@ mod tests {
         .await;
 
         // Assert
-        let SessionEvent::FetchCancel(fetch_cancel) = client.receive_event().await.unwrap() else {
+        let SessionEvent::FetchCancel(fetch_cancel) = next_event(&client).await else {
             panic!("expected FETCH_CANCEL");
         };
         assert_eq!(fetch_cancel.request_id(), REQUEST_ID);
@@ -1035,8 +1035,7 @@ mod tests {
         .await;
 
         // Assert
-        let SessionEvent::UnsubscribeNamespace(unsubscribe) = client.receive_event().await.unwrap()
-        else {
+        let SessionEvent::UnsubscribeNamespace(unsubscribe) = next_event(&client).await else {
             panic!("expected UNSUBSCRIBE_NAMESPACE");
         };
         assert_eq!(unsubscribe.track_namespace_prefix(), "room/a");
@@ -1061,7 +1060,7 @@ mod tests {
         .await;
 
         // Assert
-        let SessionEvent::PublishNamespaceDone(done) = client.receive_event().await.unwrap() else {
+        let SessionEvent::PublishNamespaceDone(done) = next_event(&client).await else {
             panic!("expected PUBLISH_NAMESPACE_DONE");
         };
         assert_eq!(done.track_namespace(), "room/a");
@@ -1102,9 +1101,7 @@ mod tests {
         let (subscribed, ()) = tokio::join!(
             subscriber.subscribe_namespace("live".into(), NamespaceInterest::Tracks),
             async {
-                let SessionEvent::SubscribeNameSpace(handler) =
-                    server.receive_event().await.unwrap()
-                else {
+                let SessionEvent::SubscribeNameSpace(handler) = next_event(&server).await else {
                     panic!("expected SUBSCRIBE_NAMESPACE");
                 };
                 handler.ok().await.unwrap();
@@ -1202,10 +1199,7 @@ mod tests {
     /// The handler is returned so its drop does not answer a request the
     /// test sent outside the client's inflight requests.
     async fn receive_track_status(session: &Session) -> TrackStatusHandler {
-        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, session.receive_event())
-            .await
-            .unwrap()
-            .unwrap();
+        let event = next_event(session).await;
         let SessionEvent::TrackStatus(handler) = event else {
             panic!("expected TRACK_STATUS, got {event:?}");
         };
@@ -1571,8 +1565,7 @@ mod tests {
         let mut read = 0;
         within(async {
             while read < MESSAGES {
-                if let SessionEvent::PublishNamespaceDone(_) = server.receive_event().await.unwrap()
-                {
+                if let SessionEvent::PublishNamespaceDone(_) = next_event(&server).await {
                     read += 1;
                 }
             }
@@ -1600,8 +1593,7 @@ mod tests {
         let mut read = 0;
         within(async {
             while read < MESSAGES {
-                if let SessionEvent::PublishNamespaceDone(_) = client.receive_event().await.unwrap()
-                {
+                if let SessionEvent::PublishNamespaceDone(_) = next_event(&client).await {
                     read += 1;
                 }
             }

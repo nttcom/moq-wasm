@@ -499,8 +499,8 @@ mod tests {
         modules::{
             moqt::{control_plane::error_codes::PublishDoneCode, version::draft14::ControlChannel},
             test_support::{
-                DISCONNECT_TIMEOUT, published_track, received_subscribe_update,
-                spawn_connected_native_sessions, subscribed_track, subscription, within,
+                DISCONNECT_TIMEOUT, next_event, published_track, received_subscribe_update,
+                spawn_connected_native_sessions, subscribed_track, subscription,
             },
         },
     };
@@ -590,7 +590,7 @@ mod tests {
             .unsubscribe(&track.subscription)
             .await
             .unwrap();
-        let event = within(track.server.receive_event()).await.unwrap();
+        let event = next_event(&track.server).await;
         assert!(matches!(event, SessionEvent::Unsubscribe(_)), "{event:?}");
 
         // Act
@@ -602,7 +602,7 @@ mod tests {
             .unwrap();
 
         // Assert: draft-14 §9.10 closes the session only for a Request ID that never existed
-        let event = within(track.server.receive_event()).await.unwrap();
+        let event = next_event(&track.server).await;
         let SessionEvent::SubscribeUpdate(update) = event else {
             panic!("expected SUBSCRIBE_UPDATE, got {event:?}");
         };

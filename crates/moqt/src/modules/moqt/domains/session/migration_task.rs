@@ -810,7 +810,7 @@ mod tests {
             test_support::{
                 DISCONNECT_TIMEOUT, DRAFTS, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
                 client_with_config, data_receiver, datagram_object, native_client_with_config,
-                next_datagram, next_subgroup, open_subgroup, self_signed_server_config,
+                next_datagram, next_event, next_subgroup, open_subgroup, self_signed_server_config,
                 send_payload, sent_update, spawn_native_server, spawn_native_server_handshake,
                 spawn_server, subscribe_namespace_accepted, subscribed_track_reader,
             },
@@ -942,7 +942,7 @@ mod tests {
         server: &Session,
         content_exists: ContentExists,
     ) -> (StreamDataSenderFactory, FilterType, Subscription) {
-        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(server).await else {
             panic!("expected SUBSCRIBE");
         };
         let track_alias = handler.ok(0, content_exists).await.unwrap();
@@ -1461,10 +1461,7 @@ mod tests {
                 .publish_done(&served_b, PublishDoneCode::TrackEnded, 0, String::new())
                 .await
                 .unwrap();
-            let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event())
-                .await
-                .unwrap()
-                .unwrap();
+            let event = next_event(&client).await;
 
             // Assert: only B's PUBLISH_DONE arrives, under the first request id
             let SessionEvent::PublishDone(done) = event else {
@@ -1529,9 +1526,7 @@ mod tests {
         let (subscribed, ()) = tokio::join!(
             subscriber.subscribe_namespace("room".into(), NamespaceInterest::Namespaces),
             async {
-                let SessionEvent::SubscribeNameSpace(handler) =
-                    server_a.receive_event().await.unwrap()
-                else {
+                let SessionEvent::SubscribeNameSpace(handler) = next_event(&server_a).await else {
                     panic!("expected SUBSCRIBE_NAMESPACE");
                 };
                 handler.ok().await.unwrap();
@@ -1541,8 +1536,7 @@ mod tests {
 
         // Act
         let server_b = server_b.named_by(&server_a).await;
-        let SessionEvent::SubscribeNameSpace(handler) = server_b.receive_event().await.unwrap()
-        else {
+        let SessionEvent::SubscribeNameSpace(handler) = next_event(&server_b).await else {
             panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
         };
         handler.ok().await.unwrap();
@@ -1551,10 +1545,7 @@ mod tests {
             .begin_publish_namespace("room/alice".into())
             .await
             .unwrap();
-        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, client.receive_event())
-            .await
-            .unwrap()
-            .unwrap();
+        let event = next_event(&client).await;
 
         // Assert: the GOAWAY itself is not returned
         assert_eq!(handler.track_namespace_prefix, "room");
@@ -1604,9 +1595,7 @@ mod tests {
         let (subscribed, ()) = tokio::join!(
             subscriber.subscribe_namespace("room".into(), NamespaceInterest::Tracks),
             async {
-                let SessionEvent::SubscribeNameSpace(handler) =
-                    server_a.receive_event().await.unwrap()
-                else {
+                let SessionEvent::SubscribeNameSpace(handler) = next_event(&server_a).await else {
                     panic!("expected SUBSCRIBE_TRACKS");
                 };
                 handler.ok().await.unwrap();
@@ -1620,10 +1609,7 @@ mod tests {
             .await
             .unwrap();
         let server_b = accept_b.await.unwrap();
-        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
-            .await
-            .unwrap()
-            .unwrap();
+        let event = next_event(&server_b).await;
 
         // Assert
         let SessionEvent::SubscribeNameSpace(handler) = event else {
@@ -1637,7 +1623,7 @@ mod tests {
     /// a SUBSCRIBE it gave up on by resetting its request stream.
     async fn next_subscribe(client: &Session) -> SubscribeHandler {
         loop {
-            match client.receive_event().await.unwrap() {
+            match next_event(client).await {
                 SessionEvent::Subscribe(handler) => return handler,
                 SessionEvent::Unsubscribe(_) => {}
                 event => panic!("expected SUBSCRIBE, got {event:?}"),
@@ -1666,10 +1652,7 @@ mod tests {
             .await
             .unwrap();
         let server_b = accept_b.await.unwrap();
-        let event = tokio::time::timeout(HANDSHAKE_TIMEOUT, server_b.receive_event())
-            .await
-            .unwrap()
-            .unwrap();
+        let event = next_event(&server_b).await;
 
         // Assert
         let SessionEvent::SubscribeNameSpace(handler) = event else {
@@ -1723,7 +1706,7 @@ mod tests {
     }
 
     async fn serve_subscribe_with_alias(client: &Session) -> (u64, Subscription) {
-        let SessionEvent::Subscribe(handler) = client.receive_event().await.unwrap() else {
+        let SessionEvent::Subscribe(handler) = next_event(client).await else {
             panic!("expected SUBSCRIBE");
         };
         let track_alias = handler.ok(0, ContentExists::False).await.unwrap();
@@ -1899,7 +1882,7 @@ mod tests {
             let (published, _) = publish(&client, &server_a).await;
             let server_b = server_b.named_by(&server_a).await;
             accept_namespace(&server_b).await;
-            let SessionEvent::Publish(handler) = server_b.receive_event().await.unwrap() else {
+            let SessionEvent::Publish(handler) = next_event(&server_b).await else {
                 panic!("expected PUBLISH from the client");
             };
             handler
@@ -1938,7 +1921,7 @@ mod tests {
 
     /// Answers the next FETCH and returns its start and its response stream.
     async fn serve_fetch(server: &Session, end: Location) -> (Location, FetchDataSender) {
-        let SessionEvent::Fetch(handler) = server.receive_event().await.unwrap() else {
+        let SessionEvent::Fetch(handler) = next_event(server).await else {
             panic!("expected FETCH");
         };
         let FetchParams::Standalone { start_location, .. } = handler.fetch.fetch_params else {
@@ -2241,7 +2224,7 @@ mod tests {
         let (handle, fetch_params) = tokio::join!(
             subscriber.fetch_relative_joining(&subscription, 0, FetchOption::default()),
             async {
-                let SessionEvent::Fetch(handler) = server_b.receive_event().await.unwrap() else {
+                let SessionEvent::Fetch(handler) = next_event(&server_b).await else {
                     panic!("expected FETCH");
                 };
                 handler.ok(false, largest.end_after()).await.unwrap();
@@ -2533,7 +2516,7 @@ mod tests {
     /// Leaves the client's next request on `first` unanswered and closes
     /// `first`; returns the server session the client reconnects with.
     async fn lose_after_request(first: Session, sessions: &mut AcceptedSessions) -> Session {
-        let unanswered = first.receive_event().await.unwrap();
+        let unanswered = next_event(&first).await;
         first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
         drop(unanswered);
         let (_, second) = next_session(sessions).await;
@@ -2555,8 +2538,7 @@ mod tests {
                     .subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
                 async {
                     let second = lose_after_request(first, &mut sessions).await;
-                    let SessionEvent::SubscribeNameSpace(handler) =
-                        second.receive_event().await.unwrap()
+                    let SessionEvent::SubscribeNameSpace(handler) = next_event(&second).await
                     else {
                         panic!("expected SUBSCRIBE_NAMESPACE on the new connection");
                     };
@@ -2641,8 +2623,7 @@ mod tests {
         let (announced, (_second, namespace)) = tokio::time::timeout(RECONNECT_LIMIT, async {
             tokio::join!(publisher.publish_namespace("room/alice".into()), async {
                 let second = lose_after_request(first, &mut sessions).await;
-                let SessionEvent::PublishNamespace(handler) = second.receive_event().await.unwrap()
-                else {
+                let SessionEvent::PublishNamespace(handler) = next_event(&second).await else {
                     panic!("expected PUBLISH_NAMESPACE on the new connection");
                 };
                 handler.ok().await.unwrap();
@@ -2673,7 +2654,7 @@ mod tests {
                 subscriber
                     .subscribe_namespace("room".into(), NamespaceInterest::NamespacesAndTracks),
                 async {
-                    let unanswered = first.receive_event().await.unwrap();
+                    let unanswered = next_event(&first).await;
                     first.close_with_error(TerminationErrorCode::ExpiredAuthToken, "expired");
                     (unanswered, first)
                 }
