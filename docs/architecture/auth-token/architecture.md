@@ -15,9 +15,9 @@ one.
 | `lib.rs` | `Claims`, `Claims::issued`, which sets `iat` and an `exp` a lifetime later, `unix_now`, the current time in the unit of `iat` and `exp`, and `TEMPORARY_APP_ID_PREFIX`, the `appId` prefix of a temporary app (see the VTS architecture). |
 | `temporary_app.rs` | `temporary_app_id`: the `appId` of an unexpired temporary app token, read without checking the signature, failing with a `TemporaryAppTokenError`. `temporary-apps` checks the signature first; `live-translate` leaves it to the relay. |
 | `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `aws-lc-rs`. |
-| `signed_token.rs` | `SignedToken`, the VTS `/verify` answer (`appId`, `isRelay`, `claims`). `check` applies a `ClaimPolicy` (default: client tokens live at most 24 hours, clocks may differ by 60 seconds) and requires `iat`, `exp` and well-formed namespace paths, failing with a `ClaimError`; `covers` tells whether the `publish`, `subscribe` or `bots` claim covers a full namespace, element by element. |
+| `signed_token.rs` | `SignedToken`, the VTS `/verify` answer (`appId`, `isRelay`, `claims`). `check` applies a `ClaimPolicy` (default: client tokens live at most 24 hours, clocks may differ by 60 seconds) and requires `iat`, `exp` and well-formed namespace paths, failing with a `ClaimError`; `covers` tells whether the `publish`, `subscribe`, `bots` or `calls` claim covers a full namespace, element by element. |
 | `vts_client.rs` | `VtsClient`, the caller of the VTS's `POST /verify`, built only with the `vts-client` feature: it sends a token with a 3 s timeout and the current W3C trace context, and answers `SignedToken` or a `VtsVerifyError` (`Unauthorized` with the VTS's reason, or `Unavailable`). It checks only the signature, as the VTS does. |
-| `bin/auth-token/` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--ttl` (`15s` / `30m` / `12h` / `365d`, parsed in `lifetime.rs`) and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |
+| `bin/auth-token/` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--calls`, `--ttl` (`15s` / `30m` / `12h` / `365d`, parsed in `lifetime.rs`) and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |
 
 The payload claims:
 
@@ -26,6 +26,7 @@ The payload claims:
 | `appId` | The registered app whose secret signed the token; also the namespace root |
 | `publish` / `subscribe` | Relative namespace path the token may publish / subscribe under; `""` is the whole app root; absent means not allowed |
 | `bots` | Relative namespace path under which the token may start, stop and list bots on the bot service (docs/architecture/bot-dispatcher/architecture.md); `""` is the whole app root; absent on client tokens |
+| `calls` | Relative namespace path under which the token may place, answer and end phone calls on the SIP gateway (docs/architecture/sip-gateway/architecture.md); `""` is the whole app root; absent on client tokens |
 | `iat` / `exp` | Unix seconds; judged by `SignedToken::check` with the reader's `ClaimPolicy`, never by the VTS |
 | `relayId` | The `RELAY_ID` of the relay presenting a relay app's token; the accepting relay records it as `peer_relay_id`. Absent on client tokens |
 
