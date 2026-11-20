@@ -1207,7 +1207,7 @@ mod tests {
             subgroup_opened_receiver
                 .try_recv()
                 .map(|run| run.first_object_id),
-            Ok(1)
+            Ok(ObjectCursor::At(1))
         );
     }
 
