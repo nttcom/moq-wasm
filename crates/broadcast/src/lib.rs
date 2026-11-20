@@ -3,13 +3,17 @@ mod cmaf_video;
 mod group_alignment;
 mod media_timeline;
 mod publish_queue;
+mod reader;
 mod relay_connection;
 mod rendition_track;
 mod stream_ledger;
+#[cfg(test)]
+mod test_support;
 mod track_publisher;
 mod writer;
 
 pub use broadcast::{Broadcast, SourceTracks, VIDEO_TRACK_NAME, VideoTrackInfo};
+pub use reader::BroadcastReader;
 pub use relay_connection::{MoqtTarget, RelayConnection};
 pub use rendition_track::{RenditionConfig, RenditionKeyframes, RenditionTrack};
 pub use stream_ledger::StreamRecord;

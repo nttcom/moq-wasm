@@ -1,15 +1,7 @@
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-use bytes::Bytes;
-use moqt::{
-    ClientConfig, Endpoint, NATIVE, Session, Subscription,
-    subscribe::{FilterType, SubscribeOption},
-};
-
-/// Objects the relay has not sent this long after receiving them would
-/// play late, so it drops them (draft-14 §9.2.1.2). Same as the browser player.
-const DELIVERY_TIMEOUT_MS: u64 = 2_000;
+use anyhow::{Context, Result};
+use moqt::{ClientConfig, Endpoint, NATIVE, Session};
 
 pub async fn connect(url: &str, config: &ClientConfig) -> Result<Arc<Session>> {
     let endpoint = Endpoint::<NATIVE>::create_client(config)?;
@@ -21,43 +13,4 @@ pub async fn connect(url: &str, config: &ClientConfig) -> Result<Arc<Session>> {
     Ok(Arc::new(
         connecting.await.context("establish moqt session")?,
     ))
-}
-
-pub async fn subscribe(
-    session: &Session,
-    namespace: &str,
-    name: &str,
-    filter_type: FilterType,
-) -> Result<Subscription> {
-    let option = SubscribeOption {
-        filter_type,
-        // A track with long groups starts one when asked (draft-18 §5.1.3.1).
-        new_group_request: (filter_type == FilterType::NextGroupStart).then_some(0),
-        delivery_timeout: Some(DELIVERY_TIMEOUT_MS),
-        ..SubscribeOption::default()
-    };
-    session
-        .subscriber()
-        .subscribe(namespace.to_string(), name.to_string(), option)
-        .await
-        .with_context(|| format!("subscribe {namespace}/{name}"))
-}
-
-/// Reads the first object of the catalog's current group with the SUBSCRIBE and
-/// joining FETCH (offset 0) that draft-ietf-moq-msf-02 §5 requires, or the next
-/// object when the track has none yet.
-pub async fn read_catalog(session: &Session, namespace: &str) -> Result<Bytes> {
-    let (_subscription, mut reader) = session
-        .subscriber()
-        .subscribe_current_group(
-            namespace.to_string(),
-            msf::CATALOG_TRACK_NAME.to_string(),
-            SubscribeOption::default(),
-        )
-        .await
-        .with_context(|| format!("subscribe {namespace}/{}", msf::CATALOG_TRACK_NAME))?;
-    match reader.next_object().await? {
-        Some(object) => Ok(object.payload),
-        None => bail!("catalog track ended before any object"),
-    }
 }

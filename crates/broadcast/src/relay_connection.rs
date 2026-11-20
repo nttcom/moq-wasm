@@ -655,13 +655,9 @@ async fn ensure_origin_track(origin: &Origin, key: &TrackKey) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use bytes::Bytes;
     use moqt::{
-        ClientConfig, NATIVE, Subscription, TrackObject, TrackReader,
-        publish::GroupBoundary,
-        server::{CertificateFiles, ServerConfig, write_self_signed_cert},
+        ClientConfig, NATIVE, Subscription, TrackObject, TrackReader, publish::GroupBoundary,
         subscribe::FilterType,
     };
     use std::collections::BTreeSet;
@@ -673,25 +669,9 @@ mod tests {
     use mediapack::AudioConfig;
 
     use crate::broadcast::{AudioTrackInfo, Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
+    use crate::test_support::self_signed_server_config;
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
-
-    fn self_signed_server_config(name: &str) -> ServerConfig {
-        let dir: PathBuf =
-            std::env::temp_dir().join(format!("broadcast-test-{name}-{}", std::process::id()));
-        let CertificateFiles {
-            cert_path,
-            key_path,
-        } = write_self_signed_cert(&dir, &["localhost", "127.0.0.1"]).unwrap();
-        ServerConfig {
-            port: 0,
-            cert_path,
-            key_path,
-            keep_alive_interval_sec: 5,
-            // The tests write and read draft-14 messages.
-            versions: vec![moqt::Version::Draft14],
-        }
-    }
 
     /// A relay that accepts one publisher session and answers its
     /// PUBLISH_NAMESPACE and PUBLISH.
