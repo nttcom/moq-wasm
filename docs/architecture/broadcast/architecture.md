@@ -11,7 +11,7 @@ CMAF media tracks, a media timeline and a publisher-side FETCH cache. It also
 reads such a broadcast back into media events for `services/live-egress` (see
 "Reading a broadcast").
 `services/live-ingest`, `crates/gst-plugin-moqt`, `services/onvif-ingest`, `moq-cli` and the
-Live Viewer's MP4 publisher, through `crates/wasm`, build on it. The track
+Live Viewer's MP4 publisher, through `sdk/js`, build on it. The track
 layout is summarised in [its README](../../../crates/broadcast/README.md); this
 document records why the tracks are shaped that way.
 

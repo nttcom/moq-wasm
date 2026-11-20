@@ -23,14 +23,14 @@ jobs:
       - name: Check the tag names the package version
         id: version
         run: |
-          version=$(python3 -c "import tomllib; print(tomllib.load(open('crates/python/pyproject.toml', 'rb'))['project']['version'])")
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('sdk/python/pyproject.toml', 'rb'))['project']['version'])")
           if [ "${GITHUB_REF_NAME}" != "python-sdk-v${version}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not name the package version ${version}"
             exit 1
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
       - name: Check the changelog has the version's section
-        run: node crates/wasm/js/scripts/release-notes.mjs crates/python/CHANGELOG.md "${{ steps.version.outputs.version }}"
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/python/CHANGELOG.md "${{ steps.version.outputs.version }}"
 
   wheel:
     needs: version
@@ -64,16 +64,16 @@ jobs:
           maturin-version: v1.16.0
           rust-toolchain: 1.100.0
           manylinux: "2_28"
-          working-directory: crates/python
+          working-directory: sdk/python
           args: --release --locked --out dist
       - name: Check the wheel's name
-        run: test -f "crates/python/dist/${WHEEL}"
+        run: test -f "sdk/python/dist/${WHEEL}"
       - name: Upload the wheel
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: wheel-${{ matrix.platform }}
-          path: crates/python/dist/${{ env.WHEEL }}
+          path: sdk/python/dist/${{ env.WHEEL }}
           if-no-files-found: error
       # The tests start a relay and a VTS built from this workspace.
       - name: Setup Rust toolchain
@@ -90,13 +90,13 @@ jobs:
           save-cache: false
       # Python 3.11 is the oldest the abi3 wheel takes; --no-install-project keeps the tests on the wheel.
       - name: Install the wheel and the test dependencies
-        working-directory: crates/python
+        working-directory: sdk/python
         run: |
           uv sync --locked --no-install-project --python 3.11
           uv pip install --no-deps "dist/${WHEEL}"
           uv run --no-sync python -c "import moq_wasm; assert 'site-packages' in moq_wasm.__file__, moq_wasm.__file__"
       - name: Run binding tests
-        working-directory: crates/python
+        working-directory: sdk/python
         # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
         run: uv run --no-sync pytest --basetemp="${RUNNER_TEMP}/pytest" ${{ matrix.pytest-args }}
       - name: Upload binding test logs
@@ -129,7 +129,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/wheels
       - name: Take the release notes from the changelog
-        run: node crates/wasm/js/scripts/release-notes.mjs crates/python/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/python/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

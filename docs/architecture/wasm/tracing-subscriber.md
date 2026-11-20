@@ -9,7 +9,7 @@ Accepted
 ## Context
 `moqt`, `broadcast` and `wasm` log through `tracing`, but the browser build installs no subscriber, so every
 event inside the wasm module is discarded. Pages need these logs: a `tracing::warn!` in
-`crates/wasm/src/media_broadcast.rs` is the only report of a dropped frame, and the browser telemetry plan forwards
+`sdk/js/src/media_broadcast.rs` is the only report of a dropped frame, and the browser telemetry plan forwards
 client logs to ClickStack.
 
 The SDK should hand each event to the page as a structured record (`{ timeMs, level, target, message, fields }`)

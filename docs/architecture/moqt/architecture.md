@@ -7,7 +7,7 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 The `moqt` crate is the core implementation of Media over QUIC Transport
 (draft-ietf-moq-transport-14). Every other crate in the workspace depends on it:
-`relay` builds a server on top of it, `crates/wasm` runs its client session in
+`relay` builds a server on top of it, `sdk/js` runs its client session in
 the browser, and the bridges/examples use its client API natively.
 
 ## Layering
@@ -49,7 +49,7 @@ modules/executor          ← task spawning, yielding, timeouts and the monotoni
   each public module only re-exports.
 - The whole stack compiles for `wasm32` as well; the quinn-based transports
   and their markers (`QUIC`, `NATIVE`) are `#[cfg(not(target_arch = "wasm32"))]`
-  and the `BROWSER` marker is wasm32-only. `crates/wasm` runs
+  and the `BROWSER` marker is wasm32-only. `sdk/js` runs
   `Endpoint::<BROWSER>` and wraps the connected session in a
   `client::Session`, whose types it binds to JavaScript.
 - `wire.rs` exports the draft-14 numeric codes (`RequestKind` and the

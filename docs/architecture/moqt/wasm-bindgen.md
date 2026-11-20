@@ -37,6 +37,6 @@ from Rust.
 
 ## Decision
 
-Use the three `wasm-bindgen` crates directly. `crates/wasm` already depends on
+Use the three `wasm-bindgen` crates directly. `sdk/js` already depends on
 them at the same versions, so no new crate enters the dependency tree, and the
 browser bindings keep a single copy of the JavaScript glue.

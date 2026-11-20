@@ -1,6 +1,6 @@
 # [S] Give the SDKs' PublishDone the code of the session's draft
 
-Next: decide the code type `PublishDone.code` carries, at `crates/moqt/src/modules/client/subscription.rs` (`PublishDone`) and its users `crates/wasm/src/session.rs` and `crates/python/src/subscription.rs`.
+Next: decide the code type `PublishDone.code` carries, at `crates/moqt/src/modules/client/subscription.rs` (`PublishDone`) and its users `sdk/js/src/session.rs` and `sdk/python/src/subscription.rs`.
 
 ## Goal
 

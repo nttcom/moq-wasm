@@ -6,9 +6,10 @@
 
 ## 2. Project Scope
 - This repository implements Media over QUIC Transport (MoQT), a low-latency, QUIC-based application-layer transport protocol.
-- Every Rust crate lives in `crates/<package name>/` or `services/<package name>/`, where `<package name>` is the `name` in its `Cargo.toml`; architecture documents use the same name under `docs/architecture/`.
+- Every Rust crate lives under `services/`, `crates/` or `sdk/`. Architecture documents live under `docs/architecture/<package name>/`, where `<package name>` is the `name` in the crate's `Cargo.toml`.
   - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `live-ingest`).
-  - `crates/` holds the code other crates, the browser, Python or GStreamer link against: libraries, bindings and plugins (`moqt`, `wasm`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
+  - `crates/` holds the code other crates, the SDKs or GStreamer link against: libraries and plugins (`moqt`, `broadcast`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
+  - `sdk/` holds the SDKs applications install, one directory per language: `sdk/js` (the crate `wasm` and the npm package under `js/`) and `sdk/python` (the crate `python` and the Python package).
 - Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
   1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
   2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
@@ -29,8 +30,8 @@ Application and integration components (draft reference is normally not required
 
 | Component | Description |
 | --- | --- |
-| `crates/wasm` | WebAssembly bindings to use `moqt` from the browser |
-| `crates/python` | Python SDK `moq-wasm`: PyO3 bindings to `moqt` (`moq_wasm._native`) and the Python package around them, used by the Python bots |
+| `sdk/js` | Browser SDK `moq-wasm`: WebAssembly bindings to `moqt` (crate `wasm`) and the TypeScript package around them in `js/` |
+| `sdk/python` | Python SDK `moq-wasm`: PyO3 bindings to `moqt` (`moq_wasm._native`) and the Python package around them, used by the Python bots |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |
 | `services/live-ingest` | Bridge converting RTMP/SRT/RTP streams into MoQT |
@@ -77,9 +78,9 @@ Application and integration components (draft reference is normally not required
 - Build: `cargo build`
 - Test: `cargo test`
 - Lint (Rust): `cargo clippy && cargo fmt --check`
-- Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "crates/wasm/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path crates/wasm/js/.prettierignore`
+- Lint (JavaScript): `npx --prefix examples/browser prettier --check "examples/browser/**/*.{js,jsx,ts,tsx,json,css,md}" "sdk/js/js/**/*.{js,ts,json,css,md}" --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore`
 - Test (browser unit): `npm test --workspaces`
-- Wasm: `npm --prefix crates/wasm/js run wasm`
+- Wasm: `npm --prefix sdk/js/js run wasm`
 - Console web: `npm --prefix services/console/web run lint && npm --prefix services/console/web run build`
 - Relay: `cargo run --bin relay`
 - Mutation test (the lines a branch changes): `git diff origin/master... > /tmp/pr.diff && cargo mutants --in-diff /tmp/pr.diff -p <package_name>`
@@ -156,4 +157,4 @@ A span that lives longer than the request that starts it (a track, a session) ro
 - This repository is public. Do not reference private repositories or internal trackers in code, documentation, commits, or pull requests: no URLs, repository names, or issue/PR numbers. Link from the private side to this repository, never the reverse.
 - When creating a pull request, follow the skill in `.agents/skills/create-pull-request/SKILL.md`.
 - When releasing the browser SDK (`moq-wasm`), follow the skill in `.agents/skills/release-sdk/SKILL.md`.
-- When releasing the Python SDK (`moq-wasm` in `crates/python`), follow the skill in `.agents/skills/release-python-sdk/SKILL.md`.
+- When releasing the Python SDK (`moq-wasm` in `sdk/python`), follow the skill in `.agents/skills/release-python-sdk/SKILL.md`.

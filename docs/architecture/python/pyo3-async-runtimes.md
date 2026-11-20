@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-`crates/python` depends on `pyo3-async-runtimes` with `tokio-runtime`. Every
+`sdk/python` depends on `pyo3-async-runtimes` with `tokio-runtime`. Every
 async method of the module returns an asyncio awaitable made by
 `pyo3_async_runtimes::tokio::future_into_py`, which runs the Rust future on a
 tokio runtime the crate shares across calls.

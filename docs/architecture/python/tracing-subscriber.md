@@ -7,7 +7,7 @@ Accepted
 2026-11-16
 
 ## What
-`crates/python` depends on `tracing-subscriber` (0.3, already in the workspace) with
+`sdk/python` depends on `tracing-subscriber` (0.3, already in the workspace) with
 `default-features = false, features = ["registry", "std"]`, as `wasm` does, and on the workspace's
 `telemetry-report`.
 

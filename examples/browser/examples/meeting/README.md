@@ -52,4 +52,4 @@ rooms, not `?jwt=` ones.
 
 ## Stack
 
-React 19, TypeScript, Tailwind CSS, shadcn/ui, Vite, `crates/wasm`.
+React 19, TypeScript, Tailwind CSS, shadcn/ui, Vite, `sdk/js`.

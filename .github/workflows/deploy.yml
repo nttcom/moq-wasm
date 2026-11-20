@@ -8,8 +8,8 @@ on:
       - "**.md"
       - "docs/**"
       # The SDK docs render these READMEs.
-      - "!crates/wasm/js/README.md"
-      - "!crates/python/README.md"
+      - "!sdk/js/js/README.md"
+      - "!sdk/python/README.md"
 
 permissions:
   contents: read
@@ -60,7 +60,7 @@ jobs:
       # TypeDoc sits outside the npm workspace: it needs TypeScript 6, which would shadow the workspace's tsc.
       - name: Install TypeDoc
         run: npm ci
-        working-directory: crates/wasm/js/typedoc
+        working-directory: sdk/js/js/typedoc
 
       - name: Setup uv
         # astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 = v10.2.0

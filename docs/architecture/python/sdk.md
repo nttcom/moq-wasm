@@ -7,8 +7,8 @@ Proposed
 2026-11-13
 
 ## Scope
-Turns the bindings of `crates/python` ([architecture.md](architecture.md))
-into an SDK for bots, like the browser SDK in `crates/wasm/js`
+Turns the bindings of `sdk/python` ([architecture.md](architecture.md))
+into an SDK for bots, like the browser SDK in `sdk/js/js`
 ([browser-sdk.md](../wasm/browser-sdk.md)): a core layer that keeps a relay
 session up, a media layer that follows and publishes MSF broadcasts, and a
 pipecat transport. This document fixes the API; its implementation, the
@@ -44,9 +44,9 @@ transcriber does.
   name, like the browser SDK. It does not use WebAssembly; the name follows
   the repository, not the technology. `-python` is left out: a Python
   package is installed by pip or uv, so the suffix says nothing.
-- `crates/python` becomes a mixed maturin project. The PyO3 module is
+- `sdk/python` becomes a mixed maturin project. The PyO3 module is
   `moq_wasm._native` and keeps the bindings of architecture.md. The SDK is
-  Python under `crates/python/python/moq_wasm/`. asyncio's cancellation,
+  Python under `sdk/python/python/moq_wasm/`. asyncio's cancellation,
   `async with` and task groups are what the SDK is made of, and they are
   plain in Python and awkward through PyO3. The browser SDK splits its Rust
   and TypeScript the same way.
@@ -60,7 +60,7 @@ transcriber does.
   the browser SDK's. The version is `[project] version` in `pyproject.toml`,
   which maturin writes into the wheel; the crate's Cargo version is not read.
   A release goes:
-  1. PRs do not edit `crates/python/CHANGELOG.md`; a change a user of the
+  1. PRs do not edit `sdk/python/CHANGELOG.md`; a change a user of the
      package would notice carries its entry in the PR body's
      `## リリースノート（Python）` section. The release PR collects them into
      the version's section and sets the version
@@ -94,7 +94,7 @@ flowchart TB
         codecs["moq_wasm.codecs<br/>OpusDecoder · OpusEncoder · VideoDecoder · VideoEncoder · decode_pictures (PyAV)"]
         media["moq_wasm.media<br/>watch_broadcasts · RemoteBroadcast · create_broadcast · Catalog · EventTimeline"]
         core["moq_wasm<br/>connect · Session"]
-        native["moq_wasm._native<br/>(PyO3, crates/python/src)"]
+        native["moq_wasm._native<br/>(PyO3, sdk/python/src)"]
     end
     pipecat --> media --> core --> native
     pipecat --> codecs
@@ -447,7 +447,7 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
 
 ### Publishing media: `_native.MediaBroadcast`
 The browser SDK encodes with WebCodecs and hands the encoded samples to
-`crates/wasm`'s `MediaBroadcast`, which wraps `broadcast::Broadcast`: the
+`sdk/js`'s `MediaBroadcast`, which wraps `broadcast::Broadcast`: the
 MSF catalog, the LOC tracks with their Timestamp property
 (draft-ietf-moq-loc-04), the media timeline, the cache for FETCH and the
 NEW_GROUP_REQUEST callback. The bindings gain the same wrapper over the same

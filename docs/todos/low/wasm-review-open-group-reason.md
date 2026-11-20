@@ -1,6 +1,6 @@
 # [S] State why a review FETCH stops at the newest closed group
 
-Next: read `resolve_fetch_range` in `docs/architecture/relay/architecture.md` against the comment at `crates/wasm/js/src/media/player/rewind.ts:78`.
+Next: read `resolve_fetch_range` in `docs/architecture/relay/architecture.md` against the comment at `sdk/js/js/src/media/player/rewind.ts:78`.
 
 ## Goal
 

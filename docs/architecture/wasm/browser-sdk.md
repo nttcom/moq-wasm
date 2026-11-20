@@ -22,7 +22,7 @@ SDK は `examples/browser` から切り出す。`examples/browser` は切り出�
 | namespace の再生 | `moq-wasm/media` の `new LivePlayer({ container, callbacks })`、`start(session, namespace)` | 同じ形で、`Session` の上で動く |
 | メディアの配信 | `moq-wasm/media` の `createBroadcast(session, namespace)` と `addSource(name, input)`（「相手ごとに再生し、source を名前で扱う」）。meeting の `mediaPublisher.ts` もこれで配信する | 同じ |
 | track 単位の PubSub | `MoqSession` の `subscribe` / `fetch` / `publishTrack` が返す `MoqSubscription` / `MoqFetch` / `TrackWriter` の handle と async iteration | `Subscription` / `TrackWriter` の handle と async iteration |
-| パッケージ | `crates/wasm/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
+| パッケージ | `sdk/js/js` の `moq-wasm`（npm workspace）。examples は `source` condition で TS ソースをそのまま読む。`npm run build` が `dist`（JS、worker、wasm）と `types`（`.d.ts`）を作り、CI が `npm pack` の tarball を新しい Vite プロジェクトでビルドして確かめる | ビルド済みの JS、`.d.ts`、wasm、worker ファイルを含む1パッケージ |
 
 ## 目標の利用コード
 
@@ -117,8 +117,8 @@ moq-wasm/recording  openRecording, Recording, RecorderError
 encoder の worker、CSS を引き込むが、`core` はどれも引き込まない。`recording` は
 recorder の HTTP API だけを持ち、wasm も `media` も引き込まない。
 
-ソースの置き場所: Rust 側は `crates/wasm` のまま。TypeScript 側は
-`examples/browser/lib` から、その隣のパッケージディレクトリ（`crates/wasm/js/`）へ
+ソースの置き場所: Rust 側は `sdk/js` のまま。TypeScript 側は
+`examples/browser/lib` から、その隣のパッケージディレクトリ（`sdk/js/js/`）へ
 移す。ビルドは `wasm-pack build --target web`、`tsc`、worker のバンドルで行う。
 `examples/browser` は、`@moqt` と `@player` の alias ではなく、workspace のパスで
 このパッケージに依存する。
@@ -140,7 +140,7 @@ recorder の HTTP API だけを持ち、wasm も `media` も引き込まない�
 ## 配信を `crates/broadcast` に寄せる
 
 `crates/broadcast` は、すでに live-ingest、gst-plugin-moqt、onvif-ingest、Live Viewer
-の MP4 publisher（`crates/wasm/src/mp4_broadcast.rs`）向けに MSF broadcast を組み
+の MP4 publisher（`sdk/js/src/mp4_broadcast.rs`）向けに MSF broadcast を組み
 立てている。担っているのは、catalog、LOC（と CMAF）の track、media timeline、
 catalog より先の PUBLISH、壁時計から始める group id、`moqt::Origin` による60秒の
 FETCH キャッシュ、GOAWAY による切り替え、catalog の再送である。入力は、映像は今のところ H.264（Annex-B）だけ、音声は AAC、
@@ -151,7 +151,7 @@ track 組み立てと catalog に閉じる（下記の変更6）。
 そのため、SDK の配信側は次のように分ける。
 
 ```
-JS（メインスレッド / worker）              wasm（crates/wasm -> crates/broadcast）
+JS（メインスレッド / worker）              wasm（sdk/js -> crates/broadcast）
 -------------------------                 ---------------------------------------
 MediaStreamTrack
   -> MediaStreamTrackProcessor
@@ -166,7 +166,7 @@ JS に残すのは、capture、encoder の設定、keyframe の要求、bitrate 
 ブラウザが必要なものである。プロトコルと MSF に関わる処理は、すべて wasm へ移す。
 これにより、配信側で次のものが不要になる。
 
-- `crates/wasm` の `ClientState` が持つ publisher 側の管理情報（announce した
+- `sdk/js` の `ClientState` が持つ publisher 側の管理情報（announce した
   namespace、受けた SUBSCRIBE とその join point、配信した最大の location、subgroup
   の状態）。callback API と一緒に消した。採番、キャッシュ、FETCH・
   FETCH_CANCEL・TRACK_STATUS への応答は `Origin` が、SUBSCRIBE への応答は
@@ -867,7 +867,7 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   その span の `traceId` と `spanId` が付く。wasm の subscriber はページ全体で1つなので、session の option では
   なく `init` の option にし、`onLog` を付けた `init` を2回呼ぶと reject する。
   subscriber は `tracing-subscriber` の registry に自前の `Layer` を載せたもので、
-  `crates/wasm/src/log_sink.rs` にある（`tracing-subscriber.md` を参照）。
+  `sdk/js/src/log_sink.rs` にある（`tracing-subscriber.md` を参照）。
 - `init({ onSpan })` を渡すと、閉じた INFO 以上の span（request span
   `moqt.subscriber.subscribe` など）が `SpanRecord`
   （`{ traceId, spanId, parentSpanId?, name, startTimeMs, endTimeMs, fields }`、id は小文字 hex）で
@@ -1004,7 +1004,7 @@ export interface TrackWriter extends AsyncDisposable {
 `LivePlayer` の catalog 追従は `subscribeCurrentGroup(namespace, 'catalog')` に
 なる。
 
-wasm 側の実装は `crates/wasm/src/session.rs` の `Session`、`Subscription`、
+wasm 側の実装は `sdk/js/src/session.rs` の `Session`、`Subscription`、
 `FetchStream`、`NamespaceWatch` で、iterator は `next()` の Promise として出す。
 JS の `AsyncIterable` への包み直しと `groups()` は、最初の利用者である `LivePlayer` を
 載せる手順で足す。これらは `moqt::client` の同名の型（`FetchStream` は
@@ -1247,7 +1247,7 @@ tarball 配布の制約: `^0.1.0` のような範囲指定、`npm update`、Depe
 - **npm への公開。** core API が 1.0 になったときに改めて決める。それまでに名前
   （`moq-wasm`）が npm で空いているかを確かめる。採らなかった配布方法は次のとおり。
   - **Git の URL（`github:<owner>/<repo>#<tag>`）。** npm はリポジトリのルートの
-    `package.json` しか見ないので、サブディレクトリ（`crates/wasm/js/`）にある
+    `package.json` しか見ないので、サブディレクトリ（`sdk/js/js/`）にある
     パッケージは入れられない。入れられたとしても、インストール時の `prepare` で
     wasm のビルドが走り、利用者に Rust と wasm-pack が要る。
   - **GitHub Packages。** public なパッケージでも、インストールに認証トークンが要る。

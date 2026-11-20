@@ -20,11 +20,11 @@ case "$rel" in
     ;;
   examples/browser/*.js | examples/browser/*.jsx | examples/browser/*.ts | examples/browser/*.tsx | \
   examples/browser/*.json | examples/browser/*.css | examples/browser/*.md | \
-  crates/wasm/js/*.js | crates/wasm/js/*.ts | crates/wasm/js/*.json | crates/wasm/js/*.css | crates/wasm/js/*.md)
+  sdk/js/js/*.js | sdk/js/js/*.ts | sdk/js/js/*.json | sdk/js/js/*.css | sdk/js/js/*.md)
     prettier="$root/examples/browser/node_modules/.bin/prettier"
     [ -x "$prettier" ] || exit 0
     (cd "$root" && "$prettier" --write --log-level warn \
-      --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path crates/wasm/js/.prettierignore "$rel") >&2 || true
+      --ignore-path .gitignore --ignore-path examples/browser/.prettierignore --ignore-path sdk/js/js/.prettierignore "$rel") >&2 || true
     ;;
 esac
 

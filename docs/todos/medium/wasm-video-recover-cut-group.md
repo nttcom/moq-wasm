@@ -1,6 +1,6 @@
 # [M] Ask for a new group when a live video subgroup stream is reset
 
-Next: in `crates/wasm/js/src/media/player/trackContext.ts:81`, where a reset group only logs `ended early`, tell an unexpected reset of the played video track apart from the expected ones.
+Next: in `sdk/js/js/src/media/player/trackContext.ts:81`, where a reset group only logs `ended early`, tell an unexpected reset of the played video track apart from the expected ones.
 
 ## Goal
 

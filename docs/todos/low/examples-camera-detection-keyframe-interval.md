@@ -1,6 +1,6 @@
 # [S] Let the camera-detection detector ask for a keyframe
 
-Next: subscribe the detector's `video` with `subscribe_group_start` (`crates/python/src/session.rs:177`) instead of `subscribe` in `crates/python/python/moq_wasm/media/_remote_broadcast.py:42`, then drop `keyframeIntervalSeconds: 1` from `examples/browser/examples/moq-camera-detection/main.ts:24`.
+Next: subscribe the detector's `video` with `subscribe_group_start` (`sdk/python/src/session.rs:177`) instead of `subscribe` in `sdk/python/python/moq_wasm/media/_remote_broadcast.py:42`, then drop `keyframeIntervalSeconds: 1` from `examples/browser/examples/moq-camera-detection/main.ts:24`.
 
 ## Goal
 

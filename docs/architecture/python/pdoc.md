@@ -7,7 +7,7 @@ Accepted
 2026-11-18
 
 ## Context
-The Python SDK (`crates/python`) is documented by its README and its docstrings. The Example site on GitHub Pages
+The Python SDK (`sdk/python`) is documented by its README and its docstrings. The Example site on GitHub Pages
 should serve both as pages, next to the browser SDK's reference.
 
 ## Decision

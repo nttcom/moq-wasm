@@ -15,13 +15,13 @@ RUN case "$TARGETARCH" in \
     && rustup target add wasm32-unknown-unknown
 WORKDIR /workspace
 COPY . .
-RUN wasm-pack build crates/wasm --target web --out-name moqt --out-dir=js/pkg
+RUN wasm-pack build sdk/js --target web --out-name moqt --out-dir=js/pkg
 
 FROM node:22.23.4-trixie-slim@sha256:be1e2a3dc2c4fd68cdfadad2a696a280e0d2749098bee509230174d72fb768c6 AS web
 WORKDIR /workspace
 COPY . .
 RUN npm ci
-COPY --from=wasm /workspace/crates/wasm/js/pkg crates/wasm/js/pkg
+COPY --from=wasm /workspace/sdk/js/js/pkg sdk/js/js/pkg
 RUN cd examples/browser && npx vite build
 
 FROM nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de

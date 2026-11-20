@@ -15,7 +15,7 @@ changes it brings to:
   keeps privately today (`BroadcastReader`).
 - `crates/auth-token`, which gains the claim a call request carries.
 - `crates/app-registry`, which gains the phone numbers of an app.
-- The browser SDK (`crates/wasm/js`), which gains a call API.
+- The browser SDK (`sdk/js/js`), which gains a call API.
 
 A call connects one phone to one MoQT peer. Out of scope: video, more than one
 peer per call (mixing a room's members into one phone leg), call transfer,

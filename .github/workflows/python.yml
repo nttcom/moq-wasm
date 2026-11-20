@@ -5,7 +5,7 @@ on:
     paths:
       - ".github/workflows/python.yml"
       - ".cargo/config.toml"
-      - "crates/python/**"
+      - "sdk/python/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "examples/python/moq-bot-job/**"
       - "examples/python/system-one-server/**"
@@ -24,7 +24,7 @@ on:
     paths:
       - ".github/workflows/python.yml"
       - ".cargo/config.toml"
-      - "crates/python/**"
+      - "sdk/python/**"
       - "examples/python/moq-meeting-transcriber/**"
       - "examples/python/moq-bot-job/**"
       - "examples/python/system-one-server/**"
@@ -79,7 +79,7 @@ jobs:
 
       # The tests start a relay and a VTS built from this workspace.
       - name: Run binding tests
-        working-directory: crates/python
+        working-directory: sdk/python
         # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
         run: uv run pytest --basetemp="$RUNNER_TEMP/pytest"
 
