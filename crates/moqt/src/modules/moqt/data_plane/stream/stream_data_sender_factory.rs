@@ -24,6 +24,7 @@ impl StreamDataSenderFactory {
                     connection.control.version(),
                     track_alias,
                     send_stream,
+                    &connection.unacknowledged_streams,
                 )),
                 Err(error) => failure = Some(error),
             }

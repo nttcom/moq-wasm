@@ -55,7 +55,10 @@ impl FetchDataSender {
         request_id: u64,
     ) -> anyhow::Result<Self> {
         let version = connection.control.version();
-        let stream_sender = Arc::new(StreamSender::new(send_stream));
+        let stream_sender = Arc::new(StreamSender::held_until_acknowledged(
+            send_stream,
+            &connection.unacknowledged_streams,
+        ));
         if !connection
             .control
             .attach_fetch_response(request_id, &stream_sender)

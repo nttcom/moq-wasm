@@ -22,6 +22,7 @@ use crate::{
             },
             data_plane::stream::{
                 fetch_data_receiver::FetchDataReceiver, open_subgroups::OpenSubgroups,
+                unacknowledged_streams::UnacknowledgedStreams,
             },
             domains::{group_cutover::GroupCutover, session_events::SessionEventSender},
             runtime::dispatch::incoming_object::{
@@ -84,6 +85,8 @@ pub(crate) struct Connection {
     pub(crate) object_sinks: tokio::sync::Mutex<ObjectSinks>,
     pub(crate) fetch_notification_map:
         std::sync::Mutex<HashMap<RequestId, mpsc::UnboundedSender<FetchDataReceiver>>>,
+    /// The subgroup and FETCH streams `Session::close` waits for.
+    pub(crate) unacknowledged_streams: UnacknowledgedStreams,
 }
 
 #[derive(Default)]
@@ -414,6 +417,7 @@ impl Connection {
             served: std::sync::Mutex::default(),
             object_sinks: tokio::sync::Mutex::default(),
             fetch_notification_map: std::sync::Mutex::new(HashMap::new()),
+            unacknowledged_streams: UnacknowledgedStreams::default(),
         }
     }
 

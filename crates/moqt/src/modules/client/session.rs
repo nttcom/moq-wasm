@@ -498,6 +498,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_group_written_just_before_the_session_closes_reaches_the_peer() {
+        // Arrange: larger than the stream's flow control window, so most of it is
+        // still unsent when `write_group` returns
+        let (client, server) = connected_client_sessions("client-close-after-write").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let subscription = within(client.subscribe(NAMESPACE, "chat", SubscribeOptions::default()))
+            .await
+            .unwrap();
+        let payload = Bytes::from(vec![7u8; 8 * 1024 * 1024]);
+        let reading = tokio::spawn(async move { subscription.next().await });
+
+        // Act
+        within(writer.write_group(payload.clone())).await.unwrap();
+        within(server.close()).await;
+        let object = within(reading).await.unwrap().unwrap().unwrap();
+
+        // Assert
+        assert_eq!(object.payload.len(), payload.len());
+    }
+
+    #[tokio::test]
     async fn a_subscription_read_by_group_yields_each_subgroup_stream() {
         // Arrange
         let (client, server) = connected_client_sessions("client-groups").await;

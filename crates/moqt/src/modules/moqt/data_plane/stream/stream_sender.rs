@@ -1,19 +1,39 @@
-use std::task::Poll;
+use std::{sync::Arc, task::Poll};
 
-use crate::modules::transport::{
-    transport_connection::BoxedSendStream, transport_send_stream::TransportSendError,
+use crate::modules::{
+    moqt::data_plane::stream::unacknowledged_streams::{SharedSendStream, UnacknowledgedStreams},
+    transport::{transport_connection::BoxedSendStream, transport_send_stream::TransportSendError},
 };
 use bytes::BytesMut;
 
 #[derive(Debug)]
 pub struct StreamSender {
-    send_stream: tokio::sync::Mutex<BoxedSendStream>,
+    send_stream: SharedSendStream,
+    /// `Some` for a subgroup or FETCH stream; `close` hands the stream to it
+    /// after sending the FIN.
+    unacknowledged: Option<UnacknowledgedStreams>,
 }
 
 impl StreamSender {
+    // `Arc`, not `Rc`: native builds share the stream across threads, while on
+    // wasm32 `BoxedSendStream` is not `Send`.
+    #[cfg_attr(target_arch = "wasm32", allow(clippy::arc_with_non_send_sync))]
     pub(crate) fn new(send_stream: BoxedSendStream) -> Self {
         Self {
-            send_stream: tokio::sync::Mutex::new(send_stream),
+            send_stream: Arc::new(tokio::sync::Mutex::new(send_stream)),
+            unacknowledged: None,
+        }
+    }
+
+    /// `close` hands the stream, after its FIN, to `unacknowledged`, which
+    /// `Session::close` waits on.
+    pub(crate) fn held_until_acknowledged(
+        send_stream: BoxedSendStream,
+        unacknowledged: &UnacknowledgedStreams,
+    ) -> Self {
+        Self {
+            unacknowledged: Some(unacknowledged.clone()),
+            ..Self::new(send_stream)
         }
     }
 
@@ -31,7 +51,11 @@ impl StreamSender {
     }
 
     pub async fn close(&self) -> Result<(), TransportSendError> {
-        self.send_stream.lock().await.close()
+        self.send_stream.lock().await.close()?;
+        if let Some(unacknowledged) = &self.unacknowledged {
+            unacknowledged.hold(self.send_stream.clone());
+        }
+        Ok(())
     }
 
     pub async fn reset(&self, error_code: u64) -> Result<(), TransportSendError> {
