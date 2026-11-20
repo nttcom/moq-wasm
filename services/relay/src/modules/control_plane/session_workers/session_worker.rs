@@ -122,6 +122,7 @@ impl SessionWorker {
             table: self.deps.local_pub_sub_directory.clone(),
             forwarder: self.deps.control_message_forwarder.clone(),
             cache_store: self.deps.cache_store.clone(),
+            route_registry: self.deps.route_registry.clone(),
         }
     }
 
@@ -164,6 +165,7 @@ impl SessionWorker {
                         session_id,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
+                        self.deps.route_registry.as_ref(),
                     )
                     .instrument(self.session_span.clone())
                     .await;
@@ -182,6 +184,7 @@ impl SessionWorker {
                         session_id,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
+                        self.deps.route_registry.as_ref(),
                         request_id,
                         None,
                     )
@@ -313,6 +316,7 @@ impl SessionWorker {
                         &deps.control_message_forwarder,
                         &deps.upstream_publisher_resolver,
                         &deps.cache_store,
+                        deps.route_registry.as_ref(),
                         handler,
                     )
                     .instrument(event_span)
@@ -324,6 +328,7 @@ impl SessionWorker {
                         session_id,
                         deps.local_pub_sub_directory.as_ref(),
                         &deps.control_message_forwarder,
+                        deps.route_registry.as_ref(),
                         handler.subscribe_id(),
                         None,
                     )
@@ -397,6 +402,7 @@ impl SessionWorker {
                                 session_id,
                                 deps.local_pub_sub_directory.as_ref(),
                                 &deps.control_message_forwarder,
+                                deps.route_registry.as_ref(),
                                 handler.subscription_request_id(),
                                 Some(end),
                             )

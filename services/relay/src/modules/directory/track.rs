@@ -486,6 +486,7 @@ pub(crate) struct DownstreamSubscription {
 pub(crate) struct ReleasedUpstreamSubscription {
     pub(crate) publisher_session_id: SessionId,
     pub(crate) subscription: UpstreamSubscription,
+    pub(crate) origin: ProducerOrigin,
 }
 
 /// `released_upstream_subscriptions` lists the upstream subscriptions the

@@ -1473,7 +1473,11 @@ holds on each hop.
   namespace-publisher prefix, so `SubscribeNamespace` never announces a
   namespace no publisher announced. The route is withdrawn when no client
   publishes the track with PUBLISH on this relay any more: at the publisher's
-  PUBLISH_DONE or session close.
+  PUBLISH_DONE or session close, or when the relay releases the PUBLISH
+  itself (a drain release, the last subscriber leaving a draining relay, a
+  malformed track). A release forgets the PUBLISH, so its later PUBLISH_DONE
+  finds no producer; the releasing sequence withdraws the route instead
+  (`release_upstream_subscriptions`).
 - **Watched namespaces**: a relay receiving a track for a client must learn
   about publishers of its namespace announcing later, on any relay. Before
   resolving the publishers of a track a client asked for, the relay registers

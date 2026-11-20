@@ -23,7 +23,9 @@ use crate::modules::{
         inter_relay_connection_manager::InterRelayConnectionManager,
         route_registry::{RelayInfo, RelayRouteRegistry},
     },
-    control_plane::control_message_forwarder::ControlMessageForwarder,
+    control_plane::{
+        control_message_forwarder::ControlMessageForwarder, sequences::publish::Publish,
+    },
     data_plane::{
         cache::{cached_object::CacheStamp, store::TrackCacheStore},
         egress::{
@@ -32,7 +34,10 @@ use crate::modules::{
         },
         ingress::ingest_task::{IngestStart, IngestTask},
     },
-    directory::{InMemoryLocalPubSubDirectory, track::Producer},
+    directory::{
+        InMemoryLocalPubSubDirectory,
+        track::{Producer, ProducerOrigin, ReleasedUpstreamSubscription},
+    },
     domain::{
         runner_signals::DownstreamRunnerSignals, session_id::SessionId, session_peer::SessionPeer,
         track_key::TrackKey,
@@ -113,20 +118,56 @@ pub(crate) async fn connect_relay(
 pub(crate) async fn remove_downstream_subscription(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
+    route_registry: &dyn RelayRouteRegistry,
     subscriber_session_id: SessionId,
     request_id: u64,
 ) {
-    let removed = table.remove_downstream_subscription(subscriber_session_id, request_id);
-    for released in removed
-        .into_iter()
-        .flat_map(|removed| removed.released_upstream_subscriptions)
-    {
+    let Some(removed) = table.remove_downstream_subscription(subscriber_session_id, request_id)
+    else {
+        return;
+    };
+    release_upstream_subscriptions(
+        table,
+        forwarder,
+        route_registry,
+        &removed.track_key,
+        &removed.released_upstream_subscriptions,
+    )
+    .await;
+}
+
+pub(crate) async fn release_upstream_subscriptions(
+    table: &InMemoryLocalPubSubDirectory,
+    forwarder: &ControlMessageForwarder,
+    route_registry: &dyn RelayRouteRegistry,
+    track_key: &TrackKey,
+    released: &[ReleasedUpstreamSubscription],
+) {
+    for released in released {
         release_upstream(
             forwarder,
             released.publisher_session_id,
             &released.subscription,
         )
         .await;
+    }
+    withdraw_released_track_route(table, route_registry, track_key, released).await;
+}
+
+/// Withdraws the route of `track_key` when the directory released a PUBLISH
+/// of it and no client PUBLISHes it here any more: the directory forgot the
+/// PUBLISH, so its PUBLISH_DONE finds no producer to withdraw the route with.
+pub(crate) async fn withdraw_released_track_route(
+    table: &InMemoryLocalPubSubDirectory,
+    route_registry: &dyn RelayRouteRegistry,
+    track_key: &TrackKey,
+    released: &[ReleasedUpstreamSubscription],
+) {
+    if released
+        .iter()
+        .any(|released| released.origin == ProducerOrigin::Publish)
+    {
+        Publish::withdraw_track_route(table, route_registry, track_key).await;
     }
 }
 
@@ -269,6 +310,7 @@ pub(crate) struct EgressRequest {
 pub(crate) async fn start_egress(
     table: &InMemoryLocalPubSubDirectory,
     forwarder: &ControlMessageForwarder,
+    route_registry: &dyn RelayRouteRegistry,
     cache_store: &TrackCacheStore,
     request: EgressRequest,
 ) -> bool {
@@ -289,6 +331,7 @@ pub(crate) async fn start_egress(
         remove_downstream_subscription(
             table,
             forwarder,
+            route_registry,
             request.subscriber_session_id,
             request.request_id,
         )
