@@ -1407,7 +1407,17 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   is gone) before exiting, or the peer only notices through its idle timeout.
   A client session keeps the endpoint it was opened on. `close` therefore
   closes the connection with NO_ERROR even while other handles are alive, then
-  waits for that endpoint to be idle. The application need not keep the
+  waits for that endpoint to be idle. Before the close it waits, at most 2 s,
+  until the peer acknowledged every subgroup and FETCH stream this side
+  ended with a FIN, because closing the connection discards the data the
+  peer has not acknowledged (RFC 9000 §10.2): a group written just before
+  `close` would otherwise never arrive. `StreamSender::close` of such a
+  stream hands it to its connection's `UnacknowledgedStreams`, which holds
+  it after its sender is dropped and forgets it once acknowledged. A stream
+  still open at the close ends with the connection, never with a FIN, since
+  only its writer knows whether its subgroup is complete. The
+  control stream and draft-18 request streams are not waited for. Guarded
+  by `a_group_written_just_before_the_session_closes_reaches_the_peer`. The application need not keep the
   `Endpoint`.
 - **No direct runtime calls in the session stack**: `modules/moqt` spawns,
   yields, bounds waits and reads the clock only through `modules/executor`
@@ -1439,7 +1449,8 @@ draft:
 - **Closing a send stream does not wait for the peer to acknowledge the FIN**
   (`TransportSendStream::close`). quinn and WebTransport call `finish()`; the
   browser transport does not await `writer.close()`. Awaiting the ACK stalls
-  every send queued behind a stream close. No test guards the browser
+  every send queued behind a stream close. Only `Session::close` waits for
+  the ACKs, of every stream at once. No test guards the browser
   transport's close.
 
 ## Testing conventions

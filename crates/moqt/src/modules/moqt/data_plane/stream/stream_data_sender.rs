@@ -1,6 +1,7 @@
 use bytes::{Bytes, BytesMut};
 
 use crate::modules::moqt::control_plane::error_codes::DataStreamResetCode;
+use crate::modules::moqt::data_plane::stream::unacknowledged_streams::UnacknowledgedStreams;
 use crate::modules::transport::transport_connection::BoxedSendStream;
 use std::marker::PhantomData;
 
@@ -48,9 +49,14 @@ pub(crate) struct WireStream {
 }
 
 impl WireStream {
-    pub(crate) fn new(version: Version, track_alias: u64, send_stream: BoxedSendStream) -> Self {
+    pub(crate) fn new(
+        version: Version,
+        track_alias: u64,
+        send_stream: BoxedSendStream,
+        unacknowledged: &UnacknowledgedStreams,
+    ) -> Self {
         Self {
-            stream_sender: StreamSender::new(send_stream),
+            stream_sender: StreamSender::held_until_acknowledged(send_stream, unacknowledged),
             encoder: SubgroupEncoder::new(version, track_alias),
         }
     }

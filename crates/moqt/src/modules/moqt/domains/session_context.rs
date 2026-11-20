@@ -589,6 +589,16 @@ impl SessionContext {
             .remove(&logical_id(connection.generation, request_id));
     }
 
+    pub(crate) async fn unacknowledged_streams_acknowledged(&self) {
+        let connections = self.live_connections();
+        futures::future::join_all(
+            connections
+                .iter()
+                .map(|connection| connection.unacknowledged_streams.acknowledged()),
+        )
+        .await;
+    }
+
     /// `Connection::close_with_error` on the session's current connection.
     pub(crate) fn close_with_error(&self, code: TerminationErrorCode, reason: &str) {
         self.connection().close_with_error(code, reason);

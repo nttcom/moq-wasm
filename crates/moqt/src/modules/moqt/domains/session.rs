@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::bail;
 use tokio::sync::watch;
@@ -6,6 +6,7 @@ use tracing::Span;
 
 use crate::Publisher;
 use crate::Subscriber;
+use crate::modules::executor;
 use crate::modules::moqt::control_plane::constants::TerminationErrorCode;
 use crate::modules::moqt::control_plane::control_messages::messages::go_away::GoAway;
 use crate::modules::moqt::control_plane::enums::SessionEvent;
@@ -22,6 +23,10 @@ use crate::modules::transport::{
 };
 
 mod migration_task;
+
+/// Bounds the wait for a peer that stopped answering; a live peer needs the
+/// time to receive the unsent data plus one round trip.
+const CLOSE_ACKNOWLEDGEMENT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) use migration_task::Follow;
 use migration_task::MigrationTask;
@@ -113,10 +118,22 @@ impl Session {
     }
 
     /// Terminates the session with NO_ERROR; other handles to it may still be
-    /// alive. On a client, resolves once the close has been sent and every
-    /// other session opened on the same `Endpoint` has closed, so the process
-    /// can exit right after.
+    /// alive. First waits, at most `CLOSE_ACKNOWLEDGEMENT_TIMEOUT`, until the
+    /// peer acknowledged every subgroup and FETCH stream this side ended with
+    /// a FIN, since the close discards data the peer has not acknowledged
+    /// (RFC 9000 §10.2). A stream not yet ended is not waited for and ends
+    /// with the connection.
+    /// On a client, resolves once the close has been sent and every other
+    /// session opened on the same `Endpoint` has closed, so the process can
+    /// exit right after.
     pub async fn close(&self) {
+        let acknowledged = self.inner.unacknowledged_streams_acknowledged();
+        if executor::timeout(CLOSE_ACKNOWLEDGEMENT_TIMEOUT, acknowledged)
+            .await
+            .is_err()
+        {
+            tracing::debug!("closing before the peer acknowledged every stream");
+        }
         self.inner
             .close_with_error(TerminationErrorCode::NoError, "");
         if let Some(endpoint) = &self.endpoint {
