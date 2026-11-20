@@ -46,6 +46,9 @@ def sign(app_id: str, secret: str, publish: str, ttl: int) -> str:
     return signing_input + "." + b64url(signature)
 ```
 
+To start a recorder or an AI bot in a room, your server signs a launch token
+the same way and calls `bot-dispatcher` ([its README](../bot-dispatcher/README.md)).
+
 ## Running locally
 
 Without IAP, give the console a fixed identity and a registry file, then open

@@ -246,7 +246,7 @@ There are no limits per app and no opening hours: a bot runs only while its
 room has a member, for its type's longest run at most, a type runs at most
 `max_running` bots, and the deployment's daily cost limit, which stops every
 paid workload once reached, bounds what bots spend around the clock. A request
-for a type not in the file is `400`.
+for a type not in the file is `404`.
 
 A bot is started with the type's `args` followed by `--bot-type`, `--bot-id`,
 `--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
