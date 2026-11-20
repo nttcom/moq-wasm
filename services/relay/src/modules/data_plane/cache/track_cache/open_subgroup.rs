@@ -419,18 +419,15 @@ mod tests {
         data_plane::cache::track_cache::MAX_SUBGROUPS_PER_GROUP,
         test_support::relay_harness::fixtures::cached_object::{
             arriving_object, datagram_object, fill_group_with_subgroups, insert_aborted_group,
-            open_group, stream_key, stream_object, stream_object_in_subgroup, subgroup_key,
+            next_subgroup_object, open_group, stream_key, stream_object, stream_object_in_subgroup,
+            subgroup_key,
         },
     };
 
     async fn next_at(cache: &TrackCache, object_id: u64) -> NextObject {
-        tokio::time::timeout(
-            Duration::from_secs(1),
-            cache.next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(object_id)),
-        )
-        .await
-        .expect("the next object is decided")
-        .unwrap()
+        next_subgroup_object(cache, stream_key(0), 0, ObjectCursor::At(object_id))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -439,8 +436,7 @@ mod tests {
         let cache = TrackCache::new();
         let _open = open_group(&cache, 0, &[0, 3, 5]);
         // Act
-        let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(3))
+        let object = next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(3))
             .await
             .unwrap()
             .unwrap();
@@ -454,8 +450,7 @@ mod tests {
         let cache = TrackCache::new();
         let _open = open_group(&cache, 0, &[0, 3, 5]);
         // Act
-        let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(4))
+        let object = next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(4))
             .await
             .unwrap()
             .unwrap();
@@ -470,9 +465,7 @@ mod tests {
         open_group(&cache, 0, &[0]).finish();
         // Act / Assert
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1)).await,
             Ok(NextObject::Finished)
         ));
     }
@@ -484,9 +477,7 @@ mod tests {
         let _ = cache.insert(stream_object(0, 0));
         // Act / Assert: nothing will ever close it, so waiting would hang
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1)).await,
             Ok(NextObject::Finished)
         ));
     }
@@ -498,8 +489,7 @@ mod tests {
         let _open = open_group(&cache, 0, &[0, 2]);
         let _ = cache.insert_live(stream_object_in_subgroup(0, 1, 1));
         // Act
-        let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
+        let object = next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1))
             .await
             .unwrap()
             .unwrap();
@@ -613,9 +603,7 @@ mod tests {
         // Assert
         assert!(subgroup_opened_receiver.try_recv().is_err());
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1)).await,
             Ok(NextObject::Finished)
         ));
     }
@@ -628,15 +616,12 @@ mod tests {
         let reopened = cache.open_subgroup(stream_key(0));
         let _ = reopened.insert(stream_object(0, 3));
         // Act
-        let superseded_last = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(2))
-            .await;
-        let superseded_end = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(3))
-            .await;
-        let reopened_first = cache
-            .next_subgroup_object_or_wait(stream_key(0), 1, ObjectCursor::At(3))
-            .await;
+        let superseded_last =
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(2)).await;
+        let superseded_end =
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(3)).await;
+        let reopened_first =
+            next_subgroup_object(&cache, stream_key(0), 1, ObjectCursor::At(3)).await;
         // Assert
         assert_eq!(
             superseded_last.unwrap().unwrap().object.location.object_id,
@@ -660,9 +645,7 @@ mod tests {
         reopened.finish();
         // Assert
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 1, ObjectCursor::At(3))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 1, ObjectCursor::At(3)).await,
             Ok(NextObject::Finished)
         ));
         assert!(cache.covers(location(0, 2), location(0, 0)));
@@ -679,9 +662,7 @@ mod tests {
         first.finish();
         // Assert
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1)).await,
             Ok(NextObject::Finished)
         ));
         assert!(cache.covers(location(0, 0), location(0, 1)));
@@ -728,9 +709,7 @@ mod tests {
         );
         remaining.finish();
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(0)).await,
             Ok(NextObject::Finished)
         ));
     }
@@ -745,8 +724,7 @@ mod tests {
         let _ = late.insert(stream_object(0, 1));
         // Assert
         assert_eq!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1))
                 .await
                 .unwrap()
                 .unwrap()
@@ -768,9 +746,7 @@ mod tests {
         drop(lagging);
         // Assert
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(1)).await,
             Ok(NextObject::Finished)
         ));
     }
@@ -811,9 +787,7 @@ mod tests {
         joined_later.finish();
         // Assert: object 2 was never received by any stream
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(4))
-                .await,
+            next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(4)).await,
             Ok(NextObject::Aborted)
         ));
     }
@@ -830,9 +804,7 @@ mod tests {
         drop(leaving);
         // Assert
         assert!(matches!(
-            cache
-                .next_subgroup_object_or_wait(key, 0, ObjectCursor::At(0))
-                .await,
+            next_subgroup_object(&cache, key, 0, ObjectCursor::At(0)).await,
             Ok(NextObject::Finished)
         ));
     }

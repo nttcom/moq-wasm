@@ -1873,7 +1873,7 @@ mod max_cache_duration_tests {
     use super::*;
     use crate::modules::data_plane::cache::cached_object::{CacheStamp, RETENTION_LIMIT};
     use crate::modules::test_support::relay_harness::fixtures::cached_object::{
-        fetch_all, stream_key, stream_object,
+        fetch_all, next_subgroup_object, stream_key, stream_object,
     };
 
     const MAX_CACHE_DURATION: Duration = Duration::from_secs(2);
@@ -1906,8 +1906,7 @@ mod max_cache_duration_tests {
         tokio::time::advance(MAX_CACHE_DURATION).await;
 
         // Act
-        let next = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
+        let next = next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(0))
             .await
             .unwrap();
 

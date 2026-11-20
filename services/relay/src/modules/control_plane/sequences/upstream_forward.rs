@@ -80,7 +80,10 @@ mod tests {
             app_token, connect_client, connect_draft18_client, spawn_draft18_relay,
             spawn_relay_with_verifier,
         },
-        test_support::relay_clients::{NAMESPACE, TRACK, next_event, subscribe_track, within},
+        test_support::{
+            relay_clients::{NAMESPACE, TRACK, next_event, subscribe_track},
+            within,
+        },
     };
 
     /// Sends PUBLISH for the track in Forward State `forward` and returns

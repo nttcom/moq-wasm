@@ -1503,7 +1503,10 @@ mod cross_draft_tests {
             app_token, connect_draft14_client, connect_draft18_client, spawn_relay_offering,
         },
         cascading::route_registry::NoopRelayRouteRegistry,
-        test_support::relay_clients::{NAMESPACE, TRACK, publish_namespace, within},
+        test_support::{
+            relay_clients::{NAMESPACE, TRACK, publish_namespace},
+            within,
+        },
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

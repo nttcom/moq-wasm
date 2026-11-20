@@ -115,8 +115,9 @@ mod tests {
         },
         cascading::route_registry::NoopRelayRouteRegistry,
         test_support::{
-            relay_clients::{next_event, publish_namespace, subscribe_namespace, within},
+            relay_clients::{next_event, publish_namespace, subscribe_namespace},
             stub_route_registry::StubRouteRegistry,
+            within,
         },
     };
 
