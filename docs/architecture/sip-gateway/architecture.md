@@ -112,13 +112,35 @@ sequenceDiagram
 
 ### Inbound call
 An app registers its numbers (DIDs) in the registry with the URL of its call
-webhook. On an INVITE to one of them the gateway answers `180 Ringing` and
-calls the webhook with `{call_id, from, to}` signed with the app's secret. The
-app server answers with the room and the peer to bridge to, or refuses. The
-gateway then sends `200 OK`, or `486`/`603` on refusal and `480` when the
-webhook does not answer within the ringing timeout. The app server hands
-`call_id` and the namespace to the page through its own channel, and the page
-joins with `PhoneCall.join`, as for an outbound call.
+webhook. An INVITE from outside the trunk's signalling addresses gets `403`,
+one to a number no app has `404`, and one for an app with its maximum of
+calls in progress `486`. The gateway answers the offer first (`488` when it
+is not SDES-SRTP with a G.711 codec), sends `180 Ringing`, and calls the
+webhook:
+
+```
+POST <callWebhook>
+Authorization: Bearer <JWT, HS256 with the app's secret:
+                       {appId, callId, from, to, iat, exp = iat + 5 min}>
+{"call_id": "...", "from": "+8190...", "to": "+8150..."}
+```
+
+`from` is the caller as the trunk shows it, or `anonymous`. The claims repeat
+the body, so an app server that checks the token can trust them. The app
+server answers within the ringing timeout (60 s), and may hold the request
+while it rings its users:
+
+| Answer | The gateway |
+| --- | --- |
+| `200 {"namespace_prefix": "<app>/<room>", "peer": "<a broadcast of the room>"}` | publishes `<room>/phone/<call_id>` with the state `ringing`, sends `200 OK` with its SDP answer, and `answered` on the ACK |
+| `200 {"reject": "busy"}` / `200 {"reject": "decline"}` | `486` / `603` |
+| no answer in time, another status, or another body | `480` |
+| a room outside the app, or a peer outside the room | `500` |
+
+A CANCEL from the trunk while the webhook is asked ends the call without a
+broadcast. The app server hands `call_id` and the namespace to the page
+through its own channel, and the page joins with `PhoneCall.join`, as for an
+outbound call. From the `200 OK` on, an inbound call runs as an outbound one.
 
 ### Trunk
 The target trunk is Twilio Elastic SIP Trunking with Secure Trunking on.
@@ -151,12 +173,16 @@ in a container as the trunk:
   `allow=ulaw,alaw` and `dtmf_mode=rfc4733`;
 - a dialplan that stands in for the phone network: one number answers with
   `Echo()`, one plays a 1 kHz tone, one is busy, one hangs up two seconds
-  after answering.
+  after answering;
+- an AOR for the gateway's listener on the host, so `channel originate`
+  calls the app's number as a phone that echoes what it hears.
 
 `run.sh` starts it with a VTS, a relay and the gateway, and a Rust client
 acts as the page: it publishes a 700 Hz tone as the peer, checks the call's
 states, hears the tone back from the echo, hangs up by closing its session,
-and checks `486` and a hangup from the phone. Until `PhoneCall` exists the
+and checks `486` and a hangup from the phone. It also serves the app's call
+webhook: it has the trunk call the app's number, answers with the room,
+hears its tone back, and declines a second call. Until `PhoneCall` exists the
 client stands in for it; the browser E2E test replaces it in step 6.
 
 ### The `call` track
@@ -235,12 +261,16 @@ refresh is not answered ends with BYE.
 main.rs          settings from the environment, SIGTERM
 server.rs        POST /calls, GET /healthz
 call_auth.rs     the call token through the VTS, the app's phone settings
-calls.rs         calls in progress, the per-app limit, the relay token
+calls.rs         calls in progress, the per-app limit, the relay token,
+                 answering the trunk's INVITEs
+webhook.rs       the app's call webhook: its token, its decision
 call.rs          one call: INVITE, answer, bridge, teardown
   state_track    the `call` track
   phone_audio    trunk audio → Opus → the broadcast's `audio` track
   peer_audio     the peer's broadcast → G.711 → one RTP packet per 20 ms
-sip_trunk.rs     rsipstack endpoint, TLS listener, INVITE, in-dialog requests
+sip_trunk.rs     rsipstack endpoint, TLS listener, INVITE, in-dialog requests,
+                 INVITEs from the trunk's signalling addresses
+  address_range  IP addresses and CIDR blocks
 media/
   rtp_leg        rustrtc PeerConnection: SDP offer/answer, SRTP, RTP
   transcoder     GStreamer G.711 ⇄ Opus
@@ -257,10 +287,11 @@ media/
 | `SIP_GATEWAY_TRUNK_HOST` | `host[:port]` of the trunk's TLS signalling, also the host of every Request-URI |
 | `SIP_GATEWAY_TRUNK_CA_FILE` | PEM roots the trunk's certificate is verified against |
 | `SIP_GATEWAY_TRUNK_USERNAME` / `SIP_GATEWAY_TRUNK_PASSWORD` | digest credentials for 401/407 |
+| `SIP_GATEWAY_TRUNK_SIGNALLING_ADDRESSES` | comma-separated IP addresses and CIDR blocks the trunk's INVITEs may come from; empty refuses every inbound call |
 | `SIP_GATEWAY_MEDIA_ADDRESS` | the address the SDP offers for media, when it is not the bound one |
 | `SIP_GATEWAY_RELAY_URL` / `SIP_GATEWAY_RELAY_INSECURE_SKIP_TLS_VERIFY` | the relay calls join |
 | `SIP_GATEWAY_VTS_URL`, `SIP_GATEWAY_REGISTRY_FILE` or `SIP_GATEWAY_REGISTRY_BUCKET`/`_OBJECT` | call token verification and the apps' phone settings |
-| `SIP_GATEWAY_INSECURE_SKIP_AUTH` | `true` accepts every request and destination and joins with no token (a relay without authorization only) |
+| `SIP_GATEWAY_INSECURE_SKIP_AUTH` | `true` accepts every request and destination and joins with no token (a relay without authorization only); with no registry, every inbound call gets `404` |
 | `SIP_GATEWAY_MAX_CALLS_PER_APP` / `SIP_GATEWAY_MAX_CALL_SECONDS` | 2 and 3600 by default |
 
 ### Deployment
