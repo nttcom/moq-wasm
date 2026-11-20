@@ -13,6 +13,7 @@ use crate::modules::test_support::relay_harness::{
     },
     ordered_payload, payloads_of, receive_objects_until_close, receive_objects_until_end,
 };
+use crate::modules::test_support::within;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn burst_publish_with_immediate_fin_delivers_all_objects() {
@@ -606,8 +607,7 @@ async fn a_publisher_reset_is_not_relayed_while_another_publisher_finishes_the_s
     let finishing_stream = harness.open_upstream_stream();
     finishing_stream.header(0);
     for _ in 0..2 {
-        subgroup_opened_receiver
-            .recv()
+        within(subgroup_opened_receiver.recv())
             .await
             .expect("both publishers should open the subgroup");
     }
