@@ -682,6 +682,8 @@ impl TrackCache {
 
 #[cfg(test)]
 mod tests {
+    mod eviction_sequences;
+
     use bytes::Bytes;
 
     use super::*;
