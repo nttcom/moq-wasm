@@ -58,6 +58,15 @@
             <svg class="icon" aria-hidden="true"><use href="/icons.svg#icon-x" /></svg>切る
           </button>
         </div>
+        <div class="keypad" role="group" aria-label="ダイヤルパッド">
+          <button type="button" data-digit="1">1</button><button type="button" data-digit="2">2</button
+          ><button type="button" data-digit="3">3</button><button type="button" data-digit="4">4</button
+          ><button type="button" data-digit="5" data-testid="phone-dtmf-5">5</button
+          ><button type="button" data-digit="6">6</button><button type="button" data-digit="7">7</button
+          ><button type="button" data-digit="8">8</button><button type="button" data-digit="9">9</button
+          ><button type="button" data-digit="*">*</button><button type="button" data-digit="0">0</button
+          ><button type="button" data-digit="#">#</button>
+        </div>
         <p class="hint">
           電話は SIP gateway（services/sip-gateway）が中継し、通話の発信と着信の受け付けはアプリのサーバーが行います。
           このページはローカルの開発用サーバー（tests/sip-gateway-e2e/app-server.mjs）を

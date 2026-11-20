@@ -10,6 +10,8 @@ const composeFile = process.env.PHONE_E2E_COMPOSE_FILE ?? ''
 /// Answers and sends back what it hears (extensions.conf).
 const ECHO = '+819000000001'
 const BUSY = '+819000000003'
+/// Hangs up once it hears the digit 5.
+const HEARS_DTMF = '+819000000005'
 /// The app's number (apps.json) and the phone that calls it (pjsip.conf).
 const APP_NUMBER = '+81300000001'
 const CALLER = '+819011112222'
@@ -54,6 +56,20 @@ test('the page calls a phone, hears it and hangs up', async ({ page }) => {
   // Assert
   await expectState(page, 'ended', 'hangup')
   await expect.poll(() => asterisk('core show channels count')).toContain('0 active calls')
+})
+
+test('the phone hangs up on the digit the page sends', async ({ page }) => {
+  // Arrange
+  await joinPage(page)
+  await page.getByTestId('phone-number').fill(HEARS_DTMF)
+  await page.getByTestId('phone-call-button').click()
+  await expectState(page, 'answered')
+
+  // Act
+  await page.getByTestId('phone-dtmf-5').click()
+
+  // Assert
+  await expectState(page, 'ended', 'hangup')
 })
 
 test('a busy phone ends the call with 486', async ({ page }) => {
