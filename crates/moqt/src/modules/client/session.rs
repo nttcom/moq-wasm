@@ -19,6 +19,7 @@ use crate::{
             track_writer::TrackWriter,
         },
         executor,
+        moqt::domains::track_writer::DEFAULT_PRIORITY,
     },
     namespace::NamespaceInterest,
     object::{GroupOrder, Location},
@@ -107,6 +108,9 @@ pub struct PublishTrackOptions {
     /// Sends each object in its own datagram (draft-14 §10.3) instead of on
     /// subgroup streams.
     pub datagram: bool,
+    /// The Publisher Priority (draft-14 §7.1), 128 by default: among the
+    /// session's tracks a lower value is sent first.
+    pub priority: u8,
 }
 
 impl Default for PublishTrackOptions {
@@ -115,6 +119,7 @@ impl Default for PublishTrackOptions {
             retention: Retention::For(DEFAULT_RETENTION),
             publish: false,
             datagram: false,
+            priority: DEFAULT_PRIORITY,
         }
     }
 }
@@ -392,6 +397,9 @@ impl Session {
                 options.retention,
             )
             .await;
+        origin
+            .set_publisher_priority(&namespace, track, options.priority)
+            .await?;
         if options.datagram {
             origin.send_in_datagrams(&namespace, track).await?;
         }

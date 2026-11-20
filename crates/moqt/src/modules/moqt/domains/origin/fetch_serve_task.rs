@@ -3,10 +3,7 @@ use std::sync::Weak;
 use anyhow::Result;
 use tokio::sync::Mutex;
 
-use super::{
-    FETCH_PUBLISHER_PRIORITY, FETCH_SUBGROUP_ID, OriginState, RequestKey,
-    object_cache::CachedObject,
-};
+use super::{FETCH_SUBGROUP_ID, OriginState, RequestKey, object_cache::CachedObject};
 use crate::{
     Publisher,
     fetch::FetchHandler,
@@ -25,13 +22,22 @@ impl FetchServeTask {
         handler: FetchHandler,
         objects: Vec<CachedObject>,
         end_location: Location,
+        publisher_priority: u8,
     ) -> Self {
         let handle = executor::spawn("Origin FETCH Serve", async move {
             let request_id = handler.request_id;
             let publisher = Publisher {
                 session: handler.session_context.clone(),
             };
-            if let Err(error) = respond(&publisher, &handler, objects, end_location).await {
+            if let Err(error) = respond(
+                &publisher,
+                &handler,
+                objects,
+                end_location,
+                publisher_priority,
+            )
+            .await
+            {
                 tracing::warn!(request_id, ?error, "failed to serve FETCH");
             }
             if let Some(state) = state.upgrade() {
@@ -49,6 +55,7 @@ async fn respond(
     handler: &FetchHandler,
     objects: Vec<CachedObject>,
     end_location: Location,
+    publisher_priority: u8,
 ) -> Result<()> {
     handler.ok(false, end_location).await?;
     let sender = publisher.create_fetch_stream(handler.request_id).await?;
@@ -59,7 +66,7 @@ async fn respond(
                 forwarding: ForwardingPreference::Subgroup {
                     subgroup_id: FETCH_SUBGROUP_ID,
                 },
-                publisher_priority: FETCH_PUBLISHER_PRIORITY,
+                publisher_priority,
                 status: ObjectStatus::Normal,
                 extension_headers: object.extension_headers,
                 payload: object.payload,
