@@ -4,15 +4,16 @@
 use std::time::Duration;
 
 use moqt::{
-    object::{Object, SubgroupPart},
+    object::{DataStreamResetCode, Object, SubgroupPart},
     publish::PublishDoneCode,
 };
 
 use crate::modules::test_support::relay_harness::{
-    DRAFT14_VARINT_LIMIT, EgressRunnerHandle, RelayHarness, Sent,
+    DRAFT14_VARINT_LIMIT, EgressRunnerHandle, FetchSent, RelayHarness, Sent,
     fixtures::{
         cached_object::{datagram_object, stream_object},
         data_object::make_header_with,
+        location,
     },
 };
 
@@ -183,4 +184,29 @@ async fn a_datagram_of_an_unencodable_group_id_ends_the_subscription_with_intern
     // Assert
     let publish_done = egress.expect_publish_done().await;
     assert_eq!(publish_done.status_code, PublishDoneCode::InternalError);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fetch_reaching_an_unencodable_object_is_reset_with_internal_error() {
+    // Arrange
+    let harness = RelayHarness::new();
+    let upstream = harness.open_upstream_stream();
+    upstream.send(make_header_with(0, 0, false));
+    upstream.send(SubgroupPart::Object(object(0, 0)));
+    upstream.send(SubgroupPart::Object(with_unencodable_extension(object(
+        0, 1,
+    ))));
+    upstream.send(SubgroupPart::Object(object(0, 2)));
+    upstream.fin();
+    harness.wait_group_closed(0).await;
+
+    // Act
+    let mut fetch = harness.start_draft14_fetch(location(0, 0), location(0, 2));
+
+    // Assert: draft-14 §9.16 reads a gap as objects that do not exist, so the fetch ends
+    fetch.expect_objects(&[(0, 0)]).await;
+    assert!(matches!(
+        fetch.expect_end().await,
+        FetchSent::Reset(DataStreamResetCode::InternalError)
+    ));
 }

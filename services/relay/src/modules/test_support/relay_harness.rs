@@ -521,6 +521,21 @@ impl RelayHarness {
         )
     }
 
+    /// `start_fetch` to a draft-14 session, whose sends fail on a value of
+    /// 2^62 or more.
+    pub(crate) fn start_draft14_fetch(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Unlimited,
+            UnknownRangeDraft::Draft14,
+        )
+    }
+
     /// A draft-18 fetch in `group_order` that waits for objects until
     /// `deadline`, then reports the rest as unknown.
     pub(crate) fn start_fetch_waiting_until(

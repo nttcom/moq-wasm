@@ -11,7 +11,10 @@ use crate::modules::{
     domain::session_id::SessionId,
     session::{data_sender::fetch_sender::FetchSender, publisher::Publisher},
 };
-use moqt::{fetch::UnknownRange, object::DataStreamResetCode};
+use moqt::{
+    fetch::UnknownRange,
+    object::{DataStreamResetCode, UnencodableObject},
+};
 
 pub(crate) struct EgressFetchRequest {
     pub(crate) subscriber_session_id: SessionId,
@@ -89,9 +92,8 @@ pub(crate) async fn deliver_fetch(request: &EgressFetchRequest, sender: &dyn Fet
                     return;
                 };
                 let at = object.location;
-                if let Err(e) = sender.send(object).await {
-                    tracing::error!(error = ?e, "failed to send fetch object");
-                    return;
+                if let Err(error) = sender.send(object).await {
+                    return send_failed(request, sender, &error, at).await;
                 }
                 last_sent = Some(at);
             }
@@ -143,9 +145,9 @@ async fn deliver_reporting_unknown(
                 let Some(object) = load(request, sender, &object).await else {
                     return;
                 };
-                if let Err(e) = sender.send(object).await {
-                    tracing::error!(?e, "failed to send fetch object");
-                    return;
+                let at = object.location;
+                if let Err(error) = sender.send(object).await {
+                    return send_failed(request, sender, &error, at).await;
                 }
             }
             PlannedFetch::Unknown { last } => match sender.report_unknown_range(last).await {
@@ -166,6 +168,33 @@ async fn deliver_reporting_unknown(
         }
     }
     finish(request, sender).await;
+}
+
+/// Resets the response with INTERNAL_ERROR when the subscriber's draft cannot
+/// carry the object at `at` (draft-14 §2.4: the subscriber drops the FETCH);
+/// logs any other failure. The object cannot be skipped: §9.16 reads the gap
+/// as objects that do not exist, and no message ends a FETCH early.
+async fn send_failed(
+    request: &EgressFetchRequest,
+    sender: &dyn FetchSender,
+    error: &anyhow::Error,
+    at: moqt::object::Location,
+) {
+    let Some(field) = UnencodableObject::in_chain(error) else {
+        tracing::error!(?error, "failed to send fetch object");
+        return;
+    };
+    tracing::warn!(
+        session_id = %request.subscriber_session_id,
+        request_id = request.request_id,
+        group_id = at.group_id,
+        object_id = at.object_id,
+        error = %field,
+        "fetch ended: the subscriber's draft cannot carry an object"
+    );
+    if let Err(error) = sender.reset(DataStreamResetCode::InternalError).await {
+        tracing::error!(?error, "failed to reset fetch stream");
+    }
 }
 
 /// A key that sorts locations as a FETCH in `group_order` delivers them:

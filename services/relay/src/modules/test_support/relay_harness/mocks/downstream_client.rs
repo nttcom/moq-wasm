@@ -353,7 +353,8 @@ pub(crate) enum FetchSent {
 /// `moqt::fetch::FetchDataSender` does.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum UnknownRangeDraft {
-    /// No End of Unknown Range: every range resets the response.
+    /// No End of Unknown Range: every range resets the response. An object
+    /// with a value of 2^62 or more fails to send.
     Draft14,
     /// A range is marked unless it ends in the group of the previous object
     /// or marker (§11.4.4.2), which resets the response.
@@ -395,6 +396,9 @@ impl MockFetchSender {
 #[async_trait::async_trait]
 impl FetchSender for MockFetchSender {
     async fn send(&self, object: moqt::object::Object) -> anyhow::Result<()> {
+        if let UnknownRangeDraft::Draft14 = self.draft {
+            refuse_object_as_draft14(&object)?;
+        }
         *self.previous.lock().unwrap() = Some(object.location);
         self.record(FetchSent::Object(object))
     }

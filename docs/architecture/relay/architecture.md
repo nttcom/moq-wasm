@@ -1413,6 +1413,9 @@ holds on each hop.
     the other send tasks are dropped with it, and the registration is
     removed as for a delivered range (`RunnerExit::SubscriptionEnded`).
   - A Subgroup ID resets that subgroup's stream with INTERNAL_ERROR.
+  - A FETCH response is reset with INTERNAL_ERROR at any of them: draft-14
+    has no message to end a FETCH early, and §9.16 would read a skipped ID
+    as an object that does not exist.
 - FETCH: a draft-14 FETCH response carries no preference, and an inferred
   datagram copy is served to a draft-18 FETCH as described in the cache
   section.
