@@ -508,12 +508,8 @@ impl ControlChannel {
     }
 }
 
-/// A message draft-14 cannot carry fails like one longer than its Message
-/// Length allows (`BiStreamSender::send`).
-fn encode_error(error: anyhow::Error) -> TransportSendError {
-    TransportSendError::SessionError {
-        reason: error.to_string(),
-    }
+fn encode_error(source: anyhow::Error) -> TransportSendError {
+    TransportSendError::Unencodable { source }
 }
 
 fn error_message_type(kind: RequestKind) -> ControlMessageType {
@@ -1366,7 +1362,7 @@ mod tests {
 
         // Assert
         assert!(
-            matches!(refused, Err(TransportSendError::SessionError { .. })),
+            matches!(refused, Err(TransportSendError::Unencodable { .. })),
             "{refused:?}"
         );
         assert!(next.is_ok(), "{next:?}");

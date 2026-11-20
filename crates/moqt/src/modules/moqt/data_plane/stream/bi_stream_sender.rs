@@ -30,11 +30,8 @@ impl BiStreamSender {
         message_type: ControlMessageType,
         bytes: BytesMut,
     ) -> Result<(), TransportSendError> {
-        let framed = encode_control_message(message_type, bytes).map_err(|error| {
-            TransportSendError::SessionError {
-                reason: error.to_string(),
-            }
-        })?;
+        let framed = encode_control_message(message_type, bytes)
+            .map_err(|source| TransportSendError::Unencodable { source })?;
         self.stream_sender.send(&framed).await
     }
 
