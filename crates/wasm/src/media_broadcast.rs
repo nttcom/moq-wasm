@@ -1,22 +1,12 @@
 mod demand_task;
 mod keyframe_request_task;
 
-use std::sync::Arc;
-
-use anyhow::{Result as AnyResult, anyhow};
 use broadcast::{
-    Broadcast, BroadcastWriter, RelayConnection, RenditionConfig, RenditionKeyframes,
-    RenditionTrack, SourceTracks,
+    Broadcast, MediaRendition, MediaSourceConfig, MediaSourceError, RelayConnection, TrackKind,
 };
 use bytes::Bytes;
 use js_sys::{Function, Promise};
-use mediapack::{
-    AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp,
-    aac::AudioSpecificConfig,
-    loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
-};
-use moqt::executor::{self, JoinHandle};
-use tokio::sync::{Notify, mpsc, oneshot};
+use mediapack::AudioLevel;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
@@ -36,28 +26,11 @@ pub struct MediaBroadcast {
 
 #[wasm_bindgen]
 pub struct MediaSource {
-    writer: BroadcastWriter,
+    source: broadcast::MediaSource,
     scope: SessionScope,
-    tracks: SourceTracks,
-    /// Reads a chunk as it reads a received LOC object: into the track's
-    /// configuration changes and a sample.
-    video: Option<LocDemuxer>,
-    renditions: Vec<Rendition>,
+    renditions: Vec<MediaRendition>,
     _keyframe_requests: KeyframeRequestTask,
-    _demand: DemandTask,
-}
-
-/// One rendition of the video, written by a task of its own in the order its
-/// events and removals arrive.
-struct Rendition {
-    command_sender: mpsc::UnboundedSender<RenditionCommand>,
-    video: Option<LocDemuxer>,
-    _task: JoinHandle,
-}
-
-enum RenditionCommand {
-    Event(MediaEvent),
-    Remove(oneshot::Sender<AnyResult<()>>),
+    _demand: Option<DemandTask>,
 }
 
 impl MediaBroadcast {
@@ -138,49 +111,41 @@ impl MediaBroadcast {
         on_keyframe_request: Function,
         on_demand_change: Function,
     ) -> MediaSource {
-        let (demand_sender, demand_receiver) = mpsc::unbounded_channel();
-        let demand_task = self
-            .scope
-            .in_scope(|| DemandTask::run(demand_receiver, on_demand_change));
-        let keyframe_requests = Arc::new(Notify::new());
-        let keyframe_request_task = self
-            .scope
-            .in_scope(|| KeyframeRequestTask::run(keyframe_requests.clone(), on_keyframe_request));
-        let tracks = SourceTracks {
-            switching_set: video.clone(),
+        let config = MediaSourceConfig {
             video,
-            audio_label: format!("{video_label} audio"),
-            video_label,
             audio,
-            cmaf,
+            label: video_label,
             video_bitrate: video_bitrate.map(|bitrate| bitrate as u64),
             video_framerate: video_framerate.map(|framerate| framerate as u32),
-            keyframe_requests: Some(keyframe_requests),
-            demand_sender: Some(demand_sender),
+            cmaf,
+            on_demand: true,
         };
+        let mut source = self
+            .scope
+            .in_scope(|| broadcast::MediaSource::new(self.broadcast.clone(), config));
+        let demand = source.take_demand_receiver().map(|demand_receiver| {
+            self.scope
+                .in_scope(|| DemandTask::run(demand_receiver, on_demand_change))
+        });
+        let keyframe_requests = source.keyframe_requests();
+        let keyframe_request_task = self
+            .scope
+            .in_scope(|| KeyframeRequestTask::run(keyframe_requests, on_keyframe_request));
         MediaSource {
-            writer: self
-                .scope
-                .in_scope(|| BroadcastWriter::run(self.broadcast.clone(), tracks.clone())),
+            source,
             scope: self.scope,
-            tracks,
-            video: None,
             renditions: Vec::new(),
             _keyframe_requests: keyframe_request_task,
-            _demand: demand_task,
+            _demand: demand,
         }
     }
 }
 
 impl MediaSource {
-    fn rendition(&mut self, index: usize) -> Result<&mut Rendition, JsValue> {
+    fn rendition(&mut self, index: usize) -> Result<&mut MediaRendition, JsValue> {
         self.renditions
             .get_mut(index)
             .ok_or_else(|| js_error(format!("no rendition {index}")))
-    }
-
-    fn push(&mut self, event: MediaEvent) -> Result<(), JsValue> {
-        self.writer.push(event).map_err(anyhow_error)
     }
 }
 
@@ -192,39 +157,19 @@ impl MediaSource {
     /// after it publish the track again.
     #[wasm_bindgen(js_name = removeTrack)]
     pub fn remove_track(&self, kind: String) -> Result<Promise, JsValue> {
-        let track_name = match kind.as_str() {
-            "video" => &self.tracks.video,
-            "audio" => &self.tracks.audio,
+        let kind = match kind.as_str() {
+            "video" => TrackKind::Video,
+            "audio" => TrackKind::Audio,
             other => return Err(js_error(format!("unknown track kind: {other}"))),
         };
         // Not an async method: wasm-bindgen would hold the borrow of `self`
         // until it resolved, failing every push of the other kind meanwhile.
-        let removal = self.writer.remove_track(track_name);
-        let renditions: Vec<_> = if kind == "video" {
-            self.renditions
-                .iter()
-                .map(|rendition| {
-                    let (done_sender, done_receiver) = oneshot::channel();
-                    let sent = rendition
-                        .command_sender
-                        .send(RenditionCommand::Remove(done_sender));
-                    async move {
-                        sent.map_err(|_| anyhow!("rendition task ended"))?;
-                        done_receiver
-                            .await
-                            .map_err(|_| anyhow!("rendition task ended"))?
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let removal = self.source.remove_track(kind);
         Ok(future_to_promise(self.scope.scoped(async move {
-            let mut result = removal.await;
-            for removed in renditions {
-                result = result.and(removed.await);
-            }
-            result.map(|()| JsValue::UNDEFINED).map_err(anyhow_error)
+            removal
+                .await
+                .map(|()| JsValue::UNDEFINED)
+                .map_err(anyhow_error)
         })))
     }
 
@@ -241,50 +186,24 @@ impl MediaSource {
         bitrate: Option<f64>,
         framerate: Option<f64>,
     ) -> usize {
-        let config = RenditionConfig {
-            track: format!("{}_{name}", self.tracks.video),
-            label,
-            bitrate: bitrate.map(|bitrate| bitrate as u64),
-            framerate: framerate.map(|framerate| framerate as u32),
-            cmaf: self.tracks.cmaf,
-            keyframes: RenditionKeyframes::SameFrames,
-        };
-        let broadcast = self.writer.broadcast().clone();
-        let track_namespace = broadcast.namespace().join("/");
-        let track_name = config.track.clone();
-        let mut track = RenditionTrack::new(&self.writer, config);
-        let (command_sender, mut command_receiver) = mpsc::unbounded_channel();
-        let task = self.scope.in_scope(|| {
-            executor::spawn("media-broadcast-rendition", async move {
-            while let Some(command) = command_receiver.recv().await {
-                match command {
-                    RenditionCommand::Event(event) => {
-                        if let Err(error) = track.push(event).await {
-                            tracing::warn!(%error, %track_namespace, %track_name, "rendition publishing stopped");
-                            return;
-                        }
-                    }
-                    RenditionCommand::Remove(done_sender) => {
-                        let _ = done_sender.send(broadcast.remove_track(&track_name).await);
-                    }
-                }
-            }
-            })
+        let rendition = self.scope.in_scope(|| {
+            self.source.add_rendition(
+                &name,
+                label,
+                bitrate.map(|bitrate| bitrate as u64),
+                framerate.map(|framerate| framerate as u32),
+            )
         });
-        self.renditions.push(Rendition {
-            command_sender,
-            video: None,
-            _task: task,
-        });
+        self.renditions.push(rendition);
         self.renditions.len() - 1
     }
 
     /// `configureVideo` for the rendition at `index`.
     #[wasm_bindgen(js_name = configureRendition)]
     pub fn configure_rendition(&mut self, index: usize, codec: String) -> Result<(), JsValue> {
-        let demuxer = video_demuxer(&codec)?;
-        self.rendition(index)?.video = Some(demuxer);
-        Ok(())
+        self.rendition(index)?
+            .configure_video(&codec)
+            .map_err(source_error)
     }
 
     /// `pushVideo` for the rendition at `index`: the chunk of the same frame
@@ -296,21 +215,9 @@ impl MediaSource {
         data: Vec<u8>,
         timestamp_micros: f64,
     ) -> Result<(), JsValue> {
-        let rendition = self.rendition(index)?;
-        let video = rendition
-            .video
-            .as_mut()
-            .ok_or_else(|| js_error("call configureRendition first"))?;
-        let events = video
-            .push(&chunk(data, timestamp_micros))
-            .map_err(anyhow_error)?;
-        for event in events {
-            rendition
-                .command_sender
-                .send(RenditionCommand::Event(event))
-                .map_err(|_| js_error("rendition task ended"))?;
-        }
-        Ok(())
+        self.rendition(index)?
+            .push_video(Bytes::from(data), timestamp_micros as u64)
+            .map_err(source_error)
     }
 
     /// `codec` is the WebCodecs codec string: `avc1.*` or `avc3.*` with
@@ -319,8 +226,7 @@ impl MediaSource {
     /// any other.
     #[wasm_bindgen(js_name = configureVideo)]
     pub fn configure_video(&mut self, codec: String) -> Result<(), JsValue> {
-        self.video = Some(video_demuxer(&codec)?);
-        Ok(())
+        self.source.configure_video(&codec).map_err(source_error)
     }
 
     /// Call `configureVideo` first. A keyframe sets the track's configuration
@@ -329,16 +235,9 @@ impl MediaSource {
     /// `timestamp_micros` must not run backwards.
     #[wasm_bindgen(js_name = pushVideo)]
     pub fn push_video(&mut self, data: Vec<u8>, timestamp_micros: f64) -> Result<(), JsValue> {
-        let video = self
-            .video
-            .as_mut()
-            .ok_or_else(|| js_error("call configureVideo first"))?;
-        let chunk = chunk(data, timestamp_micros);
-        let events = video.push(&chunk).map_err(anyhow_error)?;
-        for event in events {
-            self.push(event)?;
-        }
-        Ok(())
+        self.source
+            .push_video(Bytes::from(data), timestamp_micros as u64)
+            .map_err(source_error)
     }
 
     /// `codec` is the WebCodecs codec string: `opus`, or an AAC `mp4a.40.*`
@@ -351,19 +250,9 @@ impl MediaSource {
         channels: u8,
         description: Option<Vec<u8>>,
     ) -> Result<(), JsValue> {
-        let config = match codec.as_str() {
-            "opus" => AudioConfig::Opus {
-                sample_rate,
-                channels,
-            },
-            aac if aac.starts_with("mp4a.40.") => {
-                let description =
-                    description.ok_or_else(|| js_error("AAC needs its AudioSpecificConfig"))?;
-                AudioConfig::Aac(AudioSpecificConfig::parse(&description).map_err(anyhow_error)?)
-            }
-            other => return Err(js_error(format!("unsupported audio codec: {other}"))),
-        };
-        self.push(MediaEvent::AudioConfig(config))
+        self.source
+            .configure_audio(&codec, sample_rate, channels, description.as_deref())
+            .map_err(source_error)
     }
 
     /// One encoded audio frame; call `configureAudio` first. `level` is the
@@ -377,26 +266,16 @@ impl MediaSource {
         level: Option<u8>,
         voice_activity: Option<bool>,
     ) -> Result<(), JsValue> {
-        self.push(MediaEvent::Audio(AudioSample {
-            data: Bytes::from(data),
-            pts: Timestamp::from_micros(timestamp_micros as u64),
-            audio_level: level.map(|level| AudioLevel {
-                level,
-                voice_activity: voice_activity.unwrap_or(false),
-            }),
-        }))
+        let level = level.map(|level| AudioLevel {
+            level,
+            voice_activity: voice_activity.unwrap_or(false),
+        });
+        self.source
+            .push_audio(Bytes::from(data), timestamp_micros as u64, level)
+            .map_err(source_error)
     }
 }
 
-fn video_demuxer(codec: &str) -> Result<LocDemuxer, JsValue> {
-    let video_codec = VideoCodec::from_codec_string(codec)
-        .ok_or_else(|| js_error(format!("unsupported video codec: {codec}")))?;
-    Ok(LocDemuxer::video(video_codec).with_capture_origin(Timestamp::ZERO))
-}
-
-fn chunk(data: Vec<u8>, timestamp_micros: f64) -> LocObject {
-    LocObject {
-        extensions: vec![LocExtension::varint(TIMESTAMP_ID, timestamp_micros as u64)],
-        payload: Bytes::from(data),
-    }
+fn source_error(error: MediaSourceError) -> JsValue {
+    js_error(error.to_string())
 }

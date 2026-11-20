@@ -271,7 +271,7 @@ Safari は WebTransport と WebCodecs を持つが、Chrome と違う点がい�
 
 `MediaBroadcast`（wasm）は `Mp4Broadcast` を一般化したものである。`Session` と
 namespace から作り、`addSource` でソースごとに `MediaSource` を作る。
-`MediaSource` は `BroadcastWriter` を1つ持ち、onvif-ingest がカメラの profile
+`MediaSource` は `broadcast::MediaSource`（Python SDK と共有。`BroadcastWriter` を1つ持つ）を包み、onvif-ingest がカメラの profile
 ごとにそうしているのと同じく、`SourceTracks` で、source `<name>` の映像と音声を
 `<name>`/`<name>_audio` と名付ける。どのソースの track も、broadcast の
 1つの catalog に載る。`MediaSource` が公開するのは `configureVideo`・`pushVideo`、

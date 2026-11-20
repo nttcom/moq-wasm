@@ -184,6 +184,18 @@ to the `Origin` and the session's own answers. Registration stays with the
 owner, which keeps the `HandlerId` to remove the connection when its
 broadcasts end.
 
+## Media sources of the SDKs
+`MediaSource` is the shape the browser and Python SDKs publish encoded
+media in: one `BroadcastWriter` behind `configure_video`, `push_video`,
+`configure_audio`, `push_audio`, renditions and `remove_track`. Each frame
+goes through a `loc::Demuxer`, as if it had been received as a LOC object, so
+an H.264 or H.265 keyframe sets the track's configuration from its parameter
+sets. Each `MediaRendition` writes its `RenditionTrack` on a task of its own,
+which `remove_track` reaches through the same channel, so a removal follows
+the frames sent before it. The bindings keep only their callbacks and their
+error types: `MediaSourceError` tells media the caller got wrong
+(`InvalidMedia`) from a source that stopped publishing.
+
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or
 an empty URI meaning the same one (draft-ietf-moq-transport-14 §3.5, §9.4).
