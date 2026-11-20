@@ -27,7 +27,7 @@ down.
 | `./tests/cross-version-e2e/run.sh` | A relay accepting draft-14 and draft-18 relays tracks both ways; starts a local VTS and relay (no Docker) on `CROSS_VERSION_E2E_VTS_PORT` (8081) and `CROSS_VERSION_E2E_RELAY_PORT` (4633) |
 | `./tests/moqtsink-e2e/run.sh` | The GStreamer `moqtsink` publishes the expected tracks |
 | `./tests/live-translate-e2e/run.sh` | live-translate lists the languages in its catalog and stamps translated audio with the source time |
-| `./tests/sip-gateway-e2e/run.sh` | The SIP gateway places calls to a local Asterisk over TLS and SDES-SRTP and bridges their audio to a MoQT room |
+| `./tests/sip-gateway-e2e/run.sh` | The SIP gateway places calls to a local Asterisk over TLS and SDES-SRTP and bridges their audio to a MoQT room, then the phone example places and answers calls in Chromium |
 
 ## Browser E2E
 

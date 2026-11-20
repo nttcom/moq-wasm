@@ -5,7 +5,7 @@
     "isRelay": false,
     "phone": {
       "numbers": ["+81300000001"],
-      "callWebhook": "http://127.0.0.1:8098/calls",
+      "callWebhook": "http://127.0.0.1:8097/webhook",
       "allowedDestinations": ["+8190"]
     }
   },
