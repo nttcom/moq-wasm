@@ -2,13 +2,16 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use moqt::{
     AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
-    TrackReader, subscribe::FilterType,
+    TrackReader, Version, server::ServerConfig, subscribe::FilterType,
 };
 use msf::CATALOG_TRACK_NAME;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{TEST_TIMEOUT, self_signed_server_config};
-use crate::broadcast::VIDEO_TRACK_NAME;
+use crate::{
+    broadcast::VIDEO_TRACK_NAME,
+    relay_connection::{MoqtTarget, RelayConnection},
+};
 
 /// A relay that accepts one publisher session and answers its
 /// PUBLISH_NAMESPACE and PUBLISH.
@@ -28,6 +31,11 @@ impl FakeRelay {
         Self::spawn_gated(name, None, None)
     }
 
+    /// A relay that speaks draft-18 instead of draft-14.
+    pub(crate) fn spawn_draft18(name: &str) -> Self {
+        Self::spawn_with(name, Version::Draft18, None, None)
+    }
+
     /// PUBLISH_NAMESPACE is answered only once `namespace_gate` fires;
     /// the catalog track is read only once `catalog_gate` fires.
     pub(crate) fn spawn_gated(
@@ -35,7 +43,20 @@ impl FakeRelay {
         namespace_gate: Option<oneshot::Receiver<()>>,
         catalog_gate: Option<oneshot::Receiver<()>>,
     ) -> Self {
-        let endpoint = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
+        Self::spawn_with(name, Version::Draft14, namespace_gate, catalog_gate)
+    }
+
+    fn spawn_with(
+        name: &str,
+        version: Version,
+        namespace_gate: Option<oneshot::Receiver<()>>,
+        catalog_gate: Option<oneshot::Receiver<()>>,
+    ) -> Self {
+        let config = ServerConfig {
+            versions: vec![version],
+            ..self_signed_server_config(name)
+        };
+        let endpoint = Endpoint::<NATIVE>::create_server(&config).unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
         let (session_sender, session) = oneshot::channel();
         let (authorization_tokens_sender, authorization_tokens) = oneshot::channel();
@@ -129,6 +150,15 @@ impl FakeRelay {
             video_objects,
             catalog_objects,
         }
+    }
+
+    /// A connection that opens its session to this relay on first use.
+    pub(crate) fn connection(&self) -> RelayConnection {
+        RelayConnection::new(Some(MoqtTarget {
+            url: self.url.clone(),
+            auth_token: None,
+            verify_certificate: false,
+        }))
     }
 
     /// Mimics a draining relay whose subscribers have left.

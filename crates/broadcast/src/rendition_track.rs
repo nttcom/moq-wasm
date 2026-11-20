@@ -173,8 +173,14 @@ impl RenditionTrack {
 
 #[cfg(test)]
 mod tests {
+    use mediapack::{VideoConfig, vp8::Vp8Config};
+
     use super::*;
-    use crate::{broadcast::SourceTracks, relay_connection::RelayConnection};
+    use crate::{
+        broadcast::SourceTracks,
+        relay_connection::RelayConnection,
+        test_support::{FakeRelay, TEST_TIMEOUT},
+    };
 
     fn rendition(writer: &BroadcastWriter, keyframes: RenditionKeyframes) -> RenditionTrack {
         RenditionTrack::new(
@@ -227,5 +233,36 @@ mod tests {
         // Assert
         assert!(matches!(first, GroupBoundary::At(_)), "{first:?}");
         assert_eq!(repeated, GroupBoundary::Within);
+    }
+    #[tokio::test]
+    async fn a_rendition_reports_its_demand_where_its_source_does() {
+        // Arrange
+        let relay = FakeRelay::spawn("rendition-demand");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
+        let writer = BroadcastWriter::run(
+            broadcast,
+            SourceTracks {
+                demand_sender: Some(demand_sender),
+                ..SourceTracks::default()
+            },
+        );
+        let mut rendition = rendition(&writer, RenditionKeyframes::SameFrames);
+
+        // Act
+        rendition
+            .push(MediaEvent::VideoConfig(VideoConfig::Vp8(Vp8Config {
+                width: 64,
+                height: 48,
+            })))
+            .await
+            .unwrap();
+        let demand = tokio::time::timeout(TEST_TIMEOUT, demand_receiver.recv()).await;
+
+        // Assert
+        let demand = demand
+            .expect("the rendition must report its demand")
+            .unwrap();
+        assert_eq!(demand.track_name, "video_low");
     }
 }

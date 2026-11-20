@@ -699,20 +699,12 @@ mod tests {
         OutgoingObject::plain(GroupBoundary::Within, Bytes::from_static(b"delta"))
     }
 
-    fn connection_to(relay: &FakeRelay) -> RelayConnection {
-        RelayConnection::new(Some(MoqtTarget {
-            url: relay.url.clone(),
-            auth_token: None,
-            verify_certificate: false,
-        }))
-    }
-
     fn live_cam(connection: RelayConnection) -> Broadcast {
         Broadcast::new(connection, vec!["live".to_string(), "cam".to_string()])
     }
 
     async fn connected_broadcast(relay: &FakeRelay) -> (RelayConnection, Broadcast) {
-        let connection = connection_to(relay);
+        let connection = relay.connection();
         let broadcast = live_cam(connection.clone());
         broadcast
             .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
@@ -733,7 +725,7 @@ mod tests {
     async fn a_track_published_on_demand_asks_for_forward_state_0_and_its_catalog_for_1() {
         // Arrange
         let mut relay = FakeRelay::spawn("on-demand");
-        let broadcast = live_cam(connection_to(&relay));
+        let broadcast = live_cam(relay.connection());
         let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
 
         // Act
@@ -768,7 +760,7 @@ mod tests {
     async fn a_subscribe_for_the_cmaf_sibling_of_an_encoded_video_reports_its_demand() {
         // Arrange
         let mut relay = FakeRelay::spawn("cmaf-demand");
-        let broadcast = live_cam(connection_to(&relay));
+        let broadcast = live_cam(relay.connection());
         let (demand_sender, mut demand_receiver) = mpsc::unbounded_channel();
         broadcast
             .prepare_encoded_video(VIDEO_TRACK_NAME, true, None, Some(&demand_sender))
@@ -804,7 +796,7 @@ mod tests {
         // Arrange: the broadcast announces and publishes its catalog on relay A
         let mut relay_a = FakeRelay::spawn("goaway-a");
         let mut relay_b = FakeRelay::spawn("goaway-b");
-        let broadcast = live_cam(connection_to(&relay_a));
+        let broadcast = live_cam(relay_a.connection());
         broadcast
             .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
             .await
@@ -894,7 +886,7 @@ mod tests {
         let (accept_namespace, namespace_gate) = oneshot::channel();
         let mut relay =
             FakeRelay::spawn_gated("namespace-before-publish", Some(namespace_gate), None);
-        let broadcast = live_cam(connection_to(&relay));
+        let broadcast = live_cam(relay.connection());
         let catalog_update = tokio::spawn(async move {
             broadcast
                 .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
@@ -923,7 +915,7 @@ mod tests {
     async fn go_away_with_an_unreachable_relay_keeps_the_current_session() {
         // Arrange
         let mut relay_a = FakeRelay::spawn("goaway-unreachable");
-        let broadcast = Broadcast::new(connection_to(&relay_a), vec!["live".to_string()]);
+        let broadcast = Broadcast::new(relay_a.connection(), vec!["live".to_string()]);
         broadcast.announce().await.unwrap();
         let session_a = relay_a.session().await;
 
@@ -1031,7 +1023,11 @@ mod tests {
 
         // Assert
         assert!(subscribed.wait_for(|subscribed| *subscribed).await.is_ok());
-        assert!(abandoned.wait_for(|subscribed| *subscribed).await.is_err());
+        assert!(
+            tokio::time::timeout(TEST_TIMEOUT, abandoned.wait_for(|subscribed| *subscribed))
+                .await
+                .is_ok_and(|waited| waited.is_err())
+        );
     }
 
     /// A broadcast on a session whose owner reads the events: every SUBSCRIBE
@@ -1351,7 +1347,7 @@ mod tests {
         // waits until the relay reads the catalog track
         let (release_catalog, catalog_gate) = oneshot::channel();
         let mut relay = FakeRelay::spawn_gated("catalog-concurrent", None, Some(catalog_gate));
-        let broadcast = live_cam(connection_to(&relay));
+        let broadcast = live_cam(relay.connection());
         let large_video = VideoTrackInfo {
             label: "A".repeat(2 * 1024 * 1024),
             ..video_track_info()
@@ -1599,7 +1595,7 @@ mod tests {
     async fn a_declared_track_takes_a_subscribe_before_any_catalog() {
         // Arrange
         let mut relay = FakeRelay::spawn("declared-track");
-        let broadcast = live_cam(connection_to(&relay));
+        let broadcast = live_cam(relay.connection());
         broadcast
             .declare_tracks(&["video/profile_1".to_string()])
             .await
@@ -1630,5 +1626,59 @@ mod tests {
         // Assert
         assert!(before_subscribe.is_err());
         assert!(after_subscribe.is_ok_and(|waited| waited.is_ok()));
+    }
+    #[tokio::test]
+    async fn transport_stats_is_some_once_the_relay_session_exists() {
+        // Arrange
+        let relay = FakeRelay::spawn("transport-stats");
+
+        // Act
+        let (connection, _broadcast) = connected_broadcast(&relay).await;
+
+        // Assert
+        assert!(connection.transport_stats().is_some());
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_for_an_encoded_video_reaches_its_source() {
+        // Arrange
+        let mut relay = FakeRelay::spawn_draft18("new-group-request");
+        let broadcast = live_cam(relay.connection());
+        let requested = Arc::new(Notify::new());
+        broadcast
+            .prepare_encoded_video(VIDEO_TRACK_NAME, false, Some(&requested), None)
+            .await
+            .unwrap();
+        broadcast
+            .update_video_catalog(VIDEO_TRACK_NAME, video_track_info())
+            .await
+            .unwrap();
+        let video = tokio::time::timeout(TEST_TIMEOUT, async {
+            loop {
+                let published = relay.published.recv().await.unwrap();
+                if matches!(&published, Subscription::PublisherInitiated(published) if published.track_name == VIDEO_TRACK_NAME)
+                {
+                    return published;
+                }
+            }
+        })
+        .await
+        .expect("the video must be published");
+        let relay_session = relay.session().await;
+
+        // Act
+        let sent = relay_session
+            .subscriber()
+            .request_new_group(&video, None)
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(sent, "the video must be published with dynamic groups");
+        assert!(
+            tokio::time::timeout(TEST_TIMEOUT, requested.notified())
+                .await
+                .is_ok()
+        );
     }
 }
