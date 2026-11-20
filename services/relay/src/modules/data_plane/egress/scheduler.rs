@@ -8,18 +8,20 @@ use crate::modules::{
         cache::subgroup_key::SubgroupKey,
         cache::track_cache::{SubgroupRun, TrackCache},
     },
-    domain::delivery_control::DeliveryControl,
+    domain::delivery_control::{DeliveryControl, starts_before},
 };
 
 /// Subscriptions only deliver objects newer than the subscribe-time Largest
 /// Object (§9.7), so an absolute start at or below it is raised past it.
+/// `None` when nothing can be delivered.
 fn resolve_start_location(
-    start: moqt::object::Location,
+    start: Option<moqt::object::Location>,
     largest: &Option<moqt::object::Location>,
-) -> moqt::object::Location {
+) -> Option<moqt::object::Location> {
+    let start = start?;
     match largest {
         Some(largest) if start <= *largest => largest.next(),
-        _ => start,
+        _ => Some(start),
     }
 }
 
@@ -40,12 +42,13 @@ pub(crate) struct GroupSendTask {
 }
 
 struct StartLocationProgress {
-    start: moqt::object::Location,
+    /// `None` accepts no group.
+    start: Option<moqt::object::Location>,
     start_group_seen: bool,
 }
 
 impl StartLocationProgress {
-    fn new(start: moqt::object::Location) -> Self {
+    fn new(start: Option<moqt::object::Location>) -> Self {
         Self {
             start,
             start_group_seen: false,
@@ -54,19 +57,20 @@ impl StartLocationProgress {
 
     /// Moves the start to a later Start Location from a SUBSCRIBE_UPDATE;
     /// an earlier one leaves it unchanged.
-    fn raise(&mut self, start: moqt::object::Location) {
-        if start > self.start {
+    fn raise(&mut self, start: Option<moqt::object::Location>) {
+        if starts_before(self.start, start) {
             *self = Self::new(start);
         }
     }
 
     fn accept(&mut self, group_id: u64) -> Option<u64> {
-        if group_id < self.start.group_id {
+        let start = self.start?;
+        if group_id < start.group_id {
             return None;
         }
-        if group_id == self.start.group_id && !self.start_group_seen {
+        if group_id == start.group_id && !self.start_group_seen {
             self.start_group_seen = true;
-            Some(self.start.object_id)
+            Some(start.object_id)
         } else {
             Some(0)
         }
@@ -207,7 +211,10 @@ impl EgressScheduler {
         let Some(end_group) = control.end_group else {
             return false;
         };
-        progress.start.group_id >= end_group || !self.cache.groups_at_or_after(end_group).is_empty()
+        progress
+            .start
+            .is_none_or(|start| start.group_id >= end_group)
+            || !self.cache.groups_at_or_after(end_group).is_empty()
     }
 
     /// Schedules cached groups past the last received open event, since the
@@ -217,16 +224,23 @@ impl EgressScheduler {
     async fn recover_lagged_groups(
         &self,
         last_event_group_id: Option<u64>,
-        start: moqt::object::Location,
+        start: Option<moqt::object::Location>,
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
-        let start = last_event_group_id.map_or(start, |group_id| {
-            start.max(moqt::object::Location {
-                group_id: group_id + 1,
-                object_id: 0,
-            })
-        });
+        let start = match last_event_group_id {
+            Some(group_id) => {
+                let after_last_event = moqt::object::Location {
+                    group_id,
+                    object_id: u64::MAX,
+                }
+                .next();
+                start
+                    .zip(after_last_event)
+                    .map(|(start, next)| start.max(next))
+            }
+            None => start,
+        };
         self.schedule_cached_objects(&start, control, scheduled)
             .await;
     }
@@ -245,10 +259,13 @@ impl EgressScheduler {
     /// subscribe-time snapshot and event subscription, and lag recovery.
     async fn schedule_cached_objects(
         &self,
-        start: &moqt::object::Location,
+        start: &Option<moqt::object::Location>,
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) {
+        let Some(start) = start else {
+            return;
+        };
         let mut group_ids = self.cache.groups_at_or_after(start.group_id);
         group_ids.retain(|&group_id| !control.is_past_end(group_id));
         // §7.1: Descending sends groups with higher group IDs first.
@@ -434,6 +451,68 @@ mod tests {
                 resumes: 0
             })
         );
+    }
+
+    #[tokio::test]
+    async fn largest_object_filter_after_the_largest_object_id_starts_at_the_next_group() {
+        // Arrange
+        let cache = Arc::new(TrackCache::new());
+        let _open = open_group(&cache, 0, &[u64::MAX]);
+        let mut scheduler = start_scheduler(
+            cache.clone(),
+            FilterType::LargestObject,
+            Some(location(0, u64::MAX)),
+        )
+        .await;
+
+        // Act
+        let _next = open_group(&cache, 1, &[0]);
+        let task = scheduler.task_receiver.recv().await;
+
+        // Assert
+        assert_eq!(
+            task,
+            Some(GroupSendTask {
+                generation: 0,
+                key: stream_key(1),
+                object_id: 0,
+                resumes: 0
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_subscription_after_the_last_location_schedules_nothing_even_after_an_update() {
+        // Arrange: the Largest Object is the last Location, still open
+        let cache = Arc::new(TrackCache::new());
+        let open = open_group(&cache, u64::MAX, &[u64::MAX]);
+        let mut scheduler = start_scheduler(
+            cache.clone(),
+            FilterType::LargestObject,
+            Some(moqt::object::Location::MAX),
+        )
+        .await;
+
+        // Act: the subscriber repeats the last Location as its start (draft-18 §10.9.1)
+        scheduler.delivery_control_sender.send_modify(|control| {
+            control.apply_update(control.requested(
+                128,
+                true,
+                Some(FilterType::AbsoluteStart {
+                    location: moqt::object::Location::MAX,
+                }),
+                Some(moqt::object::Location::MAX),
+            ));
+        });
+        drop(open);
+        let task = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            scheduler.task_receiver.recv(),
+        )
+        .await;
+
+        // Assert
+        assert!(task.is_err(), "nothing follows the last Location");
     }
 
     #[tokio::test]

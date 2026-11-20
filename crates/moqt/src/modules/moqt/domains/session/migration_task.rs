@@ -683,7 +683,9 @@ async fn carry_subscription(
         .start_cutover(
             previous_request_id,
             cut_over,
-            first_whole_group(&filter_type, &subscribe_ok.content_exists),
+            // A cutover waits for the previous subscription when the
+            // current one delivers no whole group.
+            first_whole_group(&filter_type, &subscribe_ok.content_exists).unwrap_or(u64::MAX),
         )
         .await
     else {
@@ -766,15 +768,18 @@ fn resumed_filter(filter_type: FilterType, newest: Option<u64>) -> Option<Filter
 /// The first group a subscription delivers from object 0. It starts at
 /// its filter start, but not before the object after the Largest Object
 /// of its SUBSCRIBE_OK (draft-14 §9.7); a group it starts inside is
-/// joined mid-way.
-fn first_whole_group(filter_type: &FilterType, content_exists: &ContentExists) -> u64 {
-    let largest = match content_exists {
-        ContentExists::True { location } => Some(*location),
-        ContentExists::False => None,
+/// joined mid-way. `None` when it delivers no whole group.
+fn first_whole_group(filter_type: &FilterType, content_exists: &ContentExists) -> Option<u64> {
+    let largest = content_exists.largest();
+    let start = filter_type.start_location(largest)?;
+    let first = match largest {
+        Some(largest) => start.max(largest.next()?),
+        None => start,
     };
-    let start = filter_type.start_location(largest);
-    let first = largest.map_or(start, |largest| start.max(largest.next()));
-    first.group_id + u64::from(first.object_id != 0)
+    match first.object_id {
+        0 => Some(first.group_id),
+        _ => first.group_id.checked_add(1),
+    }
 }
 
 async fn retry_until<T, F, R>(deadline: Duration, mut request: F) -> Result<T, RequestFailure>
@@ -827,6 +832,48 @@ mod tests {
     const NO_EVENT_TIMEOUT: Duration = Duration::from_millis(500);
 
     use super::*;
+
+    #[test]
+    fn the_first_whole_group_follows_a_largest_object_with_the_largest_object_id() {
+        // Arrange
+        let content_exists = ContentExists::True {
+            location: Location {
+                group_id: 4,
+                object_id: u64::MAX,
+            },
+        };
+
+        // Act
+        let first = first_whole_group(&FilterType::LargestObject, &content_exists);
+
+        // Assert
+        assert_eq!(first, Some(5));
+    }
+
+    #[test]
+    fn a_subscription_after_the_last_location_has_no_whole_group() {
+        // Arrange
+        let content_exists = ContentExists::True {
+            location: Location::MAX,
+        };
+        let filter_types = [
+            FilterType::LargestObject,
+            FilterType::NextGroupStart,
+            FilterType::AbsoluteStart {
+                location: Location {
+                    group_id: 0,
+                    object_id: 0,
+                },
+            },
+        ];
+
+        // Act
+        let firsts =
+            filter_types.map(|filter_type| first_whole_group(&filter_type, &content_exists));
+
+        // Assert
+        assert_eq!(firsts, [None, None, None]);
+    }
 
     fn following_go_away() -> ClientConfig {
         ClientConfig {

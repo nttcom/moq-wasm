@@ -92,7 +92,7 @@ struct CarriedIds {
     logical_by_wire: HashMap<u64, u64>,
     /// The Start Location each SUBSCRIBE sent again here established, by
     /// logical id.
-    subscription_starts: HashMap<u64, Location>,
+    subscription_starts: HashMap<u64, Option<Location>>,
 }
 
 enum ObjectSink {
@@ -443,18 +443,24 @@ impl Connection {
         carried.logical_by_wire.insert(wire_id, logical_id);
     }
 
-    /// `carry` for a SUBSCRIBE whose SUBSCRIBE_OK here established `start`.
-    pub(crate) fn carry_subscription(&self, logical_id: u64, wire_id: u64, start: Location) {
+    /// `carry` for a SUBSCRIBE whose SUBSCRIBE_OK here established `start`;
+    /// `None` when it delivers nothing.
+    pub(crate) fn carry_subscription(
+        &self,
+        logical_id: u64,
+        wire_id: u64,
+        start: Option<Location>,
+    ) {
         self.carry(logical_id, wire_id);
         lock(&self.carried)
             .subscription_starts
             .insert(logical_id, start);
     }
 
-    /// The Start Location of the subscription `logical_id` here; `None` when
-    /// it was first sent here, so that the application's `Subscription` holds
-    /// it.
-    pub(crate) fn carried_start(&self, logical_id: u64) -> Option<Location> {
+    /// The Start Location `carry_subscription` recorded for `logical_id`
+    /// (`Some(None)` when it delivers nothing); `None` when it was first sent
+    /// here, so the application's `Subscription` holds it.
+    pub(crate) fn carried_start(&self, logical_id: u64) -> Option<Option<Location>> {
         lock(&self.carried)
             .subscription_starts
             .get(&logical_id)

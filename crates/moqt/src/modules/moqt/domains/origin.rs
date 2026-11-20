@@ -177,8 +177,9 @@ struct Demand {
 struct Outlet {
     request: RequestKey,
     publication: Publication,
-    /// The Start Location (draft-14 §9.7); objects before it are not sent.
-    start: Location,
+    /// The Start Location (draft-14 §9.7); objects before it are not sent,
+    /// and none is while it is `None`.
+    start: Option<Location>,
     /// The Forward State (draft-14 §5.1, draft-18 §5.1); no object is sent
     /// while it is 0.
     forward: bool,
@@ -498,7 +499,7 @@ impl Origin {
         let results = join_all(writers.into_iter().map(|(session, start, mut writer)| {
             let payload = payload.clone();
             async move {
-                let result = if placement.location < start {
+                let result = if !starts_at_or_before(start, placement.location) {
                     Ok(false)
                 } else {
                     writer
@@ -948,7 +949,7 @@ fn fetch_target(
 /// The writers of the subscriptions an object is sent on: those in Forward
 /// State 1. One in Forward State 0 leaves its open group, which the object
 /// is omitted from, and takes the group up again once it is back in 1.
-fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Location, TrackWriter)> {
+fn take_writers(track: &mut OriginTrack) -> Vec<(RequestKey, Option<Location>, TrackWriter)> {
     track
         .outlets
         .iter_mut()
@@ -969,7 +970,11 @@ fn datagram_senders(track: &OriginTrack, placement: Placement) -> Vec<DatagramSe
     track
         .outlets
         .iter()
-        .filter(|outlet| outlet.serving() && outlet.forward && placement.location >= outlet.start)
+        .filter(|outlet| {
+            outlet.serving()
+                && outlet.forward
+                && starts_at_or_before(outlet.start, placement.location)
+        })
         .map(|outlet| outlet.publisher.create_datagram(&outlet.subscription))
         .collect()
 }
@@ -1032,12 +1037,16 @@ fn content_exists(largest: Option<Location>) -> ContentExists {
     }
 }
 
+fn starts_at_or_before(start: Option<Location>, location: Location) -> bool {
+    start.is_some_and(|start| start <= location)
+}
+
 /// A writer that has sent nothing joins the group the object is in, and so
 /// does one that left the group in Forward State 0; one whose group a peer
 /// stopped or the transport reset resumes at the next group.
 async fn send_placed(
     writer: &mut TrackWriter,
-    start: Location,
+    start: Option<Location>,
     placement: Placement,
     object: OutgoingObject,
 ) -> Result<bool> {
@@ -1045,7 +1054,7 @@ async fn send_placed(
         group_id,
         object_id,
     } = placement.location;
-    if placement.location < start {
+    if !starts_at_or_before(start, placement.location) {
         return Ok(false);
     }
     if placement.starts_group {

@@ -27,10 +27,25 @@ impl Location {
         Ok(payload)
     }
 
-    pub fn next(self) -> Self {
-        Self {
-            group_id: self.group_id,
-            object_id: self.object_id + 1,
+    /// The last Location: [`Location::next`] returns `None` after it.
+    pub const MAX: Self = Self {
+        group_id: u64::MAX,
+        object_id: u64::MAX,
+    };
+
+    /// The first Location after `self`: the next object of its group, or the
+    /// start of the next group after the largest Object ID. `None` after
+    /// [`Location::MAX`].
+    pub fn next(self) -> Option<Self> {
+        match self.object_id.checked_add(1) {
+            Some(object_id) => Some(Self {
+                group_id: self.group_id,
+                object_id,
+            }),
+            None => Some(Self {
+                group_id: self.group_id.checked_add(1)?,
+                object_id: 0,
+            }),
         }
     }
 
@@ -91,11 +106,33 @@ mod tests {
                     object_id: 5
                 }
                 .next(),
-                Location {
+                Some(Location {
                     group_id: 10,
                     object_id: 6
-                }
+                })
             );
+        }
+
+        #[test]
+        fn next_after_the_largest_object_id_is_the_next_group_start() {
+            // Act / Assert
+            assert_eq!(
+                Location {
+                    group_id: 10,
+                    object_id: u64::MAX
+                }
+                .next(),
+                Some(Location {
+                    group_id: 11,
+                    object_id: 0
+                })
+            );
+        }
+
+        #[test]
+        fn nothing_follows_the_last_location() {
+            // Act / Assert
+            assert_eq!(Location::MAX.next(), None);
         }
 
         #[test]
@@ -128,6 +165,46 @@ mod tests {
                     object_id: 0
                 }
             );
+        }
+    }
+
+    mod properties {
+        use proptest::prelude::*;
+
+        use crate::modules::moqt::control_plane::control_messages::messages::parameters::location::Location;
+
+        /// Favours the edges an ID reaches: 0, 1, the varint limit of
+        /// draft-14 (2^62) and the largest vi64 value.
+        fn id() -> impl Strategy<Value = u64> {
+            prop_oneof![
+                Just(0),
+                Just(1),
+                Just((1 << 62) - 1),
+                Just(1 << 62),
+                Just(u64::MAX - 1),
+                Just(u64::MAX),
+                any::<u64>(),
+            ]
+        }
+
+        fn location() -> impl Strategy<Value = Location> {
+            (id(), id()).prop_map(|(group_id, object_id)| Location {
+                group_id,
+                object_id,
+            })
+        }
+
+        proptest! {
+            #[test]
+            fn next_is_the_least_location_after_self(at in location(), other in location()) {
+                match at.next() {
+                    Some(next) => {
+                        prop_assert!(next > at);
+                        prop_assert!(other <= at || other >= next);
+                    }
+                    None => prop_assert!(other <= at),
+                }
+            }
         }
     }
 }

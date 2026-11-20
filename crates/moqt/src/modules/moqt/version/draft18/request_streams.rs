@@ -911,7 +911,10 @@ fn update_baseline(
 }
 
 fn filter_range(filter: FilterType) -> (Location, u64) {
-    (filter.start_location(None), filter.update_end_group())
+    let start = filter
+        .start_location(None)
+        .expect("a filter without a Largest Object has a Start Location");
+    (start, filter.update_end_group())
 }
 
 /// §10.9: a REQUEST_UPDATE carries only the parameters that change, while

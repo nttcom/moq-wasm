@@ -231,6 +231,22 @@ mod tests {
     }
 
     #[test]
+    fn a_current_subscription_without_a_whole_group_keeps_the_previous_one() {
+        // Arrange: the migration passes u64::MAX when the current one
+        // delivers no whole group
+        let mut cutover = GroupCutover::waiting_after(Some(1), u64::MAX);
+
+        // Act
+        let released = cutover.release_previous();
+        let previous_next_group = cutover.take_previous(2);
+
+        // Assert
+        assert!(!released);
+        assert!(previous_next_group);
+        assert!(!cutover.is_cut_over());
+    }
+
+    #[test]
     fn releasing_after_the_cutover_keeps_it() {
         // Arrange
         let mut cutover = migrating_after(&[1]);

@@ -10,8 +10,9 @@ pub(crate) struct DeliveryControl {
     pub(crate) subscriber_priority: u8,
     pub(crate) forward: bool,
     /// The subscription's Start Location (§9.7), before egress raises it
-    /// past the Largest Object.
-    pub(crate) start: Location,
+    /// past the Largest Object. `None` when no Location follows the one its
+    /// filter starts after, so it delivers nothing; see `starts_before`.
+    pub(crate) start: Option<Location>,
     /// The first group past the subscription; `None` is open-ended.
     pub(crate) end_group: Option<u64>,
     /// The track's Largest Object when the subscription was accepted or last
@@ -74,7 +75,7 @@ impl DeliveryControl {
         Self {
             subscriber_priority: 128,
             forward,
-            start,
+            start: Some(start),
             end_group: (end_group != 0).then_some(end_group),
             largest_at_update: None,
             restarts: 0,
@@ -115,11 +116,11 @@ impl DeliveryControl {
             (Some(_), None) => true,
             (None, _) => false,
         };
-        requested.start < self.start || end_moves_out
+        starts_before(requested.start, self.start) || end_moves_out
     }
 
     pub(crate) fn contains_group(&self, group_id: u64) -> bool {
-        group_id >= self.start.group_id && !self.is_past_end(group_id)
+        self.start.is_some_and(|start| group_id >= start.group_id) && !self.is_past_end(group_id)
     }
 
     pub(crate) fn is_past_end(&self, group_id: u64) -> bool {
@@ -130,7 +131,7 @@ impl DeliveryControl {
     /// `widens_to`); counts a Start Location moved back in `restarts` and
     /// Forward 0→1 in `resumes`.
     pub(crate) fn apply_update(&mut self, requested: DeliveryControl) {
-        let restarts = self.restarts + u64::from(requested.start < self.start);
+        let restarts = self.restarts + u64::from(starts_before(requested.start, self.start));
         let resumes = self.resumes + u64::from(!self.forward && requested.forward);
         *self = Self {
             restarts,
@@ -154,6 +155,16 @@ impl DeliveryControl {
     }
 }
 
+/// Whether Start Location `start` precedes `other`, with `None` (delivers
+/// nothing) after every Location: the reverse of `Option`'s order.
+pub(crate) fn starts_before(start: Option<Location>, other: Option<Location>) -> bool {
+    match (start, other) {
+        (Some(start), Some(other)) => start < other,
+        (Some(_), None) => true,
+        (None, _) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,8 +183,40 @@ mod tests {
         let control = DeliveryControl::new(128, true, &FilterType::NextGroupStart, largest);
 
         // Assert
-        assert_eq!(control.start, location(6, 0));
+        assert_eq!(control.start, Some(location(6, 0)));
         assert_eq!(control.end_group, None);
+    }
+
+    #[test]
+    fn next_group_start_in_the_largest_group_contains_no_group() {
+        // Act
+        let control = DeliveryControl::new(
+            128,
+            true,
+            &FilterType::NextGroupStart,
+            Some(location(u64::MAX, 3)),
+        );
+
+        // Assert
+        assert_eq!(control.start, None);
+        assert!(!control.contains_group(u64::MAX));
+    }
+
+    #[test]
+    fn a_start_that_delivers_nothing_follows_every_location() {
+        // Arrange
+        let empty =
+            DeliveryControl::new(128, true, &FilterType::LargestObject, Some(Location::MAX));
+        let last = FilterType::AbsoluteStart {
+            location: Location::MAX,
+        };
+
+        // Act
+        let requested = empty.requested(128, true, Some(last), Some(Location::MAX));
+
+        // Assert: a start at the last Location moves back, which restarts delivery from past the Largest Object
+        assert!(empty.widens_to(&requested));
+        assert!(!requested.widens_to(&empty));
     }
 
     #[test]
@@ -313,7 +356,7 @@ mod tests {
         assert!(!control.widens_to(&requested));
         assert_eq!(
             (requested.forward, requested.start, requested.end_group),
-            (false, location(3, 0), Some(8))
+            (false, Some(location(3, 0)), Some(8))
         );
         assert_eq!(requested.largest_at_update, Some(location(5, 2)));
     }
@@ -330,7 +373,7 @@ mod tests {
         assert_eq!(control.subscriber_priority, 7);
         assert_eq!(
             (control.start, control.end_group),
-            (location(3, 0), Some(8))
+            (Some(location(3, 0)), Some(8))
         );
         assert_eq!((control.restarts, control.resumes), (0, 0));
     }
@@ -350,6 +393,6 @@ mod tests {
         );
 
         // Assert
-        assert_eq!(requested.start, location(6, 0));
+        assert_eq!(requested.start, Some(location(6, 0)));
     }
 }
