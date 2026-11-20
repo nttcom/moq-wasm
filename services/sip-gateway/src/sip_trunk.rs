@@ -1,4 +1,5 @@
 mod address_range;
+mod session_timer;
 
 use std::{net::SocketAddr, sync::Arc};
 
@@ -24,6 +25,8 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) use address_range::{AddressRange, parse_ranges};
+use session_timer::{InviteTimer, invite_headers, min_se};
+pub(crate) use session_timer::{Refresher, SessionTimer};
 
 const USER_AGENT: &str = "moq-wasm sip-gateway";
 
@@ -73,6 +76,8 @@ pub(crate) struct InboundInvite {
     /// The number dialled: the user of the Request-URI.
     pub(crate) to: String,
     pub(crate) offer: String,
+    /// The session timer the INVITE asked for and the gateway accepted.
+    pub(crate) timer: Option<SessionTimer>,
 }
 
 /// An INVITE the trunk has not finished answering, then the dialog it set up.
@@ -120,7 +125,16 @@ impl SipTrunk {
         let request_task = tokio::spawn(async move {
             while let Some(mut transaction) = incoming.recv().await {
                 let result = match router.match_dialog(&transaction) {
-                    Some(mut dialog) => dialog.handle(&mut transaction).await,
+                    // A re-INVITE waits for the call's answer and its ACK, so
+                    // each in-dialog request runs in its own task.
+                    Some(mut dialog) => {
+                        tokio::spawn(async move {
+                            if let Err(error) = dialog.handle(&mut transaction).await {
+                                tracing::warn!(%error, "SIP request not handled");
+                            }
+                        });
+                        Ok(())
+                    }
                     None if transaction.original.method == Method::Invite => {
                         receive_invite(&router, &signalling_addresses, transaction, &invite_sender)
                             .await
@@ -172,6 +186,7 @@ impl SipTrunk {
             content_type: Some("application/sdp".to_string()),
             offer: Some(offer.into_bytes()),
             credential: self.credential.clone(),
+            headers: Some(invite_headers()),
             ..InviteOption::default()
         };
         let (states_sender, states) = self.dialog_layer.new_dialog_state_channel();
@@ -238,6 +253,16 @@ async fn receive_invite(
         .unwrap_or_else(|| "anonymous".to_string());
     let offer = String::from_utf8_lossy(&request.body).into_owned();
     tracing::info!(sip_call_id, remote_address = ?source, "INVITE received");
+    let timer = match SessionTimer::for_invite(&request.headers) {
+        InviteTimer::None => None,
+        InviteTimer::Accepted(timer) => Some(timer),
+        InviteTimer::TooShort => {
+            tracing::info!(sip_call_id, sip_status = 422, "INVITE final response sent");
+            return Ok(transaction
+                .reply_with(StatusCode::SessionIntervalTooSmall, vec![min_se()], None)
+                .await?);
+        }
+    };
     let (states_sender, states) = router.new_dialog_state_channel();
     let dialog = router.get_or_create_server_invite(&transaction, states_sender, None, None)?;
     let mut handler = dialog.clone();
@@ -252,6 +277,7 @@ async fn receive_invite(
         from,
         to,
         offer,
+        timer,
     });
     Ok(())
 }
@@ -272,8 +298,12 @@ impl Drop for SipTrunk {
 pub(crate) enum Progress {
     /// 180 or 183, with its status.
     Ringing(u16),
-    /// The 2xx and its SDP answer; for an inbound call, the ACK to ours.
-    Answered(String),
+    /// The 2xx, its SDP answer and the session timer it settles; for an
+    /// inbound call, the ACK to the gateway's 2xx.
+    Answered {
+        answer: String,
+        timer: Option<SessionTimer>,
+    },
     Ended,
     Other,
 }
@@ -283,9 +313,10 @@ pub(crate) fn progress(state: &DialogState) -> Progress {
         DialogState::Early(_, response) if matches!(response.status_code.code(), 180 | 183) => {
             Progress::Ringing(response.status_code.code())
         }
-        DialogState::Confirmed(_, response) => {
-            Progress::Answered(String::from_utf8_lossy(&response.body).into_owned())
-        }
+        DialogState::Confirmed(_, response) => Progress::Answered {
+            answer: String::from_utf8_lossy(&response.body).into_owned(),
+            timer: SessionTimer::from_answer(&response.headers),
+        },
         DialogState::Terminated(..) => Progress::Ended,
         _ => Progress::Other,
     }

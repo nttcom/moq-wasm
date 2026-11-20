@@ -170,7 +170,7 @@ in a container as the trunk:
   `media_encryption=sdes`;
 - an endpoint for the gateway identified by its address and challenging its
   INVITEs with digest (Twilio's IP ACL plus credential list), with
-  `allow=ulaw,alaw` and `dtmf_mode=rfc4733`;
+  `allow=ulaw,alaw`, `dtmf_mode=rfc4733` and 90 s session timers;
 - a dialplan that stands in for the phone network: one number answers with
   `Echo()`, one plays a 1 kHz tone, one is busy, one hangs up two seconds
   after answering, one hangs up once it hears the DTMF digit 5;
@@ -183,7 +183,8 @@ states, hears the tone back from the echo, hangs up with `hangup` on its
 `control` track, checks `486` and a hangup from the phone, and sends the DTMF
 digit the phone waits for. It also serves the app's call
 webhook: it has the trunk call the app's number, answers with the room,
-hears its tone back, and declines a second call. Then the phone example
+hears its tone back, declines a second call, and keeps an outbound and an
+inbound call up for 100 s across their 90 s session timers. Then the phone example
 (`examples/browser/examples/phone`) runs in Chromium on `PhoneCall`, with
 `app-server.mjs` as its app server (it signs the page's and the call's
 tokens, places the calls and answers the webhook with the room of the page
@@ -272,12 +273,29 @@ After `ended` the broadcast stays 5 s (not on SIGTERM), so a page whose
 `PhoneCall.join` finishes after a call that ended at once (a busy phone, a
 refused INVITE) still reads why it ended through its joining FETCH.
 
-Session timers (RFC 4028), which `rsipstack` leaves to the application, are
-not implemented yet: a trunk that asks for them gets no refresh. When added,
-the gateway offers `Supported: timer`, accepts the interval the trunk asks for
-(answering `422` with its minimum when the offer is shorter), and, when it is
-the refresher, sends re-INVITE (or UPDATE) at half the interval; a call whose
-refresh is not answered ends with BYE.
+Session timers (RFC 4028), which `rsipstack` leaves to the application, run
+in the gateway (`sip_trunk/session_timer`):
+
+- **Outbound.** The INVITE carries `Supported: timer`, `Session-Expires: 1800`
+  and `Min-SE: 90`, and leaves the refresher to the trunk. The 2xx's
+  `Session-Expires` settles the interval and the refresher (the gateway, the
+  UAC, when it names none); a 2xx without one runs no timer. A `422` is not
+  retried: the gateway already asks for 1800 s.
+- **Inbound.** An INVITE asking for less than 90 s gets `422` with `Min-SE: 90`.
+  The gateway takes the interval it asks for, and the refresher it names or
+  else the trunk, and answers with `Session-Expires` and `Require: timer`.
+- **Refreshing.** As the refresher, the gateway sends a re-INVITE with its SDP
+  unchanged at half the interval (again after a 491, up to three times), and
+  ends the call (`timeout`) when it gets no 2xx. The `refresher` parameter
+  names the `uac` or `uas` of the request it travels in (RFC 4028 §4), not of
+  the INVITE that set up the dialog. Otherwise it answers the trunk's re-INVITE or UPDATE with `200` (and
+  its SDP again when the request carries an offer), and ends the call when no
+  refresh comes `min(32 s, interval / 3)` before the session expires. Each
+  in-dialog request is handled in a task of its own, since a re-INVITE waits
+  for the call's answer and its ACK.
+
+A re-INVITE that changes the media (hold, a new address) is answered with the
+gateway's SDP unchanged; the gateway does not follow it.
 
 ### Modules
 ```
@@ -295,6 +313,7 @@ call.rs          one call: INVITE, answer, bridge, teardown
 sip_trunk.rs     rsipstack endpoint, TLS listener, INVITE, in-dialog requests,
                  INVITEs from the trunk's signalling addresses
   address_range  IP addresses and CIDR blocks
+  session_timer  RFC 4028: what to ask for, accept and send, and when to act
 media/
   rtp_leg        rustrtc PeerConnection: SDP offer/answer, SRTP, RTP
   transcoder     GStreamer G.711 ⇄ Opus
