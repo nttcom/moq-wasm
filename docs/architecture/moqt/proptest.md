@@ -33,6 +33,16 @@ codecs over generated messages and objects instead of a few hand-picked ones:
 - a sequence of model SUBSCRIBE_UPDATEs sent as draft-18 REQUEST_UPDATEs
   and applied to the receiver's baseline leaves the model's state, and a
   received Subscription Filter holds the same groups once applied;
+- a SUBSCRIBE, TRACK_STATUS, SUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE,
+  PUBLISH, PUBLISH_DONE or FETCH a peer of one draft sends, forwarded by a
+  relay to a peer of the other, keeps its meaning on each hop or fails to
+  encode: a draft's encoder fails exactly when the message holds what the
+  draft cannot express (for draft-14, a namespace of no fields or an
+  integer of 2^62 or more; for draft-18, an empty namespace field, a DELETE
+  token or a range ending before its start), and otherwise the receiver
+  reads the message less only what the draft does not carry (a reason
+  phrase cut at 1,024 bytes on a character, the fields draft-14 PUBLISH
+  has no place for, the PUBLISH_DONE codes draft-14 does not define);
 - during a session migration, `GroupCutover` takes each group from at most
   one subscription, every object of it or none, and from the current one
   only from its start while the previous one may still deliver it;

@@ -15,6 +15,7 @@ use crate::modules::{
 };
 
 #[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Clone))]
 pub struct Publish {
     pub request_id: u64,
     pub track_namespace_tuple: Vec<String>,
