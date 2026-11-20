@@ -1228,7 +1228,8 @@ mod tests {
                 control_plane::{
                     control_messages::messages::{
                         fetch::Fetch as FetchMessage, parameters::group_order::GroupOrder,
-                        subscribe::Subscribe, subscribe_ok::SubscribeOk,
+                        publish_namespace::PublishNamespace, subscribe::Subscribe,
+                        subscribe_ok::SubscribeOk,
                     },
                     enums::ResponseMessage,
                 },
@@ -1238,10 +1239,11 @@ mod tests {
             },
             moqt::{data_plane::stream::stream_sender::StreamSender, version::Version},
             test_support::{
-                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_publish, data_receiver,
-                datagram_object, mandatory_track_properties, next_datagram, next_event,
-                next_subgroup, notify_datagram, published_track_between, read_fetch_objects,
-                sent_update, spawn_connected_draft18_sessions, subscribed_track_reader,
+                DISCONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, accept_namespace, accept_publish,
+                data_receiver, datagram_object, mandatory_track_properties, next_datagram,
+                next_event, next_subgroup, notify_datagram, published_track_between,
+                read_fetch_objects, send_without_waiting, sent_update,
+                spawn_connected_draft18_sessions, subscribed_track_reader,
                 unread_events_at_the_limit, use_up_bidi_streams, within,
             },
             transport::transport_send_stream::TransportSendError,
@@ -2119,6 +2121,43 @@ mod tests {
         }
     }
 
+    /// The returned Notify fires once the publisher reads a FETCH requester's FIN,
+    /// as long as the returned guard lives.
+    fn requester_fin_read() -> (Arc<tokio::sync::Notify>, tracing::subscriber::DefaultGuard) {
+        let fin_read = Arc::new(tokio::sync::Notify::new());
+        let logging =
+            telemetry_otlp::testing::set_default(tracing_subscriber::layer::SubscriberExt::with(
+                tracing_subscriber::registry(),
+                LoggedMessage {
+                    message: "FETCH requester finished its request stream",
+                    seen: fin_read.clone(),
+                },
+            ));
+        (fin_read, logging)
+    }
+
+    #[tokio::test]
+    async fn a_stop_sending_after_the_requester_fin_still_cancels_the_fetch() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-fetch-fin-then-stop", "moqt").await;
+        let (_subscriber, receiver, _handler, _sender) =
+            fetch_with_open_response(&client, &server).await;
+        let client_request_stream = outgoing_stream(&client, receiver.request_id);
+        let (fin_read, _logging) = requester_fin_read();
+
+        // Act: FIN, then STOP_SENDING on the publisher's half once it read the FIN
+        client_request_stream.sender.close().await.unwrap();
+        tokio::time::timeout(HANDSHAKE_TIMEOUT, fin_read.notified())
+            .await
+            .expect("the publisher should read the FIN");
+        client_request_stream.reader_stop.notify_one();
+        let event = next_event(&server).await;
+
+        // Assert: §3.3.2 the FIN leaves the FETCH open, so §5.2 the STOP_SENDING cancels it
+        assert!(matches!(event, SessionEvent::FetchCancel(_)), "{event:?}");
+    }
+
     #[tokio::test]
     async fn a_stop_sending_after_the_requester_fin_on_an_ended_fetch_ends_its_reading() {
         // Arrange: taken out of the registry, as a FETCH that has ended is
@@ -2132,16 +2171,7 @@ mod tests {
             .remove(&handler.request_id)
             .unwrap();
         let client_request_stream = outgoing_stream(&client, receiver.request_id);
-
-        let fin_read = Arc::new(tokio::sync::Notify::new());
-        let _logging =
-            telemetry_otlp::testing::set_default(tracing_subscriber::layer::SubscriberExt::with(
-                tracing_subscriber::registry(),
-                LoggedMessage {
-                    message: "FETCH requester finished its request stream",
-                    seen: fin_read.clone(),
-                },
-            ));
+        let (fin_read, _logging) = requester_fin_read();
 
         // Act: FIN, then STOP_SENDING on the publisher's half once it read the FIN
         client_request_stream.sender.close().await.unwrap();
@@ -3829,6 +3859,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_fin_from_the_subscriber_withdraws_its_subscription() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscribe-fin", "moqt").await;
+        let (sender, _receiver) = raw_subscription(&client, &server).await;
+
+        // Act
+        sender.close().await.unwrap();
+        let event = next_event(&server).await;
+
+        // Assert: unlike a FETCH requester's FIN, it ends the request
+        assert!(
+            matches!(event, SessionEvent::Unsubscribe(_)),
+            "expected UNSUBSCRIBE, got {event:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn the_answer_to_a_request_update_on_a_publish_keeps_the_subscription_open() {
         // Arrange: two updates; the publisher reads the second only after answering the first
         let (client, server) =
@@ -3923,6 +3971,84 @@ mod tests {
 
         // Assert: §10.14, the subscriber cannot send REQUEST_UPDATE
         assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    fn incoming_stream(session: &crate::Session, request_id: u64) -> super::RequestStream {
+        ControlChannel::of(&session.publisher().session.connection())
+            .requests()
+            .incoming
+            .get(&request_id)
+            .cloned()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_request_update_from_the_publisher_of_a_subscribe_closes_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publisher-update", "moqt").await;
+        let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
+        let stream = incoming_stream(&server, subscription.request_id());
+        let update = request_update(
+            server
+                .publisher()
+                .session
+                .connection()
+                .control
+                .take_request_id()
+                .await,
+            &[parameters::Parameter::Forward(false)],
+        );
+
+        // Act
+        stream.sender.send(&update).await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, server.closed())
+            .await
+            .unwrap();
+
+        // Assert: §10.9 only the sender of a SUBSCRIBE updates it; the subscriber closes with PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_publish_done_from_the_subscriber_of_a_publish_closes_the_session() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-subscriber-publish-done", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let stream = incoming_stream(&track.server, track.accepted.request_id());
+        let done = messages::encode_publish_done(PublishDoneCode::TrackEnded, 0, "").unwrap();
+
+        // Act
+        stream.sender.send(&done).await.unwrap();
+        let close = tokio::time::timeout(DISCONNECT_TIMEOUT, track.server.closed())
+            .await
+            .unwrap();
+
+        // Assert: §10.11 only the publisher sends PUBLISH_DONE; the publisher closes with PROTOCOL_VIOLATION
+        assert_eq!(close.code, Some(0x3), "{close:?}");
+    }
+
+    #[tokio::test]
+    async fn a_request_error_from_the_publisher_of_a_publish_fails_the_update() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-publish-update-refused", "moqt").await;
+        let track = published_track_between(client, server).await;
+        let publisher_stream = outgoing_stream(&track.client, track.published.request_id());
+        let subscriber = track.server.subscriber();
+        let mut update = std::pin::pin!(subscriber.update_forward(&track.accepted, false));
+        let _unanswered = send_without_waiting(&mut update, &track.client).await;
+        let refusal =
+            messages::encode_request_error(RequestErrorCode::NotSupported, "refused").unwrap();
+
+        // Act
+        publisher_stream.sender.send(&refusal).await.unwrap();
+        let updated = within(update).await;
+
+        // Assert: §10.9
+        let error = updated.unwrap_err();
+        assert!(format!("{error:#}").contains("NotSupported"), "{error:#}");
     }
 
     #[tokio::test]
@@ -4404,6 +4530,104 @@ mod tests {
             .await
             .expect("PUBLISH_NAMESPACE_OK should resolve the request")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_rejected_publish_namespace_fails_with_its_code() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-rejected", "moqt").await;
+        let pending = client
+            .publisher()
+            .begin_publish_namespace("live/room".into())
+            .await
+            .unwrap();
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+
+        // Act
+        handler
+            .error(RequestErrorCode::Unauthorized, "not allowed".into())
+            .await
+            .unwrap();
+        let result = within(pending.accepted()).await;
+
+        // Assert
+        assert!(
+            matches!(
+                &result,
+                Err(RequestFailure::Rejected {
+                    code: RequestErrorCode::Unauthorized,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_update_of_a_publish_namespace_is_answered_with_request_ok() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-update", "moqt").await;
+        let connection = client.publisher().session.connection();
+        let (send_stream, receive_stream) = connection.transport.open_bi().await.unwrap();
+        let sender = StreamSender::new(send_stream);
+        let mut receiver = MessageReceiver::new(receive_stream, MessageDecoder);
+        let publish_namespace = messages::encode_publish_namespace(&PublishNamespace {
+            request_id: connection.control.take_request_id().await,
+            track_namespace: vec!["live".to_string()],
+            authorization_token: vec![],
+            trace_context: None,
+        })
+        .unwrap();
+        sender.send(&publish_namespace).await.unwrap();
+        accept_namespace(&server).await;
+        let accepted = within(receiver.receive()).await.unwrap();
+        assert!(
+            matches!(accepted, Some(messages::Message::RequestOk(_))),
+            "{accepted:?}"
+        );
+        let update = request_update(connection.control.take_request_id().await, &[]);
+
+        // Act
+        sender.send(&update).await.unwrap();
+        let response = within(receiver.receive()).await;
+
+        // Assert: §10.9
+        assert!(
+            matches!(response, Ok(Some(messages::Message::RequestOk(_)))),
+            "{response:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_end_of_an_accepted_publish_namespace_stream_cancels_the_namespace() {
+        // Arrange
+        let (client, server) =
+            spawn_connected_draft18_sessions("draft18-namespace-ended", "moqt").await;
+        let pending = client
+            .publisher()
+            .begin_publish_namespace("live/room".into())
+            .await
+            .unwrap();
+        let SessionEvent::PublishNamespace(handler) = next_event(&server).await else {
+            panic!("expected PUBLISH_NAMESPACE");
+        };
+        handler.ok().await.unwrap();
+        within(pending.accepted()).await.unwrap();
+        let stream = incoming_stream(&server, handler.request_id());
+
+        // Act
+        stream.sender.close().await.unwrap();
+        let event = next_event(&client).await;
+
+        // Assert: §6.2 the subscriber's end of the stream revokes the acceptance, heard as draft-14's PUBLISH_NAMESPACE_CANCEL
+        let SessionEvent::PublishNamespaceCancel(cancel) = event else {
+            panic!("expected PUBLISH_NAMESPACE_CANCEL, got {event:?}");
+        };
+        assert_eq!(cancel.track_namespace(), "live/room");
     }
 
     #[tokio::test]
