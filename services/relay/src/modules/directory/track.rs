@@ -507,7 +507,7 @@ mod tests {
 
     use super::*;
     use crate::modules::test_support::{
-        directory_fixtures::upstream_carrying,
+        directory_fixtures::{active_upstream, upstream_carrying},
         relay_harness::fixtures::subscription::unknown_track_properties,
     };
 
@@ -537,5 +537,49 @@ mod tests {
 
         // Assert: draft-18 §2.5 forbids merging sets
         assert_eq!(track_properties, newer);
+    }
+
+    #[test]
+    fn a_relay_about_to_subscribe_wants_client_publishers_only() {
+        // Arrange
+        let mut track = Track::new(CreationState::Created);
+
+        // Act
+        track.reserve(SessionPeer::Relay);
+
+        // Assert
+        assert!(track.wants(SessionPeer::Client));
+        assert!(!track.wants(SessionPeer::Relay));
+    }
+
+    #[test]
+    fn a_client_about_to_subscribe_wants_relay_publishers_too() {
+        // Arrange
+        let mut track = Track::new(CreationState::Created);
+
+        // Act
+        track.reserve(SessionPeer::Client);
+
+        // Assert
+        assert!(track.wants(SessionPeer::Client));
+        assert!(track.wants(SessionPeer::Relay));
+    }
+
+    #[test]
+    fn a_track_expires_when_its_newest_publisher_says() {
+        // Arrange
+        let mut upstream_track = TrackState::default();
+        for (session_id, expires) in [(1, 2_000), (3, 1_000)] {
+            upstream_track.producers.insert(
+                session_id,
+                ProducerState {
+                    expires: Some(expires),
+                    ..active_upstream(ProducerOrigin::Subscribe)
+                },
+            );
+        }
+
+        // Act / Assert: session 3 is the newest, not the one with the largest value
+        assert_eq!(upstream_track.expires(), Some(1_000));
     }
 }

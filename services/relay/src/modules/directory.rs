@@ -2210,35 +2210,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn publish_done_on_a_published_track_unregisters_its_publish_handler() {
-        // Arrange
-        let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
-        table.register_publish(
-            PUBLISHER_SESSION,
-            SessionPeer::Client,
-            Arc::new(MockPublishHandler::new(
-                &track_key.track_namespace,
-                &track_key.track_name,
-                10,
-            )),
-        );
-
-        // Act
-        table.end_upstream_subscription(
-            PUBLISHER_SESSION,
-            UPSTREAM_REQUEST_ID,
-            PublishDoneReason::publisher_session_closed(),
-        );
-
-        // Assert
-        assert!(
-            table
-                .find_upstream_publishers(&track_key.track_namespace, &track_key.track_name)
-                .is_empty()
-        );
-    }
-
-    #[tokio::test]
     async fn subscriber_disconnect_after_malformed_cleanup_stops_its_runner() {
         // Arrange
         let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
@@ -2869,5 +2840,235 @@ mod tests {
         assert!(second.is_none());
         drop(forwarding);
         assert!(table.begin_forwarded_publish(&track_key(), 2).is_some());
+    }
+
+    fn register_client_publish(
+        table: &InMemoryLocalPubSubDirectory,
+        session_id: SessionId,
+        track_key: &TrackKey,
+    ) {
+        table.register_publish(
+            session_id,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new(
+                &track_key.track_namespace,
+                &track_key.track_name,
+                10,
+            )),
+        );
+    }
+
+    #[test]
+    fn upstream_publishers_are_the_clients_publishing_exactly_the_track() {
+        // Arrange: no session publishes the namespace, so only PUBLISHes count
+        let table = InMemoryLocalPubSubDirectory::new();
+        register_client_publish(&table, 1, &TrackKey::new("room/member", "video"));
+        table.register_publish(
+            2,
+            SessionPeer::Relay,
+            Arc::new(MockPublishHandler::new("room/member", "video", 10)),
+        );
+        register_client_publish(&table, 3, &TrackKey::new("room/other", "video"));
+        register_client_publish(&table, 4, &TrackKey::new("room/member", "audio"));
+
+        // Act
+        let upstream_publishers = table.find_upstream_publishers("room/member", "video");
+
+        // Assert: a relay's PUBLISH is found through the route registry instead
+        assert_eq!(upstream_publishers, vec![1]);
+    }
+
+    #[tokio::test]
+    async fn publish_done_unregisters_only_the_publish_handler_of_its_session_and_track() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
+        let other_track_key = TrackKey::new(&track_key.track_namespace, "other");
+        register_client_publish(&table, PUBLISHER_SESSION, &track_key);
+        register_client_publish(&table, PUBLISHER_SESSION, &other_track_key);
+        register_client_publish(&table, SECOND_PUBLISHER_SESSION, &track_key);
+
+        // Act
+        table.end_upstream_subscription(
+            PUBLISHER_SESSION,
+            UPSTREAM_REQUEST_ID,
+            PublishDoneReason::publisher_session_closed(),
+        );
+
+        // Assert
+        assert_eq!(
+            table.find_upstream_publishers(&track_key.track_namespace, &track_key.track_name),
+            vec![SECOND_PUBLISHER_SESSION]
+        );
+        assert_eq!(
+            table.find_upstream_publishers(
+                &other_track_key.track_namespace,
+                &other_track_key.track_name
+            ),
+            vec![PUBLISHER_SESSION]
+        );
+    }
+
+    #[test]
+    fn a_namespace_is_watched_by_a_clients_namespace_subscription_not_a_relays() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_subscribe_namespace(
+            1,
+            "room".to_string(),
+            namespaces_and_tracks(SessionPeer::Relay),
+        );
+        table.register_subscribe_namespace(
+            2,
+            "lobby".to_string(),
+            namespaces_and_tracks(SessionPeer::Client),
+        );
+
+        // Act / Assert
+        assert!(!table.is_watched_by_client("room/member"));
+        assert!(table.is_watched_by_client("lobby/member"));
+    }
+
+    #[test]
+    fn ending_a_track_subscription_unblocks_only_the_publishes_it_blocked() {
+        // Arrange: session 2 blocked tracks under two prefixes, session 3 the same room track
+        let table = InMemoryLocalPubSubDirectory::new();
+        let room_track = TrackKey::new("room/member", "video");
+        let lobby_track = TrackKey::new("lobby/member", "video");
+        for (session_id, prefix) in [(2, "room"), (2, "lobby"), (3, "room")] {
+            table.register_subscribe_namespace(
+                session_id,
+                prefix.to_string(),
+                client_subscription(NamespaceInterest::Tracks),
+            );
+        }
+        table.block_publish(2, &room_track);
+        table.block_publish(2, &lobby_track);
+        table.block_publish(3, &room_track);
+
+        // Act
+        table.unregister_subscribe_namespace(2, "room", NamespaceInterest::Tracks);
+
+        // Assert
+        assert!(!table.is_publish_blocked(2, &room_track));
+        assert!(table.is_publish_blocked(2, &lobby_track));
+        assert!(table.is_publish_blocked(3, &room_track));
+    }
+
+    #[tokio::test]
+    async fn a_second_upstream_subscribe_to_a_publisher_waits_for_the_one_in_flight() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        table.begin_upstream_subscribe(&track_key, SECOND_PUBLISHER_SESSION);
+
+        // Act
+        let second = table.begin_upstream_subscribe(&track_key, SECOND_PUBLISHER_SESSION);
+
+        // Assert
+        assert!(!second);
+    }
+
+    #[tokio::test]
+    async fn an_upstream_subscribe_to_a_publisher_can_start_again_once_the_last_one_ended() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        table.begin_upstream_subscribe(&track_key, SECOND_PUBLISHER_SESSION);
+        table.end_upstream_subscribe(&track_key, SECOND_PUBLISHER_SESSION);
+
+        // Act
+        let after_end = table.begin_upstream_subscribe(&track_key, SECOND_PUBLISHER_SESSION);
+
+        // Assert
+        assert!(after_end);
+    }
+
+    #[tokio::test]
+    async fn a_publish_replacing_the_sessions_earlier_publish_of_the_track_drops_its_handler() {
+        // Arrange
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
+        register_client_publish(&table, PUBLISHER_SESSION, &track_key);
+
+        // Act
+        let (_, replaced) = table.register_upstream_subscription(
+            track_key.clone(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Publish),
+        );
+
+        // Assert: the new PUBLISH registers its own handler afterwards
+        assert!(replaced.is_some());
+        assert!(!table.has_client_published_track(&track_key));
+    }
+
+    #[tokio::test]
+    async fn published_upstream_subscription_ignores_a_subscribe_initiated_producer() {
+        // Arrange
+        let (table, published_track_key) = table_with_upstream(ProducerOrigin::Publish);
+        let subscribed_track_key = TrackKey::new("ns", "subscribed");
+        table.register_upstream_subscription(
+            subscribed_track_key.clone(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+
+        // Act
+        let published =
+            table.published_upstream_subscription(&published_track_key, PUBLISHER_SESSION);
+        let subscribed =
+            table.published_upstream_subscription(&subscribed_track_key, PUBLISHER_SESSION);
+
+        // Assert
+        assert!(published.is_some_and(|state| state.origin == ProducerOrigin::Publish));
+        assert!(subscribed.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_last_subscriber_leaving_keeps_a_published_track_and_its_handler() {
+        // Arrange
+        let (table, track_key) = published_track_with_one_subscriber(false);
+
+        // Act
+        let removed = table.remove_downstream_subscription(2, 100).unwrap();
+
+        // Assert
+        assert!(released_request_ids(&removed).is_empty());
+        assert!(table.has_client_published_track(&track_key));
+    }
+
+    #[tokio::test]
+    async fn the_last_subscriber_leaving_a_draining_relay_drops_the_handler_of_the_publish() {
+        // Arrange
+        let (table, track_key) = published_track_with_one_subscriber(true);
+
+        // Act
+        let removed = table.remove_downstream_subscription(2, 100).unwrap();
+
+        // Assert
+        assert_eq!(
+            released_request_ids(&removed),
+            vec![(PUBLISHER_SESSION, UPSTREAM_REQUEST_ID)]
+        );
+        assert!(!table.has_client_published_track(&track_key));
+    }
+
+    /// A track a client PUBLISHed, with its handler, and the one downstream
+    /// subscription 100 of session 2.
+    fn published_track_with_one_subscriber(
+        draining: bool,
+    ) -> (InMemoryLocalPubSubDirectory, TrackKey) {
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Publish);
+        register_client_publish(&table, PUBLISHER_SESSION, &track_key);
+        if draining {
+            table.begin_draining(0);
+        }
+        table
+            .register_downstream_subscription(
+                2,
+                100,
+                SessionPeer::Client,
+                downstream_subscription(track_key.clone(), None),
+                delivery_control(true),
+            )
+            .unwrap();
+        (table, track_key)
     }
 }
