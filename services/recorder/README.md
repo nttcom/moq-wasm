@@ -2,7 +2,7 @@
 
 Records an MSF broadcast from a MoQT relay into a fragmented MP4 file: it
 subscribes to the catalog, reads one LOC video and one LOC audio track, and
-muxes both with `mediapack`. `recorder bot` records whole rooms that `bots`
+muxes both with `mediapack`. `recorder bot` records whole rooms that `bot-dispatcher`
 starts; `recorder serve` lists and replays them over an HTTP API.
 Design: [architecture document](../../docs/architecture/recorder/architecture.md).
 
@@ -47,7 +47,7 @@ cargo run -p recorder -- \
 
 ## Recording API
 
-`bots` starts and stops room recordings ([its design](../../docs/architecture/bots/architecture.md)):
+`bot-dispatcher` starts and stops room recordings ([its design](../../docs/architecture/bot-dispatcher/architecture.md)):
 each runs as a `recorder bot` job, and each composite as a `recorder composite`
 job. `recorder serve` lists and replays them; their state lives in the store
 next to the files. Locally (`make recorder-serve`):
@@ -91,8 +91,8 @@ cargo run -p recorder -- serve \
 
 `recorder bot` takes the job's settings (`--relay`, `--store`, `--output-dir`,
 `--segment-seconds`, `--max-video-height`, `--launcher` and `--composite-job`
-for the composite) and the ones `bots` adds; see the architecture document,
-"Started by `bots`".
+for the composite) and the ones `bot-dispatcher` adds; see the architecture document,
+"Started by `bot-dispatcher`".
 
 ## E2E
 

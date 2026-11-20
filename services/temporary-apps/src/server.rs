@@ -138,7 +138,7 @@ async fn refresh(body: Incoming, issuer: &TemporaryApps) -> JsonResponse {
     }
 }
 
-/// Passes a page's call on to the app server routes of `bots`, with a launch
+/// Passes a page's call on to the app server routes of `bot-dispatcher`, with a launch
 /// token for the app its own token names. The routes the bots call are 404.
 async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incoming) -> JsonResponse {
     let Some(proxy) = &state.bots else {
@@ -198,8 +198,11 @@ async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incomin
             response
         }
         Err(error) => {
-            tracing::warn!(%app_id, bot_type, error = format!("{error:#}"), "bots unreachable");
-            error_response(StatusCode::SERVICE_UNAVAILABLE, "bots_unavailable")
+            tracing::warn!(%app_id, bot_type, error = format!("{error:#}"), "bot-dispatcher unreachable");
+            error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "bot_dispatcher_unavailable",
+            )
         }
     }
 }
@@ -397,7 +400,7 @@ mod tests {
 
     type Calls = Arc<std::sync::Mutex<Vec<(String, String, String)>>>;
 
-    /// A `bots` that answers every call `201 {"id": "b1"}` and keeps the
+    /// A `bot-dispatcher` that answers every call `201 {"id": "b1"}` and keeps the
     /// method, the path and the bearer token of each.
     async fn fake_bots() -> (String, Calls, HttpServer) {
         let calls: Calls = Arc::default();
@@ -421,10 +424,10 @@ mod tests {
         (url, calls, server)
     }
 
-    /// Lets temporary apps start `recorder` bots on `bots_url`.
-    fn recorder_proxy(bots_url: &str, max_launches: u32) -> Option<BotProxy> {
+    /// Lets temporary apps start `recorder` bots on `bot_dispatcher_url`.
+    fn recorder_proxy(bot_dispatcher_url: &str, max_launches: u32) -> Option<BotProxy> {
         Some(BotProxy::new(
-            bots_url.to_string(),
+            bot_dispatcher_url.to_string(),
             vec!["recorder".to_string()],
             RateLimit::new(max_launches, Duration::from_secs(3600)),
         ))
@@ -438,8 +441,8 @@ mod tests {
     #[tokio::test]
     async fn a_page_starts_a_bot_through_a_launch_token_for_its_app() {
         // Arrange
-        let (bots_url, calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bots_url, 10)).await;
+        let (bot_dispatcher_url, calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 10)).await;
         let (token, app_id) = page_token();
 
         // Act
@@ -471,8 +474,8 @@ mod tests {
     #[tokio::test]
     async fn only_a_valid_page_token_reaches_the_app_server_routes_of_an_allowed_type() {
         // Arrange
-        let (bots_url, calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bots_url, 10)).await;
+        let (bot_dispatcher_url, calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 10)).await;
         let (token, _) = page_token();
         let client = reqwest::Client::new();
         let status = |request: reqwest::RequestBuilder| async move {
@@ -529,8 +532,8 @@ mod tests {
     #[tokio::test]
     async fn a_client_starts_bots_within_its_launch_limit() {
         // Arrange
-        let (bots_url, _calls, _bots) = fake_bots().await;
-        let server = start_server(10, recorder_proxy(&bots_url, 1)).await;
+        let (bot_dispatcher_url, _calls, _bots) = fake_bots().await;
+        let server = start_server(10, recorder_proxy(&bot_dispatcher_url, 1)).await;
         let (token, app_id) = page_token();
         let start = || {
             reqwest::Client::new()

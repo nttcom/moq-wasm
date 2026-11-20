@@ -29,7 +29,7 @@ pub(crate) enum LaunchAuth {
         vts_url: String,
     },
     /// Accepts every request for the app the prefix starts with
-    /// (`BOTS_INSECURE_SKIP_AUTH`, a relay without authorization only).
+    /// (`BOT_DISPATCHER_INSECURE_SKIP_AUTH`, a relay without authorization only).
     Insecure,
 }
 

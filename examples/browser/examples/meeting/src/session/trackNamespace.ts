@@ -35,5 +35,5 @@ export function isTranscriberNamespace(trackNamespace: string[] | undefined, roo
 }
 
 /// Only a temporary app's page can start the transcriber: it goes through the temporary-apps service
-/// (docs/architecture/bots/architecture.md "Temporary apps").
+/// (docs/architecture/bot-dispatcher/architecture.md "Temporary apps").
 export const TRANSCRIBER_AVAILABLE = access.kind === 'temporary'

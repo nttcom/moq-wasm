@@ -19,7 +19,7 @@ import {
   getDefaultMoqtUrl,
   jsDir,
 } from "./helpers.mjs";
-import { localPythonBot, startBots, temporaryAppSecret } from "./bots-dev.mjs";
+import { localPythonBot, startBotDispatcher, temporaryAppSecret } from "./bot-dispatcher-dev.mjs";
 import { startRelayAndPage } from "./relay-dev.mjs";
 
 const botDir = resolve(repoRoot, "examples/python/moq-meeting-transcriber");
@@ -73,7 +73,7 @@ async function main() {
 
     // The spec serves the fake ASR service on this port (examples/browser/tests/fake-asr.ts).
     const asrPort = await findFreePort();
-    const temporaryAppsUrl = await startBots(
+    const temporaryAppsUrl = await startBotDispatcher(
       {
         transcriber: localPythonBot(botDir, "moq_meeting_transcriber.bot", [
           "--relay-url",

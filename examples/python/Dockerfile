@@ -48,15 +48,15 @@ RUN for bot in moq-chat-moderation moq-camera-detection moq-ptz-tracking moq-mee
         uv pip install --python $bot/.venv/bin/python --no-deps -e $bot || exit 1; \
     done
 
-FROM rust:1.100.0-slim-trixie@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe AS bot-service
+FROM rust:1.100.0-slim-trixie@sha256:6f14b2b4b278ec0d50aa1d69541c304ce0f95e0f6268487aa9924af1c2e9aebe AS bot-dispatcher
 WORKDIR /workspace
 COPY . .
-RUN cargo build --locked --release -p bots
+RUN cargo build --locked --release -p bot-dispatcher
 
 # `demo`: the bots with the bot service, which launches them as local processes (compose.demo.yml).
 FROM bots AS demo
-COPY --from=bot-service /workspace/target/release/bots /usr/local/bin/
-CMD ["/usr/local/bin/bots"]
+COPY --from=bot-dispatcher /workspace/target/release/bot-dispatcher /usr/local/bin/
+CMD ["/usr/local/bin/bot-dispatcher"]
 
 FROM bots
 

@@ -1,4 +1,4 @@
-# reqwest for calling bots
+# reqwest for calling bot-dispatcher
 
 ## Status
 
@@ -15,7 +15,7 @@ it was a dev-dependency of the tests.
 
 ## Context
 
-The service is the app server of temporary apps and calls `bots` over HTTPS
+The service is the app server of temporary apps and calls `bot-dispatcher` over HTTPS
 for them.
 
 ## Alternatives
@@ -24,5 +24,5 @@ for them.
 
 ## Decision
 
-Use `reqwest`, already the workspace's HTTP client (`recorder`, `bots`,
+Use `reqwest`, already the workspace's HTTP client (`recorder`, `bot-dispatcher`,
 `metadata-token`).

@@ -7,10 +7,10 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from moq_bot_job import bot_job
-from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, bot_job_from_arguments, run_bot_job
+from moq_bot_job.bot_job import BotDispatcher, BotJob, add_bot_job_arguments, bot_job_from_arguments, run_bot_job
 
 
-class FakeBotsService:
+class FakeBotDispatcher:
     """The bot service's bot routes: answers token calls with `token` and heartbeats with `stop`, and
     keeps each call's path, `Authorization` and body."""
 
@@ -31,11 +31,11 @@ class FakeBotsService:
 
 
 @pytest.fixture
-async def open_bots(monkeypatch):
+async def open_dispatcher(monkeypatch):
     monkeypatch.setattr(bot_job, "HEARTBEAT_SECONDS", 0.01)
     sessions = []
 
-    async def open(service: FakeBotsService) -> tuple[BotJob, Bots]:
+    async def open(service: FakeBotDispatcher) -> tuple[BotJob, BotDispatcher]:
         app = web.Application()
         app.router.add_post("/bots/{type}/{id}/{call}", service.handle)
         server = TestServer(app)
@@ -43,7 +43,7 @@ async def open_bots(monkeypatch):
         http = aiohttp.ClientSession()
         sessions.append((server, http))
         job = BotJob("transcriber", "b1", str(server.make_url("")).rstrip("/"), ["app", "room"], 30.0, {})
-        return job, Bots(http, job, "key", None)
+        return job, BotDispatcher(http, job, "key", None)
 
     yield open
     for server, http in sessions:
@@ -62,7 +62,7 @@ def test_the_arguments_name_the_room_and_the_options():
             [
                 "--bot-type", "transcriber",
                 "--bot-id", "b1",
-                "--bots-url", "http://bots.example/",
+                "--bot-dispatcher-url", "http://bot-dispatcher.example/",
                 "--namespace-prefix", "app/team a",
                 "--grace-seconds", "30",
                 "--max-seconds", "3600",
@@ -72,67 +72,67 @@ def test_the_arguments_name_the_room_and_the_options():
     )
 
     # Assert
-    assert job == BotJob("transcriber", "b1", "http://bots.example", ["app", "team a"], 30.0, {"asr": "whisper"})
+    assert job == BotJob("transcriber", "b1", "http://bot-dispatcher.example", ["app", "team a"], 30.0, {"asr": "whisper"})
 
 
-async def test_a_bot_presents_its_key_for_its_token(open_bots):
+async def test_a_bot_presents_its_key_for_its_token(open_dispatcher):
     # Arrange
-    service = FakeBotsService()
-    _, bots = await open_bots(service)
+    service = FakeBotDispatcher()
+    _, dispatcher = await open_dispatcher(service)
 
     # Act
-    token = await bots.token()
+    token = await dispatcher.token()
 
     # Assert
     assert token == "jwt"
     assert service.calls == [("/bots/transcriber/b1/token", "Bearer key", None)]
 
 
-async def test_a_room_that_empties_reports_the_bot_finished(open_bots):
+async def test_a_room_that_empties_reports_the_bot_finished(open_dispatcher):
     # Arrange
-    service = FakeBotsService()
-    job, bots = await open_bots(service)
+    service = FakeBotDispatcher()
+    job, dispatcher = await open_dispatcher(service)
 
-    async def run_room(job: BotJob, bots: Bots) -> None:
+    async def run_room(job: BotJob, dispatcher: BotDispatcher) -> None:
         await asyncio.sleep(0.05)
 
     # Act
-    await run_bot_job(job, bots, run_room)
+    await run_bot_job(job, dispatcher, run_room)
 
     # Assert: running while it is in the room, then finished
     assert service.heartbeats()[0] == ("running", None)
     assert service.heartbeats()[-1] == ("finished", None)
 
 
-async def test_a_bot_asked_to_stop_leaves_its_room_and_reports_finished(open_bots):
+async def test_a_bot_asked_to_stop_leaves_its_room_and_reports_finished(open_dispatcher):
     # Arrange
-    service = FakeBotsService(stop=True)
-    job, bots = await open_bots(service)
+    service = FakeBotDispatcher(stop=True)
+    job, dispatcher = await open_dispatcher(service)
     left = asyncio.Event()
 
-    async def run_room(job: BotJob, bots: Bots) -> None:
+    async def run_room(job: BotJob, dispatcher: BotDispatcher) -> None:
         try:
             await asyncio.Event().wait()
         finally:
             left.set()
 
     # Act
-    await asyncio.wait_for(run_bot_job(job, bots, run_room), 2)
+    await asyncio.wait_for(run_bot_job(job, dispatcher, run_room), 2)
 
     # Assert
     assert left.is_set()
     assert service.heartbeats()[-1] == ("finished", None)
 
 
-async def test_a_room_that_fails_reports_the_bot_failed(open_bots):
+async def test_a_room_that_fails_reports_the_bot_failed(open_dispatcher):
     # Arrange
-    service = FakeBotsService()
-    job, bots = await open_bots(service)
+    service = FakeBotDispatcher()
+    job, dispatcher = await open_dispatcher(service)
 
-    async def run_room(job: BotJob, bots: Bots) -> None:
+    async def run_room(job: BotJob, dispatcher: BotDispatcher) -> None:
         raise ValueError("unknown asr")
 
     # Act / Assert
     with pytest.raises(ValueError, match="unknown asr"):
-        await run_bot_job(job, bots, run_room)
+        await run_bot_job(job, dispatcher, run_room)
     assert service.heartbeats()[-1] == ("failed", "ValueError('unknown asr')")

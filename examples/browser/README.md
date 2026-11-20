@@ -40,7 +40,7 @@ connects; the choice is kept in localStorage.
   refreshed.
 - The bot-backed examples start their bot through the temporary-apps service,
   which starts it on the bot service in the page's app, so only a temporary
-  app's page has a bot (`docs/architecture/bots/architecture.md`).
+  app's page has a bot (`docs/architecture/bot-dispatcher/architecture.md`).
 - A service URL in the query (`?relayUrl=`, `?recorderUrl=`, `?temporaryAppsUrl=`)
   is used only when it names this machine or a host under
   `moqt.research.skyway.io`, since the page sends its token there.

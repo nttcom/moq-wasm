@@ -1,4 +1,4 @@
-# hyper and http-body-util for the bots HTTP server
+# hyper and http-body-util for the bot-dispatcher HTTP server
 
 ## Status
 
@@ -11,12 +11,12 @@ Accepted
 ## What
 
 Add `hyper` 1.x (`http1`, `server`) and `http-body-util` as direct
-dependencies of `bots`. `server.rs` takes `hyper::Request<Incoming>` from
+dependencies of `bot-dispatcher`. `server.rs` takes `hyper::Request<Incoming>` from
 `http_server::HttpServer` and answers `Response<Full<Bytes>>`.
 
 ## Context
 
-`bots` serves six routes with JSON bodies, as the VTS and `temporary-apps` do.
+`bot-dispatcher` serves six routes with JSON bodies, as the VTS and `temporary-apps` do.
 
 ## Alternatives
 

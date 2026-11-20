@@ -24,7 +24,7 @@ use crate::{
     bots::Bots,
     id_token::{GOOGLE_CERTS_URL, IdTokenVerifier},
     launch_auth::LaunchAuth,
-    server::BotsServer,
+    server::BotDispatcherServer,
     signer::BotTokenSigner,
     store::BotStore,
 };
@@ -32,9 +32,9 @@ use crate::{
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
-        service_name: "bots",
+        service_name: "bot-dispatcher",
         service_version: env!("CARGO_PKG_VERSION"),
-        default_directives: &["bots=info", "job_launcher=info"],
+        default_directives: &["bot_dispatcher=info", "job_launcher=info"],
         log_output: telemetry_otlp::LogOutput::Stdout,
         ..Default::default()
     })?;
@@ -44,34 +44,39 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .context("PORT must be a port number")?;
     let required = |name: &str| non_empty_env(name).with_context(|| format!("{name} must be set"));
-    let public_url = required("BOTS_PUBLIC_URL")?;
-    let types_text = required("BOTS_TYPES")?;
+    let public_url = required("BOT_DISPATCHER_PUBLIC_URL")?;
+    let types_text = required("BOT_DISPATCHER_TYPES")?;
     let metadata_token = Arc::new(MetadataToken::new(reqwest::Client::new()));
     let types = BotTypes::parse(&types_text, &metadata_token)?;
-    let store = BotStore::open(&required("BOTS_STORE_URL")?.parse()?)?;
+    let store = BotStore::open(&required("BOT_DISPATCHER_STORE_URL")?.parse()?)?;
     // Without authorization the bots join with no token, so no app secret is read.
-    let insecure = non_empty_env("BOTS_INSECURE_SKIP_AUTH").is_some_and(|value| value == "true");
+    let insecure =
+        non_empty_env("BOT_DISPATCHER_INSECURE_SKIP_AUTH").is_some_and(|value| value == "true");
     let (signer, launch_auth) = if insecure {
         tracing::warn!(
-            "BOTS_INSECURE_SKIP_AUTH: every request is accepted and bots join with no token"
+            "BOT_DISPATCHER_INSECURE_SKIP_AUTH: every request is accepted and bots join with no token"
         );
         (None, LaunchAuth::Insecure)
     } else {
         let registry = Location::from_env(&LocationVariables {
-            file: "BOTS_REGISTRY_FILE",
-            bucket: "BOTS_REGISTRY_BUCKET",
-            object: "BOTS_REGISTRY_OBJECT",
+            file: "BOT_DISPATCHER_REGISTRY_FILE",
+            bucket: "BOT_DISPATCHER_REGISTRY_BUCKET",
+            object: "BOT_DISPATCHER_REGISTRY_OBJECT",
         })?
-        .context("set BOTS_REGISTRY_FILE or BOTS_REGISTRY_BUCKET")?;
+        .context("set BOT_DISPATCHER_REGISTRY_FILE or BOT_DISPATCHER_REGISTRY_BUCKET")?;
         let signer = BotTokenSigner::new(
             RegistryStore::new(registry)?,
-            non_empty_env("BOTS_TEMPORARY_APP_SECRET"),
+            non_empty_env("BOT_DISPATCHER_TEMPORARY_APP_SECRET"),
         );
-        (Some(signer), LaunchAuth::new(required("BOTS_VTS_URL")?))
+        (
+            Some(signer),
+            LaunchAuth::new(required("BOT_DISPATCHER_VTS_URL")?),
+        )
     };
-    let id_tokens = non_empty_env("BOTS_JOB_SERVICE_ACCOUNT").map(|service_accounts| {
+    let id_tokens = non_empty_env("BOT_DISPATCHER_JOB_SERVICE_ACCOUNT").map(|service_accounts| {
         IdTokenVerifier::new(
-            non_empty_env("BOTS_GOOGLE_CERTS_URL").unwrap_or_else(|| GOOGLE_CERTS_URL.to_owned()),
+            non_empty_env("BOT_DISPATCHER_GOOGLE_CERTS_URL")
+                .unwrap_or_else(|| GOOGLE_CERTS_URL.to_owned()),
             public_url.clone(),
             service_accounts
                 .split(',')
@@ -84,8 +89,8 @@ async fn main() -> anyhow::Result<()> {
     let bots = Bots::new(types, store, signer, id_tokens, public_url);
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
-    let _server = BotsServer::run(listener, bots, launch_auth);
-    tracing::info!(port, "bots listening");
+    let _server = BotDispatcherServer::run(listener, bots, launch_auth);
+    tracing::info!(port, "bot-dispatcher listening");
 
     // As PID 1 in a container the process has no default SIGTERM action.
     let mut terminate = signal(SignalKind::terminate())?;
@@ -93,6 +98,6 @@ async fn main() -> anyhow::Result<()> {
         result = tokio::signal::ctrl_c() => result?,
         _ = terminate.recv() => {}
     }
-    tracing::info!("bots shutting down");
+    tracing::info!("bot-dispatcher shutting down");
     Ok(())
 }

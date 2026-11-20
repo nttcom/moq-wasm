@@ -33,7 +33,7 @@ sequenceDiagram
 
 ## 起動
 
-bot サービス（[`services/bots`](../../../docs/architecture/bots/architecture.md)）が、一時アプリごとに `ptz-tracking` 型の bot として起動します。
+bot サービス（[`services/bot-dispatcher`](../../../docs/architecture/bot-dispatcher/architecture.md)）が、一時アプリごとに `ptz-tracking` 型の bot として起動します。
 一時アプリのページは Join したあと「bot を参加させる」を押すと temporary-apps の `/bots/ptz-tracking` を呼び、bot はページが 30 秒いないか 1 時間たつと抜けます。
 ルームはアプリに 1 つ（`{app}/moq-ptz-tracking`）で、カメラもそのルームに配信します。Public モードのページでは bot は動きません。
 
@@ -48,7 +48,7 @@ make onvif ONVIF_MOQT_URL=https://relay-1.moqt.research.skyway.io:443 \
 ```
 
 - トークンは 1 時間で切れます。切れたらページの新しい共有リンクのトークンで起動し直します。
-- 手元の relay と bot で試すときは、`uv sync` で `.venv` を作り、bots の `BOTS_TYPES` に次を足します（bots の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。d1-2B の認証は [moq-camera-detection](../moq-camera-detection/README.md#d1-2b) と同じです。
+- 手元の relay と bot で試すときは、`uv sync` で `.venv` を作り、`bot-dispatcher` の `BOT_DISPATCHER_TYPES` に次を足します（`bot-dispatcher` の起動は [moq-meeting-transcriber](../moq-meeting-transcriber/README.md) と同じです）。d1-2B の認証は [moq-camera-detection](../moq-camera-detection/README.md#d1-2b) と同じです。
 
 ```json
 {

@@ -10,13 +10,13 @@ Accepted
 
 ## What
 
-Add `reqwest` (`json`, `rustls`) as a direct dependency of `bots`.
+Add `reqwest` (`json`, `rustls`) as a direct dependency of `bot-dispatcher`.
 `launch_auth.rs` posts launch tokens to the VTS and `id_token.rs` fetches
 Google's JWKS; `job-launcher` and `google-cloud` take a client too.
 
 ## Context
 
-`bots` calls two HTTP services and the crates it builds on take a
+`bot-dispatcher` calls two HTTP services and the crates it builds on take a
 `reqwest::Client`.
 
 ## Alternatives

@@ -45,11 +45,11 @@ async function main() {
   const moqtUrl = getDefaultMoqtUrl();
   const namespace = process.env.LIVE_VIEWER_E2E_NAMESPACE ?? "anon/live/e2e";
 
-  // The recorder specs run target/debug/recorder and target/debug/bots.
+  // The recorder specs run target/debug/recorder and target/debug/bot-dispatcher.
   const [liveIngestBinary] = buildBinaries([
     "live-ingest",
     "recorder",
-    "bots",
+    "bot-dispatcher",
     "relay",
   ]);
   const { childProcesses, cleanup, ready } = startRelayAndPage(liveViewerPath);

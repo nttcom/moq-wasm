@@ -50,7 +50,7 @@ gcloud run services add-iam-policy-binding moqt-haas-ja --project=${PROJECT} --r
 ASR_URL=$(gcloud run services describe moqt-haas-ja --project=${PROJECT} --region=${REGION} --format 'value(status.url)')
 ```
 
-bot サービスの `BOTS_TYPES` で、`transcriber` の `args` に `--asr haas-ja=${ASR_URL}` と `--metadata-auth` を足します（[moq-meeting-transcriber](../moq-meeting-transcriber/README.md)）。
+bot サービスの `BOT_DISPATCHER_TYPES` で、`transcriber` の `args` に `--asr haas-ja=${ASR_URL}` と `--metadata-auth` を足します（[moq-meeting-transcriber](../moq-meeting-transcriber/README.md)）。
 手元で起動する bot から呼ぶときは `--metadata-auth` の代わりに `--gcloud-auth` を付けます。
 
 ## テスト

@@ -9,7 +9,7 @@ use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use serde::Serialize;
 
 pub(crate) const TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
-/// A launch token is signed for one call to `bots`.
+/// A launch token is signed for one call to `bot-dispatcher`.
 const LAUNCH_TOKEN_LIFETIME: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
@@ -60,8 +60,8 @@ impl TemporaryApps {
         })
     }
 
-    /// The launch token `bots` takes from an app server
-    /// (docs/architecture/bots/architecture.md): it may start, stop and read
+    /// The launch token `bot-dispatcher` takes from an app server
+    /// (docs/architecture/bot-dispatcher/architecture.md): it may start, stop and read
     /// bots anywhere under the app's root and grants nothing on the relay.
     pub(crate) fn sign_launch(&self, app_id: &str, now: u64) -> anyhow::Result<String> {
         let claims = Claims {

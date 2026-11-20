@@ -95,7 +95,7 @@ impl IdTokenVerifier {
                 && payload
                     .email
                     .is_some_and(|email| self.service_accounts.contains(&email)),
-            "not a bots' service account"
+            "not the service account of a bot job"
         );
         Ok(())
     }
@@ -165,7 +165,7 @@ mod tests {
     use super::*;
 
     const NOW: u64 = 1_800_000_000;
-    const AUDIENCE: &str = "https://bots.example";
+    const AUDIENCE: &str = "https://bot-dispatcher.example";
     const ACCOUNT: &str = "bot@project.iam.gserviceaccount.com";
 
     struct Google {

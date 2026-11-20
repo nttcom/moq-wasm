@@ -4,7 +4,7 @@ import os
 from functools import partial
 
 import moq_wasm
-from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
+from moq_bot_job.bot_job import BotDispatcher, BotJob, add_bot_job_arguments, serve_bot_job
 from moq_system_one_bot.relay import stay_connected
 from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -115,8 +115,8 @@ async def talk_in_session(gemini: GeminiServices, job: BotJob, session: moq_wasm
     await runner.run()
 
 
-async def talk_in_room(args: argparse.Namespace, gemini: GeminiServices, job: BotJob, bots: Bots) -> None:
-    await stay_connected(args, bots, partial(talk_in_session, gemini, job))
+async def talk_in_room(args: argparse.Namespace, gemini: GeminiServices, job: BotJob, dispatcher: BotDispatcher) -> None:
+    await stay_connected(args, dispatcher, partial(talk_in_session, gemini, job))
 
 
 async def main():

@@ -45,7 +45,7 @@ pub(crate) struct RoomHolder {
     version: UpdateVersion,
 }
 
-/// The objects `bots` keeps its state in, so that any number of instances
+/// The objects `bot-dispatcher` keeps its state in, so that any number of instances
 /// answer alike:
 ///
 /// - `bots/<id>.json`: the `BotRecord`, written from the launch request and

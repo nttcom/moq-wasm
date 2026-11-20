@@ -25,7 +25,7 @@ use crate::{
 
 type JsonResponse = Response<Full<Bytes>>;
 
-pub(crate) struct BotsServer {
+pub(crate) struct BotDispatcherServer {
     _http: HttpServer,
 }
 
@@ -41,7 +41,7 @@ struct StartRequest {
     options: Option<Value>,
 }
 
-impl BotsServer {
+impl BotDispatcherServer {
     pub(crate) fn run(listener: TcpListener, bots: Bots, launch_auth: LaunchAuth) -> Self {
         let state = Arc::new(ServerState { bots, launch_auth });
         Self {
@@ -55,7 +55,7 @@ impl BotsServer {
 async fn handle(request: Request<Incoming>, state: Arc<ServerState>) -> JsonResponse {
     let (head, body) = request.into_parts();
     let span = tracing::info_span!(
-        "bots.request",
+        "bot_dispatcher.request",
         "http.request.method" = %head.method,
         "url.path" = head.uri.path(),
         "http.response.status_code" = tracing::field::Empty,
@@ -216,7 +216,10 @@ async fn authorized_record(
         Ok(Some(record)) => record,
         Ok(None) => return Err((StatusCode::NOT_FOUND, "not_found")),
         Err(error) => {
-            tracing::error!(error = format!("{error:#}"), "bots request failed");
+            tracing::error!(
+                error = format!("{error:#}"),
+                "bot-dispatcher request failed"
+            );
             return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal_error"));
         }
     };
@@ -300,7 +303,10 @@ fn log_refusal(rejection: &Rejection, prefix: &str) {
 }
 
 fn internal(error: &anyhow::Error) -> JsonResponse {
-    tracing::error!(error = format!("{error:#}"), "bots request failed");
+    tracing::error!(
+        error = format!("{error:#}"),
+        "bot-dispatcher request failed"
+    );
     error_response(StatusCode::INTERNAL_SERVER_ERROR, "internal_error")
 }
 
@@ -324,7 +330,8 @@ mod tests {
         let vts = fake_vts().await;
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let _server = BotsServer::run(listener, test_bots().bots, LaunchAuth::new(vts.url.clone()));
+        let _server =
+            BotDispatcherServer::run(listener, test_bots().bots, LaunchAuth::new(vts.url.clone()));
         let client = reqwest::Client::new();
 
         // Act

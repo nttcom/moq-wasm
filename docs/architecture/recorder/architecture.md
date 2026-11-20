@@ -286,7 +286,7 @@ replayed recordings do not become participants of a new recording, and
 those under `<room>/bots/`, which are bots, the recorder's own presence among
 them; of these only an MoQ recording reads `<room>/bots/transcriber`, as a
 transcript.
-`bots` starts and stops room recordings (see "Started by `bots`"): each runs
+`bot-dispatcher` starts and stops room recordings (see "Started by `bot-dispatcher`"): each runs
 as a `recorder bot` job and each composite as a `recorder composite` job.
 `recorder serve` is an HTTP API (`api_server::ApiServer` on
 `http_server::HttpServer`, see [hyper.md](hyper.md)) that lists and replays
@@ -298,8 +298,8 @@ they need.
 
 ```mermaid
 flowchart LR
-  bots[bots] -->|launch| record[recorder bot job]
-  record -->|token, heartbeat| bots
+  dispatcher[bot-dispatcher] -->|launch| record[recorder bot job]
+  record -->|token, heartbeat| dispatcher
   record -->|launch| composite[recorder composite job]
   meeting[Meeting, console] -->|GET, publish| api[recorder serve]
   api -->|state| store[(store)]
@@ -310,7 +310,7 @@ flowchart LR
 
 `store::RecordingStore` lays the objects out so that each has one writer, and
 so needs neither compare-and-swap nor a database: a `file://` directory and
-GCS behave the same. One room runs one recording at a time because `bots`
+GCS behave the same. One room runs one recording at a time because `bot-dispatcher`
 holds the room for the `recorder` type.
 
 | Object | Writer | Holds |
@@ -350,7 +350,7 @@ digits>`, which does not collide between jobs) and records the room as
   relay its GOAWAY names; the PUBLISH_NAMESPACE that relay answers with for a
   participant already recorded is acknowledged and changes nothing.
 - `state_sync_task::StateSyncTask` writes the state whenever it changes and
-  at least every 30 s. A stop from `bots`, SIGTERM (Cloud Run stopping the
+  at least every 30 s. A stop from `bot-dispatcher`, SIGTERM (Cloud Run stopping the
   job) or SIGINT sends the stop signal every `record_broadcast` watches; the
   state goes from `stopping` to `finished` once each file is closed and
   uploaded.
@@ -613,23 +613,23 @@ The recording's JSON carries `composite` (`null` when not requested) with
 `state` `waiting` (until the composite job reports), `composing`, `done`,
 `skipped` (the recording failed) or `failed`, and `error`.
 
-## Started by `bots`
+## Started by `bot-dispatcher`
 
-`recorder bot` records a room as the bot `bots` started
-(docs/architecture/bots/architecture.md), which is how the bot service's
+`recorder bot` records a room as the bot `bot-dispatcher` started
+(docs/architecture/bot-dispatcher/architecture.md), which is how the bot service's
 `recorder` type runs: its arguments are `bot`, the job's own settings (the
-relay, the store, the launcher) and the ones `bots` adds, `--bot-type`, `--bot-id`,
-`--bots-url`, `--namespace-prefix`, `--grace-seconds` (the empty room
+relay, the store, the launcher) and the ones `bot-dispatcher` adds, `--bot-type`, `--bot-id`,
+`--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds` (the empty room
 timeout), `--max-seconds` and `--options` (`layout`, `composite` and
 `format`).
 
-- `bots_client::BotsClient` calls `bots` back with the key in
-  `BOTS_BOT_KEY` when the job was launched locally, and otherwise with the
-  Google ID token of the job's service account for the bots URL
+- `bot_dispatcher_client::BotDispatcherClient` calls `bot-dispatcher` back with the key in
+  `BOT_DISPATCHER_BOT_KEY` when the job was launched locally, and otherwise with the
+  Google ID token of the job's service account for the bot-dispatcher URL
   (`google_cloud::identity_token`).
 - The job takes its first token from `POST /bots/{type}/{id}/token`, and
-  `TokenRenewal::Bots` renews it there five minutes before it expires. A
-  `bots` without authorization answers no token, and the job joins with
+  `TokenRenewal::BotDispatcher` renews it there five minutes before it expires. A
+  `bot-dispatcher` without authorization answers no token, and the job joins with
   none. The
   token subscribes to the room and publishes only `<room>/bots/<type>`, which
   the recording announces so the room sees it.
@@ -644,8 +644,8 @@ timeout), `--max-seconds` and `--options` (`layout`, `composite` and
 A `TokenRefreshTask` polls a `TokenRenewal` every 10 s: `File` re-reads a token
 file (`--auth-token-file`), `Issuer` asks the temporary-apps service's
 `POST /tokens/refresh` for a new token once the current one expires within
-five minutes, and `Bots` asks `bots` the same way, keeping the current one
-when the mint or `bots` refuses or is unreachable.
+five minutes, and `BotDispatcher` asks `bot-dispatcher` the same way, keeping the current one
+when the mint or `bot-dispatcher` refuses or is unreachable.
 It sends a changed token with the relay's in-session refresh convention: a
 TRACK_STATUS for namespace `[app id]` and track `update_auth_token` carrying
 the token as its AUTHORIZATION TOKEN (see the relay architecture document,

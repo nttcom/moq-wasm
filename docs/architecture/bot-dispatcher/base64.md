@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-Add `base64` as a direct dependency of `bots`. `id_token.rs` decodes the
+Add `base64` as a direct dependency of `bot-dispatcher`. `id_token.rs` decodes the
 base64url segments of a Google ID token and the modulus and exponent of
 Google's JWKs.
 

@@ -6,7 +6,7 @@ import aiohttp
 import moq_wasm
 from faster_whisper import WhisperModel
 from loguru import logger
-from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
+from moq_bot_job.bot_job import BotDispatcher, BotJob, add_bot_job_arguments, serve_bot_job
 from moq_bot_job.identity_token import add_identity_token_arguments, identity_token_from_arguments
 
 from moq_meeting_transcriber.asr import GRANITE_SPEECH, GraniteSpeechRecognizer, HttpRecognizer
@@ -66,16 +66,16 @@ def recognizer_named(args: argparse.Namespace, http: aiohttp.ClientSession, name
     return recognizer(name, url, http, token)
 
 
-async def transcribe_room(args: argparse.Namespace, job: BotJob, bots: Bots) -> None:
+async def transcribe_room(args: argparse.Namespace, job: BotJob, dispatcher: BotDispatcher) -> None:
     async with aiohttp.ClientSession() as http:
         recognizer = recognizer_named(args, http, job.options.get("asr", DEFAULT_ASR))
-        token = await bots.token()
+        token = await dispatcher.token()
         connect = partial(
             moq_wasm.connect,
             args.relay_url,
             verify_certificate=not args.insecure,
             token=token,
-            refresh_token=bots.refresh if token else None,
+            refresh_token=dispatcher.refresh if token else None,
         )
         await Room(connect, job.namespace_prefix, recognizer, job.grace_seconds).run()
 

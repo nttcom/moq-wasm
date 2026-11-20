@@ -8,10 +8,10 @@ use anyhow::{Context, Result, bail};
 use moqt::Session;
 use serde_json::Value;
 
-use crate::{bots_client::BotsClient, state_sync_task::now_ms};
+use crate::{bot_dispatcher_client::BotDispatcherClient, state_sync_task::now_ms};
 
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
-/// A token from `temporary-apps` or `bots` is renewed this long before it expires.
+/// A token from `temporary-apps` or `bot-dispatcher` is renewed this long before it expires.
 const REFRESH_MARGIN: Duration = Duration::from_secs(5 * 60);
 
 /// Where the next token comes from.
@@ -22,9 +22,9 @@ pub(crate) enum TokenRenewal {
     /// A temporary app's token, renewed by `POST /tokens/refresh` on the
     /// temporary-apps service at this URL shortly before it expires.
     Issuer(String),
-    /// The token `bots` signs for the recording it started, renewed shortly
+    /// The token `bot-dispatcher` signs for the recording it started, renewed shortly
     /// before it expires.
-    Bots(Arc<BotsClient>),
+    BotDispatcher(Arc<BotDispatcherClient>),
 }
 
 impl TokenRenewal {
@@ -37,9 +37,9 @@ impl TokenRenewal {
         let token = match self {
             Self::File(path) => read_token_file(path).await?,
             Self::Issuer(url) => refresh_at_issuer(url, current).await?,
-            Self::Bots(bots) => {
-                // A `bots` without authorization signs none, and the relay asks for none.
-                match bots.token().await? {
+            Self::BotDispatcher(dispatcher) => {
+                // A `bot-dispatcher` without authorization signs none, and the relay asks for none.
+                match dispatcher.token().await? {
                     Some(token) => token,
                     None => return Ok(None),
                 }

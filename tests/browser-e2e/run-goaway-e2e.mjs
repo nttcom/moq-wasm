@@ -106,8 +106,8 @@ async function main() {
   registerSignalHandlers(cleanup);
 
   try {
-    // The recorder spec runs target/debug/recorder and target/debug/bots.
-    buildBinaries(["relay", "live-ingest", "recorder", "bots"]);
+    // The recorder spec runs target/debug/recorder and target/debug/bot-dispatcher.
+    buildBinaries(["relay", "live-ingest", "recorder", "bot-dispatcher"]);
     // A Redis of its own: relays registered in a shared one would be
     // candidates for the GOAWAY target.
     const redis = spawnProcess(

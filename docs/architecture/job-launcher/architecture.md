@@ -8,5 +8,5 @@ as the workload's own service account (`google-cloud`).
 
 A job's arguments are visible to anyone who can view its executions.
 
-Used by `recorder`, which starts `recorder composite`, and by `bots`, which
+Used by `recorder`, which starts `recorder composite`, and by `bot-dispatcher`, which
 starts each bot.

@@ -1,7 +1,7 @@
 # moq-meeting-transcriber
 
 Meeting（`examples/browser/examples/meeting`）のルームに入り、参加者全員の音声を書き起こす pipecat の bot です。
-[bot サービス](../../../docs/architecture/bots/architecture.md)（`services/bots`）が、ルームごとに `transcriber` 型の bot として起動します。
+[bot サービス](../../../docs/architecture/bot-dispatcher/architecture.md)（`services/bot-dispatcher`）が、ルームごとに `transcriber` 型の bot として起動します。
 書き起こしは MSF の event timeline として publish します。設計は [Live transcription for the Meeting example](../../../docs/architecture/ai-bots/meeting-transcriber.md) にあります。
 
 音声認識は、ページが bot を起動するときのオプション `asr` で選びます。
@@ -18,7 +18,7 @@ Meeting（`examples/browser/examples/meeting`）のルームに入り、参加�
 sequenceDiagram
     participant P as Page
     participant T as temporary-apps
-    participant S as bots
+    participant S as bot-dispatcher
     participant B as bot
     participant R as Relay
     P->>T: POST /bots/transcriber {namespace_prefix, options: {asr}}
@@ -37,7 +37,7 @@ sequenceDiagram
 
 ## 起動
 
-`bots` の `BOTS_TYPES` に `transcriber` 型を足します。手元では `local` launcher で bot の Python を起動します。
+`bot-dispatcher` の `BOT_DISPATCHER_TYPES` に `transcriber` 型を足します。手元では `local` launcher で bot の Python を起動します。
 
 ```json
 {

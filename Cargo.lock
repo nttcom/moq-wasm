@@ -317,7 +317,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bots"
+name = "bot-dispatcher"
 version = "0.1.0"
 dependencies = [
  "anyhow",

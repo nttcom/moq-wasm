@@ -4,7 +4,7 @@ from functools import partial
 
 import aiohttp
 import moq_wasm
-from moq_bot_job.bot_job import BotJob, Bots, add_bot_job_arguments, serve_bot_job
+from moq_bot_job.bot_job import BotDispatcher, BotJob, add_bot_job_arguments, serve_bot_job
 from moq_bot_job.identity_token import IdentityToken, add_identity_token_arguments, identity_token_from_arguments
 from moq_system_one_bot.system_one_client import REQUEST_TIMEOUT
 from moq_system_one_bot.system_one_status import SystemOneStatus
@@ -73,10 +73,10 @@ async def moderate_session(
     await runner.run()
 
 
-async def moderate_room(args: argparse.Namespace, job: BotJob, bots: Bots) -> None:
+async def moderate_room(args: argparse.Namespace, job: BotJob, dispatcher: BotDispatcher) -> None:
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as http:
         identity_token = identity_token_from_arguments(args, http, args.system_one_url)
-        await stay_connected(args, bots, partial(moderate_session, args, http, identity_token, job))
+        await stay_connected(args, dispatcher, partial(moderate_session, args, http, identity_token, job))
 
 
 async def main():

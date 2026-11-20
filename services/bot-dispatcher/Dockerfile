@@ -10,15 +10,15 @@ FROM chef AS builder
 # until a manifest or Cargo.lock changes; only the workspace crates are
 # compiled after the source is copied in.
 COPY --from=planner /workspace/recipe.json recipe.json
-RUN cargo chef cook --release -p bots --recipe-path recipe.json
+RUN cargo chef cook --release -p bot-dispatcher --recipe-path recipe.json
 COPY . .
-RUN cargo build --release -p bots
+RUN cargo build --release -p bot-dispatcher
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:83b9b50586253821cf63ffcec87d3d94265a093ad30da232039af962dd8f4edf
 
 WORKDIR /app
-COPY --from=builder /workspace/target/release/bots /usr/local/bin/
+COPY --from=builder /workspace/target/release/bot-dispatcher /usr/local/bin/
 
 EXPOSE 8098
 USER nonroot:nonroot
-CMD ["/usr/local/bin/bots"]
+CMD ["/usr/local/bin/bot-dispatcher"]

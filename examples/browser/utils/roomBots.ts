@@ -1,5 +1,5 @@
-/// The bots of a room, which the temporary-apps service starts, reports and stops on `bots` for the
-/// page of a temporary app (docs/architecture/bots/architecture.md).
+/// The bots of a room, which the temporary-apps service starts, reports and stops on `bot-dispatcher` for the
+/// page of a temporary app (docs/architecture/bot-dispatcher/architecture.md).
 
 import { temporaryAppToken, temporaryAppsUrl } from './access'
 import { icon } from './icon'
@@ -23,7 +23,7 @@ export class BotsError extends Error {
   }
 }
 
-/// The namespace a bot of `botType` publishes at in `room` (docs/architecture/bots/architecture.md
+/// The namespace a bot of `botType` publishes at in `room` (docs/architecture/bot-dispatcher/architecture.md
 /// "Bots in the room").
 export function botNamespace(room: string[], botType: string): string[] {
   return [...room, 'bots', botType]
@@ -34,7 +34,7 @@ export function sameNamespace(left: string[], right: string[]): boolean {
 }
 
 /// The room's latest bot of `type`, or `undefined` if it never had one or the temporary-apps service
-/// has no `bots`.
+/// has no `bot-dispatcher`.
 export async function latestBot(type: string, namespacePrefix: string): Promise<RoomBot | undefined> {
   const query = new URLSearchParams({ namespace_prefix: namespacePrefix })
   const response = await send(`/bots/${type}?${query}`, {})
@@ -72,7 +72,7 @@ async function send(path: string, init: RequestInit): Promise<Response> {
 async function answer<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({}))
   if (!response.ok) {
-    throw new BotsError(body.error ?? `bots answered ${response.status}`, response.status)
+    throw new BotsError(body.error ?? `bot-dispatcher answered ${response.status}`, response.status)
   }
   return body as T
 }

@@ -1,5 +1,5 @@
 [package]
-name = "bots"
+name = "bot-dispatcher"
 version = "0.1.0"
 edition = "2024"
 description = "Starts, stops and reports the bots of a room on behalf of an app's server"

@@ -7,7 +7,7 @@ Accepted
 2026-11-18
 
 ## Scope
-A new service `services/bots` that starts, stops and reports the bots of a
+A new service `services/bot-dispatcher` that starts, stops and reports the bots of a
 room, and the changes it brings to:
 
 - `services/recorder`: `recorder record` becomes a bot; `recorder serve` keeps
@@ -57,7 +57,7 @@ their own, the temporary-apps service plays the app server.
 sequenceDiagram
     participant P as Page
     participant A as App server (temporary-apps service for a temporary app)
-    participant B as bots
+    participant B as bot-dispatcher
     participant V as VTS
     participant J as Bot (Cloud Run Job)
     participant R as Relay
@@ -87,7 +87,7 @@ sequenceDiagram
 | --- | --- | --- |
 | App server | its app's secret | decides who may start a bot, signs launch tokens |
 | Temporary-apps service | the temporary app secret | the app server of every temporary app (below) |
-| `bots` | read access to the registry, the temporary app secret | verifies launch tokens through the VTS, launches bots, signs bot tokens, keeps bot state |
+| `bot-dispatcher` | read access to the registry, the temporary app secret | verifies launch tokens through the VTS, launches bots, signs bot tokens, keeps bot state |
 | Bot | its bot id and the job's own identity | joins the room with its bot token, reports its state, ends itself |
 
 A bot never sees an app secret, a launch token or a user's token.
@@ -101,13 +101,13 @@ secret, with one new claim:
 | `bots` | Relative namespace path under which the token may start, stop and read bots; `""` is the whole app root; absent means not allowed |
 
 A launch token carries no `publish` or `subscribe`, so the relay grants it
-nothing, and a client token carries no `bots`, so a page's token cannot start
-a bot even if a page sends one. `bots` judges `iat` and `exp` with its own
+nothing, and a client token carries no `bots` claim, so a page's token cannot start
+a bot even if a page sends one. `bot-dispatcher` judges `iat` and `exp` with its own
 `ClaimPolicy`: a launch token lives at most 5 minutes. A relay app
 (`isRelay`) cannot start bots.
 
 ### The bot token
-`bots` signs a client token for the room's app (`Claims::issued`) with the
+`bot-dispatcher` signs a client token for the room's app (`Claims::issued`) with the
 app's secret, read from the registry through `app-registry` on every
 signature, as the VTS reads it on every verification, so a rotated secret or a
 deleted app takes effect at the next renewal. A temporary app's token is
@@ -120,16 +120,16 @@ signed with the temporary app secret. The claims are the bot type's:
 
 A bot token lives 1 hour. Five minutes before it expires the bot asks for the
 next one and sends it to the relay with the relay's in-session refresh, as
-`TokenRefreshTask` and `moq_wasm.connect`'s `refresh_token` already do. `bots`
+`TokenRefreshTask` and `moq_wasm.connect`'s `refresh_token` already do. `bot-dispatcher`
 refuses to sign for a bot that is no longer running.
 
 ### How a bot proves it is the bot
 The job is launched with its bot id and nothing secret. It calls
 `POST /bots/{type}/{id}/token` and `POST /bots/{type}/{id}/heartbeat` with a Google ID token
 for the bot service's URL, from the metadata server of the job's service
-account. `bots` verifies the ID token (RS256 against Google's published keys,
+account. `bot-dispatcher` verifies the ID token (RS256 against Google's published keys,
 `aud`, `exp`, and `email` one of the configured job service accounts) and
-answers only for a bot that is running. With `--launcher local`, `bots`
+answers only for a bot that is running. With `--launcher local`, `bot-dispatcher`
 passes the child process a random per-bot key in its environment instead,
 never in its arguments, so the whole flow runs on one machine without Google
 credentials. The URL of Google's keys is a setting, so the unit tests verify
@@ -174,11 +174,11 @@ job (an AI bot joining a live meeting) can get another launcher later without
 changing the API.
 
 ### State
-`bots` keeps no state in memory. As `recorder serve` does, it keeps one small
+`bot-dispatcher` keeps no state in memory. As `recorder serve` does, it keeps one small
 JSON object per bot in a store (`gs://` or `file://`), and a lock per
 `(type, room)` taken with `PutMode::Create` and released with a conditional
 delete, so one room runs at most one bot of each type and any number of
-instances answer alike. The object is written by `bots` alone, from the
+instances answer alike. The object is written by `bot-dispatcher` alone, from the
 launch request and from the bot's heartbeats (`starting`, `running`,
 `stopping`, `finished`, `failed`). A bot that has not sent a heartbeat for
 90 s, or 5 min before its first one, is reported `failed` and its lock is
@@ -210,7 +210,7 @@ answers no CORS.
 ### Temporary apps
 A temporary app has no operator and no server: whoever holds one of its
 tokens is the app. The temporary-apps service, which holds the temporary app secret,
-becomes the app server of all of them, so `bots` handles a temporary app the
+becomes the app server of all of them, so `bot-dispatcher` handles a temporary app the
 same way as a registered one:
 
 - The temporary-apps service gains the same `/bots/{type}` routes,
@@ -225,7 +225,7 @@ same way as a registered one:
   What changes is that the decision and its limits sit in a server.
 
 ### Configuration
-Bot types are a JSON object `bots` reads at startup from `BOTS_TYPES`,
+Bot types are a JSON object `bot-dispatcher` reads at startup from `BOT_DISPATCHER_TYPES`,
 from type name to entry:
 
 ```json
@@ -249,17 +249,17 @@ paid workload once reached, bounds what bots spend around the clock. A request
 for a type not in the file is `400`.
 
 A bot is started with the type's `args` followed by `--bot-type`, `--bot-id`,
-`--bots-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
+`--bot-dispatcher-url`, `--namespace-prefix`, `--grace-seconds`, `--max-seconds` and,
 when the request has them, `--options <JSON>`. A locally launched bot also
-finds its key in `BOTS_BOT_KEY`.
+finds its key in `BOT_DISPATCHER_BOT_KEY`.
 
-The service reads `PORT` (8098), `BOTS_PUBLIC_URL` (the URL bots call back,
-and the audience of their ID tokens), `BOTS_VTS_URL`, `BOTS_STORE_URL`,
-`BOTS_REGISTRY_FILE` or `BOTS_REGISTRY_BUCKET` (with
-`BOTS_REGISTRY_OBJECT`), `BOTS_TEMPORARY_APP_SECRET`, and
-`BOTS_JOB_SERVICE_ACCOUNT`, the comma-separated service accounts the bot
+The service reads `PORT` (8098), `BOT_DISPATCHER_PUBLIC_URL` (the URL bots call back,
+and the audience of their ID tokens), `BOT_DISPATCHER_VTS_URL`, `BOT_DISPATCHER_STORE_URL`,
+`BOT_DISPATCHER_REGISTRY_FILE` or `BOT_DISPATCHER_REGISTRY_BUCKET` (with
+`BOT_DISPATCHER_REGISTRY_OBJECT`), `BOT_DISPATCHER_TEMPORARY_APP_SECRET`, and
+`BOT_DISPATCHER_JOB_SERVICE_ACCOUNT`, the comma-separated service accounts the bot
 types' jobs run as, without which only locally launched bots can
-authenticate. `BOTS_INSECURE_SKIP_AUTH=true`, for a relay without
+authenticate. `BOT_DISPATCHER_INSECURE_SKIP_AUTH=true`, for a relay without
 authorization only (local development and the E2E tests), accepts every
 request for the app its room starts with, reads no registry, and answers a
 bot's token call with `null`, so the bot joins with no token.
@@ -274,7 +274,7 @@ bot's token call with `null`, so the bot joins with no token.
 | `signer.rs` | `BotTokenSigner`: the bot token, signed with the app's secret from the registry or the temporary app secret. |
 | `store.rs` | `BotStore`: the bot records, stop requests and room holders (above). |
 | `bots.rs` | `Bots`: start (room holder, `max_running`, launch), the room's latest bot of a type, stop, and the bot's own token and heartbeat calls, authenticated by its key or its ID token. |
-| `server.rs` | `BotsServer`: the HTTP routes on `http_server::HttpServer`, each in a `bots.request` span that continues the caller's trace. |
+| `server.rs` | `BotDispatcherServer`: the HTTP routes on `http_server::HttpServer`, each in a `bot_dispatcher.request` span that continues the caller's trace. |
 
 ## Consequences
 
@@ -293,7 +293,7 @@ bot's token call with `null`, so the bot joins with no token.
   daily cost limit stops the bots, the recordings and the GPU models together
   until the next day.
 - A registered app needs a server to start bots. A page alone cannot.
-- `bots` reads every app's secret, as the VTS does, and signs with them, as
+- `bot-dispatcher` reads every app's secret, as the VTS does, and signs with them, as
   the console does. It becomes the third service trusted with them.
 - Verifying Google ID tokens is new code (JWK parsing and RS256 with
   `aws-lc-rs`, already a dependency of `auth-token`).
@@ -304,7 +304,7 @@ bot's token call with `null`, so the bot joins with no token.
 
 ## Rollout
 1. `auth-token`: the `bots` claim.
-2. `bots` with the recorder as its only type; `recorder record` takes its bot
+2. `bot-dispatcher` with the recorder as its only type; `recorder record` takes its bot
    id, fetches its token and reports heartbeats; the recorder publishes
    `bots/recorder`.
 3. Temporary-apps service `/bots/{type}`; the Meeting starts and stops the recorder through
@@ -314,7 +314,7 @@ bot's token call with `null`, so the bot joins with no token.
 5. The AI bots, one at a time: a `run` entry point that serves one room,
    their presence under `<room>/bots/<type>`, the common end rule, and their
    pages through the temporary-apps service. `moq-bot-rooms` goes away with the last one;
-   what the bots keep of it (their calls to `bots`, ID tokens, telemetry) becomes `moq-bot-job`.
+   what the bots keep of it (their calls to `bot-dispatcher`, ID tokens, telemetry) becomes `moq-bot-job`.
 
 ## Alternatives Considered
 
@@ -323,7 +323,7 @@ The current shape. It needs no app server, but leaves all four problems
 above.
 
 ### Let the bot join with the launch token
-The bot would need no token from `bots`, but it cannot renew a token it did
+The bot would need no token from `bot-dispatcher`, but it cannot renew a token it did
 not sign, so the app server would sign long-lived tokens, and one token would
 both authorise a launch and admit to the relay.
 
@@ -334,10 +334,10 @@ code too.
 
 ### Hand the job a renewal key in its arguments or in the store
 It avoids verifying Google ID tokens, but the key sits where the token sits
-today (the execution's overrides) or needs the job to read `bots`' store.
+today (the execution's overrides) or needs the job to read `bot-dispatcher`'s store.
 
-### Call `bots` from the page for temporary apps
-It leaves the temporary-apps service unchanged, but `bots` would keep a second,
+### Call `bot-dispatcher` from the page for temporary apps
+It leaves the temporary-apps service unchanged, but `bot-dispatcher` would keep a second,
 browser-facing way in, with CORS and token refreshes at the temporary-apps service, for one kind of
 app.
 

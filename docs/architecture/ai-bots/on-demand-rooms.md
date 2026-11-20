@@ -1,7 +1,7 @@
 # Design: AI demo bots started per room, on demand
 
 ## Status
-Superseded by [the bot service](../bots/architecture.md), which starts each bot as a job
+Superseded by [the bot service](../bot-dispatcher/architecture.md), which starts each bot as a job
 
 ## Date
 2026-10-19

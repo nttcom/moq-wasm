@@ -16,7 +16,7 @@ Add `url` 2.x as a direct dependency of the `http-server` crate. Its
 ## Context
 
 `recorder`, `observability` and `console` each parsed a query by wrapping it in
-a fake `http://query/?…` URL and reading its `query_pairs`, and `bots` called
+a fake `http://query/?…` URL and reading its `query_pairs`, and `bot-dispatcher` called
 `url::form_urlencoded` itself. One parser in `http-server` replaces the four.
 
 ## Alternatives
@@ -27,5 +27,5 @@ a fake `http://query/?…` URL and reading its `query_pairs`, and `bots` called
 
 ## Decision
 
-Use `url`, which `bots` and `recorder` already depend on and `reqwest` already
+Use `url`, which `bot-dispatcher` and `recorder` already depend on and `reqwest` already
 compiles, so no new crate enters the dependency tree.
