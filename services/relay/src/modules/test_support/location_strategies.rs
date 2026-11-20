@@ -17,6 +17,17 @@ const MIDDLE: u64 = 6;
 
 const OBJECT_IDS: [u64; 8] = [0, 1, 2, 3, 4, 5, MIDDLE, u64::MAX];
 
+pub(crate) fn id_near_bounds() -> impl Strategy<Value = u64> {
+    prop_oneof![
+        Just(0),
+        Just(1),
+        Just(u64::MAX - 1),
+        Just(u64::MAX),
+        0..8u64,
+        any::<u64>(),
+    ]
+}
+
 /// Every stand-in position of the groups below `groups`, in Location order.
 pub(crate) fn positions(groups: u64) -> Vec<Location> {
     (0..groups)

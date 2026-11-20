@@ -23,7 +23,9 @@ use crate::modules::{
         cached_object::CachedObject,
         disk_cache::{DiskSink, StoredPayload},
     },
-    domain::{session_id::SessionId, single_preference::SinglePreference},
+    domain::{
+        object_cursor::ObjectCursor, session_id::SessionId, single_preference::SinglePreference,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,10 +39,6 @@ pub(crate) fn location(group_id: u64, object_id: u64) -> moqt::object::Location 
         group_id,
         object_id,
     }
-}
-
-fn after(at: moqt::object::Location) -> moqt::object::Location {
-    location(at.group_id, at.object_id.saturating_add(1))
 }
 
 mod eviction_queues;
@@ -385,9 +383,9 @@ impl TrackCache {
     pub(crate) fn subgroup_runs_in_group(
         &self,
         group_id: u64,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> Vec<SubgroupRun> {
-        self.read().subgroup_runs_in_group(group_id, from_object_id)
+        self.read().subgroup_runs_in_group(group_id, from)
     }
 
     pub(crate) fn largest_location(&self) -> Option<moqt::object::Location> {
@@ -723,7 +721,7 @@ mod tests {
 
     fn subgroup_keys_in_group(cache: &TrackCache, group_id: u64) -> Vec<SubgroupKey> {
         cache
-            .subgroup_runs_in_group(group_id, 0)
+            .subgroup_runs_in_group(group_id, ObjectCursor::At(0))
             .iter()
             .map(|run| run.key)
             .collect()
@@ -806,7 +804,7 @@ mod tests {
         assert!(
             cache
                 .read()
-                .next_subgroup_object(key, 0, Instant::now())
+                .next_subgroup_object(key, ObjectCursor::At(0), Instant::now())
                 .is_some()
         );
     }
@@ -921,7 +919,11 @@ mod tests {
                 SubgroupKey::Datagram { group_id: 0 }
             ]
         );
-        assert!(cache.subgroup_runs_in_group(1, 0).is_empty());
+        assert!(
+            cache
+                .subgroup_runs_in_group(1, ObjectCursor::At(0))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1777,7 +1779,7 @@ mod max_cache_duration_tests {
 
         // Act
         let next = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
             .await
             .unwrap();
 

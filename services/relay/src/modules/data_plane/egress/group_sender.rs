@@ -22,6 +22,7 @@ use crate::modules::{
     domain::{
         delivery_control::DeliveryControl,
         delivery_stats::DeliveryStats,
+        object_cursor::ObjectCursor,
         publish_done_reason::PublishDoneReason,
         session_id::SessionId,
         single_preference::{SinglePreference, converted_datagram_subgroup},
@@ -208,7 +209,7 @@ impl SubgroupSource {
     /// subgroup.
     async fn next(
         &mut self,
-        object_id: u64,
+        from: ObjectCursor,
         stream_priority: Option<moqt::object::StreamPriority>,
     ) -> SubgroupNext {
         let group_id = self.key.group_id();
@@ -235,7 +236,7 @@ impl SubgroupSource {
             biased;
             interruption = interrupted => interruption,
             () = moved => SubgroupNext::Reprioritized,
-            next = self.cache.next_subgroup_object_or_wait(self.key, self.generation, object_id) => {
+            next = self.cache.next_subgroup_object_or_wait(self.key, self.generation, from) => {
                 match next {
                     Ok(next) => SubgroupNext::Cache(next),
                     Err(TrackMalformed) => SubgroupNext::Malformed,
@@ -244,14 +245,15 @@ impl SubgroupSource {
         }
     }
 
-    /// Waits until an update releases the subgroup and returns the object id
-    /// to continue at: `unsent`, or past the Largest Object at that update if
+    /// Waits until an update releases the subgroup and returns where to
+    /// continue: `unsent`, or past the Largest Object at that update if
     /// later (`DeliveryControl::resume_object_id`). `None` when nothing is
-    /// left to send: the subgroup ended, its group lies past the End Group or
+    /// left to send: the subgroup ended, `unsent` is past the group, its
+    /// group lies past the End Group or
     /// at or before that Largest Object, the registration is gone, or the
     /// scheduler has returned (no update can release it then, and the runner
     /// sends PUBLISH_DONE only after every task ends).
-    async fn held(&mut self, unsent: u64) -> Option<u64> {
+    async fn held(&mut self, unsent: ObjectCursor) -> Option<ObjectCursor> {
         let group_id = self.key.group_id();
         let (key, generation, cache) = (self.key, self.generation, self.cache.clone());
         let subgroup_ended = async move {
@@ -265,7 +267,7 @@ impl SubgroupSource {
                     Ok(NextObject::Partial(partial)) => partial.object.location.object_id,
                     _ => break,
                 };
-                cursor = object_id.saturating_add(1);
+                cursor = ObjectCursor::after(object_id);
             }
         };
         let schedule_over = self.schedule_over_receiver.wait_for(|over| *over);
@@ -285,13 +287,15 @@ impl SubgroupSource {
             return None;
         }
         self.resumes = control.resumes;
-        control.resume_object_id(group_id, unsent)
+        control
+            .resume_object_id(group_id, unsent)
+            .map(ObjectCursor::At)
     }
 }
 
 struct StreamSendTask {
     source: SubgroupSource,
-    object_id: u64,
+    object_id: ObjectCursor,
     factory: SharedStreamSenderFactory,
     delivery_stats: Arc<DeliveryStats>,
     unencodable: Unencodable,
@@ -419,7 +423,7 @@ impl GroupSender {
                                 track_alias = track_alias,
                                 group_id = group_id,
                                 subgroup_id = subgroup_id,
-                                object_id = task.object_id,
+                                object_id = task.object_id.object_id(),
                                 object_count = tracing::field::Empty,
                                 end_reason = tracing::field::Empty,
                             );
@@ -642,7 +646,7 @@ impl GroupSender {
                                     }
                                     None => {
                                         stream_priority = None;
-                                        sent.unsent = object_id.saturating_add(1);
+                                        sent.unsent = ObjectCursor::after(object_id);
                                         continue;
                                     }
                                 }
@@ -699,7 +703,7 @@ impl GroupSender {
                                 }
                                 None => {
                                     stream_priority = None;
-                                    sent.unsent = object_id.saturating_add(1);
+                                    sent.unsent = ObjectCursor::after(object_id);
                                     continue;
                                 }
                             }
@@ -711,7 +715,7 @@ impl GroupSender {
                 }
             }
             last_deadline = deadline;
-            sent.unsent = object_id.saturating_add(1);
+            sent.unsent = ObjectCursor::after(object_id);
         }
     }
 
@@ -901,7 +905,7 @@ impl GroupSender {
                 _ => return,
             };
             let object_id = object.object.location.object_id;
-            cursor = object_id.saturating_add(1);
+            cursor = ObjectCursor::after(object_id);
             let Some(subgroup_id) = converted_datagram_subgroup(object_id) else {
                 tracing::debug!(
                     object_id,
@@ -998,7 +1002,7 @@ impl GroupSender {
                 _ => return,
             };
             let object_id = object.object.location.object_id;
-            cursor = object_id.saturating_add(1);
+            cursor = ObjectCursor::after(object_id);
             let mut loaded = match object.load().await {
                 Ok(loaded) => loaded,
                 Err(error) => {
@@ -1036,7 +1040,7 @@ impl GroupSender {
 struct DatagramSendTask {
     track_alias: u64,
     source: SubgroupSource,
-    object_id: u64,
+    object_id: ObjectCursor,
     sender: Box<dyn DatagramSender>,
     delivery_stats: Arc<DeliveryStats>,
     unencodable: Unencodable,
@@ -1046,8 +1050,7 @@ struct DatagramSendTask {
 struct SentSubgroup {
     object_count: u64,
     end_reason: &'static str,
-    /// The next object id not sent.
-    unsent: u64,
+    unsent: ObjectCursor,
 }
 
 pub(super) fn subscriber_left_reason(error: &anyhow::Error) -> Option<&'static str> {
@@ -1147,7 +1150,9 @@ mod tests {
     };
     use crate::modules::{
         data_plane::cache::track_cache::TrackCache,
-        domain::{delivery_control::DeliveryControl, track_key::TrackKey},
+        domain::{
+            delivery_control::DeliveryControl, object_cursor::ObjectCursor, track_key::TrackKey,
+        },
         test_support::{
             directory_fixtures::delivery_control,
             mock_session::wait_until,
@@ -1195,7 +1200,7 @@ mod tests {
         GroupSendTask {
             key: stream_key(group_id),
             generation: 0,
-            object_id: 0,
+            object_id: ObjectCursor::At(0),
             resumes: 0,
         }
     }
@@ -1217,7 +1222,7 @@ mod tests {
 
         // Assert: only the cache and this lookup hold the object
         let first = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
             .await
             .unwrap()
             .unwrap();

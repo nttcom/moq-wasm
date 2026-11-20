@@ -22,6 +22,7 @@ use crate::modules::{
     domain::{
         delivery_control::DeliveryControl,
         delivery_stats::{DeliveryCounters, DeliveryStats},
+        object_cursor::ObjectCursor,
         publish_done_reason::PublishDoneReason,
         runner_signals::DownstreamRunnerSignals,
         session_id::SessionId,
@@ -361,7 +362,7 @@ impl RelayHarness {
         key: SubgroupKey,
     ) -> Vec<(u64, moqt::object::ObjectStatus)> {
         let mut objects = Vec::new();
-        let mut cursor = 0;
+        let mut cursor = ObjectCursor::At(0);
         while let NextObject::Object(object) = self
             .ingest
             .cache
@@ -370,7 +371,7 @@ impl RelayHarness {
             .unwrap()
         {
             objects.push((object.object.location.object_id, object.object.status));
-            cursor = object.object.location.object_id + 1;
+            cursor = ObjectCursor::after(object.object.location.object_id);
         }
         objects
     }
@@ -382,9 +383,11 @@ impl RelayHarness {
     ) -> NextObject {
         tokio::time::timeout(
             RECV_TIMEOUT,
-            self.ingest
-                .cache
-                .next_subgroup_object_or_wait(key, 0, last_object_id + 1),
+            self.ingest.cache.next_subgroup_object_or_wait(
+                key,
+                0,
+                ObjectCursor::after(last_object_id),
+            ),
         )
         .await
         .expect("subgroup should be closed, not waiting for more objects")

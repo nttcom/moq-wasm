@@ -2,9 +2,12 @@ use std::sync::Arc;
 
 use tokio::time::Instant;
 
-use crate::modules::data_plane::cache::{
-    cached_object::CachedObject,
-    known_ranges::{KnownRanges, following},
+use crate::modules::{
+    data_plane::cache::{
+        cached_object::CachedObject,
+        known_ranges::{KnownRanges, following},
+    },
+    domain::object_cursor::ObjectCursor,
 };
 
 use super::{TrackCache, location};
@@ -48,7 +51,7 @@ impl TrackCache {
         let mut expired_in_gap = false;
         for group_id in groups {
             for object in ledger
-                .group_objects(group_id, region.first_in(group_id))
+                .group_objects(group_id, ObjectCursor::At(region.first_in(group_id)))
                 .take_while(|object| object.object.location < region.end)
             {
                 if object.is_expired(now) {

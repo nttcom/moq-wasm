@@ -6,13 +6,19 @@ use std::{
 
 use tokio::time::Instant;
 
-use crate::modules::data_plane::{
-    cache::subgroup_key::SubgroupKey,
-    cache::{cached_object::CachedObject, known_ranges::KnownRanges},
+use crate::modules::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::{
+            cached_object::CachedObject,
+            known_ranges::{KnownRanges, following},
+        },
+    },
+    domain::object_cursor::ObjectCursor,
 };
 
 use super::{
-    SubgroupRun, after, eviction_queues::EvictionQueues, location, partial_object::PartialObject,
+    SubgroupRun, eviction_queues::EvictionQueues, location, partial_object::PartialObject,
 };
 
 /// `epoch` tells a guard opened before the subgroup last closed apart from one
@@ -27,7 +33,7 @@ pub(super) struct OpenSubgroup {
 #[derive(Default)]
 pub(super) struct LiveGroup {
     pub(super) open_subgroups: HashMap<SubgroupKey, OpenSubgroup>,
-    pub(super) knowledge_frontier: u64,
+    pub(super) knowledge_frontier: ObjectCursor,
 }
 
 impl LiveGroup {
@@ -67,7 +73,7 @@ pub(super) struct Ledger {
     pub(super) live_groups: HashMap<u64, LiveGroup>,
     pub(super) aborted_subgroups: BTreeSet<SubgroupKey>,
     pub(super) finished_subgroups: BTreeSet<SubgroupKey>,
-    reopened_run_first_object_ids: BTreeMap<SubgroupKey, Vec<u64>>,
+    reopened_run_first_object_ids: BTreeMap<SubgroupKey, Vec<ObjectCursor>>,
     /// Groups whose last open subgroup closed since the last eviction.
     pub(super) groups_closed_since_eviction: Vec<u64>,
     pub(super) known_ranges: KnownRanges,
@@ -116,7 +122,10 @@ impl Ledger {
         group_ids.sort_unstable();
         group_ids.dedup();
         for group_id in group_ids {
-            if self.group_objects(group_id, 0).next().is_some()
+            if self
+                .group_objects(group_id, ObjectCursor::At(0))
+                .next()
+                .is_some()
                 || self.live_groups.contains_key(&group_id)
             {
                 continue;
@@ -142,11 +151,11 @@ impl Ledger {
             return;
         }
         let after_cached_objects = self
-            .group_objects(key.group_id(), 0)
+            .group_objects(key.group_id(), ObjectCursor::At(0))
             .rev()
             .find(|object| object.subgroup_key() == key)
-            .map_or(0, |object| {
-                object.object.location.object_id.saturating_add(1)
+            .map_or(ObjectCursor::At(0), |object| {
+                ObjectCursor::after(object.object.location.object_id)
             });
         let first_object_id = after_cached_objects.max(self.latest_run(key).first_object_id);
         self.reopened_run_first_object_ids
@@ -164,7 +173,7 @@ impl Ledger {
         SubgroupRun {
             key,
             generation: first_object_ids.len(),
-            first_object_id: first_object_ids.last().copied().unwrap_or(0),
+            first_object_id: first_object_ids.last().copied().unwrap_or_default(),
         }
     }
 
@@ -176,7 +185,11 @@ impl Ledger {
             .sum()
     }
 
-    pub(super) fn superseded_run_end(&self, key: SubgroupKey, generation: usize) -> Option<u64> {
+    pub(super) fn superseded_run_end(
+        &self,
+        key: SubgroupKey,
+        generation: usize,
+    ) -> Option<ObjectCursor> {
         self.reopened_run_first_object_ids
             .get(&key)?
             .get(generation)
@@ -200,21 +213,22 @@ impl Ledger {
     /// skipped by a non-zero delta cannot be inferred); the rest of the group is
     /// decided when its last subgroup closes.
     pub(super) fn register_live_object(&mut self, location: moqt::object::Location) {
-        self.known_ranges.insert(location, after(location));
+        self.known_ranges
+            .insert_until(location, following(location));
         if let Some(live) = self.live_groups.get_mut(&location.group_id) {
             live.knowledge_frontier = live
                 .knowledge_frontier
-                .max(location.object_id.saturating_add(1));
+                .max(ObjectCursor::after(location.object_id));
         }
     }
 
     pub(super) fn group_objects(
         &self,
         group_id: u64,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> impl DoubleEndedIterator<Item = &Arc<CachedObject>> {
         self.objects
-            .range(location(group_id, from_object_id)..=location(group_id, u64::MAX))
+            .range(from.rest_of_group(group_id))
             .map(|(_, object)| object)
     }
 
@@ -222,10 +236,10 @@ impl Ledger {
     pub(super) fn next_subgroup_object(
         &self,
         key: SubgroupKey,
-        from_object_id: u64,
+        from: ObjectCursor,
         now: Instant,
     ) -> Option<Arc<CachedObject>> {
-        self.group_objects(key.group_id(), from_object_id)
+        self.group_objects(key.group_id(), from)
             .find(|object| object.subgroup_key() == key && !object.is_expired(now))
             .cloned()
     }
@@ -233,11 +247,10 @@ impl Ledger {
     pub(super) fn next_subgroup_partial(
         &self,
         key: SubgroupKey,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> Option<Arc<PartialObject>> {
-        let group_id = key.group_id();
         self.partial_objects
-            .range(location(group_id, from_object_id)..=location(group_id, u64::MAX))
+            .range(from.rest_of_group(key.group_id()))
             .map(|(_, partial)| partial)
             .find(|partial| SubgroupKey::of(&partial.object) == key)
             .cloned()
@@ -246,9 +259,9 @@ impl Ledger {
     pub(super) fn next_group_object(
         &self,
         group_id: u64,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> Option<Arc<CachedObject>> {
-        self.group_objects(group_id, from_object_id).next().cloned()
+        self.group_objects(group_id, from).next().cloned()
     }
 
     pub(super) fn has_open_subgroup_in_group(&self, group_id: u64) -> bool {
@@ -258,10 +271,10 @@ impl Ledger {
     pub(super) fn subgroup_runs_in_group(
         &self,
         group_id: u64,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> Vec<SubgroupRun> {
         let mut keys: BTreeSet<SubgroupKey> = self
-            .group_objects(group_id, from_object_id)
+            .group_objects(group_id, from)
             .map(|object| object.subgroup_key())
             .collect();
         keys.extend(self.open_keys_in_group(group_id));

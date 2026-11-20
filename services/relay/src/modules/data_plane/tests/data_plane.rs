@@ -3,6 +3,7 @@ use std::time::Duration;
 use moqt::object::{DataStreamResetCode, SubgroupPart};
 
 use crate::modules::data_plane::cache::track_cache::NextObject;
+use crate::modules::domain::object_cursor::ObjectCursor;
 use crate::modules::test_support::relay_harness::{
     OBJECT_COUNT, RelayHarness, Sent, assert_full_ordered_delivery, downstream_object_ids,
     fixtures::{
@@ -706,7 +707,7 @@ async fn a_subscriber_joining_inside_a_payload_receives_the_object_from_its_firs
         subgroup_opened.recv().await.unwrap();
         let NextObject::Partial(partial) = harness
             .cache()
-            .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
             .await
             .unwrap()
         else {

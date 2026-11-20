@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use tokio::time::Instant;
 
-use crate::modules::data_plane::cache::{cached_object::CachedObject, track_cache::NextObject};
+use crate::modules::{
+    data_plane::cache::{cached_object::CachedObject, track_cache::NextObject},
+    domain::object_cursor::ObjectCursor,
+};
 
 use super::{FetchInterrupted, TrackCache, location};
 
@@ -19,18 +22,23 @@ struct GroupCursor {
     reopen_count: usize,
     fully_known: bool,
     frontier: Option<u64>,
-    next_object_id: u64,
+    next: ObjectCursor,
     end_exclusive: Option<u64>,
 }
 
 impl GroupCursor {
-    fn reached_end(&self, object_id: u64) -> bool {
-        self.end_exclusive
-            .is_some_and(|end_object_id| object_id >= end_object_id)
+    fn reached_end(&self, cursor: ObjectCursor) -> bool {
+        cursor.object_id().is_none_or(|object_id| {
+            self.end_exclusive
+                .is_some_and(|end_object_id| object_id >= end_object_id)
+        })
     }
 
-    fn is_known(&self, object_id: u64) -> bool {
-        self.fully_known || self.frontier.is_some_and(|frontier| object_id < frontier)
+    fn is_known(&self, cursor: ObjectCursor) -> bool {
+        self.fully_known
+            || self
+                .frontier
+                .is_some_and(|frontier| cursor < ObjectCursor::At(frontier))
     }
 }
 
@@ -63,27 +71,23 @@ impl<'a> FetchCursor<'a> {
                 self.current = Some(self.enter_group(group_id));
                 continue;
             };
-            if group.reached_end(group.next_object_id) {
+            if group.reached_end(group.next) {
                 self.current = None;
                 continue;
             }
-            let in_known = group.is_known(group.next_object_id);
+            let in_known = group.is_known(group.next);
             let found = if in_known {
                 match self
                     .cache
                     .read()
-                    .next_group_object(group.group_id, group.next_object_id)
+                    .next_group_object(group.group_id, group.next)
                 {
                     Some(object) => NextObject::Object(object),
                     None => NextObject::Finished,
                 }
             } else {
                 self.cache
-                    .next_group_object_or_wait(
-                        group.group_id,
-                        group.reopen_count,
-                        group.next_object_id,
-                    )
+                    .next_group_object_or_wait(group.group_id, group.reopen_count, group.next)
                     .await?
             };
             match found {
@@ -94,8 +98,8 @@ impl<'a> FetchCursor<'a> {
                 }
                 NextObject::Object(object) => {
                     let object_id = object.object.location.object_id;
-                    group.next_object_id = object_id.saturating_add(1);
-                    if group.reached_end(object_id) {
+                    group.next = ObjectCursor::after(object_id);
+                    if group.reached_end(ObjectCursor::At(object_id)) {
                         self.current = None;
                         continue;
                     }
@@ -107,7 +111,7 @@ impl<'a> FetchCursor<'a> {
                 NextObject::Partial(_) => unreachable!("a group read returned a partial object"),
                 NextObject::Finished if group.fully_known => self.current = None,
                 NextObject::Finished if in_known => {
-                    group.next_object_id = group.frontier.unwrap_or(group.next_object_id);
+                    group.next = group.frontier.map_or(group.next, ObjectCursor::At);
                 }
                 NextObject::Finished => self.current = None,
             }
@@ -125,10 +129,10 @@ impl<'a> FetchCursor<'a> {
             Some(end) if end.group_id == group_id => Some(end.object_id),
             _ => None,
         };
-        let next_object_id = if group_id == self.start.group_id {
-            self.start.object_id
+        let next = if group_id == self.start.group_id {
+            ObjectCursor::At(self.start.object_id)
         } else {
-            0
+            ObjectCursor::At(0)
         };
         let end_exclusive = if group_id == self.end.group_id && self.end.object_id != 0 {
             Some(self.end.object_id)
@@ -140,7 +144,7 @@ impl<'a> FetchCursor<'a> {
             reopen_count,
             fully_known,
             frontier,
-            next_object_id,
+            next,
             end_exclusive,
         }
     }

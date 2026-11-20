@@ -8,7 +8,10 @@ use crate::modules::{
         cache::subgroup_key::SubgroupKey,
         cache::track_cache::{SubgroupRun, TrackCache},
     },
-    domain::delivery_control::{DeliveryControl, starts_before},
+    domain::{
+        delivery_control::{DeliveryControl, starts_before},
+        object_cursor::ObjectCursor,
+    },
 };
 
 /// Subscriptions only deliver objects newer than the subscribe-time Largest
@@ -36,7 +39,7 @@ pub(crate) enum SchedulerExit {
 pub(crate) struct GroupSendTask {
     pub(crate) key: SubgroupKey,
     pub(crate) generation: usize,
-    pub(crate) object_id: u64,
+    pub(crate) object_id: ObjectCursor,
     /// `DeliveryControl::resumes` when the task was scheduled.
     pub(crate) resumes: u64,
 }
@@ -145,7 +148,9 @@ impl EgressScheduler {
                         }
                         progress.raise(control.start);
                         if let Some(object_id) = progress.accept(group_id) {
-                            let _ = self.schedule(run, object_id, &control, &mut scheduled).await;
+                            let _ = self
+                                .schedule(run, ObjectCursor::At(object_id), &control, &mut scheduled)
+                                .await;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -274,9 +279,9 @@ impl EgressScheduler {
         }
         for group_id in group_ids {
             let object_id = if group_id == start.group_id {
-                start.object_id
+                ObjectCursor::At(start.object_id)
             } else {
-                0
+                ObjectCursor::At(0)
             };
             // Skip a closed subgroup with nothing at or after the start, such as one
             // only a FETCH filled. Its task would end at once, and its live stream's
@@ -292,7 +297,7 @@ impl EgressScheduler {
     async fn schedule(
         &self,
         run: SubgroupRun,
-        object_id: u64,
+        object_id: ObjectCursor,
         control: &DeliveryControl,
         scheduled: &mut HashMap<SubgroupKey, GroupSendTask>,
     ) -> Option<()> {
@@ -419,7 +424,7 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 1,
+                object_id: ObjectCursor::At(1),
                 resumes: 0
             }
         );
@@ -447,7 +452,7 @@ mod tests {
             Some(GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 1,
+                object_id: ObjectCursor::At(1),
                 resumes: 0
             })
         );
@@ -475,7 +480,7 @@ mod tests {
             Some(GroupSendTask {
                 generation: 0,
                 key: stream_key(1),
-                object_id: 0,
+                object_id: ObjectCursor::At(0),
                 resumes: 0
             })
         );
@@ -570,7 +575,7 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(2),
-                object_id: 1,
+                object_id: ObjectCursor::At(1),
                 resumes: 0
             }
         );
@@ -621,7 +626,7 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(5),
-                object_id: 0,
+                object_id: ObjectCursor::At(0),
                 resumes: 0
             }
         );
@@ -749,7 +754,7 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(7),
-                object_id: 0,
+                object_id: ObjectCursor::At(0),
                 resumes: 0
             }
         );
@@ -781,14 +786,18 @@ mod tests {
         let mut tasks = Vec::new();
         for _ in 0..3 {
             let task = tokio::time::timeout(EXIT_TIMEOUT, scheduler.task_receiver.recv()).await;
-            tasks.push(task.ok().flatten().map(|task| (task.key, task.object_id)));
+            tasks.push(
+                task.ok()
+                    .flatten()
+                    .map(|task| (task.key, task.object_id.object_id())),
+            );
         }
         assert_eq!(
             tasks,
             [
-                Some((stream_key(9), 0)),
-                Some((stream_key(7), 0)),
-                Some((stream_key(3), 1)),
+                Some((stream_key(9), Some(0))),
+                Some((stream_key(7), Some(0))),
+                Some((stream_key(3), Some(1))),
             ]
         );
     }
@@ -860,7 +869,7 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 0,
+                object_id: ObjectCursor::At(0),
                 resumes: 0
             }
         );
@@ -885,7 +894,7 @@ mod tests {
             GroupSendTask {
                 generation: 0,
                 key: stream_key(0),
-                object_id: 1,
+                object_id: ObjectCursor::At(1),
                 resumes: 0
             }
         );
@@ -912,8 +921,15 @@ mod tests {
             scheduler.task_receiver.recv().await,
         ];
         assert_eq!(
-            tasks.map(|task| task.map(|task| (task.key, task.generation, task.object_id))),
-            [Some((stream_key(0), 1, 3)), Some((stream_key(1), 0, 0))]
+            tasks.map(|task| task.map(|task| (
+                task.key,
+                task.generation,
+                task.object_id.object_id()
+            ))),
+            [
+                Some((stream_key(0), 1, Some(3))),
+                Some((stream_key(1), 0, Some(0)))
+            ]
         );
     }
 }
