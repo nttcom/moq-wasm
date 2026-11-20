@@ -10,7 +10,7 @@ pub(crate) const MAX_TOKEN_TTL_SECONDS: u64 = 24 * 60 * 60;
 pub(crate) const MAX_APPS_PER_OWNER: usize = 20;
 
 pub(crate) enum Creation {
-    Created(App),
+    Created(Box<App>),
     LimitReached,
 }
 
@@ -39,6 +39,7 @@ pub(crate) async fn create_app(
         sub: Some(sub.to_owned()),
         created_at: Some(now),
         rotated_at: None,
+        phone: None,
     };
     store
         .update(|apps| {
@@ -51,7 +52,7 @@ pub(crate) async fn create_app(
                 return Ok(Creation::LimitReached);
             }
             apps.push(app.clone());
-            Ok(Creation::Created(app.clone()))
+            Ok(Creation::Created(Box::new(app.clone())))
         })
         .await
 }
