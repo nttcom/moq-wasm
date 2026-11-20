@@ -237,7 +237,15 @@ helpers. Each SDK wraps it without reimplementing it:
 | operator | browser | record types, action and intent writers |
 | policy bot, exporter | Python | `Aligner`, record types, action writer |
 
-The Rust SDK adds the module with the same shape as the Python one.
+The Rust SDK adds the module with the same shape as the Python one
+(docs/architecture/moq-wasm/sdk.md).
+
+The records are read through `RemoteBroadcast.event_timeline(name)` of each
+SDK's media layer, which starts from the record the relay holds (a joining
+FETCH) and subscribes again when the track ends. The Python SDK does not
+have it yet; it gains it under this name, with the `priority` and
+`delivery_timeout` of a SUBSCRIBE, which the table in Priority and delivery
+sets per track.
 
 ### Telemetry
 `Robot` logs each driver change and each hold at INFO, and the loop latency
