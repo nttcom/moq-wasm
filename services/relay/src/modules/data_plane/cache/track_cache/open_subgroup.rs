@@ -406,6 +406,8 @@ impl TrackCache {
 
 #[cfg(test)]
 mod tests {
+    mod subgroup_sequences;
+
     use std::time::Duration;
 
     use super::*;
