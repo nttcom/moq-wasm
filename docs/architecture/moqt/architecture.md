@@ -236,8 +236,11 @@ alike; only the message transport under it differs.
   written and the receive task has drained until the peer's Close, so
   `wait_idle` does not close a socket with unread bytes, which would answer
   with RST. `websocket/websocket_client.rs` is the
-  `wss://` client; it fails the handshake when the server selects no
-  offered subprotocol.
+  `wss://` client. It fails the handshake when the server selects no
+  offered subprotocol, or when TCP, TLS, the upgrade and the QMux transport
+  parameters together take over 30 s: the time quinn's default idle timeout
+  gives a QUIC dial, so a `wss://` fallback is not given up before the dial
+  it backs up.
 - `Session::url_scheme` is `wss` for a WebSocket session, so a GOAWAY's New
   Session URI keeps a session that landed on WebSocket there.
 

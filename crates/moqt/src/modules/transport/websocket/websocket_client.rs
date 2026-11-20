@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
 use quinn::rustls::{self, pki_types::ServerName};
@@ -12,7 +12,7 @@ use tokio_tungstenite::{
     },
 };
 
-use super::{HANDSHAKE_TIMEOUT, tungstenite_transport::split, web_socket_config};
+use super::{tungstenite_transport::split, web_socket_config};
 use crate::modules::transport::{
     application_protocol::ApplicationProtocols,
     connect_target::ConnectTarget,
@@ -20,13 +20,19 @@ use crate::modules::transport::{
     transport_addresses::TransportAddresses,
 };
 
+/// TCP, TLS, the HTTP upgrade and the QMux transport parameters together:
+/// the time quinn's default idle timeout gives a QUIC dial, so the `wss://`
+/// fallback of a `moqt://` or `https://` URL is not given up before the dial
+/// it backs up.
+const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Opens a QMux session over `wss://`. `crypto` must offer the HTTP/1.1 ALPN.
 pub(crate) async fn connect(
     target: &ConnectTarget,
     crypto: Arc<rustls::ClientConfig>,
     protocols: &ApplicationProtocols,
 ) -> anyhow::Result<QmuxConnection> {
-    tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake(target, crypto, protocols))
+    tokio::time::timeout(DIAL_TIMEOUT, handshake(target, crypto, protocols))
         .await
         .context("WebSocket handshake timed out")?
 }
