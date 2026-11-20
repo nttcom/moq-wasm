@@ -3104,6 +3104,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "robotics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "msf",
+ "proptest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

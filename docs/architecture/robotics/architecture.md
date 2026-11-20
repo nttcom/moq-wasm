@@ -59,14 +59,14 @@ lives once, in Rust, and the SDKs wrap it.
  robot ───► │ cameras (LOC)  state  control │ ───► relay ───► operator page
             │ episode                       │          ├────► policy bot   (<room>/bots/policy)
             └───────────────────────────────┘          └────► recorder     (<room>/bots/recorder)
- robot ◄─── action, intent of <room>/operators/<id> and <room>/bots/policy
+ robot ◄─── action of <room>/operators/<id> and <room>/bots/policy
 ```
 
 A room holds one robot. The robot publishes the broadcast `<room>/robot`;
 each operator publishes `<room>/operators/<operator_id>`; the policy bot
 publishes `<room>/bots/policy`, as bots do (docs/architecture/bot-dispatcher/architecture.md).
-The robot subscribes to the namespace `<room>` and to the `action` and
-`intent` tracks of every broadcast that may drive it.
+The robot subscribes to the namespace `<room>` and to the `action` track of
+every broadcast that may drive it.
 
 The relay enforces each token's `publish` path, so the namespace of an
 action track identifies its sender: the robot trusts a namespace, not a
@@ -90,9 +90,8 @@ Milliseconds are fine enough for control loops up to a few hundred hertz.
 | robot | `control` | `eventtimeline` | one per record | the current driver and why it changed |
 | robot | `episode` | `eventtimeline` | one per episode | start, task instruction, end, success |
 | operator / policy | `action` | `eventtimeline` | one per record | a chunk of actions and the observation it answers |
-| operator / policy | `intent` | `eventtimeline` | one per record | take or release control |
 
-`state`, `control`, `action` and `intent` are independent of their history,
+`state`, `control` and `action` are independent of their history,
 so each record is its own group of one object, as §8.4 recommends. A late
 subscriber reads the current value with a joining FETCH of the current group
 and needs no periodic repeat. `episode` is a sequence: each episode is one
@@ -123,11 +122,10 @@ dataset columns by configuration.
   sends its action horizon.
 - `T` is the sender's clock and is informational only.
 
-`intent`: `{"T": …, "data": {"take": true}}` or `{"take": false}`.
-
-`control`: `{"T": …, "data": {"driver": "operators/alice", "reason": "intent"}}`,
+`control`: `{"T": …, "data": {"driver": "operators/alice", "reason": "action"}}`,
 with `driver` relative to the room, `null` when nobody drives, and `reason`
-one of `intent`, `release`, `left`, `stale`, `episode`.
+one of `action` (an operator's fresh action took the robot), `left`,
+`stale`, `episode`.
 
 `episode`: the first object `{"T": …, "data": {"event": "start", "id": 12, "task": "put the cup on the tray"}}`,
 the last `{"T": …, "data": {"event": "end", "id": 12, "success": true}}`.
@@ -152,19 +150,22 @@ The defaults are starting points, to be tuned on the example over a real
 network:
 
 - **Candidates.** Operators (`operators/*`) take precedence over the policy
-  (`bots/policy`). An operator drives after its `intent` `take` and until
-  `release`, its PUBLISH_NAMESPACE_DONE, or staleness. The policy drives
-  while no operator does and an episode is open with the policy enabled.
-  An operator's `take` while the policy drives is an intervention; the
-  `control` record shows it.
-- **Freshness.** An action from the driver is applied only when its `seq`
-  is above the last one applied and `now − basis ≤ max_action_age`; within a
-  chunk, entries whose time has passed are skipped. Actions from a candidate
-  that does not drive are dropped.
+  (`bots/policy`). An operator's fresh action makes it the driver while
+  nobody or the policy drives; it drives until its actions go stale or its
+  PUBLISH_NAMESPACE_DONE, and another operator's actions are dropped
+  meanwhile. The policy drives while no operator does and an episode is
+  open with the policy enabled, so an operator's action while the policy
+  drives is an intervention, which the `control` record shows, and the
+  policy drives again once the operator's actions go stale.
+- **Freshness.** An action is applied only when its sender may drive, its
+  `seq` is above the last one applied from it and `now − basis ≤
+  max_action_age`; within a chunk, entries whose time has passed are
+  skipped. Other actions are dropped.
 - **Dead man.** When no action has been applied for `hold_timeout`, the
   robot calls the application's hold handler (hold position, stop motors:
   the application's choice) and publishes `control` with reason `stale`.
-  The driver stays the driver; its next fresh action resumes control.
+  A stale operator stops driving; the policy stays the driver, and its next
+  fresh action resumes control.
 - **Session loss.** When the robot's session to the relay ends, it holds at
   once, without waiting for `hold_timeout`.
 
@@ -178,7 +179,7 @@ Lower values go first (draft-14 §7). Control must not wait behind video:
 
 | Track | Publisher Priority | Subscriber Priority (driver side) | DELIVERY TIMEOUT |
 | --- | --- | --- | --- |
-| `action`, `intent`, `control` | 0 | 0 | `max_action_age` |
+| `action`, `control` | 0 | 0 | `max_action_age` |
 | `state` | 32 | 32 | `max_action_age` for operators and the policy, none for the recorder |
 | `episode` | 64 | 64 | none |
 | cameras | 128 | 128 | the player's default |
@@ -201,24 +202,16 @@ recorder would lose records lost on the robot's uplink, and a subscriber
 could not choose reliability per subscription as it does with DELIVERY
 TIMEOUT.
 
-### Observation alignment
-`robotics::Aligner` turns timestamped inputs into one observation per tick
-for the policy bot and the exporter. At tick time `t` it takes, per input,
-the newest item with timestamp `≤ t`, and yields no observation when any
-input's newest item is older than `t − max_skew`. Items are opaque to it
-(encoded frames, decoded images, state records); decoding stays with the
-caller. On the robot, which holds its own data, no alignment is needed.
-
 ### Recording and datasets
 The recorder's room archive (`format: "moq"`) already stores catalogs, LOC
 cameras and the event timelines a catalog lists, on one recording clock. It
 gains the event timelines of every broadcast in the room, so `state`,
-`control`, `episode` and each driver's `action` and `intent` are archived
+`control`, `episode` and each driver's `action` are archived
 next to the cameras. A robot room is recorded by starting the recorder bot
 in it, as for a meeting.
 
 The exporter writes a LeRobot dataset (one episode per `episode` group:
-the aligned observations at the dataset's fps, the action applied at each
+the observations at the dataset's fps, aligned by their timestamps, the action applied at each
 frame, the task instruction, success, and which driver produced each frame).
 It reads the recording through the existing replay (`POST
 /recordings/{id}/publish`) with FETCH, so it needs no second archive reader,
@@ -227,21 +220,22 @@ writer. MCAP export, for viewing in Foxglove, follows as a later step.
 
 ### Policy bot
 The bot type `policy` is a Python bot started by `bot-dispatcher`. It
-subscribes to the robot's cameras, `state` and `episode`, aligns them,
+subscribes to the robot's cameras, `state` and `episode`, pairs each
+frame with the newest `state` before it,
 runs the model the deployment configures, and publishes `action` chunks with
 the `basis` of the observation it used. Which model, and whether inference
 runs in the bot or in a separate server, is the deployment's choice; the
 example ships a trivial policy.
 
 ### SDKs
-`robotics` holds the record types, `Robot`, `Aligner` and the track setup
+`robotics` holds the record types, `Robot` and the track setup
 helpers. Each SDK wraps it without reimplementing it:
 
 | Side | SDK | Uses |
 | --- | --- | --- |
 | robot | Rust (`moq_wasm::robotics`), Python | `Robot` |
-| operator | browser | record types, action and intent writers |
-| policy bot, exporter | Python | `Aligner`, record types, action writer |
+| operator | browser | record types, action writer |
+| policy bot, exporter | Python | record types, action writer |
 
 The Rust SDK adds the module with the same shape as the Python one
 (docs/architecture/moq-wasm/sdk.md).
@@ -287,14 +281,15 @@ Each step is its own pull request, stacked:
    prerequisite).
 1. `moqt`: Publisher Priority per track in `TrackWriter`, and `priority` in
    `publish_track` of the Python and browser SDKs.
-2. `robotics`: record types, track setup helpers and `Aligner`, with
-   proptest properties for the alignment and the freshness rule.
+2. `robotics`: record types and track setup helpers, with proptest
+   properties for the records.
 3. `robotics`: `Robot` (arbitration, dead man, `state` / `control` /
    `episode` publishing).
-4. Python SDK `moq_wasm.robotics`, and the module in the Rust SDK.
-5. Example: a simulated robot in Python and an operator page in
-   `examples/browser` (cameras, keyboard or gamepad actions, take and
-   release), with an E2E test.
+4. The Rust SDK's `moq_wasm::robotics`; the Python SDK's module follows
+   when a Python robot needs it.
+5. Example: a simulated robot on the Rust SDK and an operator page in
+   `examples/browser` (cameras, keyboard or gamepad actions), with an E2E
+   test.
 6. `recorder`: archive every broadcast's event timelines in a room.
 7. `bot-dispatcher`: the `policy` bot type and an example policy bot.
 8. Later: the LeRobot exporter, MCAP export, and a ROS 2 bridge (its own
