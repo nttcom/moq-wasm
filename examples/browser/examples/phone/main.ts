@@ -55,6 +55,9 @@ element<HTMLFormElement>('dialForm').addEventListener('submit', (event) => {
 element('answerBtn').addEventListener('click', () => void answer())
 element('declineBtn').addEventListener('click', () => void decline())
 hangUpButton.addEventListener('click', () => void call?.hangUp())
+for (const key of document.querySelectorAll<HTMLButtonElement>('[data-digit]')) {
+  key.addEventListener('click', () => void call?.sendDtmf(key.dataset.digit!))
+}
 
 function setStatus(text: string): void {
   element('status').textContent = text
