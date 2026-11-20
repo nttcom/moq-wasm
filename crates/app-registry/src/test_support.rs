@@ -47,5 +47,6 @@ pub(crate) fn app(app_id: &str, sub: Option<&str>) -> App {
         sub: sub.map(Into::into),
         created_at: None,
         rotated_at: None,
+        phone: None,
     }
 }
