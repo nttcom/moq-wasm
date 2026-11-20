@@ -1060,16 +1060,41 @@ impl InMemoryLocalPubSubDirectory {
             })
     }
 
-    /// The producer starts in the Forward State `Track::upstream_forward`
-    /// gives, which is returned for the PUBLISH_OK of a PUBLISH. Also returns
-    /// the producer from the same publisher that this one replaces; its
-    /// ingest stops when the caller drops it.
+    /// A later release of the producer also forgets this handler. The
+    /// producer starts in the Forward State `Track::upstream_forward`
+    /// gives, which is returned for the PUBLISH_OK. Also returns the producer
+    /// from the same publisher that this one replaces; its ingest stops when
+    /// the caller drops it.
+    pub(crate) fn register_published_subscription(
+        &self,
+        track_key: TrackKey,
+        publisher_session_id: SessionId,
+        producer: Producer,
+        handler: Arc<dyn PublishHandler>,
+    ) -> (bool, Option<Producer>) {
+        self.insert_producer(track_key, publisher_session_id, producer, Some(handler))
+    }
+
+    /// Registers a producer like `register_published_subscription`, without
+    /// a handler.
+    #[cfg(test)]
     pub(crate) fn register_upstream_subscription(
         &self,
         track_key: TrackKey,
         publisher_session_id: SessionId,
-        mut producer: Producer,
+        producer: Producer,
     ) -> (bool, Option<Producer>) {
+        self.insert_producer(track_key, publisher_session_id, producer, None)
+    }
+
+    fn insert_producer(
+        &self,
+        track_key: TrackKey,
+        publisher_session_id: SessionId,
+        mut producer: Producer,
+        handler: Option<Arc<dyn PublishHandler>>,
+    ) -> (bool, Option<Producer>) {
+        let publisher_peer = producer.state.peer;
         let mut track = self
             .upstream_tracks
             .entry(track_key.clone())
@@ -1078,13 +1103,19 @@ impl InMemoryLocalPubSubDirectory {
         producer.state.forward = forward;
         let replaced = track.producers.insert(publisher_session_id, producer);
         track.mark_created();
-        drop(track);
+        // Change the handler before dropping the track entry: a release
+        // forgets the handler only after it drops the entry, so it cannot run
+        // between the producer insert and the handler change.
         if replaced
             .as_ref()
             .is_some_and(|replaced| replaced.state.origin == ProducerOrigin::Publish)
         {
             self.forget_published_handler(publisher_session_id, &track_key);
         }
+        if let Some(handler) = handler {
+            self.register_publish(publisher_session_id, publisher_peer, handler);
+        }
+        drop(track);
         (forward, replaced)
     }
 

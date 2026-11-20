@@ -1600,6 +1600,13 @@ no list of relays and no session to each.
   removed because its track's last upstream subscription ended receives PUBLISH_DONE, always
   after its SUBSCRIBE_OK. An upstream PUBLISH_DONE on a PUBLISH-initiated track
   also unregisters that PUBLISH, so the ended track is no longer resolved.
+- **A PUBLISH handler lives exactly as long as its producer**:
+  `register_published_subscription` inserts the producer and registers its
+  handler while it holds the track entry, and every release of a
+  PUBLISH-initiated producer forgets the handler after it lets go of the
+  entry. A release racing the PUBLISH, such as the last subscriber leaving a
+  draining relay, therefore never leaves a handler, nor the client route it
+  keeps (`has_client_published_track`), for a track that has no entry.
 - **A forwarded PUBLISH is a downstream subscription**: every PUBLISH the
   relay sends and the receiver accepts is registered and served by an egress
   runner like a SUBSCRIBE, so it carries objects and ends with PUBLISH_DONE.
