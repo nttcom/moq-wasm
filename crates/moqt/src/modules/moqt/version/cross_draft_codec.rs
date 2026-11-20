@@ -95,15 +95,33 @@ fn draft14_expresses(integers: &[u64]) -> bool {
     integers.iter().all(|integer| *integer < 1 << 62)
 }
 
-/// A draft-14 Track Namespace has 1 to 32 fields (§2.4.1).
-fn draft14_expresses_namespace(namespace: &[String]) -> bool {
-    !namespace.is_empty()
+/// Set by §2.4.1 of draft-14 and draft-18.
+const MAX_NAMESPACE_FIELDS: usize = 32;
+const MAX_NAME_BYTES: usize = 4096;
+
+fn namespace_bytes(namespace: &[String]) -> usize {
+    namespace.iter().map(String::len).sum()
 }
 
-/// Draft-18 refuses an empty Track Namespace field (§2.4.1), and the model
-/// holds a DELETE token without the alias draft-18 sends with it (§10.2.2).
+fn full_track_name_fits(namespace: &[String], name: &str) -> bool {
+    namespace_bytes(namespace) + name.len() <= MAX_NAME_BYTES
+}
+
+/// Draft-14 §2.4.1 bounds only the Full Track Name to 4,096 bytes, but a
+/// namespace over that leaves no room for a track name, so it is refused
+/// on its own as in draft-18.
+fn draft14_expresses_namespace(namespace: &[String]) -> bool {
+    (1..=MAX_NAMESPACE_FIELDS).contains(&namespace.len())
+        && namespace_bytes(namespace) <= MAX_NAME_BYTES
+}
+
+/// Bounds the namespace as §2.4.1 does, and the model holds a DELETE
+/// token without the alias draft-18 sends with it (§10.2.2).
 fn draft18_expresses(namespace: &[String], tokens: &[AuthorizationToken]) -> bool {
-    !namespace.iter().any(String::is_empty) && !tokens.contains(&AuthorizationToken::Delete)
+    namespace.len() <= MAX_NAMESPACE_FIELDS
+        && !namespace.iter().any(String::is_empty)
+        && namespace_bytes(namespace) <= MAX_NAME_BYTES
+        && !tokens.contains(&AuthorizationToken::Delete)
 }
 
 /// The integers a draft-14 AUTHORIZATION TOKEN parameter writes (§9.2.1.1).
@@ -177,7 +195,9 @@ fn draft14_expresses_subscribe(subscribe: &Subscribe) -> bool {
     integers.extend(filter_integers(&subscribe.filter_type));
     integers.extend(token_integers(&subscribe.authorization_tokens));
     integers.extend(subscribe.delivery_timeout);
-    draft14_expresses_namespace(&subscribe.track_namespace) && draft14_expresses(&integers)
+    draft14_expresses_namespace(&subscribe.track_namespace)
+        && full_track_name_fits(&subscribe.track_namespace, &subscribe.track_name)
+        && draft14_expresses(&integers)
 }
 
 /// Draft-14 lays TRACK_STATUS out as SUBSCRIBE (§9.17) and has no
@@ -206,6 +226,7 @@ fn draft18_subscribe() -> Draft<Subscribe> {
         // A range ending before its start group has no End Group Delta (§5.1.2).
         expresses: |subscribe| {
             draft18_expresses(&subscribe.track_namespace, &subscribe.authorization_tokens)
+                && full_track_name_fits(&subscribe.track_namespace, &subscribe.track_name)
                 && !matches!(
                     subscribe.filter_type,
                     FilterType::AbsoluteRange { location, end_group } if end_group < location.group_id
@@ -231,7 +252,7 @@ fn draft18_track_status() -> Draft<Subscribe> {
             draft18_expresses(
                 &track_status.track_namespace,
                 &track_status.authorization_tokens,
-            )
+            ) && full_track_name_fits(&track_status.track_namespace, &track_status.track_name)
         },
         carries: |track_status| Subscribe {
             request_id: track_status.request_id,
@@ -324,7 +345,9 @@ fn draft14_expresses_publish(publish: &Publish) -> bool {
     integers.extend(token_integers(&publish.authorization_tokens));
     integers.extend(publish.track_properties.delivery_timeout());
     integers.extend(publish.track_properties.max_cache_duration());
-    draft14_expresses_namespace(&publish.track_namespace_tuple) && draft14_expresses(&integers)
+    draft14_expresses_namespace(&publish.track_namespace_tuple)
+        && full_track_name_fits(&publish.track_namespace_tuple, &publish.track_name)
+        && draft14_expresses(&integers)
 }
 
 /// Of the Track Properties, a draft-14 PUBLISH carries the Group Order field,
@@ -363,7 +386,7 @@ fn draft18_publish() -> Draft<Publish> {
             draft18_expresses(
                 &publish.track_namespace_tuple,
                 &publish.authorization_tokens,
-            )
+            ) && full_track_name_fits(&publish.track_namespace_tuple, &publish.track_name)
         },
         carries: Publish::clone,
     }
@@ -418,11 +441,13 @@ fn draft18_publish_done() -> Draft<Done> {
     }
 }
 
-fn fetch_namespace(fetch: &Fetch) -> Option<&[String]> {
+fn fetch_name(fetch: &Fetch) -> Option<(&[String], &str)> {
     match &fetch.fetch_params {
         FetchParams::Standalone {
-            track_namespace, ..
-        } => Some(track_namespace),
+            track_namespace,
+            track_name,
+            ..
+        } => Some((track_namespace, track_name)),
         FetchParams::RelativeJoining { .. } | FetchParams::AbsoluteJoining { .. } => None,
     }
 }
@@ -448,7 +473,9 @@ fn draft14_expresses_fetch(fetch: &Fetch) -> bool {
         } => integers.extend([*joining_request_id, *joining_start]),
     }
     integers.extend(token_integers(&fetch.authorization_tokens));
-    fetch_namespace(fetch).is_none_or(draft14_expresses_namespace) && draft14_expresses(&integers)
+    fetch_name(fetch).is_none_or(|(namespace, name)| {
+        draft14_expresses_namespace(namespace) && full_track_name_fits(namespace, name)
+    }) && draft14_expresses(&integers)
 }
 
 /// Draft-14 FETCH has no fill timeout.
@@ -476,10 +503,9 @@ fn draft18_fetch() -> Draft<Fetch> {
             message => anyhow::bail!("decoded {message:?}"),
         },
         expresses: |fetch| {
-            draft18_expresses(
-                fetch_namespace(fetch).unwrap_or_default(),
-                &fetch.authorization_tokens,
-            )
+            let (namespace, name) = fetch_name(fetch).unwrap_or_default();
+            draft18_expresses(namespace, &fetch.authorization_tokens)
+                && full_track_name_fits(namespace, name)
         },
         carries: |fetch| Fetch {
             group_order: match fetch.group_order {

@@ -528,40 +528,61 @@ fn cross_draft_integer() -> BoxedStrategy<u64> {
     prop_oneof![varint(), vi64(), proptest::sample::select(&DRAFT_EDGES[..])].boxed()
 }
 
-/// Namespaces either draft's receiver reads: 0 fields (draft-18 only,
-/// §2.4.1), 1 and 32 (both) often, and often with one field emptied
-/// (draft-14 only). More empty fields would hide the field counts, since
-/// draft-18 refuses a namespace with any.
+/// Set by §2.4.1 of draft-14 and draft-18.
+const MAX_NAMESPACE_FIELDS: usize = 32;
+const MAX_NAME_BYTES: usize = 4096;
+
+/// Namespaces on both sides of each draft's limits (§2.4.1), weighted to
+/// 0 fields (draft-18 only), 1 and 32 (both) and 33 (neither), to one
+/// emptied field (draft-14 only), and to 4,095, 4,096 or 4,097 bytes.
+/// At most one field is emptied: draft-18 refuses any empty field, so
+/// more would hide the field counts.
 fn cross_draft_track_namespace() -> impl Strategy<Value = Vec<String>> {
-    prop_oneof![Just(0usize), Just(1), Just(32), 0..=32usize]
-        .prop_flat_map(|count| {
-            (
-                vec(
-                    vec(any::<char>(), 1..=16).prop_map(String::from_iter),
-                    count,
-                ),
-                option::of(any::<proptest::sample::Index>()),
-            )
-        })
-        .prop_map(|(mut namespace, emptied)| {
-            if let Some(index) = emptied.filter(|_| !namespace.is_empty()) {
-                let emptied = index.index(namespace.len());
-                namespace[emptied].clear();
-            }
-            namespace
-        })
+    prop_oneof![
+        Just(0usize),
+        Just(1),
+        Just(MAX_NAMESPACE_FIELDS),
+        Just(MAX_NAMESPACE_FIELDS + 1),
+        0..=MAX_NAMESPACE_FIELDS + 1,
+    ]
+    .prop_flat_map(|count| {
+        (
+            vec(
+                vec(any::<char>(), 1..=16).prop_map(String::from_iter),
+                count,
+            ),
+            option::of(any::<proptest::sample::Index>()),
+            option::of((
+                any::<proptest::sample::Index>(),
+                MAX_NAME_BYTES - 1..=MAX_NAME_BYTES + 1,
+            )),
+        )
+    })
+    .prop_map(|(mut namespace, emptied, filled)| {
+        if namespace.is_empty() {
+            return namespace;
+        }
+        if let Some(index) = emptied {
+            let emptied = index.index(namespace.len());
+            namespace[emptied].clear();
+        }
+        if let Some((index, total)) = filled {
+            let used: usize = namespace.iter().map(String::len).sum();
+            let filled = index.index(namespace.len());
+            namespace[filled].push_str(&"n".repeat(total.saturating_sub(used)));
+        }
+        namespace
+    })
 }
 
-/// A namespace and a Track Name, the name often filling the Full Track Name
-/// to one byte short of or exactly at the 4,096-byte limit both drafts'
-/// receivers hold to (§2.4.1).
 fn cross_draft_full_track_name() -> impl Strategy<Value = (Vec<String>, String)> {
     cross_draft_track_namespace().prop_flat_map(|namespace| {
         let used: usize = namespace.iter().map(String::len).sum();
-        let at_limit = move |offset: usize| "n".repeat((4095 + offset).saturating_sub(used));
+        let at_limit =
+            move |offset: usize| "n".repeat((MAX_NAME_BYTES - 1 + offset).saturating_sub(used));
         let name = prop_oneof![
             short_text().boxed(),
-            (0..=1usize).prop_map(at_limit).boxed(),
+            (0..=2usize).prop_map(at_limit).boxed(),
         ];
         (Just(namespace), name)
     })
