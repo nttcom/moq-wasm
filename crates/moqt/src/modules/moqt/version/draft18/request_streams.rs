@@ -426,6 +426,10 @@ impl IncomingRequestTask {
                                 .push(Box::pin(namespace_prefix_answer(answer_receiver, prefix)));
                         }
                         FollowUp::Done => return,
+                        FollowUp::Finish => {
+                            finish_incoming(&context, request_id).await;
+                            return;
+                        }
                     }
                 }
                 Err(StreamReceiveError::Closed(ReadError::ConnectionLost)) => return,
@@ -669,8 +673,7 @@ impl IncomingRequestTask {
                         done.reason,
                     )),
                 );
-                scope.channel().take_incoming(request_id);
-                FollowUp::Done
+                FollowUp::Finish
             }
             _ => {
                 close_on_violation(scope, "unexpected message on a request stream");
@@ -687,7 +690,7 @@ impl IncomingRequestTask {
             fetch_cancelled(scope, request_id).await;
             return;
         }
-        if scope.channel().take_incoming(request_id).is_none() {
+        if !finish_incoming(scope, request_id).await {
             return;
         }
         let event = match kind {
@@ -768,6 +771,20 @@ enum FollowUp {
     /// answer in time (§10.9.1), while the stream goes on being read.
     AnswerNamespaceUpdate(NamespaceUpdateAnswerReceiver, Vec<String>),
     Done,
+    /// The peer ended the request: this side's half ends with FIN.
+    Finish,
+}
+
+/// Ends this side's half of the peer's request `request_id` with FIN;
+/// `false` when the request was no longer open.
+async fn finish_incoming(scope: &Scope, request_id: RequestId) -> bool {
+    let Some(stream) = scope.channel().take_incoming(request_id) else {
+        return false;
+    };
+    if let Err(error) = stream.sender.close().await {
+        tracing::debug!(%error, "could not end the stream of a request the peer ended");
+    }
+    true
 }
 
 fn emit_update(
@@ -1001,7 +1018,11 @@ impl OutgoingRequestTask {
         let message = match first {
             Ok(Some(message)) => message,
             Ok(None) | Err(_) => {
-                context.channel().take_outgoing(request_id);
+                if let Some(stream) = context.channel().take_outgoing(request_id)
+                    && let Err(error) = stream.sender.close().await
+                {
+                    tracing::debug!(%error, "could not end the stream of an unanswered request");
+                }
                 return;
             }
         };
