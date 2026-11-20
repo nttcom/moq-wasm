@@ -50,6 +50,15 @@ fn connect_span(url: &str) -> Span {
     span
 }
 
+/// The caller gets the error as well, but only this log reaches the browser's telemetry.
+fn log_connect_failure(target: &ConnectTarget, error: &anyhow::Error) {
+    tracing::warn!(
+        url = %target.url,
+        error = %format!("{error:#}"),
+        "session connect failed"
+    );
+}
+
 pub(crate) struct SessionCreator<T: TransportProtocol> {
     pub(crate) transport_creator: T::ConnectionCreator,
     pub(crate) authorization_token: Option<AuthorizationTokenSource>,
@@ -192,8 +201,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
                     "transport connected"
                 )
             }),
-            Err(_) => {
+            Err(error) => {
                 connect_span.record("outcome", "failed");
+                connect_span.in_scope(|| log_connect_failure(target, error));
             }
         }
         opened
@@ -219,6 +229,9 @@ impl<T: TransportProtocol> SessionCreator<T> {
             Err(_) => "failed",
         };
         connect_span.record("outcome", outcome);
+        if let Err(error) = &set_up {
+            connect_span.in_scope(|| log_connect_failure(target, error));
+        }
         set_up
     }
 
@@ -564,6 +577,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_transport_that_fails_to_open_is_logged_in_the_connect_span() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+        let port = refusing_server("connect-failure-log-transport");
+        let client = falling_back_client();
+
+        // Act
+        let _ = within(client.connect(&format!("moqt://127.0.0.1:{port}"))).await;
+
+        // Assert: the error includes the wss:// fallback's failure
+        let logged = telemetry.events("session connect failed");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].span(), Some("moqt.session.connect"));
+        assert!(
+            logged[0]
+                .field("error")
+                .is_some_and(|error| error.contains(&format!("wss://127.0.0.1:{port}/ failed"))),
+            "{:?}",
+            logged[0].field("error")
+        );
+    }
+
+    #[tokio::test]
     async fn connect_sends_authorization_token_in_client_setup() {
         // Arrange
         let (port, accept) = spawn_native_server_handshake("client-setup-with-token");
@@ -804,6 +840,27 @@ mod tests {
         let spans = telemetry.closed_spans("moqt.session.connect");
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].field("outcome"), Some("rejected"));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_client_setup_is_logged_in_the_connect_span() {
+        // Arrange
+        let (telemetry, _guard) = capture_telemetry();
+
+        // Act
+        connect_to_a_rejecting_server("connect-failure-log-setup").await;
+
+        // Assert
+        let logged = telemetry.events("session connect failed");
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].span(), Some("moqt.session.connect"));
+        assert!(
+            logged[0]
+                .field("error")
+                .is_some_and(|error| error.contains("bad token")),
+            "{:?}",
+            logged[0].field("error")
+        );
     }
 
     #[tokio::test]
