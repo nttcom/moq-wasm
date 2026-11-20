@@ -1,5 +1,8 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use bytes::Bytes;
+use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, vp8::Vp8Config};
+
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, SessionEvent,
     publish::Origin,
@@ -12,6 +15,22 @@ pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 mod fake_relay;
 
 pub(crate) use fake_relay::FakeRelay;
+
+pub(crate) fn vp8_config() -> VideoConfig {
+    VideoConfig::Vp8(Vp8Config {
+        width: 64,
+        height: 48,
+    })
+}
+
+pub(crate) fn keyframe_at(pts_us: u64) -> MediaEvent {
+    MediaEvent::Video(VideoSample {
+        data: Bytes::from_static(b"nal"),
+        is_keyframe: true,
+        pts: Timestamp::from_micros(pts_us),
+        dts: Timestamp::from_micros(pts_us),
+    })
+}
 
 /// A server config with a self-signed certificate written under a temporary
 /// directory named after `name`, so tests running in parallel do not share one.

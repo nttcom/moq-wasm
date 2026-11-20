@@ -1,20 +1,28 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use moqt::{
-    Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject, TrackReader,
-    subscribe::FilterType,
+    AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
+    TrackReader, Version,
+    server::ServerConfig,
+    subscribe::{FilterType, SubscribeOption},
 };
-use msf::CATALOG_TRACK_NAME;
+use msf::{CATALOG_TRACK_NAME, Catalog};
 use tokio::sync::{mpsc, oneshot};
 
 use super::{TEST_TIMEOUT, self_signed_server_config};
-use crate::broadcast::VIDEO_TRACK_NAME;
+use crate::{
+    broadcast::VIDEO_TRACK_NAME,
+    relay_connection::{MoqtTarget, RelayConnection},
+};
 
 /// A relay that accepts one publisher session and answers its
 /// PUBLISH_NAMESPACE and PUBLISH.
 pub(crate) struct FakeRelay {
     pub(crate) url: String,
     pub(crate) session: oneshot::Receiver<Arc<Session>>,
+    connected_session: Option<Arc<Session>>,
+    /// The AUTHORIZATION TOKEN parameters of the publisher's CLIENT_SETUP.
+    pub(crate) authorization_tokens: oneshot::Receiver<Vec<AuthorizationToken>>,
     pub(crate) requests: mpsc::UnboundedReceiver<String>,
     pub(crate) published: mpsc::UnboundedReceiver<Subscription>,
     video_objects: mpsc::UnboundedReceiver<TrackObject>,
@@ -26,6 +34,10 @@ impl FakeRelay {
         Self::spawn_gated(name, None, None)
     }
 
+    pub(crate) fn spawn_draft18(name: &str) -> Self {
+        Self::spawn_with(name, Version::Draft18, None, None)
+    }
+
     /// PUBLISH_NAMESPACE is answered only once `namespace_gate` fires;
     /// the catalog track is read only once `catalog_gate` fires.
     pub(crate) fn spawn_gated(
@@ -33,9 +45,23 @@ impl FakeRelay {
         namespace_gate: Option<oneshot::Receiver<()>>,
         catalog_gate: Option<oneshot::Receiver<()>>,
     ) -> Self {
-        let endpoint = Endpoint::<NATIVE>::create_server(&self_signed_server_config(name)).unwrap();
+        Self::spawn_with(name, Version::Draft14, namespace_gate, catalog_gate)
+    }
+
+    fn spawn_with(
+        name: &str,
+        version: Version,
+        namespace_gate: Option<oneshot::Receiver<()>>,
+        catalog_gate: Option<oneshot::Receiver<()>>,
+    ) -> Self {
+        let config = ServerConfig {
+            versions: vec![version],
+            ..self_signed_server_config(name)
+        };
+        let endpoint = Endpoint::<NATIVE>::create_server(&config).unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
         let (session_sender, session) = oneshot::channel();
+        let (authorization_tokens_sender, authorization_tokens) = oneshot::channel();
         let (request_sender, requests) = mpsc::unbounded_channel();
         let (published_sender, published) = mpsc::unbounded_channel();
         let (video_object_sender, video_objects) = mpsc::unbounded_channel();
@@ -44,6 +70,7 @@ impl FakeRelay {
             let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
             let mut published_tracks = HashMap::new();
             let handshake = endpoint.accept().await.unwrap().await.unwrap();
+            let _ = authorization_tokens_sender.send(handshake.authorization_tokens().to_vec());
             let session = Arc::new(handshake.accept(&tracing::Span::current()).await.unwrap());
             let _ = session_sender.send(session.clone());
             while let Ok(event) = session.receive_event().await {
@@ -119,11 +146,53 @@ impl FakeRelay {
         Self {
             url,
             session,
+            connected_session: None,
+            authorization_tokens,
             requests,
             published,
             video_objects,
             catalog_objects,
         }
+    }
+
+    /// A connection that opens its session to this relay on first use.
+    pub(crate) fn connection(&self) -> RelayConnection {
+        RelayConnection::new(Some(MoqtTarget {
+            url: self.url.clone(),
+            auth_token: None,
+            verify_certificate: false,
+        }))
+    }
+
+    /// A SUBSCRIBE as a viewer behind the relay would send.
+    pub(crate) async fn subscribe(&mut self, namespace: &str, track_name: &str) -> Subscription {
+        let session = self.session().await;
+        tokio::time::timeout(
+            TEST_TIMEOUT,
+            session.subscriber().subscribe(
+                namespace.to_string(),
+                track_name.to_string(),
+                SubscribeOption::default(),
+            ),
+        )
+        .await
+        .expect("the SUBSCRIBE must be answered")
+        .unwrap()
+    }
+
+    pub(crate) async fn first_object(&mut self, subscription: &Subscription) -> TrackObject {
+        let session = self.session().await;
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let receiver = session
+                .subscriber()
+                .accept_data_receiver(subscription)
+                .await
+                .unwrap();
+            TrackReader::new(receiver).next_object().await.unwrap()
+        })
+        .await
+        .expect("an object must arrive")
+        .expect("the track must not end before its first object")
     }
 
     /// Mimics a draining relay whose subscribers have left.
@@ -156,10 +225,15 @@ impl FakeRelay {
     }
 
     pub(crate) async fn session(&mut self) -> Arc<Session> {
-        tokio::time::timeout(TEST_TIMEOUT, &mut self.session)
+        if let Some(session) = &self.connected_session {
+            return session.clone();
+        }
+        let session = tokio::time::timeout(TEST_TIMEOUT, &mut self.session)
             .await
             .expect("the publisher must connect")
-            .unwrap()
+            .unwrap();
+        self.connected_session = Some(session.clone());
+        session
     }
 
     pub(crate) async fn wait_for_request(&mut self, expected: &str) {
@@ -185,6 +259,15 @@ impl FakeRelay {
             catalogs.push(object);
         }
         catalogs
+    }
+
+    pub(crate) async fn newest_catalog(&mut self) -> Catalog {
+        let catalogs = self.received_catalogs().await;
+        let newest = catalogs
+            .iter()
+            .max_by_key(|object| object.group_id)
+            .expect("a catalog must arrive");
+        serde_json::from_slice(&newest.payload).unwrap()
     }
 
     pub(crate) fn received_requests(&mut self) -> Vec<String> {
