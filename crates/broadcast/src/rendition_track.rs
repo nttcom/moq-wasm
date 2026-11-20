@@ -173,22 +173,13 @@ impl RenditionTrack {
 
 #[cfg(test)]
 mod tests {
-    use mediapack::{VideoConfig, vp8::Vp8Config};
-
     use super::*;
     use crate::{
         broadcast::SourceTracks,
         broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
         relay_connection::RelayConnection,
-        test_support::{FakeRelay, TEST_TIMEOUT, keyframe_at},
+        test_support::{FakeRelay, TEST_TIMEOUT, keyframe_at, vp8_config},
     };
-
-    fn vp8_config() -> VideoConfig {
-        VideoConfig::Vp8(Vp8Config {
-            width: 64,
-            height: 48,
-        })
-    }
 
     fn rendition(writer: &BroadcastWriter, keyframes: RenditionKeyframes) -> RenditionTrack {
         RenditionTrack::new(

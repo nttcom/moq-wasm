@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use mediapack::{MediaEvent, Timestamp, VideoSample};
+use mediapack::{MediaEvent, Timestamp, VideoConfig, VideoSample, vp8::Vp8Config};
 
 use moqt::{
     CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, SessionEvent,
@@ -15,6 +15,13 @@ pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 mod fake_relay;
 
 pub(crate) use fake_relay::FakeRelay;
+
+pub(crate) fn vp8_config() -> VideoConfig {
+    VideoConfig::Vp8(Vp8Config {
+        width: 64,
+        height: 48,
+    })
+}
 
 pub(crate) fn keyframe_at(pts_us: u64) -> MediaEvent {
     MediaEvent::Video(VideoSample {

@@ -401,12 +401,14 @@ fn wall_clock() -> Timestamp {
 mod tests {
     use std::time::Duration;
 
-    use mediapack::{VideoConfig, vp8::Vp8Config};
+    use mediapack::aac::AudioSpecificConfig;
     use tokio::sync::Notify;
 
     use super::*;
     use crate::{
-        broadcast::VIDEO_TRACK_NAME, relay_connection::RelayConnection, test_support::keyframe_at,
+        broadcast::{VIDEO_TRACK_NAME, VideoTrackInfo},
+        relay_connection::RelayConnection,
+        test_support::{FakeRelay, keyframe_at, vp8_config},
     };
 
     fn publisher() -> TrackPublisher {
@@ -460,10 +462,7 @@ mod tests {
                 ..SourceTracks::default()
             },
         );
-        let video = MediaEvent::VideoConfig(VideoConfig::Vp8(Vp8Config {
-            width: 64,
-            height: 48,
-        }));
+        let video = MediaEvent::VideoConfig(vp8_config());
         publisher.push(&video).await.unwrap();
 
         // Act
@@ -608,10 +607,7 @@ mod tests {
                 ..SourceTracks::default()
             },
         );
-        let video = MediaEvent::VideoConfig(VideoConfig::Vp8(Vp8Config {
-            width: 64,
-            height: 48,
-        }));
+        let video = MediaEvent::VideoConfig(vp8_config());
         publisher.push(&video).await.unwrap();
         publisher.push(&opus_config()).await.unwrap();
 
@@ -685,13 +681,6 @@ mod tests {
             }
         }
 
-        fn vp8() -> VideoConfig {
-            VideoConfig::Vp8(Vp8Config {
-                width: 64,
-                height: 48,
-            })
-        }
-
         fn group_ids(boundaries: &[GroupBoundary]) -> Vec<u64> {
             boundaries
                 .iter()
@@ -721,8 +710,8 @@ mod tests {
             let mut publisher = publisher();
             publisher.video_published = true;
             let alignment = publisher.timing.alignment.clone();
-            let mut video_cmaf = CmafVideo::new(vp8());
-            let mut rendition_cmaf = CmafVideo::new(vp8());
+            let mut video_cmaf = CmafVideo::new(vp8_config());
+            let mut rendition_cmaf = CmafVideo::new(vp8_config());
             let mut published = Published::default();
             let mut source_frames = Vec::new();
             let mut source_keyframes = 0;
@@ -825,5 +814,101 @@ mod tests {
                 );
             }
         }
+    }
+    fn relay_publisher(relay: &FakeRelay, tracks: SourceTracks) -> TrackPublisher {
+        TrackPublisher::new(
+            Broadcast::new(relay.connection(), vec!["live".to_string()]),
+            tracks,
+        )
+    }
+
+    #[tokio::test]
+    async fn the_video_is_listed_with_its_source_s_tracks() {
+        // Arrange: the source is a camera profile, as `onvif-ingest` names it
+        let mut relay = FakeRelay::spawn("publisher-catalog");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        broadcast
+            .update_video_catalog(
+                "video/profile_2",
+                VideoTrackInfo {
+                    switching_set: "profile".to_string(),
+                    source: "video/profile_2".to_string(),
+                    cmaf: false,
+                    ..VideoTrackInfo::from_config(&vp8_config(), "Profile 2".to_string()).unwrap()
+                },
+            )
+            .await
+            .unwrap();
+        let mut publisher = TrackPublisher::new(
+            broadcast,
+            SourceTracks {
+                video: "video/profile_1".to_string(),
+                switching_set: "profile".to_string(),
+                cmaf: false,
+                video_bitrate: Some(300_000),
+                video_framerate: Some(15),
+                ..SourceTracks::default()
+            },
+        );
+
+        // Act
+        publisher
+            .push(&MediaEvent::VideoConfig(vp8_config()))
+            .await
+            .unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        let tracks = catalog.tracks.unwrap();
+        let track = |name: &str| tracks.iter().find(|track| track.name == name);
+        let video = track("video/profile_1").expect("the video must be listed");
+        let other = track("video/profile_2").unwrap();
+        assert_eq!(video.bitrate, Some(300_000));
+        assert_eq!(video.framerate, Some(15.0));
+        assert!(video.alt_group.is_some() && video.alt_group == other.alt_group);
+        assert!(track("video/profile_1_cmaf").is_none());
+        assert!(track("video/profile_1_timeline").is_some());
+        assert!(track("video_timeline").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_of_the_cmaf_video_receives_its_fragments() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("publisher-cmaf-video");
+        let mut publisher = relay_publisher(&relay, SourceTracks::default());
+        publisher
+            .push(&MediaEvent::VideoConfig(vp8_config()))
+            .await
+            .unwrap();
+        let subscription = relay.subscribe("live", "video_cmaf").await;
+
+        // Act: a fragment is muxed once the next sample gives its duration
+        publisher.push(&keyframe_at(40_000)).await.unwrap();
+        publisher.push(&video_at(80_000, false)).await.unwrap();
+
+        // Assert
+        let fragment = relay.first_object(&subscription).await;
+        assert!(fragment.payload.windows(4).any(|window| window == b"moof"));
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_of_the_cmaf_audio_receives_its_fragments() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("publisher-cmaf-audio");
+        let mut publisher = relay_publisher(&relay, SourceTracks::default());
+        publisher
+            .push(&MediaEvent::AudioConfig(AudioConfig::Aac(
+                AudioSpecificConfig::new(2, 48_000, 1),
+            )))
+            .await
+            .unwrap();
+        let subscription = relay.subscribe("live", "audio_cmaf").await;
+
+        // Act
+        publisher.push(&audio_at(0)).await.unwrap();
+
+        // Assert
+        let fragment = relay.first_object(&subscription).await;
+        assert!(fragment.payload.windows(4).any(|window| window == b"moof"));
     }
 }

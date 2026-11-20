@@ -2,7 +2,9 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use moqt::{
     AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
-    TrackReader, Version, server::ServerConfig, subscribe::FilterType,
+    TrackReader, Version,
+    server::ServerConfig,
+    subscribe::{FilterType, SubscribeOption},
 };
 use msf::{CATALOG_TRACK_NAME, Catalog};
 use tokio::sync::{mpsc, oneshot};
@@ -18,6 +20,7 @@ use crate::{
 pub(crate) struct FakeRelay {
     pub(crate) url: String,
     pub(crate) session: oneshot::Receiver<Arc<Session>>,
+    connected_session: Option<Arc<Session>>,
     /// The AUTHORIZATION TOKEN parameters of the publisher's CLIENT_SETUP.
     pub(crate) authorization_tokens: oneshot::Receiver<Vec<AuthorizationToken>>,
     pub(crate) requests: mpsc::UnboundedReceiver<String>,
@@ -31,7 +34,6 @@ impl FakeRelay {
         Self::spawn_gated(name, None, None)
     }
 
-    /// A relay that speaks draft-18 instead of draft-14.
     pub(crate) fn spawn_draft18(name: &str) -> Self {
         Self::spawn_with(name, Version::Draft18, None, None)
     }
@@ -144,6 +146,7 @@ impl FakeRelay {
         Self {
             url,
             session,
+            connected_session: None,
             authorization_tokens,
             requests,
             published,
@@ -159,6 +162,37 @@ impl FakeRelay {
             auth_token: None,
             verify_certificate: false,
         }))
+    }
+
+    /// A SUBSCRIBE as a viewer behind the relay would send.
+    pub(crate) async fn subscribe(&mut self, namespace: &str, track_name: &str) -> Subscription {
+        let session = self.session().await;
+        tokio::time::timeout(
+            TEST_TIMEOUT,
+            session.subscriber().subscribe(
+                namespace.to_string(),
+                track_name.to_string(),
+                SubscribeOption::default(),
+            ),
+        )
+        .await
+        .expect("the SUBSCRIBE must be answered")
+        .unwrap()
+    }
+
+    pub(crate) async fn first_object(&mut self, subscription: &Subscription) -> TrackObject {
+        let session = self.session().await;
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let receiver = session
+                .subscriber()
+                .accept_data_receiver(subscription)
+                .await
+                .unwrap();
+            TrackReader::new(receiver).next_object().await.unwrap()
+        })
+        .await
+        .expect("an object must arrive")
+        .expect("the track must not end before its first object")
     }
 
     /// Mimics a draining relay whose subscribers have left.
@@ -191,10 +225,15 @@ impl FakeRelay {
     }
 
     pub(crate) async fn session(&mut self) -> Arc<Session> {
-        tokio::time::timeout(TEST_TIMEOUT, &mut self.session)
+        if let Some(session) = &self.connected_session {
+            return session.clone();
+        }
+        let session = tokio::time::timeout(TEST_TIMEOUT, &mut self.session)
             .await
             .expect("the publisher must connect")
-            .unwrap()
+            .unwrap();
+        self.connected_session = Some(session.clone());
+        session
     }
 
     pub(crate) async fn wait_for_request(&mut self, expected: &str) {
@@ -222,7 +261,6 @@ impl FakeRelay {
         catalogs
     }
 
-    /// The newest catalog received within the wait of `received_catalogs`.
     pub(crate) async fn newest_catalog(&mut self) -> Catalog {
         let catalogs = self.received_catalogs().await;
         let newest = catalogs
