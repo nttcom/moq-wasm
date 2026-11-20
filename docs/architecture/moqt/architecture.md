@@ -836,11 +836,12 @@ point; its API and its mapping to the JavaScript and Python SDKs are in
 
 | File | Role |
 | --- | --- |
-| `session.rs` | `Session`: `new(moqt::Session)` (a connected session; the bindings build their endpoints themselves) or `connect(url, &ClientConfig)`, and the requests: `subscribe`, `subscribe_current_group`, `subscribe_group_start`, `fetch`, `track_status`, `watch_namespaces`, `announce`, `publish_track`, `closed`, `close`. Namespaces are element lists, joined with `/` here |
+| `session.rs` | `Session`: `new(moqt::Session)` (a connected session; the bindings build their endpoints themselves) or `connect(url, &ClientConfig)`, and the requests: `subscribe`, `subscribe_current_group`, `subscribe_group_start`, `fetch`, `track_status`, `watch_namespaces`, `follow_track`, `announce`, `publish_track`, `closed`, `close`. Namespaces are element lists, joined with `/` here |
 | `routes.rs` | `Routes`: the event routing below and the tables it fills |
 | `event_loop_task.rs` | `EventLoopTask`: runs `Routes::route` on `executor::spawn`; dropping it (with the `Session`) or `close` stops it |
 | `event_handler.rs` | `EventHandler`, the `handle(event) -> Option<event>` shape `Origin`, `NamespaceWatchers` and `broadcast::RelayConnection` share, and `HandlerId` |
 | `subscription.rs`, `fetch.rs`, `namespace_watch.rs`, `announcement.rs`, `track_writer.rs` | What the requests return; each holds the `Arc<moqt::Session>` (and `Routes` where it reads them) |
+| `track_follower.rs` | `TrackFollower`, what `follow_track` returns: a track that peers publish one after another (a browser viewer's input track). An `EventHandler` takes the track's PUBLISH, the namespace's `NamespaceWatchers` entry its PUBLISH_NAMESPACE, and `FollowTask` subscribes to or accepts one publisher at a time, reports `FollowEvent::PublisherLeft` when that one's subscription ends, and lets a publisher that announced meanwhile take over |
 | `request_error.rs` | `RequestError`: a request's `RequestKind` and `RequestFailure`, with the draft's error code; `FetchError`: a rejected FETCH, or a response stream that did not arrive (`fetch` returns once the stream has) |
 
 Each event goes, in order, to the handlers `add_handler` added (in the order
