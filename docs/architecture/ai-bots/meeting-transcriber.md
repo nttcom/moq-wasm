@@ -101,7 +101,9 @@ it then leaves the room for every page.
 - When the audio track ends (mute), the bot subscribes again a second later.
   When the catalog switches to another track, the bot unsubscribes from the
   old one, so the participant's browser stops encoding it if no one else
-  takes it. `PUBLISH_NAMESPACE_DONE` ends the participant.
+  takes it. `PUBLISH_NAMESPACE_DONE` ends the participant once the utterances
+  its pipeline already heard are transcribed, so what they said before leaving
+  reaches the transcript; stopping the bot drops them instead.
 
 ### Transcription
 Each participant gets a pipeline of `VADProcessor(SileroVADAnalyzer())` and an
