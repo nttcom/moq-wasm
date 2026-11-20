@@ -192,10 +192,12 @@ pub(crate) struct Track {
     /// Sessions a forwarded PUBLISH is on its way to.
     pending_consumers: HashSet<SessionId>,
     pub(crate) new_group_requests: NewGroupRequestGate,
+    /// Distinguishes this entry from one created later under the same key.
+    pub(super) generation: u64,
 }
 
 impl Track {
-    pub(crate) fn new(state: CreationState) -> Self {
+    pub(crate) fn new(state: CreationState, generation: u64) -> Self {
         Self {
             producers: BTreeMap::new(),
             consumers: HashMap::new(),
@@ -207,6 +209,7 @@ impl Track {
             reservations: Reservations::default(),
             pending_consumers: HashSet::new(),
             new_group_requests: NewGroupRequestGate::default(),
+            generation,
         }
     }
 
@@ -542,7 +545,7 @@ mod tests {
     #[test]
     fn a_relay_about_to_subscribe_wants_client_publishers_only() {
         // Arrange
-        let mut track = Track::new(CreationState::Created);
+        let mut track = Track::new(CreationState::Created, 0);
 
         // Act
         track.reserve(SessionPeer::Relay);
@@ -555,7 +558,7 @@ mod tests {
     #[test]
     fn a_client_about_to_subscribe_wants_relay_publishers_too() {
         // Arrange
-        let mut track = Track::new(CreationState::Created);
+        let mut track = Track::new(CreationState::Created, 0);
 
         // Act
         track.reserve(SessionPeer::Client);

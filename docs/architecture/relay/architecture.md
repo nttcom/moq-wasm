@@ -402,6 +402,13 @@ Each sequence owns the relay-side protocol logic for one message
   for them already), and the sessions a forwarded PUBLISH is on its way to.
   `track_state` is `None` while no producer feeds the track, so a track being
   created is invisible to every sequence but SUBSCRIBE.
+- A track removed and created again under its key is another entry. A
+  `TrackEntry` (the key and the entry's generation) names the entry a
+  SUBSCRIBE found. Its reservation, the consumer it registers, the
+  upstream SUBSCRIBEs sent to create it and a forwarded PUBLISH act on
+  that entry only. So a subscriber that found a removed track registers
+  nowhere and looks the track up again, and a late answer to an upstream
+  SUBSCRIBE feeds no later entry.
 
 ### SUBSCRIBE sequence (the central flow)
 1. **Find-or-create upstream subscription.** `track_or_begin_creation`

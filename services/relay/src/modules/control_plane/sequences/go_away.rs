@@ -46,9 +46,10 @@ impl GoAway {
             cache_store: cache_store.clone(),
             resolver: upstream_publisher_resolver.clone(),
         };
-        for track_key in fed_tracks {
+        for entry in fed_tracks {
+            let track_key = &entry.track_key;
             let feeding = table
-                .track_state(&track_key)
+                .entry_state(&entry)
                 .map(|track| track.producers.keys().copied().collect::<Vec<_>>())
                 .unwrap_or_default();
             let publishers: Vec<UpstreamPublisher> = upstream_publisher_resolver
@@ -74,7 +75,7 @@ impl GoAway {
                 publishers = publishers.len(),
                 "subscribing other publishers"
             );
-            subscribe_publishers(&join_deps, &track_key, session_id, publishers, None);
+            subscribe_publishers(&join_deps, &entry, session_id, publishers, None);
         }
     }
 }

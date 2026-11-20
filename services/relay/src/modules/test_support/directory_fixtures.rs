@@ -22,8 +22,8 @@ use crate::modules::{
         },
     },
     domain::{
-        delivery_control::DeliveryControl, session_id::SessionId, session_peer::SessionPeer,
-        track_key::TrackKey,
+        delivery_control::DeliveryControl, runner_signals::DownstreamRunnerSignals,
+        session_id::SessionId, session_peer::SessionPeer, track_key::TrackKey,
     },
     session::{
         Session,
@@ -89,6 +89,27 @@ pub(crate) fn downstream_subscription(
         filter_type: moqt::subscribe::FilterType::LargestObject,
         joining_location,
     }
+}
+
+/// Registers the subscription on the entry its track has now, as a
+/// SUBSCRIBE that has just found it would.
+pub(crate) fn register_downstream(
+    table: &InMemoryLocalPubSubDirectory,
+    downstream_session_id: SessionId,
+    downstream_subscribe_id: u64,
+    subscriber_peer: SessionPeer,
+    subscription: DownstreamSubscription,
+    delivery_control: DeliveryControl,
+) -> Option<DownstreamRunnerSignals> {
+    let entry = table.track_entry(&subscription.track_key)?;
+    table.register_downstream_subscription(
+        &entry,
+        downstream_session_id,
+        downstream_subscribe_id,
+        subscriber_peer,
+        subscription,
+        delivery_control,
+    )
 }
 
 pub(crate) fn active_upstream(origin: ProducerOrigin) -> ProducerState {

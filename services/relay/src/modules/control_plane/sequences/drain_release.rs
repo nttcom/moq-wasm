@@ -31,7 +31,7 @@ mod tests {
         domain::session_peer::SessionPeer,
         test_support::directory_fixtures::{
             PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, delivery_control,
-            track_key, upstream_release_context,
+            register_downstream, track_key, upstream_release_context,
         },
     };
 
@@ -62,16 +62,15 @@ mod tests {
     async fn a_watched_published_track_stays_until_its_last_subscriber_leaves() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Publish).await;
-        let _registered = ctx
-            .table
-            .register_downstream_subscription(
-                100,
-                10,
-                SessionPeer::Client,
-                downstream_subscription(track_key(), None),
-                delivery_control(true),
-            )
-            .unwrap();
+        let _registered = register_downstream(
+            &ctx.table,
+            100,
+            10,
+            SessionPeer::Client,
+            downstream_subscription(track_key(), None),
+            delivery_control(true),
+        )
+        .unwrap();
 
         // Act
         release(&ctx).await;

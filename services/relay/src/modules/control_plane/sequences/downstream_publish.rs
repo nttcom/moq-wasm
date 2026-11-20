@@ -54,7 +54,7 @@ impl DownstreamPublish {
         {
             return Ok(());
         }
-        let Some(_forwarding) = self
+        let Some(forwarding) = self
             .table
             .begin_forwarded_publish(track_key, subscriber_session_id)
         else {
@@ -101,6 +101,7 @@ impl DownstreamPublish {
 
         let filter_type = downstream_subscription.filter_type();
         let Some(runner_signals) = self.table.register_downstream_subscription(
+            forwarding.entry(),
             subscriber_session_id,
             request_id,
             subscriber_peer,
