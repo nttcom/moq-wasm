@@ -683,6 +683,7 @@ impl TrackCache {
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
+    use moqt::object::ObjectStatus;
 
     use super::*;
     use crate::modules::{
@@ -690,7 +691,7 @@ mod tests {
         test_support::relay_harness::fixtures::{
             cached_object::{
                 datagram_object, fetched_copy_in_subgroup, insert_aborted_group,
-                insert_closed_group, open_group, stream_key, stream_object,
+                insert_closed_group, open_group, status_object, stream_key, stream_object,
                 stream_object_in_subgroup, stream_object_with_payload,
             },
             subscription::unknown_track_properties,
@@ -808,6 +809,22 @@ mod tests {
                 .read()
                 .next_subgroup_object(key, 0, Instant::now())
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn a_second_fetched_copy_leaves_the_forwarding_preference_to_infer() {
+        // Arrange: live ingest delivers datagrams; a FETCH filled object 5
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(datagram_object(0, 4));
+        let _ = cache.insert(fetched_copy_in_subgroup(0, 5, 5));
+        // Act
+        let _ = cache.insert(fetched_copy_in_subgroup(0, 5, 5));
+        // Assert: no live copy reached it, so a FETCH still serves it as a datagram
+        let cached = cache.read().objects[&location(0, 5)].clone();
+        assert_eq!(
+            cache.fetch_forwarding(&cached, 1),
+            ForwardingPreference::Datagram
         );
     }
 
@@ -1022,6 +1039,19 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn evict_removes_a_status_object_older_than_ttl() {
+        // Arrange: an End of Group object, which has no payload, is not persisted
+        let ttl = Duration::from_secs(10);
+        let cache = TrackCache::new();
+        let _ = cache.insert_live(status_object(0, 0, ObjectStatus::EndOfGroup));
+        // Act
+        tokio::time::advance(Duration::from_secs(11)).await;
+        cache.evict(ttl);
+        // Assert
+        assert!(cache.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn evict_keeps_the_newest_object_of_a_live_track_past_ttl() {
         // Arrange
         let ttl = Duration::from_secs(10);
@@ -1156,6 +1186,24 @@ mod tests {
                 .try_recv()
                 .map(|run| run.generation),
             Ok(0)
+        );
+    }
+
+    #[test]
+    fn evict_keeps_the_runs_of_an_aborted_group_whose_objects_remain() {
+        // Arrange
+        let cache = TrackCache::new();
+        insert_aborted_group(&cache, 0, &[0]);
+        let mut subgroup_opened_receiver = cache.subscribe_subgroup_opened();
+        // Act
+        cache.evict(Duration::from_secs(10));
+        let _reopened = cache.open_subgroup(stream_key(0));
+        // Assert: the reopened run starts past the object the aborted run left
+        assert_eq!(
+            subgroup_opened_receiver
+                .try_recv()
+                .map(|run| run.first_object_id),
+            Ok(1)
         );
     }
 
