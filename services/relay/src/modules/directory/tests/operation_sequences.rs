@@ -305,11 +305,17 @@ impl Harness {
         track: usize,
         publisher_session_id: SessionId,
         request_id: u64,
+        origin: ProducerOrigin,
     ) -> Result<(), TestCaseError> {
+        // The origin decides whether the caller withdraws the track's route.
         let removed = self.producers.remove(&(track, publisher_session_id));
-        prop_assert!(
-            removed.is_some_and(|(removed_request_id, _)| removed_request_id == request_id),
-            "the directory released upstream subscription {request_id} of session {publisher_session_id} on track {track}, which the model does not hold"
+        prop_assert_eq!(
+            removed,
+            Some((request_id, origin)),
+            "the directory released upstream subscription {} of session {} on track {}, which the model does not hold",
+            request_id,
+            publisher_session_id,
+            track
         );
         Ok(())
     }
@@ -324,6 +330,7 @@ impl Harness {
                     track_of(&removed.track_key),
                     released.publisher_session_id,
                     released.subscription.request_id(),
+                    released.origin,
                 )?;
             }
         }
@@ -673,6 +680,7 @@ impl Harness {
                         track_of(&track_key),
                         session_id,
                         released.subscription.request_id(),
+                        released.origin,
                     )?;
                 }
             }
@@ -691,6 +699,7 @@ impl Harness {
                         track,
                         publisher_session_id,
                         producer.state.subscription.request_id(),
+                        producer.state.origin,
                     )?;
                 }
                 self.malformed_tracks.insert(track);
