@@ -1399,6 +1399,23 @@ holds on each hop.
     gives them as datagrams too, which a draft-14 FETCH sends in the
     subgroup of their Object ID (§10.4.4), as the live datagram's duplicate
     check expects.
+- Values of 2^62 or more: a draft-18 vi64 reaches them, a draft-14 varint
+  does not. moqt's draft-14 encoder writes nothing for such an object and
+  names the field (`moqt::object::UnencodableObject`), and egress goes on
+  by the field (`group_sender::Unencodable`, each logged at WARN):
+  - An extension header loses only that object. A subgroup stream is reset
+    with INTERNAL_ERROR and the rest of the subgroup goes on a new stream,
+    as for a held subgroup (draft-14 §10.4.2 forbids skipping an object on
+    the same stream); a datagram is dropped alone.
+  - A Group ID or Object ID leaves no later object of the group sendable.
+    The send task resets its stream and asks the runner to end the
+    subscription with PUBLISH_DONE INTERNAL_ERROR (no §13.1.3 code fits);
+    the other send tasks are dropped with it, and the registration is
+    removed as for a delivered range (`RunnerExit::SubscriptionEnded`).
+  - A Subgroup ID resets that subgroup's stream with INTERNAL_ERROR.
+  - A FETCH response is reset with INTERNAL_ERROR at any of them: draft-14
+    has no message to end a FETCH early, and §9.16 would read a skipped ID
+    as an object that does not exist.
 - FETCH: a draft-14 FETCH response carries no preference, and an inferred
   datagram copy is served to a draft-18 FETCH as described in the cache
   section.

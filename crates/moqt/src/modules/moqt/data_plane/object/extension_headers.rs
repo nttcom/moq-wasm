@@ -4,7 +4,9 @@ use crate::modules::{
     extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt},
     moqt::{
         control_plane::control_messages::key_value_pair::{KeyValuePair, VariantType},
-        data_plane::object::{declared_length, decode_error::DecodeError},
+        data_plane::object::{
+            declared_length, decode_error::DecodeError, unencodable_object::UnencodableObject,
+        },
     },
 };
 
@@ -54,12 +56,16 @@ impl ExtensionHeaders {
         Ok(Self { key_value_pairs })
     }
 
-    /// The draft-14 Extension Headers Length and Key-Value-Pairs. Fails when
-    /// a key or value exceeds a draft-14 varint.
+    /// The draft-14 Extension Headers Length and Key-Value-Pairs. Fails with
+    /// `UnencodableObject::ExtensionHeaders` when a key or value exceeds a
+    /// draft-14 varint.
     pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         let mut kv_buf = bytes::BytesMut::new();
         for kv_pair in &self.key_value_pairs {
-            kv_buf.unsplit(kv_pair.encode()?);
+            let encoded = kv_pair
+                .encode()
+                .map_err(|_| UnencodableObject::ExtensionHeaders { key: kv_pair.key })?;
+            kv_buf.unsplit(encoded);
         }
         let mut buf = bytes::BytesMut::new();
         buf.put_varint(kv_buf.len() as u64)?;

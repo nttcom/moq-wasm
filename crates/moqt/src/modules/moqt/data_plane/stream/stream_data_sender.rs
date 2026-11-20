@@ -145,7 +145,8 @@ impl StreamDataSender<Uninitialized> {
     }
 
     /// Sends the header of the subgroup `start` describes and returns the
-    /// sender for its objects.
+    /// sender for its objects. Fails with `UnencodableObject` in its chain
+    /// when the session's draft cannot carry the Group ID or Subgroup ID.
     pub async fn start(
         mut self,
         start: SubgroupStart,
@@ -193,7 +194,9 @@ impl StreamDataSender<Uninitialized> {
 }
 
 impl StreamDataSender<HeaderSent> {
-    /// Fails while a payload `begin_object` announced is incomplete.
+    /// Fails while a payload `begin_object` announced is incomplete, and with
+    /// `UnencodableObject` in its chain, having written nothing, when the
+    /// session's draft cannot carry one of the object's fields.
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<()> {
         self.ensure_no_open_payload()?;
         let mut results = Vec::with_capacity(self.streams.len());
@@ -209,8 +212,9 @@ impl StreamDataSender<HeaderSent> {
 
     /// Sends `object` up to its payload; `send_payload` then delivers its
     /// `payload_len` bytes. `object.payload` must be empty. Fails while the
-    /// previous object's payload is incomplete, or when `payload_len` is zero
-    /// (send such an object with `send_object`).
+    /// previous object's payload is incomplete, when `payload_len` is zero
+    /// (send such an object with `send_object`), or like `send_object` when
+    /// the session's draft cannot carry one of the object's fields.
     pub async fn begin_object(
         &mut self,
         object: &Object,

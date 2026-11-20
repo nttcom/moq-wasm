@@ -1,5 +1,5 @@
 use moqt::fetch::UnknownRange;
-use moqt::object::{DataStreamResetCode, DatagramDelivery, SubgroupPart};
+use moqt::object::{DataStreamResetCode, DatagramDelivery, SubgroupPart, UnencodableObject};
 use moqt::publish::PublishDoneCode;
 use tokio::sync::mpsc;
 
@@ -21,10 +21,52 @@ pub(crate) enum Sent {
     Reset(DataStreamResetCode),
 }
 
+/// The first value a draft-14 varint cannot carry.
+pub(crate) const DRAFT14_VARINT_LIMIT: u64 = 1 << 62;
+
+/// Fails, as moqt's draft-14 encoder does, on a Group ID, Subgroup ID or
+/// Object ID of 2^62 or more, or extension headers draft-14 cannot carry.
+fn refuse_as_draft14(part: &SubgroupPart) -> anyhow::Result<()> {
+    let object = match part {
+        SubgroupPart::Header(start) => {
+            refuse_location_as_draft14(start.group_id, 0)?;
+            return refuse_subgroup_id_as_draft14(start.subgroup_id);
+        }
+        SubgroupPart::Object(object) | SubgroupPart::ObjectStart { object, .. } => object,
+        SubgroupPart::Payload { .. } => return Ok(()),
+    };
+    refuse_object_as_draft14(object)
+}
+
+fn refuse_object_as_draft14(object: &moqt::object::Object) -> anyhow::Result<()> {
+    refuse_location_as_draft14(object.location.group_id, object.location.object_id)?;
+    object.extension_headers.encode()?;
+    Ok(())
+}
+
+fn refuse_subgroup_id_as_draft14(subgroup_id: u64) -> anyhow::Result<()> {
+    if subgroup_id >= DRAFT14_VARINT_LIMIT {
+        return Err(UnencodableObject::SubgroupId { subgroup_id }.into());
+    }
+    Ok(())
+}
+
+fn refuse_location_as_draft14(group_id: u64, object_id: u64) -> anyhow::Result<()> {
+    if group_id >= DRAFT14_VARINT_LIMIT || object_id >= DRAFT14_VARINT_LIMIT {
+        return Err(UnencodableObject::Location {
+            group_id,
+            object_id,
+        }
+        .into());
+    }
+    Ok(())
+}
+
 struct MockDataSender {
     sent: mpsc::UnboundedSender<Sent>,
     stall_writes: bool,
     withhold_acknowledgements: bool,
+    refuses_draft14_values: bool,
 }
 
 #[async_trait::async_trait]
@@ -32,6 +74,9 @@ impl DataSender for MockDataSender {
     async fn send_object(&mut self, object: SubgroupPart) -> anyhow::Result<()> {
         if self.stall_writes && !matches!(object, SubgroupPart::Header(_)) {
             std::future::pending::<()>().await
+        }
+        if self.refuses_draft14_values {
+            refuse_as_draft14(&object)?;
         }
         self.sent
             .send(Sent::Object(object))
@@ -67,11 +112,15 @@ impl DataSender for MockDataSender {
 struct MockDatagramSender {
     sent: mpsc::UnboundedSender<Sent>,
     payload_limit: usize,
+    refuses_draft14_values: bool,
 }
 
 #[async_trait::async_trait]
 impl DatagramSender for MockDatagramSender {
     async fn send(&mut self, object: moqt::object::Object) -> anyhow::Result<DatagramDelivery> {
+        if self.refuses_draft14_values {
+            refuse_object_as_draft14(&object)?;
+        }
         if object.payload.len() > self.payload_limit {
             return Ok(DatagramDelivery::TooLarge);
         }
@@ -88,6 +137,7 @@ struct MockStreamSenderFactory {
     stall_opens: bool,
     stall_writes: bool,
     withhold_acknowledgements: bool,
+    refuses_draft14_values: bool,
 }
 
 #[async_trait::async_trait]
@@ -106,6 +156,7 @@ impl StreamSenderFactory for MockStreamSenderFactory {
             sent: self.sent.clone(),
             stall_writes: self.stall_writes,
             withhold_acknowledgements: self.withhold_acknowledgements,
+            refuses_draft14_values: self.refuses_draft14_values,
         }))
     }
 }
@@ -127,6 +178,7 @@ pub(crate) struct MockPublisher {
     withhold_acknowledgements: bool,
     mixes_forwarding_preferences: bool,
     datagram_payload_limit: usize,
+    refuses_draft14_values: bool,
 }
 
 pub(crate) struct MockPublisherObservers {
@@ -156,6 +208,7 @@ impl MockPublisher {
                 withhold_acknowledgements: false,
                 mixes_forwarding_preferences,
                 datagram_payload_limit: usize::MAX,
+                refuses_draft14_values: false,
             },
             MockPublisherObservers {
                 sent: receiver,
@@ -187,6 +240,15 @@ impl MockPublisher {
     pub(crate) fn withholding_acknowledgements(self) -> Self {
         Self {
             withhold_acknowledgements: true,
+            ..self
+        }
+    }
+
+    /// A draft-14 subscriber: a send fails, as moqt's does, on a value of
+    /// 2^62 or more.
+    pub(crate) fn refusing_draft14_values(self) -> Self {
+        Self {
+            refuses_draft14_values: true,
             ..self
         }
     }
@@ -259,6 +321,7 @@ impl Publisher for MockPublisher {
             stall_opens: self.stall_opens,
             stall_writes: self.stall_writes,
             withhold_acknowledgements: self.withhold_acknowledgements,
+            refuses_draft14_values: self.refuses_draft14_values,
         })
     }
 
@@ -269,6 +332,7 @@ impl Publisher for MockPublisher {
         Box::new(MockDatagramSender {
             sent: self.sent.clone(),
             payload_limit: self.datagram_payload_limit,
+            refuses_draft14_values: self.refuses_draft14_values,
         })
     }
 
@@ -289,7 +353,8 @@ pub(crate) enum FetchSent {
 /// `moqt::fetch::FetchDataSender` does.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum UnknownRangeDraft {
-    /// No End of Unknown Range: every range resets the response.
+    /// No End of Unknown Range: every range resets the response. An object
+    /// with a value of 2^62 or more fails to send.
     Draft14,
     /// A range is marked unless it ends in the group of the previous object
     /// or marker (§11.4.4.2), which resets the response.
@@ -331,6 +396,9 @@ impl MockFetchSender {
 #[async_trait::async_trait]
 impl FetchSender for MockFetchSender {
     async fn send(&self, object: moqt::object::Object) -> anyhow::Result<()> {
+        if let UnknownRangeDraft::Draft14 = self.draft {
+            refuse_object_as_draft14(&object)?;
+        }
         *self.previous.lock().unwrap() = Some(object.location);
         self.record(FetchSent::Object(object))
     }

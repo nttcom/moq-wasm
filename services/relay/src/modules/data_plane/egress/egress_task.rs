@@ -104,7 +104,8 @@ mod tests {
         test_support::{
             directory_fixtures::delivery_control,
             relay_harness::{
-                MockPublisher, MockPublisherObservers, fixtures::subscription::make_subscription,
+                MockPublisher, MockPublisherObservers,
+                fixtures::{cached_object::open_group, subscription::make_subscription},
             },
         },
     };
@@ -316,6 +317,41 @@ mod tests {
             moqt::publish::PublishDoneCode::SubscriptionEnded
         );
         assert_eq!(publish_done.stream_count, 0);
+        let event = tokio::time::timeout(TEST_TIMEOUT, ctx.subscriber_mailbox_receiver.recv())
+            .await
+            .expect("runner should report the ended subscription to the subscriber session")
+            .expect("the subscriber mailbox should stay open");
+        assert!(matches!(
+            event,
+            SessionEvent::DownstreamSubscriptionEnded {
+                request_id: DOWNSTREAM_SUBSCRIBE_ID
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn runner_that_cannot_encode_an_object_location_reports_the_subscription_ended() {
+        // Arrange
+        let mut ctx = setup();
+        ctx.publisher = ctx.publisher.clone().refusing_draft14_values();
+        let _group = open_group(&ctx.cache, 1 << 62, &[0]);
+        let (_runner_stop_sender, runner_stop_receiver) = oneshot::channel();
+
+        // Act
+        start_reader(&ctx, runner_stop_receiver)
+            .await
+            .expect("runner readiness should not be dropped")
+            .expect("runner should start");
+
+        // Assert: the subscription ends as when its range is delivered
+        let publish_done = tokio::time::timeout(TEST_TIMEOUT, ctx.observers.publish_done.recv())
+            .await
+            .expect("runner should send PUBLISH_DONE")
+            .expect("runner dropped its publisher");
+        assert_eq!(
+            publish_done.status_code,
+            moqt::publish::PublishDoneCode::InternalError
+        );
         let event = tokio::time::timeout(TEST_TIMEOUT, ctx.subscriber_mailbox_receiver.recv())
             .await
             .expect("runner should report the ended subscription to the subscriber session")

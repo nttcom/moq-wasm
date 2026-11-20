@@ -286,7 +286,12 @@ call through the adapter; a draft never gets a task of its own (see
   stream into `Object`s, and `Version::decode_datagram` decodes a datagram.
   `draft14::objects` holds the draft-14 side (Object ID Deltas, Subgroup ID
   forms, status codes) on top of the wire structs in `data_plane/object` and
-  the decoders in `data_plane/codec`.
+  the decoders in `data_plane/codec`. A draft-14 varint stops below 2^62, a
+  draft-18 vi64 does not: an object with a Group ID, Subgroup ID, Object ID or
+  extension header value past it writes nothing, and the send fails with the
+  public `UnencodableObject` naming the field in its error chain, so a caller
+  can tell an object it may skip (extension headers) from a group it cannot
+  go on with (Group ID, Object ID).
 - `version::application_protocols(versions)` lists the ALPN and WebTransport
   subprotocol of every draft in the config, in its order; `Endpoint` hands
   them to its creator. A server takes the first of its own ALPNs or

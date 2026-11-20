@@ -34,7 +34,8 @@ pub(crate) mod fixtures;
 mod mocks;
 
 pub(crate) use self::mocks::downstream_client::{
-    FetchSent, MockFetchSender, MockPublisher, MockPublisherObservers, Sent, UnknownRangeDraft,
+    DRAFT14_VARINT_LIMIT, FetchSent, MockFetchSender, MockPublisher, MockPublisherObservers, Sent,
+    UnknownRangeDraft,
 };
 pub(crate) use self::mocks::upstream_client::{
     FailingUpstream, UpstreamSubgroupStream, UpstreamTrack,
@@ -441,6 +442,18 @@ impl RelayHarness {
         .await
     }
 
+    /// `start_single_preference_egress` to a draft-14 session, whose sends
+    /// fail on a value of 2^62 or more.
+    pub(crate) async fn start_draft14_egress(&self) -> EgressRunnerHandle {
+        let (publisher, observers) = MockPublisher::channel_mixing(false);
+        self.start_egress_to(
+            (publisher.refusing_draft14_values(), observers),
+            moqt::subscribe::FilterType::LargestObject,
+            None,
+        )
+        .await
+    }
+
     async fn start_egress_to(
         &self,
         (publisher, observers): (MockPublisher, MockPublisherObservers),
@@ -505,6 +518,21 @@ impl RelayHarness {
             moqt::object::GroupOrder::Ascending,
             FetchWait::Unlimited,
             UnknownRangeDraft::Draft18,
+        )
+    }
+
+    /// `start_fetch` to a draft-14 session, whose sends fail on a value of
+    /// 2^62 or more.
+    pub(crate) fn start_draft14_fetch(
+        &self,
+        start_location: moqt::object::Location,
+        end_location: moqt::object::Location,
+    ) -> FetchDeliveryHandle {
+        self.spawn_fetch(
+            start_location..end_location,
+            moqt::object::GroupOrder::Ascending,
+            FetchWait::Unlimited,
+            UnknownRangeDraft::Draft14,
         )
     }
 

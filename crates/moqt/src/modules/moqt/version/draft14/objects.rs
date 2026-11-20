@@ -28,6 +28,7 @@ use crate::modules::{
                     SubgroupHeader, SubgroupHeaderType, SubgroupId, SubgroupObject,
                     SubgroupObjectHead,
                 },
+                unencodable_object::UnencodableObject,
             },
             stream::{
                 fetch_data_receiver::FetchDataReceiver,
@@ -58,8 +59,12 @@ impl SubgroupEncoder {
     }
 
     /// Subgroup 0 omits the Subgroup ID field. Extensions are declared
-    /// present, so every object may carry them.
+    /// present, so every object may carry them. Fails with
+    /// `UnencodableObject` when draft-14 cannot carry the Group ID or the
+    /// Subgroup ID.
     pub(crate) fn header(&mut self, start: SubgroupStart) -> anyhow::Result<BytesMut> {
+        check_location(start.group_id, 0)?;
+        check_subgroup_id(start.subgroup_id)?;
         let subgroup_id = match start.subgroup_id {
             0 => SubgroupId::None,
             subgroup_id => SubgroupId::Value(subgroup_id),
@@ -97,8 +102,9 @@ impl SubgroupEncoder {
         Ok(bytes)
     }
 
-    /// Fails when the object id is not greater than the previous object's. An
-    /// object without payload is sent as its status.
+    /// Fails when the object id is not greater than the previous object's,
+    /// and with `UnencodableObject` when draft-14 cannot carry its Object ID
+    /// or extension headers. An object without payload is sent as its status.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         let mut bytes = self.object_head(object, object.payload.len())?;
         bytes.extend_from_slice(&object.payload);
@@ -113,6 +119,7 @@ impl SubgroupEncoder {
         payload_len: usize,
     ) -> anyhow::Result<BytesMut> {
         let object_id = object.location.object_id;
+        check_location(object.location.group_id, object_id)?;
         let object_id_delta = version::object_id_delta(self.prev_object_id, object_id)?;
         let extension_headers = object.extension_headers.clone();
         let head = if payload_len == 0 {
@@ -171,7 +178,30 @@ pub(crate) fn has_malformed_immutable_extensions(headers: &ExtensionHeaders) -> 
         })
 }
 
+/// The first value a draft-14 varint cannot carry (§1.4).
+const VARINT_LIMIT: u64 = 1 << 62;
+
+fn check_location(group_id: u64, object_id: u64) -> Result<(), UnencodableObject> {
+    if group_id >= VARINT_LIMIT || object_id >= VARINT_LIMIT {
+        return Err(UnencodableObject::Location {
+            group_id,
+            object_id,
+        });
+    }
+    Ok(())
+}
+
+fn check_subgroup_id(subgroup_id: u64) -> Result<(), UnencodableObject> {
+    if subgroup_id >= VARINT_LIMIT {
+        return Err(UnencodableObject::SubgroupId { subgroup_id });
+    }
+    Ok(())
+}
+
+/// Fails with `UnencodableObject` when draft-14 cannot carry the Group ID,
+/// Object ID or extension headers.
 pub(crate) fn encode_datagram(track_alias: u64, object: &Object) -> anyhow::Result<BytesMut> {
+    check_location(object.location.group_id, object.location.object_id)?;
     ObjectDatagram::from_object(track_alias, object).encode()
 }
 
@@ -179,8 +209,13 @@ pub(crate) fn encode_fetch_header(request_id: u64) -> anyhow::Result<BytesMut> {
     FetchHeader::new(request_id).encode()
 }
 
+/// Fails with `UnencodableObject` when draft-14 cannot carry the object's
+/// Group ID, Subgroup ID, Object ID or extension headers.
 pub(crate) fn encode_fetch_object(object: &Object) -> anyhow::Result<BytesMut> {
-    FetchObjectField::from_object(object).encode()
+    check_location(object.location.group_id, object.location.object_id)?;
+    let field = FetchObjectField::from_object(object);
+    check_subgroup_id(field.subgroup_id)?;
+    field.encode()
 }
 
 pub(crate) fn decode_datagram(data: &mut BytesMut) -> anyhow::Result<(u64, Object)> {
@@ -387,13 +422,14 @@ impl FetchReader {
 mod tests {
     use bytes::{Bytes, BytesMut};
 
-    use super::SubgroupEncoder;
+    use super::{SubgroupEncoder, encode_datagram, encode_fetch_object};
     use crate::modules::moqt::{
         control_plane::control_messages::messages::parameters::location::Location,
         data_plane::object::{
             canonical_object::{ForwardingPreference, Object, SubgroupStart},
-            extension_headers::ExtensionHeaders,
+            extension_headers::{ExtensionHeaderType, ExtensionHeaders},
             object_status::ObjectStatus,
+            unencodable_object::UnencodableObject,
         },
     };
 
@@ -478,7 +514,55 @@ mod tests {
         let header = encoder.header(start);
 
         // Assert
-        assert!(header.is_err());
+        assert_eq!(
+            UnencodableObject::in_chain(&header.unwrap_err()),
+            Some(UnencodableObject::Location {
+                group_id: 1 << 62,
+                object_id: 0
+            })
+        );
+    }
+
+    #[test]
+    fn a_header_of_subgroup_2_62_fails() {
+        // Arrange
+        let mut encoder = SubgroupEncoder::new(1);
+        let start = SubgroupStart {
+            group_id: 0,
+            subgroup_id: 1 << 62,
+            publisher_priority: 0,
+            ends_group: false,
+        };
+
+        // Act
+        let header = encoder.header(start);
+
+        // Assert
+        assert_eq!(
+            UnencodableObject::in_chain(&header.unwrap_err()),
+            Some(UnencodableObject::SubgroupId {
+                subgroup_id: 1 << 62
+            })
+        );
+    }
+
+    #[test]
+    fn an_object_of_id_2_62_fails() {
+        // Arrange
+        let mut encoder = encoder();
+        let unencodable = object(1 << 62, ObjectStatus::Normal, b"frame");
+
+        // Act
+        let refused = encoder.object(&unencodable);
+
+        // Assert
+        assert_eq!(
+            UnencodableObject::in_chain(&refused.unwrap_err()),
+            Some(UnencodableObject::Location {
+                group_id: 0,
+                object_id: 1 << 62
+            })
+        );
     }
 
     #[test]
@@ -496,7 +580,73 @@ mod tests {
         let sent = encoder.object(&next);
 
         // Assert: the next object is still the subgroup's first, at Object ID Delta 0
-        assert!(refused.is_err());
+        assert_eq!(
+            UnencodableObject::in_chain(&refused.unwrap_err()),
+            Some(UnencodableObject::ExtensionHeaders {
+                key: ExtensionHeaderType::PriorGroupIdGap as u64
+            })
+        );
         assert_eq!(sent.unwrap()[0], 0);
+    }
+
+    #[test]
+    fn a_datagram_with_an_extension_value_of_2_62_fails_naming_the_extension() {
+        // Arrange
+        let mut unencodable = object(0, ObjectStatus::Normal, b"frame");
+        unencodable.forwarding = ForwardingPreference::Datagram;
+        unencodable
+            .extension_headers
+            .push_prior_group_id_gap(1 << 62);
+
+        // Act
+        let refused = encode_datagram(1, &unencodable);
+
+        // Assert
+        assert_eq!(
+            UnencodableObject::in_chain(&refused.unwrap_err()),
+            Some(UnencodableObject::ExtensionHeaders {
+                key: ExtensionHeaderType::PriorGroupIdGap as u64
+            })
+        );
+    }
+
+    #[test]
+    fn a_datagram_of_group_2_62_fails_naming_the_location() {
+        // Arrange
+        let mut unencodable = object(0, ObjectStatus::Normal, b"frame");
+        unencodable.forwarding = ForwardingPreference::Datagram;
+        unencodable.location.group_id = 1 << 62;
+
+        // Act
+        let refused = encode_datagram(1, &unencodable);
+
+        // Assert
+        assert_eq!(
+            UnencodableObject::in_chain(&refused.unwrap_err()),
+            Some(UnencodableObject::Location {
+                group_id: 1 << 62,
+                object_id: 0
+            })
+        );
+    }
+
+    #[test]
+    fn a_fetch_object_of_subgroup_2_62_fails_naming_the_subgroup() {
+        // Arrange
+        let mut unencodable = object(0, ObjectStatus::Normal, b"frame");
+        unencodable.forwarding = ForwardingPreference::Subgroup {
+            subgroup_id: 1 << 62,
+        };
+
+        // Act
+        let refused = encode_fetch_object(&unencodable);
+
+        // Assert
+        assert_eq!(
+            UnencodableObject::in_chain(&refused.unwrap_err()),
+            Some(UnencodableObject::SubgroupId {
+                subgroup_id: 1 << 62
+            })
+        );
     }
 }

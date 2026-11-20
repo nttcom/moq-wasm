@@ -5,4 +5,5 @@ mod fetch;
 mod malformed_track;
 mod mixed_forwarding;
 mod subscription_range;
+mod unencodable_object;
 mod upstream_end;
