@@ -709,7 +709,7 @@ replay し、`LivePlayer` は catalog が示すとおりに再生する。
 transcript の記録は、話者（room の直下の要素が話者名の参加者）のカメラの session のうち、録画した
 メディアの範囲が記録の `M` を含む最初のものに入れる。当てはまる参加者や session が無い記録と、音声を
 録画していない session の記録は捨てる。catalog では `packaging` を `eventtimeline`、role を
-`subtitle`（Table 4）、`eventType` を `com.skyway.transcript.v1`、`depends` をその namespace の
+`subtitle`（Table 4）、`eventType` を `io.skyway.research.moqt.transcript.v1`、`depends` をその namespace の
 media timeline にし、`trackDuration` はほかの track と同じにする。track は group 0 の Object 1つで、その
 session の記録を `M` の順に並べ、同じ記録は1つにまとめる。
 

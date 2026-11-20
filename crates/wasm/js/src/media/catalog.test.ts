@@ -134,7 +134,13 @@ test('an event timeline keeps the type of its records', () => {
     version: 1,
     tracks: [
       { name: 'video', packaging: 'loc', role: 'video', isLive: true },
-      { name: 'chat', packaging: 'eventtimeline', eventType: 'com.skyway.chat.v1', isLive: true, depends: ['video'] }
+      {
+        name: 'chat',
+        packaging: 'eventtimeline',
+        eventType: 'io.skyway.research.moqt.chat.v1',
+        isLive: true,
+        depends: ['video']
+      }
     ]
   }
 
@@ -142,7 +148,7 @@ test('an event timeline keeps the type of its records', () => {
   const [video, chat] = extractCatalogTracks(catalog)
 
   // Assert
-  expect([video.eventType, chat.eventType]).toEqual([undefined, 'com.skyway.chat.v1'])
+  expect([video.eventType, chat.eventType]).toEqual([undefined, 'io.skyway.research.moqt.chat.v1'])
 })
 
 /// The tracks a page lists for an unnamed camera with a rendition and a shared screen.

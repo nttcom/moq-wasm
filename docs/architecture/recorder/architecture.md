@@ -518,7 +518,7 @@ and does not announce the transcriber's namespace:
   between them moves the boundaries by as much.
 - The session's catalog lists `transcript` after its other tracks:
   `packaging` `eventtimeline`, role `subtitle` ("a transcription of the spoken
-  dialogue", §5.2.7), `eventType` `com.skyway.transcript.v1`, label
+  dialogue", §5.2.7), `eventType` `io.skyway.research.moqt.transcript.v1`, label
   `Transcript`, `mimeType` `application/json`, `depends` the namespace's media
   timelines, and the namespace's `trackDuration` like the others.
 - The track is one object at group 0, object 0: the session's records as one

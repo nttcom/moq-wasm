@@ -207,7 +207,7 @@ test('records participants, screen share, chat and transcript and replays them i
     expect(aliceTracks.find((track) => track.name === 'transcript')).toMatchObject({
       packaging: 'eventtimeline',
       role: 'subtitle',
-      eventType: 'com.skyway.transcript.v1',
+      eventType: 'io.skyway.research.moqt.transcript.v1',
       depends: ['video_timeline'],
       isLive: false
     })
