@@ -1254,9 +1254,10 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   never FIN'd (draft-14 §10.4.3): a FIN would make a partial subgroup look
   complete. quinn finishes a dropped `SendStream`, so `QUICSendStream` and
   `WtSendStream` reset it in their `Drop`; a stream meant to end cleanly
-  calls `close`. Guarded by the `a_stream_dropped_*` tests of
-  `quic_send_stream.rs` and `wt_send_stream.rs`. The browser transport does
-  not reset a dropped stream yet.
+  calls `close`. The browser would leave a dropped stream open, neither
+  finished nor reset, so `BrowserSendStream` aborts it in its `Drop`.
+  Guarded by the `a_stream_dropped_*` tests of `quic_send_stream.rs` and
+  `wt_send_stream.rs`; no test guards the browser transport's drop.
 
 - **Request IDs reach the peer in order and without gaps** (draft-14 §9.1). A
   `RequestIdReservation` holds the next Request ID's lock until the request

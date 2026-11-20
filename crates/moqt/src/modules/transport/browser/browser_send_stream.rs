@@ -26,6 +26,7 @@ pub struct BrowserSendStream {
     /// rejects it with its code.
     closed: Option<JsFuture>,
     stats: Rc<BrowserStats>,
+    ended: bool,
 }
 
 impl BrowserSendStream {
@@ -39,6 +40,7 @@ impl BrowserSendStream {
             writer,
             closed: None,
             stats,
+            ended: false,
         })
     }
 }
@@ -57,6 +59,7 @@ impl TransportSendStream for BrowserSendStream {
 
     /// `writer.close()` resolves only once the peer has acknowledged the FIN.
     fn close(&mut self) -> Result<(), TransportSendError> {
+        self.ended = true;
         let close = self.writer.close();
         spawn_local(async move {
             if let Err(error) = JsFuture::from(close).await {
@@ -68,6 +71,7 @@ impl TransportSendStream for BrowserSendStream {
 
     async fn reset(&mut self, error_code: u64) -> Result<(), TransportSendError> {
         let reason = web_transport_error(error_code).map_err(send_error)?;
+        self.ended = true;
         JsFuture::from(self.writer.abort_with_reason(&reason))
             .await
             .map(|_| ())
@@ -96,6 +100,23 @@ impl TransportSendStream for BrowserSendStream {
             self.closed = None;
         }
         polled.map(|closed| closed.err().and_then(|error| stream_error_code(&error)))
+    }
+}
+
+/// Dropping only releases the JavaScript handles: the session keeps the
+/// stream open, neither finished nor reset, so the peer would wait on it.
+/// `abort()` without a `WebTransportError` reason resets with code 0.
+impl Drop for BrowserSendStream {
+    fn drop(&mut self) {
+        if self.ended {
+            return;
+        }
+        let abort = self.writer.abort();
+        spawn_local(async move {
+            if let Err(error) = JsFuture::from(abort).await {
+                tracing::debug!(?error, "failed to reset a dropped send stream");
+            }
+        });
     }
 }
 
