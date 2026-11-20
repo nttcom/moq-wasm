@@ -79,9 +79,12 @@ signs for it and sends a heartbeat every 5 s. Until the bot's namespace
 appears, the page asks `bot-dispatcher` for the room's latest transcriber every 5 s and
 shows `transcriber failed to start` if it failed.
 
-The bot ends by itself 30 s after the room's last participant withdraws their
-namespace, counted from its start too, and at the hour `bot-dispatcher` allows it. Stop
-transcription in the button's menu asks for confirmation, then sends
+The bot ends by itself once the room has had no participant, nor the words of
+one who left still to transcribe, for 30 s, counted from its start too, and at
+the hour `bot-dispatcher` allows it. It follows the room's namespace until
+then, so a participant who joins while the words of one who left are
+transcribed is heard and starts the 30 s over. Stop transcription in the
+button's menu asks for confirmation, then sends
 `DELETE /bots/transcriber/{id}`, which the bot learns at its next heartbeat;
 it then leaves the room for every page.
 
@@ -104,10 +107,9 @@ it then leaves the room for every page.
   takes it. `PUBLISH_NAMESPACE_DONE` ends the participant once their audio is
   unsubscribed, so a rejoin under the same name is heard at once, while the
   room keeps their pipeline transcribing the utterances it already heard, so
-  what they said before leaving reaches the transcript; the bot leaves the room
-  only after those. Stopping the bot drops them instead, those of a
-  participant who already left included, without waiting for the recognizer
-  or handing it any more of them.
+  what they said before leaving reaches the transcript. Stopping the bot drops
+  them instead, those of a participant who already left included, without
+  waiting for the recognizer or handing it any more of them.
 
 ### Transcription
 Each participant gets a pipeline of `VADProcessor(SileroVADAnalyzer())` and an

@@ -53,7 +53,7 @@ sequenceDiagram
 
 - 先に `uv sync` で `.venv` を作ります。初回はモデルをダウンロードし、`moq-wasm` のビルドに Rust のツールチェーンが要ります。
 - Meeting は一時アプリのページから temporary-apps service（`TEMPORARY_APPS_BOT_TYPES` に `transcriber`）を通して bot を起動・停止します。
-- ルームに参加者がいない状態が 30 秒（`grace_seconds`）続くと、bot はルームを抜けて終わります。
+- ルームに参加者がおらず、退出した参加者の発言の書き起こしも終えた状態が 30 秒（`grace_seconds`）続くと、bot はルームを抜けて終わります。
 
 ## オプション
 
