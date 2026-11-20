@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose};
 use mediapack::{AudioConfig, VideoConfig, loc::VideoCodec, mp4::Fmp4TrackMuxer};
 use moqt::{
@@ -171,10 +171,33 @@ impl Broadcast {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
         };
+        let chat = chat_track(&Some(self.namespace.join("/")));
         relay
             .update_metadata(&self.namespace, |metadata| {
-                !std::mem::replace(&mut metadata.chat_offered, true)
+                metadata.offer_event_timeline(chat)
             })
+            .await
+    }
+
+    /// Lists `track`, an event timeline (draft-ietf-moq-msf-02 §8) whose
+    /// objects the caller writes with `send_object`, in the catalog, and
+    /// sends the catalog. Its subgroups carry `publisher_priority`, which a
+    /// subscription keeps from the moment it begins, so offering the track
+    /// again with another priority reaches only the later subscriptions.
+    /// Offering a track of the same name again replaces its entry. Fails for
+    /// a track whose packaging is not `eventtimeline`, and when the relay
+    /// session has ended.
+    pub async fn offer_event_timeline(&self, track: Track, publisher_priority: u8) -> Result<()> {
+        ensure!(
+            track.packaging == Packaging::Known(KnownPackaging::EventTimeline),
+            "track {} is not an event timeline",
+            track.name
+        );
+        let Some(relay) = self.connection.connected().await? else {
+            return Ok(());
+        };
+        relay
+            .offer_event_timeline(&self.namespace, track, publisher_priority)
             .await
     }
 
@@ -182,8 +205,10 @@ impl Broadcast {
     /// PUBLISH_DONE every track that catalog no longer lists: the track, its
     /// CMAF sibling, the media timeline of a source left without tracks and,
     /// when it was the last default track, the `audio` placeholder and the
-    /// chat. Stop sending the track's objects first. Updating its catalog
-    /// again publishes it again. Fails when the relay session has ended.
+    /// chat unless it was offered. `track_name` may also name an offered
+    /// event timeline, the chat included. Stop sending the track's objects
+    /// first. Updating its catalog again publishes it again. Fails when the
+    /// relay session has ended.
     pub async fn remove_track(&self, track_name: &str) -> Result<()> {
         let Some(relay) = self.connection.connected().await? else {
             return Ok(());
@@ -316,16 +341,24 @@ pub(crate) fn timeline_track_name(source: &str) -> String {
     format!("{source}{TIMELINE_TRACK_SUFFIX}")
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CatalogMetadata {
     pub(crate) video_tracks: BTreeMap<String, VideoTrackInfo>,
     pub(crate) audio_tracks: BTreeMap<String, AudioTrackInfo>,
     /// The default `audio` was removed, so no placeholder stands in for it.
     default_audio_removed: bool,
-    chat_offered: bool,
+    /// The event timelines the publisher offered, by name, listed as given.
+    event_timelines: BTreeMap<String, Track>,
 }
 
 impl CatalogMetadata {
+    /// Whether the catalog changed.
+    pub(crate) fn offer_event_timeline(&mut self, track: Track) -> bool {
+        self.event_timelines
+            .insert(track.name.clone(), track.clone())
+            != Some(track)
+    }
+
     /// Whether the catalog changed.
     pub(crate) fn remove_track(&mut self, track_name: &str) -> bool {
         if track_name == AUDIO_TRACK_NAME && !self.default_audio_removed {
@@ -335,6 +368,7 @@ impl CatalogMetadata {
         }
         self.video_tracks.remove(track_name).is_some()
             || self.audio_tracks.remove(track_name).is_some()
+            || self.event_timelines.remove(track_name).is_some()
     }
 
     fn has_default_tracks(&self) -> bool {
@@ -444,7 +478,8 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
         })
         .collect();
     tracks.extend(timelines);
-    if metadata.has_default_tracks() || metadata.chat_offered {
+    tracks.extend(metadata.event_timelines.values().cloned());
+    if metadata.has_default_tracks() && !metadata.event_timelines.contains_key(CHAT_TRACK_NAME) {
         tracks.push(chat_track(&namespace));
     }
 
@@ -710,10 +745,8 @@ mod tests {
     #[test]
     fn an_offered_chat_is_listed_without_default_tracks() {
         // Arrange
-        let metadata = CatalogMetadata {
-            chat_offered: true,
-            ..CatalogMetadata::default()
-        };
+        let mut metadata = CatalogMetadata::default();
+        metadata.offer_event_timeline(chat_track(&Some("live/test".to_string())));
 
         // Act
         let catalog = build_catalog("live/test", &metadata).unwrap();
@@ -948,7 +981,7 @@ mod tests {
         metadata
             .video_tracks
             .insert("screen".to_string(), video("screen"));
-        metadata.chat_offered = true;
+        metadata.offer_event_timeline(chat_track(&Some("live/test".to_string())));
         let catalog = build_catalog("live/test", &metadata).unwrap();
 
         // Act
@@ -1381,6 +1414,121 @@ mod tests {
             "{catalog:?}"
         );
     }
+
+    fn event_timeline(name: &str, event_type: &str) -> Track {
+        let mut track = Track::new(name, KnownPackaging::EventTimeline, true);
+        track.event_type = Some(event_type.to_string());
+        track.label = Some("Events".to_string());
+        track.mime_type = Some("application/json".to_string());
+        track
+    }
+
+    #[tokio::test]
+    async fn an_offered_event_timeline_is_sent_in_a_catalog_with_the_fields_given() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("offer-event-timeline");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        let track = event_timeline("events", "com.example.events.v1");
+
+        // Act
+        broadcast
+            .offer_event_timeline(track.clone(), 200)
+            .await
+            .unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        assert_eq!(catalog.tracks, Some(vec![track]));
+    }
+
+    #[tokio::test]
+    async fn an_offered_event_timeline_carries_its_publisher_priority_on_its_subgroups() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("event-timeline-priority");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        broadcast
+            .offer_event_timeline(event_timeline("events", "com.example.events.v1"), 200)
+            .await
+            .unwrap();
+
+        // Act
+        broadcast
+            .send_object(
+                "events",
+                OutgoingObject::plain(
+                    moqt::publish::GroupBoundary::Next,
+                    bytes::Bytes::from_static(b"[]"),
+                ),
+            )
+            .await
+            .unwrap();
+        let header = relay.first_subgroup_header("events").await;
+
+        // Assert
+        assert_eq!(header.publisher_priority, 200);
+    }
+
+    #[tokio::test]
+    async fn an_event_timeline_offered_again_replaces_its_entry() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("event-timeline-replace");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        broadcast
+            .offer_event_timeline(event_timeline("events", "com.example.events.v1"), 200)
+            .await
+            .unwrap();
+        let replacement = event_timeline("events", "com.example.events.v2");
+
+        // Act
+        broadcast
+            .offer_event_timeline(replacement.clone(), 200)
+            .await
+            .unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        assert_eq!(catalog.tracks, Some(vec![replacement]));
+    }
+
+    #[tokio::test]
+    async fn remove_track_takes_an_offered_event_timeline_out_of_the_catalog_and_ends_it() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("event-timeline-remove");
+        let broadcast = Broadcast::new(relay.connection(), vec!["live".to_string()]);
+        broadcast.offer_chat().await.unwrap();
+        broadcast
+            .offer_event_timeline(event_timeline("events", "com.example.events.v1"), 200)
+            .await
+            .unwrap();
+
+        // Act
+        broadcast.remove_track("events").await.unwrap();
+        let catalog = relay.newest_catalog().await;
+
+        // Assert
+        let names: Vec<&str> = catalog
+            .tracks
+            .iter()
+            .flatten()
+            .map(|track| track.name.as_str())
+            .collect();
+        assert_eq!(names, [CHAT_TRACK_NAME]);
+        relay.wait_for_request("PUBLISH_DONE live/events").await;
+    }
+
+    #[tokio::test]
+    async fn a_track_that_is_not_an_event_timeline_is_not_offered() {
+        // Arrange
+        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["live".to_string()]);
+        let track = Track::new("events", KnownPackaging::Loc, true);
+
+        // Act
+        let offered = broadcast.offer_event_timeline(track, 200).await;
+
+        // Assert
+        assert!(offered.is_err());
+    }
+
     #[tokio::test]
     async fn an_updated_audio_track_is_sent_in_a_catalog() {
         // Arrange

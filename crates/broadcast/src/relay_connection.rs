@@ -17,7 +17,7 @@ use moqt::{
     publish::{Origin, OutgoingObject, Retention, TrackDemand, WriteOutcome},
     subscribe::SubscribeHandler,
 };
-use msf::CATALOG_TRACK_NAME;
+use msf::{CATALOG_TRACK_NAME, Track};
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 
 use crate::{
@@ -544,6 +544,23 @@ impl ConnectedRelay {
             true
         })
         .await
+    }
+
+    /// Registers the track before the catalog that lists it publishes it, so
+    /// the subscription its PUBLISH starts carries `publisher_priority`.
+    pub(crate) async fn offer_event_timeline(
+        &self,
+        namespace: &[String],
+        track: Track,
+        publisher_priority: u8,
+    ) -> Result<()> {
+        let key = (namespace.join("/"), track.name.clone());
+        ensure_origin_track(&self.origin, &key).await;
+        self.origin
+            .set_publisher_priority(&key.0, &key.1, publisher_priority)
+            .await?;
+        self.update_metadata(namespace, |metadata| metadata.offer_event_timeline(track))
+            .await
     }
 
     /// Sends the catalog when `update` reports that it changed the metadata.

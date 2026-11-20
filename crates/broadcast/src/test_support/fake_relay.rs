@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use moqt::{
     AuthorizationToken, Endpoint, NATIVE, Session, SessionEvent, Subscription, TrackObject,
     TrackReader, Version,
+    object::{DataReceiver, Subgroup, SubgroupStart, TrackData},
     server::ServerConfig,
     subscribe::{FilterType, SubscribeOption},
 };
@@ -27,6 +28,8 @@ pub(crate) struct FakeRelay {
     pub(crate) published: mpsc::UnboundedReceiver<Subscription>,
     video_objects: mpsc::UnboundedReceiver<TrackObject>,
     pub(crate) catalog_objects: mpsc::UnboundedReceiver<TrackObject>,
+    /// The data of every other published track, by track name.
+    track_data: mpsc::UnboundedReceiver<(String, DataReceiver)>,
 }
 
 impl FakeRelay {
@@ -66,6 +69,7 @@ impl FakeRelay {
         let (published_sender, published) = mpsc::unbounded_channel();
         let (video_object_sender, video_objects) = mpsc::unbounded_channel();
         let (catalog_object_sender, catalog_objects) = mpsc::unbounded_channel();
+        let (track_data_sender, track_data) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let (mut namespace_gate, mut catalog_gate) = (namespace_gate, catalog_gate);
             let mut published_tracks = HashMap::new();
@@ -97,9 +101,7 @@ impl FakeRelay {
                             CATALOG_TRACK_NAME => Some(catalog_object_sender.clone()),
                             _ => None,
                         };
-                        if object_sender.is_some() {
-                            handler.accept_data_receiver().await;
-                        }
+                        handler.accept_data_receiver().await;
                         let subscription = handler
                             .ok(0, FilterType::LargestObject, handler.forward)
                             .await
@@ -130,6 +132,12 @@ impl FakeRelay {
                                     let _ = sender.send(object);
                                 }
                             });
+                        } else if let Ok(receiver) = session
+                            .subscriber()
+                            .accept_data_receiver(&subscription)
+                            .await
+                        {
+                            let _ = track_data_sender.send((handler.track_name.clone(), receiver));
                         }
                         let _ = published_sender.send(subscription);
                     }
@@ -152,6 +160,7 @@ impl FakeRelay {
             published,
             video_objects,
             catalog_objects,
+            track_data,
         }
     }
 
@@ -268,6 +277,27 @@ impl FakeRelay {
             .max_by_key(|object| object.group_id)
             .expect("a catalog must arrive");
         serde_json::from_slice(&newest.payload).unwrap()
+    }
+
+    /// The header of the first subgroup of the published track `track_name`.
+    pub(crate) async fn first_subgroup_header(&mut self, track_name: &str) -> SubgroupStart {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let mut receiver = loop {
+                let (name, receiver) = self.track_data.recv().await.unwrap();
+                if name == track_name {
+                    break receiver;
+                }
+            };
+            let TrackData::Subgroup(mut stream) = receiver.next().await.unwrap() else {
+                panic!("{track_name} must be sent on subgroup streams");
+            };
+            let Some(Subgroup::Header(header)) = stream.receive().await.unwrap() else {
+                panic!("a subgroup stream must begin with its header");
+            };
+            header
+        })
+        .await
+        .expect("a subgroup of the track must arrive")
     }
 
     pub(crate) fn received_requests(&mut self) -> Vec<String> {

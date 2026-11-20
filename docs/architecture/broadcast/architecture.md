@@ -30,7 +30,14 @@ broadcast under `SourceTracks` naming `video/profile_N` and `audio/profile_N`.
 The chat describes the default `video` and `audio`, so the catalog lists it,
 and the `audio` placeholder sent before the AAC config arrives, only while a
 default track exists. `Broadcast::offer_chat` lists the chat without one, for a
-broadcast whose publisher writes the chat while it sends no media. Every
+broadcast whose publisher writes the chat while it sends no media.
+`Broadcast::offer_event_timeline` lists any event timeline of the publisher's
+(draft-ietf-moq-msf-02 §8), such as the records of a robot, as the publisher
+describes it, and has its subgroups carry a Publisher Priority of their own;
+the publisher writes its objects with `Broadcast::send_object`. An offered
+chat is one of these event timelines, under the Publisher Priority of the
+catalog and the media. `CatalogMetadata` keeps them by name, so offering a
+name again replaces its entry. Every
 writer publishes a media timeline of its own (see "Media timeline").
 
 Tasks are spawned, timers run and clocks read only through `moqt::executor`, so the crate
@@ -62,8 +69,8 @@ A source that stops, such as a muted microphone or an ended screen share,
 leaves with `Broadcast::remove_track`: the catalog without the track is sent
 first, then every track that catalog no longer lists, the CMAF sibling, the
 media timeline of a writer left without tracks and, with the last default
-track, the audio placeholder and the chat, ends with PUBLISH_DONE through
-`Origin::end_track`. The numbering stays in `Origin`, so a track whose
+track, the audio placeholder and the chat unless it was offered, ends with
+PUBLISH_DONE through `Origin::end_track`. The numbering stays in `Origin`, so a track whose
 catalog is updated again is published again from the next group, without
 reusing a location.
 `BroadcastWriter::remove_track` takes the removal after the media pushed
@@ -259,7 +266,7 @@ the track, so `Origin` sends its PUBLISH in Forward State 0 and reports on
 that channel whether a subscriber takes the track (draft-ietf-moq-transport-18
 §10.10). A video's CMAF sibling, which is never PUBLISHed, is registered too:
 its SUBSCRIBEs are reported under the sibling's name, and the browser
-encodes the video while either track is taken. The catalog, the media timeline and the chat stay in Forward State 1:
+encodes the video while either track is taken. The catalog, the media timeline, the chat and the offered event timelines stay in Forward State 1:
 they hold a state a late subscriber needs, which a relay could not hand it
 had it never received it. The browser sets the sender (`MediaBroadcast`'s
 `onDemandChange`); the other sources encode whether or not anyone watches and
