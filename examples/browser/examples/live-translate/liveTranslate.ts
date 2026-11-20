@@ -50,15 +50,12 @@ export async function requestTranslation(relayUrl: string): Promise<TranslationR
       method: 'POST',
       headers: { Authorization: `Bearer ${await renewedTemporaryToken()}` }
     })
-    const answer = await response.json().catch(() => ({}))
     if (!response.ok) {
+      const answer = await response.json().catch(() => ({}))
       return refused(answer.error ?? response.status)
     }
     const events = new EventSource(`${translatorUrl}/events`)
-    return {
-      notice: answer.openHours && !answer.open ? `翻訳は稼働時間外です（稼働時間: ${answer.openHours}）` : undefined,
-      release: () => events.close()
-    }
+    return { notice: undefined, release: () => events.close() }
   } catch (error) {
     return refused(error instanceof Error ? error.message : error)
   }

@@ -4,7 +4,6 @@ mod catalog_publication;
 mod echo_translation;
 mod gemini;
 mod language_translation;
-mod open_hours;
 mod opus_codec;
 mod pcm_framer;
 mod root_translation;
@@ -30,7 +29,6 @@ use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 use crate::{
     broadcast_namespace::BroadcastNamespaces,
     gemini::{AgentPlatform, GeminiCredentials},
-    open_hours::OpenHours,
     root_translation::{RootTranslation, TranslationResources},
     session_server::{SessionServer, SessionServerState},
     target_language::find_by_code,
@@ -107,13 +105,6 @@ struct Args {
 
     #[arg(
         long,
-        env = "LIVE_TRANSLATE_OPEN_HOURS",
-        help = "Translate only inside these weekly hours, like 'Mon-Fri 09:00-17:30 +09:00'; always when unset"
-    )]
-    open_hours: Option<OpenHours>,
-
-    #[arg(
-        long,
         env = "LIVE_TRANSLATE_LANGUAGE_TIME_LIMIT_MINUTES",
         default_value_t = 60,
         help = "Stop a language's translation after this many minutes at a stretch; its viewers may subscribe again"
@@ -150,14 +141,13 @@ async fn main() -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
     let policy = Arc::new(TranslationPolicy {
-        open_hours: args.open_hours.clone(),
         language_time_limit: Duration::from_secs(args.language_time_limit_minutes * 60),
         always_on,
     });
     let resources = TranslationResources {
         engine,
         capacity: Arc::new(Semaphore::new(args.max_sessions)),
-        policy: policy.clone(),
+        policy,
     };
     let _session_server = match args.http_port {
         Some(port) => {
@@ -168,7 +158,6 @@ async fn main() -> Result<()> {
             Some(SessionServer::run(
                 listener,
                 SessionServerState {
-                    policy: policy.clone(),
                     temporary_apps: TemporaryApps::new(
                         args.relay.clone(),
                         args.insecure,

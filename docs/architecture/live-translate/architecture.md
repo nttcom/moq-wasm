@@ -27,15 +27,11 @@ keeps the whole path testable without Google Cloud; without either `--echo` or
 `--always-on` languages (`translation_policy.rs`) start with the broadcast
 and run while it lasts, whoever listens, so their first viewer hears them
 about a second after choosing them instead of waiting for Gemini's first
-answer. Three limits bound the Gemini cost besides the `--max-sessions`
-cap: a language is translated only inside
-`--open-hours` (the bots' notation, `Mon-Fri 09:00-17:30 +09:00`; a SUBSCRIBE
-outside them gets SUBSCRIBE_ERROR), for at most
-`--language-time-limit-minutes` at a stretch, and the `BroadcastTranslation`
-checks both every minute, ending the language's subscriptions with
-PUBLISH_DONE so the viewers fall back to the original audio and may subscribe
-again. An always-on language ignores the time limit and viewers leaving, and
-restarts when the open hours resume. A language also ends, with the reason
+answer. Besides the `--max-sessions` cap, a language is translated for at
+most `--language-time-limit-minutes` at a stretch: the `BroadcastTranslation`
+checks it every minute, ending the language's subscriptions with PUBLISH_DONE
+so the viewers fall back to the original audio and may subscribe again. An
+always-on language ignores the time limit and viewers leaving. A language also ends, with the reason
 `translation unavailable`, when its Gemini session gives up: Gemini closed the
 connection with a policy violation (the API disabled, the account refused), or
 quick failures in a row have backed off all the way to 30 s. Reconnecting
@@ -46,10 +42,7 @@ With `PORT` set the process also serves the requests of the streamers' pages
 server-sent event stream that only sends a comment every 15 s. A streamer's
 page holds `/events` while it broadcasts: a Cloud Run instance lives while a
 request is in flight, so that stream is what keeps the translator running, and
-lets the service scale to zero when every page is closed. Outside the open
-hours the stream ends at its next heartbeat and a new one gets 204, which
-stops an `EventSource` from reconnecting, so a tab left open does not keep the
-instance up past closing time. The service does not identify its callers.
+lets the service scale to zero when every page is closed. The service does not identify its callers.
 What a caller can make the translation cost is bounded instead, by the limits
 above and by the deployment's limit on what the Gemini API may be billed.
 The server listens before the relay is dialed, so the port is open as soon as

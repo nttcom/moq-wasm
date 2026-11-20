@@ -40,7 +40,6 @@ enum BroadcastCommand {
 }
 
 enum StartRefusal {
-    Closed,
     Capacity,
     Failed(anyhow::Error),
 }
@@ -275,19 +274,10 @@ impl Serving {
     ) -> Result<()> {
         if let Err(refusal) = self.start_language(language, false) {
             let reason = match &refusal {
-                StartRefusal::Closed => {
-                    format!(
-                        "closed outside the open hours {}",
-                        self.policy
-                            .open_hours
-                            .as_ref()
-                            .expect("closed only with open hours")
-                    )
-                }
-                StartRefusal::Capacity => "translation capacity reached".to_string(),
-                StartRefusal::Failed(_) => "translation failed to start".to_string(),
+                StartRefusal::Capacity => "translation capacity reached",
+                StartRefusal::Failed(_) => "translation failed to start",
             };
-            reject(handler, RequestErrorCode::InternalError, &reason).await;
+            reject(handler, RequestErrorCode::InternalError, reason).await;
             return match refusal {
                 StartRefusal::Failed(error) => Err(error),
                 _ => Ok(()),
@@ -358,9 +348,6 @@ impl Serving {
         language: &'static TargetLanguage,
         pinned: bool,
     ) -> Result<(), StartRefusal> {
-        if !self.policy.is_open() {
-            return Err(StartRefusal::Closed);
-        }
         if self.languages.contains_key(language.code) {
             return Ok(());
         }
@@ -396,7 +383,7 @@ impl Serving {
         Ok(())
     }
 
-    /// Also called at every policy check, so a start refused while closed, or
+    /// Also called at every policy check, so a start refused for capacity, or
     /// failed, is retried.
     fn start_always_on(&mut self) {
         for language in self.policy.always_on.clone() {
@@ -407,7 +394,6 @@ impl Serving {
                 Ok(()) => {
                     tracing::info!(language = language.code, "translation started, always on")
                 }
-                Err(StartRefusal::Closed) => {}
                 Err(StartRefusal::Capacity) => {
                     tracing::warn!(
                         language = language.code,
@@ -478,22 +464,16 @@ impl Serving {
     /// Viewers of an ended language get PUBLISH_DONE and may subscribe again.
     async fn enforce_limits(&mut self) {
         let now = Instant::now();
-        let closed = !self.policy.is_open();
-        let ended: Vec<(&'static str, &'static str)> = self
+        let ended: Vec<&'static str> = self
             .languages
             .iter()
-            .filter_map(|(code, slot)| {
-                if !slot.pinned && now >= slot.started_at + self.policy.language_time_limit {
-                    Some((*code, "time limit"))
-                } else if closed {
-                    Some((*code, "closed"))
-                } else {
-                    None
-                }
+            .filter(|(_, slot)| {
+                !slot.pinned && now >= slot.started_at + self.policy.language_time_limit
             })
+            .map(|(code, _)| *code)
             .collect();
-        for (code, reason) in ended {
-            self.end_language(code, reason).await;
+        for code in ended {
+            self.end_language(code, "time limit").await;
         }
     }
 
