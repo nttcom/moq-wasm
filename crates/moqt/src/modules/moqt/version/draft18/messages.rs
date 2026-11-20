@@ -1788,7 +1788,13 @@ mod tests {
         let result = decode_message(SUBSCRIBE_OK, payload.freeze());
 
         // Assert
-        assert!(result.is_ok(), "{result:?}");
+        let Ok(Message::SubscribeOk(subscribe_ok)) = result else {
+            panic!("expected SUBSCRIBE_OK: {result:?}");
+        };
+        assert_eq!(
+            subscribe_ok.track_properties.default_publisher_priority(),
+            Some(255)
+        );
     }
 
     #[test]

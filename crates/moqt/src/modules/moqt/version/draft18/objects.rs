@@ -1046,11 +1046,15 @@ mod tests {
     use super::{
         Fetch, FetchEncoder, FetchState, PADDING_STREAM, StreamDecoder, StreamFrame,
         SubgroupEncoder, SubgroupState, decode_datagram, encode_datagram, encode_fetch_header,
+        get_fetch_field,
     };
     use crate::modules::moqt::{
-        control_plane::control_messages::{
-            key_value_pair::{KeyValuePair, VariantType},
-            messages::parameters::{group_order::GroupOrder, location::Location},
+        control_plane::{
+            constants::TerminationErrorCode,
+            control_messages::{
+                key_value_pair::{KeyValuePair, VariantType},
+                messages::parameters::{group_order::GroupOrder, location::Location},
+            },
         },
         data_plane::object::{
             MAX_WIRE_DECLARED_LENGTH,
@@ -1315,8 +1319,8 @@ mod tests {
     }
 
     #[test]
-    fn a_subgroup_without_properties_takes_its_id_from_its_first_object() {
-        // Arrange: Subgroup ID mode 0b01; the second object states Normal status explicitly
+    fn subgroup_id_mode_01_gives_every_object_the_first_objects_id() {
+        // Arrange: Subgroup ID mode 0b01; objects 5 and 6
         let mut stream = BytesMut::new();
         put_vi64(&mut stream, 0x10 | (0b01 << 1));
         put_vi64(&mut stream, 9);
@@ -1326,8 +1330,8 @@ mod tests {
         put_vi64(&mut stream, 1);
         stream.extend_from_slice(b"a");
         put_vi64(&mut stream, 0);
-        put_vi64(&mut stream, 0);
-        put_vi64(&mut stream, 0x0);
+        put_vi64(&mut stream, 1);
+        stream.extend_from_slice(b"b");
 
         // Act
         let mut frames = frames(stream).into_iter();
@@ -1351,7 +1355,7 @@ mod tests {
             objects,
             [
                 with_priority_7(object(3, 5, subgroup(5), b"a")),
-                with_priority_7(object(3, 6, subgroup(5), b"")),
+                with_priority_7(object(3, 6, subgroup(5), b"b")),
             ]
         );
     }
@@ -1359,14 +1363,23 @@ mod tests {
     #[test]
     fn unknown_fetch_serialization_flags_are_rejected() {
         // Arrange
-        let mut stream = encode_fetch_header(6);
-        put_vi64(&mut stream, 0x80);
-        stream.extend_from_slice(&[0; 8]);
-        let mut decoder = StreamDecoder::default();
-        decoder.decode(&mut stream).unwrap();
+        let mut field = BytesMut::new();
+        put_vi64(&mut field, 0x80);
 
-        // Act / Assert
-        assert!(decoder.decode(&mut stream).is_err());
+        // Act
+        let result = get_fetch_field(&mut field.freeze());
+
+        // Assert
+        assert!(
+            matches!(
+                result,
+                Err(DecodeError::Violation {
+                    code: TerminationErrorCode::ProtocolViolation,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -1624,7 +1637,7 @@ mod tests {
     #[test]
     fn fetch_objects_name_their_subgroup_in_the_shortest_form() {
         // Arrange
-        let objects: Vec<Object> = [0, 0, 1, 1, 5]
+        let objects: Vec<Object> = [0, 1, 1, 5]
             .into_iter()
             .enumerate()
             .map(|(object_id, subgroup_id)| {
@@ -1639,8 +1652,8 @@ mod tests {
             .map(|sent| encoder.object(sent).unwrap().unwrap()[0] & 0x03)
             .collect();
 
-        // Assert: subgroup 0 is 0x00 even when it repeats the prior one; then the next one, the prior one, and an explicit id
-        assert_eq!(modes, [0x00, 0x00, 0x02, 0x01, 0x03]);
+        // Assert: subgroup 0, the prior subgroup plus 1, the prior subgroup, and an explicit id
+        assert_eq!(modes, [0x00, 0x02, 0x01, 0x03]);
     }
 
     #[test]
