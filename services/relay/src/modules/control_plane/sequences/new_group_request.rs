@@ -90,8 +90,9 @@ mod tests {
 
     use crate::modules::{
         auth::test_support::{app_token, connect_draft18_client, spawn_draft18_relay},
-        test_support::relay_clients::{
-            NAMESPACE, TRACK, publish_namespace, subscribe_track, within,
+        test_support::{
+            relay_clients::{NAMESPACE, TRACK, publish_namespace, subscribe_track},
+            within,
         },
     };
 

@@ -2,14 +2,19 @@ use bytes::Bytes;
 use moqt::object::{ExtensionHeaders, ForwardingPreference, Object, ObjectStatus};
 
 use super::location;
-use crate::modules::data_plane::{
-    cache::subgroup_key::SubgroupKey,
-    cache::{
-        cached_object::CachedObject,
-        track_cache::{
-            FetchCursor, FetchInterrupted, MAX_SUBGROUPS_PER_GROUP, OpenSubgroupGuard, TrackCache,
+use crate::modules::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::{
+            cached_object::CachedObject,
+            track_cache::{
+                FetchCursor, FetchInterrupted, MAX_SUBGROUPS_PER_GROUP, NextObject,
+                OpenSubgroupGuard, TrackCache, TrackMalformed,
+            },
         },
     },
+    domain::object_cursor::ObjectCursor,
+    test_support::within,
 };
 
 pub(crate) const FIXTURE_PRIORITY: u8 = 128;
@@ -129,10 +134,22 @@ pub(crate) async fn fetch_all(
     end: moqt::object::Location,
     group_order: moqt::object::GroupOrder,
 ) -> Result<Vec<moqt::object::Object>, FetchInterrupted> {
-    let mut cursor = FetchCursor::new(cache, start, end, group_order);
-    let mut objects = Vec::new();
-    while let Some(object) = cursor.next().await? {
-        objects.push(object.object.clone());
-    }
-    Ok(objects)
+    within(async {
+        let mut cursor = FetchCursor::new(cache, start, end, group_order);
+        let mut objects = Vec::new();
+        while let Some(object) = cursor.next().await? {
+            objects.push(object.object.clone());
+        }
+        Ok(objects)
+    })
+    .await
+}
+
+pub(crate) async fn next_subgroup_object(
+    cache: &TrackCache,
+    key: SubgroupKey,
+    generation: usize,
+    from: ObjectCursor,
+) -> Result<NextObject, TrackMalformed> {
+    within(cache.next_subgroup_object_or_wait(key, generation, from)).await
 }

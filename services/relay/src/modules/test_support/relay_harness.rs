@@ -45,7 +45,7 @@ pub(crate) use self::mocks::upstream_client::{
 pub(crate) use self::fixtures::data_object::ordered_payload;
 
 use self::{
-    fixtures::{location, subscription::make_subscription},
+    fixtures::{cached_object::next_subgroup_object, location, subscription::make_subscription},
     mocks::downstream_client::SentPublishDone,
 };
 
@@ -363,12 +363,10 @@ impl RelayHarness {
     ) -> Vec<(u64, moqt::object::ObjectStatus)> {
         let mut objects = Vec::new();
         let mut cursor = ObjectCursor::At(0);
-        while let NextObject::Object(object) = self
-            .ingest
-            .cache
-            .next_subgroup_object_or_wait(key, 0, cursor)
-            .await
-            .unwrap()
+        while let NextObject::Object(object) =
+            next_subgroup_object(&self.ingest.cache, key, 0, cursor)
+                .await
+                .unwrap()
         {
             objects.push((object.object.location.object_id, object.object.status));
             cursor = ObjectCursor::after(object.object.location.object_id);

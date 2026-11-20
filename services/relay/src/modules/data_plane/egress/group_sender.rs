@@ -1159,10 +1159,11 @@ mod tests {
             relay_harness::{
                 MockPublisher, MockPublisherObservers, Sent,
                 fixtures::{
-                    cached_object::{open_group, stream_key},
+                    cached_object::{next_subgroup_object, open_group, stream_key},
                     subscription::make_subscription,
                 },
             },
+            within,
         },
     };
 
@@ -1221,8 +1222,7 @@ mod tests {
             .expect("the publisher should stay alive");
 
         // Assert: only the cache and this lookup hold the object
-        let first = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
+        let first = next_subgroup_object(&cache, stream_key(0), 0, ObjectCursor::At(0))
             .await
             .unwrap()
             .unwrap();
@@ -1265,9 +1265,8 @@ mod tests {
     /// and objects sent before it.
     async fn next_end(sent: &mut mpsc::UnboundedReceiver<Sent>) -> Sent {
         loop {
-            let next = tokio::time::timeout(Duration::from_secs(60), sent.recv())
+            let next = within(sent.recv())
                 .await
-                .expect("the stream should be closed or reset")
                 .expect("the publisher should stay alive");
             match next {
                 Sent::Object(_) => {}

@@ -623,6 +623,7 @@ mod tests {
     };
     use crate::modules::test_support::relay_harness::fixtures::cached_object::insert_closed_group;
     use crate::modules::test_support::relay_harness::fixtures::subscription::unknown_track_properties;
+    use crate::modules::test_support::within;
     use crate::modules::{
         directory::{InMemoryLocalPubSubDirectory, track::ProducerOrigin},
         domain::session_peer::SessionPeer,
@@ -716,19 +717,18 @@ mod tests {
         for _ in 0..subscribe_count {
             let Ok(UpstreamTrackAccess {
                 largest_location, ..
-            }) = Subscribe
-                .get_or_create_upstream_subscription(
-                    SUBSCRIBER_SESSION,
-                    SessionPeer::Client,
-                    &track_key.track_namespace,
-                    &track_key.track_name,
-                    None,
-                    &table,
-                    &forwarder,
-                    &resolver,
-                    &cache_store,
-                )
-                .await
+            }) = within(Subscribe.get_or_create_upstream_subscription(
+                SUBSCRIBER_SESSION,
+                SessionPeer::Client,
+                &track_key.track_namespace,
+                &track_key.track_name,
+                None,
+                &table,
+                &forwarder,
+                &resolver,
+                &cache_store,
+            ))
+            .await
             else {
                 panic!("upstream subscription should be created");
             };
@@ -984,19 +984,18 @@ mod tests {
         let forwarder = ControlMessageForwarder { repository };
 
         // Act
-        let created = Subscribe
-            .get_or_create_upstream_subscription(
-                2,
-                SessionPeer::Client,
-                "ns",
-                "track",
-                None,
-                &table,
-                &forwarder,
-                &Arc::new(local_publisher_resolver()),
-                &Arc::new(TrackCacheStore::new()),
-            )
-            .await;
+        let created = within(Subscribe.get_or_create_upstream_subscription(
+            2,
+            SessionPeer::Client,
+            "ns",
+            "track",
+            None,
+            &table,
+            &forwarder,
+            &Arc::new(local_publisher_resolver()),
+            &Arc::new(TrackCacheStore::new()),
+        ))
+        .await;
 
         // Assert: only the SUBSCRIBE (request 1) is unsubscribed, and its ingest never starts
         assert!(created.is_ok());
@@ -1503,7 +1502,10 @@ mod cross_draft_tests {
             app_token, connect_draft14_client, connect_draft18_client, spawn_relay_offering,
         },
         cascading::route_registry::NoopRelayRouteRegistry,
-        test_support::relay_clients::{NAMESPACE, TRACK, publish_namespace, within},
+        test_support::{
+            relay_clients::{NAMESPACE, TRACK, publish_namespace},
+            within,
+        },
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
