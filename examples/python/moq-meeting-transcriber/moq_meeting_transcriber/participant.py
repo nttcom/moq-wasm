@@ -15,8 +15,8 @@ from moq_meeting_transcriber.transcript import TranscriptWriter
 
 
 class Participant:
-    """Transcribes one participant of the room until cancelled, in a pipeline of their own so that
-    the voice activity detector hears one speaker. `MoqWasmParticipantInput` takes the Opus LOC
+    """Transcribes one participant of the room, in a pipeline of their own so that the voice
+    activity detector hears one speaker. `MoqWasmParticipantInput` takes the Opus LOC
     audio track with the lowest bitrate, the profile the Meeting's viewers take; the publisher
     encodes a profile only while someone subscribes to it, so this starts no extra encoder in the
     participant's browser."""
@@ -27,7 +27,10 @@ class Participant:
         self._recognizer = recognizer
         self._timeline = timeline
 
-    async def run(self) -> None:
+    async def run(self, room: asyncio.Task) -> None:
+        """Runs until cancelled. Cancelled while `room`, the task following the room, is not, as
+        when the participant leaves, it first transcribes the utterances it already heard; cancelled
+        with `room`, it drops them."""
         audio = MoqWasmParticipantInput(self._broadcast, MoqWasmInputParams(audio_in_enabled=True))
 
         @audio.event_handler("on_track_subscribed")
@@ -54,6 +57,10 @@ class Participant:
         running = asyncio.create_task(runner.run())
         try:
             await asyncio.shield(running)
-        finally:
-            await runner.cancel()
+        except asyncio.CancelledError:
+            if room.cancelling():
+                await runner.cancel()
+            else:
+                await worker.stop_when_done()
             await running
+            raise

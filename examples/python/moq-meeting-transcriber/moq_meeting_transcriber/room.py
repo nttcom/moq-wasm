@@ -90,16 +90,16 @@ class Room:
         await watch_broadcasts(
             session,
             self._namespace,
-            partial(self._run_participant, timeline),
+            partial(self._run_participant, timeline, asyncio.current_task()),
             filter=lambda namespace: participant_name(namespace, self._namespace) is not None,
             empty_timeout=self._grace_seconds,
         )
 
-    async def _run_participant(self, timeline: EventTimeline, broadcast: RemoteBroadcast) -> None:
+    async def _run_participant(self, timeline: EventTimeline, room: asyncio.Task, broadcast: RemoteBroadcast) -> None:
         name = broadcast.namespace[-1]
         logger.info(f"room {self._key}: {name} joined")
         try:
-            await Participant(broadcast, self._recognizer, timeline).run()
+            await Participant(broadcast, self._recognizer, timeline).run(room)
         except RuntimeError as error:
             logger.info(f"room {self._key}: {name}'s catalog ended: {error}")
         finally:
