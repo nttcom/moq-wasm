@@ -5,11 +5,13 @@ use crate::{
     object::Location,
     object::{
         DataStreamResetCode, ExtensionHeaders, ForwardingPreference, Object, ObjectStatus,
-        StreamDataSenderFactory, SubgroupObjectSender, SubgroupStart,
+        StreamDataSenderFactory, StreamPriority, SubgroupObjectSender, SubgroupStart,
     },
 };
 
-const PUBLISHER_PRIORITY: u8 = 128;
+/// The default Subscriber and Publisher Priority: the middle of their range
+/// (draft-14 §7.1).
+pub(crate) const DEFAULT_PRIORITY: u8 = 128;
 const NO_GROUP_AFTER_MAX: &str = "no group follows group u64::MAX";
 
 pub struct TrackWriter {
@@ -22,6 +24,8 @@ pub struct TrackWriter {
     abandoned: Option<GroupSender>,
     pending_group_gap: Option<u64>,
     opened_streams: u64,
+    subscriber_priority: u8,
+    publisher_priority: u8,
 }
 
 impl TrackWriter {
@@ -34,7 +38,17 @@ impl TrackWriter {
             abandoned: None,
             pending_group_gap: None,
             opened_streams: 0,
+            subscriber_priority: DEFAULT_PRIORITY,
+            publisher_priority: DEFAULT_PRIORITY,
         }
+    }
+
+    /// Each stream it opens carries `publisher_priority` in its header and is
+    /// scheduled on the transport by both priorities (draft-14 §7.2).
+    pub fn with_priorities(mut self, subscriber_priority: u8, publisher_priority: u8) -> Self {
+        self.subscriber_priority = subscriber_priority;
+        self.publisher_priority = publisher_priority;
+        self
     }
 
     /// Leaves the open group because one of its objects is not sent, as in
@@ -233,11 +247,19 @@ impl TrackWriter {
         let group_id = self.next_group_id.context(NO_GROUP_AFTER_MAX)?;
         let stream = self.factory.next().await?;
         self.opened_streams += 1;
+        stream
+            .set_priority(StreamPriority {
+                subscriber_priority: self.subscriber_priority,
+                publisher_priority: self.publisher_priority,
+                group_position: 0,
+                subgroup_id: 0,
+            })
+            .await?;
         let sender = stream
             .start(SubgroupStart {
                 group_id,
                 subgroup_id: 0,
-                publisher_priority: PUBLISHER_PRIORITY,
+                publisher_priority: self.publisher_priority,
                 ends_group: false,
             })
             .await?;
@@ -246,6 +268,7 @@ impl TrackWriter {
             sender,
             group_id,
             next_object_id: 0,
+            publisher_priority: self.publisher_priority,
         })
     }
 }
@@ -254,6 +277,7 @@ struct GroupSender {
     sender: SubgroupObjectSender,
     group_id: u64,
     next_object_id: u64,
+    publisher_priority: u8,
 }
 
 impl GroupSender {
@@ -288,7 +312,7 @@ impl GroupSender {
                 object_id: self.next_object_id,
             },
             forwarding: ForwardingPreference::Subgroup { subgroup_id: 0 },
-            publisher_priority: PUBLISHER_PRIORITY,
+            publisher_priority: self.publisher_priority,
             status,
             extension_headers,
             payload,

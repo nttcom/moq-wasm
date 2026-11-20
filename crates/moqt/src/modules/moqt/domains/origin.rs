@@ -14,10 +14,13 @@ use crate::{
         FetchCancelHandler, FetchHandler, FetchParams, JoinPoint, JoiningFetchError, JoiningStart,
         resolve_joining_fetch,
     },
-    modules::{executor, moqt::domains::session_context::SessionContext},
+    modules::{
+        executor,
+        moqt::domains::{session_context::SessionContext, track_writer::DEFAULT_PRIORITY},
+    },
     object::{
         ContentExists, DatagramDelivery, DatagramSender, ExtensionHeaders, ForwardingPreference,
-        Location, Object, ObjectStatus, StreamDataSenderFactory,
+        Location, Object, ObjectStatus,
     },
     publish::PublishOption,
     subscribe::{
@@ -45,9 +48,7 @@ use object_numbering::ObjectNumbering;
 /// §9.8). Relays forward this value, and some subscribers (moq-ffi before
 /// 0.4.5) reject a non-zero one.
 const SUBSCRIBE_NEVER_EXPIRES: u64 = 0;
-const FETCH_PUBLISHER_PRIORITY: u8 = 128;
 const FETCH_SUBGROUP_ID: u64 = 0;
-const DATAGRAM_PUBLISHER_PRIORITY: u8 = 128;
 
 type TrackKey = (String, String);
 /// The address of a session's `SessionContext`. An outlet or a FETCH task
@@ -157,6 +158,7 @@ struct OriginTrack {
     demand: Option<Demand>,
     /// The track's Object Forwarding Preference is Datagram (draft-14 §10).
     datagrams: bool,
+    publisher_priority: u8,
 }
 
 /// Whether a subscription to a track published on demand is in Forward State
@@ -197,7 +199,16 @@ impl OriginTrack {
             new_group_requests: None,
             demand: None,
             datagrams: false,
+            publisher_priority: DEFAULT_PRIORITY,
         }
+    }
+
+    /// The first group id `0` is never used: `send_placed` and
+    /// `Origin::write_group` open every group at the Group ID the numbering
+    /// placed.
+    fn outlet_writer(&self, publisher: &Publisher, subscription: &Subscription) -> TrackWriter {
+        TrackWriter::new(publisher.create_stream(subscription), 0)
+            .with_priorities(subscription.subscriber_priority(), self.publisher_priority)
     }
 
     fn wanted(&self) -> bool {
@@ -329,6 +340,21 @@ impl Origin {
         Ok(())
     }
 
+    /// Sets the priority the track's subgroups, datagrams and FETCH responses
+    /// carry (draft-14 §7.1). Call this before the track is subscribed to: an
+    /// open subscription keeps the priority it began with. Fails for a track
+    /// that is not registered.
+    pub(crate) async fn set_publisher_priority(
+        &self,
+        namespace: &str,
+        track_name: &str,
+        priority: u8,
+    ) -> Result<()> {
+        let key = track_key(namespace, track_name);
+        self.state.lock().await.track_mut(&key)?.publisher_priority = priority;
+        Ok(())
+    }
+
     /// Marks the track as published on demand: `publish` then asks for
     /// Forward State 0, so the peer has the track sent only while it wants
     /// the objects (draft-18 §10.10). `demand_sender` is sent whether a
@@ -410,7 +436,7 @@ impl Origin {
             publication: Publication::Published,
             start,
             forward,
-            writer: Some(outlet_writer(publisher.create_stream(&subscription))),
+            writer: Some(track.outlet_writer(&publisher, &subscription)),
             publisher,
             subscription,
         });
@@ -453,8 +479,9 @@ impl Origin {
             );
             if track.datagrams {
                 let senders = datagram_senders(track, placement);
+                let priority = track.publisher_priority;
                 drop(state);
-                return send_datagrams(senders, placement, object).await;
+                return send_datagrams(senders, placement, priority, object).await;
             }
             (placement, take_writers(track))
         };
@@ -486,9 +513,10 @@ impl Origin {
             track.store(placement, ExtensionHeaders::default(), payload.clone());
             if track.datagrams {
                 let senders = datagram_senders(track, placement);
+                let priority = track.publisher_priority;
                 drop(state);
                 let object = OutgoingObject::plain(GroupBoundary::Next, payload);
-                return send_datagrams(senders, placement, object).await;
+                return send_datagrams(senders, placement, priority, object).await;
             }
             (placement, take_writers(track))
         };
@@ -615,7 +643,7 @@ impl Origin {
             publication: Publication::Subscribed,
             start,
             forward: handler.forward,
-            writer: Some(outlet_writer(publisher.create_stream(&subscription))),
+            writer: Some(track.outlet_writer(&publisher, &subscription)),
             publisher,
             subscription,
         });
@@ -749,20 +777,27 @@ impl Origin {
                 return Ok(());
             }
         };
-        let range = state
-            .tracks
-            .get(&key)
-            .map(|track| track.cache.resolve(start_location, end_location));
+        let range = state.tracks.get(&key).map(|track| {
+            (
+                track.cache.resolve(start_location, end_location),
+                track.publisher_priority,
+            )
+        });
         let (code, reason) = match range {
             None => (RequestErrorCode::TrackDoesNotExist, "track not published"),
-            Some(FetchRange::InvalidRange) => (RequestErrorCode::InvalidRange, "invalid range"),
-            Some(FetchRange::NoObjects) => {
+            Some((FetchRange::InvalidRange, _)) => {
+                (RequestErrorCode::InvalidRange, "invalid range")
+            }
+            Some((FetchRange::NoObjects, _)) => {
                 (RequestErrorCode::NoObjects, "no cached objects in range")
             }
-            Some(FetchRange::Serve {
-                objects,
-                end_location,
-            }) => {
+            Some((
+                FetchRange::Serve {
+                    objects,
+                    end_location,
+                },
+                publisher_priority,
+            )) => {
                 tracing::info!(
                     request_id = handler.request_id,
                     track_namespace = %key.0,
@@ -777,6 +812,7 @@ impl Origin {
                     handler,
                     objects,
                     end_location,
+                    publisher_priority,
                 );
                 state.fetches.insert(request_key, task);
                 return Ok(());
@@ -974,12 +1010,13 @@ fn datagram_senders(track: &OriginTrack, placement: Placement) -> Vec<DatagramSe
 async fn send_datagrams(
     senders: Vec<DatagramSender>,
     placement: Placement,
+    publisher_priority: u8,
     object: OutgoingObject,
 ) -> Result<WriteOutcome> {
     let object = Object {
         location: placement.location,
         forwarding: ForwardingPreference::Datagram,
-        publisher_priority: DATAGRAM_PUBLISHER_PRIORITY,
+        publisher_priority,
         status: ObjectStatus::Normal,
         extension_headers: object.extension_headers,
         payload: object.payload,
@@ -1031,12 +1068,6 @@ fn content_exists(largest: Option<Location>) -> ContentExists {
 
 fn starts_at_or_before(start: Option<Location>, location: Location) -> bool {
     start.is_some_and(|start| start <= location)
-}
-
-/// The 0 is never used: `send_placed` and `Origin::write_group` open every
-/// group at the Group ID the numbering placed.
-fn outlet_writer(factory: StreamDataSenderFactory) -> TrackWriter {
-    TrackWriter::new(factory, 0)
 }
 
 /// A writer that has sent nothing joins the group the object is in, and so
@@ -1094,8 +1125,9 @@ mod tests {
         RequestFailure, SessionEvent, Subscription, TrackObject, Version,
         fetch::{FetchHandle, FetchOption},
         modules::test_support::{
-            DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_event,
-            next_subgroup, read_fetch_objects, rejection, subscribed_track_reader, within,
+            DRAFTS, accept_publish, connected_sessions, data_receiver, is_notified, next_datagram,
+            next_event, next_subgroup, read_fetch_objects, rejection, subscribed_track_reader,
+            within,
         },
         object::{DataReceiver, GroupOrder, Object, ObjectStatus, StreamDataReceiver, Subgroup},
         subscribe::{FilterType, SubscribeOption},
@@ -1841,6 +1873,52 @@ mod tests {
                 ]
             );
             assert_eq!(done.stream_count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_track_s_publisher_priority_is_on_its_subgroups_and_datagrams() {
+        for version in DRAFTS {
+            for datagrams in [false, true] {
+                // Arrange
+                let peers = origin_with_track("origin-priority", RETENTION, version).await;
+                peers
+                    .origin
+                    .set_publisher_priority(NAMESPACE, TRACK, 7)
+                    .await
+                    .unwrap();
+                if datagrams {
+                    peers
+                        .origin
+                        .send_in_datagrams(NAMESPACE, TRACK)
+                        .await
+                        .unwrap();
+                }
+                let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+                let mut receiver = data_receiver(&peers.server, &subscription).await;
+
+                // Act
+                peers
+                    .origin
+                    .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                    .await
+                    .unwrap();
+                let priority = if datagrams {
+                    within(next_datagram(&mut receiver))
+                        .await
+                        .publisher_priority
+                } else {
+                    let mut stream = within(next_subgroup(&mut receiver)).await;
+                    let Some(Subgroup::Header(header)) = within(stream.receive()).await.unwrap()
+                    else {
+                        panic!("expected a subgroup header");
+                    };
+                    header.publisher_priority
+                };
+
+                // Assert
+                assert_eq!(priority, 7, "{version:?}, datagrams: {datagrams}");
+            }
         }
     }
 
