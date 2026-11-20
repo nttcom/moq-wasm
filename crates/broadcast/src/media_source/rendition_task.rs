@@ -1,7 +1,8 @@
-use broadcast::{Broadcast, RenditionTrack};
 use mediapack::MediaEvent;
 use moqt::executor::{self, JoinHandle};
 use tokio::sync::{mpsc, oneshot};
+
+use crate::{broadcast::Broadcast, rendition_track::RenditionTrack};
 
 pub(super) enum RenditionCommand {
     Event(MediaEvent),
@@ -20,15 +21,13 @@ pub(super) struct RenditionTask {
 impl RenditionTask {
     pub(super) fn run(mut track: RenditionTrack, broadcast: Broadcast, track_name: String) -> Self {
         let (command_sender, mut command_receiver) = mpsc::unbounded_channel();
-        let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let join_handle = executor::spawn("python-media-rendition", async move {
+        let track_namespace = broadcast.namespace().join("/");
+        let join_handle = executor::spawn("media-source-rendition", async move {
             while let Some(command) = command_receiver.recv().await {
                 match command {
                     RenditionCommand::Event(event) => {
                         if let Err(error) = track.push(event).await {
-                            // As the source's publish task does, the first
-                            // failure stops the rendition.
-                            tracing::error!(error = %format!("{error:#}"), track_name, "rendition publishing stopped");
+                            tracing::warn!(error = %format!("{error:#}"), track_namespace, track_name, "rendition publishing stopped");
                             return;
                         }
                     }
@@ -44,7 +43,6 @@ impl RenditionTask {
         }
     }
 
-    /// Where `MediaSource.remove_track` sends the rendition's removal.
     pub(super) fn command_sender(&self) -> mpsc::UnboundedSender<RenditionCommand> {
         self.command_sender.clone()
     }

@@ -1,26 +1,17 @@
-mod rendition_task;
-
 use std::sync::{Arc, Mutex};
 
-use broadcast::{
-    Broadcast, BroadcastWriter, RenditionConfig, RenditionKeyframes, RenditionTrack, SourceTracks,
-};
+use broadcast::{Broadcast, MediaRendition, MediaSourceConfig, MediaSourceError, TrackKind};
 use bytes::Bytes;
-use mediapack::{
-    AudioConfig, AudioLevel, AudioSample, MediaEvent, Timestamp,
-    aac::AudioSpecificConfig,
-    loc::{Demuxer as LocDemuxer, LocExtension, LocObject, TIMESTAMP_ID, VideoCodec},
-};
+use mediapack::{AudioLevel, aac::AudioSpecificConfig};
 use moqt::client::{self, HandlerId};
 use moqt::publish::TrackDemand;
 use pyo3::{
     exceptions::{PyRuntimeError, PyValueError},
     prelude::*,
 };
-use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc, oneshot};
+use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
 
 use crate::scope::SessionScope;
-use rendition_task::{RenditionCommand, RenditionTask};
 
 /// An MSF broadcast of media the caller encodes, built by `broadcast` as the
 /// browser SDK's is: it publishes the catalog, the LOC tracks and the media
@@ -70,33 +61,28 @@ impl MediaBroadcast {
         cmaf: bool,
         on_demand: bool,
     ) -> MediaSource {
-        let keyframe_requests = Arc::new(Notify::new());
-        let (demand_sender, demand_receiver) = on_demand.then(mpsc::unbounded_channel).unzip();
-        let tracks = SourceTracks {
-            switching_set: video.clone(),
+        let config = MediaSourceConfig {
             video,
-            audio_label: format!("{label} audio"),
-            video_label: label,
             audio,
-            cmaf,
+            label,
             video_bitrate,
             video_framerate,
-            keyframe_requests: Some(keyframe_requests.clone()),
-            demand_sender,
+            cmaf,
+            on_demand,
         };
-        // The writer spawns its publish task, which needs the runtime the module's futures run on
+        // The source spawns its publish task, which needs the runtime the module's futures run on
         // and keeps the scope it is spawned in.
         let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
-        let writer = self
+        let mut source = self
             .scope
-            .run(|| BroadcastWriter::run(self.broadcast.clone(), tracks));
+            .run(|| broadcast::MediaSource::new(self.broadcast.clone(), config));
         MediaSource {
-            writer: Arc::new(Mutex::new(writer)),
+            keyframe_requests: source.keyframe_requests(),
+            demands: source
+                .take_demand_receiver()
+                .map(|receiver| Arc::new(AsyncMutex::new(receiver))),
+            source: Mutex::new(source),
             scope: self.scope,
-            video: Mutex::new(None),
-            keyframe_requests,
-            renditions: Mutex::new(Vec::new()),
-            demands: demand_receiver.map(|receiver| Arc::new(AsyncMutex::new(receiver))),
         }
     }
 }
@@ -105,28 +91,11 @@ impl MediaBroadcast {
 /// encoded frames.
 #[pyclass(module = "moq_wasm")]
 pub struct MediaSource {
-    writer: Arc<Mutex<BroadcastWriter>>,
+    source: Mutex<broadcast::MediaSource>,
     scope: SessionScope,
-    /// Reads a frame as it reads a received LOC object: into the track's
-    /// configuration changes and a sample.
-    video: Mutex<Option<LocDemuxer>>,
     keyframe_requests: Arc<Notify>,
-    /// The renditions' command senders, for remove_track.
-    renditions: Mutex<Vec<mpsc::UnboundedSender<RenditionCommand>>>,
     /// `None` for a source not published on demand.
     demands: Option<Arc<AsyncMutex<mpsc::UnboundedReceiver<TrackDemand>>>>,
-}
-
-impl MediaSource {
-    fn push(&self, event: MediaEvent) -> PyResult<()> {
-        self.scope.run(|| {
-            self.writer
-                .lock()
-                .unwrap()
-                .push(event)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))
-        })
-    }
 }
 
 #[pymethods]
@@ -134,18 +103,24 @@ impl MediaSource {
     /// `codec` is a WebCodecs codec string: `avc1.*`, `hvc1.*`, `vp8`,
     /// `vp09.*` or `av01.*`; H.264 and H.265 frames are Annex B.
     fn configure_video(&self, codec: &str) -> PyResult<()> {
-        *self.video.lock().unwrap() = Some(video_demuxer(codec)?);
-        Ok(())
+        self.source
+            .lock()
+            .unwrap()
+            .configure_video(codec)
+            .map_err(py_error)
     }
 
     /// One encoded frame; call `configure_video` first. A keyframe opens a
     /// group and sets the track's configuration (for H.264 and H.265, its
     /// parameter sets). `timestamp_micros` must not run backwards.
     fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<()> {
-        for event in demux(&self.video, data, timestamp_micros)? {
-            self.push(event)?;
-        }
-        Ok(())
+        self.scope.run(|| {
+            self.source
+                .lock()
+                .unwrap()
+                .push_video(Bytes::from(data), timestamp_micros)
+                .map_err(py_error)
+        })
     }
 
     /// A rendition of the video in the track `<video>_<name>`, in the group
@@ -160,26 +135,16 @@ impl MediaSource {
         bitrate: Option<u64>,
         framerate: Option<u32>,
     ) -> Rendition {
-        let writer = self.writer.lock().unwrap();
-        let source_tracks = writer.source_tracks();
-        let track = format!("{}_{name}", source_tracks.video);
-        let config = RenditionConfig {
-            track: track.clone(),
-            label,
-            bitrate,
-            framerate,
-            cmaf: source_tracks.cmaf,
-            keyframes: RenditionKeyframes::SameFrames,
-        };
-        let rendition = RenditionTrack::new(&writer, config);
-        let task = self
-            .scope
-            .run(|| RenditionTask::run(rendition, writer.broadcast().clone(), track));
-        self.renditions.lock().unwrap().push(task.command_sender());
+        let _runtime = pyo3_async_runtimes::tokio::get_runtime().enter();
+        let rendition = self.scope.run(|| {
+            self.source
+                .lock()
+                .unwrap()
+                .add_rendition(name, label, bitrate, framerate)
+        });
         Rendition {
-            task,
+            rendition: Mutex::new(rendition),
             scope: self.scope,
-            video: Mutex::new(None),
         }
     }
 
@@ -189,44 +154,18 @@ impl MediaSource {
     /// `configure_video` or `configure_audio` and the media pushed after it
     /// publish the track again. Fails when the relay session has ended.
     fn remove_track<'py>(&self, py: Python<'py>, kind: &str) -> PyResult<Bound<'py, PyAny>> {
-        let writer = self.writer.lock().unwrap();
-        let tracks = writer.source_tracks();
-        let track_name = match kind {
-            "video" => tracks.video.clone(),
-            "audio" => tracks.audio.clone(),
+        let kind = match kind {
+            "video" => TrackKind::Video,
+            "audio" => TrackKind::Audio,
             other => {
                 return Err(PyValueError::new_err(format!(
                     "unknown track kind: {other}"
                 )));
             }
         };
-        let removal = writer.remove_track(&track_name);
-        let renditions: Vec<_> = if kind == "video" {
-            self.renditions
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|command_sender| {
-                    let (done_sender, done_receiver) = oneshot::channel();
-                    let sent = command_sender.send(RenditionCommand::Remove(done_sender));
-                    async move {
-                        sent.map_err(|_| anyhow::anyhow!("rendition task ended"))?;
-                        done_receiver
-                            .await
-                            .map_err(|_| anyhow::anyhow!("rendition task ended"))?
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        self.scope.future_into_py(py, async move {
-            let mut result = removal.await;
-            for removed in renditions {
-                result = result.and(removed.await);
-            }
-            Ok(result?)
-        })
+        let removal = self.source.lock().unwrap().remove_track(kind);
+        self.scope
+            .future_into_py(py, async move { Ok(removal.await?) })
     }
 
     /// `codec` is `opus`, or an AAC `mp4a.40.*` whose `description` is the
@@ -239,23 +178,13 @@ impl MediaSource {
         channels: u8,
         description: Option<Vec<u8>>,
     ) -> PyResult<()> {
-        let config = match codec {
-            "opus" => AudioConfig::Opus {
-                sample_rate,
-                channels,
-            },
-            aac if aac.starts_with("mp4a.40.") => {
-                let description = description
-                    .ok_or_else(|| PyValueError::new_err("AAC needs its AudioSpecificConfig"))?;
-                AudioConfig::Aac(audio_specific_config(&description)?)
-            }
-            other => {
-                return Err(PyValueError::new_err(format!(
-                    "unsupported audio codec: {other}"
-                )));
-            }
-        };
-        self.push(MediaEvent::AudioConfig(config))
+        self.scope.run(|| {
+            self.source
+                .lock()
+                .unwrap()
+                .configure_audio(codec, sample_rate, channels, description.as_deref())
+                .map_err(py_error)
+        })
     }
 
     /// `level` is the frame's RFC 6464 level in -dBov (0 to 127), written
@@ -268,14 +197,17 @@ impl MediaSource {
         level: Option<u8>,
         voice_activity: bool,
     ) -> PyResult<()> {
-        self.push(MediaEvent::Audio(AudioSample {
-            data: Bytes::from(data),
-            pts: Timestamp::from_micros(timestamp_micros),
-            audio_level: level.map(|level| AudioLevel {
-                level,
-                voice_activity,
-            }),
-        }))
+        let level = level.map(|level| AudioLevel {
+            level,
+            voice_activity,
+        });
+        self.scope.run(|| {
+            self.source
+                .lock()
+                .unwrap()
+                .push_audio(Bytes::from(data), timestamp_micros, level)
+                .map_err(py_error)
+        })
     }
 
     /// Resolves the next time a subscriber asks for a new group
@@ -315,30 +247,30 @@ impl MediaSource {
 /// same pictures as the video.
 #[pyclass(module = "moq_wasm")]
 pub struct Rendition {
-    task: RenditionTask,
+    rendition: Mutex<MediaRendition>,
     scope: SessionScope,
-    video: Mutex<Option<LocDemuxer>>,
 }
 
 #[pymethods]
 impl Rendition {
     /// As `MediaSource.configure_video`.
     fn configure_video(&self, codec: &str) -> PyResult<()> {
-        *self.video.lock().unwrap() = Some(video_demuxer(codec)?);
-        Ok(())
+        self.rendition
+            .lock()
+            .unwrap()
+            .configure_video(codec)
+            .map_err(py_error)
     }
 
     /// An encoded frame of the same picture as a video frame, at that
     /// frame's timestamp. Fails once an earlier frame stopped the rendition.
     fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<()> {
-        let events = demux(&self.video, data, timestamp_micros)?;
         self.scope.run(|| {
-            for event in events {
-                self.task
-                    .push(event)
-                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            }
-            Ok(())
+            self.rendition
+                .lock()
+                .unwrap()
+                .push_video(Bytes::from(data), timestamp_micros)
+                .map_err(py_error)
         })
     }
 }
@@ -347,37 +279,16 @@ impl Rendition {
 /// (ISO/IEC 14496-3 §1.6.2.1).
 #[pyfunction]
 pub fn check_audio_specific_config(description: &[u8]) -> PyResult<()> {
-    audio_specific_config(description).map(drop)
-}
-
-fn audio_specific_config(description: &[u8]) -> PyResult<AudioSpecificConfig> {
     AudioSpecificConfig::parse(description)
+        .map(drop)
         .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
-fn video_demuxer(codec: &str) -> PyResult<LocDemuxer> {
-    let video_codec = VideoCodec::from_codec_string(codec)
-        .ok_or_else(|| PyValueError::new_err(format!("unsupported video codec: {codec}")))?;
-    Ok(LocDemuxer::video(video_codec).with_capture_origin(Timestamp::ZERO))
-}
-
-/// Reads a frame as it reads a received LOC object: into the track's
-/// configuration changes and a sample.
-fn demux(
-    video: &Mutex<Option<LocDemuxer>>,
-    data: Vec<u8>,
-    timestamp_micros: u64,
-) -> PyResult<Vec<MediaEvent>> {
-    let mut video = video.lock().unwrap();
-    let video = video
-        .as_mut()
-        .ok_or_else(|| PyRuntimeError::new_err("call configure_video first"))?;
-    video
-        .push(&LocObject {
-            extensions: vec![LocExtension::varint(TIMESTAMP_ID, timestamp_micros)],
-            payload: Bytes::from(data),
-        })
-        .map_err(|error| PyValueError::new_err(error.to_string()))
+fn py_error(error: MediaSourceError) -> PyErr {
+    match error {
+        MediaSourceError::InvalidMedia(_) => PyValueError::new_err(error.to_string()),
+        _ => PyRuntimeError::new_err(error.to_string()),
+    }
 }
 
 /// Whether a subscriber takes `track_name` (draft-18 §10.10).
