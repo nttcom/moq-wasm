@@ -27,10 +27,9 @@ class Participant:
         self._recognizer = recognizer
         self._timeline = timeline
 
-    async def run(self, room: asyncio.Task) -> None:
-        """Runs until cancelled. Cancelled while `room`, the task following the room, is not, as
-        when the participant leaves, it first transcribes the utterances it already heard; cancelled
-        with `room`, it drops them."""
+    async def run(self, stopping: asyncio.Event) -> None:
+        """Runs until cancelled, as when the participant leaves; it then transcribes the utterances
+        it already heard, unless `stopping` is set, which drops them."""
         audio = MoqWasmParticipantInput(self._broadcast, MoqWasmInputParams(audio_in_enabled=True))
 
         @audio.event_handler("on_track_subscribed")
@@ -42,7 +41,7 @@ class Participant:
                 [
                     audio,
                     VADProcessor(vad_analyzer=SileroVADAnalyzer()),
-                    UtteranceSTTService(self._recognizer, self._name),
+                    UtteranceSTTService(self._recognizer, self._name, stopping),
                     TranscriptWriter(self._timeline),
                 ]
             ),
@@ -58,9 +57,6 @@ class Participant:
         try:
             await asyncio.shield(running)
         except asyncio.CancelledError:
-            if room.cancelling():
-                await runner.cancel()
-            else:
-                await worker.stop_when_done()
+            await worker.stop_when_done()
             await running
             raise

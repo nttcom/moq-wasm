@@ -46,7 +46,7 @@ def segment_of(seconds: float) -> bytes:
 
 async def transcribe(model: StubModel, segment: bytes, stopped_at: float, monkeypatch) -> list:
     """Closes an utterance as the VAD does, then transcribes `segment` as the service's segment for it."""
-    service = UtteranceSTTService(SharedWhisper(loaded(model)), "alice")
+    service = UtteranceSTTService(SharedWhisper(loaded(model)), "alice", asyncio.Event())
     await service.process_frame(VADUserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
     monkeypatch.setattr(stt.time, "time", lambda: stopped_at)
     await service.process_frame(VADUserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
