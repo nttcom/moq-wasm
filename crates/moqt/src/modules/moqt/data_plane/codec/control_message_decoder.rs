@@ -428,17 +428,21 @@ mod tests {
 
     #[test]
     fn decode_track_namespace_of_0_or_33_fields_yields_fatal_error() {
-        // Arrange: the encoder refuses 0 fields, so set the count byte to 0 and cut the field "test" out of an encoded SUBSCRIBE
+        // Arrange: the encoder refuses both, so rewrite the count byte of an encoded SUBSCRIBE: cut its field "test" out for 0, add a field "n" to 32 for 33
         let one_field = make_subscribe().encode().unwrap();
         let mut no_fields = BytesMut::from(&one_field[..1]);
         no_fields.put_u8(0);
         no_fields.extend_from_slice(&one_field[7..]);
-        let thirty_three_fields = Subscribe {
-            track_namespace: vec!["n".to_string(); 33],
+        let thirty_two_fields = Subscribe {
+            track_namespace: vec!["n".to_string(); 32],
             ..make_subscribe()
         }
         .encode()
         .unwrap();
+        let mut thirty_three_fields = BytesMut::from(&thirty_two_fields[..1]);
+        thirty_three_fields.put_u8(33);
+        thirty_three_fields.extend_from_slice(&[1, b'n']);
+        thirty_three_fields.extend_from_slice(&thirty_two_fields[2..]);
 
         for (fields, payload) in [(0, no_fields), (33, thirty_three_fields)] {
             // Act
@@ -454,15 +458,23 @@ mod tests {
 
     #[test]
     fn decode_full_track_name_over_4096_bytes_yields_fatal_error() {
-        // Arrange
-        let subscribe = Subscribe {
+        // Arrange: the encoder refuses it, so lengthen the 96-byte track name of an encoded 4,096-byte SUBSCRIBE by one byte
+        let at_limit = Subscribe {
             track_namespace: vec!["n".repeat(4000)],
-            track_name: "t".repeat(97),
+            track_name: "t".repeat(96),
             ..make_subscribe()
-        };
+        }
+        .encode()
+        .unwrap();
+        // Request ID, field count, 2-byte field length and the field
+        let name_offset = 1 + 1 + 2 + 4000;
+        let mut over_limit = BytesMut::from(&at_limit[..name_offset]);
+        over_limit.put_varint(97).unwrap();
+        over_limit.extend_from_slice("t".repeat(97).as_bytes());
+        over_limit.extend_from_slice(&at_limit[name_offset + 2 + 96..]);
 
         // Act
-        let message = decode_one(ControlMessageType::Subscribe, subscribe.encode().unwrap());
+        let message = decode_one(ControlMessageType::Subscribe, over_limit);
 
         // Assert: draft-14 §2.4.1 PROTOCOL_VIOLATION
         assert!(

@@ -2,6 +2,8 @@
 //! (§1.4.1), Location (§1.4.2), Key-Value-Pairs (§1.4.3), Reason Phrase
 //! (§1.4.4) and Track Namespace / Track Name (§2.4.1).
 
+use std::ops::RangeInclusive;
+
 use bytes::{Buf, BufMut, Bytes};
 use thiserror::Error;
 
@@ -269,8 +271,12 @@ pub(crate) fn put_reason_phrase(buf: &mut impl BufMut, reason: &str) {
     buf.put_slice(reason.as_bytes());
 }
 
+/// A Track Namespace or Track Namespace Prefix: 0 to 32 fields (§2.4.1,
+/// §10.18, §10.19).
+const TRACK_NAMESPACE_FIELDS: RangeInclusive<u64> = 0..=name_reader::MAX_TRACK_NAMESPACE_FIELDS;
+
 pub(crate) fn get_track_namespace(buf: &mut impl Buf) -> Result<Vec<String>, DecodeError> {
-    let namespace = name_reader::get_track_namespace(buf, get_name_length, 0..=32)?;
+    let namespace = name_reader::get_track_namespace(buf, get_name_length, TRACK_NAMESPACE_FIELDS)?;
     if namespace.iter().any(String::is_empty) {
         return Err(DecodeError::protocol_violation(
             "empty track namespace field",
@@ -279,8 +285,9 @@ pub(crate) fn get_track_namespace(buf: &mut impl Buf) -> Result<Vec<String>, Dec
     Ok(namespace)
 }
 
-/// Fails on an empty field, which §2.4.1 forbids; a namespace of no fields
-/// is written.
+/// Fails, writing nothing, on a namespace §2.4.1 has its receiver close the
+/// session over: an empty field, more than 32 fields or more than 4096
+/// bytes. A namespace of no fields is written.
 pub(crate) fn put_track_namespace(
     buf: &mut impl BufMut,
     namespace: &[String],
@@ -289,6 +296,7 @@ pub(crate) fn put_track_namespace(
         !namespace.iter().any(String::is_empty),
         "empty track namespace field"
     );
+    name_reader::check_track_namespace(namespace, TRACK_NAMESPACE_FIELDS)?;
     put_vi64(buf, namespace.len() as u64);
     for field in namespace {
         put_vi64(buf, field.len() as u64);
@@ -305,11 +313,14 @@ pub(crate) fn get_full_track_name(
     Ok((namespace, name))
 }
 
+/// Fails, writing nothing, like `put_track_namespace` and on a Full Track
+/// Name over 4096 bytes (§2.4.1).
 pub(crate) fn put_full_track_name(
     buf: &mut impl BufMut,
     namespace: &[String],
     name: &str,
 ) -> anyhow::Result<()> {
+    name_reader::check_track_name(namespace, name)?;
     put_track_namespace(buf, namespace)?;
     put_vi64(buf, name.len() as u64);
     buf.put_slice(name.as_bytes());
@@ -570,6 +581,25 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_namespace_or_full_track_name_beyond_the_limits_is_not_encoded() {
+        // Arrange
+        let too_many_fields = vec!["n".to_string(); 33];
+        let too_long = vec!["n".repeat(4097)];
+        let mut buf = BytesMut::new();
+
+        // Act
+        let results = [
+            put_track_namespace(&mut buf, &too_many_fields),
+            put_track_namespace(&mut buf, &too_long),
+            put_full_track_name(&mut buf, &["n".repeat(4000)], &"t".repeat(97)),
+        ];
+
+        // Assert
+        assert!(results.iter().all(Result::is_err), "{results:?}");
+        assert!(buf.is_empty());
+    }
+
+    #[test]
     fn a_namespace_of_no_fields_round_trips() {
         // Arrange
         let mut buf = BytesMut::new();
@@ -604,10 +634,11 @@ pub(super) mod tests {
 
     #[test]
     fn a_full_track_name_beyond_4096_bytes_is_a_protocol_violation() {
-        // Arrange
-        let namespace = vec!["n".repeat(4000)];
+        // Arrange: written by hand, since the encoder refuses it
         let mut buf = BytesMut::new();
-        put_full_track_name(&mut buf, &namespace, &"t".repeat(97)).unwrap();
+        put_track_namespace(&mut buf, &["n".repeat(4000)]).unwrap();
+        put_vi64(&mut buf, 97);
+        buf.extend_from_slice("t".repeat(97).as_bytes());
 
         // Act / Assert
         assert_eq!(

@@ -104,8 +104,7 @@ impl FetchParams {
                 end_location,
             } => {
                 payload.put_varint(FetchTypeValue::Standalone as u64)?;
-                payload.put_tuple(track_namespace)?;
-                payload.put_string(track_name)?;
+                util::put_full_track_name(&mut payload, track_namespace, track_name)?;
                 payload.unsplit(start_location.encode()?);
                 payload.unsplit(end_location.encode()?);
             }
