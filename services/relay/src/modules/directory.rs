@@ -1381,6 +1381,8 @@ impl InMemoryLocalPubSubDirectory {
 
 #[cfg(test)]
 mod tests {
+    mod operation_sequences;
+
     use super::*;
     use crate::modules::data_plane::ingress::ingest_task::IngestTask;
     use crate::modules::session::session_event::SessionEvent;
