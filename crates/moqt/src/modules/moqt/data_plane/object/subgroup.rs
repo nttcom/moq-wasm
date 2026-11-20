@@ -704,8 +704,7 @@ mod tests {
             fn decoded_deltas_give_back_the_object_ids_up_to_the_first_past_u64_max(
                 object_id_deltas in vec(prop_oneof![varint(), Just((1 << 62) - 1)], 1..12),
             ) {
-                // Arrange: the Object IDs the deltas name, without overflow,
-                // up to the first one past `u64::MAX`
+                // Arrange: the model computes the Object IDs in u128
                 let message_type = SubgroupHeaderType::new(0x10).unwrap();
                 let mut expected = Vec::new();
                 let mut model_prev: Option<u128> = None;
