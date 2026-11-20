@@ -889,6 +889,13 @@ handle 型（`Subscriber`、`Publisher`、`Subscription`、`TrackReader`、`Trac
   `ClientTelemetry`）。10秒ごとと `pagehide` のとき（`sendBeacon`）に、session のトークンごとに
   1レポートにまとめる。401 が返ったトークンのレコードは、以後トークンなしで送る。`onLog` と
   `onSpan` も渡せば両方に届く。
+  - `ClientTelemetry` と TypeScript 側のログの sink は wasm を読み込む前に用意し、wasm の sink は
+    読み込みの後に入れる。
+    - 読み込みに失敗すると、`loadMoqt` が `wasm module failed to load` を ERROR でトークンなしに
+      残す。これで wasm が動かないページも送られる。例: キャッシュされた古いページが再デプロイで
+      消えた `.wasm` を指し、サーバーが HTML を返す。
+    - `ClientTelemetry` はページに1つだけ作る。失敗した `init()` をやり直しても送信タイマーは
+      増えない。
   - 送るたびに、`start` した `LivePlayer` の stats（`LiveStats`）を、その player の
     `trackNamespace`（`/` でつないだ namespace）と `mediaSource`（`source` の video track 名、
     `source` なしなら無し）とともに、player の session のトークンのレポートの `stats` に入れる。

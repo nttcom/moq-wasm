@@ -1,9 +1,11 @@
-import { setSdkLogSink } from './log'
+import { sdkLog, setSdkLogSink } from './log'
 import { ClientTelemetry, type TelemetryOptions } from './telemetry'
 import type * as Moqt from '../../pkg/moqt'
 
 // Not `typeof import(...)`: API Extractor cannot report that form.
 type MoqtModule = typeof Moqt
+
+const TARGET = 'moq-wasm::core::init'
 
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug' | 'trace'
 
@@ -53,6 +55,9 @@ export interface InitOptions {
 
 let loading: Promise<MoqtModule> | null = null
 let initializing: Promise<void> | null = null
+/// Created once, before the wasm module loads, so a load failure is sent too and a call after
+/// one that rejected does not start a second report timer.
+let telemetry: ClientTelemetry | undefined
 
 /// Loads the wasm module and, with `onLog`, `onSpan` or `telemetry`, installs its log sink.
 /// The sink is page-wide, so only the first call's options take effect: a later call returns
@@ -67,17 +72,19 @@ export function init(options: InitOptions = {}): Promise<void> {
 }
 
 async function initialize(options: InitOptions): Promise<void> {
-  const moqt = await loadMoqt(options.wasmUrl)
-  const telemetry = options.telemetry && new ClientTelemetry(options.telemetry)
+  if (options.telemetry && !telemetry) {
+    telemetry = new ClientTelemetry(options.telemetry)
+    telemetry.start()
+  }
   const onLog = both(options.onLog, telemetry?.log)
   const onSpan = both(options.onSpan, telemetry?.span)
-  if (onLog || onSpan) {
-    moqt.setLogSink(onLog ?? (() => {}), options.logLevel ?? 'warn', onSpan)
-  }
   if (onLog) {
     setSdkLogSink(onLog, options.logLevel ?? 'warn')
   }
-  telemetry?.start()
+  const moqt = await loadMoqt(options.wasmUrl)
+  if (onLog || onSpan) {
+    moqt.setLogSink(onLog ?? (() => {}), options.logLevel ?? 'warn', onSpan)
+  }
 }
 
 function both<A extends unknown[]>(
@@ -105,6 +112,7 @@ export function loadMoqt(wasmUrl?: string | URL): Promise<MoqtModule> {
     })
     .catch((error) => {
       loading = null
+      sdkLog(undefined, 'error', TARGET, 'wasm module failed to load', { error })
       throw error
     })
   return loading
