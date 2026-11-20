@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use moqt::{object::Location, subscribe::FilterType};
 
+use crate::modules::domain::object_cursor::ObjectCursor;
+
 /// The part of a downstream subscription a SUBSCRIBE_UPDATE / REQUEST_UPDATE
 /// can change (draft-14 §9.10, draft-18 §10.9.1), shared by its registration
 /// and its egress runner.
@@ -142,18 +144,18 @@ impl DeliveryControl {
     }
 
     /// Where a subgroup of `group_id` continues once an update lets it be
-    /// delivered again, given that `object_id` is the next one it has not
-    /// sent: past the Largest Object at that update. `None` when the whole
-    /// group lies at or before it.
-    pub(crate) fn resume_object_id(&self, group_id: u64, object_id: u64) -> Option<u64> {
-        match self.largest_at_update {
-            Some(largest) if group_id < largest.group_id => None,
-            Some(largest) if group_id == largest.group_id => largest
-                .object_id
-                .checked_add(1)
-                .map(|next| object_id.max(next)),
-            _ => Some(object_id),
-        }
+    /// delivered again: `unsent`, or past the Largest Object at that update
+    /// if later. `None` when nothing of the group is left: `unsent` is past
+    /// it, or the whole group lies at or before that Largest Object.
+    pub(crate) fn resume_object_id(&self, group_id: u64, unsent: ObjectCursor) -> Option<u64> {
+        let resumed = match self.largest_at_update {
+            Some(largest) if group_id < largest.group_id => return None,
+            Some(largest) if group_id == largest.group_id => {
+                unsent.max(ObjectCursor::after(largest.object_id))
+            }
+            _ => unsent,
+        };
+        resumed.object_id()
     }
 }
 
@@ -172,18 +174,9 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::modules::test_support::relay_harness::fixtures::location;
-
-    fn id_near_bounds() -> impl Strategy<Value = u64> {
-        prop_oneof![
-            Just(0),
-            Just(1),
-            Just(u64::MAX - 1),
-            Just(u64::MAX),
-            0..8u64,
-            any::<u64>(),
-        ]
-    }
+    use crate::modules::test_support::{
+        location_strategies::id_near_bounds, relay_harness::fixtures::location,
+    };
 
     fn location_near_bounds() -> impl Strategy<Value = Location> {
         (id_near_bounds(), id_near_bounds())
@@ -359,10 +352,10 @@ mod tests {
         control.apply_update(control.requested(128, true, None, Some(location(4, 2))));
 
         // Assert
-        assert_eq!(control.resume_object_id(3, 7), None);
-        assert_eq!(control.resume_object_id(4, 1), Some(3));
-        assert_eq!(control.resume_object_id(4, 5), Some(5));
-        assert_eq!(control.resume_object_id(5, 0), Some(0));
+        assert_eq!(control.resume_object_id(3, ObjectCursor::At(7)), None);
+        assert_eq!(control.resume_object_id(4, ObjectCursor::At(1)), Some(3));
+        assert_eq!(control.resume_object_id(4, ObjectCursor::At(5)), Some(5));
+        assert_eq!(control.resume_object_id(5, ObjectCursor::At(0)), Some(0));
     }
 
     #[test]
@@ -376,9 +369,22 @@ mod tests {
         last.apply_update(last.requested(128, true, None, Some(Location::MAX)));
 
         // Assert
-        assert_eq!(control.resume_object_id(4, 7), None);
-        assert_eq!(control.resume_object_id(5, 0), Some(0));
-        assert_eq!(last.resume_object_id(u64::MAX, 7), None);
+        assert_eq!(control.resume_object_id(4, ObjectCursor::At(7)), None);
+        assert_eq!(control.resume_object_id(5, ObjectCursor::At(0)), Some(0));
+        assert_eq!(last.resume_object_id(u64::MAX, ObjectCursor::At(7)), None);
+    }
+
+    #[test]
+    fn a_subgroup_that_sent_the_largest_object_id_does_not_resume() {
+        // Arrange
+        let mut control = DeliveryControl::new(128, true, &FilterType::LargestObject, None);
+        control.apply_update(control.requested(128, true, None, Some(location(4, 2))));
+
+        // Act
+        let resumed = control.resume_object_id(5, ObjectCursor::after(u64::MAX));
+
+        // Assert
+        assert_eq!(resumed, None);
     }
 
     proptest! {
@@ -405,7 +411,7 @@ mod tests {
                 .min();
 
             // Act
-            let resumed = control.resume_object_id(group_id, object_id);
+            let resumed = control.resume_object_id(group_id, ObjectCursor::At(object_id));
 
             // Assert
             prop_assert_eq!(resumed, model);

@@ -4,15 +4,18 @@ use tokio::time::Instant;
 
 use bytes::Bytes;
 
-use crate::modules::data_plane::{
-    cache::subgroup_key::SubgroupKey,
-    cache::{
-        cached_object::CachedObject,
-        track_cache::{
-            ledger::{Ledger, OpenSubgroup},
-            partial_object::{PartialEnd, PartialObject},
+use crate::modules::{
+    data_plane::{
+        cache::subgroup_key::SubgroupKey,
+        cache::{
+            cached_object::CachedObject,
+            track_cache::{
+                ledger::{Ledger, OpenSubgroup},
+                partial_object::{PartialEnd, PartialObject},
+            },
         },
     },
+    domain::object_cursor::ObjectCursor,
 };
 
 use super::{TrackCache, TrackMalformed, location};
@@ -125,7 +128,7 @@ impl Drop for OpenSubgroupGuard<'_> {
 pub(crate) struct SubgroupRun {
     pub(crate) key: SubgroupKey,
     pub(crate) generation: usize,
-    pub(crate) first_object_id: u64,
+    pub(crate) first_object_id: ObjectCursor,
 }
 
 #[derive(Debug)]
@@ -316,11 +319,11 @@ impl TrackCache {
                 ledger.aborted_subgroups.insert(key);
             }
             let group_complete = stream_group_closed && !ledger.is_group_aborted(group_id);
-            if group_complete {
-                ledger.known_ranges.insert(
-                    location(group_id, knowledge_frontier),
-                    location(group_id, 0),
-                );
+            // A frontier past the group leaves no Object ID to mark known.
+            if group_complete && let Some(frontier) = knowledge_frontier.object_id() {
+                ledger
+                    .known_ranges
+                    .insert(location(group_id, frontier), location(group_id, 0));
             }
         }
         self.notify.notify_waiters();
@@ -353,16 +356,17 @@ impl TrackCache {
         &self,
         key: SubgroupKey,
         generation: usize,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> Result<NextObject, TrackMalformed> {
         self.wait_until(|ledger| {
             let run_end = ledger.superseded_run_end(key, generation);
-            let in_run = |object_id: u64| run_end.is_none_or(|end| object_id < end);
+            let in_run =
+                |object_id: u64| run_end.is_none_or(|end| ObjectCursor::At(object_id) < end);
             let next_object = ledger
-                .next_subgroup_object(key, from_object_id, Instant::now())
+                .next_subgroup_object(key, from, Instant::now())
                 .filter(|object| in_run(object.object.location.object_id));
             let next_partial = ledger
-                .next_subgroup_partial(key, from_object_id)
+                .next_subgroup_partial(key, from)
                 .filter(|partial| in_run(partial.object.location.object_id))
                 .filter(|partial| {
                     next_object.as_ref().is_none_or(|object| {
@@ -387,13 +391,13 @@ impl TrackCache {
         &self,
         group_id: u64,
         reopen_count: usize,
-        from_object_id: u64,
+        from: ObjectCursor,
     ) -> Result<NextObject, TrackMalformed> {
         self.wait_until(|ledger| {
             if ledger.reopen_count_in_group(group_id) != reopen_count {
                 return Some(NextObject::Aborted);
             }
-            match ledger.next_group_object(group_id, from_object_id) {
+            match ledger.next_group_object(group_id, from) {
                 Some(object) => Some(NextObject::Object(object)),
                 None if ledger.has_open_subgroup_in_group(group_id) => None,
                 None if ledger.is_group_aborted(group_id) => Some(NextObject::Aborted),
@@ -422,7 +426,7 @@ mod tests {
     async fn next_at(cache: &TrackCache, object_id: u64) -> NextObject {
         tokio::time::timeout(
             Duration::from_secs(1),
-            cache.next_subgroup_object_or_wait(stream_key(0), 0, object_id),
+            cache.next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(object_id)),
         )
         .await
         .expect("the next object is decided")
@@ -436,7 +440,7 @@ mod tests {
         let _open = open_group(&cache, 0, &[0, 3, 5]);
         // Act
         let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 3)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(3))
             .await
             .unwrap()
             .unwrap();
@@ -451,7 +455,7 @@ mod tests {
         let _open = open_group(&cache, 0, &[0, 3, 5]);
         // Act
         let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 4)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(4))
             .await
             .unwrap()
             .unwrap();
@@ -467,7 +471,7 @@ mod tests {
         // Act / Assert
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -481,7 +485,7 @@ mod tests {
         // Act / Assert: nothing will ever close it, so waiting would hang
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -495,7 +499,7 @@ mod tests {
         let _ = cache.insert_live(stream_object_in_subgroup(0, 1, 1));
         // Act
         let object = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
             .await
             .unwrap()
             .unwrap();
@@ -512,7 +516,7 @@ mod tests {
             let cache = cache.clone();
             async move {
                 cache
-                    .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                    .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
                     .await
             }
         });
@@ -539,7 +543,7 @@ mod tests {
             let cache = cache.clone();
             async move {
                 cache
-                    .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                    .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
                     .await
             }
         });
@@ -563,7 +567,7 @@ mod tests {
             let cache = cache.clone();
             async move {
                 cache
-                    .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                    .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
                     .await
             }
         });
@@ -592,7 +596,7 @@ mod tests {
             Ok(SubgroupRun {
                 key: stream_key(0),
                 generation: 1,
-                first_object_id: 3,
+                first_object_id: ObjectCursor::At(3),
             })
         );
     }
@@ -610,7 +614,7 @@ mod tests {
         assert!(subgroup_opened_receiver.try_recv().is_err());
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -625,13 +629,13 @@ mod tests {
         let _ = reopened.insert(stream_object(0, 3));
         // Act
         let superseded_last = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 2)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(2))
             .await;
         let superseded_end = cache
-            .next_subgroup_object_or_wait(stream_key(0), 0, 3)
+            .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(3))
             .await;
         let reopened_first = cache
-            .next_subgroup_object_or_wait(stream_key(0), 1, 3)
+            .next_subgroup_object_or_wait(stream_key(0), 1, ObjectCursor::At(3))
             .await;
         // Assert
         assert_eq!(
@@ -657,7 +661,7 @@ mod tests {
         // Assert
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 1, 3)
+                .next_subgroup_object_or_wait(stream_key(0), 1, ObjectCursor::At(3))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -676,7 +680,7 @@ mod tests {
         // Assert
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -717,7 +721,7 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
-                cache.next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
             )
             .await
             .is_err()
@@ -725,7 +729,7 @@ mod tests {
         remaining.finish();
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -742,7 +746,7 @@ mod tests {
         // Assert
         assert_eq!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
                 .await
                 .unwrap()
                 .unwrap()
@@ -765,7 +769,7 @@ mod tests {
         // Assert
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 1)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(1))
                 .await,
             Ok(NextObject::Finished)
         ));
@@ -786,7 +790,7 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
-                cache.next_subgroup_object_or_wait(stream_key(0), 0, 4)
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(4))
             )
             .await
             .is_err()
@@ -808,7 +812,7 @@ mod tests {
         // Assert: object 2 was never received by any stream
         assert!(matches!(
             cache
-                .next_subgroup_object_or_wait(stream_key(0), 0, 4)
+                .next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(4))
                 .await,
             Ok(NextObject::Aborted)
         ));
@@ -826,7 +830,9 @@ mod tests {
         drop(leaving);
         // Assert
         assert!(matches!(
-            cache.next_subgroup_object_or_wait(key, 0, 0).await,
+            cache
+                .next_subgroup_object_or_wait(key, 0, ObjectCursor::At(0))
+                .await,
             Ok(NextObject::Finished)
         ));
     }
@@ -844,7 +850,7 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
-                cache.next_subgroup_object_or_wait(key, 0, 0)
+                cache.next_subgroup_object_or_wait(key, 0, ObjectCursor::At(0))
             )
             .await
             .is_err()
