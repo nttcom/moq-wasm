@@ -216,8 +216,9 @@ impl TransportSendStream for QmuxSendStream {
     }
 }
 
-/// As in quinn, a stream dropped before `close` or `reset` is reset with
-/// code 0, so the peer does not wait for data that never comes.
+/// A stream dropped before `close` or `reset` is reset with code 0, so the
+/// peer neither waits for data that never comes nor takes a partial
+/// subgroup for a complete one.
 impl Drop for QmuxSendStream {
     fn drop(&mut self) {
         if !self.ended {

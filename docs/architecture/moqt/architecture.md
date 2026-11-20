@@ -223,8 +223,9 @@ alike; only the message transport under it differs.
   MoQT termination code, then the WebSocket Close frame; a peer's 0x1d is
   reported as `TransportClose { code: Some(..) }`, a transport error (0x1c)
   or a lost socket as `code: None`, like quinn's `ApplicationClosed`. Dropping
-  a `QmuxSendStream` before `close` resets it with code 0 and dropping a
-  `QmuxReceiveStream` before its end sends STOP_SENDING 0, as quinn does.
+  a `QmuxSendStream` before `close` resets it with code 0, as the QUIC and
+  WebTransport send streams do, and dropping a `QmuxReceiveStream` before
+  its end sends STOP_SENDING 0, as quinn does.
 - `websocket/websocket_listener.rs` — binds `[::]:port` (TCP), terminates
   TLS with the server's certificate (ALPN `http/1.1`), runs the HTTP/1.1
   upgrade with the subprotocol selection in a task per connection (10 s
@@ -1246,6 +1247,14 @@ TRACK_STATUS_ERROR NOT_SUPPORTED automatically.
   enter the per-track channel.
 
 ## Key invariants
+
+- **A send stream dropped before `close` or `reset` is reset with code 0**,
+  never FIN'd (draft-14 §10.4.3): a FIN would make a partial subgroup look
+  complete. quinn finishes a dropped `SendStream`, so `QUICSendStream` and
+  `WtSendStream` reset it in their `Drop`; a stream meant to end cleanly
+  calls `close`. Guarded by the `a_stream_dropped_*` tests of
+  `quic_send_stream.rs` and `wt_send_stream.rs`. The browser transport does
+  not reset a dropped stream yet.
 
 - **Request IDs reach the peer in order and without gaps** (draft-14 §9.1). A
   `RequestIdReservation` holds the next Request ID's lock until the request

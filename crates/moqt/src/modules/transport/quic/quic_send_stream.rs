@@ -18,6 +18,10 @@ pub struct QUICSendStream {
     /// The wait `poll_stopped` started, kept until it resolves so that it
     /// stays registered.
     stopped: Option<Stopped>,
+    /// Set once `close` or `reset` ran, so `Drop` does not reset a stream
+    /// already finished: quinn still accepts a reset until the FIN is
+    /// acknowledged.
+    ended: bool,
 }
 
 impl QUICSendStream {
@@ -25,6 +29,7 @@ impl QUICSendStream {
         Self {
             send_stream,
             stopped: None,
+            ended: false,
         }
     }
 }
@@ -47,6 +52,7 @@ impl TransportSendStream for QUICSendStream {
     }
 
     fn close(&mut self) -> Result<(), TransportSendError> {
+        self.ended = true;
         self.send_stream
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)
@@ -58,6 +64,7 @@ impl TransportSendStream for QUICSendStream {
                 source: source.into(),
             }
         })?;
+        self.ended = true;
         self.send_stream
             .reset(error_code)
             .map_err(|_| TransportSendError::ClosedStream)
@@ -83,6 +90,17 @@ impl TransportSendStream for QUICSendStream {
     }
 }
 
+/// A stream dropped before `close` or `reset` is reset with code 0: quinn
+/// would finish it, making a partial subgroup look complete to the peer
+/// (draft-14 §10.4.3).
+impl Drop for QUICSendStream {
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = self.send_stream.reset(quinn::VarInt::from_u32(0));
+        }
+    }
+}
+
 fn quic_write_error_to_transport_send_error(error: quinn::WriteError) -> TransportSendError {
     match error {
         quinn::WriteError::Stopped(code) => TransportSendError::Stopped {
@@ -93,5 +111,40 @@ fn quic_write_error_to_transport_send_error(error: quinn::WriteError) -> Transpo
         },
         quinn::WriteError::ClosedStream => TransportSendError::ClosedStream,
         quinn::WriteError::ZeroRttRejected => TransportSendError::ZeroRttRejected,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::modules::{
+        test_support::{WRITTEN, within, written_uni_stream},
+        transport::{qmux::in_memory::read_to_end, read_error::ReadError},
+    };
+
+    #[tokio::test]
+    async fn a_stream_dropped_before_close_is_reset() {
+        // Arrange
+        let mut stream = written_uni_stream("quic-drop-reset", "moqt", "").await;
+
+        // Act
+        drop(stream.sender);
+
+        // Assert: the peer does not take the partial data for a complete stream
+        let read = within(read_to_end(&mut stream.receiver)).await;
+        assert_eq!(read, Err(ReadError::Reset));
+    }
+
+    #[tokio::test]
+    async fn a_stream_dropped_after_close_ends_with_fin() {
+        // Arrange
+        let mut stream = written_uni_stream("quic-close-fin", "moqt", "").await;
+
+        // Act
+        stream.sender.close().unwrap();
+        drop(stream.sender);
+
+        // Assert
+        let read = within(read_to_end(&mut stream.receiver)).await;
+        assert_eq!(read, Ok(WRITTEN.to_vec()));
     }
 }

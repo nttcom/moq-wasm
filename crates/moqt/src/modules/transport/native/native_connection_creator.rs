@@ -255,51 +255,17 @@ mod tests {
     use crate::modules::{
         moqt::version::{DEFAULT_VERSIONS, application_protocols},
         test_support::{
-            HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions, native_client,
-            self_signed_server_config, server_transport_creator, spawn_native_server,
+            HANDSHAKE_TIMEOUT, assert_both_sides_open_bi_streams, connect_sessions,
+            connect_transports, native_client, self_signed_server_config, server_transport_creator,
+            spawn_native_server,
         },
         transport::{
             accept_error::AcceptError,
             application_protocol::{ApplicationProtocols, NegotiatedProtocol},
             connect_target::ConnectTarget,
-            transport_connection::BoxedConnection,
             transport_connection_creator::TransportConnectionCreator,
         },
     };
-
-    /// Returns the (client, server) connections.
-    async fn connect_transports(
-        name: &str,
-        scheme: &str,
-        path: &str,
-        server: ApplicationProtocols,
-        client: ApplicationProtocols,
-    ) -> (BoxedConnection, BoxedConnection) {
-        let config = self_signed_server_config(name);
-        let server = NativeConnectionCreator::server(
-            &config.cert_path,
-            &config.key_path,
-            0,
-            config.keep_alive_interval_sec,
-            server,
-        )
-        .unwrap();
-        let url = format!(
-            "{scheme}://127.0.0.1:{}{path}",
-            server.local_port().unwrap()
-        );
-        let client =
-            NativeConnectionCreator::client(&CertificateVerification::Disabled, client).unwrap();
-        let target = ConnectTarget::parse(&url).unwrap();
-        tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
-            let (client, server) = tokio::join!(client.create_new_transport(&target), async {
-                server.accept_new_transport().await.unwrap().await
-            });
-            (client.unwrap(), server.unwrap())
-        })
-        .await
-        .unwrap()
-    }
 
     #[tokio::test]
     async fn raw_quic_connections_report_the_alpn_they_negotiated() {
