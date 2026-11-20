@@ -8,7 +8,7 @@ import type {
 import { RequestError, RequestErrorCode } from '../../../core/requestError'
 
 /// One SUBSCRIBE the session answered: `deliver` hands its reader an object,
-/// `end` ends it with PUBLISH_DONE.
+/// `end` ends it with PUBLISH_DONE, after which its reader reads nothing more.
 export type FakeTextSubscription = {
   track: string
   options: MoqSubscribeGroupStartOptions
@@ -44,6 +44,7 @@ export class FakeTextTrackSession {
     }
     const queued: ReceivedObject[] = []
     let wake = () => {}
+    let ended = false
     let endDone = (_done: PublishDone) => {}
     const done = new Promise<PublishDone | undefined>((resolve) => {
       endDone = resolve
@@ -56,14 +57,18 @@ export class FakeTextTrackSession {
         queued.push(textObject(groupId, text))
         wake()
       },
-      end: (published) => endDone(published)
+      end: (published) => {
+        ended = true
+        endDone(published)
+        wake()
+      }
     }
     this.subscriptions.push(subscription)
     return {
       largest: undefined,
       done,
       async *[Symbol.asyncIterator]() {
-        while (!subscription.closed) {
+        while (!subscription.closed && !ended) {
           const object = queued.shift()
           if (object) {
             yield object
