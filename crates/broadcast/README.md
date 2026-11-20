@@ -14,6 +14,7 @@ one player plays and rewinds all of them.
 | `audio` | LOC | Raw AAC, G.711 A-law, Opus or MP3 frames |
 | `<track>_cmaf` | CMAF (draft-ietf-moq-cmsf-01) | One `moof` + `mdat` fragment per sample; AAC only for audio |
 | `<video>_timeline` | MSF media timeline | Per group: presentation time, location and encode wallclock |
+| `chat`, offered event timelines | MSF event timeline | Records the publisher writes, indexed by wallclock or by media time |
 
 `video_720p` / `video_480p` / `video_360p` appear when the publisher
 transcodes (`crates/transcode`). A publisher can name its tracks otherwise
