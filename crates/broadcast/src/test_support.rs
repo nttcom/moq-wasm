@@ -7,6 +7,12 @@ use moqt::{
 };
 use tokio::sync::mpsc;
 
+mod fake_relay;
+
+pub(crate) use fake_relay::FakeRelay;
+
+pub(crate) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A server config with a self-signed certificate written under a temporary
 /// directory named after `name`, so tests running in parallel do not share one.
 pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
