@@ -19,6 +19,7 @@ from tests.helpers import (
 
 ROOM = ["app-1", "team a"]
 ALICE = [*ROOM, "alice"]
+BOB = [*ROOM, "bob"]
 
 
 def test_one_element_under_the_room_is_a_participant():
@@ -163,6 +164,29 @@ async def test_a_room_that_empties_still_transcribes_what_a_participant_who_left
     # Assert
     await asyncio.wait_for(following, 5)
     assert texts(transcript) == ["こんにちは"]
+
+
+async def test_a_participant_who_joins_after_the_grace_period_while_what_was_said_is_transcribed_is_heard(
+    monkeypatch,
+):
+    # Arrange: alice leaves while the recognizer works on her utterance, and the grace period passes
+    recognizer = HeldRecognizer("一", "二")
+    following, transcript, session = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 0.1, leave=True)
+    await asyncio.sleep(0.3)
+
+    # Act: bob joins and speaks before her utterance is transcribed
+    session.publish(BOB)
+    heard_while_busy = await called_within(recognizer, 2, 1.0)
+    recognizer.release.set()
+    await until_transcribed(transcript, 2)
+    stayed = not following.done()
+    session.withdraw(BOB)
+
+    # Assert: the room stays while bob is in it, and ends once he left
+    assert heard_while_busy
+    assert stayed
+    await asyncio.wait_for(following, 5)
+    assert sorted(texts(transcript)) == ["一", "二"]
 
 
 async def test_a_participant_who_rejoins_is_heard_while_what_they_said_before_is_transcribed(monkeypatch):
