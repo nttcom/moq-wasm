@@ -1,0 +1,13 @@
+[
+  {
+    "appId": "sip-e2e",
+    "secret": "local-secret-for-the-sip-gateway-e2e-app",
+    "isRelay": false,
+    "phone": { "allowedDestinations": ["+8190"] }
+  },
+  {
+    "appId": "sip-e2e-relay",
+    "secret": "local-secret-for-the-sip-gateway-e2e-relay",
+    "isRelay": true
+  }
+]

@@ -1,0 +1,14 @@
+# The local trunk the E2E test calls through (run.sh writes keys/).
+services:
+  trunk:
+    image: andrius/asterisk:22-cert
+    volumes:
+      - ./asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./asterisk/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
+      - ./asterisk/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./keys:/etc/asterisk/keys:ro
+    ports:
+      - "127.0.0.1:5061:5061/tcp"
+      - "127.0.0.1:10000-10019:10000-10019/udp"
