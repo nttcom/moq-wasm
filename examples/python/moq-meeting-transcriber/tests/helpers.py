@@ -50,23 +50,25 @@ class SessionRefusingNamespaces:
 
 
 class HeldRecognizer(NamedRecognizer):
-    """Answers each utterance with `text` once `release` is set; `called` is set once it has one."""
+    """Answers its calls with `texts` in order once `release` is set; `called` is set once it has one."""
 
-    def __init__(self, text: str):
+    def __init__(self, *texts: str):
         super().__init__("whisper")
-        self.text = text
+        self.texts = list(texts)
         self.called = asyncio.Event()
         self.release = asyncio.Event()
 
     async def recognize(self, pcm: bytes) -> str:
         self.called.set()
         await self.release.wait()
-        return self.text
+        return self.texts.pop(0)
 
 
-class OneUtteranceInput(FrameProcessor):
+class UtterancesInput(FrameProcessor):
     """Stands in for `MoqWasmParticipantInput` and the VAD after it: once the pipeline starts, the
-    participant says one second of audio, framed by the VAD's start and stop."""
+    participant says `count` utterances of one second, each framed by the VAD's start and stop."""
+
+    count = 1
 
     def __init__(self, broadcast, params):
         super().__init__()
@@ -76,15 +78,16 @@ class OneUtteranceInput(FrameProcessor):
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
         if isinstance(frame, StartFrame):
-            await self.push_frame(VADUserStartedSpeakingFrame())
-            await self.push_frame(
-                UserAudioRawFrame(
-                    user_id="alice", audio=bytes(2 * SAMPLE_RATE), sample_rate=SAMPLE_RATE, num_channels=1
+            for _ in range(self.count):
+                await self.push_frame(VADUserStartedSpeakingFrame())
+                await self.push_frame(
+                    UserAudioRawFrame(
+                        user_id="alice", audio=bytes(2 * SAMPLE_RATE), sample_rate=SAMPLE_RATE, num_channels=1
+                    )
                 )
-            )
-            await self.push_frame(VADUserStoppedSpeakingFrame())
+                await self.push_frame(VADUserStoppedSpeakingFrame())
 
 
 def passing_vad(vad_analyzer) -> FrameProcessor:
-    """Stands in for `VADProcessor`: `OneUtteranceInput` frames the speech itself."""
+    """Stands in for `VADProcessor`: `UtterancesInput` frames the speech itself."""
     return IdentityFilter()
