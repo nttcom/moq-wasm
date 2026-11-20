@@ -29,6 +29,10 @@ struct Args {
     #[arg(long)]
     bots: Option<String>,
 
+    /// Namespace path under the appId the token may place, answer and end phone calls in; "" grants the whole app
+    #[arg(long)]
+    calls: Option<String>,
+
     /// Token lifetime, e.g. 30m, 12h, 365d
     #[arg(long, default_value = "12h", value_parser = parse_lifetime)]
     ttl: Duration,
@@ -47,6 +51,7 @@ fn main() -> anyhow::Result<()> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let claims = Claims {
         bots: args.bots,
+        calls: args.calls,
         relay_id: args.relay_id,
         ..Claims::issued(args.app_id, args.publish, args.subscribe, now, args.ttl)
     };
