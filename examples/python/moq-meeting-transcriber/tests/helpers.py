@@ -80,15 +80,18 @@ class NamespaceEvents:
 
 
 class HeldRecognizer(NamedRecognizer):
-    """Answers its calls with `texts` in order once `release` is set; `called` is set once it has one."""
+    """Answers its calls with `texts` in order once `release` is set; `called` is set once it has one,
+    and `calls` counts them."""
 
     def __init__(self, *texts: str):
         super().__init__("whisper")
         self.texts = list(texts)
         self.called = asyncio.Event()
+        self.calls = 0
         self.release = asyncio.Event()
 
     async def recognize(self, pcm: bytes) -> str:
+        self.calls += 1
         self.called.set()
         await self.release.wait()
         return self.texts.pop(0)
@@ -128,6 +131,24 @@ def hear_utterances(monkeypatch, count: int = 1) -> None:
     monkeypatch.setattr(participant, "MoqWasmParticipantInput", UtterancesInput)
     monkeypatch.setattr(UtterancesInput, "count", count)
     monkeypatch.setattr(participant, "VADProcessor", passing_vad)
+
+
+async def until_transcribed(transcript: RecordingPublication, count: int) -> None:
+    """Returns once `transcript` holds `count` texts; raises TimeoutError after 5 s."""
+    async with asyncio.timeout(5):
+        while len(texts(transcript)) < count:
+            await asyncio.sleep(0.01)
+
+
+async def called_within(recognizer: HeldRecognizer, calls: int, seconds: float) -> bool:
+    """Whether `recognizer` has had `calls` calls within `seconds`."""
+    try:
+        async with asyncio.timeout(seconds):
+            while recognizer.calls < calls:
+                await asyncio.sleep(0.01)
+    except TimeoutError:
+        return False
+    return True
 
 
 def texts(transcript: RecordingPublication) -> list[str]:

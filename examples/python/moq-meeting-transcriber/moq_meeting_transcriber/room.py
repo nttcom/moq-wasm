@@ -88,32 +88,42 @@ class Room:
         logger.info(f"room {self._key}: {self._recognizer.name} is ready")
         await status.write_status(status_track, self._recognizer.name, status.READY)
         stopping = asyncio.Event()
+        # The pipelines of the participants who left, still transcribing what they said.
+        departed: set[asyncio.Task] = set()
         watching = asyncio.ensure_future(
             watch_broadcasts(
                 session,
                 self._namespace,
-                partial(self._run_participant, timeline, stopping),
+                partial(self._run_participant, timeline, stopping, departed),
                 filter=lambda namespace: participant_name(namespace, self._namespace) is not None,
                 empty_timeout=self._grace_seconds,
             )
         )
         try:
             await asyncio.shield(watching)
+            if departed:
+                await asyncio.wait(departed)
         except asyncio.CancelledError:
             # Set before the participants are cancelled, so that none of them, nor those who
             # already left, waits for the recognizer to transcribe what they said.
             stopping.set()
             watching.cancel()
             await asyncio.wait([watching])
+            if departed:
+                await asyncio.wait(departed)
             raise
 
     async def _run_participant(
-        self, timeline: EventTimeline, stopping: asyncio.Event, broadcast: RemoteBroadcast
+        self,
+        timeline: EventTimeline,
+        stopping: asyncio.Event,
+        departed: set[asyncio.Task],
+        broadcast: RemoteBroadcast,
     ) -> None:
         name = broadcast.namespace[-1]
         logger.info(f"room {self._key}: {name} joined")
         try:
-            await Participant(broadcast, self._recognizer, timeline).run(stopping)
+            await Participant(broadcast, self._recognizer, timeline).run(stopping, departed)
         except RuntimeError as error:
             logger.info(f"room {self._key}: {name}'s catalog ended: {error}")
         finally:

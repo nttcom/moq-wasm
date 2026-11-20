@@ -10,9 +10,11 @@ from tests.helpers import (
     NamespaceEvents,
     RecordingPublication,
     SessionRefusingNamespaces,
+    called_within,
     hear_utterances,
     recorded_timeline,
     texts,
+    until_transcribed,
 )
 
 ROOM = ["app-1", "team a"]
@@ -110,14 +112,14 @@ async def speak_while_the_recognizer_is_busy(
     if leave:
         session.withdraw(ALICE)
         await asyncio.sleep(0.1)
-    return following, transcript
+    return following, transcript, session
 
 
 @pytest.mark.parametrize("leave", [False, True])
 async def test_a_room_that_stops_drops_what_was_said_without_waiting_for_the_recognizer(monkeypatch, leave):
     # Arrange
     recognizer = HeldRecognizer("こんにちは")
-    following, transcript = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 60, leave=leave)
+    following, transcript, _ = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 60, leave=leave)
 
     # Act
     following.cancel()
@@ -134,7 +136,7 @@ async def test_a_room_that_stops_drops_what_was_said_without_waiting_for_the_rec
 async def test_a_room_that_empties_still_transcribes_what_a_participant_who_left_said(monkeypatch):
     # Arrange
     recognizer = HeldRecognizer("こんにちは")
-    following, transcript = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 0.1, leave=True)
+    following, transcript, _ = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 0.1, leave=True)
 
     # Act: the grace period ends while the recognizer is still busy
     await asyncio.sleep(0.3)
@@ -143,3 +145,21 @@ async def test_a_room_that_empties_still_transcribes_what_a_participant_who_left
     # Assert
     await asyncio.wait_for(following, 5)
     assert texts(transcript) == ["こんにちは"]
+
+
+async def test_a_participant_who_rejoins_is_heard_while_what_they_said_before_is_transcribed(monkeypatch):
+    # Arrange: alice leaves while the recognizer works on her utterance
+    recognizer = HeldRecognizer("一", "二")
+    following, transcript, session = await speak_while_the_recognizer_is_busy(monkeypatch, recognizer, 60, leave=True)
+
+    # Act: she rejoins under the same name and speaks before that utterance is transcribed
+    session.publish(ALICE)
+    heard_while_busy = await called_within(recognizer, 2, 1.0)
+    recognizer.release.set()
+    await until_transcribed(transcript, 2)
+    following.cancel()
+    await asyncio.wait([following])
+
+    # Assert
+    assert heard_while_busy
+    assert sorted(texts(transcript)) == ["一", "二"]

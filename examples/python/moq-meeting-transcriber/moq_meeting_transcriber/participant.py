@@ -4,6 +4,7 @@ from loguru import logger
 from moq_wasm.media import EventTimeline, RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParticipantInput, MoqWasmTrack
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import EndFrame, Frame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.audio.vad_processor import VADProcessor
@@ -27,14 +28,23 @@ class Participant:
         self._recognizer = recognizer
         self._timeline = timeline
 
-    async def run(self, stopping: asyncio.Event) -> None:
-        """Runs until cancelled, as when the participant leaves; it then transcribes the utterances
-        it already heard, unless `stopping` is set, which drops them."""
+    async def run(self, stopping: asyncio.Event, departed: set[asyncio.Task]) -> None:
+        """Runs until cancelled, as when the participant leaves. It then ends once their audio is
+        unsubscribed, so that a rejoin under the same name is heard at once, and adds to `departed`
+        its pipeline's task, which goes on to transcribe the utterances it already heard unless
+        `stopping` is set, which drops them."""
         audio = MoqWasmParticipantInput(self._broadcast, MoqWasmInputParams(audio_in_enabled=True))
+        unsubscribed = asyncio.Event()
 
         @audio.event_handler("on_track_subscribed")
         async def on_track_subscribed(_, track: MoqWasmTrack):
             logger.info(f"{self._name}: transcribing {track.name}")
+
+        @audio.event_handler("on_after_process_frame")
+        async def on_after_process_frame(_, frame: Frame):
+            # The input unsubscribes as it processes the EndFrame.
+            if isinstance(frame, EndFrame):
+                unsubscribed.set()
 
         worker = PipelineWorker(
             Pipeline(
@@ -57,6 +67,12 @@ class Participant:
         try:
             await asyncio.shield(running)
         except asyncio.CancelledError:
+            departed.add(running)
+            running.add_done_callback(departed.discard)
             await worker.stop_when_done()
-            await running
+            input_ended = asyncio.ensure_future(unsubscribed.wait())
+            try:
+                await asyncio.wait([running, input_ended], return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                input_ended.cancel()
             raise

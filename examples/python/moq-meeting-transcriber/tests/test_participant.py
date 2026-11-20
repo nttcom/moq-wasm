@@ -17,15 +17,20 @@ async def participant_hearing(monkeypatch, recognizer: HeldRecognizer, utterance
     return Participant(BROADCAST, recognizer, timeline), transcript
 
 
-async def leave_while_the_recognizer_is_busy(participant: Participant, recognizer: HeldRecognizer) -> asyncio.Task:
+async def leave_while_the_recognizer_is_busy(participant: Participant, recognizer: HeldRecognizer) -> set[asyncio.Task]:
     """Withdraws the participant while the recognizer works on their first utterance, which it
-    answers only after a pipeline being cancelled would have ended."""
-    running = asyncio.create_task(participant.run(asyncio.Event()))
+    answers only after a pipeline being cancelled would have ended, and returns the pipeline the
+    participant left once it is unsubscribed."""
+    departed: set[asyncio.Task] = set()
+    running = asyncio.create_task(participant.run(asyncio.Event(), departed))
     await asyncio.wait_for(recognizer.called.wait(), 5)
     running.cancel()
     await asyncio.wait([running], timeout=0.5)
+    pipelines = set(departed)
     recognizer.release.set()
-    return running
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(running, 5)
+    return pipelines
 
 
 async def test_a_participant_who_leaves_still_gets_the_utterance_already_heard(monkeypatch):
@@ -34,11 +39,10 @@ async def test_a_participant_who_leaves_still_gets_the_utterance_already_heard(m
     participant, transcript = await participant_hearing(monkeypatch, recognizer)
 
     # Act
-    running = await leave_while_the_recognizer_is_busy(participant, recognizer)
+    pipelines = await leave_while_the_recognizer_is_busy(participant, recognizer)
+    await asyncio.wait_for(asyncio.wait(pipelines), 5)
 
     # Assert
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(running, 5)
     assert texts(transcript) == ["こんにちは"]
 
 
@@ -48,9 +52,8 @@ async def test_a_participant_who_leaves_still_gets_each_utterance_heard_while_th
     participant, transcript = await participant_hearing(monkeypatch, recognizer, utterances=3)
 
     # Act
-    running = await leave_while_the_recognizer_is_busy(participant, recognizer)
+    pipelines = await leave_while_the_recognizer_is_busy(participant, recognizer)
+    await asyncio.wait_for(asyncio.wait(pipelines), 5)
 
     # Assert
-    with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(running, 5)
     assert texts(transcript) == ["一", "二", "三"]
