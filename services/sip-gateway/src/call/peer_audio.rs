@@ -5,17 +5,15 @@ use broadcast::BroadcastReader;
 use bytes::Bytes;
 use mediapack::{AudioConfig, MediaEvent};
 use moqt::client;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-    time::MissedTickBehavior,
-};
+use tokio::{sync::mpsc, task::JoinHandle, time::MissedTickBehavior};
 
+use super::peer_control::{Command, read_commands};
 use crate::media::{g711::G711, playout::Playout, rtp_leg::RtpSender, transcoder::Transcoder};
 
 /// Opus waiting for the call to be answered is dropped beyond this.
 const PEER_AUDIO_CAPACITY: usize = 64;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
+const COMMAND_CAPACITY: usize = 8;
 const PACKET_INTERVAL: Duration = Duration::from_millis(20);
 
 pub(crate) enum PeerAudio {
@@ -23,8 +21,8 @@ pub(crate) enum PeerAudio {
     Packet(Bytes),
 }
 
-/// Waits for the peer's broadcast, reads its audio and reports when the
-/// peer ends it (PUBLISH_NAMESPACE_DONE).
+/// Waits for the peer's broadcast and reads its audio and its commands; the
+/// peer ending its broadcast (PUBLISH_NAMESPACE_DONE) is a `Command::Hangup`.
 pub(crate) struct PeerWatchTask {
     join_handle: JoinHandle<()>,
 }
@@ -33,14 +31,14 @@ impl PeerWatchTask {
     pub(crate) fn run(
         session: Arc<client::Session>,
         peer: Vec<String>,
-    ) -> (Self, mpsc::Receiver<PeerAudio>, oneshot::Receiver<()>) {
+    ) -> (Self, mpsc::Receiver<PeerAudio>, mpsc::Receiver<Command>) {
         let (audio_sender, audio_receiver) = mpsc::channel(PEER_AUDIO_CAPACITY);
-        let (left_sender, left_receiver) = oneshot::channel();
+        let (command_sender, command_receiver) = mpsc::channel(COMMAND_CAPACITY);
         let join_handle = tokio::spawn(async move {
-            match watch(&session, &peer, &audio_sender).await {
+            match watch(&session, &peer, &audio_sender, &command_sender).await {
                 Ok(()) => {
                     tracing::info!(track_namespace = peer.join("/"), "peer left the call");
-                    let _ = left_sender.send(());
+                    let _ = command_sender.send(Command::Hangup).await;
                 }
                 Err(error) => tracing::warn!(
                     %error,
@@ -49,7 +47,7 @@ impl PeerWatchTask {
                 ),
             }
         });
-        (Self { join_handle }, audio_receiver, left_receiver)
+        (Self { join_handle }, audio_receiver, command_receiver)
     }
 }
 
@@ -63,6 +61,7 @@ async fn watch(
     session: &client::Session,
     peer: &[String],
     audio_sender: &mpsc::Sender<PeerAudio>,
+    command_sender: &mpsc::Sender<Command>,
 ) -> Result<()> {
     let namespaces = session.watch_namespaces(peer).await?;
     let namespace = peer.join("/");
@@ -76,8 +75,11 @@ async fn watch(
     loop {
         let forwarding = forward(session, &namespace, audio_sender);
         tokio::pin!(forwarding);
+        let commanding = read_commands_until_left(session, peer, command_sender);
+        tokio::pin!(commanding);
         loop {
             tokio::select! {
+                () = &mut commanding => {}
                 event = namespaces.next() => match event {
                     Some(event) if event.namespace == peer && !event.active => return Ok(()),
                     Some(_) => {}
@@ -90,6 +92,22 @@ async fn watch(
                     break;
                 }
             }
+        }
+        tokio::time::sleep(RETRY_DELAY).await;
+    }
+}
+
+/// Reads the peer's commands, subscribing again `RETRY_DELAY` after each
+/// failure or end of the `control` track, which the page may publish after
+/// its namespace. Never returns; `watch` drops it once the peer leaves.
+async fn read_commands_until_left(
+    session: &client::Session,
+    peer: &[String],
+    command_sender: &mpsc::Sender<Command>,
+) {
+    loop {
+        if let Err(error) = read_commands(session, peer, command_sender).await {
+            tracing::debug!(%error, track_namespace = peer.join("/"), "peer commands not read");
         }
         tokio::time::sleep(RETRY_DELAY).await;
     }
