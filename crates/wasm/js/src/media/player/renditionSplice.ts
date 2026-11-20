@@ -6,9 +6,12 @@ export type IncomingVerdict = {
   play: boolean
   /// Set by the object that decided where the incoming rendition starts.
   start?: SpliceStart
-  /// The outgoing subscription has nothing left to deliver.
-  retireOutgoing: boolean
 }
+
+/// `overrun` is an object of a group past the start group. A publisher that
+/// ended the outgoing subscription before the start sends none, so an overrun
+/// shows it did not.
+export type OutgoingVerdict = 'play' | 'drop' | 'overrun'
 
 /// Hands live video over from one rendition to another of its switching set
 /// at a group boundary. Renditions of one `altGroup` number their groups by
@@ -30,19 +33,22 @@ export class RenditionSplice {
     return this.startGroupId
   }
 
-  /// `drop` is an object at or past the incoming rendition's start. A caller
+  /// `drop` is an object of the incoming rendition's start group. A caller
   /// that asked the publisher to end the outgoing subscription there can
   /// still receive one sent before the publisher processed the request
   /// (draft-ietf-moq-transport-14 §9.10), and leaves the subscription to the
   /// publisher's PUBLISH_DONE; one that did not retires it.
-  acceptOutgoing(groupId: bigint): 'play' | 'drop' {
+  acceptOutgoing(groupId: bigint): OutgoingVerdict {
     if (this.startGroupId === undefined) {
       if (this.outgoingNewest === undefined || groupId > this.outgoingNewest) {
         this.outgoingNewest = groupId
       }
       return 'play'
     }
-    return groupId < this.startGroupId ? 'play' : 'drop'
+    if (groupId < this.startGroupId) {
+      return 'play'
+    }
+    return groupId === this.startGroupId ? 'drop' : 'overrun'
   }
 
   acceptIncoming(groupId: bigint, objectId: bigint): IncomingVerdict {
@@ -53,10 +59,10 @@ export class RenditionSplice {
 
   private judgeIncoming(groupId: bigint, objectId: bigint): IncomingVerdict {
     if (this.startGroupId !== undefined) {
-      return { play: groupId >= this.startGroupId, retireOutgoing: groupId > this.startGroupId }
+      return { play: groupId >= this.startGroupId }
     }
     if (objectId !== 0n) {
-      return { play: false, retireOutgoing: false }
+      return { play: false }
     }
     const newest = this.outgoingNewest
     const aligned = newest !== undefined && groupId >= newest && groupId <= newest + 1n
@@ -64,8 +70,7 @@ export class RenditionSplice {
     this.startGroupId = startGroupId
     return {
       play: groupId >= startGroupId,
-      start: { groupId: startGroupId, aligned },
-      retireOutgoing: !aligned
+      start: { groupId: startGroupId, aligned }
     }
   }
 }

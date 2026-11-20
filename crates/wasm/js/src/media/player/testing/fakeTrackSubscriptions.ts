@@ -1,4 +1,4 @@
-import type { MoqSubscription } from '../../../core/session'
+import type { MoqSubscription, PublishDone } from '../../../core/session'
 import type { MediaCatalogTrack } from '../../catalog'
 import type { MediaKind, ObjectHandler } from '../trackContext'
 import type { TrackSubscription } from '../trackSubscriptions'
@@ -13,16 +13,26 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
   readonly calls: string[] = []
   private readonly subscriptions = new Map<MediaKind, TrackSubscription>()
   private readonly handlers = new Map<string, ObjectHandler>()
+  private readonly publishDones = new Map<string, (done: PublishDone) => void>()
+  /// Makes `endBeforeGroup` reject, as when the SUBSCRIBE_UPDATE cannot be sent.
+  endBeforeGroupError: Error | undefined
 
   /// Makes a subscription to `name` the one of `kind`, as `subscribe` does.
   subscribed(kind: MediaKind, name: string): TrackSubscription {
-    const subscription = trackSubscription(name, { name, label: name })
+    const subscription = this.trackSubscription(name, { name, label: name })
     this.subscriptions.set(kind, subscription)
     return subscription
   }
 
   deliver(name: string, groupId: bigint, objectId: bigint): void {
     this.handlers.get(name)?.(groupId, receivedObject(groupId, objectId), false)
+  }
+
+  /// Resolves `done` of the subscription to `name` with SUBSCRIPTION_ENDED,
+  /// and waits for the callbacks chained on it.
+  async endedByPublisher(name: string): Promise<void> {
+    this.publishDones.get(name)?.({ code: 3n, reason: '' })
+    await Promise.resolve()
   }
 
   get(kind: MediaKind): TrackSubscription | undefined {
@@ -37,7 +47,7 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
   ): Promise<TrackSubscription> {
     this.calls.push(`open ${wireName}`)
     this.handlers.set(wireName, handler)
-    return trackSubscription(wireName, track)
+    return this.trackSubscription(wireName, track)
   }
 
   async close(subscription: TrackSubscription): Promise<void> {
@@ -57,21 +67,25 @@ export class FakeTrackSubscriptions implements VideoSwitchSubscriptions {
 
   async endBeforeGroup(subscription: TrackSubscription, groupId: bigint): Promise<void> {
     this.calls.push(`endBeforeGroup ${subscription.name} ${groupId}`)
+    if (this.endBeforeGroupError) {
+      throw this.endBeforeGroupError
+    }
   }
 
   async retire(subscription: TrackSubscription): Promise<void> {
     this.calls.push(`retire ${subscription.name}`)
   }
-}
 
-function trackSubscription(name: string, track: MediaCatalogTrack): TrackSubscription {
-  return {
-    id: 0n,
-    handle: { largest: undefined } as unknown as MoqSubscription,
-    priority: 128,
-    forward: true,
-    name,
-    track,
-    forgotten: false
+  private trackSubscription(name: string, track: MediaCatalogTrack): TrackSubscription {
+    const done = new Promise<PublishDone>((resolve) => this.publishDones.set(name, resolve))
+    return {
+      id: 0n,
+      handle: { largest: undefined, done } as unknown as MoqSubscription,
+      priority: 128,
+      forward: true,
+      name,
+      track,
+      forgotten: false
+    }
   }
 }

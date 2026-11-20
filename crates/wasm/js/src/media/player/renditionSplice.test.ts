@@ -9,9 +9,9 @@ test('the incoming rendition starts after the group the outgoing one already sta
   const verdict = splice.acceptIncoming(10n, 0n)
 
   // Assert
-  expect(verdict).toEqual({ play: false, start: { groupId: 11n, aligned: true }, retireOutgoing: false })
+  expect(verdict).toEqual({ play: false, start: { groupId: 11n, aligned: true } })
   expect(splice.acceptOutgoing(10n)).toBe('play')
-  expect(splice.acceptIncoming(11n, 0n)).toEqual({ play: true, retireOutgoing: false })
+  expect(splice.acceptIncoming(11n, 0n)).toEqual({ play: true })
 })
 
 test('an incoming group the outgoing rendition has not reached takes over from its first object', () => {
@@ -22,7 +22,7 @@ test('an incoming group the outgoing rendition has not reached takes over from i
   const verdict = splice.acceptIncoming(11n, 0n)
 
   // Assert: the outgoing rendition plays the group before the start and drops the start group
-  expect(verdict).toEqual({ play: true, start: { groupId: 11n, aligned: true }, retireOutgoing: false })
+  expect(verdict).toEqual({ play: true, start: { groupId: 11n, aligned: true } })
   expect(splice.acceptOutgoing(10n)).toBe('play')
   expect(splice.acceptOutgoing(11n)).toBe('drop')
 })
@@ -48,20 +48,20 @@ test('the incoming rendition waits for the start of a group', () => {
   const verdict = splice.acceptIncoming(11n, 3n)
 
   // Assert
-  expect(verdict).toEqual({ play: false, retireOutgoing: false })
+  expect(verdict).toEqual({ play: false })
   expect(splice.start).toBeUndefined()
 })
 
-test('the outgoing rendition retires once the incoming one plays past the start group', () => {
+test('an outgoing object past the start group is an overrun', () => {
   // Arrange
   const splice = new RenditionSplice(10n)
   splice.acceptIncoming(11n, 0n)
 
   // Act
-  const verdict = splice.acceptIncoming(12n, 0n)
+  const verdict = splice.acceptOutgoing(12n)
 
   // Assert
-  expect(verdict).toEqual({ play: true, retireOutgoing: true })
+  expect(verdict).toBe('overrun')
 })
 
 test('group ids that do not continue the outgoing rendition cut over at once', () => {
@@ -72,7 +72,7 @@ test('group ids that do not continue the outgoing rendition cut over at once', (
   const verdict = splice.acceptIncoming(5n, 0n)
 
   // Assert
-  expect(verdict).toEqual({ play: true, start: { groupId: 5n, aligned: false }, retireOutgoing: true })
+  expect(verdict).toEqual({ play: true, start: { groupId: 5n, aligned: false } })
 })
 
 test('without an outgoing group the incoming rendition cuts over at its first group', () => {
@@ -83,18 +83,17 @@ test('without an outgoing group the incoming rendition cuts over at its first gr
   const verdict = splice.acceptIncoming(7n, 0n)
 
   // Assert
-  expect(verdict).toEqual({ play: true, start: { groupId: 7n, aligned: false }, retireOutgoing: true })
+  expect(verdict).toEqual({ play: true, start: { groupId: 7n, aligned: false } })
 })
 
-test('the incoming rendition plays once it delivers the start group, before the outgoing one retires', () => {
+test('the incoming rendition plays once it delivers the start group', () => {
   // Arrange
   const splice = new RenditionSplice(10n)
 
   // Act
-  const verdict = splice.acceptIncoming(11n, 0n)
+  splice.acceptIncoming(11n, 0n)
 
   // Assert
-  expect(verdict.retireOutgoing).toBe(false)
   expect(splice.incomingPlaying).toBe(true)
 })
 
@@ -120,5 +119,5 @@ test('the incoming rendition drops the rest of a group before the start', () => 
   const verdict = splice.acceptIncoming(10n, 2n)
 
   // Assert
-  expect(verdict).toEqual({ play: false, retireOutgoing: false })
+  expect(verdict).toEqual({ play: false })
 })
