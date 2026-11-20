@@ -292,7 +292,8 @@ impl Session {
     /// the track is also sent with PUBLISH (draft-14 §9.13); announce the
     /// namespace first. With `datagram`, each object is sent in its own
     /// datagram (draft-14 §10.3) instead of on subgroup streams; rejects for a
-    /// track already written to on streams.
+    /// track already written to on streams. `priority` is the Publisher
+    /// Priority (draft-14 §7.1), 128 by default.
     #[wasm_bindgen(js_name = publishTrack)]
     pub async fn publish_track(
         &self,
@@ -301,6 +302,7 @@ impl Session {
         retention_ms: Option<f64>,
         publish: Option<bool>,
         datagram: Option<bool>,
+        priority: Option<u8>,
     ) -> Result<TrackWriter, JsValue> {
         self.scope
             .scoped(async {
@@ -313,6 +315,7 @@ impl Session {
                     },
                     publish: publish.unwrap_or(false),
                     datagram: datagram.unwrap_or(false),
+                    priority: priority.unwrap_or(defaults.priority),
                 };
                 let writer = self
                     .session
