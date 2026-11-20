@@ -35,6 +35,7 @@ pub(crate) struct StubRouteRegistry {
     publisher_lookup: PublisherLookup,
     watched_namespace_calls: Mutex<Vec<String>>,
     namespace_subscriber_calls: Mutex<Vec<String>>,
+    unregistered_track_publishers: Mutex<Vec<TrackKey>>,
     migration_target: Option<String>,
     draining: AtomicBool,
     /// The namespaces other relays publish; `None` leaves the namespace routes
@@ -51,6 +52,7 @@ impl StubRouteRegistry {
             publisher_lookup,
             watched_namespace_calls: Mutex::new(Vec::new()),
             namespace_subscriber_calls: Mutex::new(Vec::new()),
+            unregistered_track_publishers: Mutex::new(Vec::new()),
             migration_target: None,
             draining: AtomicBool::new(false),
             namespace_routes: None,
@@ -107,6 +109,10 @@ impl StubRouteRegistry {
         self.namespace_subscriber_calls.lock().unwrap().clone()
     }
 
+    pub(crate) fn unregistered_track_publishers(&self) -> Vec<TrackKey> {
+        self.unregistered_track_publishers.lock().unwrap().clone()
+    }
+
     pub(crate) fn is_draining(&self) -> bool {
         self.draining.load(Ordering::SeqCst)
     }
@@ -151,8 +157,12 @@ impl RelayRouteRegistry for StubRouteRegistry {
         Ok(())
     }
 
-    async fn unregister_track_publisher(&self, _track_key: &TrackKey) -> anyhow::Result<()> {
-        unimplemented!("not used with the stub route registry")
+    async fn unregister_track_publisher(&self, track_key: &TrackKey) -> anyhow::Result<()> {
+        self.unregistered_track_publishers
+            .lock()
+            .unwrap()
+            .push(track_key.clone());
+        Ok(())
     }
 
     async fn register_watched_namespace(&self, track_namespace: &str) -> anyhow::Result<()> {

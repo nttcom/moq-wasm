@@ -111,7 +111,12 @@ impl PendingProducerTask {
                 }
                 if malformed {
                     MalformedTrackCleanup
-                        .handle(track_key, &deps.table, &deps.forwarder)
+                        .handle(
+                            track_key,
+                            &deps.table,
+                            &deps.forwarder,
+                            deps.resolver.route_registry(),
+                        )
                         .await;
                 }
             }

@@ -1161,12 +1161,19 @@ impl InMemoryLocalPubSubDirectory {
     }
 
     /// Leaves the track's downstream registrations to their subscribers: a
-    /// malformed track ends their runners on its own.
+    /// malformed track ends their runners on its own. Forgets the PUBLISH
+    /// handler of each published subscription it removes.
     pub(crate) fn remove_upstream_track(&self, track_key: &TrackKey) -> Vec<(SessionId, Producer)> {
-        self.upstream_tracks
-            .remove(track_key)
-            .map(|(_, track)| track.producers.into_iter().collect())
-            .unwrap_or_default()
+        let Some((_, track)) = self.upstream_tracks.remove(track_key) else {
+            return Vec::new();
+        };
+        let removed: Vec<_> = track.producers.into_iter().collect();
+        for (publisher_session_id, producer) in &removed {
+            if producer.state.origin == ProducerOrigin::Publish {
+                self.forget_published_handler(*publisher_session_id, track_key);
+            }
+        }
+        removed
     }
 
     pub(crate) fn end_upstream_subscription(

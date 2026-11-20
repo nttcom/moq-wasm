@@ -142,6 +142,7 @@ impl SessionWorker {
                         &track_key,
                         self.deps.local_pub_sub_directory.as_ref(),
                         &self.deps.control_message_forwarder,
+                        self.deps.route_registry.as_ref(),
                     )
                     .instrument(event_span)
                     .await;
