@@ -133,7 +133,7 @@ impl PublishQueue {
     pub(crate) fn remove_track(
         &self,
         track_name: String,
-    ) -> impl Future<Output = Result<()>> + 'static {
+    ) -> impl Future<Output = Result<()>> + use<> {
         let event_sender = self.event_sender.clone();
         async move {
             let (done_sender, done_receiver) = oneshot::channel();

@@ -206,7 +206,7 @@ impl MediaSource {
     pub fn remove_track(
         &self,
         kind: TrackKind,
-    ) -> impl Future<Output = anyhow::Result<()>> + 'static {
+    ) -> impl Future<Output = anyhow::Result<()>> + use<> {
         let tracks = self.writer.source_tracks();
         let track_name = match kind {
             TrackKind::Video => &tracks.video,
@@ -275,7 +275,7 @@ impl MediaRendition {
 
 fn remove_rendition(
     command_sender: &mpsc::UnboundedSender<RenditionCommand>,
-) -> impl Future<Output = anyhow::Result<()>> + 'static {
+) -> impl Future<Output = anyhow::Result<()>> + use<> {
     let (done_sender, done_receiver) = oneshot::channel();
     let sent = command_sender.send(RenditionCommand::Remove(done_sender));
     async move {
@@ -393,5 +393,18 @@ mod tests {
 
         // Assert
         assert!(matches!(result, Err(MediaSourceError::VideoNotConfigured)));
+    }
+
+    #[tokio::test]
+    async fn a_removal_outlives_the_borrow_of_its_source() {
+        // Arrange
+        let source = std::sync::Mutex::new(source());
+
+        // Act: the future leaves the lock, as an SDK holding the source behind one awaits it
+        let removal = source.lock().unwrap().remove_track(TrackKind::Audio);
+        let removed = removal.await;
+
+        // Assert: without a relay connection nothing is sent
+        assert!(removed.is_ok(), "{removed:?}");
     }
 }
