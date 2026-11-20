@@ -311,7 +311,7 @@ impl SubgroupReader {
                 field,
                 receive_time,
             } => {
-                let object_id = field.resolve_object_id(self.prev_object_id);
+                let object_id = self.object_id(field.resolve_object_id(self.prev_object_id))?;
                 let (status, payload) = match field.subgroup_object {
                     SubgroupObject::Payload { data, .. } => (ObjectStatus::Normal, data),
                     SubgroupObject::Status { code, .. } => {
@@ -323,7 +323,7 @@ impl SubgroupReader {
                 Ok(Some(SubgroupPart::Object(Object { payload, ..object })))
             }
             SubgroupFrame::ObjectHead(head) => {
-                let object_id = head.resolve_object_id(self.prev_object_id);
+                let object_id = self.object_id(head.resolve_object_id(self.prev_object_id))?;
                 let payload_len = head.payload_len();
                 self.streaming_payload_len = payload_len;
                 Ok(Some(SubgroupPart::ObjectStart {
@@ -341,6 +341,17 @@ impl SubgroupReader {
                 }))
             }
         }
+    }
+
+    /// An Object ID Delta past `u64::MAX` names no Object ID; the draft is
+    /// silent, so it fails the stream like an unknown Object Status.
+    fn object_id(&self, object_id: Option<u64>) -> Result<u64, StreamReceiveError> {
+        object_id.ok_or_else(|| {
+            StreamReceiveError::ProtocolViolation(format!(
+                "object id delta overflows after object {:?}",
+                self.prev_object_id
+            ))
+        })
     }
 
     /// The object `object_id` without its payload; it becomes the previous
@@ -422,15 +433,25 @@ impl FetchReader {
 mod tests {
     use bytes::{Bytes, BytesMut};
 
-    use super::{SubgroupEncoder, encode_datagram, encode_fetch_object};
-    use crate::modules::moqt::{
-        control_plane::control_messages::messages::parameters::location::Location,
-        data_plane::object::{
-            canonical_object::{ForwardingPreference, Object, SubgroupStart},
-            extension_headers::{ExtensionHeaderType, ExtensionHeaders},
-            object_status::ObjectStatus,
-            unencodable_object::UnencodableObject,
+    use std::task::Poll;
+
+    use super::{SubgroupEncoder, SubgroupReader, encode_datagram, encode_fetch_object};
+    use crate::modules::{
+        moqt::{
+            control_plane::control_messages::messages::parameters::location::Location,
+            data_plane::{
+                codec::uni_stream_decoder::UniStreamDecoder,
+                object::{
+                    canonical_object::{ForwardingPreference, Object, SubgroupStart},
+                    extension_headers::{ExtensionHeaderType, ExtensionHeaders},
+                    object_status::ObjectStatus,
+                    subgroup::{SubgroupHeader, SubgroupId},
+                    unencodable_object::UnencodableObject,
+                },
+                stream::stream_receiver::{StreamReceiveError, UniStreamReceiver},
+            },
         },
+        transport::transport_receive_stream::MockTransportReceiveStream,
     };
 
     fn encoder() -> SubgroupEncoder {
@@ -647,6 +668,48 @@ mod tests {
             Some(UnencodableObject::SubgroupId {
                 subgroup_id: 1 << 62
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn an_object_id_delta_past_u64_max_fails_the_stream() {
+        // Arrange: four deltas of 2^62 - 1 reach Object ID u64::MAX, and a
+        // fifth object at delta 0 would be u64::MAX + 1
+        let header = SubgroupHeader::new(1, 0, SubgroupId::None, 0, false, false);
+        let largest_delta = [0xff; 8];
+        let mut bytes = header.encode().unwrap().to_vec();
+        for _ in 0..4 {
+            bytes.extend_from_slice(&largest_delta);
+            bytes.extend_from_slice(&[0x01, 0xaa]);
+        }
+        bytes.extend_from_slice(&[0x00, 0x01, 0xaa]);
+        let mut chunks = vec![bytes].into_iter();
+        let mut receive_stream = MockTransportReceiveStream::new();
+        receive_stream.expect_poll_read().returning(move |_, buf| {
+            if let Some(chunk) = chunks.next() {
+                buf.put_slice(&chunk);
+            }
+            Poll::Ready(Ok(()))
+        });
+        let mut stream = UniStreamReceiver::new(Box::new(receive_stream), UniStreamDecoder::new());
+        stream
+            .receive()
+            .await
+            .unwrap()
+            .expect("the subgroup header");
+        let mut reader = SubgroupReader::new(stream, header);
+        for _ in 0..4 {
+            reader.next_part().await.unwrap().expect("an object");
+        }
+        assert_eq!(reader.prev_object_id, Some(u64::MAX));
+
+        // Act
+        let result = reader.next_part().await;
+
+        // Assert
+        assert!(
+            matches!(result, Err(StreamReceiveError::ProtocolViolation(_))),
+            "{result:?}"
         );
     }
 }
