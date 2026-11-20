@@ -37,6 +37,10 @@ impl UpstreamPublisherResolver {
         }
     }
 
+    pub(crate) fn route_registry(&self) -> &dyn RelayRouteRegistry {
+        self.route_registry.as_ref()
+    }
+
     /// Every publisher of the track: the local client publishers newest first
     /// (session ids grow with time), then, for a client requester, every
     /// remote relay publishing the namespace or the track. A relay requester

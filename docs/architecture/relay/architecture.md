@@ -305,7 +305,9 @@ session mailbox (unbounded, sender in SessionEntry) ──SessionEvent──► 
     `Producer` of the track, since the cache latch makes the whole track
     malformed whichever publisher's object conflicted, and send each
     publisher UNSUBSCRIBE (§2.5 MUST); dropping the producers stops their
-    ingests. Duplicate reports are idempotent (the track entry is only found
+    ingests. As on PUBLISH_DONE, a removed PUBLISH's handler is forgotten
+    and the track's route withdrawn once no client PUBLISH of it remains
+    (`Publish::withdraw_track_route`). Duplicate reports are idempotent (the track entry is only found
     once).
   - `ProtocolViolationDetected { reason }`, raised when a subgroup object
     carries an Object Status draft-14 §10.2.1.1 does not define. The worker
