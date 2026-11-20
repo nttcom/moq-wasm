@@ -663,7 +663,7 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
 
     use super::*;
-    use mediapack::AudioConfig;
+    use mediapack::{AudioConfig, VideoConfig, vp8::Vp8Config};
 
     use crate::broadcast::{AudioTrackInfo, Broadcast, VIDEO_TRACK_NAME, VideoTrackInfo};
     use crate::test_support::{FakeRelay, TEST_TIMEOUT};
@@ -674,7 +674,10 @@ mod tests {
             codec: "avc1.42e01e".to_string(),
             width: 640,
             height: 360,
-            init_segment: String::new(),
+            config: VideoConfig::Vp8(Vp8Config {
+                width: 640,
+                height: 360,
+            }),
             bitrate: None,
             framerate: None,
             cmaf: true,
@@ -1337,7 +1340,7 @@ mod tests {
         let mut relay = FakeRelay::spawn_gated("catalog-concurrent", None, Some(catalog_gate));
         let broadcast = live_cam(connection_to(&relay));
         let large_video = VideoTrackInfo {
-            init_segment: "A".repeat(2 * 1024 * 1024),
+            label: "A".repeat(2 * 1024 * 1024),
             ..video_track_info()
         };
         let update = |track_name: &'static str, info: VideoTrackInfo| {

@@ -263,7 +263,8 @@ pub struct VideoTrackInfo {
     pub codec: String,
     pub width: u32,
     pub height: u32,
-    pub init_segment: String,
+    /// The configuration the CMAF sibling's init segment is muxed from.
+    pub config: VideoConfig,
     /// Target bitrate in bits per second, known when the publisher encodes
     /// the track itself; the catalog lists an estimate otherwise.
     pub bitrate: Option<u64>,
@@ -292,13 +293,12 @@ impl VideoTrackInfo {
             VideoConfig::Vp9(config) => (config.width, config.height),
             VideoConfig::Av1(config) => (config.max_width, config.max_height),
         };
-        let init_segment = Fmp4TrackMuxer::video(config.clone()).init_segment()?;
         Ok(Self {
             label,
             codec: config.codec_string(),
             width,
             height,
-            init_segment: general_purpose::STANDARD.encode(init_segment),
+            config: config.clone(),
             bitrate: None,
             framerate: None,
             cmaf: true,
@@ -384,11 +384,15 @@ pub(crate) fn build_catalog(namespace_path: &str, metadata: &CatalogMetadata) ->
             framerate,
             reference_videos.get(info.switching_set.as_str()).copied(),
         ));
-        let cmaf = info.cmaf.then(|| {
+        let cmaf = if info.cmaf {
+            let init_segment = Fmp4TrackMuxer::video(info.config.clone()).init_segment()?;
             let mut cmaf = cmaf_sibling(&loc, "video/mp4", cmaf_alt_group);
-            init_data_list.push(cmaf.set_inline_init_data(info.init_segment.clone()));
-            cmaf
-        });
+            init_data_list
+                .push(cmaf.set_inline_init_data(general_purpose::STANDARD.encode(init_segment)));
+            Some(cmaf)
+        } else {
+            None
+        };
         let names = source_track_names.entry(info.source.as_str()).or_default();
         names.push(loc.name.clone());
         names.extend(cmaf.as_ref().map(|cmaf| cmaf.name.clone()));
@@ -640,7 +644,8 @@ fn audio_mime_type(config: &AudioConfig) -> &'static str {
 mod tests {
     use bytes::Bytes;
     use mediapack::{
-        aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, vp9::Vp9Config,
+        aac::AudioSpecificConfig, h264::AvcDecoderConfigurationRecord, vp8::Vp8Config,
+        vp9::Vp9Config,
     };
 
     use super::*;
@@ -729,7 +734,10 @@ mod tests {
             codec: "avc1.42e01e".to_string(),
             width: 640,
             height: 360,
-            init_segment: String::new(),
+            config: VideoConfig::Vp8(Vp8Config {
+                width: 640,
+                height: 360,
+            }),
             bitrate: None,
             framerate: None,
             cmaf: true,
@@ -1071,7 +1079,11 @@ mod tests {
         assert_eq!(video_cmaf.mime_type.as_deref(), Some("video/mp4"));
         assert_eq!(video_cmaf.codec, video.codec);
         assert_eq!(video_cmaf.max_grp_sap_starting_type, Some(1));
-        let video_init_segment = &metadata.video_tracks[VIDEO_TRACK_NAME].init_segment;
+        let video_init_segment = general_purpose::STANDARD.encode(
+            Fmp4TrackMuxer::video(metadata.video_tracks[VIDEO_TRACK_NAME].config.clone())
+                .init_segment()
+                .unwrap(),
+        );
         assert_eq!(
             catalog.init_data(video_cmaf),
             Some(video_init_segment.as_str())
