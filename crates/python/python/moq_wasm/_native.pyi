@@ -95,6 +95,7 @@ class Session:
         retention_seconds: float,
         publish: bool,
         datagram: bool,
+        priority: int,
     ) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for, keeping each object
         `retention_seconds` to answer FETCH; 0 keeps only the newest. Register it before `announce`,
@@ -102,8 +103,10 @@ class Session:
         sends PUBLISH, so the relay takes the track before anyone subscribes. `datagram` sends each
         object in its own datagram: a lost one is not resent, one larger than the path's datagram
         size (about 1 KB is safe) is dropped, and a subscriber reads it by object, not with
-        `groups()`. Raises RuntimeError when the relay refuses the PUBLISH or, with `datagram`, when
-        the track was already written to on streams."""
+        `groups()`. `priority` is the Publisher Priority: among the session's tracks, a lower value
+        is sent first. Raises RuntimeError when the relay refuses the PUBLISH or, with `datagram`,
+        when the track was already written to on streams; OverflowError for a `priority` outside
+        0-255."""
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         """Hands the relay `token`, a later token of the same app, before the current one expires
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it

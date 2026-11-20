@@ -1,7 +1,7 @@
 import asyncio
 
 from moq_wasm import _native
-from moq_wasm._session import DEFAULT_RETENTION_SECONDS, Announcement, Session, TrackWriter
+from moq_wasm._session import DEFAULT_PRIORITY, DEFAULT_RETENTION_SECONDS, Announcement, Session, TrackWriter
 from moq_wasm.media._event_timeline import EventTimeline
 from moq_wasm.media._media_source import MediaSource
 
@@ -25,14 +25,19 @@ class LocalBroadcast:
         self._media_broadcast: _native.MediaBroadcast | None = None
 
     def publish_track(
-        self, name: str, *, retention_seconds: float = DEFAULT_RETENTION_SECONDS, datagram: bool = False
+        self,
+        name: str,
+        *,
+        retention_seconds: float = DEFAULT_RETENTION_SECONDS,
+        datagram: bool = False,
+        priority: int = DEFAULT_PRIORITY,
     ) -> TrackWriter:
         """A track the session answers SUBSCRIBE and FETCH for, keeping what is written for
         `retention_seconds`; with `datagram`, sent in datagrams. It takes no `publish`: the tracks
         declared before the first `await` are registered before the namespace is published, and a
         PUBLISH must follow the namespace."""
         writer = self._session._track_writer(
-            self.namespace, name, retention_seconds, publish=False, datagram=datagram
+            self.namespace, name, retention_seconds, publish=False, datagram=datagram, priority=priority
         )
         if self._batching:
             self._pending.append(writer)
