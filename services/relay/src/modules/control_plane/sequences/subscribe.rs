@@ -30,7 +30,7 @@ pub(crate) struct Subscribe;
 
 /// Another session's cleanup can remove the track between finding it and
 /// registering on it; each attempt finds or creates it again.
-const UPSTREAM_ATTEMPTS: usize = 3;
+pub(crate) const UPSTREAM_ATTEMPTS: usize = 3;
 
 enum Acceptance {
     Answered,
