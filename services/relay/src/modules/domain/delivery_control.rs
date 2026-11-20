@@ -43,7 +43,8 @@ impl DeliveryControl {
         largest: Option<Location>,
     ) -> Self {
         let end_group = match filter_type {
-            FilterType::AbsoluteRange { end_group, .. } => Some(end_group.saturating_add(1)),
+            // No group follows the largest Group ID, so ending there is open-ended.
+            FilterType::AbsoluteRange { end_group, .. } => end_group.checked_add(1),
             _ => None,
         };
         Self {
@@ -253,6 +254,21 @@ mod tests {
         assert!(control.contains_group(4));
         assert!(!control.contains_group(5));
         assert!(!control.contains_group(1));
+    }
+
+    #[test]
+    fn absolute_range_ending_at_the_largest_group_id_includes_it() {
+        // Arrange
+        let filter_type = FilterType::AbsoluteRange {
+            location: location(2, 0),
+            end_group: u64::MAX,
+        };
+
+        // Act
+        let control = DeliveryControl::new(128, true, &filter_type, None);
+
+        // Assert
+        assert!(control.contains_group(u64::MAX));
     }
 
     #[test]
