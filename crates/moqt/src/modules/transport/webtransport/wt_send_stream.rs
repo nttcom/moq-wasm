@@ -8,7 +8,20 @@ use crate::modules::transport::transport_send_stream::{TransportSendError, Trans
 
 #[derive(Debug)]
 pub struct WtSendStream {
-    pub(crate) send_stream: web_transport_quinn::SendStream,
+    send_stream: web_transport_quinn::SendStream,
+    /// Set once `close` or `reset` ran, so `Drop` does not reset a stream
+    /// already finished: quinn still accepts a reset until the FIN is
+    /// acknowledged.
+    ended: bool,
+}
+
+impl WtSendStream {
+    pub(crate) fn new(send_stream: web_transport_quinn::SendStream) -> Self {
+        Self {
+            send_stream,
+            ended: false,
+        }
+    }
 }
 
 #[async_trait]
@@ -21,6 +34,7 @@ impl TransportSendStream for WtSendStream {
     }
 
     fn close(&mut self) -> Result<(), TransportSendError> {
+        self.ended = true;
         self.send_stream
             .finish()
             .map_err(|_| TransportSendError::ClosedStream)
@@ -31,6 +45,7 @@ impl TransportSendStream for WtSendStream {
             u32::try_from(error_code).map_err(|source| TransportSendError::Transport {
                 source: source.into(),
             })?;
+        self.ended = true;
         self.send_stream
             .reset(error_code)
             .map_err(|_| TransportSendError::ClosedStream)
@@ -49,6 +64,17 @@ impl TransportSendStream for WtSendStream {
             Err(web_transport_quinn::WriteError::InvalidStopped(code)) => Some(code.into_inner()),
             Ok(()) | Err(_) => None,
         })
+    }
+}
+
+/// A stream dropped before `close` or `reset` is reset with code 0: the
+/// quinn stream underneath would finish it, making a partial subgroup look
+/// complete to the peer (draft-14 §10.4.3).
+impl Drop for WtSendStream {
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = self.send_stream.reset(0);
+        }
     }
 }
 
@@ -74,6 +100,10 @@ fn webtransport_write_error_to_transport_send_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::{
+        test_support::{WRITTEN, within, written_uni_stream},
+        transport::{qmux::in_memory::read_to_end, read_error::ReadError},
+    };
 
     #[test]
     fn stop_sending_outside_webtransport_code_range_is_stopped_by_peer() {
@@ -85,5 +115,32 @@ mod tests {
 
         // Assert
         assert!(matches!(mapped, TransportSendError::Stopped { code: 0 }));
+    }
+
+    #[tokio::test]
+    async fn a_stream_dropped_before_close_is_reset() {
+        // Arrange
+        let mut stream = written_uni_stream("wt-drop-reset", "https", "/moq").await;
+
+        // Act
+        drop(stream.sender);
+
+        // Assert: the peer does not take the partial data for a complete stream
+        let read = within(read_to_end(&mut stream.receiver)).await;
+        assert_eq!(read, Err(ReadError::Reset));
+    }
+
+    #[tokio::test]
+    async fn a_stream_dropped_after_close_ends_with_fin() {
+        // Arrange
+        let mut stream = written_uni_stream("wt-close-fin", "https", "/moq").await;
+
+        // Act
+        stream.sender.close().unwrap();
+        drop(stream.sender);
+
+        // Assert
+        let read = within(read_to_end(&mut stream.receiver)).await;
+        assert_eq!(read, Ok(WRITTEN.to_vec()));
     }
 }

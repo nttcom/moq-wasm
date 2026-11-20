@@ -60,7 +60,7 @@ fn boxed_bi(
     ),
 ) -> (BoxedSendStream, BoxedReceiveStream) {
     (
-        Box::new(WtSendStream { send_stream: send }),
+        Box::new(WtSendStream::new(send)),
         Box::new(WtReceiveStream { recv_stream: recv }),
     )
 }
@@ -114,14 +114,14 @@ impl TransportConnection for WtConnection {
     async fn accept_bi(&self) -> anyhow::Result<(BoxedSendStream, BoxedReceiveStream)> {
         let (send, recv) = self.session.accept_bi().await?;
         Ok((
-            Box::new(WtSendStream { send_stream: send }),
+            Box::new(WtSendStream::new(send)),
             Box::new(WtReceiveStream { recv_stream: recv }),
         ))
     }
 
     async fn open_uni(&self) -> anyhow::Result<BoxedSendStream> {
         let send = self.session.open_uni().await?;
-        Ok(Box::new(WtSendStream { send_stream: send }))
+        Ok(Box::new(WtSendStream::new(send)))
     }
 
     async fn accept_uni(&self) -> anyhow::Result<BoxedReceiveStream> {

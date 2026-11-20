@@ -35,6 +35,7 @@ use crate::modules::transport::{
     accept_error::AcceptError,
     application_protocol::ApplicationProtocols,
     connect_target::ConnectTarget,
+    native::native_connection_creator::NativeConnectionCreator,
     server_transport_config::MAX_CONCURRENT_BIDI_STREAMS,
     transport_connection::{BoxedConnection, BoxedReceiveStream, BoxedSendStream},
     transport_connection_creator::{TransportAccepting, TransportConnectionCreator},
@@ -56,7 +57,7 @@ use crate::{
         runtime::dispatch::incoming_object::{
             IncomingDatagram, IncomingObject, IncomingObjectReceiver,
         },
-        version::{Version, server_application_protocols},
+        version::{DEFAULT_VERSIONS, Version, application_protocols, server_application_protocols},
     },
     object::{
         DataReceiver, ExtensionHeaders, ForwardingPreference, KeyValuePair, Location, Object,
@@ -128,6 +129,66 @@ pub(crate) fn server_transport_creator<C: TransportConnectionCreator>(name: &str
         server_application_protocols(&config.versions).unwrap(),
     )
     .unwrap()
+}
+
+/// The (client, server) transport connections of a NATIVE server on a free
+/// port, for `scheme` `moqt` (raw QUIC) or `https` (WebTransport at `path`).
+pub(crate) async fn connect_transports(
+    name: &str,
+    scheme: &str,
+    path: &str,
+    server: ApplicationProtocols,
+    client: ApplicationProtocols,
+) -> (BoxedConnection, BoxedConnection) {
+    let config = self_signed_server_config(name);
+    let server = NativeConnectionCreator::server(
+        &config.cert_path,
+        &config.key_path,
+        0,
+        config.keep_alive_interval_sec,
+        server,
+    )
+    .unwrap();
+    let url = format!(
+        "{scheme}://127.0.0.1:{}{path}",
+        server.local_port().unwrap()
+    );
+    let client =
+        NativeConnectionCreator::client(&CertificateVerification::Disabled, client).unwrap();
+    let target = ConnectTarget::parse(&url).unwrap();
+    tokio::time::timeout(HANDSHAKE_TIMEOUT, async {
+        let (client, server) = tokio::join!(client.create_new_transport(&target), async {
+            server.accept_new_transport().await.unwrap().await
+        });
+        (client.unwrap(), server.unwrap())
+    })
+    .await
+    .unwrap()
+}
+
+/// A unidirectional stream from client to server with [`WRITTEN`] written
+/// on it, over `scheme` as in [`connect_transports`].
+pub(crate) struct WrittenUniStream {
+    pub(crate) sender: BoxedSendStream,
+    pub(crate) receiver: BoxedReceiveStream,
+    /// Kept so that the stream outlives the test's act.
+    _connections: (BoxedConnection, BoxedConnection),
+}
+
+pub(crate) const WRITTEN: &[u8] = b"partial subgroup";
+
+pub(crate) async fn written_uni_stream(name: &str, scheme: &str, path: &str) -> WrittenUniStream {
+    let protocols = application_protocols(DEFAULT_VERSIONS).unwrap();
+    let (client, server) =
+        connect_transports(name, scheme, path, protocols.clone(), protocols).await;
+    let mut sender = client.open_uni().await.unwrap();
+    sender.send(&BytesMut::from(WRITTEN)).await.unwrap();
+    let receiver = within(server.accept_uni()).await.unwrap();
+    WrittenUniStream {
+        sender,
+        receiver,
+        _connections: (client, server),
+    }
 }
 
 /// More than quinn's default limit of 100 concurrent bidirectional streams.

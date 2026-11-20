@@ -2424,8 +2424,9 @@ mod tests {
         })
         .unwrap();
 
-        // Act
-        StreamSender::new(send_stream).send(&fetch).await.unwrap();
+        // Act: the sender is kept, as dropping it would cancel the FETCH
+        let sender = StreamSender::new(send_stream);
+        sender.send(&fetch).await.unwrap();
         let SessionEvent::Fetch(handler) = next_event(&server).await else {
             panic!("expected FETCH");
         };
