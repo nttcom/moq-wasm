@@ -9,8 +9,8 @@ mod tests {
         h264::annexb::with_start_codes,
         sample::{MediaEvent, Timestamp},
         test_support::{
-            IDR_SLICE, delta_frame_annexb, fixture_record, fixture_video_config, keyframe_annexb,
-            keyframe_sample,
+            FIXTURE_PPS, FIXTURE_SPS, IDR_SLICE, delta_frame_annexb, fixture_record,
+            fixture_video_config, keyframe_annexb, keyframe_sample,
         },
     };
 
@@ -102,5 +102,35 @@ mod tests {
 
         // Act / Assert
         assert!(tracker.track(&[0, 0, 0]).unwrap().is_none());
+    }
+
+    #[test]
+    fn holds_parameter_sets_without_a_slice_for_the_next_keyframe() {
+        // Arrange
+        let mut tracker = ParameterSetTracker::new();
+        let parameter_sets = with_start_codes([&FIXTURE_SPS[..], &FIXTURE_PPS]);
+        let bare_keyframe = with_start_codes([&IDR_SLICE[..]]);
+
+        // Act
+        let held = tracker.track(&parameter_sets).unwrap();
+        let keyframe = tracker.track(&bare_keyframe).unwrap().unwrap();
+
+        // Assert
+        assert!(held.is_none());
+        assert_eq!(keyframe.config_changed, Some(fixture_record()));
+        assert!(keyframe.is_keyframe);
+        assert_eq!(keyframe.data, keyframe_annexb());
+    }
+
+    #[test]
+    fn ignores_an_access_unit_delimiter_or_sei_without_a_slice() {
+        // Arrange
+        let mut tracker = ParameterSetTracker::new();
+        let delimiter = with_start_codes([&[0x09, 0xF0][..]]);
+        let sei = with_start_codes([&[0x06, 0x05, 0x01, 0x00, 0x80][..]]);
+
+        // Act / Assert
+        assert!(tracker.track(&delimiter).unwrap().is_none());
+        assert!(tracker.track(&sei).unwrap().is_none());
     }
 }

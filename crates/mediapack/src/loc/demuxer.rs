@@ -203,7 +203,8 @@ impl<C: NalDecoderConfig> Default for NalTrack<C> {
 impl<C: NalDecoderConfig> NalTrack<C> {
     /// The access unit in Annex-B form and whether it is a keyframe, after
     /// pushing a `VideoConfig` event to `events` when its parameter sets
-    /// changed; `None` for an object without NAL units.
+    /// changed; `None` for an object without a slice, whose parameter sets
+    /// are kept for the next one.
     fn read(
         &mut self,
         object: &LocObject,
@@ -251,10 +252,10 @@ mod tests {
         sample::AudioLevel,
         test_support::annexb_to_avcc,
         test_support::{
-            FIXTURE_AV1_IVF, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, NON_IDR_SLICE, delta_frame_annexb,
-            fixture_record, fixture_video_config, hevc_delta_frame_annexb, hevc_fixture_record,
-            hevc_keyframe_annexb, ivf_frames, keyframe_annexb, keyframe_sample, mono_48k,
-            video_samples,
+            FIXTURE_AV1_IVF, FIXTURE_PPS, FIXTURE_SPS, FIXTURE_VP8_IVF, FIXTURE_VP9_IVF, IDR_SLICE,
+            NON_IDR_SLICE, delta_frame_annexb, fixture_record, fixture_video_config,
+            hevc_delta_frame_annexb, hevc_fixture_record, hevc_keyframe_annexb, ivf_frames,
+            keyframe_annexb, keyframe_sample, mono_48k, video_samples,
         },
     };
 
@@ -305,6 +306,32 @@ mod tests {
         assert_eq!(
             events[2],
             MediaEvent::Video(keyframe_sample(Timestamp::ZERO))
+        );
+    }
+
+    #[test]
+    fn holds_an_object_of_parameter_sets_alone_for_the_next_keyframe() {
+        // Arrange
+        let mut demuxer = Demuxer::video(VideoCodec::H264);
+        let parameter_sets = with_start_codes([&FIXTURE_SPS[..], &FIXTURE_PPS]);
+        let bare_keyframe = with_start_codes([&IDR_SLICE[..]]);
+
+        // Act
+        let held = demuxer
+            .push(&video_object(1_000_000, parameter_sets))
+            .unwrap();
+        let events = demuxer
+            .push(&video_object(1_000_000, bare_keyframe))
+            .unwrap();
+
+        // Assert
+        assert!(video_samples(&held).is_empty());
+        assert_eq!(
+            events,
+            [
+                MediaEvent::VideoConfig(fixture_video_config()),
+                MediaEvent::Video(keyframe_sample(Timestamp::ZERO))
+            ]
         );
     }
 

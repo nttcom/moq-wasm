@@ -240,6 +240,7 @@ impl From<HevcDecoderConfigurationRecord> for VideoConfig {
 mod tests {
     use super::*;
     use crate::{
+        h264::annexb::with_start_codes,
         parameter_sets::ParameterSetTracker,
         test_support::{
             FIXTURE_HVCC, hevc_delta_frame_annexb, hevc_fixture_nal, hevc_fixture_record,
@@ -322,7 +323,7 @@ mod tests {
     fn a_keyframe_reports_the_record_and_a_bare_one_gets_its_parameter_sets() {
         // Arrange
         let mut tracker = ParameterSetTracker::<HevcDecoderConfigurationRecord>::new();
-        let bare_keyframe = crate::h264::annexb::with_start_codes([&hevc_fixture_nal(20)[..]]);
+        let bare_keyframe = with_start_codes([&hevc_fixture_nal(20)[..]]);
 
         // Act
         let first = tracker.track(&hevc_keyframe_annexb()).unwrap().unwrap();
@@ -337,5 +338,34 @@ mod tests {
         assert_eq!(delta.data, hevc_delta_frame_annexb());
         assert!(completed.config_changed.is_none());
         assert_eq!(completed.data, hevc_keyframe_annexb());
+    }
+
+    #[test]
+    fn holds_parameter_sets_without_a_slice_for_the_next_keyframe() {
+        // Arrange
+        let mut tracker = ParameterSetTracker::<HevcDecoderConfigurationRecord>::new();
+        let parameter_sets = [VPS, SPS, PPS].map(hevc_fixture_nal);
+        let parameter_sets = with_start_codes(parameter_sets.iter().map(|nal| nal.as_ref()));
+        let bare_keyframe = with_start_codes([&hevc_fixture_nal(20)[..]]);
+
+        // Act
+        let held = tracker.track(&parameter_sets).unwrap();
+        let keyframe = tracker.track(&bare_keyframe).unwrap().unwrap();
+
+        // Assert
+        assert!(held.is_none());
+        assert_eq!(keyframe.config_changed, Some(hevc_fixture_record()));
+        assert!(keyframe.is_keyframe);
+        assert_eq!(keyframe.data, hevc_keyframe_annexb());
+    }
+
+    #[test]
+    fn ignores_an_access_unit_delimiter_without_a_slice() {
+        // Arrange: nal_unit_type 35, then pic_type 2
+        let mut tracker = ParameterSetTracker::<HevcDecoderConfigurationRecord>::new();
+        let delimiter = with_start_codes([&[0x46, 0x01, 0x50][..]]);
+
+        // Act / Assert
+        assert!(tracker.track(&delimiter).unwrap().is_none());
     }
 }
