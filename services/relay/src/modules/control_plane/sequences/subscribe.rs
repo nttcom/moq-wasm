@@ -489,7 +489,7 @@ impl Subscribe {
             }
         }
 
-        if handler
+        if let Err(error) = handler
             .ok_with_track_alias(
                 subscriber_track_alias,
                 upstream_track.expires().unwrap_or(0),
@@ -497,13 +497,20 @@ impl Subscribe {
                 track_properties,
             )
             .await
-            .is_err()
         {
             tracing::error!(
+                %error,
                 request_id = handler.subscribe_id(),
                 track_alias = subscriber_track_alias,
                 "failed to send SUBSCRIBE_OK"
             );
+            super::remove_downstream_subscription(
+                table,
+                forwarder,
+                session_id,
+                handler.subscribe_id(),
+            )
+            .await;
             return Acceptance::Answered;
         }
         let _ = subscribe_ok_sender.send(());
@@ -1180,6 +1187,32 @@ mod tests {
         assert_eq!(
             *handler.subscribe_errors.lock().unwrap(),
             vec![RequestErrorCode::MalformedTrack]
+        );
+        assert!(table.get_downstream_subscription(2, 0).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_subscribe_ok_that_cannot_be_encoded_leaves_no_downstream_subscription() {
+        // Arrange
+        let table = InMemoryLocalPubSubDirectory::new();
+        table.register_upstream_subscription(
+            track_key(),
+            PUBLISHER_SESSION,
+            producer(ProducerOrigin::Subscribe),
+        );
+        let handler = MockSubscribeHandler {
+            subscribe_ok_unencodable: true,
+            ..MockSubscribeHandler::default()
+        };
+
+        // Act
+        let acceptance = accept_downstream(&table, &handler).await;
+
+        // Assert
+        assert!(matches!(acceptance, Acceptance::Answered));
+        assert_eq!(
+            *handler.subscribe_errors.lock().unwrap(),
+            vec![RequestErrorCode::InternalError]
         );
         assert!(table.get_downstream_subscription(2, 0).is_none());
     }

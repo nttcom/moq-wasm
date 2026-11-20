@@ -984,6 +984,10 @@ pub(crate) struct MockSubscribeHandler {
     /// `false` stands in for a subscriber whose draft cannot carry the
     /// track's properties: `ok_with_track_alias` then refuses, as moqt's does.
     pub(crate) understands_track_properties: bool,
+    /// `true` stands in for a SUBSCRIBE_OK the subscriber's draft cannot
+    /// carry: `ok_with_track_alias` then answers INTERNAL_ERROR and fails,
+    /// as moqt's does.
+    pub(crate) subscribe_ok_unencodable: bool,
     /// The track properties of each SUBSCRIBE_OK sent.
     pub(crate) subscribe_oks: Arc<Mutex<Vec<TrackProperties>>>,
     pub(crate) subscribe_errors: Arc<Mutex<Vec<RequestErrorCode>>>,
@@ -998,6 +1002,7 @@ impl Default for MockSubscribeHandler {
         Self {
             forward: true,
             understands_track_properties: true,
+            subscribe_ok_unencodable: false,
             subscribe_oks: Arc::default(),
             subscribe_errors: Arc::default(),
             on_allocate_track_alias: None,
@@ -1075,6 +1080,13 @@ impl SubscribeHandler for MockSubscribeHandler {
                 .unwrap()
                 .push(RequestErrorCode::UnsupportedExtension);
             anyhow::bail!("the subscriber's draft cannot carry the track's properties");
+        }
+        if self.subscribe_ok_unencodable {
+            self.subscribe_errors
+                .lock()
+                .unwrap()
+                .push(RequestErrorCode::InternalError);
+            anyhow::bail!("SUBSCRIBE_OK cannot be encoded");
         }
         self.subscribe_oks.lock().unwrap().push(track_properties);
         Ok(())
