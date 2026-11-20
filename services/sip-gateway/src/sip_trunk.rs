@@ -1,3 +1,5 @@
+mod address_range;
+
 use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{Context, Result, anyhow};
@@ -11,14 +13,17 @@ use rsipstack::{
         invitation::{InviteAsyncResult, InviteOption},
         invite_dialog::InviteDialog,
     },
-    sip::{StatusCode, Uri},
+    sip::{Header, Method, StatusCode, Uri, prelude::HeadersExt},
+    transaction::transaction::Transaction,
     transport::{
         TransportLayer,
         tls::{TlsConfig, TlsListenerConnection},
     },
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
+
+pub(crate) use address_range::{AddressRange, parse_ranges};
 
 const USER_AGENT: &str = "moq-wasm sip-gateway";
 
@@ -31,6 +36,9 @@ pub(crate) struct TrunkSettings {
     pub(crate) ca_certificates: Vec<u8>,
     /// Answers a 401/407 to an INVITE (digest, RFC 3261 §22).
     pub(crate) credential: Option<(String, String)>,
+    /// The addresses the trunk sends its INVITEs from; an INVITE from any
+    /// other is refused with 403.
+    pub(crate) signalling_addresses: Vec<AddressRange>,
 }
 
 /// Where the gateway takes SIP over TLS. Its address is also the Via and
@@ -55,6 +63,18 @@ pub(crate) struct SipTrunk {
     _request_task: JoinHandle<()>,
 }
 
+/// An INVITE from the trunk, not answered yet.
+/// The gateway answers it with `ringing`, `accept` or `reject` on `dialog`.
+pub(crate) struct InboundInvite {
+    pub(crate) dialog: InviteDialog,
+    pub(crate) states: DialogStateReceiver,
+    /// The caller's number as the trunk shows it, or `anonymous`.
+    pub(crate) from: String,
+    /// The number dialled: the user of the Request-URI.
+    pub(crate) to: String,
+    pub(crate) offer: String,
+}
+
 /// An INVITE the trunk has not finished answering, then the dialog it set up.
 pub(crate) struct OutboundInvite {
     pub(crate) dialog: InviteDialog,
@@ -63,8 +83,12 @@ pub(crate) struct OutboundInvite {
 }
 
 impl SipTrunk {
-    /// Fails when the TLS listener cannot bind or load its certificate and key.
-    pub(crate) async fn run(listen: ListenSettings, settings: TrunkSettings) -> Result<Self> {
+    /// Also returns the INVITEs the trunk sends to start a call. Fails when
+    /// the TLS listener cannot bind or load its certificate and key.
+    pub(crate) async fn run(
+        listen: ListenSettings,
+        settings: TrunkSettings,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<InboundInvite>)> {
         let cancel = CancellationToken::new();
         let transport_layer = TransportLayer::new(cancel.child_token());
         let tls_config = TlsConfig {
@@ -89,12 +113,19 @@ impl SipTrunk {
             .expect("a new endpoint hands out its transactions once");
         let dialog_layer = Arc::new(DialogLayer::new(endpoint.inner.clone()));
         let router = dialog_layer.clone();
-        // In-dialog requests (BYE, re-INVITE) reach their dialog; any other
-        // request is refused.
+        let signalling_addresses = settings.signalling_addresses;
+        let (invite_sender, invite_receiver) = mpsc::unbounded_channel();
+        // In-dialog requests (BYE, re-INVITE) reach the dialog they belong
+        // to; an INVITE outside a dialog starts an inbound call.
         let request_task = tokio::spawn(async move {
             while let Some(mut transaction) = incoming.recv().await {
                 let result = match router.match_dialog(&transaction) {
                     Some(mut dialog) => dialog.handle(&mut transaction).await,
+                    None if transaction.original.method == Method::Invite => {
+                        receive_invite(&router, &signalling_addresses, transaction, &invite_sender)
+                            .await
+                            .map_err(|error| *error)
+                    }
                     None => {
                         transaction
                             .reply(StatusCode::CallTransactionDoesNotExist)
@@ -107,7 +138,7 @@ impl SipTrunk {
             }
         });
         let endpoint_task = tokio::spawn(async move { endpoint.serve().await });
-        Ok(Self {
+        let trunk = Self {
             dialog_layer,
             host: settings.host,
             credential: settings.credential.map(|(username, password)| Credential {
@@ -119,7 +150,8 @@ impl SipTrunk {
             cancel,
             _endpoint_task: endpoint_task,
             _request_task: request_task,
-        })
+        };
+        Ok((trunk, invite_receiver))
     }
 
     /// Sends an INVITE for `to` from `from` (E.164 numbers, or a user name
@@ -166,6 +198,69 @@ impl SipTrunk {
     }
 }
 
+/// Refuses an INVITE from outside `signalling_addresses` with 403; otherwise
+/// hands it over as an `InboundInvite`, with a task driving its transaction
+/// until the ACK or CANCEL.
+async fn receive_invite(
+    router: &DialogLayer,
+    signalling_addresses: &[AddressRange],
+    mut transaction: Transaction,
+    invite_sender: &mpsc::UnboundedSender<InboundInvite>,
+) -> Result<(), Box<rsipstack::Error>> {
+    let source = transaction
+        .connection
+        .as_ref()
+        .and_then(|connection| connection.get_remote_addr())
+        .and_then(|address| address.get_socketaddr().ok())
+        .map(|address| address.ip());
+    let from_trunk = source.is_some_and(|source| {
+        signalling_addresses
+            .iter()
+            .any(|range| range.contains(source))
+    });
+    if !from_trunk {
+        tracing::warn!(remote_address = ?source, "INVITE from outside the trunk refused");
+        return Ok(transaction.reply(StatusCode::Forbidden).await?);
+    }
+    let request = &transaction.original;
+    let sip_call_id = request
+        .call_id_header()
+        .map(|call_id| call_id.value().to_string())
+        .unwrap_or_default();
+    let Some(to) = request.uri.user().map(str::to_string) else {
+        return Ok(transaction.reply(StatusCode::NotFound).await?);
+    };
+    let from = request
+        .from_header()
+        .ok()
+        .and_then(|from| from.uri().ok())
+        .and_then(|uri| uri.user().map(str::to_string))
+        .unwrap_or_else(|| "anonymous".to_string());
+    let offer = String::from_utf8_lossy(&request.body).into_owned();
+    tracing::info!(sip_call_id, remote_address = ?source, "INVITE received");
+    let (states_sender, states) = router.new_dialog_state_channel();
+    let dialog = router.get_or_create_server_invite(&transaction, states_sender, None, None)?;
+    let mut handler = dialog.clone();
+    tokio::spawn(async move {
+        if let Err(error) = handler.handle(&mut transaction).await {
+            tracing::warn!(%error, "INVITE transaction failed");
+        }
+    });
+    let _ = invite_sender.send(InboundInvite {
+        dialog,
+        states,
+        from,
+        to,
+        offer,
+    });
+    Ok(())
+}
+
+/// The header an answer with SDP carries.
+pub(crate) fn sdp_content_type() -> Vec<Header> {
+    vec![Header::ContentType("application/sdp".into())]
+}
+
 impl Drop for SipTrunk {
     fn drop(&mut self) {
         self.cancel.cancel();
@@ -177,7 +272,7 @@ impl Drop for SipTrunk {
 pub(crate) enum Progress {
     /// 180 or 183, with its status.
     Ringing(u16),
-    /// The 2xx and its SDP answer.
+    /// The 2xx and its SDP answer; for an inbound call, the ACK to ours.
     Answered(String),
     Ended,
     Other,

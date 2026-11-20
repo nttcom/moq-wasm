@@ -4,6 +4,7 @@ mod calls;
 mod media;
 mod server;
 mod sip_trunk;
+mod webhook;
 
 use std::{sync::Arc, time::Duration};
 
@@ -18,9 +19,9 @@ use tokio::{
 use crate::{
     call::CallContext,
     call_auth::CallAuth,
-    calls::Calls,
+    calls::{Calls, InboundTask},
     server::GatewayServer,
-    sip_trunk::{ListenSettings, SipTrunk, TrunkSettings},
+    sip_trunk::{ListenSettings, SipTrunk, TrunkSettings, parse_ranges},
 };
 
 #[tokio::main]
@@ -66,12 +67,18 @@ async fn main() -> anyhow::Result<()> {
         certificate: read("SIP_GATEWAY_TLS_CERT_FILE")?,
         private_key: read("SIP_GATEWAY_TLS_KEY_FILE")?,
     };
-    let trunk = SipTrunk::run(
+    let signalling_addresses =
+        parse_ranges(&non_empty_env("SIP_GATEWAY_TRUNK_SIGNALLING_ADDRESSES").unwrap_or_default())
+            .context(
+                "SIP_GATEWAY_TRUNK_SIGNALLING_ADDRESSES must list IP addresses or CIDR blocks",
+            )?;
+    let (trunk, invites) = SipTrunk::run(
         listen,
         TrunkSettings {
             host: required("SIP_GATEWAY_TRUNK_HOST")?,
             ca_certificates: read("SIP_GATEWAY_TRUNK_CA_FILE")?,
             credential,
+            signalling_addresses,
         },
     )
     .await?;
@@ -88,14 +95,14 @@ async fn main() -> anyhow::Result<()> {
         max_duration: Duration::from_secs(number("SIP_GATEWAY_MAX_CALL_SECONDS", 3_600)?),
     };
     let max_calls_per_app = usize::try_from(number("SIP_GATEWAY_MAX_CALLS_PER_APP", 2)?)?;
-    let calls = Arc::new(Calls::new(context, max_calls_per_app));
 
-    let call_auth = if non_empty_env("SIP_GATEWAY_INSECURE_SKIP_AUTH").is_some_and(|v| v == "true")
+    let (call_auth, registry) = if non_empty_env("SIP_GATEWAY_INSECURE_SKIP_AUTH")
+        .is_some_and(|v| v == "true")
     {
         tracing::warn!(
-            "SIP_GATEWAY_INSECURE_SKIP_AUTH: every request and destination is accepted and calls join with no token"
+            "SIP_GATEWAY_INSECURE_SKIP_AUTH: every request and destination is accepted, calls join with no token and INVITEs from the trunk are refused"
         );
-        CallAuth::Insecure
+        (CallAuth::Insecure, None)
     } else {
         let registry = Location::from_env(&LocationVariables {
             file: "SIP_GATEWAY_REGISTRY_FILE",
@@ -103,11 +110,14 @@ async fn main() -> anyhow::Result<()> {
             object: "SIP_GATEWAY_REGISTRY_OBJECT",
         })?
         .context("set SIP_GATEWAY_REGISTRY_FILE or SIP_GATEWAY_REGISTRY_BUCKET")?;
-        CallAuth::new(
-            required("SIP_GATEWAY_VTS_URL")?,
-            RegistryStore::new(registry)?,
+        let registry = Arc::new(RegistryStore::new(registry)?);
+        (
+            CallAuth::new(required("SIP_GATEWAY_VTS_URL")?, registry.clone()),
+            Some(registry),
         )
     };
+    let calls = Arc::new(Calls::new(context, max_calls_per_app, registry));
+    let _inbound = InboundTask::run(calls.clone(), invites);
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     let _server = GatewayServer::run(listener, calls.clone(), call_auth);

@@ -7,7 +7,12 @@ use std::{net::IpAddr, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use moqt::{CertificateVerification, ClientConfig, client};
-use rsipstack::dialog::invite_dialog::InviteDialog;
+use rsipstack::{
+    dialog::{
+        dialog::DialogStateReceiver, invitation::InviteAsyncResult, invite_dialog::InviteDialog,
+    },
+    sip::StatusCode,
+};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::{Instant, sleep_until},
@@ -16,8 +21,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::{
-    media::rtp_leg::RtpLeg,
-    sip_trunk::{OutboundInvite, Progress, SipTrunk, progress},
+    calls::CallSlot,
+    media::rtp_leg::{Negotiated, RtpLeg},
+    sip_trunk::{InboundInvite, Progress, SipTrunk, progress, sdp_content_type},
 };
 use peer_audio::{PeerAudio, PeerWatchTask, PlayoutTask};
 use phone_audio::PhoneAudioTask;
@@ -39,13 +45,11 @@ pub(crate) struct CallContext {
     pub(crate) max_duration: Duration,
 }
 
-/// One outbound call the app server asked for.
+/// One call, from its INVITE to its end.
 pub(crate) struct CallPlan {
-    pub(crate) call_id: String,
+    pub(crate) slot: CallSlot,
     pub(crate) app_id: String,
-    /// The caller the INVITE shows: the app's number, or a user name.
-    pub(crate) from: String,
-    pub(crate) to: String,
+    pub(crate) direction: Direction,
     /// `<room>/phone/<call_id>`, the broadcast the gateway publishes.
     pub(crate) namespace: Vec<String>,
     /// The broadcast the page publishes for this call.
@@ -53,21 +57,57 @@ pub(crate) struct CallPlan {
     pub(crate) relay_token: Option<String>,
 }
 
-/// Cancelling `hang_up` ends the call with BYE, or CANCEL while it rings.
-pub(crate) async fn run(context: Arc<CallContext>, plan: CallPlan, hang_up: CancellationToken) {
+pub(crate) enum Direction {
+    /// The app server asked for a call to `to`, showing `from` as the caller:
+    /// the app's number, or a user name.
+    Outbound { from: String, to: String },
+    /// The trunk's INVITE to one of the app's numbers, which the app's call
+    /// webhook answered.
+    Inbound(AnsweringInvite),
+}
+
+/// An inbound INVITE whose SDP answer is built but not sent yet.
+pub(crate) struct AnsweringInvite {
+    pub(crate) invite: InboundInvite,
+    pub(crate) leg: RtpLeg,
+    pub(crate) answer: String,
+    pub(crate) negotiated: Negotiated,
+}
+
+impl Direction {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Outbound { .. } => "outbound",
+            Self::Inbound(_) => "inbound",
+        }
+    }
+}
+
+/// Cancelling the slot's `hang_up` ends the call with BYE, or CANCEL while
+/// it rings.
+pub(crate) async fn run(context: Arc<CallContext>, plan: CallPlan) {
+    let direction = plan.direction.label();
     let span = tracing::info_span!(
         "sip_gateway.call",
-        call_id = %plan.call_id,
+        call_id = %plan.slot.call_id,
         app_id = %plan.app_id,
-        direction = "outbound",
+        direction,
     );
-    let call_id = plan.call_id.clone();
+    let call_id = plan.slot.call_id.clone();
+    let hang_up = plan.slot.hang_up.clone();
     let app_id = plan.app_id.clone();
+    let unanswered = match &plan.direction {
+        Direction::Inbound(answering) => Some(answering.invite.dialog.clone()),
+        Direction::Outbound { .. } => None,
+    };
     let reason = async {
         match Call::start(&context, plan).await {
             Ok(call) => call.run(&context, hang_up).await,
             Err(error) => {
                 tracing::error!(error = %format!("{error:#}"), call_id, app_id, "call not started");
+                if let Some(dialog) = unanswered {
+                    reject(&dialog, StatusCode::ServiceUnavailable);
+                }
                 EndReason::Gateway
             }
         }
@@ -77,21 +117,35 @@ pub(crate) async fn run(context: Arc<CallContext>, plan: CallPlan, hang_up: Canc
     tracing::info!(
         call_id,
         app_id,
+        direction,
         call_end_reason = reason.label(),
         "call ended"
     );
 }
 
 struct Call {
-    plan: CallPlan,
+    call_id: String,
+    slot: CallSlot,
     session: Arc<client::Session>,
     broadcast: Broadcast,
     state_track: StateTrack,
     leg: Arc<RtpLeg>,
-    invite: OutboundInvite,
+    dialog: InviteDialog,
+    states: DialogStateReceiver,
+    setup: Setup,
     peer_watch: PeerWatchTask,
     peer_audio: Option<mpsc::Receiver<PeerAudio>>,
     peer_left: oneshot::Receiver<()>,
+}
+
+/// What is left of the INVITE once it is sent or answered.
+enum Setup {
+    /// The trunk's final response, once it ends the dialog without a 2xx.
+    Outbound {
+        result: rsipstack::platform::JoinHandle<InviteAsyncResult>,
+    },
+    /// Settled by the gateway's own answer.
+    Inbound { negotiated: Negotiated },
 }
 
 impl Call {
@@ -114,25 +168,55 @@ impl Call {
         session.add_handler(Arc::new(connection.clone()));
         let broadcast = Broadcast::new(connection, plan.namespace.clone());
         let state_track = StateTrack::open(broadcast.clone()).await?;
-        state_track.publish(&CallState::Dialing).await?;
         let (peer_watch, peer_audio, peer_left) =
             PeerWatchTask::run(session.clone(), plan.peer.clone());
-        let (leg, offer) = RtpLeg::offer(context.media_address).await?;
-        let invite = context
-            .trunk
-            .invite(&plan.call_id, &plan.from, &plan.to, offer)?;
-        tracing::info!(
-            call_id = %plan.call_id,
-            sip_call_id = invite.dialog.id().call_id,
-            "INVITE sent"
-        );
+        let call_id = plan.slot.call_id.clone();
+        let (leg, dialog, states, setup) = match plan.direction {
+            Direction::Outbound { from, to } => {
+                state_track.publish(&CallState::Dialing).await?;
+                let (leg, offer) = RtpLeg::offer(context.media_address).await?;
+                let invite = context.trunk.invite(&call_id, &from, &to, offer)?;
+                tracing::info!(
+                    call_id,
+                    sip_call_id = invite.dialog.id().call_id,
+                    "INVITE sent"
+                );
+                let setup = Setup::Outbound {
+                    result: invite.result,
+                };
+                (leg, invite.dialog, invite.states, setup)
+            }
+            Direction::Inbound(answering) => {
+                state_track.publish(&CallState::Ringing).await?;
+                let dialog = answering.invite.dialog;
+                dialog
+                    .accept(
+                        Some(sdp_content_type()),
+                        Some(answering.answer.into_bytes()),
+                    )
+                    .context("answer the INVITE")?;
+                tracing::info!(
+                    call_id,
+                    sip_call_id = dialog.id().call_id,
+                    sip_status = 200,
+                    "INVITE final response sent"
+                );
+                let setup = Setup::Inbound {
+                    negotiated: answering.negotiated,
+                };
+                (answering.leg, dialog, answering.invite.states, setup)
+            }
+        };
         Ok(Self {
-            plan,
+            call_id,
+            slot: plan.slot,
             session,
             broadcast,
             state_track,
             leg: Arc::new(leg),
-            invite,
+            dialog,
+            states,
+            setup,
             peer_watch,
             peer_audio: Some(peer_audio),
             peer_left,
@@ -141,46 +225,69 @@ impl Call {
 
     async fn run(mut self, context: &CallContext, hang_up: CancellationToken) -> EndReason {
         let reason = match self.until_answered(&hang_up).await {
-            Ok(answer) => self.bridge(context, &hang_up, &answer).await,
+            Ok(negotiated) => self.bridge(context, &hang_up, negotiated).await,
             Err(reason) => reason,
         };
         self.end(context, &reason).await;
         reason
     }
 
-    /// The SDP answer of the 2xx, or why the call ended before one.
-    async fn until_answered(&mut self, hang_up: &CancellationToken) -> Result<String, EndReason> {
+    /// The media an outbound call's 2xx or an inbound call's ACK settled, or
+    /// why the call ended before.
+    async fn until_answered(
+        &mut self,
+        hang_up: &CancellationToken,
+    ) -> Result<Negotiated, EndReason> {
         let deadline = Instant::now() + RINGING_TIMEOUT;
         loop {
             tokio::select! {
-                state = self.invite.states.recv() => {
+                state = self.states.recv() => {
                     let Some(state) = state else {
                         return Err(EndReason::Gateway);
                     };
                     match progress(&state) {
-                        Progress::Ringing(sip_status) => {
-                            tracing::info!(call_id = %self.plan.call_id, sip_status, "INVITE provisional response received");
+                        Progress::Ringing(sip_status) if matches!(self.setup, Setup::Outbound { .. }) => {
+                            tracing::info!(call_id = %self.call_id, sip_status, "INVITE provisional response received");
                             self.publish(&CallState::Ringing).await;
                         }
-                        Progress::Answered(answer) => {
-                            tracing::info!(call_id = %self.plan.call_id, sip_status = 200, "INVITE final response received");
-                            return Ok(answer);
-                        }
-                        Progress::Ended => return Err(self.final_status().await),
-                        Progress::Other => {}
+                        Progress::Answered(answer) => return self.answered(&answer).await,
+                        Progress::Ended => return Err(self.ended_unanswered().await),
+                        Progress::Ringing(_) | Progress::Other => {}
                     }
                 }
                 () = sleep_until(deadline) => {
-                    hang_up_dialog(&self.invite.dialog).await;
+                    hang_up_dialog(&self.dialog).await;
                     return Err(EndReason::Timeout);
                 }
                 () = hang_up.cancelled() => {
-                    hang_up_dialog(&self.invite.dialog).await;
+                    hang_up_dialog(&self.dialog).await;
                     return Err(EndReason::Gateway);
                 }
                 Ok(()) = &mut self.peer_left => {
-                    hang_up_dialog(&self.invite.dialog).await;
+                    hang_up_dialog(&self.dialog).await;
                     return Err(EndReason::Hangup);
+                }
+            }
+        }
+    }
+
+    /// Applies the trunk's SDP answer to an outbound call; an inbound call's
+    /// media was settled by the gateway's own answer.
+    async fn answered(&mut self, answer: &str) -> Result<Negotiated, EndReason> {
+        match &self.setup {
+            Setup::Inbound { negotiated } => {
+                tracing::info!(call_id = %self.call_id, "ACK received");
+                Ok(*negotiated)
+            }
+            Setup::Outbound { .. } => {
+                tracing::info!(call_id = %self.call_id, sip_status = 200, "INVITE final response received");
+                match self.leg.answer(answer).await {
+                    Ok(negotiated) => Ok(negotiated),
+                    Err(error) => {
+                        tracing::warn!(%error, call_id = %self.call_id, "SDP answer refused");
+                        hang_up_dialog(&self.dialog).await;
+                        Err(EndReason::Status(488))
+                    }
                 }
             }
         }
@@ -190,16 +297,8 @@ impl Call {
         &mut self,
         context: &CallContext,
         hang_up: &CancellationToken,
-        answer: &str,
+        negotiated: Negotiated,
     ) -> EndReason {
-        let negotiated = match self.leg.answer(answer).await {
-            Ok(negotiated) => negotiated,
-            Err(error) => {
-                tracing::warn!(%error, call_id = %self.plan.call_id, "SDP answer refused");
-                hang_up_dialog(&self.invite.dialog).await;
-                return EndReason::Status(488);
-            }
-        };
         self.publish(&CallState::Answered).await;
         let writer = BroadcastWriter::run(
             self.broadcast.clone(),
@@ -225,45 +324,50 @@ impl Call {
         loop {
             let silent_until = *last_audio.borrow() + SILENCE_TIMEOUT;
             tokio::select! {
-                state = self.invite.states.recv() => match state.as_ref().map(progress) {
+                state = self.states.recv() => match state.as_ref().map(progress) {
                     Some(Progress::Ended) | None => {
-                        tracing::info!(call_id = %self.plan.call_id, "BYE received");
+                        tracing::info!(call_id = %self.call_id, "BYE received");
                         return EndReason::Hangup;
                     }
                     _ => {}
                 },
                 () = sleep_until(silent_until) => {
                     if *last_audio.borrow() + SILENCE_TIMEOUT <= Instant::now() {
-                        hang_up_dialog(&self.invite.dialog).await;
+                        hang_up_dialog(&self.dialog).await;
                         return EndReason::Timeout;
                     }
                 }
                 () = sleep_until(limit) => {
-                    hang_up_dialog(&self.invite.dialog).await;
+                    hang_up_dialog(&self.dialog).await;
                     return EndReason::Limit;
                 }
                 () = hang_up.cancelled() => {
-                    hang_up_dialog(&self.invite.dialog).await;
+                    hang_up_dialog(&self.dialog).await;
                     return EndReason::Gateway;
                 }
                 Ok(()) = &mut self.peer_left => {
-                    hang_up_dialog(&self.invite.dialog).await;
+                    hang_up_dialog(&self.dialog).await;
                     return EndReason::Hangup;
                 }
             }
         }
     }
 
-    /// The final response to the INVITE, once the dialog ended without a 2xx.
-    async fn final_status(&mut self) -> EndReason {
-        match (&mut self.invite.result).await {
+    /// Why the dialog ended before it was answered: for an outbound call
+    /// the trunk's final response, for an inbound one a CANCEL or BYE.
+    async fn ended_unanswered(&mut self) -> EndReason {
+        let Setup::Outbound { result } = &mut self.setup else {
+            tracing::info!(call_id = %self.call_id, "CANCEL received");
+            return EndReason::Hangup;
+        };
+        match result.await {
             Ok(Ok((_, Some(response)))) => {
                 let sip_status = response.status_code.code();
-                tracing::info!(call_id = %self.plan.call_id, sip_status, "INVITE final response received");
+                tracing::info!(call_id = %self.call_id, sip_status, "INVITE final response received");
                 EndReason::Status(sip_status)
             }
             Ok(Err(error)) => {
-                tracing::warn!(%error, call_id = %self.plan.call_id, "INVITE failed");
+                tracing::warn!(%error, call_id = %self.call_id, "INVITE failed");
                 EndReason::Gateway
             }
             _ => EndReason::Gateway,
@@ -273,7 +377,8 @@ impl Call {
     async fn end(self, context: &CallContext, reason: &EndReason) {
         self.publish(&CallState::Ended(reason.clone())).await;
         self.leg.close();
-        context.trunk.remove_dialog(&self.invite.dialog.id());
+        context.trunk.remove_dialog(&self.dialog.id());
+        drop(self.slot);
         drop(self.peer_watch);
         self.broadcast.connection().close().await;
         self.session.close().await;
@@ -281,16 +386,26 @@ impl Call {
 
     async fn publish(&self, state: &CallState) {
         if let Err(error) = self.state_track.publish(state).await {
-            tracing::warn!(%error, call_id = %self.plan.call_id, "call state not published");
+            tracing::warn!(%error, call_id = %self.call_id, "call state not published");
         }
     }
 }
 
-/// BYE, or CANCEL while the INVITE is unanswered.
+/// Refuses an inbound INVITE not answered yet.
+pub(crate) fn reject(dialog: &InviteDialog, status: StatusCode) {
+    let sip_call_id = dialog.id().call_id;
+    let sip_status = status.code();
+    tracing::info!(sip_call_id, sip_status, "INVITE final response sent");
+    if let Err(error) = dialog.reject(Some(status), None) {
+        tracing::warn!(sip_call_id, %error, "INVITE final response not sent");
+    }
+}
+
+/// BYE, or CANCEL while an outbound INVITE is unanswered.
 async fn hang_up_dialog(dialog: &InviteDialog) {
-    let call_id = dialog.id().call_id;
-    tracing::info!(call_id, "hangup sent");
+    let sip_call_id = dialog.id().call_id;
+    tracing::info!(sip_call_id, "hangup sent");
     if let Err(error) = dialog.hangup().await {
-        tracing::warn!(call_id, %error, "hangup not sent");
+        tracing::warn!(sip_call_id, %error, "hangup not sent");
     }
 }

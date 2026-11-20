@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use app_registry::{Apps, RegistryStore, is_e164};
 use auth_token::{Access, ClaimPolicy, SignedToken};
@@ -40,7 +43,7 @@ pub(crate) enum CallAuth {
     Vts {
         client: reqwest::Client,
         vts_url: String,
-        registry: RegistryStore,
+        registry: Arc<RegistryStore>,
     },
     /// Accepts every request for the app the prefix starts with and joins
     /// the relay with no token (`SIP_GATEWAY_INSECURE_SKIP_AUTH`, a local
@@ -49,7 +52,7 @@ pub(crate) enum CallAuth {
 }
 
 impl CallAuth {
-    pub(crate) fn new(vts_url: String, registry: RegistryStore) -> Self {
+    pub(crate) fn new(vts_url: String, registry: Arc<RegistryStore>) -> Self {
         Self::Vts {
             client: reqwest::Client::new(),
             vts_url,
