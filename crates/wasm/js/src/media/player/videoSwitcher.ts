@@ -65,10 +65,18 @@ export class VideoSwitcher {
   }
 
   /// False for an object of the outgoing rendition at or past the start of
-  /// the incoming one.
+  /// the incoming one. An object past the start group also retires the
+  /// outgoing subscription (`overrun`).
   acceptOutgoing(trackName: string, groupId: bigint): boolean {
     const pending = this.current
-    return pending?.outgoing.name !== trackName || pending.splice.acceptOutgoing(groupId) === 'play'
+    if (pending?.outgoing.name !== trackName) {
+      return true
+    }
+    const verdict = pending.splice.acceptOutgoing(groupId)
+    if (verdict === 'overrun') {
+      this.retireOutgoing(pending)
+    }
+    return verdict === 'play'
   }
 
   /// Settles a switch in progress: one that has handed over keeps the new
@@ -117,9 +125,6 @@ export class VideoSwitcher {
         void this.host.subscriptions.requestNewGroup(next, groupId)
       }
     }
-    if (verdict.retireOutgoing) {
-      this.retireOutgoing(pending)
-    }
     if (verdict.play) {
       this.host.play(trackName, groupId, object)
     }
@@ -129,8 +134,16 @@ export class VideoSwitcher {
     this.host.subscriptions.handOver('video', next)
     this.host.handedOver(next, start)
     if (!start.aligned) {
+      this.retireOutgoing(pending)
       return
     }
+    // The outgoing rendition can still be delivering the group before the
+    // start, so the switch waits for the publisher to end it there.
+    void pending.outgoing.handle.done.then(() => {
+      if (this.current === pending) {
+        this.current = undefined
+      }
+    })
     this.host.subscriptions.endBeforeGroup(pending.outgoing, start.groupId).catch((error) => {
       this.host.log('warn', `end ${pending.outgoing.name} before group ${start.groupId}: ${getErrorMessage(error)}`)
       this.retireOutgoing(pending)

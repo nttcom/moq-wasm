@@ -42,6 +42,63 @@ test('the incoming rendition takes over at the group after the newest outgoing o
   expect(switcher.acceptOutgoing('camera_low', 5n)).toBe(false)
 })
 
+test('the outgoing rendition is left to its PUBLISH_DONE after the incoming one passes the start group', async () => {
+  // Arrange: the outgoing rendition lags, so the incoming one has reached group 6 while the outgoing one still delivers group 4
+  const { subscriptions, switcher, played } = await switchingToCamera()
+  subscriptions.deliver('camera', 5n, 0n)
+  subscriptions.deliver('camera', 6n, 0n)
+
+  // Act
+  const tailPlays = switcher.acceptOutgoing('camera_low', 4n)
+  await subscriptions.endedByPublisher('camera_low')
+
+  // Assert: the switch is over without an UNSUBSCRIBE, so settling it retires nothing
+  expect(tailPlays).toBe(true)
+  expect(played).toEqual(['camera 5/0', 'camera 6/0'])
+  expect(switcher.abandon()).toBeUndefined()
+  expect(subscriptions.calls).not.toContain('retire camera_low')
+})
+
+test('an outgoing object past the start group retires the outgoing rendition its publisher did not end', async () => {
+  // Arrange
+  const { subscriptions, switcher } = await switchingToCamera()
+  subscriptions.deliver('camera', 5n, 0n)
+
+  // Act
+  const plays = switcher.acceptOutgoing('camera_low', 6n)
+
+  // Assert
+  expect(plays).toBe(false)
+  expect(subscriptions.calls).toContain('retire camera_low')
+})
+
+test('an End Group that cannot be sent retires the outgoing rendition', async () => {
+  // Arrange
+  const { subscriptions } = await switchingToCamera()
+  subscriptions.endBeforeGroupError = new Error('session closed')
+
+  // Act
+  subscriptions.deliver('camera', 5n, 0n)
+  await Promise.resolve()
+
+  // Assert
+  expect(subscriptions.calls).toContain('retire camera_low')
+})
+
+test('group ids that do not continue the outgoing rendition retire it at the handover', async () => {
+  // Arrange
+  const { subscriptions, played, handovers } = await switchingToCamera()
+
+  // Act
+  subscriptions.deliver('camera', 100n, 0n)
+
+  // Assert
+  expect(played).toEqual(['camera 100/0'])
+  expect(handovers).toEqual([{ groupId: 100n, aligned: false }])
+  expect(subscriptions.calls).toContain('retire camera_low')
+  expect(subscriptions.calls).not.toContain('endBeforeGroup camera_low 100')
+})
+
 test('a seek after the handover keeps the incoming rendition from playing the group before its start', async () => {
   // Arrange: the incoming rendition's first object is in the outgoing rendition's newest group, so it starts at 5
   const { subscriptions, switcher, played } = await switchingToCamera()

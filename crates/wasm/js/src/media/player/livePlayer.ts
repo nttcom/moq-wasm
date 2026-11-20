@@ -1284,8 +1284,8 @@ export class LivePlayer {
   }
 
   /// Waits for a switch only until its incoming rendition plays. The outgoing
-  /// rendition retires only when the incoming one starts its second group, up to
-  /// a keyframe interval later; the next switch retires it at once
+  /// rendition is ended by its publisher's PUBLISH_DONE, which can come a
+  /// group or more later; the next switch retires it at once
   /// (`abandonVideoSwitch`).
   private adaptVideo(): void {
     const nowMs = monotonicUnixMicros() / 1_000
