@@ -49,5 +49,5 @@ Run `python hello.py`. It prints `hello` and closes both sessions.
 - [Pipecat transport](https://nttcom.github.io/moq-wasm/docs/python/moq_wasm/pipecat.html) — install `moq-wasm[pipecat]` to build a bot. The [voice agent example](https://github.com/nttcom/moq-wasm/tree/master/examples/python/moq-ai-voice-agent) includes a working pipeline and uv configuration.
 
 For source builds and SDK internals, see the [package design](https://github.com/nttcom/moq-wasm/blob/master/docs/architecture/python/sdk.md#package)
-and [native type signatures](https://github.com/nttcom/moq-wasm/blob/master/crates/python/python/moq_wasm/_native.pyi).
-See the [changelog](https://github.com/nttcom/moq-wasm/blob/master/crates/python/CHANGELOG.md) for release notes.
+and [native type signatures](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/python/moq_wasm/_native.pyi).
+See the [changelog](https://github.com/nttcom/moq-wasm/blob/master/sdk/python/CHANGELOG.md) for release notes.

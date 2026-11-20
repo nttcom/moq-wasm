@@ -36,11 +36,11 @@ its bidirectional and unidirectional streams, datagrams, close info and
 
 ## Decision
 
-Use `web-sys` directly, limited to the listed features. `crates/wasm` already
+Use `web-sys` directly, limited to the listed features. `sdk/js` already
 depends on it at the same version, so no new crate enters the dependency
 tree. The `WebTransport` types are still behind `--cfg web_sys_unstable_apis`
 in `web-sys` 0.3; the root `.cargo/config.toml` sets that cfg for every build
-in the workspace, replacing the copy that lived in `crates/wasm/.cargo`.
+in the workspace, replacing the copy that lived in `sdk/js/.cargo`.
 `streamErrorCode` and `sendOrder` are read and written through
 `js_sys::Reflect` because `web-sys` types the former as `u8` and does not
 expose the latter.

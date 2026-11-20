@@ -40,8 +40,8 @@ A Rust application today therefore writes what the Python SDK gives a bot:
 | Publish encoded H.264/Opus as an MSF broadcast | `LocalBroadcast.add_media_source` over `_native.MediaBroadcast` | `broadcast::Broadcast` and `BroadcastWriter` with `mediapack` events built by hand |
 | Write an MSF event timeline | `EventTimeline` | by hand |
 
-The media source is already written twice: `crates/wasm/src/media_broadcast.rs`
-and `crates/python/src/media_broadcast.rs` wrap `broadcast::Broadcast` with the
+The media source is already written twice: `sdk/js/src/media_broadcast.rs`
+and `sdk/python/src/media_broadcast.rs` wrap `broadcast::Broadcast` with the
 same `configure_video`, `push_video`, `configure_audio`, `push_audio`,
 `add_rendition`, `remove_track`, keyframe request and demand change, about
 400 lines each.
@@ -72,7 +72,7 @@ The layer that closes these gaps depends on `moqt`, `broadcast` and `msf`.
   after `MoqSession`; wrapping each of its types again would copy it. A
   change to `moqt::client` is a change to this SDK and is written in its
   changelog.
-- **`crates/python` keeps `[lib] name = "moq_wasm"`** for its extension
+- **`sdk/python` keeps `[lib] name = "moq_wasm"`** for its extension
   module and gains `doc = false`, so `cargo doc --workspace` writes one
   `moq_wasm`.
 - Native targets only, on tokio. The browser uses the browser SDK.
@@ -222,7 +222,7 @@ broadcast.close().await?;
   `configure_audio`, `push_audio`, `add_rendition`, `remove_track`,
   `keyframe_request().await` (a NEW_GROUP_REQUEST), `demand_change().await`
   and the `on_demand` option. Its implementation is the wrapper
-  `crates/wasm` and `crates/python` share after "Migration" step 2, so the
+  `sdk/js` and `sdk/python` share after "Migration" step 2, so the
   three SDKs publish the same catalog.
 - **`watch_broadcasts(session, prefix, WatchOptions, handler)`** runs
   `handler` on a tokio task for each broadcast published under `prefix` that
@@ -337,13 +337,13 @@ One step per PR, each stacked on the one before.
 1. **docs: this design.** [moqt/sdk.md](../moqt/sdk.md) marks decisions 2 and
    3 and its Rust release steps 9 and 10 as replaced by this document.
 2. **refactor(broadcast): one media source.** Move the wrapper
-   `crates/wasm/src/media_broadcast.rs` and
-   `crates/python/src/media_broadcast.rs` share into `broadcast`, and make
+   `sdk/js/src/media_broadcast.rs` and
+   `sdk/python/src/media_broadcast.rs` share into `broadcast`, and make
    both bindings call it. The browser unit tests, pytest and the media E2E
    guard it; neither SDK's API changes.
 3. **feat(moq-wasm): core.** The crate, `connect`, `Session`, token refresh,
    `SessionEnd`, the re-exports, the README; AGENTS.md gains the crate in its
-   component table and naming rule; `crates/python` gains `doc = false`.
+   component table and naming rule; `sdk/python` gains `doc = false`.
 4. **feat(moq-wasm): publish a broadcast.** `create_broadcast`,
    `LocalBroadcast`, `EventTimeline`, `MediaSource`.
 5. **feat(moq-wasm): follow broadcasts.** `watch_broadcasts`,

@@ -1262,7 +1262,7 @@ dev = [
 requires-dist = [
     { name = "moq-bot-job", editable = "../moq-bot-job" },
     { name = "moq-system-one-bot", editable = "../moq-system-one-bot" },
-    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
+    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../sdk/python" },
     { name = "pipecat-ai", extras = ["google", "silero"], specifier = ">=1.13" },
 ]
 
@@ -1307,7 +1307,7 @@ dependencies = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "moq-bot-job", editable = "../moq-bot-job" },
-    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
+    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../sdk/python" },
 ]
 
 [package.metadata.requires-dev]
@@ -1319,7 +1319,7 @@ dev = [
 [[package]]
 name = "moq-wasm"
 version = "0.0.1"
-source = { directory = "../../../crates/python" }
+source = { directory = "../../../sdk/python" }
 
 [package.optional-dependencies]
 pipecat = [

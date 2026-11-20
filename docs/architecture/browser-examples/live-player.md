@@ -45,14 +45,14 @@ L3  page            examples/live-viewer, examples/onvif
                     connection form, MP4 publisher / PTZ, diagnostics
                     (StreamMonitor, delivery grid, PlaybackCharts, stats line), log
                         | public API and callbacks only
-L2  controls        crates/wasm/js/src/media/controls
+L2  controls        sdk/js/js/src/media/controls
                     seek bar, skip buttons, play/pause, LIVE, volume, speed,
                     quality menu, fullscreen, pointer idle, buffering spinner
                         | public API and callbacks only
-L1  LivePlayer      crates/wasm/js/src/media/player
+L1  LivePlayer      sdk/js/js/src/media/player
                     catalog, subscriptions, live pipelines, seek timeline, review
                         |
-L0  transport/codec MoqSession, crates/wasm/js/src/media/internal (decoder workers, MseSink)
+L0  transport/codec MoqSession, sdk/js/js/src/media/internal (decoder workers, MseSink)
 ```
 
 Rules:
@@ -63,7 +63,7 @@ Rules:
   writes status text; overlays the page puts in the same container stay on
   top of the pictures.
 - L1 does not connect. `start` is given a connected `MoqSession`
-  (`crates/wasm/js/src/core/session.ts`), so a page can share one session with a publisher
+  (`sdk/js/js/src/core/session.ts`), so a page can share one session with a publisher
   or with other players, and the page closes it.
 - Relay switchover and reconnecting are the session's, not the player's. The
   wasm `Session`'s `moqt::Session` follows GOAWAY and reconnects itself (see
@@ -83,7 +83,7 @@ Rules:
   appends its markup and `playerControls.css` to the same container, after the
   pictures and the page's own overlays. The arrow keys skip wherever the focus
   is, so a page holds one `PlayerControls`.
-- L1 reads the MSF catalog through `crates/wasm/js/src/media/catalog.ts` and uses
+- L1 reads the MSF catalog through `sdk/js/js/src/media/catalog.ts` and uses
   `getErrorMessage` from `utils/page.ts`; neither `lib/` nor `utils/` imports
   from `examples/`.
 - Diagnostics stay in L3. L1 reports deliveries to an optional observer
@@ -442,7 +442,7 @@ together.
 ### MP4 publisher
 
 The MP4 Publish panel demuxes the chosen file in the browser and publishes it
-through `crates/broadcast`, built into `crates/wasm` as `Mp4Broadcast`: the
+through `crates/broadcast`, built into `sdk/js` as `Mp4Broadcast`: the
 catalog, LOC and CMAF tracks, media timeline and FETCH cache are the ones
 `live-ingest` produces, so the viewer, the CMAF packaging and the rewind work
 unchanged. The page reads and paces the samples; everything sent to the relay
@@ -451,7 +451,7 @@ It publishes on a session of its own, opened with the page's token, so
 stopping it leaves the viewer's session open.
 
 - Demuxing uses the progressive MP4 index of `crates/mediapack`
-  (`mp4::Mp4Index`) through `crates/wasm`: only `moov` is handed to wasm and
+  (`mp4::Mp4Index`) through `sdk/js`: only `moov` is handed to wasm and
   samples are read with `File.slice`, so the file never sits in memory whole.
 - Video must be H.264. `mediapack` converts AVCC samples to Annex-B and puts
   the SPS / PPS from `avcC` before every keyframe, so the video track has no

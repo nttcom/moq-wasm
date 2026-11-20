@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 On `wasm32`, build with `RUSTFLAGS="--cfg web_sys_unstable_apis"`.
-For JavaScript, see the [browser SDK](../wasm/js/README.md).
+For JavaScript, see the [browser SDK](../../sdk/js/js/README.md).
 
 ## Send and receive a message
 

@@ -1212,7 +1212,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.11" },
     { name = "faster-whisper", specifier = "~=1.2.1" },
     { name = "moq-bot-job", editable = "../moq-bot-job" },
-    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../crates/python" },
+    { name = "moq-wasm", extras = ["pipecat"], directory = "../../../sdk/python" },
     { name = "pipecat-ai", extras = ["silero"], specifier = ">=1.12" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.11" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.11", index = "https://download.pytorch.org/whl/cpu" },
@@ -1230,7 +1230,7 @@ dev = [
 [[package]]
 name = "moq-wasm"
 version = "0.0.1"
-source = { directory = "../../../crates/python" }
+source = { directory = "../../../sdk/python" }
 
 [package.optional-dependencies]
 pipecat = [

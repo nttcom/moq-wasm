@@ -13,7 +13,7 @@ re-export する crate `moq-wasm`（`crates/moq-wasm`）で、tag は `rust-sdk-
 ## 目標
 ブラウザ SDK（`docs/architecture/wasm/browser-sdk.md`）と同じことを、Python と Rust
 でも同じ形で書けるようにする。relay に接続し、track を購読し、track を配信し、
-namespace を監視する。基準は JS の `MoqSession`（`crates/wasm/js/src/core/session.ts`）
+namespace を監視する。基準は JS の `MoqSession`（`sdk/js/js/src/core/session.ts`）
 で、3言語のメソッドは名前と引数の意味をそろえる。
 
 範囲は core API（session、購読、FETCH、配信、namespace）だけにする。JS の
@@ -27,13 +27,13 @@ transport）は `docs/architecture/python/sdk.md` で設計する。
 | 言語 | 入口 | 状態 |
 | --- | --- | --- |
 | JS | `moq-wasm` の `MoqSession` | SDK として完成した。tag `js-sdk-v<version>` の GitHub Release で配っている |
-| Python | `crates/python`（PyO3 + maturin、配布名 `moq-wasm`、モジュール `moq_wasm._native`、abi3-py311） | Meeting の transcriber と AI bot が要るものだけがある。`fetch`、`track_status`、トークン、購読のオプションが無い。bot は path 依存で、利用者は Rust でビルドする |
+| Python | `sdk/python`（PyO3 + maturin、配布名 `moq-wasm`、モジュール `moq_wasm._native`、abi3-py311） | Meeting の transcriber と AI bot が要るものだけがある。`fetch`、`track_status`、トークン、購読のオプションが無い。bot は path 依存で、利用者は Rust でビルドする |
 | Rust | `crates/moqt` | 制御メッセージ単位の API（`Session`、`Subscriber`、`Publisher`、`publish::Origin`、`namespace::NamespaceWatchers`）。`README.md` は commit を指す git 依存を案内している |
 
 `MoqSession` 相当の処理は、Rust の中で2か所に重複している。
 
-- `crates/wasm/src/session_routes.rs` の `SessionRoutes`
-- `crates/python/src/session.rs` の `route_events`
+- `sdk/js/src/session_routes.rs` の `SessionRoutes`
+- `sdk/python/src/session.rs` の `route_events`
 
 どちらも `moqt::Session::receive_event` を1本のループで読む。そして、配信している
 track への SUBSCRIBE、FETCH、TRACK_STATUS を `Origin::handle` へ、PUBLISH_NAMESPACE を
@@ -356,7 +356,7 @@ Linux aarch64、macOS arm64 の abi3 wheel（Python 3.11 以上）で、
    始める。
 10. **ci: `rust-release.yml`（`rust-v*`）。**
 11. **ci: `python-release.yml`（`python-sdk-v*`）。** wheel の matrix と、wheel での
-    pytest。`crates/python/CHANGELOG.md` を始め、README に wheel の入れ方を書く。
+    pytest。`sdk/python/CHANGELOG.md` を始め、README に wheel の入れ方を書く。
 
 1〜4 は重複を1か所にする部分で、5〜8 は Python の機能を JS に追いつかせる部分で
 ある。9〜11 の配布は、それぞれの機能がそろってから出す。

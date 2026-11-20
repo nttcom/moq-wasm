@@ -10,7 +10,7 @@ Accepted
 
 ## What
 
-`crates/python` depends on `pyo3` (with `abi3-py311` and `anyhow`) to define
+`sdk/python` depends on `pyo3` (with `abi3-py311` and `anyhow`) to define
 the Python module `moq_wasm._native`, and on `pyo3-build-config` in `build.rs` for the
 macOS link arguments of an extension module. maturin builds the module as a
 wheel; it is a build tool named in `pyproject.toml`, not a Cargo dependency.

@@ -28,7 +28,7 @@ override-dependencies = ["pillow>=13"]
 
 [tool.uv.sources]
 moq-bot-job = { path = "../moq-bot-job", editable = true }
-moq-wasm = { path = "../../../crates/python" }
+moq-wasm = { path = "../../../sdk/python" }
 # PyPI's Linux torch carries the CUDA libraries, several GB that a bot on the CPU never loads.
 torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
 torchaudio = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }

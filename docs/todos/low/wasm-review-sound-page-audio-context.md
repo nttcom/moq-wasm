@@ -1,6 +1,6 @@
 # [M] Play review sound through the page's AudioContext
 
-Next: replace the context's `suspend()` in `ReviewClock.applyPauseToContext` (`crates/wasm/js/src/media/player/reviewClock.ts:145`) with a flush of every follower's sound.
+Next: replace the context's `suspend()` in `ReviewClock.applyPauseToContext` (`sdk/js/js/src/media/player/reviewClock.ts:145`) with a flush of every follower's sound.
 
 ## Goal
 

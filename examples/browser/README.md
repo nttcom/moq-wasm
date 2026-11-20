@@ -1,6 +1,6 @@
 # browser examples
 
-Browser demos built on `crates/wasm`.
+Browser demos built on `sdk/js`.
 
 ```shell
 npm ci              # the repository root is an npm workspace

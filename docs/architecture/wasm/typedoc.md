@@ -7,13 +7,13 @@ Accepted
 2026-11-18
 
 ## Context
-The browser SDK (`crates/wasm/js`) is documented by its README and its TSDoc comments, which only someone reading
+The browser SDK (`sdk/js/js`) is documented by its README and its TSDoc comments, which only someone reading
 the source or the `.d.ts` files sees. The Example site on GitHub Pages should serve both as pages: the README as a
 guide and every exported class, function and type of the `moq-wasm`, `moq-wasm/media` and `moq-wasm/recording`
 entry points as a reference.
 
 ## Decision
-Add **`typedoc`** in `crates/wasm/js/typedoc/`, a package with its own lock file outside the npm workspace.
+Add **`typedoc`** in `sdk/js/js/typedoc/`, a package with its own lock file outside the npm workspace.
 `typedoc.json` there takes the three entry points and the README; `npm run docs` in `examples/browser` writes the
 HTML to `examples/browser/public/docs/js`, which Vite serves and copies into the site.
 
@@ -24,7 +24,7 @@ HTML to `examples/browser/public/docs/js`, which Vite serves and copies into the
 
 ### Negative
 - TypeDoc supports `typescript` up to 6.0, not the TypeScript 7 the workspace builds with, and takes it as a peer
-  dependency. Inside the workspace, npm put TypeScript 6 in `crates/wasm/js/node_modules/.bin`, where it shadowed the
+  dependency. Inside the workspace, npm put TypeScript 6 in `sdk/js/js/node_modules/.bin`, where it shadowed the
   workspace's `tsc` and changed the declarations `api-extractor` checks; hence the separate package and lock file.
 - `skipErrorChecking` stops TypeDoc from type checking the sources, which use APIs TypeScript 6's libraries lack
   (`Uint8Array.fromBase64`).

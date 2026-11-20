@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 A promise the SDK neither awaits nor marks with `void` loses its rejection and lets the next step run before it
-settles. `tsc` does not report it, and the browser SDK (`crates/wasm/js`) had no linter, so nothing in CI caught it.
+settles. `tsc` does not report it, and the browser SDK (`sdk/js/js`) had no linter, so nothing in CI caught it.
 The check needs type information: whether an expression is a promise depends on its type.
 
 ## Decision

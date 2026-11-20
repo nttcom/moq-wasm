@@ -1,6 +1,6 @@
 # [M] Play the sound of a review window that has no video
 
-Next: read the `frames.length === 0` branch of `fetchWindow` at `crates/wasm/js/src/media/player/reviewSession.ts:185`.
+Next: read the `frames.length === 0` branch of `fetchWindow` at `sdk/js/js/src/media/player/reviewSession.ts:185`.
 
 ## Goal
 

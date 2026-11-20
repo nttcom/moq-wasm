@@ -14,7 +14,7 @@ reviewer cannot tell from a pull request whether the public API changed.
 ## Decision
 Add **`@microsoft/api-extractor`** as a devDependency of `moq-wasm`. For each entry point in `exports` that has
 types (`.`, `./media`, `./recording`), it reads the built `types/<entry>/index.d.ts` and writes
-`crates/wasm/js/api/<entry>.api.md`, the exported declarations with their signatures. The reports are committed.
+`sdk/js/js/api/<entry>.api.md`, the exported declarations with their signatures. The reports are committed.
 The `sdk-package` CI job builds the package and runs `npm run api:check`, which fails when a report differs from
 the declarations; `npm run api:update` rewrites them.
 
@@ -35,7 +35,7 @@ only list declarations and the types they reference but do not export (`ae-forgo
   inside it does not show.
 
 ### Neutral
-- The reports are excluded from Prettier (`crates/wasm/js/.prettierignore`), since the check compares them byte
+- The reports are excluded from Prettier (`sdk/js/js/.prettierignore`), since the check compares them byte
   for byte.
 
 ## Alternatives Considered

@@ -7,7 +7,7 @@ Accepted
 2026-11-16
 
 ## What
-`crates/python` depends on `serde_json` (1, already in the workspace).
+`sdk/python` depends on `serde_json` (1, already in the workspace).
 
 ## Context
 `telemetry_report::log_record` and `SpanRecordLayer` build the records, which `wait_log_records`

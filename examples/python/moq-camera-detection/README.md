@@ -46,7 +46,7 @@ System One は 1 度に 1 つの問いにしか答えないので、同時に動
 }
 ```
 
-- bot は `moq-wasm` を `crates/python` からビルドするので、Rust のツールチェーンが要ります。
+- bot は `moq-wasm` を `sdk/python` からビルドするので、Rust のツールチェーンが要ります。
 - 起動のオプションは [moq-bot-job](../moq-bot-job/README.md) の「bot サービスから起動される bot」にあります。
 
 ## トラック

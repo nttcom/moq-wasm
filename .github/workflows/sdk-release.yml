@@ -25,14 +25,14 @@ jobs:
           node-version: 22.23.4
       - name: Check the tag names the package version
         run: |
-          version=$(node -p "require('./crates/wasm/js/package.json').version")
+          version=$(node -p "require('./sdk/js/js/package.json').version")
           if [ "${GITHUB_REF_NAME}" != "js-sdk-v${version}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not name the package version ${version}"
             exit 1
           fi
           echo "VERSION=${version}" >> "${GITHUB_ENV}"
       - name: Take the release notes from the changelog
-        run: node crates/wasm/js/scripts/release-notes.mjs crates/wasm/js/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
+        run: node sdk/js/js/scripts/release-notes.mjs sdk/js/js/CHANGELOG.md "${VERSION}" > "${RUNNER_TEMP}/notes.md"
       - name: Install Rust
         # dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 = v1
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9

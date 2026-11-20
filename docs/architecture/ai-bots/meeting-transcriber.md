@@ -12,7 +12,7 @@ service starts as the bot type `transcriber`
 (see [the bot-dispatcher design](../bot-dispatcher/architecture.md)), and the Meeting page
 (`examples/browser/examples/meeting`).
 The bot reaches the relay through this repository's Python bindings
-(`crates/python`, see [its design](../python/architecture.md)).
+(`sdk/python`, see [its design](../python/architecture.md)).
 
 ## Context
 A spike (2026-10-19/20) showed that a Python process can transcribe a meeting

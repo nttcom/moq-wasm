@@ -10,7 +10,7 @@ Accepted
 2026-10-20
 
 ## Scope
-A new crate `crates/python` that builds the Python module `moqt` with PyO3, a
+A new crate `sdk/python` that builds the Python module `moqt` with PyO3, a
 helper moved into `moqt` so the module and `broadcast` share one way of serving
 published tracks, and the switch of the Meeting transcriber and the AI demo
 bots under `examples/python/` from moq-rs to the module.
@@ -41,7 +41,7 @@ exists, and exposed no FETCH.
 ## Decision
 
 ### The crate
-`crates/python` (package `python`, like `crates/wasm`) builds a `cdylib`,
+`sdk/python` (package `python`, like `sdk/js`) builds a `cdylib`,
 the module `moq_wasm._native` of the distribution `moq-wasm`, with PyO3 and
 maturin. Its method names follow the browser SDK's `MoqSession`. Every async method returns an asyncio
 awaitable through `pyo3-async-runtimes` on its tokio runtime; the module
@@ -137,7 +137,7 @@ The browser SDK binds the same `client::Session`, so both answer the relay alike
   when the crate, `moqt`, the relay or the VTS change.
 
 ### Using it from the bots
-A bot depends on the module by path (`moq-wasm = { path = "../../../crates/python" }`
+A bot depends on the module by path (`moq-wasm = { path = "../../../sdk/python" }`
 in `[tool.uv.sources]`), and uv builds it with maturin, so building a bot
 needs a Rust toolchain. `examples/python/Dockerfile` gains a builder stage
 that compiles the wheel.

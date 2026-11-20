@@ -14,7 +14,7 @@ Shared by all agents (Claude Code, Codex).
 - When a fix requires a refactor, open the refactor as its own PR first, then stack the fix that builds on it as a stacked PR on top of the refactor PR — do not mix the two in one PR.
 
 ## Lower Layers
-A lower layer is one of the crates other code builds on: `moqt`, `broadcast`, `msf`, `mediapack`, and the SDKs `crates/wasm` and `crates/python`.
+A lower layer is one of the crates other code builds on: `moqt`, `broadcast`, `msf`, `mediapack`, and the SDKs `sdk/js` and `sdk/python`.
 - Fix a bug whose cause lies in a lower layer there, not in the caller. A workaround becomes load-bearing and hides the bug from the next caller.
 - When the cleanest design of the task needs something a lower layer does not offer, propose adding it there instead of bending the caller's design around the gap, such as picking a namespace layout only because an SDK fixes one, even when bending the caller would be the smaller change. State the API (signature and default behaviour) and what the caller gains, and wait for approval. An API the task needs is a current requirement under YAGNI; options beyond what the task uses still wait for a second use case.
 - Open the lower-layer change as its own PR first and stack the caller's change on top, as with a refactor and its fix.

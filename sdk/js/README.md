@@ -10,7 +10,7 @@ in `MoqSession`, `createBroadcast()` and `LivePlayer`; `examples/browser`
 depends on it as an npm workspace.
 
 ```shell
-npm --prefix crates/wasm/js run wasm         # wasm-pack build --target web
+npm --prefix sdk/js/js run wasm         # wasm-pack build --target web
 ```
 
 `make browser` runs this before starting Vite.

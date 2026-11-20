@@ -18,17 +18,17 @@ unit test.
 
 ## Context
 
-`crates/wasm` hands LOC properties across the JavaScript boundary
+`sdk/js` hands LOC properties across the JavaScript boundary
 with `serde_wasm_bindgen`, and previously did so through a parallel set of LOC
 types in the `packages` crate. Folding `packages` into `mediapack` leaves the
 `mediapack` types as the only LOC model, so they must be the ones that cross
 the boundary. The shape is `{ id, value: { varint } | { bytes } }`, which is
 the draft-ietf-moq-loc-04 §2.3 representation and is mirrored by
-`crates/wasm/js/src/media/internal/loc.ts`.
+`sdk/js/js/src/media/internal/loc.ts`.
 
 ## Alternatives
 
-- Keep a serde-only DTO enum in `crates/wasm` and convert to and from
+- Keep a serde-only DTO enum in `sdk/js` and convert to and from
   `mediapack::loc::LocExtension`. Keeps `mediapack` free of `serde`, but
   keeps the id-to-name table that the merge is removing alive in a second
   place.

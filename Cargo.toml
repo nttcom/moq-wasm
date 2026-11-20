@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     'services/*',
     'crates/*',
+    'sdk/*',
     'examples/rust/moq-cli',
     'tests/*',
 ]

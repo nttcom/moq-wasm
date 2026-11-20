@@ -45,7 +45,7 @@ Pass every comment and doc comment the diff adds, each with the code around it, 
 Run the checks for what the diff touches, every time, whether the files were changed with Edit, Write or a shell command. The PostToolUse hook in `.claude/settings.json` formats only files written with Edit and Write.
 
 - Rust: `cargo fmt --check` and `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
-- Files prettier checks (under `examples/browser/` or `crates/wasm/js/`): the `Lint (JavaScript)` command in `AGENTS.md`. Run `npm ci` first in this checkout, so prettier is the version its lock file pins rather than one left in another checkout.
+- Files prettier checks (under `examples/browser/` or `sdk/js/js/`): the `Lint (JavaScript)` command in `AGENTS.md`. Run `npm ci` first in this checkout, so prettier is the version its lock file pins rather than one left in another checkout.
 
 Fix a failure with the formatter or by hand, never by loosening the check.
 
@@ -71,10 +71,10 @@ Section rules:
 - `## 影響範囲` — name the affected crates and whether the change is breaking for dependents. `moqt` is the central crate, so changes there affect the whole workspace.
   - For a `fix` PR, also state the versions the bug affects: the first release that contains it (`git tag --contains <commit that introduced the bug> --list 'js-sdk-v*' --sort=v:refname | head -1`, with `'python-sdk-v*'` for a bug in the Python SDK, or `未リリース` when no tag contains it), and the MoQT draft version (`draft-14`, `draft-18`) when the bug occurs on only one of them.
 - `## テスト` — the commands actually run and their results. If a check was skipped, say so.
-- `## リリースノート` — present only when the change is visible to a user of the browser SDK (`moq-wasm`): its API, its behaviour, or a bug they could hit. One or more English bullets in the style of `crates/wasm/js/CHANGELOG.md`, written to be copied there as they are; start a breaking change with `Breaking:` and show the migration. The `release-sdk` skill collects these sections when it releases. The rest of the body stays Japanese, and the three-line limit does not apply to this section.
-- `## リリースノート（Python）` — the same for a user of the Python SDK (`moq-wasm` in `crates/python`), in the style of `crates/python/CHANGELOG.md`; the `release-python-sdk` skill collects these sections. A change both SDKs' users notice, such as one in `moqt`, gets both sections, each written for its SDK's API.
+- `## リリースノート` — present only when the change is visible to a user of the browser SDK (`moq-wasm`): its API, its behaviour, or a bug they could hit. One or more English bullets in the style of `sdk/js/js/CHANGELOG.md`, written to be copied there as they are; start a breaking change with `Breaking:` and show the migration. The `release-sdk` skill collects these sections when it releases. The rest of the body stays Japanese, and the three-line limit does not apply to this section.
+- `## リリースノート（Python）` — the same for a user of the Python SDK (`moq-wasm` in `sdk/python`), in the style of `sdk/python/CHANGELOG.md`; the `release-python-sdk` skill collects these sections. A change both SDKs' users notice, such as one in `moqt`, gets both sections, each written for its SDK's API.
 
-Do not edit `crates/wasm/js/CHANGELOG.md` or `crates/python/CHANGELOG.md` in a PR other than a release PR: entries written there by parallel PRs conflict, so they live in the PR body until the release.
+Do not edit `sdk/js/js/CHANGELOG.md` or `sdk/python/CHANGELOG.md` in a PR other than a release PR: entries written there by parallel PRs conflict, so they live in the PR body until the release.
 
 ### Do Not Write
 
