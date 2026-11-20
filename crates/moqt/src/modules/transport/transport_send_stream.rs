@@ -26,6 +26,14 @@ pub enum TransportSendError {
         #[source]
         source: anyhow::Error,
     },
+    /// The message holds a value its draft cannot carry, such as a draft-18
+    /// vi64 of 2^62 or more on draft-14, or is longer than its Message Length
+    /// allows. Nothing was written, and the session stays usable.
+    #[error("message cannot be encoded: {source}")]
+    Unencodable {
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 impl TransportSendError {

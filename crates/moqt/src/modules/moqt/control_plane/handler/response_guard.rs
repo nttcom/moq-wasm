@@ -68,15 +68,32 @@ impl ResponseGuard {
         anyhow::bail!("the peer's draft cannot carry the track's properties")
     }
 
-    /// `response` must be an `*_OK`; it is logged as `*_OK sent`.
+    /// `response` must be an `*_OK`; it is logged as `*_OK sent`. An `*_OK`
+    /// the peer's draft cannot carry is answered with INTERNAL_ERROR instead,
+    /// so the requester does not wait for its timeout, and the returned
+    /// `Unencodable` tells the caller the request was refused.
     pub(crate) async fn accept(
         &self,
         response: OutgoingResponse,
     ) -> Result<(), TransportSendError> {
         self.mark_responded();
-        self.connection.control.respond(response).await?;
-        self.request.log_ok_sent();
-        Ok(())
+        match self.connection.control.respond(response).await {
+            Ok(()) => {
+                self.request.log_ok_sent();
+                Ok(())
+            }
+            Err(unencodable @ TransportSendError::Unencodable { .. }) => {
+                send_request_error(
+                    &self.connection,
+                    &self.request,
+                    RequestErrorCode::InternalError,
+                    "response cannot be encoded".to_string(),
+                )
+                .await?;
+                Err(unencodable)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) async fn reject(

@@ -228,10 +228,8 @@ async fn cancel(stream: Option<RequestStream>) -> Result<(), TransportSendError>
     }
 }
 
-fn encode_error(error: anyhow::Error) -> TransportSendError {
-    TransportSendError::SessionError {
-        reason: error.to_string(),
-    }
+fn encode_error(source: anyhow::Error) -> TransportSendError {
+    TransportSendError::Unencodable { source }
 }
 
 impl ControlChannel {

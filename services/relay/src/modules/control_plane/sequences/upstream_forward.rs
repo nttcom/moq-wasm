@@ -311,9 +311,13 @@ mod tests {
             reason: "webtransport error: closed".to_string(),
         });
         let other = anyhow::anyhow!("session not found");
+        let unencodable = anyhow::Error::new(moqt::TransportSendError::Unencodable {
+            source: anyhow::anyhow!("value of 2^62 or more"),
+        });
 
         // Act / Assert
         assert!(super::publisher_left(&closed));
         assert!(!super::publisher_left(&other));
+        assert!(!super::publisher_left(&unencodable));
     }
 }

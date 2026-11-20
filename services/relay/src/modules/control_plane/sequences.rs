@@ -103,6 +103,28 @@ pub(crate) async fn connect_relay(
         .ok()
 }
 
+/// Removes a downstream subscription its subscriber was never told of, and
+/// releases the upstream subscriptions it leaves unneeded.
+pub(crate) async fn remove_downstream_subscription(
+    table: &InMemoryLocalPubSubDirectory,
+    forwarder: &ControlMessageForwarder,
+    subscriber_session_id: SessionId,
+    request_id: u64,
+) {
+    let removed = table.remove_downstream_subscription(subscriber_session_id, request_id);
+    for released in removed
+        .into_iter()
+        .flat_map(|removed| removed.released_upstream_subscriptions)
+    {
+        release_upstream(
+            forwarder,
+            released.publisher_session_id,
+            &released.subscription,
+        )
+        .await;
+    }
+}
+
 /// Sends the UNSUBSCRIBE of a released upstream subscription; its ingest
 /// stopped with the producer the directory dropped.
 pub(crate) async fn release_upstream(
@@ -258,19 +280,13 @@ pub(crate) async fn start_egress(
             request_id = request.request_id,
             "subscriber session not found; egress not started"
         );
-        let removed =
-            table.remove_downstream_subscription(request.subscriber_session_id, request.request_id);
-        for released in removed
-            .into_iter()
-            .flat_map(|removed| removed.released_upstream_subscriptions)
-        {
-            release_upstream(
-                forwarder,
-                released.publisher_session_id,
-                &released.subscription,
-            )
-            .await;
-        }
+        remove_downstream_subscription(
+            table,
+            forwarder,
+            request.subscriber_session_id,
+            request.request_id,
+        )
+        .await;
         return false;
     };
     let _egress = EgressTask::run(EgressStart {
