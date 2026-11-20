@@ -140,6 +140,7 @@ class FakeNativeSession:
         self.calls: list[tuple] = []
         self.subscribe_options: list[dict] = []
         self.writers: dict[str, FakeWriter] = {}
+        self.publish_options: dict[str, dict] = {}
         self.refreshed: list[str] = []
         self._closed = asyncio.get_running_loop().create_future()
         self._namespace_events: asyncio.Queue = asyncio.Queue()
@@ -153,6 +154,7 @@ class FakeNativeSession:
 
     async def publish_track(self, namespace: list[str], name: str, **options) -> FakeWriter:
         self.calls.append(("publish_track", name))
+        self.publish_options[name] = options
         return self.writers.setdefault(name, FakeWriter())
 
     async def announce(self, namespace: list[str]) -> None:

@@ -303,7 +303,8 @@ impl Session {
     /// Registers a track with the session's origin. Its group ids start at
     /// the wall-clock time in µs, so a later run of the same publisher does
     /// not reuse a location the relay still caches.
-    #[pyo3(signature = (namespace, name, *, retention_seconds, publish, datagram))]
+    #[pyo3(signature = (namespace, name, *, retention_seconds, publish, datagram, priority))]
+    #[allow(clippy::too_many_arguments)]
     fn publish_track<'py>(
         &self,
         py: Python<'py>,
@@ -312,6 +313,7 @@ impl Session {
         retention_seconds: f64,
         publish: bool,
         datagram: bool,
+        priority: u8,
     ) -> PyResult<Bound<'py, PyAny>> {
         let retention = if retention_seconds == 0.0 {
             Retention::NewestOnly
@@ -327,6 +329,7 @@ impl Session {
                 retention,
                 publish,
                 datagram,
+                priority,
             };
             let writer = session.publish_track(&namespace, &name, options).await?;
             Ok(TrackWriter::new(writer, scope))

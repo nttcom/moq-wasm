@@ -208,6 +208,7 @@ export type PublishTrackOptions = {
     retentionMs?: number;
     publish?: boolean;
     datagram?: boolean;
+    priority?: number;
 };
 
 // @public (undocumented)

@@ -47,6 +47,9 @@ export type PublishTrackOptions = {
   /// safe) is dropped. A subscriber reads the track with the async iterator,
   /// not `groups()`.
   datagram?: boolean
+  /// The Publisher Priority (draft-14 §7.1), 0 to 255, 128 by default: among
+  /// the session's tracks, a lower value is sent first.
+  priority?: number
 }
 
 export type MoqSubscribeOptions = {
@@ -246,7 +249,14 @@ export class MoqSession {
   /// Numbers, caches and sends what the writer writes, and answers the track's
   /// SUBSCRIBE and FETCH.
   publishTrack(namespace: string[], track: string, options: PublishTrackOptions = {}): Promise<Moqt.TrackWriter> {
-    return this.inner.publishTrack(namespace, track, options.retentionMs, options.publish, options.datagram)
+    return this.inner.publishTrack(
+      namespace,
+      track,
+      options.retentionMs,
+      options.publish,
+      options.datagram,
+      options.priority
+    )
   }
 
   /// To publish a MediaStream, use `publish` from `moq-wasm/media`, which feeds

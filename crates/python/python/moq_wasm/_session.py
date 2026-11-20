@@ -11,6 +11,7 @@ logger = logging.getLogger("moq_wasm")
 
 T = TypeVar("T")
 DEFAULT_RETENTION_SECONDS = 60.0
+DEFAULT_PRIORITY = 128
 Dial = Callable[[str | None], Awaitable[_native.Session]]
 
 
@@ -84,6 +85,7 @@ class TrackWriter:
         *,
         publish: bool = False,
         datagram: bool = False,
+        priority: int = DEFAULT_PRIORITY,
         session_ended: asyncio.Future[None] | None = None,
     ):
         self.namespace = namespace
@@ -91,6 +93,7 @@ class TrackWriter:
         self.retention_seconds = retention_seconds
         self.publish = publish
         self.datagram = datagram
+        self.priority = priority
         self._session_ended = session_ended
         self._writer: _native.TrackWriter | None = None
         # Set once the track is registered, or will not be.
@@ -240,19 +243,35 @@ class Session:
         retention_seconds: float = DEFAULT_RETENTION_SECONDS,
         publish: bool = False,
         datagram: bool = False,
+        priority: int = DEFAULT_PRIORITY,
     ) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for
         (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
         a SUBSCRIBE at once; with `publish`, announce first."""
-        writer = self._track_writer(namespace, name, retention_seconds, publish=publish, datagram=datagram)
+        writer = self._track_writer(
+            namespace, name, retention_seconds, publish=publish, datagram=datagram, priority=priority
+        )
         await self._register(writer)
         return writer
 
     def _track_writer(
-        self, namespace: list[str], name: str, retention_seconds: float, *, publish: bool, datagram: bool
+        self,
+        namespace: list[str],
+        name: str,
+        retention_seconds: float,
+        *,
+        publish: bool,
+        datagram: bool,
+        priority: int,
     ) -> TrackWriter:
         return TrackWriter(
-            namespace, name, retention_seconds, publish=publish, datagram=datagram, session_ended=self._done
+            namespace,
+            name,
+            retention_seconds,
+            publish=publish,
+            datagram=datagram,
+            priority=priority,
+            session_ended=self._done,
         )
 
     async def _register(self, writer: TrackWriter) -> None:
@@ -263,6 +282,7 @@ class Session:
                 retention_seconds=writer.retention_seconds,
                 publish=writer.publish,
                 datagram=writer.datagram,
+                priority=writer.priority,
             )
         except BaseException:
             writer._abandon()

@@ -49,6 +49,21 @@ async def test_connection_lost_carries_how_the_last_connection_closed():
     assert (lost.value.close_info.code, lost.value.close_info.reason) == (0x10, "going away")
 
 
+async def test_a_track_s_publisher_priority_reaches_the_native_session():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+
+    # Act
+    await within(session.publish_track(NAMESPACE, "control", priority=0))
+    await within(session.publish_track(NAMESPACE, "video"))
+
+    # Assert
+    options = relay.sessions[0].publish_options
+    assert (options["control"]["priority"], options["video"]["priority"]) == (0, 128)
+    await session.close()
+
+
 async def test_a_refreshed_token_is_handed_to_the_relay():
     # Arrange: the first token is due for refresh at once
     first = unsigned_token("temp-app", time.time() + 300)
