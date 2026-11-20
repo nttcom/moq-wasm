@@ -9,7 +9,7 @@
 - Every Rust crate lives under `services/`, `crates/` or `sdk/`. Architecture documents live under `docs/architecture/<package name>/`, where `<package name>` is the `name` in the crate's `Cargo.toml`.
   - `services/` holds the crates whose product is a process that is deployed or run on its own: servers and bridges (`relay`, `vts`, `live-ingest`).
   - `crates/` holds the code other crates, the SDKs or GStreamer link against: libraries and plugins (`moqt`, `broadcast`, `gst-plugin-moqt`). A library that also ships a small CLI behind a feature (`auth-token`) stays here.
-  - `sdk/` holds the SDKs applications install, one directory per language: `sdk/js` (the crate `wasm` and the npm package under `js/`) and `sdk/python` (the crate `python` and the Python package).
+  - `sdk/` holds the SDKs applications install, one directory per language: `sdk/js` (the crate `wasm` and the npm package under `js/`), `sdk/python` (the crate `python` and the Python package) and `sdk/rust` (the crate `moq-wasm`, named as the other two SDKs are installed, since a git dependency is named by its package).
 - Crate names carry no `moqt-` prefix: the workspace is the namespace. Pick the name with this test:
   1. The crate implements a specification → use the specification's name (`moqt`, `msf`).
   2. An external ecosystem dictates the form → follow it (`gst-plugin-moqt`).
@@ -31,6 +31,7 @@ Application and integration components (draft reference is normally not required
 | Component | Description |
 | --- | --- |
 | `sdk/js` | Browser SDK `moq-wasm`: WebAssembly bindings to `moqt` (crate `wasm`) and the TypeScript package around them in `js/` |
+| `sdk/rust` | Rust SDK `moq-wasm`: `moqt::client` re-exported with token refresh and the end of a session, for applications outside this repository |
 | `sdk/python` | Python SDK `moq-wasm`: PyO3 bindings to `moqt` (`moq_wasm._native`) and the Python package around them, used by the Python bots |
 | `crates/gst-plugin-moqt` | GStreamer plugin (`moqtsink`) publishing H.264/AAC pipelines into MoQT |
 | `crates/transcode` | GStreamer-backed re-encoding of `mediapack` media events into multiple renditions |

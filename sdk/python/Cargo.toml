@@ -8,6 +8,8 @@ name = "moq_wasm"
 crate-type = ["cdylib"]
 # An extension module cannot link as a test binary; pytest covers it.
 test = false
+# Both libraries are named `moq_wasm`, so `cargo doc` keeps sdk/rust's; pdoc documents this module.
+doc = false
 doctest = false
 
 [dependencies]

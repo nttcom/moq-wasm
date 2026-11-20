@@ -1971,6 +1971,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moq-wasm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "auth-token",
+ "moqt",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "moqt"
 version = "0.1.0"
 dependencies = [
