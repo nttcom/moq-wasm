@@ -99,6 +99,8 @@ Name fields from this vocabulary and add a name to it before using a new one:
 | `track_namespace_prefix` | A SUBSCRIBE_NAMESPACE prefix |
 | `media_source` | The source of a broadcast a browser plays or publishes, named by its video track (`camera`, `screen`, …) |
 | `ready_state` | A `MediaStreamTrack`'s `readyState` (`live` or `ended`) when one of its events is logged |
+| `call_id` / `direction` / `call_end_reason` | A phone call the SIP gateway placed or answered, whether it is `outbound` or `inbound`, and why it ended (`hangup`, `timeout`, `limit`, `gateway` or the SIP status) |
+| `sip_call_id` / `sip_status` | The SIP Call-ID of a call's dialog, and the status of a SIP response |
 | `bot_id` / `bot_type` / `bot_state` | A bot the bot service launched, its type (`recorder`, …), and the state it reported (`running`, `finished`, …) |
 | `track_alias` | The track alias on the session the log is about |
 | `group_id` / `subgroup_id` / `object_id` | The Group ID, Subgroup ID and Object ID of the object the event is about |

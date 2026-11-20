@@ -1,0 +1,11 @@
+[advisories]
+ignore = [
+    # crypto-bigint 0.5.5 timing variability (fixed in >=0.7.6), through p256,
+    # which rustrtc uses only for DTLS. The SIP gateway keys SRTP with SDES and
+    # never runs DTLS. rustrtc 0.6.6 has no release on a newer p256.
+    "RUSTSEC-2026-0387",
+    # h2 0.3.27 unbounded empty DATA frames (fixed in >=0.4.16), through
+    # hyper 0.14 and igd, which rustrtc uses only for UPnP port mapping. The SIP
+    # gateway turns UPnP off, and igd's client speaks HTTP/1 only.
+    "RUSTSEC-2026-0258",
+]
