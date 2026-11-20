@@ -1433,9 +1433,12 @@ mod tests {
 
 #[cfg(test)]
 mod cross_draft_tests {
-    use std::{sync::Arc, time::Duration};
+    use std::sync::Arc;
 
-    use moqt::{TrackProperties, publish::PublishOption, subscribe::SubscribeOption};
+    use moqt::{
+        RequestErrorCode, RequestFailure, TrackProperties, publish::PublishOption,
+        subscribe::SubscribeOption,
+    };
 
     use crate::modules::{
         auth::test_support::{
@@ -1445,11 +1448,8 @@ mod cross_draft_tests {
         test_support::relay_clients::{NAMESPACE, TRACK, publish_namespace, within},
     };
 
-    /// Shorter than a request's timeout: the SUBSCRIBE gets no answer.
-    const UNANSWERED: Duration = Duration::from_millis(500);
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_track_property_draft14_cannot_carry_fails_only_the_draft14_subscribe_ok() {
+    async fn a_track_property_draft14_cannot_carry_refuses_the_draft14_subscribe() {
         // Arrange: a draft-18 publisher's track with a MAX_CACHE_DURATION of 2^62 ms
         let relay = spawn_relay_offering(
             app_token(Some(""), Some("")),
@@ -1473,18 +1473,25 @@ mod cross_draft_tests {
         .unwrap();
 
         // Act
-        let subscribed = tokio::time::timeout(
-            UNANSWERED,
-            subscriber.subscriber().subscribe(
-                NAMESPACE.to_string(),
-                TRACK.to_string(),
-                SubscribeOption::default(),
-            ),
-        )
+        let subscribed = within(subscriber.subscriber().subscribe(
+            NAMESPACE.to_string(),
+            TRACK.to_string(),
+            SubscribeOption::default(),
+        ))
         .await;
 
-        // Assert: no SUBSCRIBE_OK reaches the draft-14 subscriber, and the relay still answers its session
-        assert!(subscribed.is_err(), "{subscribed:?}");
+        // Assert: the relay still answers the session after the refusal
+        assert!(
+            matches!(
+                subscribed,
+                Err(RequestFailure::Rejected {
+                    code: RequestErrorCode::InternalError,
+                    ..
+                })
+            ),
+            "{:?}",
+            subscribed.err()
+        );
         publish_namespace(&subscriber, "APP/other").await;
     }
 }

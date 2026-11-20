@@ -229,6 +229,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_draft14_subscribe_ok_with_a_value_of_2_62_is_sent_as_an_internal_error() {
+        // Arrange
+        let (client, server) = spawn_connected_native_sessions("subscribe-handler-2-62").await;
+        let request = tokio::spawn(async move {
+            client
+                .subscriber()
+                .subscribe(
+                    "ns".to_string(),
+                    "track".to_string(),
+                    SubscribeOption::default(),
+                )
+                .await
+        });
+        let SessionEvent::Subscribe(handler) = server.receive_event().await.unwrap() else {
+            panic!("expected SUBSCRIBE from the client");
+        };
+
+        // Act
+        let answered = handler.ok(1 << 62, ContentExists::False).await;
+
+        // Assert
+        assert!(answered.is_err());
+        assert!(matches!(
+            request.await.unwrap(),
+            Err(RequestFailure::Rejected {
+                code: RequestErrorCode::InternalError,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
     async fn a_draft14_refusal_with_unsupported_extension_reaches_the_subscriber_as_not_supported()
     {
         // Arrange
