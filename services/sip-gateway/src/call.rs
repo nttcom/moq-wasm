@@ -37,6 +37,10 @@ pub(crate) const RINGING_TIMEOUT: Duration = Duration::from_secs(60);
 /// A call whose trunk sends no audio this long has lost its media path. Some
 /// trunks hang up on RTP inactivity as well; the gateway does not wait for them.
 const SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the broadcast stays after `ended`, so a page whose
+/// `PhoneCall.join` finishes after the call already ended (a busy phone's
+/// immediate 486) still reads why it ended.
+const ENDED_LINGER: Duration = Duration::from_secs(5);
 
 pub(crate) struct CallContext {
     pub(crate) trunk: SipTrunk,
@@ -382,8 +386,13 @@ impl Call {
         self.publish(&CallState::Ended(reason.clone())).await;
         self.leg.close();
         context.trunk.remove_dialog(&self.dialog.id());
+        let hang_up = self.slot.hang_up.clone();
         drop(self.slot);
         drop(self.peer_watch);
+        tokio::select! {
+            () = tokio::time::sleep(ENDED_LINGER) => {}
+            () = hang_up.cancelled() => {}
+        }
         self.broadcast.connection().close().await;
         self.session.close().await;
     }
