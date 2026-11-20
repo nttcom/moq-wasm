@@ -27,24 +27,24 @@ pub enum FilterType {
 impl FilterType {
     /// draft-14 §9.7: the Start Location of a subscription with this filter,
     /// given the Largest Location of its SUBSCRIBE_OK (`None` when no content
-    /// has been delivered yet).
-    pub fn start_location(&self, largest: Option<Location>) -> Location {
+    /// has been delivered yet). Returns `None`, and the subscription delivers
+    /// nothing, when no Location follows the one the filter starts after;
+    /// only draft-18 IDs reach `u64::MAX`.
+    pub fn start_location(&self, largest: Option<Location>) -> Option<Location> {
         match (self, largest) {
             (Self::AbsoluteStart { location } | Self::AbsoluteRange { location, .. }, _) => {
-                *location
+                Some(*location)
             }
-            (Self::LargestObject, Some(largest)) => Location {
-                group_id: largest.group_id,
-                object_id: largest.object_id + 1,
-            },
+            (Self::LargestObject, Some(largest)) => largest.next(),
             (Self::NextGroupStart, Some(largest)) => Location {
-                group_id: largest.group_id + 1,
-                object_id: 0,
-            },
-            (Self::LargestObject | Self::NextGroupStart, None) => Location {
+                group_id: largest.group_id,
+                object_id: u64::MAX,
+            }
+            .next(),
+            (Self::LargestObject | Self::NextGroupStart, None) => Some(Location {
                 group_id: 0,
                 object_id: 0,
-            },
+            }),
         }
     }
 
@@ -174,7 +174,7 @@ mod tests {
         let start = FilterType::LargestObject.start_location(Some(location(5, 3)));
 
         // Assert
-        assert_eq!(start, location(5, 4));
+        assert_eq!(start, Some(location(5, 4)));
     }
 
     #[test]
@@ -183,7 +183,7 @@ mod tests {
         let start = FilterType::NextGroupStart.start_location(Some(location(5, 3)));
 
         // Assert
-        assert_eq!(start, location(6, 0));
+        assert_eq!(start, Some(location(6, 0)));
     }
 
     #[test]
@@ -192,7 +192,7 @@ mod tests {
         let start = FilterType::NextGroupStart.start_location(None);
 
         // Assert
-        assert_eq!(start, location(0, 0));
+        assert_eq!(start, Some(location(0, 0)));
     }
 
     #[test]
@@ -206,6 +206,33 @@ mod tests {
         let start = filter_type.start_location(Some(location(5, 3)));
 
         // Assert
-        assert_eq!(start, location(2, 0));
+        assert_eq!(start, Some(location(2, 0)));
+    }
+
+    #[test]
+    fn largest_object_after_the_largest_object_id_starts_at_the_next_group() {
+        // Act
+        let start = FilterType::LargestObject.start_location(Some(location(5, u64::MAX)));
+
+        // Assert
+        assert_eq!(start, Some(location(6, 0)));
+    }
+
+    #[test]
+    fn largest_object_after_the_last_location_has_no_start() {
+        // Act
+        let start = FilterType::LargestObject.start_location(Some(Location::MAX));
+
+        // Assert
+        assert_eq!(start, None);
+    }
+
+    #[test]
+    fn next_group_start_in_the_largest_group_has_no_start() {
+        // Act
+        let start = FilterType::NextGroupStart.start_location(Some(location(u64::MAX, 3)));
+
+        // Assert
+        assert_eq!(start, None);
     }
 }

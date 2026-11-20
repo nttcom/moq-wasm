@@ -838,7 +838,7 @@ impl Subscriber {
         self.write_update(subscription, option, |connection| {
             connection
                 .carried_start(subscription.request_id())
-                .map_or(start, |carried| carried.max(start))
+                .map_or(start, |carried| carried.unwrap_or(Location::MAX).max(start))
         })
         .await
     }
@@ -1133,7 +1133,10 @@ async fn wait_for(answers: Vec<UpdateAnswer>) -> anyhow::Result<()> {
 /// The last SUBSCRIBE_UPDATE sent for `subscription`, or before any update,
 /// the range, priority and Forward State of its SUBSCRIBE or PUBLISH_OK.
 /// `end_group` is the SUBSCRIBE_UPDATE field: the end group plus one, or 0
-/// for an open-ended subscription.
+/// for an open-ended subscription. A subscription that delivers nothing
+/// repeats [`Location::MAX`] as its start: at or below the Largest Object,
+/// it restarts the subscription from past it (draft-18 §10.9.1), which
+/// stays empty.
 fn repeated_update(subscription: &Subscription) -> SubscribeUpdateOption {
     if let Some(last) = subscription.last_update().get() {
         return last;
@@ -1141,7 +1144,7 @@ fn repeated_update(subscription: &Subscription) -> SubscribeUpdateOption {
     let largest = subscription.content_exists().largest();
     let filter_type = subscription.filter_type();
     SubscribeUpdateOption {
-        start_location: filter_type.start_location(largest),
+        start_location: filter_type.start_location(largest).unwrap_or(Location::MAX),
         end_group: filter_type.update_end_group(),
         subscriber_priority: subscription.subscriber_priority(),
         forward: subscription.forward(),
@@ -2253,6 +2256,36 @@ mod tests {
             );
             assert_eq!(update.subscriber_priority(), 128);
         }
+    }
+
+    #[tokio::test]
+    async fn update_forward_of_a_subscription_after_the_last_location_repeats_the_last_location() {
+        // Arrange: only a draft-18 Largest reaches the last Location
+        let (client, server) =
+            connected_sessions("subscriber-update-empty", Version::Draft18).await;
+        let (request, handler) = start_subscribe(&client, &server, "track").await;
+        handler
+            .ok(
+                0,
+                ContentExists::True {
+                    location: Location::MAX,
+                },
+            )
+            .await
+            .unwrap();
+        let subscription = request.await.unwrap().unwrap();
+
+        // Act
+        let subscriber = client.subscriber();
+        let update = sent_update(subscriber.update_forward(&subscription, false), &server).await;
+
+        // Assert
+        assert_eq!(
+            update.filter(),
+            Some(FilterType::AbsoluteStart {
+                location: Location::MAX
+            })
+        );
     }
 
     #[tokio::test]
