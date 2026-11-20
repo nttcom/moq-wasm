@@ -14,11 +14,10 @@ Open `examples/live-translate/streamer/index.html` (`MOQT_FAKE_MEDIA=0 make chro
 
 To translate for real, replace `--echo` with `--gcp-project <project id> --gcloud-impersonate <service account email>`; `gcloud` must be logged in as a user with `roles/iam.serviceAccountTokenCreator` on that account.
 
-| Translator option                           | Effect                                                                                              |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `--language-time-limit-minutes`             | How long a language is translated at a stretch (60 by default)                                      |
-| `--open-hours 'Mon-Fri 09:00-17:30 +09:00'` | Translate only inside those hours                                                                   |
-| `--always-on en,ko`                         | Keep those languages translating for the whole broadcast, so switching to them takes about a second |
+| Translator option               | Effect                                                                                              |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `--language-time-limit-minutes` | How long a language is translated at a stretch (60 by default)                                      |
+| `--always-on en,ko`             | Keep those languages translating for the whole broadcast, so switching to them takes about a second |
 
 The viewer plays every track 5 s after capture (`?delay=4.5` tries another delay) and shows the transcript of the language heard as captions. Its Stats line shows the delay, the A/V offset and the switch time; the same numbers go to the page telemetry every 10 s.
 

@@ -18,10 +18,7 @@ use serde_json::json;
 use tokio::{net::TcpListener, time::Interval};
 use tracing::Instrument;
 
-use crate::{
-    temporary_apps::{Refusal, TemporaryApps},
-    translation_policy::TranslationPolicy,
-};
+use crate::temporary_apps::{Refusal, TemporaryApps};
 
 const EVENTS_HEARTBEAT: Duration = Duration::from_secs(15);
 
@@ -34,7 +31,6 @@ pub(crate) struct SessionServer {
 }
 
 pub(crate) struct SessionServerState {
-    pub(crate) policy: Arc<TranslationPolicy>,
     pub(crate) temporary_apps: TemporaryApps,
 }
 
@@ -62,7 +58,7 @@ async fn handle(request: Request<Incoming>, state: Arc<SessionServerState>) -> S
     let response = async {
         match (&head.method, head.uri.path()) {
             (&Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
-            (&Method::GET, "/events") => events(&state),
+            (&Method::GET, "/events") => events(),
             (&Method::POST, "/sessions") => start_session(&state, &head.headers).await,
             (&Method::OPTIONS, "/sessions") => empty_response(StatusCode::NO_CONTENT),
             _ => error_response(StatusCode::NOT_FOUND, "not_found"),
@@ -80,13 +76,7 @@ async fn start_session(state: &SessionServerState, headers: &HeaderMap) -> Serve
         return error_response(StatusCode::UNAUTHORIZED, "missing_token");
     };
     match state.temporary_apps.start(token).await {
-        Ok(()) => json_response(
-            StatusCode::OK,
-            json!({
-                "openHours": state.policy.open_hours.as_ref().map(ToString::to_string),
-                "open": state.policy.is_open(),
-            }),
-        ),
+        Ok(()) => empty_response(StatusCode::NO_CONTENT),
         Err(Refusal::NotATemporaryAppToken) => {
             error_response(StatusCode::FORBIDDEN, "not_a_temporary_app_token")
         }
@@ -103,16 +93,8 @@ fn empty_response(status: StatusCode) -> ServerResponse {
     http_server::empty_response(status).map(BodyExt::boxed)
 }
 
-/// `GET /events`: a server-sent event stream of heartbeat comments only; a
-/// page holds it open for the reason on `SessionServer`. Outside the open hours
-/// nothing is translated, so the stream ends and a new one gets 204. 204
-/// tells an `EventSource` not to reconnect, so a tab left open lets the
-/// instance stop.
-fn events(state: &SessionServerState) -> ServerResponse {
-    if !state.policy.is_open() {
-        return empty_response(StatusCode::NO_CONTENT);
-    }
-    let mut response = Response::new(Heartbeat::new(state.policy.clone()).boxed());
+fn events() -> ServerResponse {
+    let mut response = Response::new(Heartbeat::new().boxed());
     let headers = response.headers_mut();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
     headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
@@ -121,14 +103,12 @@ fn events(state: &SessionServerState) -> ServerResponse {
 
 struct Heartbeat {
     ticks: Interval,
-    policy: Arc<TranslationPolicy>,
 }
 
 impl Heartbeat {
-    fn new(policy: Arc<TranslationPolicy>) -> Self {
+    fn new() -> Self {
         Self {
             ticks: tokio::time::interval(EVENTS_HEARTBEAT),
-            policy,
         }
     }
 }
@@ -142,9 +122,6 @@ impl Body for Heartbeat {
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         ready!(self.ticks.poll_tick(cx));
-        if !self.policy.is_open() {
-            return Poll::Ready(None);
-        }
         Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b": alive\n\n")))))
     }
 }
@@ -165,22 +142,23 @@ mod tests {
     use hyper::header::{ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_ORIGIN};
     use tokio::sync::Semaphore;
 
-    use crate::{root_translation::TranslationResources, translation_engine::TranslationEngine};
+    use crate::{
+        root_translation::TranslationResources, translation_engine::TranslationEngine,
+        translation_policy::TranslationPolicy,
+    };
 
     use super::*;
 
-    async fn serve(open_hours: Option<&str>) -> u16 {
+    async fn serve() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let policy = Arc::new(TranslationPolicy {
-            open_hours: open_hours.map(|text| text.parse().unwrap()),
             language_time_limit: Duration::from_secs(3600),
             always_on: Vec::new(),
         });
         let server = SessionServer::run(
             listener,
             SessionServerState {
-                policy: policy.clone(),
                 // No place for an app, so no test dials the relay.
                 temporary_apps: TemporaryApps::new(
                     "moqt://relay.example:443".to_string(),
@@ -198,22 +176,10 @@ mod tests {
         port
     }
 
-    /// Hours that are open only on the weekday three days from now.
-    fn closed_hours() -> String {
-        let days = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            / 86_400;
-        // 1970-01-01 was a Thursday, so indexing from Sunday names the weekday three days ahead.
-        let weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][(days % 7) as usize];
-        format!("{weekday}-{weekday} 00:00-23:59 +00:00")
-    }
-
     #[tokio::test]
-    async fn the_event_stream_is_held_inside_the_open_hours() {
-        // Arrange: no open hours, so always open
-        let port = serve(None).await;
+    async fn the_event_stream_is_held() {
+        // Arrange
+        let port = serve().await;
 
         // Act
         let response = reqwest::get(format!("http://127.0.0.1:{port}/events"))
@@ -223,36 +189,6 @@ mod tests {
         // Assert
         assert_eq!(response.status(), 200);
         assert_eq!(response.headers()[CONTENT_TYPE], "text/event-stream");
-    }
-
-    #[tokio::test]
-    async fn the_event_stream_is_refused_outside_the_open_hours() {
-        // Arrange
-        let port = serve(Some(&closed_hours())).await;
-
-        // Act
-        let response = reqwest::get(format!("http://127.0.0.1:{port}/events"))
-            .await
-            .unwrap();
-
-        // Assert: 204 stops an EventSource from reconnecting
-        assert_eq!(response.status(), 204);
-    }
-
-    #[tokio::test]
-    async fn a_held_event_stream_ends_when_the_open_hours_are_over() {
-        // Arrange
-        let mut heartbeat = Heartbeat::new(Arc::new(TranslationPolicy {
-            open_hours: Some(closed_hours().parse().unwrap()),
-            language_time_limit: Duration::from_secs(3600),
-            always_on: Vec::new(),
-        }));
-
-        // Act
-        let frame = heartbeat.frame().await;
-
-        // Assert
-        assert!(frame.is_none());
     }
 
     async fn post_session(port: u16, token: Option<&str>) -> reqwest::Response {
@@ -284,7 +220,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_request_without_a_token_is_unauthorized_for_any_origin() {
         // Arrange
-        let port = serve(None).await;
+        let port = serve().await;
 
         // Act
         let response = post_session(port, None).await;
@@ -297,7 +233,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_request_with_a_registered_app_token_is_forbidden() {
         // Arrange
-        let port = serve(None).await;
+        let port = serve().await;
 
         // Act
         let response = post_session(port, Some(&token_of("app-1"))).await;
@@ -309,7 +245,7 @@ mod tests {
     #[tokio::test]
     async fn a_session_request_beyond_the_app_limit_is_unavailable() {
         // Arrange: the server translates no app at once
-        let port = serve(None).await;
+        let port = serve().await;
 
         // Act
         let response = post_session(port, Some(&token_of("temp-3f9a"))).await;
@@ -321,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn a_preflight_allows_the_authorization_header() {
         // Arrange
-        let port = serve(None).await;
+        let port = serve().await;
 
         // Act
         let response = reqwest::Client::new()
