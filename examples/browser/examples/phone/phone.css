@@ -1,0 +1,39 @@
+.connection {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 820px) {
+  .connection {
+    grid-template-columns: 1fr;
+  }
+}
+
+.connection-relay,
+.connection-room,
+.call-card {
+  display: grid;
+  gap: 12px;
+}
+
+.dial,
+.incoming,
+.call-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.call-row {
+  align-items: center;
+}
+
+.incoming {
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}

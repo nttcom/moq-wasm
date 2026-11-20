@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Places calls through the SIP gateway to a local Asterisk standing in for
 # Twilio Elastic SIP Trunking (asterisk/), and has it call the app's number,
-# with a local VTS and relay.
+# with a local VTS and relay: first from a Rust client standing in for a page,
+# then from the phone example in Chromium (examples/browser/tests/phone-e2e.spec.ts)
+# with the dev app server (app-server.mjs).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -33,9 +35,10 @@ mint() {
   AUTH_TOKEN_SECRET="$(secret "$app_id")" ./target/debug/auth-token --app-id "$app_id" "$@"
 }
 
+# Waits `tries` times 0.2 s (100 by default) for `check` to pass.
 wait_for() {
-  local name="$1" check="$2"
-  for _ in {1..100}; do
+  local name="$1" check="$2" tries="${3:-100}"
+  for ((i = 0; i < tries; i++)); do
     if eval "$check" >/dev/null 2>&1; then
       return 0
     fi
@@ -105,6 +108,23 @@ E2E_RELAY_URL=moqt://localhost:4433 \
   E2E_PAGE_TOKEN="$(mint sip-e2e --publish room --subscribe room --ttl 1h)" \
   E2E_CALL_TOKEN="$(mint sip-e2e --calls room --ttl 5m)" \
   E2E_APP_SECRET="$(secret sip-e2e)" \
-  E2E_WEBHOOK_ADDRESS=127.0.0.1:8098 \
+  E2E_WEBHOOK_ADDRESS=127.0.0.1:8097 \
   E2E_COMPOSE_FILE="$E2E_DIR/compose.yaml" \
   ./target/debug/sip-gateway-e2e
+
+# The webhook the Rust client served is gone; the app server takes its port.
+APP_ID=sip-e2e APP_SECRET="$(secret sip-e2e)" GATEWAY_URL=http://127.0.0.1:8099 PORT=8097 \
+  node "$E2E_DIR/app-server.mjs" >"$LOGS/app-server.log" 2>&1 &
+PIDS+=($!)
+wait_for app-server "grep -q 'listening' '$LOGS/app-server.log'"
+(cd examples/browser && exec "$ROOT_DIR/node_modules/.bin/vite" --host 127.0.0.1 --port 4173 --strictPort) \
+  >"$LOGS/vite.log" 2>&1 &
+PIDS+=($!)
+wait_for vite "curl -fsS http://127.0.0.1:4173/moq-wasm/examples/phone/index.html" 600
+(cd examples/browser && \
+  MEDIA_E2E_BASE_URL=http://127.0.0.1:4173 \
+  PHONE_E2E_MOQT_URL=https://127.0.0.1:4433 \
+  PHONE_E2E_APP_SERVER_URL=http://127.0.0.1:8097 \
+  PHONE_E2E_COMPOSE_FILE="$E2E_DIR/compose.yaml" \
+  npm run e2e:phone)
+echo "sip-gateway browser e2e passed"
