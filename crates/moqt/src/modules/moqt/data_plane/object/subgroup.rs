@@ -617,15 +617,6 @@ mod tests {
             let id2 = make_field(4).resolve_object_id(id1);
             assert_eq!(id2, Some(10));
         }
-
-        #[test]
-        fn a_delta_past_u64_max_resolves_to_no_object_id() {
-            // Act
-            let id = make_field(0).resolve_object_id(Some(u64::MAX));
-
-            // Assert
-            assert_eq!(id, None);
-        }
     }
 
     mod failure {
@@ -713,12 +704,18 @@ mod tests {
             fn decoded_deltas_give_back_the_object_ids_up_to_the_first_past_u64_max(
                 object_id_deltas in vec(prop_oneof![varint(), Just((1 << 62) - 1)], 1..12),
             ) {
-                // Arrange: the Object IDs the deltas name, without overflow
+                // Arrange: the Object IDs the deltas name, without overflow,
+                // up to the first one past `u64::MAX`
                 let message_type = SubgroupHeaderType::new(0x10).unwrap();
-                let mut model = Vec::new();
+                let mut expected = Vec::new();
+                let mut model_prev: Option<u128> = None;
                 for &delta in &object_id_deltas {
-                    let next = model.last().map_or(0, |prev: &u128| prev + 1) + u128::from(delta);
-                    model.push(next);
+                    let next = model_prev.map_or(0, |prev| prev + 1) + u128::from(delta);
+                    model_prev = Some(next);
+                    expected.push(u64::try_from(next).ok());
+                    if next > u128::from(u64::MAX) {
+                        break;
+                    }
                 }
                 let wire: Vec<_> = object_id_deltas
                     .iter()
@@ -746,15 +743,6 @@ mod tests {
                 }
 
                 // Assert
-                let expected: Vec<_> = model
-                    .iter()
-                    .map(|&id| u64::try_from(id).ok())
-                    .scan(false, |past_max, id| {
-                        let emit = !*past_max;
-                        *past_max |= id.is_none();
-                        emit.then_some(id)
-                    })
-                    .collect();
                 prop_assert_eq!(object_ids, expected);
             }
         }
