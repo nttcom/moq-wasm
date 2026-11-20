@@ -314,6 +314,7 @@ mod tests {
         use proptest::{
             collection::{btree_map, vec},
             prelude::*,
+            sample::select,
         };
 
         use super::*;
@@ -376,18 +377,28 @@ mod tests {
             steps
         }
 
+        /// A FETCH's `start` and its `end` in FETCH_OK End Location encoding,
+        /// where Object ID 0 stands for the whole group.
+        fn fetch_range() -> impl Strategy<Value = (Location, Location)> {
+            stand_in(GROUPS).prop_flat_map(|start| {
+                let ends: Vec<Location> = positions(start.group_id + 3)
+                    .into_iter()
+                    .filter(|end| {
+                        end.group_id >= start.group_id && (end.object_id == 0 || start < *end)
+                    })
+                    .collect();
+                (Just(start), select(ends))
+            })
+        }
+
         proptest! {
             #[test]
             fn the_plan_is_the_unexpired_objects_with_an_unknown_stretch_for_each_undecided_gap(
                 objects in btree_map(object_location(GROUPS), any::<bool>(), 0..16),
                 known in vec((bound(GROUPS), bound(GROUPS)), 0..5),
-                start in stand_in(GROUPS),
-                end_group_offset in 0..3u64,
-                end_object in stand_in(1),
+                (start, end) in fetch_range(),
                 descending in any::<bool>(),
             ) {
-                let end = location(start.group_id + end_group_offset, end_object.object_id);
-                prop_assume!(end.object_id == 0 || start < end);
                 // Arrange: `objects` maps each cached object to whether it expired
                 let cache = TrackCache::new();
                 for (&at, &expired) in &objects {
