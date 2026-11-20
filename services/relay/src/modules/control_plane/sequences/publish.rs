@@ -294,16 +294,15 @@ impl Publish {
             anyhow::bail!("publisher session not found");
         };
 
-        let forward = super::register_upstream_subscription(
+        Ok(super::register_published_subscription(
             table,
             forwarder,
             track_key,
             session_id,
             Producer::new(state, ingest),
+            handler,
         )
-        .await;
-        table.register_publish(session_id, publisher_peer, handler);
-        Ok(forward)
+        .await)
     }
 
     #[tracing::instrument(

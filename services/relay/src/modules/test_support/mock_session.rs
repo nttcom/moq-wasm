@@ -71,6 +71,7 @@ pub(crate) struct RecordedControlMessages {
     /// Request ids whose ingest dropped its data receiver.
     ingests_stopped: Arc<Mutex<Vec<u64>>>,
     unsubscribed_request_ids: Arc<Mutex<Vec<u64>>>,
+    unsubscribe_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     pub(crate) fetch_cancelled_request_ids: Arc<Mutex<Vec<u64>>>,
     fetch_fill_timeouts: Arc<Mutex<Vec<Option<std::time::Duration>>>>,
     /// Request ids of the FETCH responses the relay opened toward this session.
@@ -95,6 +96,7 @@ impl Default for RecordedControlMessages {
             data_receivers: Arc::default(),
             ingests_stopped: Arc::default(),
             unsubscribed_request_ids: Arc::default(),
+            unsubscribe_gate: Arc::default(),
             fetch_cancelled_request_ids: Arc::default(),
             fetch_fill_timeouts: Arc::default(),
             fetch_senders_opened: Arc::default(),
@@ -123,6 +125,14 @@ impl RecordedControlMessages {
         self.event_sender
             .send(Err(anyhow::anyhow!("session event stream failed")))
             .expect("the mock session owns the event receiver");
+    }
+
+    /// Makes each later UNSUBSCRIBE record its request id, then wait for one
+    /// notification on the returned gate before it returns.
+    pub(crate) fn hold_unsubscribes(&self) -> Arc<tokio::sync::Notify> {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *self.unsubscribe_gate.lock().unwrap() = Some(gate.clone());
+        gate
     }
 
     pub(crate) fn unsubscribed_request_ids(&self) -> Vec<u64> {
@@ -803,6 +813,10 @@ impl Subscriber for MockUpstreamSubscriber {
             .lock()
             .unwrap()
             .push(subscription.request_id());
+        let gate = self.recorded.unsubscribe_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
         Ok(())
     }
 
