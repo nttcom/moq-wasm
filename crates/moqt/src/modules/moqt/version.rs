@@ -267,6 +267,8 @@ impl Version {
         }
     }
 
+    /// Fails with `UnencodableObject` when draft-14 cannot carry the object's
+    /// fields.
     pub(crate) fn encode_datagram(
         self,
         track_alias: u64,
@@ -421,7 +423,8 @@ impl SubgroupEncoder {
         }
     }
 
-    /// Fails when draft-14 cannot carry the header's fields.
+    /// Fails when draft-14 cannot carry the header's fields, with
+    /// `UnencodableObject` for the Group ID and the Subgroup ID.
     pub(crate) fn header(&mut self, start: SubgroupStart) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.header(start),
@@ -430,7 +433,7 @@ impl SubgroupEncoder {
     }
 
     /// Fails when the object id is not greater than the previous object's, or
-    /// when draft-14 cannot carry the object's fields.
+    /// with `UnencodableObject` when draft-14 cannot carry the object's fields.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<BytesMut> {
         match self {
             Self::Draft14(encoder) => encoder.object(object),
@@ -483,7 +486,8 @@ impl FetchEncoder {
     }
 
     /// `Ok(None)` for an object the draft cannot carry in a FETCH response;
-    /// fails when draft-14 cannot carry the object's fields.
+    /// fails with `UnencodableObject` when draft-14 cannot carry the object's
+    /// fields.
     pub(crate) fn object(&mut self, object: &Object) -> anyhow::Result<Option<BytesMut>> {
         match self {
             Self::Draft14 => draft14::objects::encode_fetch_object(object).map(Some),

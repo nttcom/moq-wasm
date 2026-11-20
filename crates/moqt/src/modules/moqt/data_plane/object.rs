@@ -6,6 +6,7 @@ pub mod fetch;
 pub mod object_datagram;
 pub mod object_status;
 pub mod subgroup;
+pub mod unencodable_object;
 
 use decode_error::DecodeError;
 

@@ -15,7 +15,8 @@ impl DatagramSender {
 
     /// Sends `object` as one datagram on every connection the track goes to,
     /// ignoring its forwarding preference. Fails when no connection took it
-    /// and none dropped it as too large.
+    /// and none dropped it as too large, with `UnencodableObject` in its
+    /// chain when the session's draft cannot carry one of its fields.
     pub async fn send_object(&mut self, object: &Object) -> anyhow::Result<DatagramDelivery> {
         let results: Vec<_> = self
             .targets

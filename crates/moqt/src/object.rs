@@ -13,6 +13,7 @@ pub use crate::modules::moqt::data_plane::datagram::datagram_sender::DatagramSen
 pub use crate::modules::moqt::data_plane::malformed_track_error::MalformedTrackError;
 pub use crate::modules::moqt::data_plane::object::extension_headers::ExtensionHeaders;
 pub use crate::modules::moqt::data_plane::object::object_status::ObjectStatus;
+pub use crate::modules::moqt::data_plane::object::unencodable_object::UnencodableObject;
 pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::StreamDataReceiver;
 pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::Subgroup;
 pub use crate::modules::moqt::data_plane::stream::stream_data_receiver::SubgroupPart;
