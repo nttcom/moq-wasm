@@ -15,6 +15,7 @@ use crate::{
             request_error::{FetchError, RequestError},
             routes::Routes,
             subscription::{Reading, Subscription},
+            track_follower::TrackFollower,
             track_writer::TrackWriter,
         },
         executor,
@@ -321,6 +322,40 @@ impl Session {
             .await
             .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
         Ok(NamespaceWatch::new(self.session.clone(), prefix, events))
+    }
+
+    /// Follows `track` in `namespace` as peers publish it one after another,
+    /// through a SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespace and
+    /// its tracks; see `TrackFollower`. Fails when the SUBSCRIBE_NAMESPACE
+    /// is rejected.
+    pub async fn follow_track(
+        &self,
+        namespace: &[impl AsRef<str>],
+        track: &str,
+    ) -> Result<TrackFollower, RequestError> {
+        let elements: Vec<String> = namespace
+            .iter()
+            .map(|element| element.as_ref().to_string())
+            .collect();
+        // Watch before sending SUBSCRIBE_NAMESPACE: the peer sends the
+        // namespaces it already knows right away.
+        let announcements = self.routes.watchers.watch(elements.clone());
+        let follower = TrackFollower::new(
+            self.session.clone(),
+            self.routes.clone(),
+            elements,
+            track.to_string(),
+            announcements,
+        );
+        self.session
+            .subscriber()
+            .subscribe_namespace(
+                join_namespace(namespace),
+                NamespaceInterest::NamespacesAndTracks,
+            )
+            .await
+            .map_err(RequestError::of(RequestKind::SubscribeNamespace))?;
+        Ok(follower)
     }
 
     /// PUBLISH_NAMESPACE (draft-14 §9.23).

@@ -110,6 +110,7 @@ session.close().await;
 | `Group` | `MoqGroup` | 1本の subgroup stream |
 | `Fetch` | `MoqFetch` | 1つの FETCH の応答 |
 | `NamespaceWatch` | `MoqNamespaceWatch` | `next` と `close`（UNSUBSCRIBE_NAMESPACE） |
+| `TrackFollower` | なし | `follow_track` の戻り値。publisher が入れ替わる1本のトラック（ブラウザの視聴者が出す操作トラック）を追い、`next` で `FollowEvent`（オブジェクトか、追っていた publisher が抜けたこと）を返す。使うのはネイティブのブリッジだけなので、JS と Python には出さない |
 | `Announcement` | `Announcement` | `close`（PUBLISH_NAMESPACE_DONE） |
 | `TrackWriter` | `TrackWriter` | `Origin` に書く `write`（拡張ヘッダーは `ExtensionHeaders`）、`write_group`、`next_subscriber` |
 | `EventHandler` | なし | 下記 |
