@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
         &args.moqt_url,
         &client_config,
         CommandTrack {
-            namespace: subscribe_namespace.join("/"),
+            namespace: subscribe_namespace.clone(),
             track: args.command_track.clone(),
         },
         command_sender,
