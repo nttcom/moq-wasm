@@ -1520,12 +1520,7 @@ mod tests {
         let (client, server) =
             spawn_connected_draft18_sessions("draft18-publish-done-final", "moqt").await;
         let subscription = subscribed(&client, &server, SubscribeOption::default()).await;
-        let stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&subscription.request_id())
-            .cloned()
-            .unwrap();
+        let stream = incoming_stream(&server, subscription.request_id());
         let publish_done =
             messages::encode_publish_done(PublishDoneCode::TrackEnded, 0, "done").unwrap();
 
@@ -2171,12 +2166,7 @@ mod tests {
             .await;
             let (_subscriber, mut receiver, handler, _sender) =
                 fetch_with_open_response(&client, &server).await;
-            let request_stream = ControlChannel::of(&server.publisher().session.connection())
-                .requests()
-                .incoming
-                .get(&handler.request_id)
-                .cloned()
-                .unwrap();
+            let request_stream = incoming_stream(&server, handler.request_id);
 
             // Act: STOP_SENDING alone, the requester's half left open
             outgoing_stream(&client, receiver.request_id)
@@ -2212,12 +2202,7 @@ mod tests {
             .outgoing
             .remove(&receiver.request_id)
             .unwrap();
-        let request_stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&handler.request_id)
-            .cloned()
-            .unwrap();
+        let request_stream = incoming_stream(server, handler.request_id);
         drop(receiver);
         let response_stream = request_stream.fetch_response.clone().unwrap();
         let stopped = tokio::time::timeout(HANDSHAKE_TIMEOUT, response_stream.stopped()).await;
@@ -2934,12 +2919,7 @@ mod tests {
             spawn_connected_draft18_sessions("draft18-wrong-response-kind", "moqt").await;
         let (request, handler) =
             subscribe_requested(&client, &server, SubscribeOption::default()).await;
-        let stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&handler.request_id())
-            .cloned()
-            .unwrap();
+        let stream = incoming_stream(&server, handler.request_id());
 
         // Act: a SUBSCRIBE is answered by SUBSCRIBE_OK, not REQUEST_OK (§10.5)
         stream
@@ -3061,12 +3041,7 @@ mod tests {
     ) {
         let (request, handler) =
             subscribe_requested(client, server, SubscribeOption::default()).await;
-        let stream = ControlChannel::of(&server.publisher().session.connection())
-            .requests()
-            .incoming
-            .get(&handler.request_id())
-            .cloned()
-            .unwrap();
+        let stream = incoming_stream(server, handler.request_id());
         let mut payload = BytesMut::new();
         codec::put_vi64(&mut payload, track_alias);
         parameters::put_parameters(&mut payload, &[]).unwrap();
