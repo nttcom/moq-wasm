@@ -26,7 +26,9 @@ bookkeeping of known positions against brute-force models:
 `test_support::location_strategies` generates the positions, shared by the
 three. Each group has the Object IDs 0 to 5, `u64::MAX`, and one stand-in for
 every ID between, so a model over a few dozen positions decides every
-position, including the last of a group.
+position, including the last of a group. The groups start at Group ID 0 or
+end at `u64::MAX`, which a draft-18 publisher can send, so a range also ends
+past the last Location.
 
 ## Context
 

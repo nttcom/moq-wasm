@@ -89,3 +89,25 @@ async fn a_fetch_of_a_group_ending_at_the_largest_object_id_sends_it_once() {
     fetch.expect_objects(&[(0, u64::MAX)]).await;
     assert!(matches!(fetch.expect_end().await, FetchSent::Closed));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fetch_of_the_last_two_groups_is_served_from_the_cache() {
+    // Arrange
+    let harness = RelayHarness::new();
+    for group_id in [u64::MAX - 1, u64::MAX] {
+        let upstream = harness.open_upstream_stream();
+        upstream.header(group_id);
+        upstream.object(0);
+        upstream.fin();
+        harness.wait_group_closed(group_id).await;
+    }
+
+    // Act
+    let mut fetch = harness.start_fetch(location(u64::MAX - 1, 0), location(u64::MAX, 0));
+
+    // Assert
+    fetch
+        .expect_objects(&[(u64::MAX - 1, 0), (u64::MAX, 0)])
+        .await;
+    assert!(matches!(fetch.expect_end().await, FetchSent::Closed));
+}
