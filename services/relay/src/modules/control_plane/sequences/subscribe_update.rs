@@ -271,7 +271,7 @@ mod tests {
 
         // Assert: draft-14 §9.10
         assert!(updated.closed_the_session());
-        assert_eq!(updated.control().start, location(5, 0));
+        assert_eq!(updated.control().start, Some(location(5, 0)));
     }
 
     #[tokio::test]
@@ -317,7 +317,10 @@ mod tests {
         // Assert: draft-18 §10.9.1
         assert!(!updated.closed_the_session());
         let control = updated.control();
-        assert_eq!((control.start, control.end_group), (location(2, 0), None));
+        assert_eq!(
+            (control.start, control.end_group),
+            (Some(location(2, 0)), None)
+        );
         assert_eq!(control.largest_at_update, Some(location(3, 1)));
     }
 
@@ -354,7 +357,10 @@ mod tests {
 
         // Assert: draft-18 §10.2.9
         let control = updated.control();
-        assert_eq!((control.forward, control.start), (false, location(5, 0)));
+        assert_eq!(
+            (control.forward, control.start),
+            (false, Some(location(5, 0)))
+        );
     }
 
     #[tokio::test]
