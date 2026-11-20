@@ -16,57 +16,18 @@ publishes, so the tracks are the ones its
 relay ──► BroadcastReader ──► mediapack::MediaEvent ──► output (rtp)
 ```
 
-`BroadcastReader` knows MoQT and MSF and nothing of the outputs: it reads the
-catalog, picks the tracks, and turns their LOC objects into media events on
-one channel. An output knows its protocol and nothing of MoQT: it consumes the
-media events. Further outputs, such as fMP4 or WebRTC, are further consumers
+`broadcast::BroadcastReader` knows MoQT and MSF and nothing of the outputs: it
+reads the catalog, picks the tracks, and turns their LOC objects into media
+events on one channel. How it picks, joins and times the tracks is recorded in
+the [`broadcast` architecture document](../broadcast/architecture.md) under
+"Reading a broadcast". An output knows its protocol and nothing of MoQT: it
+consumes the media events. Further outputs, such as fMP4 or WebRTC, are further consumers
 of the same channel; the packetization they need belongs in `mediapack`, as
 `rtp::Muxer` does for RTP, so it stays free of sockets and reusable.
 
-## Track selection
-The reader takes the first LOC track with role `video` and the first with role
-`audio` in catalog order, which is the source rendition in a `broadcast`
-catalog. An AAC track's AudioSpecificConfig comes from the `initDataList`
-entry its `initRef` names (draft-ietf-moq-msf-02 §5.1.7, §5.2.14); an AAC
-track without one is skipped with a warning. A-law and Opus tracks carry no
-initialization data, so their `codec`, `samplerate` and `channelConfig`
-(§5.2.19, §5.2.29, §5.2.30) make up the configuration. CMAF tracks and the
-timeline are ignored.
-
-## Joining
-The catalog is read with `Subscriber::subscribe_current_group`, the SUBSCRIBE
-and joining FETCH MSF §5 asks of a late joiner, so the reader does not wait
-for the next catalog.
-Media tracks are subscribed rather than fetched: FETCH would deliver past
-groups as a burst, which a real-time output like RTP would send on as a
-burst. The video is subscribed from the next group start, so it begins at a
-keyframe. The audio is subscribed from the largest object
-(draft-ietf-moq-transport-14 §9.7) and continues the group in flight: an
-audio object decodes alone, and a publisher that sends its audio as one
-endless group, as a meeting member does, never starts the next group that
-NextGroupStart waits for. Every media track is subscribed before any is
-read, so the audio usually starts before the video. Both carry a 2 s
-DELIVERY TIMEOUT, as a browser player does: on a congested link the relay
-drops what would arrive late instead of sending it on.
-
-Group ids cannot line the audio up with the video: `broadcast` gives the
-audio groups the ids of the video groups they start with, but a meeting
-member numbers its one audio group apart from the video's. The reader instead
-holds the audio to the capture time of the first
-video object: it drops audio that arrives before that object or was captured
-before it, as `broadcast` drops the audio before its first keyframe. Audio
-without a capture timestamp passes once the video has started.
-
-## Timing
-Each track is demuxed by its own `loc::Demuxer`, measuring presentation time
-from a capture origin the tracks share: the capture timestamp of the first
-video object, or of the first audio object when the broadcast has no video.
-LOC capture timestamps are on one wall clock across the tracks of a
-broadcast, so the shared origin keeps video and audio aligned in the media
-events, which an output that muxes both into one container needs.
-
-The RTP output hands this alignment to the receiver through RTCP sender
-reports. Each stream keeps its own timestamp offset, as RTP requires. A
+## RTP timing
+The reader times every track from one shared capture origin. The RTP output
+hands this alignment to the receiver through RTCP sender reports. Each stream keeps its own timestamp offset, as RTP requires. A
 report pairs the time it is sent with the stream's RTP time at that instant
 (RFC 3550 §6.4.1), extrapolated from the latest sample, whose wall-clock
 time is the shared capture origin plus its presentation time; the same

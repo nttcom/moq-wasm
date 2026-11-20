@@ -1,8 +1,5 @@
-mod broadcast_reader;
 mod relay_session;
 mod rtp;
-#[cfg(test)]
-mod test_support;
 
 use std::{net::IpAddr, path::PathBuf};
 
@@ -14,7 +11,9 @@ use mediapack::rtp::{
 };
 use moqt::{CertificateVerification, ClientConfig, Session};
 
-use crate::{broadcast_reader::BroadcastReader, rtp::RtpOutput};
+use broadcast::BroadcastReader;
+
+use crate::rtp::RtpOutput;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -84,6 +83,7 @@ async fn main() -> Result<()> {
         service_version: env!("CARGO_PKG_VERSION"),
         default_directives: &[
             "live_egress=info",
+            "broadcast=info",
             "moqt=info",
             "msf=info",
             "mediapack=info",

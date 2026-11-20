@@ -1,10 +1,40 @@
+use std::{path::PathBuf, sync::Arc, time::Duration};
+
 use moqt::{
-    Endpoint, NATIVE, SessionEvent,
+    CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, SessionEvent,
     publish::Origin,
     server::{CertificateFiles, ServerConfig, write_self_signed_cert},
 };
-use std::time::Duration;
 use tokio::sync::mpsc;
+
+/// A server config with a self-signed certificate written under a temporary
+/// directory named after `name`, so tests running in parallel do not share one.
+pub(crate) fn self_signed_server_config(name: &str) -> ServerConfig {
+    let dir: PathBuf =
+        std::env::temp_dir().join(format!("broadcast-test-{name}-{}", std::process::id()));
+    let CertificateFiles {
+        cert_path,
+        key_path,
+    } = write_self_signed_cert(&dir, &["localhost", "127.0.0.1"]).unwrap();
+    ServerConfig {
+        port: 0,
+        cert_path,
+        key_path,
+        keep_alive_interval_sec: 5,
+        // The tests write and read draft-14 messages.
+        versions: vec![moqt::Version::Draft14],
+    }
+}
+
+/// A client session to `url` that trusts any certificate.
+pub(crate) async fn connect(url: &str) -> Arc<Session> {
+    let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
+        certificate_verification: CertificateVerification::Disabled,
+        ..ClientConfig::default()
+    })
+    .unwrap();
+    Arc::new(endpoint.connect(url).await.unwrap().await.unwrap())
+}
 
 /// A publisher that serves the tracks registered with `origin` to the one
 /// session that connects to `url`, as a relay would.
@@ -17,19 +47,8 @@ pub(crate) struct FakePublisher {
 
 impl FakePublisher {
     pub(crate) fn spawn() -> Self {
-        let CertificateFiles {
-            cert_path,
-            key_path,
-        } = write_self_signed_cert(&cert_dir(), &["localhost", "127.0.0.1"]).unwrap();
-        let endpoint = Endpoint::<NATIVE>::create_server(&ServerConfig {
-            port: 0,
-            cert_path,
-            key_path,
-            keep_alive_interval_sec: 5,
-            // The tests write and read draft-14 messages.
-            versions: vec![moqt::Version::Draft14],
-        })
-        .unwrap();
+        let endpoint =
+            Endpoint::<NATIVE>::create_server(&self_signed_server_config("publisher")).unwrap();
         let url = format!("moqt://127.0.0.1:{}", endpoint.local_port().unwrap());
         let origin = Origin::default();
         let (served_sender, served) = mpsc::unbounded_channel();
@@ -65,8 +84,4 @@ impl FakePublisher {
             .expect("no track was subscribed")
             .expect("the publisher stopped serving")
     }
-}
-
-fn cert_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("live-egress-test-{}", std::process::id()))
 }

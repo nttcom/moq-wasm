@@ -1769,13 +1769,10 @@ name = "live-egress"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "base64 0.23.1",
- "bytes",
+ "broadcast",
  "clap",
  "mediapack",
  "moqt",
- "msf",
- "serde_json",
  "telemetry-otlp",
  "tokio",
  "tracing",

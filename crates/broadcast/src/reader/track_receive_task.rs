@@ -4,7 +4,10 @@ use mediapack::{
     AudioConfig, MediaEvent, Timestamp,
     loc::{self, LocObject},
 };
-use moqt::TrackReader;
+use moqt::{
+    TrackReader,
+    executor::{self, JoinHandle},
+};
 use tokio::sync::mpsc;
 
 pub(super) enum TrackKind {
@@ -48,9 +51,35 @@ impl StartPoint {
     }
 }
 
-/// Reads one LOC track into the broadcast's media channel. Returns when the
-/// track ends or the channel is closed.
-pub(super) async fn receive_track(
+/// Reads one LOC track into the broadcast's media channel until the track
+/// ends or the channel is closed.
+pub(super) struct TrackReceiveTask {
+    handle: JoinHandle,
+}
+
+impl TrackReceiveTask {
+    pub(super) fn run(
+        name: String,
+        reader: TrackReader,
+        kind: TrackKind,
+        start: Arc<StartPoint>,
+        media_sender: mpsc::Sender<MediaEvent>,
+    ) -> Self {
+        let handle = executor::spawn(
+            "broadcast-track-receive",
+            receive_track(name, reader, kind, start, media_sender),
+        );
+        Self { handle }
+    }
+}
+
+impl Drop for TrackReceiveTask {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+async fn receive_track(
     name: String,
     mut reader: TrackReader,
     kind: TrackKind,

@@ -5,13 +5,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use broadcast::BroadcastReader;
 use mediapack::{
     Timestamp,
     rtp::{Destination, MediaKind, Muxer, MuxerOptions},
 };
 use tokio::{net::UdpSocket, time::Instant};
-
-use crate::broadcast_reader::BroadcastReader;
 
 /// The minimum RTCP interval RFC 3550 §6.2 recommends. A stream's first
 /// report goes out with its first packet instead, so that a receiver aligns

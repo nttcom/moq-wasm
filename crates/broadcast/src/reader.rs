@@ -4,17 +4,21 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use bytes::Bytes;
 use mediapack::{AudioConfig, MediaEvent, StreamSet, Timestamp, aac::AudioSpecificConfig};
-use moqt::{Session, subscribe::FilterType};
-use msf::{Catalog, KnownTrackRole, Track};
-use tokio::{sync::mpsc, task::JoinSet};
-
-use crate::{
-    broadcast_reader::track_receive_task::{StartPoint, TrackKind, receive_track},
-    relay_session::{read_catalog, subscribe},
+use moqt::{
+    Session, Subscription,
+    subscribe::{FilterType, SubscribeOption},
 };
+use msf::{Catalog, KnownTrackRole, Track};
+use tokio::sync::mpsc;
+
+use crate::reader::track_receive_task::{StartPoint, TrackKind, TrackReceiveTask};
 
 const MEDIA_CHANNEL_CAPACITY: usize = 256;
+/// Objects the relay has not sent this long after receiving them would
+/// play late, so it drops them (draft-14 §9.2.1.2). Same as the browser player.
+const DELIVERY_TIMEOUT_MS: u64 = 2_000;
 const PCMA_CODEC: &str = "pcma";
 const OPUS_CODEC: &str = "opus";
 
@@ -24,16 +28,19 @@ const OPUS_CODEC: &str = "opus";
 pub struct BroadcastReader {
     media_receiver: mpsc::Receiver<MediaEvent>,
     start: Arc<StartPoint>,
-    _tasks: JoinSet<()>,
+    _tasks: Vec<TrackReceiveTask>,
 }
 
 #[derive(Debug, PartialEq)]
-pub struct SelectedTracks {
-    pub video: Option<String>,
-    pub audio: Option<(String, AudioConfig)>,
+struct SelectedTracks {
+    video: Option<String>,
+    audio: Option<(String, AudioConfig)>,
 }
 
 impl BroadcastReader {
+    /// Reads the catalog of the broadcast at `namespace` and subscribes to the
+    /// tracks it selects. Fails when the catalog cannot be read or parsed, lists
+    /// neither a LOC video nor a LOC audio track, or a SUBSCRIBE fails.
     pub async fn run(session: &Session, namespace: &str) -> Result<Self> {
         let catalog = read_catalog(session, namespace).await?;
         let catalog = Catalog::parse(&catalog).context("parse catalog json")?;
@@ -61,7 +68,7 @@ impl BroadcastReader {
         if let Some((name, config)) = tracks.audio {
             kinds.push((name, TrackKind::Audio(config)));
         }
-        let mut tasks = JoinSet::new();
+        let mut tasks = Vec::new();
         for (name, kind) in kinds {
             // NextGroupStart begins the video at a keyframe. An audio object decodes
             // alone, and a publisher that sends its audio as one endless group never
@@ -73,7 +80,7 @@ impl BroadcastReader {
             };
             let subscription = subscribe(session, namespace, &name, filter_type).await?;
             let reader = session.subscriber().track_reader(&subscription);
-            tasks.spawn(receive_track(
+            tasks.push(TrackReceiveTask::run(
                 name,
                 reader,
                 kind,
@@ -106,7 +113,7 @@ impl BroadcastReader {
 /// `initDataList` (§5.1.7), or an A-law or Opus track without a readable
 /// `samplerate` and `channelConfig`, is skipped; fails when neither role has a
 /// track.
-pub fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
+fn select_tracks(catalog: &Catalog) -> Result<SelectedTracks> {
     let video = catalog
         .loc_tracks()
         .find(|track| track.has_role(KnownTrackRole::Video))
@@ -176,6 +183,45 @@ fn aac_config(catalog: &Catalog, track: &Track) -> Result<AudioSpecificConfig> {
     AudioSpecificConfig::parse(&bytes)
 }
 
+async fn subscribe(
+    session: &Session,
+    namespace: &str,
+    name: &str,
+    filter_type: FilterType,
+) -> Result<Subscription> {
+    let option = SubscribeOption {
+        filter_type,
+        // A track with long groups starts one when asked (draft-18 §5.1.3.1).
+        new_group_request: (filter_type == FilterType::NextGroupStart).then_some(0),
+        delivery_timeout: Some(DELIVERY_TIMEOUT_MS),
+        ..SubscribeOption::default()
+    };
+    session
+        .subscriber()
+        .subscribe(namespace.to_string(), name.to_string(), option)
+        .await
+        .with_context(|| format!("subscribe {namespace}/{name}"))
+}
+
+/// Reads the first object of the catalog's current group with the SUBSCRIBE and
+/// joining FETCH (offset 0) that draft-ietf-moq-msf-02 §5 requires, or the next
+/// object when the track has none yet.
+async fn read_catalog(session: &Session, namespace: &str) -> Result<Bytes> {
+    let (_subscription, mut reader) = session
+        .subscriber()
+        .subscribe_current_group(
+            namespace.to_string(),
+            msf::CATALOG_TRACK_NAME.to_string(),
+            SubscribeOption::default(),
+        )
+        .await
+        .with_context(|| format!("subscribe {namespace}/{}", msf::CATALOG_TRACK_NAME))?;
+    match reader.next_object().await? {
+        Some(object) => Ok(object.payload),
+        None => bail!("catalog track ended before any object"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -186,17 +232,14 @@ mod tests {
         loc::{self, LocObject},
         mpegts,
     };
-    use moqt::{
-        CertificateVerification, ClientConfig,
-        publish::{GroupBoundary, OutgoingObject, Retention},
-    };
+    use moqt::publish::{GroupBoundary, OutgoingObject, Retention};
 
     use super::*;
-    use crate::{relay_session, test_support::FakePublisher};
+    use crate::test_support::{FakePublisher, connect};
     use msf::KnownPackaging;
 
     const NAMESPACE: &str = "anon/room/alice";
-    const FIXTURE_TS: &[u8] = include_bytes!("../../../crates/mediapack/fixtures/testsrc.ts");
+    const FIXTURE_TS: &[u8] = include_bytes!("../../mediapack/fixtures/testsrc.ts");
     /// TOC configuration 31, code 0: one 20 ms CELT frame.
     const OPUS_20_MS_FRAME: [u8; 4] = [0xFC, 0x01, 0x02, 0x03];
 
@@ -388,15 +431,7 @@ mod tests {
         write("audio", audio_group, opus_object(video_capture - 40_000))
             .await
             .unwrap();
-        let relay = relay_session::connect(
-            &publisher.url,
-            &ClientConfig {
-                certificate_verification: CertificateVerification::Disabled,
-                ..ClientConfig::default()
-            },
-        )
-        .await
-        .unwrap();
+        let relay = connect(&publisher.url).await;
         let session = relay.clone();
         let reading = tokio::spawn(async move { BroadcastReader::run(&session, NAMESPACE).await });
         assert_eq!(publisher.next_served().await, msf::CATALOG_TRACK_NAME);
