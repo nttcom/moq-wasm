@@ -9,7 +9,7 @@ Proposed
 ## Scope
 A Rust SDK for applications outside this repository, robots under remote
 operation first, released like the Python SDK
-([python/sdk.md](../python/sdk.md)): a new crate `crates/moq-wasm` that a
+([python/sdk.md](../python/sdk.md)): a new crate `sdk/rust` that a
 Rust application adds as its only dependency on this repository. This
 document fixes the crate, its API and its release. Robot-specific features
 (command expiry, dead-man stop, observation alignment, the track layout of a
@@ -52,14 +52,13 @@ The layer that closes these gaps depends on `moqt`, `broadcast` and `msf`.
 ## Decision
 
 ### The crate
-- **Package `moq-wasm`, in `crates/moq-wasm`, imported as `moq_wasm`.** A
+- **Package `moq-wasm`, in `sdk/rust` beside `sdk/js` and `sdk/python`,
+  imported as `moq_wasm`.** A
   git dependency is named by its package, so the package carries the name
   users install, the one the browser and Python SDKs are installed under. It
   does not use WebAssembly; the name follows the repository, as the Python
   package's does. A role name (`client`) would make users write
-  `client = { git = … }` or rename it with `package =`. This is the
-  "external ecosystem dictates the form" case of the naming rule in
-  AGENTS.md, which gains it as an example.
+  `client = { git = … }` or rename it with `package =`.
 - **No suffix.** `moq-wasm-client` or `moq-wasm-rust` says nothing Cargo
   does not: the browser and Python SDKs are clients too, and the tags tell
   the three apart.
@@ -87,7 +86,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 ```mermaid
 flowchart TB
-    subgraph moq_wasm["moq-wasm (crates/moq-wasm)"]
+    subgraph moq_wasm["moq-wasm (sdk/rust)"]
         media["moq_wasm::media<br/>create_broadcast · LocalBroadcast · MediaSource · EventTimeline<br/>watch_broadcasts · RemoteBroadcast · Catalog"]
         core["moq_wasm<br/>connect · Session · re-exports of moqt::client"]
     end
@@ -137,10 +136,11 @@ tokio::select! {
   `certificate_verification` and the `ClientConfig` fields an application
   sets. A failure to connect is the `Err`.
 - **`Session`** owns a `moqt::client::Session` and the token refresh task,
-  and has its request methods with the same names and arguments:
-  `subscribe`, `subscribe_current_group`, `subscribe_group_start`, `fetch`,
+  and dereferences to the `moqt::client::Session`, so its request methods
+  keep their names and arguments without a copy of each: `subscribe`,
+  `subscribe_current_group`, `subscribe_group_start`, `fetch`,
   `track_status`, `watch_namespaces`, `announce`, `publish_track`,
-  `transferred_bytes`, `close`. What they return are `moqt::client`'s
+  `transferred_bytes`. `closed` and `close` are its own. What they return are `moqt::client`'s
   `Subscription`, `Group`, `Fetch`, `NamespaceWatch`, `Announcement` and
   `TrackWriter`, re-exported. A refused request is `moqt::client`'s
   `RequestError` or `FetchError`; any other failure is `anyhow::Error`.
@@ -287,10 +287,10 @@ design needs two things of the general API, both above:
 As the Python SDK's, without build artifacts: the tag is what users depend
 on.
 
-1. PRs do not edit `crates/moq-wasm/CHANGELOG.md`; a change a user of the
+1. PRs do not edit `sdk/rust/CHANGELOG.md`; a change a user of the
    crate would notice carries its entry in the PR body's
    `## リリースノート（Rust）` section. The release PR collects them into the
-   version's section and sets `version` in `crates/moq-wasm/Cargo.toml`
+   version's section and sets `version` in `sdk/rust/Cargo.toml`
    (`.agents/skills/release-rust-sdk/SKILL.md`).
 2. `rust-sdk-v<version>` is pushed on its merge commit.
 3. `.github/workflows/rust-sdk-release.yml` stops unless the tag names the
@@ -318,7 +318,7 @@ break the API, as theirs may. crates.io stays out for the reasons
   promised; the README names the version CI uses.
 
 ### Documentation
-- `crates/moq-wasm/README.md` is the crate's documentation root
+- `sdk/rust/README.md` is the crate's documentation root
   (`#![doc = include_str!("../README.md")]`): install, connect, publish a
   broadcast, follow one, and the platform notes.
 - `npm run docs` in `examples/browser`, which already writes the Python
@@ -343,7 +343,7 @@ One step per PR, each stacked on the one before.
    guard it; neither SDK's API changes.
 3. **feat(moq-wasm): core.** The crate, `connect`, `Session`, token refresh,
    `SessionEnd`, the re-exports, the README; AGENTS.md gains the crate in its
-   component table and naming rule; `sdk/python` gains `doc = false`.
+   component table; `sdk/python` gains `doc = false`.
 4. **feat(moq-wasm): publish a broadcast.** `create_broadcast`,
    `LocalBroadcast`, `EventTimeline`, `MediaSource`.
 5. **feat(moq-wasm): follow broadcasts.** `watch_broadcasts`,

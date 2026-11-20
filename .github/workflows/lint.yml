@@ -6,8 +6,9 @@ on:
       - "**"
       - "!**.md"
       - "!docs/**"
-      # rustdoc runs the code blocks in the moqt README as doctests
+      # rustdoc runs the code blocks in the moqt and Rust SDK READMEs as doctests
       - "crates/moqt/README.md"
+      - "sdk/rust/README.md"
       # prettier checks the Markdown under examples/browser and sdk/js/js
       - "examples/browser/**.md"
       - "sdk/js/js/**.md"
@@ -19,8 +20,9 @@ on:
       - "**"
       - "!**.md"
       - "!docs/**"
-      # rustdoc runs the code blocks in the moqt README as doctests
+      # rustdoc runs the code blocks in the moqt and Rust SDK READMEs as doctests
       - "crates/moqt/README.md"
+      - "sdk/rust/README.md"
       # prettier checks the Markdown under examples/browser and sdk/js/js
       - "examples/browser/**.md"
       - "sdk/js/js/**.md"
