@@ -103,7 +103,7 @@ for await (const event of await session.watchNamespaces(['room-1'])) {
 
 ```
 moq-wasm            core: init, connect, Session, Subscription, TrackWriter, 型
-moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
+moq-wasm/media      createBroadcast(), watchBroadcasts(), RemoteBroadcast, PhoneCall, LivePlayer, PlayerControls, parseCatalog, Mp4Broadcast
 moq-wasm/media/player.css
 moq-wasm/media/controls.css
 moq-wasm/recording  openRecording, Recording, RecorderError
@@ -637,6 +637,37 @@ relay に残るのは、ブラウザが接続を閉じられないとき（ク�
 PUBLISH_NAMESPACE_DONE を流さない。namespace に SDK が一意な要素を足す方法は採らない。
 名前で配信を指す使い方（`['live', 'concert']`）と、namespace で配信を探す recorder や
 live-translate が影響を受けるためである。
+
+## 電話をつなぐ `PhoneCall`
+SIP gateway（docs/architecture/sip-gateway/architecture.md）がつないだ電話と、ページを
+1対1で話させる。ページは電話をかけない。アプリのサーバーが gateway にかけさせた通話か、
+受けさせた通話に、`call_id` と namespace を受け取ってから入る。
+
+```ts
+const call = await PhoneCall.join(session, {
+  call: ['app', 'room', 'phone', callId], // gateway の配信
+  local: ['app', 'room', 'alice', 'call', callId], // アプリのサーバーが gateway に渡した peer
+  audio: true,
+  audioContext
+})
+call.listen((state, reason) => {}) // dialing | ringing | answered | ended
+await call.sendDtmf('1#')
+await call.hangUp()
+```
+
+- **送る側:** `createBroadcast(local)` にマイクだけの source `microphone` を足し、同じ
+  namespace に `control` track を `session.publishTrack` で出す。`control` には命令を
+  1つずつ、それだけの Group にした JSON で書く（`{"event":"dtmf","digit":"1"}`、
+  `{"event":"hangup"}`）。
+- **受ける側:** 電話の音声は `RemoteBroadcast(call)` で鳴らす。状態は gateway の `call`
+  track を joining FETCH つきで購読して読む（`CallStates`）。gateway がまだ公開して
+  いなければ 500 ms ごとに購読し直す。
+- **切る:** `hangUp` は `control` に `hangup` を書いてから、マイクと再生を止める。
+  `LocalBroadcast` は session を閉じるまで namespace を公開し続け、ページの session には
+  ほかの配信も載っているので、配信を終えて切ることはできない。session が閉じたとき
+  （ページを閉じた、落ちた）は、gateway が PUBLISH_NAMESPACE_DONE を見て切る。
+- **終わり:** `ended` を読むか、`ended` を読まないまま `call` track が終わる（gateway が
+  止まった。`reason` は `gateway`）と、マイクと再生を止める。
 
 ## 録画を `LivePlayer` で再生する
 

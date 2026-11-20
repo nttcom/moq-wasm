@@ -29,6 +29,8 @@ export {
   RemoteBroadcast
 } from './remoteBroadcast'
 export { type BroadcastWatch, type WatchBroadcastsOptions, watchBroadcasts } from './watchBroadcasts'
+export { type PhoneCallState } from './callStates'
+export { type PhoneCallListener, type PhoneCallOptions, PhoneCall } from './phoneCall'
 export { type AddedAudioTrack, type AddedAudioTrackListener } from './player/addedAudioTrack'
 export { type AddedTextTrack, type AddedTextTrackListener } from './player/addedTextTrack'
 export {

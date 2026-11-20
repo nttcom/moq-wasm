@@ -519,6 +519,36 @@ export type Packaging = 'loc' | 'cmaf';
 export function parseCatalog(json: string): unknown;
 
 // @public (undocumented)
+export class PhoneCall {
+    // (undocumented)
+    hangUp(): Promise<void>;
+    // (undocumented)
+    static join(session: MoqSession, options: PhoneCallOptions): Promise<PhoneCall>;
+    // (undocumented)
+    listen(listener: PhoneCallListener): () => void;
+    // (undocumented)
+    readonly phone: RemoteBroadcast;
+    // (undocumented)
+    sendDtmf(digits: string): Promise<void>;
+}
+
+// @public (undocumented)
+export type PhoneCallListener = (state: PhoneCallState, reason: string | undefined) => void;
+
+// @public (undocumented)
+export type PhoneCallOptions = {
+    call: string[];
+    local: string[];
+    audio: TrackInput;
+    audioContext?: AudioContext;
+};
+
+// Warning: (ae-forgotten-export) The symbol "STATES" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export type PhoneCallState = (typeof STATES)[number];
+
+// @public (undocumented)
 export class PlaybackGroup {
     constructor(callbacks?: PlaybackGroupCallbacks | undefined);
     // (undocumented)
