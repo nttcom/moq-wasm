@@ -1,6 +1,6 @@
 mod config;
 mod logging;
-pub use config::RelayConfig;
+pub use config::{AuthConfig, CacheConfig, DiskCacheConfig, RelayConfig};
 pub use logging::init_logging;
 mod modules;
 mod relay_server;
