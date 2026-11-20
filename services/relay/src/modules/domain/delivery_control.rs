@@ -43,7 +43,8 @@ impl DeliveryControl {
         largest: Option<Location>,
     ) -> Self {
         let end_group = match filter_type {
-            FilterType::AbsoluteRange { end_group, .. } => Some(end_group.saturating_add(1)),
+            // No group follows the largest Group ID, so ending there is open-ended.
+            FilterType::AbsoluteRange { end_group, .. } => end_group.checked_add(1),
             _ => None,
         };
         Self {
@@ -147,9 +148,10 @@ impl DeliveryControl {
     pub(crate) fn resume_object_id(&self, group_id: u64, object_id: u64) -> Option<u64> {
         match self.largest_at_update {
             Some(largest) if group_id < largest.group_id => None,
-            Some(largest) if group_id == largest.group_id => {
-                Some(object_id.max(largest.object_id.saturating_add(1)))
-            }
+            Some(largest) if group_id == largest.group_id => largest
+                .object_id
+                .checked_add(1)
+                .map(|next| object_id.max(next)),
             _ => Some(object_id),
         }
     }
@@ -167,8 +169,26 @@ pub(crate) fn starts_before(start: Option<Location>, other: Option<Location>) ->
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
     use crate::modules::test_support::relay_harness::fixtures::location;
+
+    fn id_near_bounds() -> impl Strategy<Value = u64> {
+        prop_oneof![
+            Just(0),
+            Just(1),
+            Just(u64::MAX - 1),
+            Just(u64::MAX),
+            0..8u64,
+            any::<u64>(),
+        ]
+    }
+
+    fn location_near_bounds() -> impl Strategy<Value = Location> {
+        (id_near_bounds(), id_near_bounds())
+            .prop_map(|(group_id, object_id)| location(group_id, object_id))
+    }
 
     fn bounded(start: Location, end_group: u64) -> DeliveryControl {
         DeliveryControl::from_subscribe_update(true, start, end_group)
@@ -234,6 +254,21 @@ mod tests {
         assert!(control.contains_group(4));
         assert!(!control.contains_group(5));
         assert!(!control.contains_group(1));
+    }
+
+    #[test]
+    fn absolute_range_ending_at_the_largest_group_id_includes_it() {
+        // Arrange
+        let filter_type = FilterType::AbsoluteRange {
+            location: location(2, 0),
+            end_group: u64::MAX,
+        };
+
+        // Act
+        let control = DeliveryControl::new(128, true, &filter_type, None);
+
+        // Assert
+        assert!(control.contains_group(u64::MAX));
     }
 
     #[test]
@@ -328,6 +363,53 @@ mod tests {
         assert_eq!(control.resume_object_id(4, 1), Some(3));
         assert_eq!(control.resume_object_id(4, 5), Some(5));
         assert_eq!(control.resume_object_id(5, 0), Some(0));
+    }
+
+    #[test]
+    fn nothing_of_a_group_follows_a_largest_object_at_the_largest_object_id() {
+        // Arrange
+        let mut control = DeliveryControl::new(128, true, &FilterType::LargestObject, None);
+        let mut last = control;
+
+        // Act
+        control.apply_update(control.requested(128, true, None, Some(location(4, u64::MAX))));
+        last.apply_update(last.requested(128, true, None, Some(Location::MAX)));
+
+        // Assert
+        assert_eq!(control.resume_object_id(4, 7), None);
+        assert_eq!(control.resume_object_id(5, 0), Some(0));
+        assert_eq!(last.resume_object_id(u64::MAX, 7), None);
+    }
+
+    proptest! {
+        #[test]
+        fn a_subgroup_resumes_at_the_first_object_after_the_largest_object(
+            (largest, group_id) in location_near_bounds().prop_flat_map(|largest| {
+                let near = prop_oneof![
+                    Just(largest.group_id),
+                    Just(largest.group_id.saturating_sub(1)),
+                    Just(largest.group_id.saturating_add(1)),
+                    id_near_bounds(),
+                ];
+                (Just(largest), near)
+            }),
+            object_id in id_near_bounds(),
+        ) {
+            // Arrange
+            let mut control = DeliveryControl::new(128, true, &FilterType::LargestObject, None);
+            control.apply_update(control.requested(128, true, None, Some(largest)));
+            let model = [Some(object_id), largest.object_id.checked_add(1)]
+                .into_iter()
+                .flatten()
+                .filter(|&id| id >= object_id && location(group_id, id) > largest)
+                .min();
+
+            // Act
+            let resumed = control.resume_object_id(group_id, object_id);
+
+            // Assert
+            prop_assert_eq!(resumed, model);
+        }
     }
 
     #[test]
