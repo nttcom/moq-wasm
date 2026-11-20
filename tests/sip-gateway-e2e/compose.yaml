@@ -9,6 +9,8 @@ services:
       - ./asterisk/logger.conf:/etc/asterisk/logger.conf:ro
       - ./asterisk/modules.conf:/etc/asterisk/modules.conf:ro
       - ./keys:/etc/asterisk/keys:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:5061:5061/tcp"
       - "127.0.0.1:10000-10019:10000-10019/udp"
