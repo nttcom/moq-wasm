@@ -17,7 +17,7 @@ use hyper::StatusCode;
 use mediapack::{AudioConfig, AudioSample, MediaEvent, Timestamp};
 use moqt::{
     CertificateVerification, ClientConfig,
-    client::{self, GroupStartOptions, NamespaceWatch, Subscription},
+    client::{self, GroupStartOptions, NamespaceWatch, PublishTrackOptions, Subscription},
 };
 use serde_json::{Value, json};
 use tokio::{
@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     a_destination_outside_the_app_s_prefixes_is_refused(&env).await?;
     println!("ok: a destination outside the app's prefixes is refused");
     the_phone_hears_the_page_and_the_page_hangs_up(&env).await?;
-    println!("ok: the phone hears the page and the page hangs up");
+    println!("ok: the phone hears the page and the page hangs up on its control track");
     a_busy_phone_ends_the_call_with_486(&env).await?;
     println!("ok: a busy phone ends the call with 486");
     the_phone_hangs_up(&env).await?;
@@ -106,11 +106,14 @@ async fn the_phone_hears_the_page_and_the_page_hangs_up(env: &Env) -> Result<()>
         "the phone sent back {heard:.0} Hz instead of the page's {TONE_HZ} Hz"
     );
 
-    drop(tone);
-    peer_session.close().await;
+    // As `PhoneCall.hangUp`: the page's session stays open.
+    tone.hang_up().await?;
     let reason = call.until_state("ended").await?;
     ensure!(reason == "hangup", "ended with {reason}");
-    call.until_gone().await
+    call.until_gone().await?;
+    drop(tone);
+    peer_session.close().await;
+    Ok(())
 }
 
 async fn a_busy_phone_ends_the_call_with_486(env: &Env) -> Result<()> {
@@ -154,6 +157,7 @@ async fn the_page_answers_a_call_to_the_app_s_number(env: &Env, webhook: &Webhoo
         "the phone sent back {heard:.0} Hz instead of the page's {TONE_HZ} Hz"
     );
 
+    // The page's session closes, so its broadcast ends.
     drop(tone);
     peer_session.close().await;
     let reason = call.until_state("ended").await?;
@@ -367,9 +371,11 @@ async fn until_namespace(phones: &NamespaceWatch, namespace: &[&str], active: bo
     .await?
 }
 
-/// The page's microphone: a sine tone, published as an Opus broadcast.
+/// The page's broadcast for a call, as `PhoneCall` publishes it: its
+/// microphone, a sine tone in Opus, and its `control` track.
 struct ToneBroadcast {
     pipeline: gst::Pipeline,
+    control: client::TrackWriter,
     _writer_task: tokio::task::JoinHandle<()>,
 }
 
@@ -382,6 +388,13 @@ impl ToneBroadcast {
             namespace.split('/').map(str::to_string).collect(),
         );
         broadcast.announce().await?;
+        let control = session
+            .publish_track(
+                &namespace.split('/').collect::<Vec<_>>(),
+                "control",
+                PublishTrackOptions::default(),
+            )
+            .await?;
         let mut writer = BroadcastWriter::run(
             broadcast,
             SourceTracks {
@@ -411,8 +424,16 @@ impl ToneBroadcast {
         });
         Ok(Self {
             pipeline,
+            control,
             _writer_task: writer_task,
         })
+    }
+
+    async fn hang_up(&self) -> Result<()> {
+        self.control
+            .write_group(Bytes::from_static(br#"{"event":"hangup"}"#))
+            .await?;
+        Ok(())
     }
 }
 
