@@ -52,7 +52,7 @@ impl BroadcastWriter {
 
     /// `Broadcast::remove_track`, taken after the media pushed before it. The
     /// future does not borrow the writer, so media can be pushed meanwhile.
-    pub fn remove_track(&self, track_name: &str) -> impl Future<Output = Result<()>> + 'static {
+    pub fn remove_track(&self, track_name: &str) -> impl Future<Output = Result<()>> + use<> {
         self.queue.remove_track(track_name.to_string())
     }
 
