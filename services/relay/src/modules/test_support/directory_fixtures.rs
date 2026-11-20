@@ -272,6 +272,7 @@ impl DownstreamPublishContext {
             table: self.table.clone(),
             forwarder: self.forwarder.clone(),
             cache_store: self.cache_store.clone(),
+            route_registry: Arc::new(NoopRelayRouteRegistry),
         }
     }
 

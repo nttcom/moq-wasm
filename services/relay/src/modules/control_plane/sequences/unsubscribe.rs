@@ -1,4 +1,5 @@
 use crate::modules::{
+    cascading::route_registry::RelayRouteRegistry,
     control_plane::control_message_forwarder::ControlMessageForwarder,
     directory::InMemoryLocalPubSubDirectory,
     domain::{publish_done_reason::PublishDoneReason, session_id::SessionId},
@@ -17,6 +18,7 @@ impl Unsubscribe {
         session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
+        route_registry: &dyn RelayRouteRegistry,
         subscribe_id: u64,
         end: Option<PublishDoneReason>,
     ) {
@@ -44,14 +46,14 @@ impl Unsubscribe {
             "UNSUBSCRIBE handled"
         );
 
-        for released in removed.released_upstream_subscriptions {
-            super::release_upstream(
-                forwarder,
-                released.publisher_session_id,
-                &released.subscription,
-            )
-            .await;
-        }
+        super::release_upstream_subscriptions(
+            table,
+            forwarder,
+            route_registry,
+            &removed.track_key,
+            &removed.released_upstream_subscriptions,
+        )
+        .await;
     }
 }
 
@@ -67,15 +69,18 @@ mod tests {
         domain::{publish_done_reason::PublishDoneReason, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{
-                UPSTREAM_REQUEST_ID, UpstreamReleaseContext, register_downstream, track_key,
-                upstream_release_context,
+                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext,
+                register_downstream, track_key, upstream_release_context,
             },
-            mock_session::runner_stopped,
+            mock_session::{MockPublishHandler, runner_stopped},
+            stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
     };
+    use std::sync::Arc;
 
     struct TestContext {
         upstream: UpstreamReleaseContext,
+        route_registry: StubRouteRegistry,
         runner_stop_receivers: Vec<oneshot::Receiver<PublishDoneReason>>,
     }
 
@@ -101,6 +106,7 @@ mod tests {
             .collect();
         TestContext {
             upstream,
+            route_registry: StubRouteRegistry::new(PublisherLookup::MustNotBeCalled),
             runner_stop_receivers,
         }
     }
@@ -120,6 +126,7 @@ mod tests {
                 session_id,
                 &ctx.upstream.table,
                 &ctx.upstream.forwarder,
+                &ctx.route_registry,
                 subscribe_id,
                 end,
             )
@@ -212,6 +219,48 @@ mod tests {
             .recorded
             .wait_ingest_stopped(UPSTREAM_REQUEST_ID)
             .await;
+    }
+
+    #[tokio::test]
+    async fn the_last_subscriber_of_a_draining_relay_withdraws_the_route_of_the_released_publish() {
+        // Arrange
+        let ctx = setup(ProducerOrigin::Publish, &[(100, 10)]).await;
+        ctx.upstream.table.register_publish(
+            PUBLISHER_SESSION,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new(
+                &track_key().track_namespace,
+                &track_key().track_name,
+                10,
+            )),
+        );
+        ctx.upstream.table.begin_draining(1);
+
+        // Act
+        run_unsubscribe(&ctx, 100, 10).await;
+
+        // Assert
+        assert!(!ctx.upstream.table.has_client_published_track(&track_key()));
+        assert_eq!(
+            ctx.route_registry.unregistered_track_publishers(),
+            vec![track_key()]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_released_subscribe_leaves_the_route_registry_alone() {
+        // Arrange
+        let ctx = setup(ProducerOrigin::Subscribe, &[(100, 10)]).await;
+
+        // Act
+        run_unsubscribe(&ctx, 100, 10).await;
+
+        // Assert: the relay registers a route only for a client's PUBLISH
+        assert!(
+            ctx.route_registry
+                .unregistered_track_publishers()
+                .is_empty()
+        );
     }
 
     #[tokio::test]

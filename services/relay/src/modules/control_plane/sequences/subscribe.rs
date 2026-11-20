@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::modules::directory::track::DownstreamSubscription;
 use crate::modules::{
+    cascading::route_registry::RelayRouteRegistry,
     control_plane::{
         control_message_forwarder::ControlMessageForwarder,
         sequences::new_group_request::NewGroupRequest,
@@ -120,6 +121,7 @@ impl Subscribe {
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
+        route_registry: &dyn RelayRouteRegistry,
         handler: Box<dyn SubscribeHandler>,
     ) {
         let track_namespace = handler.track_namespace();
@@ -193,6 +195,7 @@ impl Subscribe {
                     table,
                     forwarder,
                     cache_store,
+                    route_registry,
                     handler.as_ref(),
                 )
                 .await;
@@ -392,6 +395,7 @@ impl Subscribe {
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
         cache_store: &Arc<TrackCacheStore>,
+        route_registry: &dyn RelayRouteRegistry,
         handler: &dyn SubscribeHandler,
     ) -> Acceptance {
         let track_key = entry.track_key.clone();
@@ -455,6 +459,7 @@ impl Subscribe {
         if !super::start_egress(
             table,
             forwarder,
+            route_registry,
             cache_store,
             super::EgressRequest {
                 subscriber_session_id: session_id,
@@ -508,6 +513,7 @@ impl Subscribe {
             super::remove_downstream_subscription(
                 table,
                 forwarder,
+                route_registry,
                 session_id,
                 handler.subscribe_id(),
             )
@@ -1172,6 +1178,7 @@ mod tests {
                 table,
                 &ControlMessageForwarder { repository },
                 cache_store,
+                &NoopRelayRouteRegistry,
                 handler,
             )
             .await
@@ -1251,6 +1258,7 @@ mod tests {
                 &ControlMessageForwarder { repository },
                 &Arc::new(local_publisher_resolver()),
                 &cache_store,
+                &NoopRelayRouteRegistry,
                 Box::new(handler.clone()),
             )
             .await;
@@ -1316,6 +1324,7 @@ mod tests {
                     .await,
                 },
                 &Arc::new(TrackCacheStore::new()),
+                &NoopRelayRouteRegistry,
                 &handler,
             )
             .await;
@@ -1380,6 +1389,7 @@ mod tests {
                     repository: Arc::new(tokio::sync::Mutex::new(detached_session_repository())),
                 },
                 &Arc::new(TrackCacheStore::new()),
+                &NoopRelayRouteRegistry,
                 &MockSubscribeHandler::default(),
             )
             .await;
@@ -1467,6 +1477,7 @@ mod tests {
                 &ControlMessageForwarder { repository },
                 &Arc::new(resolver),
                 &Arc::new(TrackCacheStore::new()),
+                &NoopRelayRouteRegistry,
                 Box::new(handler.clone()),
             )
             .await;

@@ -2,7 +2,7 @@ use super::WorkerDeps;
 use crate::modules::{
     control_plane::sequences::{
         publish::Publish, publish_namespace_done::PublishNamespaceDone,
-        unsubscribe_namespace::UnsubscribeNamespace,
+        unsubscribe_namespace::UnsubscribeNamespace, withdraw_released_track_route,
     },
     directory::track::RemovedSessionSubscriptions,
     domain::session_id::SessionId,
@@ -36,6 +36,13 @@ async fn cleanup_removed_session(
     let forwarder = &deps.control_message_forwarder;
 
     for removed_downstream in removed.downstream_subscriptions {
+        withdraw_released_track_route(
+            table,
+            deps.route_registry.as_ref(),
+            &removed_downstream.track_key,
+            &removed_downstream.released_upstream_subscriptions,
+        )
+        .await;
         for released in removed_downstream.released_upstream_subscriptions {
             if released.publisher_session_id != removed_session_id
                 && let Err(err) = forwarder

@@ -1,4 +1,5 @@
 use crate::modules::{
+    cascading::route_registry::RelayRouteRegistry,
     control_plane::control_message_forwarder::ControlMessageForwarder,
     directory::InMemoryLocalPubSubDirectory, domain::session_id::SessionId,
 };
@@ -15,29 +16,55 @@ impl ReleaseUnwatchedPublishes {
         publisher_session_id: SessionId,
         table: &InMemoryLocalPubSubDirectory,
         forwarder: &ControlMessageForwarder,
+        route_registry: &dyn RelayRouteRegistry,
     ) {
-        for (_, released) in table.release_unwatched_published_subscriptions(publisher_session_id) {
-            super::release_upstream(forwarder, publisher_session_id, &released.subscription).await;
+        for (track_key, released) in
+            table.release_unwatched_published_subscriptions(publisher_session_id)
+        {
+            super::release_upstream_subscriptions(
+                table,
+                forwarder,
+                route_registry,
+                &track_key,
+                std::slice::from_ref(&released),
+            )
+            .await;
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::modules::test_support::directory_fixtures::downstream_subscription;
     use crate::modules::{
+        cascading::route_registry::NoopRelayRouteRegistry,
         directory::track::ProducerOrigin,
         domain::session_peer::SessionPeer,
-        test_support::directory_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, delivery_control,
-            register_downstream, track_key, upstream_release_context,
+        test_support::{
+            directory_fixtures::{
+                PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, delivery_control,
+                register_downstream, track_key, upstream_release_context,
+            },
+            mock_session::MockPublishHandler,
+            stub_route_registry::{PublisherLookup, StubRouteRegistry},
         },
     };
 
     async fn release(ctx: &UpstreamReleaseContext) {
+        release_with(ctx, &NoopRelayRouteRegistry).await;
+    }
+
+    async fn release_with(ctx: &UpstreamReleaseContext, route_registry: &dyn RelayRouteRegistry) {
         ReleaseUnwatchedPublishes
-            .handle(PUBLISHER_SESSION, &ctx.table, &ctx.forwarder)
+            .handle(
+                PUBLISHER_SESSION,
+                &ctx.table,
+                &ctx.forwarder,
+                route_registry,
+            )
             .await;
     }
 
@@ -56,6 +83,32 @@ mod tests {
         );
         ctx.recorded.wait_ingest_stopped(UPSTREAM_REQUEST_ID).await;
         assert!(ctx.table.upstream_tracks.get(&track_key()).is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unwatched_published_track_has_its_route_withdrawn() {
+        // Arrange
+        let ctx = upstream_release_context(ProducerOrigin::Publish).await;
+        ctx.table.register_publish(
+            PUBLISHER_SESSION,
+            SessionPeer::Client,
+            Arc::new(MockPublishHandler::new(
+                &track_key().track_namespace,
+                &track_key().track_name,
+                10,
+            )),
+        );
+        let route_registry = StubRouteRegistry::new(PublisherLookup::MustNotBeCalled);
+
+        // Act
+        release_with(&ctx, &route_registry).await;
+
+        // Assert
+        assert!(!ctx.table.has_client_published_track(&track_key()));
+        assert_eq!(
+            route_registry.unregistered_track_publishers(),
+            vec![track_key()]
+        );
     }
 
     #[tokio::test]

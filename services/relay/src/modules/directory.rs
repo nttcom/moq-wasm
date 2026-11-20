@@ -289,6 +289,7 @@ impl InMemoryLocalPubSubDirectory {
                 ReleasedUpstreamSubscription {
                     publisher_session_id,
                     subscription: producer.state.subscription,
+                    origin: ProducerOrigin::Publish,
                 },
             ));
         }
@@ -1369,6 +1370,7 @@ impl InMemoryLocalPubSubDirectory {
                     released_upstream_subscriptions.push(ReleasedUpstreamSubscription {
                         publisher_session_id: *publisher_session_id,
                         subscription: state.subscription.clone(),
+                        origin: state.origin,
                     });
                 }
                 !released
