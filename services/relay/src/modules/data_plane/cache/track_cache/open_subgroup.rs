@@ -702,7 +702,7 @@ mod tests {
         assert!(
             tokio::time::timeout(
                 Duration::from_millis(50),
-                cache.next_subgroup_object_or_wait(stream_key(0), 0, 0)
+                cache.next_subgroup_object_or_wait(stream_key(0), 0, ObjectCursor::At(0))
             )
             .await
             .is_err()

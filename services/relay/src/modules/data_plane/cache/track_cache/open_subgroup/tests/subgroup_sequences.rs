@@ -25,6 +25,7 @@ use crate::modules::{
         subgroup_key::SubgroupKey,
         track_cache::{NextObject, OpenSubgroupGuard, SubgroupRun, TrackCache, location},
     },
+    domain::object_cursor::ObjectCursor,
     test_support::relay_harness::fixtures::cached_object::{
         stream_object_in_subgroup, subgroup_key as key,
     },
@@ -285,7 +286,7 @@ impl<'a> Harness<'a> {
         let expected = opening_id.map(|_| SubgroupRun {
             key: key(group_id, subgroup_id),
             generation: subgroup.reopened_runs.len(),
-            first_object_id: subgroup.latest_run_first_object_id(),
+            first_object_id: ObjectCursor::At(subgroup.latest_run_first_object_id()),
         });
         prop_assert_eq!(announced, expected, "run announced on opening");
         if !group_was_live && opening_id.is_some() {
@@ -463,7 +464,7 @@ enum Next {
 }
 
 fn poll_next(cache: &TrackCache, key: SubgroupKey, generation: usize, from: u64) -> Next {
-    let next = pin!(cache.next_subgroup_object_or_wait(key, generation, from));
+    let next = pin!(cache.next_subgroup_object_or_wait(key, generation, ObjectCursor::At(from)));
     match next.poll(&mut Context::from_waker(Waker::noop())) {
         Poll::Pending => Next::Waits,
         Poll::Ready(Ok(NextObject::Object(object))) => {
