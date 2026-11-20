@@ -17,12 +17,11 @@ use crate::modules::{
     },
     data_plane::cache::store::TrackCacheStore,
     directory::{
-        InMemoryLocalPubSubDirectory,
+        InMemoryLocalPubSubDirectory, TrackEntry,
         track::{CreationFailure, Producer, ProducerOrigin, ProducerState},
     },
     domain::{
         publish_done_reason::PublishDoneReason, session_id::SessionId, session_peer::SessionPeer,
-        track_key::TrackKey,
     },
     session::subscription::UpstreamSubscription,
 };
@@ -42,17 +41,16 @@ pub(crate) struct PendingProducerDeps {
 /// the upstream SUBSCRIBEs carry too (draft-18 §10.2.13).
 pub(crate) fn subscribe_publishers(
     deps: &PendingProducerDeps,
-    track_key: &TrackKey,
+    entry: &TrackEntry,
     subscriber_session_id: SessionId,
     publishers: Vec<UpstreamPublisher>,
     new_group_request: Option<u64>,
 ) {
-    deps.table
-        .add_pending_producers(track_key, publishers.len());
+    deps.table.add_pending_producers(entry, publishers.len());
     for publisher in publishers {
         let _task = PendingProducerTask::run(
             deps.clone(),
-            track_key.clone(),
+            entry.clone(),
             subscriber_session_id,
             publisher,
             new_group_request,
@@ -89,16 +87,17 @@ pub(crate) struct PendingProducerTask {
 impl PendingProducerTask {
     pub(crate) fn run(
         deps: PendingProducerDeps,
-        track_key: TrackKey,
+        entry: TrackEntry,
         subscriber_session_id: SessionId,
         publisher: UpstreamPublisher,
         new_group_request: Option<u64>,
     ) -> Self {
         let join_handle = tokio::spawn(
             async move {
+                let track_key = &entry.track_key;
                 let failure = Self::subscribe_once(
                     &deps,
-                    &track_key,
+                    &entry,
                     subscriber_session_id,
                     &publisher,
                     new_group_request,
@@ -107,12 +106,12 @@ impl PendingProducerTask {
                 let malformed = failure
                     .as_ref()
                     .is_some_and(|failure| failure.code == RequestErrorCode::MalformedTrack);
-                if deps.table.pending_producer_ended(&track_key, failure) {
-                    deps.cache_store.publisher_left(&track_key);
+                if deps.table.pending_producer_ended(&entry, failure) {
+                    deps.cache_store.publisher_left(track_key);
                 }
                 if malformed {
                     MalformedTrackCleanup
-                        .handle(&track_key, &deps.table, &deps.forwarder)
+                        .handle(track_key, &deps.table, &deps.forwarder)
                         .await;
                 }
             }
@@ -127,11 +126,12 @@ impl PendingProducerTask {
     /// a subscriber waiting for the track should hear about.
     async fn subscribe_once(
         deps: &PendingProducerDeps,
-        track_key: &TrackKey,
+        entry: &TrackEntry,
         subscriber_session_id: SessionId,
         publisher: &UpstreamPublisher,
         new_group_request: Option<u64>,
     ) -> Option<CreationFailure> {
+        let track_key = &entry.track_key;
         let Some(publisher_session_id) = deps.resolver.session_of(publisher).await else {
             return Some(CreationFailure {
                 code: RequestErrorCode::InternalError,
@@ -140,7 +140,7 @@ impl PendingProducerTask {
         };
         if !deps
             .table
-            .begin_upstream_subscribe(track_key, publisher_session_id)
+            .begin_upstream_subscribe(entry, publisher_session_id)
         {
             tracing::debug!(
                 publisher_session_id = %publisher_session_id,
@@ -152,24 +152,25 @@ impl PendingProducerTask {
         }
         let failure = Self::answer(
             deps,
-            track_key,
+            entry,
             subscriber_session_id,
             publisher_session_id,
             new_group_request,
         )
         .await;
         deps.table
-            .end_upstream_subscribe(track_key, publisher_session_id);
+            .end_upstream_subscribe(entry, publisher_session_id);
         failure
     }
 
     async fn answer(
         deps: &PendingProducerDeps,
-        track_key: &TrackKey,
+        entry: &TrackEntry,
         subscriber_session_id: SessionId,
         publisher_session_id: SessionId,
         new_group_request: Option<u64>,
     ) -> Option<CreationFailure> {
+        let track_key = &entry.track_key;
         let publisher_peer = session_peer(publisher_session_id, &deps.forwarder).await;
         let subscription = match deps
             .forwarder
@@ -212,7 +213,7 @@ impl PendingProducerTask {
                 ContentExists::False => None,
             };
             deps.table
-                .new_group_request_subscribe_answered(track_key, largest_group);
+                .new_group_request_subscribe_answered(entry, largest_group);
         }
 
         // The publisher sent PUBLISH for the track while the SUBSCRIBE was
@@ -232,28 +233,28 @@ impl PendingProducerTask {
             return None;
         }
         let upstream_request_id = subscription.request_id();
-        let joined =
-            deps.table
-                .track_takes_publisher(track_key, publisher_session_id, publisher_peer)
-                && match start_ingest(
-                    &deps.forwarder,
-                    &deps.cache_store,
-                    IngestRequest {
-                        subscriber_session_id,
-                        publisher_session_id,
-                        track_key: track_key.clone(),
-                        subscription: subscription.clone(),
-                    },
-                )
-                .await
-                {
-                    Some(ingest) => deps.table.add_upstream_subscription_to_track(
-                        track_key,
-                        publisher_session_id,
-                        Producer::new(subscribe_initiated(&subscription, publisher_peer), ingest),
-                    ),
-                    None => return Some(UpstreamSubscriptionError::PublisherNotFound.failure()),
-                };
+        let joined = deps
+            .table
+            .track_takes_publisher(entry, publisher_session_id, publisher_peer)
+            && match start_ingest(
+                &deps.forwarder,
+                &deps.cache_store,
+                IngestRequest {
+                    subscriber_session_id,
+                    publisher_session_id,
+                    track_key: track_key.clone(),
+                    subscription: subscription.clone(),
+                },
+            )
+            .await
+            {
+                Some(ingest) => deps.table.add_upstream_subscription_to_track(
+                    entry,
+                    publisher_session_id,
+                    Producer::new(subscribe_initiated(&subscription, publisher_peer), ingest),
+                ),
+                None => return Some(UpstreamSubscriptionError::PublisherNotFound.failure()),
+            };
         if !joined {
             unsubscribe(
                 &deps.forwarder,
@@ -350,7 +351,7 @@ mod tests {
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, delivery_control, local_publisher_resolver,
-                table_with_upstream, track_key,
+                register_downstream, table_with_upstream, track_key,
             },
             mock_session::{
                 RecordedControlMessages, mock_session_answering_subscribe,
@@ -390,10 +391,13 @@ mod tests {
             VerifiedToken::full_access(),
         )
         .await;
-        table.add_pending_producers(&track_key(), 1);
+        let entry = table
+            .track_entry(&track_key())
+            .expect("a track entry to answer for");
+        table.add_pending_producers(&entry, 1);
         let task = PendingProducerTask::run(
             deps(table, repository),
-            track_key(),
+            entry,
             SUBSCRIBER_SESSION,
             UpstreamPublisher::Session(publisher_session_id),
             None,
@@ -485,7 +489,7 @@ mod tests {
     async fn a_publisher_with_a_subscribe_in_flight_is_not_subscribed_again() {
         // Arrange: the first SUBSCRIBE waits for its answer
         let table = Arc::new(InMemoryLocalPubSubDirectory::new());
-        let TrackLookup::Started(creation, _reservation) =
+        let TrackLookup::Started(creation, reservation) =
             table.track_or_begin_creation(&track_key(), SessionPeer::Client)
         else {
             panic!("the first SUBSCRIBE starts the creation");
@@ -499,10 +503,10 @@ mod tests {
         )
         .await;
         let deps = deps(table.clone(), repository);
-        table.add_pending_producers(&track_key(), 2);
+        table.add_pending_producers(reservation.entry(), 2);
         let first = PendingProducerTask::run(
             deps.clone(),
-            track_key(),
+            reservation.entry().clone(),
             SUBSCRIBER_SESSION,
             UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
             None,
@@ -514,7 +518,7 @@ mod tests {
         // Act
         let second = PendingProducerTask::run(
             deps,
-            track_key(),
+            reservation.entry().clone(),
             SUBSCRIBER_SESSION,
             UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
             None,
@@ -541,15 +545,15 @@ mod tests {
     async fn a_publisher_answering_while_the_track_lives_joins_it() {
         // Arrange
         let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
-        table
-            .register_downstream_subscription(
-                SUBSCRIBER_SESSION,
-                100,
-                SessionPeer::Client,
-                downstream_subscription(track_key(), None),
-                delivery_control(true),
-            )
-            .unwrap();
+        register_downstream(
+            &table,
+            SUBSCRIBER_SESSION,
+            100,
+            SessionPeer::Client,
+            downstream_subscription(track_key(), None),
+            delivery_control(true),
+        )
+        .unwrap();
         let table = Arc::new(table);
 
         // Act
@@ -592,15 +596,15 @@ mod tests {
     async fn a_publisher_whose_session_ended_while_answering_is_not_kept_on_the_track() {
         // Arrange: the session leaves the repository as it sends SUBSCRIBE_OK
         let (table, _) = table_with_upstream(ProducerOrigin::Subscribe);
-        table
-            .register_downstream_subscription(
-                SUBSCRIBER_SESSION,
-                100,
-                SessionPeer::Client,
-                downstream_subscription(track_key(), None),
-                delivery_control(true),
-            )
-            .unwrap();
+        register_downstream(
+            &table,
+            SUBSCRIBER_SESSION,
+            100,
+            SessionPeer::Client,
+            downstream_subscription(track_key(), None),
+            delivery_control(true),
+        )
+        .unwrap();
         let table = Arc::new(table);
         let cell = Arc::new(OnceLock::<Arc<tokio::sync::Mutex<SessionRepository>>>::new());
         let closing_cell = cell.clone();
@@ -620,12 +624,13 @@ mod tests {
         )
         .await;
         let _ = cell.set(repository.clone());
-        table.add_pending_producers(&track_key(), 1);
+        let entry = table.track_entry(&track_key()).unwrap();
+        table.add_pending_producers(&entry, 1);
 
         // Act
         let task = PendingProducerTask::run(
             deps(table.clone(), repository),
-            track_key(),
+            entry,
             SUBSCRIBER_SESSION,
             UpstreamPublisher::Session(LATE_PUBLISHER_SESSION),
             None,

@@ -590,7 +590,8 @@ mod tests {
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, active_upstream, local_publisher_resolver, producer,
-                producer_with, table_with_upstream, track_key, upstream_carrying,
+                producer_with, register_downstream, table_with_upstream, track_key,
+                upstream_carrying,
             },
             mock_session::{
                 FetchAnswer, MockFetchHandler, MockUpstreamSession, RecordedControlMessages,
@@ -1464,7 +1465,8 @@ mod tests {
     async fn resolve_joining_target_no_objects_published() {
         // Arrange
         let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_downstream_subscription(
+        register_downstream(
+            &table,
             2,
             100,
             SessionPeer::Client,
@@ -1507,7 +1509,8 @@ mod tests {
         subscription: DownstreamSubscription,
         forward: bool,
     ) {
-        table.register_downstream_subscription(
+        register_downstream(
+            table,
             2,
             100,
             SessionPeer::Client,
@@ -1647,7 +1650,8 @@ mod tests {
             object_id: 5,
         };
         let (table, key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_downstream_subscription(
+        register_downstream(
+            &table,
             2,
             100,
             SessionPeer::Client,
@@ -1684,7 +1688,8 @@ mod tests {
         let track_key = TrackKey::new("ns", "track");
         let cache = cache_store.get_or_create(&track_key);
         let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_downstream_subscription(
+        register_downstream(
+            &table,
             2,
             100,
             SessionPeer::Client,
@@ -1743,7 +1748,8 @@ mod tests {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_downstream_subscription(
+        register_downstream(
+            &table,
             2,
             100,
             SessionPeer::Client,
@@ -1797,7 +1803,8 @@ mod tests {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_downstream_subscription(
+        register_downstream(
+            &table,
             2,
             100,
             SessionPeer::Client,
@@ -1851,7 +1858,8 @@ mod tests {
         // Arrange
         let cache_store = Arc::new(TrackCacheStore::new());
         let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
-        table.register_downstream_subscription(
+        register_downstream(
+            &table,
             2,
             100,
             SessionPeer::Client,

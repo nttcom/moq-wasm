@@ -338,7 +338,7 @@ mod tests {
         test_support::{
             directory_fixtures::{
                 PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, active_upstream, delivery_control,
-                producer_with, track_key, upstream_release_context,
+                producer_with, register_downstream, track_key, upstream_release_context,
             },
             relay_harness::fixtures::subscription::upstream_subscription,
         },
@@ -380,15 +380,15 @@ mod tests {
     async fn the_last_subscriber_leaving_a_draining_relay_leaves_the_publisher_unsubscribed() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
-        ctx.table
-            .register_downstream_subscription(
-                100,
-                10,
-                SessionPeer::Client,
-                downstream_subscription(track_key(), None),
-                delivery_control(true),
-            )
-            .unwrap();
+        register_downstream(
+            &ctx.table,
+            100,
+            10,
+            SessionPeer::Client,
+            downstream_subscription(track_key(), None),
+            delivery_control(true),
+        )
+        .unwrap();
         register_upstream_subscription(
             &ctx.table,
             &ctx.forwarder,

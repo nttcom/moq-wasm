@@ -42,8 +42,8 @@ mod tests {
         directory::track::ProducerOrigin,
         domain::session_peer::SessionPeer,
         test_support::directory_fixtures::{
-            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key,
-            upstream_release_context,
+            PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, UpstreamReleaseContext, register_downstream,
+            track_key, upstream_release_context,
         },
     };
 
@@ -67,17 +67,16 @@ mod tests {
     async fn publish_done_ends_the_downstream_subscriptions_and_stops_ingress() {
         // Arrange
         let ctx = upstream_release_context(ProducerOrigin::Subscribe).await;
-        let mut runner_stop_receiver = ctx
-            .table
-            .register_downstream_subscription(
-                DOWNSTREAM_SESSION,
-                DOWNSTREAM_SUBSCRIBE_ID,
-                SessionPeer::Client,
-                downstream_subscription(track_key(), None),
-                delivery_control(true),
-            )
-            .unwrap()
-            .stop_receiver;
+        let mut runner_stop_receiver = register_downstream(
+            &ctx.table,
+            DOWNSTREAM_SESSION,
+            DOWNSTREAM_SUBSCRIBE_ID,
+            SessionPeer::Client,
+            downstream_subscription(track_key(), None),
+            delivery_control(true),
+        )
+        .unwrap()
+        .stop_receiver;
 
         // Act
         receive_publish_done(&ctx, UPSTREAM_REQUEST_ID).await;

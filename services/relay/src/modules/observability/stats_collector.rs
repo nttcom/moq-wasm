@@ -206,6 +206,7 @@ fn subscription_stats(
 mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::downstream_subscription;
+    use crate::modules::test_support::directory_fixtures::register_downstream;
     use crate::modules::test_support::directory_fixtures::unused_inter_relay_client_config;
     use crate::modules::test_support::relay_harness::fixtures::subscription::upstream_subscription;
     use std::{sync::Arc, time::Duration};
@@ -375,16 +376,15 @@ mod tests {
         let _ = open.insert(first);
         tokio::time::advance(Duration::from_millis(250)).await;
         let _ = open.insert(stream_object_with_payload(0, 1, Bytes::from_static(b"56")));
-        let signals = fixture
-            .directory
-            .register_downstream_subscription(
-                9,
-                4,
-                SessionPeer::Client,
-                downstream_subscription(track_key, None),
-                delivery_control(true),
-            )
-            .unwrap();
+        let signals = register_downstream(
+            &fixture.directory,
+            9,
+            4,
+            SessionPeer::Client,
+            downstream_subscription(track_key, None),
+            delivery_control(true),
+        )
+        .unwrap();
         signals
             .delivery_stats
             .record_object_sent(4, first_received_at);

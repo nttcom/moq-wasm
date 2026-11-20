@@ -143,19 +143,19 @@ impl PublishNamespace {
         if publishers.is_empty() {
             return;
         }
-        for track_key in join_deps.table.tracks_wanting_publisher(
+        for entry in join_deps.table.tracks_wanting_publisher(
             track_namespace,
             publisher_peer,
             publisher_session_id,
         ) {
             tracing::debug!(
-                track_namespace = %track_key.track_namespace,
-                track_name = %track_key.track_name,
+                track_namespace = %entry.track_key.track_namespace,
+                track_name = %entry.track_key.track_name,
                 "subscribing newly announced publishers to an active track"
             );
             subscribe_publishers(
                 join_deps,
-                &track_key,
+                &entry,
                 announcing_session_id,
                 publishers.clone(),
                 None,
@@ -279,7 +279,8 @@ mod tests {
         domain::track_key::TrackKey,
         test_support::{
             directory_fixtures::{
-                PUBLISHER_SESSION, local_publisher_resolver, table_with_upstream,
+                PUBLISHER_SESSION, local_publisher_resolver, register_downstream,
+                table_with_upstream,
             },
             mock_session::{
                 MockPublishNamespaceHandler, RecordedControlMessages, detached_session_repository,
@@ -327,15 +328,15 @@ mod tests {
         // Arrange
         let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
         let table = Arc::new(table);
-        table
-            .register_downstream_subscription(
-                2,
-                100,
-                SessionPeer::Client,
-                downstream_subscription(track_key.clone(), None),
-                delivery_control(true),
-            )
-            .unwrap();
+        register_downstream(
+            &table,
+            2,
+            100,
+            SessionPeer::Client,
+            downstream_subscription(track_key.clone(), None),
+            delivery_control(true),
+        )
+        .unwrap();
 
         // Act
         let recorded = announce(&table).await;

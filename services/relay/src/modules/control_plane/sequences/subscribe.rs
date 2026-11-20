@@ -10,7 +10,7 @@ use crate::modules::{
     },
     data_plane::cache::store::TrackCacheStore,
     directory::{
-        InMemoryLocalPubSubDirectory, TrackLookup, TrackReservation,
+        InMemoryLocalPubSubDirectory, TrackEntry, TrackLookup, TrackReservation,
         track::{CreationFailure, CreationState, TrackState},
     },
     domain::{
@@ -66,12 +66,12 @@ pub(super) fn is_latched_malformed(cache_store: &TrackCacheStore, track_key: &Tr
 }
 
 /// The track as found or created for a SUBSCRIBE, held wanting its producers
-/// (`_reservation`) until the downstream subscription is registered.
+/// (`reservation`) until the downstream subscription is registered on the
+/// entry it reserved.
 struct UpstreamTrackAccess {
-    track_key: TrackKey,
     upstream_track: TrackState,
     largest_location: Option<moqt::object::Location>,
-    _reservation: TrackReservation,
+    reservation: TrackReservation,
 }
 
 pub(crate) enum UpstreamSubscriptionError {
@@ -187,7 +187,7 @@ impl Subscribe {
                 .accept_downstream_subscription(
                     session_id,
                     requester,
-                    access.track_key,
+                    access.reservation.entry(),
                     access.upstream_track,
                     access.largest_location,
                     table,
@@ -252,10 +252,9 @@ impl Subscribe {
                         let largest_location =
                             existing_track_largest(cache_store, &track_key, &upstream_track);
                         return Ok(UpstreamTrackAccess {
-                            track_key,
                             upstream_track,
                             largest_location,
-                            _reservation: reservation,
+                            reservation,
                         });
                     }
                     TrackLookup::Creating(receiver, reservation) => {
@@ -265,12 +264,12 @@ impl Subscribe {
                     TrackLookup::Started(receiver, reservation) => {
                         let cache_before_subscribe = cached_largest(cache_store, &track_key);
                         if let Some(new_group_request) = new_group_request {
-                            table.record_new_group_request(&track_key, new_group_request);
+                            table.record_new_group_request(reservation.entry(), new_group_request);
                         }
                         self.create_upstream_subscription(
                             session_id,
                             requester,
-                            &track_key,
+                            reservation.entry(),
                             new_group_request,
                             table,
                             forwarder,
@@ -289,7 +288,7 @@ impl Subscribe {
                 return Err(failure);
             }
             // Created, or the entry went away meanwhile.
-            let Some(upstream_track) = table.track_state(&track_key) else {
+            let Some(upstream_track) = table.entry_state(reservation.entry()) else {
                 continue;
             };
             // The creator advertises the Largest Location of subscribe time:
@@ -306,10 +305,9 @@ impl Subscribe {
                 None => existing_track_largest(cache_store, &track_key, &upstream_track),
             };
             return Ok(UpstreamTrackAccess {
-                track_key,
                 upstream_track,
                 largest_location,
-                _reservation: reservation,
+                reservation,
             });
         }
     }
@@ -324,21 +322,22 @@ impl Subscribe {
         skip_all,
         fields(
             session_id = %session_id,
-            track_namespace = %track_key.track_namespace,
-            track_name = %track_key.track_name
+            track_namespace = %entry.track_key.track_namespace,
+            track_name = %entry.track_key.track_name
         )
     )]
     async fn create_upstream_subscription(
         &self,
         session_id: SessionId,
         requester: SessionPeer,
-        track_key: &TrackKey,
+        entry: &TrackEntry,
         new_group_request: Option<u64>,
         table: &Arc<InMemoryLocalPubSubDirectory>,
         forwarder: &ControlMessageForwarder,
         upstream_publisher_resolver: &Arc<UpstreamPublisherResolver>,
         cache_store: &Arc<TrackCacheStore>,
     ) {
+        let track_key = &entry.track_key;
         if requester == SessionPeer::Client {
             upstream_publisher_resolver
                 .watched_namespace_routes
@@ -355,7 +354,7 @@ impl Subscribe {
             .await;
         if publishers.is_empty() {
             table.pending_producer_ended(
-                track_key,
+                entry,
                 Some(UpstreamSubscriptionError::PublisherNotFound.failure()),
             );
             return;
@@ -367,7 +366,7 @@ impl Subscribe {
                 cache_store: cache_store.clone(),
                 resolver: upstream_publisher_resolver.clone(),
             },
-            track_key,
+            entry,
             session_id,
             publishers,
             new_group_request,
@@ -387,7 +386,7 @@ impl Subscribe {
         &self,
         session_id: SessionId,
         subscriber_peer: SessionPeer,
-        track_key: TrackKey,
+        entry: &TrackEntry,
         upstream_track: TrackState,
         largest_location: Option<moqt::object::Location>,
         table: &InMemoryLocalPubSubDirectory,
@@ -395,6 +394,7 @@ impl Subscribe {
         cache_store: &Arc<TrackCacheStore>,
         handler: &dyn SubscribeHandler,
     ) -> Acceptance {
+        let track_key = entry.track_key.clone();
         // The track may have been latched while the upstream SUBSCRIBE was
         // in flight.
         if is_latched_malformed(cache_store, &track_key) {
@@ -424,6 +424,7 @@ impl Subscribe {
         let downstream_subscription = handler.to_downstream_subscription(subscriber_track_alias);
         let filter_type = downstream_subscription.filter_type();
         let Some(runner_signals) = table.register_downstream_subscription(
+            entry,
             session_id,
             handler.subscribe_id(),
             subscriber_peer,
@@ -604,7 +605,7 @@ mod tests {
     use crate::modules::test_support::directory_fixtures::delivery_control;
     use crate::modules::test_support::directory_fixtures::{
         PUBLISHER_SESSION, UPSTREAM_REQUEST_ID, local_publisher_resolver, producer, producer_with,
-        track_key, upstream_carrying, upstream_track,
+        register_downstream, table_with_upstream, track_key, upstream_carrying, upstream_track,
     };
     use crate::modules::test_support::mock_session::{
         MockSubscribeHandler, MockUpstreamSession, RecordedControlMessages,
@@ -791,15 +792,15 @@ mod tests {
         .await
         .expect("the SUBSCRIBE must not wait for a publisher that never answers");
         if let Ok(access) = &created {
-            table
-                .register_downstream_subscription(
-                    SUBSCRIBER_SESSION,
-                    1,
-                    SessionPeer::Client,
-                    downstream_subscription(access.track_key.clone(), None),
-                    delivery_control(true),
-                )
-                .unwrap();
+            register_downstream(
+                &table,
+                SUBSCRIBER_SESSION,
+                1,
+                SessionPeer::Client,
+                downstream_subscription(access.reservation.entry().track_key.clone(), None),
+                delivery_control(true),
+            )
+            .unwrap();
         }
         (table, created)
     }
@@ -1149,13 +1150,23 @@ mod tests {
         handler: &MockSubscribeHandler,
         cache_store: &Arc<TrackCacheStore>,
     ) -> Acceptance {
+        let entry = table.track_entry(&track_key()).unwrap();
+        accept_downstream_on(&entry, table, handler, cache_store).await
+    }
+
+    async fn accept_downstream_on(
+        entry: &TrackEntry,
+        table: &InMemoryLocalPubSubDirectory,
+        handler: &MockSubscribeHandler,
+        cache_store: &Arc<TrackCacheStore>,
+    ) -> Acceptance {
         let (repository, _subscriber, _mailbox_receiver) =
             session_repository_with_upstream_session_and_mailbox(2);
         Subscribe
             .accept_downstream_subscription(
                 2,
                 SessionPeer::Client,
-                track_key(),
+                entry,
                 upstream_track(ProducerOrigin::Subscribe),
                 None,
                 table,
@@ -1260,11 +1271,14 @@ mod tests {
     #[tokio::test]
     async fn upstream_removed_before_registration_leaves_the_subscribe_unanswered() {
         // Arrange
-        let table = InMemoryLocalPubSubDirectory::new();
+        let (table, track_key) = table_with_upstream(ProducerOrigin::Subscribe);
+        let entry = table.track_entry(&track_key).unwrap();
+        table.remove_upstream_track(&track_key);
         let handler = MockSubscribeHandler::default();
 
         // Act
-        let acceptance = accept_downstream(&table, &handler).await;
+        let acceptance =
+            accept_downstream_on(&entry, &table, &handler, &Arc::new(TrackCacheStore::new())).await;
 
         // Assert
         assert!(matches!(acceptance, Acceptance::UpstreamGone));
@@ -1289,7 +1303,7 @@ mod tests {
             .accept_downstream_subscription(
                 2,
                 SessionPeer::Client,
-                track_key(),
+                &table.track_entry(&track_key()).unwrap(),
                 table.track_state(&track_key()).unwrap(),
                 None,
                 &table,
@@ -1358,7 +1372,7 @@ mod tests {
             .accept_downstream_subscription(
                 2,
                 SessionPeer::Client,
-                track_key(),
+                &table.track_entry(&track_key()).unwrap(),
                 upstream_track(ProducerOrigin::Subscribe),
                 None,
                 &table,

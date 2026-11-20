@@ -67,7 +67,8 @@ mod tests {
         domain::{publish_done_reason::PublishDoneReason, session_peer::SessionPeer},
         test_support::{
             directory_fixtures::{
-                UPSTREAM_REQUEST_ID, UpstreamReleaseContext, track_key, upstream_release_context,
+                UPSTREAM_REQUEST_ID, UpstreamReleaseContext, register_downstream, track_key,
+                upstream_release_context,
             },
             mock_session::runner_stopped,
         },
@@ -86,17 +87,16 @@ mod tests {
         let runner_stop_receivers = downstream_subscriptions
             .iter()
             .map(|(session_id, subscribe_id)| {
-                upstream
-                    .table
-                    .register_downstream_subscription(
-                        *session_id,
-                        *subscribe_id,
-                        SessionPeer::Client,
-                        downstream_subscription(track_key(), None),
-                        delivery_control(true),
-                    )
-                    .unwrap()
-                    .stop_receiver
+                register_downstream(
+                    &upstream.table,
+                    *session_id,
+                    *subscribe_id,
+                    SessionPeer::Client,
+                    downstream_subscription(track_key(), None),
+                    delivery_control(true),
+                )
+                .unwrap()
+                .stop_receiver
             })
             .collect();
         TestContext {

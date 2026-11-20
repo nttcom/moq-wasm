@@ -111,7 +111,9 @@ mod tests {
             session_peer::SessionPeer,
         },
         test_support::{
-            directory_fixtures::{delivery_control, downstream_subscription, table_with_upstream},
+            directory_fixtures::{
+                delivery_control, downstream_subscription, register_downstream, table_with_upstream,
+            },
             mock_session::{MockSubscribeUpdateHandler, UpdateDraft},
             relay_harness::fixtures::{cached_object::insert_closed_group, location},
         },
@@ -151,15 +153,15 @@ mod tests {
         let (table, upstream_key) = table_with_upstream(ProducerOrigin::Subscribe);
         let cache_store = TrackCacheStore::new();
         insert_closed_group(&cache_store.get_or_create(&upstream_key), 3, &[0, 1]);
-        let signals = table
-            .register_downstream_subscription(
-                SUBSCRIBER_SESSION,
-                SUBSCRIPTION,
-                SessionPeer::Client,
-                downstream_subscription(upstream_key, Some(location(1, 0))),
-                control,
-            )
-            .unwrap();
+        let signals = register_downstream(
+            &table,
+            SUBSCRIBER_SESSION,
+            SUBSCRIPTION,
+            SessionPeer::Client,
+            downstream_subscription(upstream_key, Some(location(1, 0))),
+            control,
+        )
+        .unwrap();
         Updated {
             table,
             cache_store,
