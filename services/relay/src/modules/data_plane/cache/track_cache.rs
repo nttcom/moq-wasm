@@ -1564,6 +1564,51 @@ mod fetch_tests {
     }
 
     #[test]
+    fn resolve_fetch_range_serves_a_fetch_starting_at_the_largest_location() {
+        // Arrange: live g0's largest location, where a late subscriber starts (§9.8), is (0, 1)
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _open = open_group(&cache, 0, &[0, 1]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 1), location(0, 2), None),
+            FetchRangeResolution::Serve {
+                end_location: location(0, 2)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_serves_a_range_ending_where_an_aborted_groups_knowledge_ends() {
+        // Arrange: g0 is still live; g1's stream was reset after objects 0 and 1
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        let _g0 = open_group(&cache, 0, &[0]);
+        insert_aborted_group(&cache, 1, &[0, 1]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(1, 2), None),
+            FetchRangeResolution::Serve {
+                end_location: location(1, 2)
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_fetch_range_is_not_covered_when_the_last_groups_first_object_is_unknown() {
+        // Arrange: g0 closed; g1 is live but its object 0 never arrived
+        let cache = TrackCache::new();
+        cache.begin_live_ingest();
+        insert_closed_group(&cache, 0, &[0]);
+        let _g1 = open_group(&cache, 1, &[1, 2]);
+        // Act / Assert
+        assert_eq!(
+            cache.resolve_fetch_range(location(0, 0), location(1, 3), None),
+            FetchRangeResolution::NotCovered
+        );
+    }
+
+    #[test]
     fn covers_live_range_from_first_ingested_object_to_open_largest_group() {
         // Arrange: live ingestion started at group 3, groups 3 and 4 closed, group 5 open
         let cache = TrackCache::new();
