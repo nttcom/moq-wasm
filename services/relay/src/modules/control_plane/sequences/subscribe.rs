@@ -1430,3 +1430,61 @@ mod tests {
         assert!(table.track_state(&track_key()).is_some());
     }
 }
+
+#[cfg(test)]
+mod cross_draft_tests {
+    use std::{sync::Arc, time::Duration};
+
+    use moqt::{TrackProperties, publish::PublishOption, subscribe::SubscribeOption};
+
+    use crate::modules::{
+        auth::test_support::{
+            app_token, connect_draft14_client, connect_draft18_client, spawn_relay_offering,
+        },
+        cascading::route_registry::NoopRelayRouteRegistry,
+        test_support::relay_clients::{NAMESPACE, TRACK, publish_namespace, within},
+    };
+
+    /// Shorter than a request's timeout: the SUBSCRIBE gets no answer.
+    const UNANSWERED: Duration = Duration::from_millis(500);
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_track_property_draft14_cannot_carry_fails_only_the_draft14_subscribe_ok() {
+        // Arrange: a draft-18 publisher's track with a MAX_CACHE_DURATION of 2^62 ms
+        let relay = spawn_relay_offering(
+            app_token(Some(""), Some("")),
+            Arc::new(NoopRelayRouteRegistry),
+            &[moqt::Version::Draft18, moqt::Version::Draft14],
+        );
+        let publisher = connect_draft18_client(&relay).await;
+        let subscriber = connect_draft14_client(&relay).await;
+        let mut track_properties = TrackProperties::default();
+        track_properties.set_max_cache_duration(Some(1 << 62));
+        let option = PublishOption {
+            track_properties,
+            ..PublishOption::default()
+        };
+        within(
+            publisher
+                .publisher()
+                .publish(NAMESPACE.to_string(), TRACK.to_string(), option),
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let subscribed = tokio::time::timeout(
+            UNANSWERED,
+            subscriber.subscriber().subscribe(
+                NAMESPACE.to_string(),
+                TRACK.to_string(),
+                SubscribeOption::default(),
+            ),
+        )
+        .await;
+
+        // Assert: no SUBSCRIBE_OK reaches the draft-14 subscriber, and the relay still answers its session
+        assert!(subscribed.is_err(), "{subscribed:?}");
+        publish_namespace(&subscriber, "APP/other").await;
+    }
+}

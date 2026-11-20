@@ -46,14 +46,14 @@ impl KeyValuePair {
 
     pub(crate) fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.put_varint(self.key);
+        buf.put_varint(self.key)?;
         match &self.value {
             VariantType::Odd(value) => {
-                buf.put_varint(value.len() as u64);
+                buf.put_varint(value.len() as u64)?;
                 buf.extend_from_slice(value);
             }
             VariantType::Even(value) => {
-                buf.put_varint(*value);
+                buf.put_varint(*value)?;
             }
         }
         Ok(buf)
@@ -66,7 +66,7 @@ impl KeyValuePair {
 
     pub(crate) fn encode_list(pairs: &[Self]) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.put_varint(pairs.len() as u64);
+        buf.put_varint(pairs.len() as u64)?;
         for pair in pairs {
             buf.unsplit(pair.encode()?);
         }

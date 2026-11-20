@@ -55,7 +55,7 @@ impl FetchOk {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
+        payload.put_varint(self.request_id)?;
         payload.put_u8(self.group_order as u8);
         payload.put_u8(self.end_of_track as u8);
         payload.unsplit(self.end_location.encode()?);

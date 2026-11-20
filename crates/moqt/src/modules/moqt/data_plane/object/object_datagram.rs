@@ -84,9 +84,9 @@ impl ObjectDatagram {
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
         let (message_type, field_bytes) = self.field.encode()?;
-        buf.put_varint(message_type);
-        buf.put_varint(self.track_alias);
-        buf.put_varint(self.group_id);
+        buf.put_varint(message_type)?;
+        buf.put_varint(self.track_alias)?;
+        buf.put_varint(self.group_id)?;
         buf.unsplit(field_bytes);
 
         Ok(buf)

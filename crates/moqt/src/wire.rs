@@ -22,7 +22,7 @@ pub(crate) fn encode_control_message(
     let length = u16::try_from(payload.len())
         .map_err(|_| anyhow!("control message longer than 2^16-1 bytes"))?;
     let mut buf = BytesMut::new();
-    buf.put_varint(u8::from(message_type) as u64);
+    buf.put_varint(u8::from(message_type) as u64)?;
     buf.put_u16(length);
     buf.unsplit(payload);
     Ok(buf)

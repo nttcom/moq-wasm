@@ -462,4 +462,41 @@ mod tests {
         // Assert
         assert_eq!(bytes, expected);
     }
+
+    #[test]
+    fn a_header_of_group_2_62_fails() {
+        // Arrange: a draft-18 Group ID no draft-14 varint carries
+        let mut encoder = SubgroupEncoder::new(1);
+        let start = SubgroupStart {
+            group_id: 1 << 62,
+            subgroup_id: 0,
+            publisher_priority: 0,
+            ends_group: false,
+        };
+
+        // Act
+        let header = encoder.header(start);
+
+        // Assert
+        assert!(header.is_err());
+    }
+
+    #[test]
+    fn an_object_with_an_extension_value_of_2_62_fails_and_the_next_object_takes_its_place() {
+        // Arrange: a draft-18 extension value no draft-14 varint carries
+        let mut encoder = encoder();
+        let mut unencodable = object(0, ObjectStatus::Normal, b"frame");
+        unencodable
+            .extension_headers
+            .push_prior_group_id_gap(1 << 62);
+        let next = object(0, ObjectStatus::Normal, b"frame");
+
+        // Act
+        let refused = encoder.object(&unencodable);
+        let sent = encoder.object(&next);
+
+        // Assert: the next object is still the subgroup's first, at Object ID Delta 0
+        assert!(refused.is_err());
+        assert_eq!(sent.unwrap()[0], 0);
+    }
 }

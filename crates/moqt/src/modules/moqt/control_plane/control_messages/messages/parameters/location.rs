@@ -22,8 +22,8 @@ impl Location {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.group_id);
-        payload.put_varint(self.object_id);
+        payload.put_varint(self.group_id)?;
+        payload.put_varint(self.object_id)?;
         Ok(payload)
     }
 

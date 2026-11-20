@@ -103,9 +103,9 @@ impl FetchParams {
                 start_location,
                 end_location,
             } => {
-                payload.put_varint(FetchTypeValue::Standalone as u64);
+                payload.put_varint(FetchTypeValue::Standalone as u64)?;
                 payload.put_tuple(track_namespace)?;
-                payload.put_string(track_name);
+                payload.put_string(track_name)?;
                 payload.unsplit(start_location.encode()?);
                 payload.unsplit(end_location.encode()?);
             }
@@ -113,17 +113,17 @@ impl FetchParams {
                 joining_request_id,
                 joining_start,
             } => {
-                payload.put_varint(FetchTypeValue::RelativeJoining as u64);
-                payload.put_varint(*joining_request_id);
-                payload.put_varint(*joining_start);
+                payload.put_varint(FetchTypeValue::RelativeJoining as u64)?;
+                payload.put_varint(*joining_request_id)?;
+                payload.put_varint(*joining_start)?;
             }
             FetchParams::AbsoluteJoining {
                 joining_request_id,
                 joining_start,
             } => {
-                payload.put_varint(FetchTypeValue::AbsoluteJoining as u64);
-                payload.put_varint(*joining_request_id);
-                payload.put_varint(*joining_start);
+                payload.put_varint(FetchTypeValue::AbsoluteJoining as u64)?;
+                payload.put_varint(*joining_request_id)?;
+                payload.put_varint(*joining_start)?;
             }
         }
         Ok(payload)
@@ -182,7 +182,7 @@ impl Fetch {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
+        payload.put_varint(self.request_id)?;
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.fetch_params.encode()?);

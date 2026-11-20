@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use bytes::{Buf, Bytes, BytesMut};
 
-use super::frame::{ProtocolError, TransportErrorCode};
-use crate::modules::extensions::{buf_get_ext::BufGetExt, buf_put_ext::BufPutExt};
+use super::frame::{ProtocolError, TransportErrorCode, put_quic_varint};
+use crate::modules::extensions::buf_get_ext::BufGetExt;
 
 const MAX_IDLE_TIMEOUT: u64 = 0x01;
 const INITIAL_MAX_DATA: u64 = 0x04;
@@ -164,9 +164,9 @@ impl TransportParameters {
 
 fn put_integer(out: &mut BytesMut, id: u64, value: u64) {
     let mut encoded = BytesMut::new();
-    encoded.put_varint(value);
-    out.put_varint(id);
-    out.put_varint(encoded.len() as u64);
+    put_quic_varint(&mut encoded, value);
+    put_quic_varint(out, id);
+    put_quic_varint(out, encoded.len() as u64);
     out.extend_from_slice(&encoded);
 }
 
@@ -228,8 +228,8 @@ mod tests {
     fn unknown_parameters_are_ignored() {
         // Arrange: a reserved id (31 * 2 + 27 = 89) with an opaque value
         let mut encoded = BytesMut::new();
-        encoded.put_varint(89);
-        encoded.put_varint(3);
+        put_quic_varint(&mut encoded, 89);
+        put_quic_varint(&mut encoded, 3);
         encoded.extend_from_slice(b"xyz");
 
         // Act

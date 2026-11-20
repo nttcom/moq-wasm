@@ -41,8 +41,8 @@ impl FetchHeader {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.put_varint(Self::TYPE);
-        buf.put_varint(self.request_id);
+        buf.put_varint(Self::TYPE)?;
+        buf.put_varint(self.request_id)?;
         Ok(buf)
     }
 }
@@ -178,20 +178,20 @@ impl FetchObjectField {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut buf = BytesMut::new();
-        buf.put_varint(self.group_id);
-        buf.put_varint(self.subgroup_id);
-        buf.put_varint(self.object_id);
+        buf.put_varint(self.group_id)?;
+        buf.put_varint(self.subgroup_id)?;
+        buf.put_varint(self.object_id)?;
         buf.put_u8(self.publisher_priority);
         let ext_headers_buf = self.extension_headers.encode()?;
         buf.extend_from_slice(&ext_headers_buf);
         match &self.fetch_object {
             FetchObject::Payload(payload) => {
-                buf.put_varint(payload.len() as u64);
+                buf.put_varint(payload.len() as u64)?;
                 buf.put_slice(payload);
             }
             FetchObject::Status(status) => {
-                buf.put_varint(0);
-                buf.put_varint(u8::from(*status) as u64);
+                buf.put_varint(0)?;
+                buf.put_varint(u8::from(*status) as u64)?;
             }
         }
         Ok(buf)
@@ -308,7 +308,7 @@ mod tests {
         fn depacketize_payload_length_over_limit_is_fatal() {
             // Arrange: no payload bytes follow, so without the limit this is NeedMoreData
             let mut buf = BytesMut::from(&[1u8, 2, 3, 128, 0][..]);
-            buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1);
+            buf.put_varint(MAX_WIRE_DECLARED_LENGTH + 1).unwrap();
 
             // Act
             let result = FetchObjectField::decode(&mut buf);

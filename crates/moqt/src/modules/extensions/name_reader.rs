@@ -123,8 +123,8 @@ mod tests {
     fn a_namespace_field_length_over_u32_is_a_protocol_violation() {
         // Arrange
         let mut buf = BytesMut::new();
-        buf.put_varint(1);
-        buf.put_varint(LENGTH_OVER_U32);
+        buf.put_varint(1).unwrap();
+        buf.put_varint(LENGTH_OVER_U32).unwrap();
         buf.put_u8(b'n');
 
         // Act
@@ -141,7 +141,7 @@ mod tests {
     fn a_track_name_length_over_u32_is_a_protocol_violation() {
         // Arrange
         let mut buf = BytesMut::new();
-        buf.put_varint(LENGTH_OVER_U32);
+        buf.put_varint(LENGTH_OVER_U32).unwrap();
         buf.put_u8(b't');
 
         // Act

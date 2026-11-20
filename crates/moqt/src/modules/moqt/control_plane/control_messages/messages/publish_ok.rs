@@ -56,12 +56,12 @@ impl PublishOk {
 
     pub fn encode(&self) -> anyhow::Result<bytes::BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
+        payload.put_varint(self.request_id)?;
         payload.put_u8(self.forward as u8);
         payload.put_u8(self.subscriber_priority);
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.filter_type.encode()?);
-        payload.put_varint(self.delivery_timeout.is_some() as u64);
+        payload.put_varint(self.delivery_timeout.is_some() as u64)?;
         if let Some(delivery_timeout) = self.delivery_timeout {
             payload.unsplit(
                 KeyValuePair {

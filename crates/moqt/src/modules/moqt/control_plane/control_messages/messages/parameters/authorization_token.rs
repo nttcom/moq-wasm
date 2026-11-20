@@ -132,7 +132,7 @@ impl AuthorizationToken {
         match self {
             AuthorizationToken::Delete => {
                 let mut buf = bytes::BytesMut::new();
-                buf.put_varint(AliasType::Delete as u64);
+                buf.put_varint(AliasType::Delete as u64)?;
                 Ok(buf)
             }
             AuthorizationToken::Register {
@@ -141,16 +141,16 @@ impl AuthorizationToken {
                 token_value,
             } => {
                 let mut buf = bytes::BytesMut::new();
-                buf.put_varint(AliasType::Register as u64);
-                buf.put_varint(*token_alias);
-                buf.put_varint(*token_type);
+                buf.put_varint(AliasType::Register as u64)?;
+                buf.put_varint(*token_alias)?;
+                buf.put_varint(*token_type)?;
                 buf.extend_from_slice(token_value);
                 Ok(buf)
             }
             AuthorizationToken::UseAlias { token_alias } => {
                 let mut buf = bytes::BytesMut::new();
-                buf.put_varint(AliasType::UseAlias as u64);
-                buf.put_varint(*token_alias);
+                buf.put_varint(AliasType::UseAlias as u64)?;
+                buf.put_varint(*token_alias)?;
                 Ok(buf)
             }
             AuthorizationToken::UseValue {
@@ -158,8 +158,8 @@ impl AuthorizationToken {
                 token_value,
             } => {
                 let mut buf = bytes::BytesMut::new();
-                buf.put_varint(AliasType::UseValue as u64);
-                buf.put_varint(*token_type);
+                buf.put_varint(AliasType::UseValue as u64)?;
+                buf.put_varint(*token_type)?;
                 buf.extend_from_slice(token_value);
                 Ok(buf)
             }

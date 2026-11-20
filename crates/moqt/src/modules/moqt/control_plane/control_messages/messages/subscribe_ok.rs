@@ -56,9 +56,9 @@ impl SubscribeOk {
 
     pub fn encode(&self) -> anyhow::Result<BytesMut> {
         let mut payload = BytesMut::new();
-        payload.put_varint(self.request_id);
-        payload.put_varint(self.track_alias);
-        payload.put_varint(self.expires);
+        payload.put_varint(self.request_id)?;
+        payload.put_varint(self.track_alias)?;
+        payload.put_varint(self.expires)?;
         payload.put_u8(self.group_order as u8);
         payload.unsplit(self.content_exists.encode()?);
         let parameters: Vec<KeyValuePair> = [

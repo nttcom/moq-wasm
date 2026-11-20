@@ -314,8 +314,8 @@ impl ControlChannel {
                 },
             ),
         };
-        // §2.4.1: the peer closes the session on a namespace of no fields,
-        // which draft-18 allows.
+        // A value draft-14 cannot carry fails only this request: a namespace
+        // of no fields (§2.4.1), or a draft-18 vi64 of 2^62 or more.
         let payload = payload
             .map_err(|_| RequestFailure::ProtocolViolation("request could not be encoded"))?;
         debug_assert_eq!(request_id, reservation.request_id());
@@ -383,9 +383,7 @@ impl ControlChannel {
                 (error_message_type(kind), error.encode())
             }
         };
-        self.send_stream
-            .send(message_type, payload.map_err(encode_error)?)
-            .await
+        self.send_answer(message_type, payload).await
     }
 
     pub(super) async fn notify(
@@ -437,9 +435,25 @@ impl ControlChannel {
             Notification::MaxRequestId(m) => (ControlMessageType::MaxRequestId, m.encode()),
             Notification::RequestsBlocked(m) => (ControlMessageType::RequestsBlocked, m.encode()),
         };
-        self.send_stream
-            .send(message_type, payload.map_err(encode_error)?)
-            .await
+        self.send_answer(message_type, payload).await
+    }
+
+    /// A message whose values draft-14 cannot carry, such as a draft-18 vi64
+    /// of 2^62 or more, is not sent: it logs a WARN and returns a send error.
+    async fn send_answer(
+        &self,
+        message_type: ControlMessageType,
+        payload: anyhow::Result<BytesMut>,
+    ) -> Result<(), TransportSendError> {
+        let payload = payload.map_err(|error| {
+            tracing::warn!(
+                ?message_type,
+                %error,
+                "control message not sent: draft-14 cannot carry its values"
+            );
+            encode_error(error)
+        })?;
+        self.send_stream.send(message_type, payload).await
     }
 
     /// `on_late_response` is the withdrawal to send if a success response arrives after abandonment.
@@ -800,10 +814,10 @@ mod tests {
 
     use super::{
         ControlChannel, LateResponseAction, MAX_ABANDONED_REQUESTS, Notification, OutgoingRequest,
-        REQUEST_ID_WINDOW, RequestIdReservation, handle_late_response,
+        OutgoingResponse, REQUEST_ID_WINDOW, RequestIdReservation, handle_late_response,
     };
     use crate::{
-        RequestFailure, Session, SessionEvent,
+        RequestFailure, Session, SessionEvent, TransportSendError,
         modules::{
             moqt::{
                 control_plane::{
@@ -1310,6 +1324,58 @@ mod tests {
         );
         let next = channel.reserve_request_id().await.unwrap();
         assert_eq!(next.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_request_with_a_value_of_2_62_fails_and_leaves_its_request_id_unused() {
+        // Arrange: a draft-18 vi64 no draft-14 varint carries
+        let (client, _server) = spawn_connected_native_sessions("request-value-of-2-62").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let reservation = channel.reserve_request_id().await.unwrap();
+        let request = OutgoingRequest::Subscribe(Subscribe {
+            delivery_timeout: Some(1 << 62),
+            ..track_status(reservation.request_id())
+        });
+
+        // Act
+        let refused = channel
+            .send_request(&connection, reservation, request)
+            .await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(RequestFailure::ProtocolViolation(_))),
+            "{:?}",
+            refused.err()
+        );
+        let next = channel.reserve_request_id().await.unwrap();
+        assert_eq!(next.request_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_response_with_a_value_of_2_62_is_a_send_error_and_the_next_one_is_sent() {
+        // Arrange: a draft-18 vi64 no draft-14 varint carries
+        let (client, _server) = spawn_connected_native_sessions("response-value-of-2-62").await;
+        let connection = connection_of(&client);
+        let channel = ControlChannel::of(&connection);
+        let response = OutgoingResponse::SubscribeOk(SubscribeOk {
+            expires: 1 << 62,
+            ..subscribe_ok()
+        });
+
+        // Act
+        let refused = channel.respond(response).await;
+        let next = channel
+            .respond(OutgoingResponse::SubscribeOk(subscribe_ok()))
+            .await;
+
+        // Assert
+        assert!(
+            matches!(refused, Err(TransportSendError::SessionError { .. })),
+            "{refused:?}"
+        );
+        assert!(next.is_ok(), "{next:?}");
     }
 
     #[tokio::test]
