@@ -7,8 +7,8 @@ import logging
 import operator
 import time
 from collections import deque
-from collections.abc import AsyncIterable, Callable
-from dataclasses import dataclass
+from collections.abc import AsyncIterable, Awaitable, Callable
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from typing import cast
 
@@ -18,7 +18,8 @@ from av.error import FFmpegError
 
 from moq_wasm._native import Location, Object
 from moq_wasm._once import retrieve
-from moq_wasm.media import Following
+from moq_wasm.media import Following, RemoteBroadcast
+from moq_wasm.media._remote_broadcast import DEFAULT_DELIVERY_TIMEOUT_SECONDS, _Objects
 
 logger = logging.getLogger("moq_wasm")
 
@@ -320,6 +321,11 @@ class DecodedPicture:
     """The Location of the object the picture was decoded from."""
     decoded_at: float
     """`time.monotonic()` when it was decoded."""
+    largest: Location | None = None
+    """For a picture `follow_pictures` decoded, the Largest Location the SUBSCRIBE_OK of its
+    subscription reported: the pictures before it were replayed from what the relay held, older
+    than the subscription. None from `decode_pictures`, and for a track that had no object when it
+    was subscribed to."""
 
 
 def decode_pictures(
@@ -328,13 +334,13 @@ def decode_pictures(
     """Decodes the objects of one subscription to a LOC video track, such as one that
     `RemoteBroadcast.subscriptions(name)` yields, in a thread and yields every picture, in
     presentation order within its group, or at most one every `interval` seconds. A track followed
-    across its subscriptions gives each subscription a `decode_pictures` of its own: the groups of
-    the next subscription, as of a publisher that took over, may start at 0 again, which one
-    `decode_pictures` takes as groups it already decoded. Each group gets a `VideoDecoder` of its
-    own, since it starts at a keyframe and the objects of groups in flight may interleave; a group
-    joined midway decodes to nothing. A group's decoder is flushed at its End of Group status
-    object, when `MAX_OPEN_GROUPS` newer groups opened since (the objects of that group arriving
-    later are skipped), and at the end of `objects`.
+    across its subscriptions is decoded with `follow_pictures`, which gives each subscription a
+    `decode_pictures` of its own: the groups of the next subscription, as of a publisher that took
+    over, may start at 0 again, which one `decode_pictures` takes as groups it already decoded. Each
+    group gets a `VideoDecoder` of its own, since it starts at a keyframe and the objects of groups
+    in flight may interleave; a group joined midway decodes to nothing. A group's decoder is flushed
+    at its End of Group status object, when `MAX_OPEN_GROUPS` newer groups opened since (the objects
+    of that group arriving later are skipped), and at the end of `objects`.
 
     A group's decoder takes the LOC Video Config its first object carries; a later object of the
     group carrying another one, a keyframe whose parameters changed, starts a new decoder with it. A
@@ -370,17 +376,19 @@ def decode_pictures(
     as of a track whose only Video Config came before the subscription joined, is skipped without
     being decoded, with one warning logged when its group was joined at its keyframe, until a group
     carrying a Video Config arrives; give the track's Video Config as `config` to decode it.
+    `follow_pictures` joins at the start of the current group, so it gets that group's Video Config
+    when the group carries one.
 
     `objects` stays the caller's: each read advances it in the reader's own task and context, and
     neither closing nor dropping the decoding cancels or closes it. A read cancelled, as by
     `asyncio.wait_for` timing out, does not end the decoding: the object being decoded in a thread
     goes on for the next read, as a `Following`'s state does; but a cancellation that reaches a
     read of `objects` reaches `objects` itself, which an async generator does not survive. Read
-    `RemoteBroadcast.subscriptions()`'s objects or a `moq_wasm.Subscription` to read with a
-    timeout. `aclose()` stops the decoding at once: a read waiting on `objects` raises
-    StopAsyncIteration once `objects` gives it its object, which is dropped, and no read reads
-    `objects` after it. Closed, the decoding keeps no decoder or picture, once a decode in flight
-    in a worker finished, also while a read still waits on `objects`."""
+    `RemoteBroadcast.subscriptions()`'s objects, a `moq_wasm.Subscription` or `follow_pictures`
+    to read with a timeout. `aclose()` stops the decoding at once: a read waiting on `objects`
+    raises StopAsyncIteration once `objects` gives it its object, which is dropped, and no read
+    reads `objects` after it. Closed, the decoding keeps no decoder or picture, once a decode in
+    flight in a worker finished, also while a read still waits on `objects`."""
     return _DecodedPictures(objects, codec, interval, config)
 
 
@@ -640,6 +648,116 @@ class _PictureDecoder:
         if group is not None:
             decoded.extend(self._sampled(cast(_Group, group).flush()))
         return decoded + self._release(group_id + 1)
+
+
+def follow_pictures(
+    remote: RemoteBroadcast,
+    name: str,
+    codec: str,
+    *,
+    namespace: list[str] | None = None,
+    interval: float = 0.0,
+    on_subscribed: Callable[[], Awaitable[None]] | None = None,
+    config: bytes | None = None,
+) -> "FollowedPictures":
+    """The pictures of the LOC video track `name` of `remote`, followed as `RemoteBroadcast.follow`
+    follows it, with `namespace` and `on_subscribed` as there, each subscription starting at the
+    current group's first object (`RemoteBroadcast.subscriptions` with `from_group_start`), so its
+    keyframe and the Video Config it may alone carry are decoded: each subscription is decoded by a
+    `decode_pictures` of its own, at most one picture every `interval` seconds, so the pictures its
+    decoders hold back come as it ends, and the next one carries no state of it but the track's
+    Video Config: each `decode_pictures` starts with the one the newest object of the subscriptions
+    before it carried, as one the publisher writes only when it changes, or else `config`, as
+    `decode_pictures` takes it. Raises ValueError at once when no decoder takes `codec`; its reads
+    raise what ended the session, as `follow()` does, and the decoder's error as `decode_pictures`
+    does. A read cancelled, as by a timeout, does not end it; read it in `contextlib.aclosing`, as
+    `follow()`; closed, it keeps no decoder or picture, only the Video Config it learned. A reader
+    that follows the track again, as after a decoder error, passes the Video Config this one learned
+    (`FollowedPictures.config`) on as `config`."""
+    return FollowedPictures(remote, name, codec, namespace, interval, on_subscribed, config)
+
+
+class FollowedPictures(Following[DecodedPicture]):
+    """What `follow_pictures` returns: the pictures of each subscription, decoded by a
+    `decode_pictures` of its own."""
+
+    def __init__(
+        self,
+        remote: RemoteBroadcast,
+        name: str,
+        codec: str,
+        namespace: list[str] | None,
+        interval: float,
+        on_subscribed: Callable[[], Awaitable[None]] | None,
+        config: bytes | None,
+    ):
+        super().__init__(f"the pictures of {name}")
+        # Raises ValueError for an unknown codec before subscribing.
+        VideoDecoder(codec)
+        self._codec = codec
+        self._interval = interval
+        self._config = config
+        self._subscriptions = remote._subscriptions(
+            name, namespace, on_subscribed, True, None, DEFAULT_DELIVERY_TIMEOUT_SECONDS
+        )
+        # The decoding of the current subscription, and the Largest Location its SUBSCRIBE_OK
+        # reported.
+        self._pictures: Following[DecodedPicture] | None = None
+        self._largest: Location | None = None
+
+    @property
+    def config(self) -> bytes | None:
+        """The Video Config the next subscription starts with: the one the newest object that
+        carried one brought, or else the `config` given."""
+        return self._config
+
+    async def _next(self) -> DecodedPicture:
+        while True:
+            if self._pictures is None:
+                objects = cast(_Objects, await anext(self._subscriptions))
+                if self._closing.started:
+                    # Closed by the `on_subscribed` callback.
+                    raise StopAsyncIteration
+                self._largest = objects._subscription.largest
+                self._pictures = decode_pictures(
+                    _NotedObjects(objects, self), self._codec, interval=self._interval, config=self._config
+                )
+            try:
+                picture = await anext(self._pictures)
+            except StopAsyncIteration:
+                self._pictures = None
+                continue
+            return replace(picture, largest=self._largest)
+
+    async def _release(self) -> None:
+        try:
+            await self._subscriptions.aclose()
+        finally:
+            # The decoders and the pictures they hold, freed once a decoding a cancelled read left
+            # in a worker finished; the Video Config learned stays for `config`.
+            self._pictures = None
+
+
+class _NotedObjects:
+    """The objects of one subscription, noting the Video Config of the newest one carrying one as
+    the one the next subscription starts with. Its groups may start at 0 again, so its locations
+    are not compared with an earlier one's."""
+
+    def __init__(self, objects: Following[Object], pictures: FollowedPictures):
+        self._objects = objects
+        self._pictures = pictures
+        self._newest: tuple[int, int] | None = None
+
+    def __aiter__(self) -> "_NotedObjects":
+        return self
+
+    async def __anext__(self) -> Object:
+        video_object = await anext(self._objects)
+        config = _video_config(video_object.extension_headers)
+        location = (video_object.group_id, video_object.object_id)
+        if config is not None and (self._newest is None or location >= self._newest):
+            self._pictures._config, self._newest = config, location
+        return video_object
 
 
 def _length_prefixed_units(payload: bytes) -> list[bytes] | None:

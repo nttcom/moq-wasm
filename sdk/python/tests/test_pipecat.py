@@ -22,7 +22,7 @@ import pytest
 import moq_wasm
 from moq_wasm import codecs
 from moq_wasm import Location, Subscription
-from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder, decode_pictures
+from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder, decode_pictures, follow_pictures
 from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
@@ -556,6 +556,37 @@ async def test_a_participants_video_reaches_the_sink_as_pictures():
     assert (received.size, received.participant_id, received.video_source) == (SIZE, "alice", "camera")
     assert (received.location.group_id, received.location.object_id) == (0, 0)
     await room.stop("input")
+    await session.close()
+
+
+async def test_following_pictures_decodes_each_subscription_afresh():
+    # Arrange: the first subscription brings five groups with B-frames and ends, as when alice's
+    # page leaves; the page taking over restarts its groups at 0
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    groups = b_frame_groups(5, 6)
+    first = [(group_id, object_id, payload) for group_id, group in enumerate(groups) for object_id, (payload, _) in enumerate(group)]
+    second = [(0, object_id, payload) for object_id, (payload, _) in enumerate(groups[0])]
+    native.tracks["camera"] = [first, [*second, STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    by_subscription: dict[int, list] = {}
+
+    async def follow() -> None:
+        async with contextlib.aclosing(follow_pictures(remote, "camera", "avc1.64001f")) as pictures:
+            async for decoded in pictures:
+                subscriptions = sum(1 for _, name in native.subscribed if name == "camera")
+                by_subscription.setdefault(subscriptions, []).append(decoded)
+                if len(by_subscription.get(2, [])) >= 4:
+                    return
+
+    # Act
+    await within(follow())
+
+    # Assert: the pictures the decoders held back came as the first subscription ended, and the
+    # second's group 0 was not taken as the first's
+    assert len(by_subscription[1]) == 30
+    assert {decoded.location.group_id for decoded in by_subscription[2]} == {0}
     await session.close()
 
 
@@ -1345,6 +1376,94 @@ async def test_length_prefixed_h264_without_a_video_config_decodes_with_the_one_
 
     # Assert
     assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(1, 0), (1, 1), (1, 2)]
+
+
+async def test_following_pictures_decodes_length_prefixed_h264_with_the_video_config_given():
+    # Arrange: no object of the avcC H.264 track carries the Video Config
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    config, group = length_prefixed_group(encoder, 2)
+    native.tracks["camera"] = [[video_object(4, object_id, payload) for object_id, payload in enumerate(group)] + [STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+
+    # Act
+    async with contextlib.aclosing(follow_pictures(remote, "camera", "avc1.42e01f", config=config)) as pictures:
+        decoded = [await within(anext(pictures)) for _ in range(2)]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(4, 0), (4, 1)]
+    await session.close()
+
+
+async def test_following_pictures_decodes_a_later_subscription_with_the_video_config_an_earlier_one_brought():
+    # Arrange: only the first object of the avcC H.264 track carries the Video Config; the first
+    # subscription brings it and ends, and the next one joins at a group without one
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    config, group_0 = length_prefixed_group(encoder, 1)
+    _, group_1 = length_prefixed_group(encoder, 2)
+    first = [video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, config)])]
+    second = [video_object(1, object_id, payload) for object_id, payload in enumerate(group_1)]
+    native.tracks["camera"] = [first, [*second, STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+
+    # Act
+    async with contextlib.aclosing(follow_pictures(remote, "camera", "avc1.42e01f")) as pictures:
+        decoded = [await within(anext(pictures)) for _ in range(3)]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(0, 0), (1, 0), (1, 1)]
+    await session.close()
+
+
+async def test_following_pictures_starts_at_the_group_whose_first_object_carries_the_only_video_config():
+    # Arrange: the relay holds the first object of the group, which alone carries the Video Config of
+    # the avcC H.264 track; live objects come from the group's second on
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    units = [length_prefixed(b"".join(encoder.encode(picture(value), SIZE, "RGB"))) for value in (0, 10, 20)]
+    sps, pps, _ = units[0]
+    config = avc_decoder_configuration(sps, pps)
+    native.current_groups["camera"] = [video_object(7, 0, units[0][2], extension_headers=[(VIDEO_CONFIG_ID, config)])]
+    native.tracks["camera"] = [[video_object(7, 1, units[1][2]), video_object(7, 2, units[2][2]), STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+
+    # Act
+    async with contextlib.aclosing(follow_pictures(remote, "camera", "avc1.42e01f")) as pictures:
+        decoded = [await within(anext(pictures)) for _ in range(2)]
+
+    # Assert
+    assert [(d.location.group_id, d.location.object_id) for d in decoded] == [(7, 0), (7, 1)]
+    await session.close()
+
+
+async def test_closed_followed_pictures_keep_no_decoder_but_the_video_config_they_learned(video_decoders):
+    # Arrange: the group stays open, so its decoder lives until the pictures are closed
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    config, group = length_prefixed_group(VideoEncoder("H264", *SIZE, 30), 2)
+    native.tracks["camera"] = [
+        [video_object(0, 0, group[0], extension_headers=[(VIDEO_CONFIG_ID, config)]), video_object(0, 1, group[1]), STAY_OPEN]
+    ]
+    pictures = follow_pictures(RemoteBroadcast(session, [*ROOM, "alice"]), "camera", "avc1.42e01f")
+    for _ in range(2):
+        await within(anext(pictures))
+
+    # Act
+    await within(pictures.aclose())
+    gc.collect()
+
+    # Assert
+    assert [decoder for decoder in video_decoders if decoder() is not None] == []
+    assert pictures.config == config
+    await session.close()
 
 
 HALF_SIZE = (SIZE[0] // 2, SIZE[1] // 2)
