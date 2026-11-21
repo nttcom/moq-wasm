@@ -174,16 +174,13 @@ read `tracing` directly.
 ### Media: `moq_wasm::media`
 
 ```rust
-use moq_wasm::media::{self, MediaSourceOptions, TrackQuery, WatchOptions};
+use moq_wasm::{Retention, media::{self, MediaSourceOptions, TrackQuery, WatchOptions}};
 
-let mut builder = media::create_broadcast(&session, &["anon", "robot-1"]);
+let builder = media::create_broadcast(&session, &["anon", "robot-1"]);
 let status = builder.publish_track("status", Default::default()).await?;
-let events = builder.event_timeline("events", Duration::from_secs(3600)).await?;
-let camera = builder.add_media_source(MediaSourceOptions {
-    video: Some("video".into()),
-    ..Default::default()
-});
+let events = builder.event_timeline("events", Retention::For(Duration::from_secs(3600))).await?;
 let broadcast = builder.announce().await?;
+let camera = broadcast.add_media_source(MediaSourceOptions::new("camera"));
 
 camera.configure_video("avc1.42e01f")?;
 camera.push_video(annexb_access_unit, timestamp_micros)?; // a keyframe opens a group
@@ -202,18 +199,25 @@ broadcast.close().await?;
 ```
 
 - **`create_broadcast(session, namespace)`** returns a `BroadcastBuilder`.
-  Its `publish_track`, `event_timeline` and `add_media_source` register
-  tracks, and `announce()` publishes the namespace and returns the
-  `LocalBroadcast`. The Python SDK asks for tracks to be declared before the
-  first `await` so that a SUBSCRIBE the relay forwards at once finds them;
-  here the builder makes it a type: no track of the batch can be added after
-  the announce. `LocalBroadcast` adds later tracks with the same methods,
-  each registered on its own. `close()` withdraws the namespace
-  (PUBLISH_NAMESPACE_DONE) and ends the media source; dropping a
-  `LocalBroadcast` without `close()` does the same on a spawned task.
+  Its `publish_track` and `event_timeline` register tracks, and
+  `announce()` publishes the namespace and returns the `LocalBroadcast`.
+  The Python SDK asks for tracks to be declared before the first `await` so
+  that a SUBSCRIBE the relay forwards at once finds them; here the builder
+  makes it a type: no track of the batch can be added after the announce.
+  The builder refuses a track with `publish`, since a PUBLISH follows the
+  namespace. `LocalBroadcast` adds later tracks with the same methods, and
+  media sources with `add_media_source`: a subscriber finds a media
+  source's tracks in the catalog, which lists them only once they are
+  published, so they need no place in the batch. `close()` withdraws the
+  namespace (PUBLISH_NAMESPACE_DONE) and stops the media sources and their
+  renditions: their pushes fail from then on, so no frame reaches the
+  subscriptions the namespace had, and their waits end. Dropping a
+  `LocalBroadcast` without `close()` does the same, withdrawing on a spawned
+  task.
 - **`EventTimeline`** writes a draft-ietf-moq-msf-02 §8 event timeline as
   the Python SDK's does: one group, each record one more object, so a late
-  joiner's joining FETCH brings the records the track still keeps. The
+  joiner's joining FETCH brings the records the track still keeps for its
+  `Retention`. The
   one-record-per-group tracks of a robot are written by `robotics`.
 - **`MediaSource`** is the Python SDK's media source in Rust: it takes
   encoded video (H.264, H.265, VP8, VP9, AV1) or audio (AAC, Opus) with capture timestamps in
@@ -221,7 +225,9 @@ broadcast.close().await?;
   MSF catalog and media timeline: `configure_video`, `push_video`,
   `configure_audio`, `push_audio`, `add_rendition`, `remove_track`,
   `keyframe_request().await` (a NEW_GROUP_REQUEST), `demand_change().await`
-  and the `on_demand` option. Its implementation is the wrapper
+  and the `on_demand` option. `MediaSourceOptions::new(label)` takes the
+  catalog label, which has no default, as the Python SDK's `label` has
+  none. Its implementation is the wrapper
   `sdk/js` and `sdk/python` share after "Migration" step 2, so the
   three SDKs publish the same catalog.
 - **`watch_broadcasts(session, prefix, WatchOptions, handler)`** runs

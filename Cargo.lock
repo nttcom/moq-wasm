@@ -1976,6 +1976,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auth-token",
+ "broadcast",
+ "bytes",
+ "mediapack",
  "moqt",
  "serde_json",
  "tokio",

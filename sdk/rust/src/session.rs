@@ -94,6 +94,10 @@ pub struct Session {
 }
 
 impl Session {
+    pub(crate) fn client(&self) -> &Arc<client::Session> {
+        &self.client
+    }
+
     /// Waits for the session to end; returns at once if it already has.
     pub async fn closed(&self) -> SessionEnd {
         let mut end_receiver = self.end_sender.subscribe();

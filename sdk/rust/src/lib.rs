@@ -1,6 +1,9 @@
 #![doc = include_str!("../README.md")]
 
+pub mod media;
 mod session;
+#[cfg(test)]
+mod test_support;
 mod token;
 
 pub use moqt::client::{

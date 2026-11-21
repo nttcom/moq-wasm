@@ -55,6 +55,36 @@ async fn main() -> anyhow::Result<()> {
 
 `moqt://` connects over raw QUIC, `https://` over WebTransport.
 
+## Publish a broadcast
+
+`media::create_broadcast` registers tracks before it publishes the
+namespace, so a SUBSCRIBE the relay forwards at once finds them. A media
+source takes frames you encode (H.264, H.265, VP8, VP9, AV1, AAC, Opus) and
+publishes them as LOC tracks with the MSF catalog that the browser and
+Python SDKs read; the SDK neither encodes nor decodes.
+
+```rust,no_run
+use moq_wasm::{Retention, media::{self, MediaSourceOptions}};
+use serde_json::json;
+use std::time::Duration;
+
+# async fn run(session: &moq_wasm::Session, access_unit: Vec<u8>, timestamp_micros: u64) -> anyhow::Result<()> {
+let builder = media::create_broadcast(session, &["anon", "robot-1"]);
+let events = builder
+    .event_timeline("events", Retention::For(Duration::from_secs(3600)))
+    .await?;
+let broadcast = builder.announce().await?;
+
+let camera = broadcast.add_media_source(MediaSourceOptions::new("camera"));
+camera.configure_video("avc1.42e01f")?;
+camera.push_video(access_unit, timestamp_micros)?; // Annex B; a keyframe opens a group
+events.append(&json!({"T": 0, "data": "started"})).await?;
+
+broadcast.close().await?;
+# Ok(())
+# }
+```
+
 ## Tokens and the end of a session
 
 A relay that verifies tokens takes a JWT in `ConnectOptions::token`. Give
