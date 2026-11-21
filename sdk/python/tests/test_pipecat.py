@@ -1,12 +1,17 @@
 import asyncio
+import contextlib
 import contextvars
 import gc
 import json
+import os
+import subprocess
+import sys
 import threading
 import time
 import uuid
 import weakref
 from fractions import Fraction
+from pathlib import Path
 from types import SimpleNamespace
 
 import av
@@ -359,10 +364,114 @@ async def test_every_picture_of_groups_with_b_frames_is_decoded_with_the_locatio
     assert [(d.location.group_id, d.location.object_id) for d in decoded] == [carried[value] for value in values]
 
 
+def test_the_decoders_remember_no_more_than_one_entry_per_supported_codec_family():
+    # Arrange: what the codec module remembered before
+    cached = [value for value in vars(codecs).values() if hasattr(value, "cache_clear")]
+    for function in cached:
+        function.cache_clear()
+
+    # Act: catalogs name many codec strings, supported or not
+    for index in range(64):
+        for codec in (f"avc1.64{index:04x}", f"vp09.00.{index}.08", f"unknown{index}.1"):
+            with contextlib.suppress(ValueError):
+                VideoDecoder(codec)
+
+    # Assert
+    assert sum(function.cache_info().currsize for function in cached) <= len(codecs.VIDEO_DECODERS)
+
+
 def test_a_video_codec_other_than_h264_and_vp8_is_refused():
     # Act / Assert
     with pytest.raises(ValueError, match="H265"):
         VideoEncoder("H265", *SIZE, 30)
+
+
+AV1_ENCODERS = [name for name in ("libaom-av1", "libsvtav1") if name in av.codecs_available]
+
+
+@pytest.mark.skipif(not AV1_ENCODERS, reason="this PyAV build has no AV1 encoder to make the track with")
+async def test_an_av1_track_decodes_in_software():
+    # Arrange: three AV1 pictures in one group, as the browser's screenshare sends by default
+    encoder = av.CodecContext.create(AV1_ENCODERS[0], "w")
+    encoder.width, encoder.height, encoder.pix_fmt = *SIZE, "yuv420p"
+    encoder.time_base = Fraction(1, 30)
+    encoder.framerate = 30
+    encoder.open()
+    payloads = []
+    for index in range(3):
+        frame = av.VideoFrame.from_ndarray(np.frombuffer(picture(index * 40), np.uint8).reshape(SIZE[1], SIZE[0], 3), format="rgb24")
+        frame = frame.reformat(format="yuv420p")
+        frame.pts = index
+        payloads.extend(bytes(packet) for packet in encoder.encode(frame))
+    payloads.extend(bytes(packet) for packet in encoder.encode(None))
+
+    async def objects():
+        for object_id, payload in enumerate(payloads):
+            yield video_object(0, object_id, payload)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "av01.0.04M.08")]
+
+    # Assert
+    assert len(decoded) == 3
+    assert {(d.picture.width, d.picture.height) for d in decoded} == {SIZE}
+
+
+# Decodes the first objects of a low-delay 720p AV1 group, as a live track sends them, and drops the
+# decoder, again and again, as `decode_pictures` closed mid-group does.
+AV1_TEARDOWNS = """
+import sys
+from fractions import Fraction
+
+import av
+import numpy as np
+
+from moq_wasm import Location
+from moq_wasm.codecs import VideoDecoder
+
+WIDTH, HEIGHT, PICTURES, TEARDOWNS = 1280, 720, 30, 150
+name = sys.argv[1]
+encoder = av.CodecContext.create(name, "w")
+encoder.width, encoder.height, encoder.pix_fmt = WIDTH, HEIGHT, "yuv420p"
+encoder.time_base = Fraction(1, 30)
+encoder.framerate = 30
+if name == "libsvtav1":
+    encoder.options = {"preset": "12", "svtav1-params": "pred-struct=1"}
+else:
+    encoder.options = {"cpu-used": "8", "usage": "realtime"}
+encoder.open()
+noise = np.random.default_rng(0).integers(0, 255, (HEIGHT, WIDTH, 3), np.uint8)
+payloads = []
+for index in range(PICTURES):
+    frame = av.VideoFrame.from_ndarray(np.roll(noise, index * 4, axis=1), format="rgb24").reformat(format="yuv420p")
+    frame.pts = index
+    payloads.extend(bytes(packet) for packet in encoder.encode(frame))
+payloads.extend(bytes(packet) for packet in encoder.encode(None))
+decoded = np.random.default_rng(1).integers(1, len(payloads) + 1, TEARDOWNS)
+for count in decoded:
+    decoder = VideoDecoder("av01.0.08M.08")
+    for object_id, payload in enumerate(payloads[:count]):
+        decoder.decode(payload, Location(0, object_id))
+    del decoder
+"""
+
+
+@pytest.mark.skipif(not AV1_ENCODERS, reason="this PyAV build has no AV1 encoder to make the track with")
+@pytest.mark.skipif(codecs._decoder_name("av01") != "libdav1d", reason="this PyAV build decodes AV1 without dav1d")
+def test_dropping_an_av1_decoder_mid_group_does_not_deadlock():
+    # Arrange: a process that may deadlock, so it runs apart from the tests
+    command = [sys.executable, "-c", AV1_TEARDOWNS, "libsvtav1" if "libsvtav1" in AV1_ENCODERS else AV1_ENCODERS[0]]
+    environment = {**os.environ, "PYTHONPATH": os.pathsep.join([str(Path(codecs.__file__).parents[1]), os.environ.get("PYTHONPATH", "")])}
+
+    # Act
+    try:
+        finished = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        finished = None
+
+    # Assert
+    assert finished is not None, "the decoder's teardown deadlocked"
+    assert finished.returncode == 0, finished.stderr
 
 
 async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
