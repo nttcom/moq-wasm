@@ -117,6 +117,9 @@ media::watch_broadcasts(session, &["anon", "room"], WatchOptions::default(), |re
 # }
 ```
 
+[`examples/rust/moq-broadcast`](../../examples/rust/moq-broadcast/README.md)
+runs both sides against a relay.
+
 ## Tokens and the end of a session
 
 A relay that verifies tokens takes a JWT in `ConnectOptions::token`. Give
