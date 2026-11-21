@@ -1698,6 +1698,13 @@ Unit tests are colocated (`#[cfg(test)]`) and pin structural invariants —
 e.g. worker non-blocking and terminal-event handling in
 `control_plane/session_workers.rs`, largest-location resolution in `control_plane/sequences/subscribe.rs`,
 eviction refcount rules in `data_plane/cache/store.rs`. Shared mocks and the
-data-plane `RelayHarness` live in `test_support/`. Multi-process behaviour
+data-plane `RelayHarness` live in `test_support/`.
+`control_plane/tests/message_sequences.rs` runs the session workers, the
+sequences and the directory together against scripted peers
+(`test_support/scripted_session.rs`): a property feeds them random sequences
+of the clients' control messages, answers the relay's requests in any order,
+and checks what each peer was sent and that the relay comes to rest after
+every step. A change to a sequence or to the directory is covered by it
+without a model of the sequence's steps. Multi-process behaviour
 (cascading relays, cache eviction, fetch, multiple publishers, dedup) lives in
 the workspace-level `tests/*-e2e` suites, each driven by its `run.sh`.
