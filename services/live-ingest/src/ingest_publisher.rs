@@ -27,19 +27,22 @@ impl IngestPublisher {
     }
 
     pub fn push(&mut self, event: MediaEvent) -> Result<()> {
-        match &event {
+        let rendition_sample = match &event {
             MediaEvent::VideoConfig(config) if self.transcode && self.renditions.is_none() => {
                 config.avc()?;
                 let source = VideoTrackInfo::from_config(config, "Video".to_string())?;
                 self.renditions = RenditionFanout::run(&self.writer, &source);
+                None
             }
-            MediaEvent::Video(sample) => {
-                if let Some(renditions) = &self.renditions {
-                    renditions.push(sample);
-                }
-            }
-            _ => {}
+            MediaEvent::Video(sample) => Some(sample.clone()),
+            _ => None,
+        };
+        // The writer numbers a keyframe's group, which the renditions look up,
+        // so it gets the sample before the transcoder.
+        self.writer.push(event)?;
+        if let (Some(renditions), Some(sample)) = (&self.renditions, rendition_sample) {
+            renditions.push(sample);
         }
-        self.writer.push(event)
+        Ok(())
     }
 }

@@ -75,8 +75,8 @@ impl RenditionFanout {
         })
     }
 
-    pub fn push(&self, sample: &VideoSample) {
-        if self.sample_sender.try_send(sample.clone()).is_err() {
+    pub fn push(&self, sample: VideoSample) {
+        if self.sample_sender.try_send(sample).is_err() {
             tracing::warn!("transcoder input queue full, dropping video sample");
         }
     }

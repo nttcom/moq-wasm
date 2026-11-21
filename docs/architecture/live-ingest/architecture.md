@@ -20,6 +20,9 @@ Nothing on the input's task may block before the first sample is pushed:
 and stamps the backlog read after it into the future. The transcoder is
 therefore built on a blocking thread, and the video samples that arrive
 meanwhile wait in its input queue, which drops them once it is full.
+`IngestPublisher` pushes each sample to the writer before the transcoder, so a
+source keyframe has its group id by the time its renditions look it up (see
+Group alignment in the `broadcast` document).
 
 ## Transport stream loss
 The SRT listener reads with a 4 MiB UDP receive buffer: a keyframe arrives as
