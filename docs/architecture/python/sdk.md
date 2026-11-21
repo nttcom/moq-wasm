@@ -787,33 +787,114 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   those joining later is received.
 - **Video in.** pipecat's video sources name tracks of a participant's
   catalog. `"camera"` is the LOC video track with the lowest bitrate that
-  PyAV decodes, or the one `video_in_track` picks; any other source is the
-  video track of that name, as an ONVIF camera names its profiles. Each
+  PyAV decodes, or the one `video_in_track` picks (what it raises goes to
+  `on_error` once the pick finished, so a handler may capture or release a
+  source, and the camera track received before stays; a capture, and the
+  activation a request makes, picks its own source alone, so a handler that
+  captures a fallback source does not run the failing selector again and
+  is not called back for it); any other
+  source is the
+  video track of that name, as an ONVIF camera names its profiles, when it
+  is LOC and PyAV decodes it. Each
   group is decoded with a fresh decoder (a group starts at a keyframe), and
   each subscription to the track with a `decode_pictures` of its own
-  (`follow_pictures`): the pictures its decoders hold back come as the
-  subscription ends, and the next one, as of a page that took over and
-  starts its groups at 0 again, carries no state of the one before but its
-  Video Config, so its groups are not taken as ones already decoded. Each
-  subscription starts at the first object of the group the relay holds, so
-  the first pictures come without waiting for the next keyframe. Each
-  picture is pushed as an RGB `UserImageRawFrame` with the source in
+  (`follow_pictures`): the
+  pictures its decoders hold back come as the subscription ends, and the
+  next one, as of a page that took over and starts its groups at 0 again,
+  carries no state of the one before but its Video Config, so its groups
+  are not taken as ones already decoded. Each subscription starts at the first object of the
+  group the relay holds, so the first pictures come without waiting for the
+  next keyframe. The track's initialization data in the catalog
+  (`Catalog.init_data`), as the avcC record of a length-prefixed H.264
+  track, is the Video Config the groups without one of their own decode
+  with; a track received again after a decoder error starts with the one
+  its objects brought last, which the catalog may not carry. A newer
+  catalog that gives the track other initialization data, even under the
+  same name, codec and `initRef`, makes it a track of its own, received
+  again with that Video Config. Each picture is pushed as an RGB
+  `UserImageRawFrame` with the source in
   `transport_source` and the `Location` of its object in
   `metadata["location"]`, so a bot records a verdict at the picture it
   judged. As in pipecat, `video_in_enabled` receives the sources
   `video_in_sources` lists, each at its framerate or `on_request_only`, as
-  each participant joins, and others only when asked for.
-  `capture_participant_video` starts one. `release_participant_video`,
-  which pipecat's API does not have, stops one: PTZ tracking releases its
+  each participant joins, and others only when asked for. A source
+  received at a framerate is sampled on the schedule of pipecat's own
+  video input sampler: the next picture is due one interval after the
+  previous one's scheduled time, not its arrival, or up to 50 ms (at most
+  half an interval) before it, so a camera's jitter costs no picture; one
+  answering a request, or the first after a stall, starts the schedule
+  afresh.
+  `capture_participant_video` starts one, at its `framerate`, every
+  picture when it is None, or for requests only with `on_request_only` or,
+  as pipecat's deprecated form, a `framerate` of 0, which warns as pipecat
+  does; a participant who is leaving starts no track for it, so the
+  teardown that waits for the participant's tracks owns every one of them.
+  `release_participant_video`,
+  which pipecat's API does not have, stops one and returns once its
+  UNSUBSCRIBE is done, also when called again after a release that was
+  cancelled, and a participant who
+  leaves meanwhile ends only once its UNSUBSCRIBE is done: PTZ tracking releases its
   profile when the viewer clears the target, because onvif-ingest serves only
   the profile its first subscriber picks.
 - **Image requests.** A `UserImageRequestFrame` pushed upstream is answered
   by the next picture of its `user_id` and `video_source` (`"camera"` when
   unset), with the request in `request`, as pipecat's Daily and SmallWebRTC
   transports answer it; a source not yet received starts being received for
-  requests only. A request no picture will answer, for a participant not in
+  requests only. Captures and releases of a participant's sources, the picks
+  of its catalogs and the activation of a source a request asks for take
+  their turn one at a time. A request for a participant in the room itself
+  waits from the frame on and does not hold the input's frame processing: it
+  is admitted at once, and a
+  task of the participant's receiver, which its teardown waits for,
+  activates its source once the turns before it finished, so a request made
+  while `release_participant_video` releases another source neither waits
+  for that release nor has its five seconds start after it, and a request
+  made while its own source is released is answered by the subscription
+  that activation starts, not with the release's error, which answers the
+  requests made before the release was called. A release takes that set of
+  requests as it is called, not once its turn comes, so a release queued
+  behind another leaves a request made meanwhile waiting; as it stops the
+  source, the requests made since keep it received for requests only
+  through an activation the release starts then, so a timeout that cancels
+  the release afterwards does not leave them without a track. The requests
+  made before it are taken out by a task of the receiver's as the stopped
+  track's task ends, before the track the activation starts, which waits
+  for that task, passes a picture on, and get the release's error from that
+  task even when the release was cancelled. A subscription first replays the current group the relay
+  holds, for the decoder, so a request is answered only by a picture at or
+  after the Largest Location the subscription's SUBSCRIBE_OK reported
+  (`DecodedPicture.largest`), the newest one when it was subscribed to, and
+  not by an older one. Nor does a group whose stream was delayed answer
+  it: the picture must come from a newer location (group, then object)
+  than every picture of the subscription seen before the request, so a
+  B-frame that comes after a picture of a later object leaves it to the
+  next picture; a new subscription, whose groups may start at 0 again,
+  forgets the locations seen. A request no picture will answer, for a participant not in
   the room, one who left or a track that failed, gets `{"error": ...}`
-  through its `result_callback`. A bot that judges pictures slower than
+  through its `result_callback`, and so does every request no picture
+  answered within five seconds of it, as when the participant published no
+  catalog, its catalog has no track for the source or the relay refuses the
+  track's SUBSCRIBE. A `result_callback` that raises, a CancelledError of
+  its own included, as from a future another task cancelled, is logged, and
+  the other requests are answered still, so a failed track is still reported
+  to `on_error` and received again. The error for a participant not in the room, or one
+  who left, is given as the input processes the request, so the input
+  awaits its `result_callback` before it processes the next frame: a
+  callback that takes long hands its work to a task of its own. A request is
+  answered only once its picture was
+  passed on: a picture the input drops, as while a `StopFrame` paused it,
+  or one whose track is replaced before it was passed on leaves the request
+  to the next picture, and to the error once its five seconds are over, even
+  when they ran out while the picture was being delivered. An error answer
+  runs to its end once it started, its `result_callback` included: an
+  `EndFrame` or a cancelled release does not cut it short, the input's
+  stop and teardown wait for it, and so does a release of its source called
+  outside any `result_callback`, one retried after a cancelled one
+  included. A release called from an answer's `result_callback`, directly
+  or through a task it started, which a context variable the answer's task
+  sets tells apart, waits only for its own answers: the answer that called
+  it waits for it, and so may another answer whose callback releases the
+  source too. A bot that judges pictures slower than
   they arrive asks for one when it is ready instead of thinning a stream.
 - **Two transports.** A bot in two rooms runs a transport for each in one
   pipeline. The input that receives video answers image requests and keeps
@@ -995,7 +1076,7 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   that writes it only when it changes, does not decode to nothing; with
   none seen yet, it starts with the `config` it was given. Its `config`
   property gives that Video Config to a reader that follows the track
-  again, as after a decoder error; closed, it drops
+  again, as the transport does after a decoder error; closed, it drops
   its decoders and the pictures they hold, freed once a decoding a
   cancelled read left in a worker finished, and keeps only that Video
   Config, so a reader holding it to read `config` holds no codec context.

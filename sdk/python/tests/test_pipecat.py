@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import contextlib
 import contextvars
 import gc
@@ -9,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+import warnings
 import weakref
 from fractions import Fraction
 from pathlib import Path
@@ -54,7 +56,9 @@ from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnu
 from pipecat.transports.base_transport import VideoInSourceParams
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
 from pipecat.transports.base_input import BaseInputTransport
+from pipecat.transports import video_in_sampler
 from pipecat.transports.base_output import BaseOutputTransport
+from pipecat.utils import deprecation
 from pipecat.utils.asyncio.task_manager import TaskManager
 from pipecat.workers.runner import WorkerRunner
 from pipecat.tests.utils import SleepFrame, run_test
@@ -155,9 +159,10 @@ class RecordingSink:
         self.audio.append((pcm, sample_rate, participant_id))
         self.received.set()
 
-    async def push_picture(self, picture) -> None:
+    async def push_picture(self, picture) -> bool:
         self.pictures.append(picture)
         self.received.set()
+        return True
 
     async def push_message(self, message: MoqWasmTrackMessage) -> None:
         self.messages.append(message)
@@ -759,6 +764,473 @@ async def test_a_participant_ends_only_once_the_tracks_a_new_catalog_replaced_ar
     await session.close()
 
 
+async def test_a_participant_ends_only_once_a_released_track_is_unsubscribed():
+    # Arrange: alice's camera is received; the relay holds the answer to its UNSUBSCRIBE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    releasing = asyncio.create_task(receiver.release("camera"))
+    await asyncio.sleep(0.05)
+
+    # Act: alice leaves while her camera is being unsubscribed
+    running.cancel()
+    await asyncio.sleep(0.05)
+    ended_while_unsubscribing = running.done()
+    unsubscribing.set()
+    await within(asyncio.gather(running, releasing, return_exceptions=True))
+
+    # Assert
+    assert not ended_while_unsubscribing
+    assert all(subscription.closed for subscription in native.subscriptions)
+    await session.close()
+
+
+async def test_a_release_retried_after_a_cancelled_one_returns_once_the_track_is_unsubscribed():
+    # Arrange: alice's camera is received; the relay holds the answer to its UNSUBSCRIBE back
+    # while a release of it is cancelled
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    cancelled = asyncio.create_task(receiver.release("camera"))
+    await until(lambda: native.subscriptions[1].unsubscribing)
+    cancelled.cancel()
+    await asyncio.gather(cancelled, return_exceptions=True)
+
+    # Act
+    retried = asyncio.create_task(receiver.release("camera"))
+    await asyncio.sleep(0.05)
+    released_while_unsubscribing = retried.done()
+    unsubscribing.set()
+    await within(retried)
+
+    # Assert
+    assert not released_while_unsubscribing
+    assert native.subscriptions[1].closed
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+class HeldAnswerSink(RecordingSink):
+    """A sink whose answers to image requests wait until `finish` is set."""
+
+    def __init__(self):
+        super().__init__()
+        self.answering = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    async def answer_image_requests(self, requests: list[UserImageRequestFrame], error: str) -> None:
+        self.answering.set()
+        await self.finish.wait()
+        await super().answer_image_requests(requests, error)
+
+
+async def test_a_release_whose_answer_is_being_delivered_keeps_no_picture_of_the_released_track(kept_media):
+    # Arrange: alice's camera is passing a picture on, which the sink holds, and a request waits
+    # for the next one
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[*video_frames(2), STAY_OPEN]]
+    sink = HeldAnswerSink()
+    pushing = asyncio.Event()
+
+    async def hold_picture(picture) -> bool:
+        sink.pictures.append(picture)
+        pushing.set()
+        await asyncio.Event().wait()
+        return True
+
+    sink.push_picture = hold_picture
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await within(pushing.wait())
+    await receiver.request_image(UserImageRequestFrame(user_id="alice"))
+
+    # Act: the camera is released, and the error answering the request is being delivered
+    releasing = asyncio.create_task(receiver.release("camera"))
+    await within(sink.answering.wait())
+
+    # Assert
+    assert kept_media.alive() == (0, 0)
+    sink.finish.set()
+    await within(releasing)
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_released_video_sources_leave_no_sampler_behind_once_their_requests_expired(monkeypatch):
+    # Arrange: each of alice's ONVIF profiles is captured, asked for a picture and released
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.1)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(), sink)
+    running = asyncio.create_task(receiver.run())
+    deadlines = []
+    for index in range(3):
+        await within(receiver.capture(f"profile{index}", 1000.0))
+        await within(receiver.request_image(UserImageRequestFrame(user_id="alice", video_source=f"profile{index}")))
+        deadlines.extend(receiver._deadlines)
+        await within(receiver.release(f"profile{index}"))
+
+    # Act: the deadlines of the requests the releases answered expire
+    await within(asyncio.gather(*deadlines))
+
+    # Assert
+    assert len(sink.unanswered) == 3
+    assert receiver._samplers == {}
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_made_while_another_source_is_released_returns_at_once_and_expires_on_time(monkeypatch):
+    # Arrange: alice's camera is received; the relay holds the answer to its UNSUBSCRIBE back as the
+    # camera is released
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.1)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    releasing = asyncio.create_task(receiver.release("camera"))
+    await until(lambda: native.subscriptions[1].unsubscribing)
+    request = UserImageRequestFrame(user_id="alice", video_source="screen")
+
+    # Act: the input's frame processing awaits the request
+    await asyncio.wait_for(receiver.request_image(request), 1)
+    await until(lambda: sink.unanswered)
+
+    # Assert: the deadline answered it while the camera's release still waits
+    assert [answered for answered, _ in sink.unanswered] == [request]
+    assert not releasing.done()
+    unsubscribing.set()
+    await within(releasing)
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_made_while_its_source_is_released_is_answered_by_the_subscription_it_starts():
+    # Arrange: alice's camera is received, and its next subscription sends pictures; the relay
+    # holds the answer to the first one's UNSUBSCRIBE back as the camera is released
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN], [*video_frames(3), STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    releasing = asyncio.create_task(receiver.release("camera"))
+    await until(lambda: native.subscriptions[1].unsubscribing)
+    request = UserImageRequestFrame(user_id="alice")
+
+    # Act
+    requesting = asyncio.create_task(receiver.request_image(request))
+    await asyncio.sleep(0.05)
+    unsubscribing.set()
+    await within(asyncio.gather(releasing, requesting))
+    await until(lambda: sink.pictures or sink.unanswered)
+
+    # Assert
+    assert sink.unanswered == []
+    assert [picture.request for picture in sink.pictures] == [request]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_a_request_a_cancelled_release_answers_is_not_answered_by_the_subscription_a_later_request_starts():
+    # Arrange: alice's camera is received, and its next subscription sends pictures; a request
+    # waits as the camera is released, the relay holds the answer to its UNSUBSCRIBE back, and a
+    # request made meanwhile starts the camera again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN], [*video_frames(3), STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    released = UserImageRequestFrame(user_id="alice")
+    await within(receiver.request_image(released))
+    releasing = asyncio.create_task(receiver.release("camera"))
+    await until(lambda: native.subscriptions[1].unsubscribing)
+    later = UserImageRequestFrame(user_id="alice")
+    await within(receiver.request_image(later))
+
+    # Act: a timeout cancels the release while the camera's track is unsubscribed
+    releasing.cancel()
+    await asyncio.gather(releasing, return_exceptions=True)
+    unsubscribing.set()
+    await until(lambda: sink.pictures and sink.unanswered)
+
+    # Assert
+    assert sink.unanswered == [(released, "camera of alice released")]
+    assert [picture.request for picture in sink.pictures] == [later]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_made_after_a_queued_release_was_called_is_answered_by_the_subscription_it_starts():
+    # Arrange: alice's camera is received, and its next subscriptions, which each release ends
+    # and the request starts again, send pictures; the relay holds the answer to the first one's
+    # UNSUBSCRIBE back as the camera is released, and a second release of it waits for the first
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN], *[[*video_frames(3), STAY_OPEN]] * 2]
+    unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(camera=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    first = asyncio.create_task(receiver.release("camera"))
+    await until(lambda: native.subscriptions[1].unsubscribing)
+    second = asyncio.create_task(receiver.release("camera"))
+    await asyncio.sleep(0.05)
+    request = UserImageRequestFrame(user_id="alice")
+
+    # Act
+    await within(receiver.request_image(request))
+    unsubscribing.set()
+    await within(asyncio.gather(first, second))
+    await until(lambda: sink.pictures or sink.unanswered)
+
+    # Assert
+    assert sink.unanswered == []
+    assert [picture.request for picture in sink.pictures] == [request]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_made_after_a_queued_release_was_called_is_answered_once_the_release_was_cancelled(
+    monkeypatch,
+):
+    # Arrange: alice's camera and screen are received, and her camera's next subscription sends
+    # pictures; a release of the screen, whose UNSUBSCRIBE the relay holds back, holds a release
+    # of the camera queued as a request on the camera is made
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 1.0)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    screen = {"name": "screen", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 2000000, "framerate": 30, "isLive": True}
+    native.tracks["catalog"] = [[catalog_payload(json.loads(VIDEO_CATALOG)["tracks"][0], screen), STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN], [*video_frames(3), STAY_OPEN]]
+    native.tracks["screen"] = [[STAY_OPEN]]
+    camera_unsubscribing = native.unsubscribe_gates["video"] = asyncio.Event()
+    screen_unsubscribing = native.unsubscribe_gates["screen"] = asyncio.Event()
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": 1000.0, "screen": 1000.0})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 3)
+    camera_track, screen_track = native.subscriptions[1:3]
+    releasing_screen = asyncio.create_task(receiver.release("screen"))
+    await until(lambda: screen_track.unsubscribing)
+    releasing_camera = asyncio.create_task(receiver.release("camera"))
+    await asyncio.sleep(0.05)
+    request = UserImageRequestFrame(user_id="alice")
+    await within(receiver.request_image(request))
+    screen_unsubscribing.set()
+    await within(releasing_screen)
+    await until(lambda: camera_track.unsubscribing)
+
+    # Act: a timeout cancels the camera's release while its track is unsubscribed
+    releasing_camera.cancel()
+    await asyncio.gather(releasing_camera, return_exceptions=True)
+    camera_unsubscribing.set()
+    await until(lambda: sink.pictures or sink.unanswered)
+
+    # Assert
+    assert sink.unanswered == []
+    assert [picture.request for picture in sink.pictures] == [request]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_made_after_an_earlier_release_dropped_its_sampler_is_answered_once_a_queued_release_ran(
+    monkeypatch,
+):
+    # Arrange: alice's camera and screen are received, and her camera's next subscription sends
+    # pictures; a release of the camera, then one of the screen, whose UNSUBSCRIBE the relay holds
+    # back, and another one of the camera are queued; the first release dropped the camera's
+    # sampler as a request on the camera is made
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 1.0)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    screen = {"name": "screen", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 2000000, "framerate": 30, "isLive": True}
+    native.tracks["catalog"] = [[catalog_payload(json.loads(VIDEO_CATALOG)["tracks"][0], screen), STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN], [*video_frames(3), STAY_OPEN]]
+    native.tracks["screen"] = [[STAY_OPEN]]
+    screen_unsubscribing = native.unsubscribe_gates["screen"] = asyncio.Event()
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": 1000.0, "screen": 1000.0})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 3)
+    screen_track = native.subscriptions[2]
+    first_camera_release = asyncio.create_task(receiver.release("camera"))
+    releasing_screen = asyncio.create_task(receiver.release("screen"))
+    second_camera_release = asyncio.create_task(receiver.release("camera"))
+    await within(first_camera_release)
+    await until(lambda: screen_track.unsubscribing)
+    request = UserImageRequestFrame(user_id="alice")
+    await within(receiver.request_image(request))
+
+    # Act
+    screen_unsubscribing.set()
+    await within(asyncio.gather(releasing_screen, second_camera_release))
+    await until(lambda: sink.pictures or sink.unanswered)
+
+    # Assert
+    assert sink.unanswered == []
+    assert [picture.request for picture in sink.pictures] == [request]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_a_source_captured_while_the_participant_leaves_is_not_subscribed_to():
+    # Arrange: alice's catalog has audio and a camera; the relay holds the answer to her audio's
+    # UNSUBSCRIBE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    tracks = json.loads(AUDIO_CATALOG)["tracks"] + json.loads(VIDEO_CATALOG)["tracks"]
+    native.tracks["catalog"] = [[catalog_payload(*tracks), STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    unsubscribing = native.unsubscribe_gates["audio"] = asyncio.Event()
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(audio_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 2)
+    running.cancel()
+    await asyncio.sleep(0.05)
+
+    # Act: her camera is captured while she leaves
+    await within(receiver.capture("camera", None))
+    await asyncio.sleep(0.05)
+    unsubscribing.set()
+    await within(asyncio.gather(running, return_exceptions=True))
+
+    # Assert
+    assert [name for _, name in native.subscribed] == ["audio"]
+    assert all(subscription.closed for subscription in native.subscriptions)
+    await session.close()
+
+
+@pytest.mark.parametrize("failure", [KeyError("video"), RuntimeError("no camera")])
+async def test_a_video_in_track_selector_that_fails_on_a_later_catalog_is_reported_and_keeps_the_tracks(failure):
+    # Arrange: a participant's audio and camera, then a later catalog the selector fails on
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    tracks = json.loads(AUDIO_CATALOG)["tracks"] + json.loads(VIDEO_CATALOG)["tracks"]
+    later = asyncio.Event()
+    native.tracks["catalog"] = [[catalog_payload(*tracks), later, catalog_payload(*tracks), STAY_OPEN]]
+    native.tracks["audio"] = [[STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    selections = []
+
+    def select(catalog):
+        selections.append(catalog)
+        if len(selections) > 1:
+            raise failure
+        return catalog.select(role="video")
+
+    sink = RecordingSink()
+    options = receive_options(audio_in=True, video_sources={"camera": None}, video_in_track=select)
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(native.subscriptions) == 3)
+
+    # Act
+    later.set()
+    await until(lambda: any(event[0] == "on_error" for event in sink.events))
+
+    # Assert: the failure was reported, and neither track was unsubscribed
+    assert [event[2] for event in sink.events if event[0] == "on_error"] == [failure]
+    assert not running.done()
+    assert not any(subscription.unsubscribing for subscription in native.subscriptions)
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_on_error_handler_capturing_a_fallback_source_after_the_selector_raised_is_called_once():
+    # Arrange: the selector of alice's camera raises, and the on_error handler captures another of
+    # her sources on each error, at most three times
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+
+    def select(catalog):
+        raise ValueError("no camera for the bot")
+
+    class CapturingSink(RecordingSink):
+        def __init__(self):
+            super().__init__()
+            self.captures = 0
+            self.captured = asyncio.Event()
+
+        async def event(self, name: str, *args: object) -> None:
+            await super().event(name, *args)
+            if name == "on_error" and self.captures < 3:
+                self.captures += 1
+                await receiver.capture("screen", None)
+                self.captured.set()
+
+    sink = CapturingSink()
+    options = receive_options(video_sources={"camera": None}, video_in_track=select)
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await within(sink.captured.wait())
+    await asyncio.sleep(0.05)
+
+    # Assert: the capture picked the screen alone and did not run the camera's selector again
+    assert [event[0] for event in sink.events] == ["on_error"]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
 async def test_a_refused_subscribe_reports_no_subscribed_track():
     # Arrange: alice's catalog names an audio track the relay does not have
     relay = FakeRelay()
@@ -797,6 +1269,38 @@ async def test_a_track_that_failed_to_decode_is_received_again_with_a_fresh_deco
     # Assert: the catalog did not change, and the track came back after one failure
     assert [event[0] for event in sink.events].count("on_error") == 1
     assert sink.audio[0][2] == "alice"
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def test_a_video_track_received_again_after_a_decoder_error_decodes_with_the_video_config_it_learned(monkeypatch):
+    # Arrange: only the first object of alice's avcC H.264 track carries the Video Config, which her
+    # catalog does not; the group after it does not decode, and the next subscription joins at a
+    # group without one
+    monkeypatch.setattr(_participant, "RETRY_DELAY_SECONDS", 0.01)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    config, group_0 = length_prefixed_group(encoder, 1)
+    _, group_2 = length_prefixed_group(encoder, 2)
+    undecodable = [video_object(1, object_id, b"\xff" * 8) for object_id in range(codecs.MAX_REFUSED_OBJECTS)]
+    first = [video_object(0, 0, group_0[0], extension_headers=[(VIDEO_CONFIG_ID, config)]), *undecodable, STAY_OPEN]
+    second = [*(video_object(2, object_id, payload) for object_id, payload in enumerate(group_2)), STAY_OPEN]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [first, second]
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: any(picture.location.group_id == 2 for picture in sink.pictures))
+
+    # Assert
+    assert [event[0] for event in sink.events].count("on_error") == 1
+    assert [(picture.location.group_id, picture.location.object_id) for picture in sink.pictures][:2] == [(0, 0), (2, 0)]
     running.cancel()
     await asyncio.gather(running, return_exceptions=True)
     await session.close()
@@ -847,6 +1351,70 @@ async def test_a_participants_video_reaches_the_sink_as_pictures():
     assert (received.size, received.participant_id, received.video_source) == (SIZE, "alice", "camera")
     assert (received.location.group_id, received.location.object_id) == (0, 0)
     await room.stop("input")
+    await session.close()
+
+
+async def test_a_participants_length_prefixed_video_decodes_with_the_video_config_of_its_catalog():
+    # Arrange: no object of the avcC H.264 track carries the Video Config, which the catalog does
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    config, group = length_prefixed_group(encoder, 2)
+    track = {"name": "video", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 1000000, "framerate": 30, "isLive": True, "initRef": "video"}
+    catalog = {"version": "draft-02", "tracks": [track], "initDataList": [{"id": "video", "type": "inline", "data": base64.b64encode(config).decode()}]}
+    native.tracks["catalog"] = [[json.dumps(catalog).encode(), STAY_OPEN]]
+    native.tracks["video"] = [[*(video_object(3, object_id, payload) for object_id, payload in enumerate(group)), STAY_OPEN]]
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(sink.pictures) >= 2)
+
+    # Assert
+    assert [(picture.location.group_id, picture.location.object_id) for picture in sink.pictures[:2]] == [(3, 0), (3, 1)]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def test_a_catalog_changing_only_a_tracks_inline_video_config_receives_the_track_again_with_it():
+    # Arrange: alice's length-prefixed track carries no Video Config of its own; her second catalog
+    # keeps its name, codec and initRef but gives it the Video Config of 32x24 pictures instead of
+    # 64x48, and the publisher's objects change with it
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    large_config, large = length_prefixed_group(VideoEncoder("H264", *SIZE, 30), 2)
+    small_config, small = length_prefixed_group(VideoEncoder("H264", 32, 24, 30), 2)
+    track = {"name": "video", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 1000000, "framerate": 30, "isLive": True, "initRef": "video"}
+
+    def catalog(config: bytes) -> bytes:
+        init = [{"id": "video", "type": "inline", "data": base64.b64encode(config).decode()}]
+        return json.dumps({"version": "draft-02", "tracks": [track], "initDataList": init}).encode()
+
+    changing = asyncio.Event()
+    native.tracks["catalog"] = [[catalog(large_config), changing, catalog(small_config), STAY_OPEN]]
+    native.tracks["video"] = [
+        [*(video_object(0, index, payload) for index, payload in enumerate(large)), STAY_OPEN],
+        [*(video_object(1, index, payload) for index, payload in enumerate(small)), STAY_OPEN],
+    ]
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(sink.pictures) >= 1)
+
+    # Act
+    changing.set()
+
+    # Assert: the track was received again and decoded with the new Video Config
+    await until(lambda: any(picture.size == (32, 24) for picture in sink.pictures))
+    assert sink.pictures[0].size == SIZE
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
     await session.close()
 
 
@@ -1422,6 +1990,35 @@ async def test_cleaning_up_a_participant_input_that_no_end_frame_stopped_unsubsc
     await session.close()
 
 
+async def test_a_cleaned_up_participant_input_keeps_no_decoder_or_picture(kept_media):
+    # Arrange: alice's audio and camera are received
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    tracks = json.loads(AUDIO_CATALOG)["tracks"] + json.loads(VIDEO_CATALOG)["tracks"]
+    native.tracks["catalog"] = [[catalog_payload(*tracks), STAY_OPEN]]
+    native.tracks["audio"] = [[*OpusEncoder().encode(tone(0.04), SAMPLE_RATE), STAY_OPEN]]
+    native.tracks["video"] = [[*video_frames(2), STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(
+            audio_in_enabled=True,
+            audio_in_sample_rate=SAMPLE_RATE,
+            video_in_enabled=True,
+            video_in_sources={"camera": VideoInSourceParams(framerate=30)},
+        ),
+    )
+    await within(start_alone(participant_input))
+    await until(lambda: kept_media.decoders and kept_media.pictures)
+
+    # Act
+    await within(participant_input.cleanup())
+
+    # Assert: the application still holds the input
+    assert kept_media.alive() == (0, 0)
+    await session.close()
+
+
 async def test_a_cleaned_up_participant_input_keeps_no_catalog_subscription(monkeypatch):
     # Arrange: alice's audio is received; each read of her catalogs is followed by a weak reference
     relay = FakeRelay()
@@ -1538,6 +2135,213 @@ async def test_a_participant_input_whose_stop_was_cancelled_answers_its_image_re
     assert not cleaned_while_unsubscribing
     assert answers == [{"error": "alice left"}]
     assert [subscription.closed for subscription in native.subscriptions] == [True, True]
+    await session.close()
+
+
+async def test_a_participant_input_whose_session_closed_answers_its_image_request_before_its_worker_returns(relay_url):
+    # Arrange: through a relay, a worker run by the bot's session receives alice, whose catalog has
+    # no camera, and a request for her camera waits; its callback takes 300 ms
+    room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
+    alice_session = await moq_wasm.connect(relay_url, verify_certificate=False)
+    bot_session = await moq_wasm.connect(relay_url, verify_certificate=False)
+    alice = await within(create_broadcast(alice_session, [*room, "alice"]).__aenter__())
+    catalog = alice.publish_track("catalog")
+    await within(alice.published())
+    await catalog.write(AUDIO_CATALOG, new_group=True)
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(bot_session, [*room, "alice"]), MoqWasmInputParams(video_in_enabled=True)
+    )
+    worker = PipelineWorker(Pipeline([participant_input]), cancel_on_idle_timeout=False)
+    answers: list[dict] = []
+
+    async def answered(result: dict) -> None:
+        await asyncio.sleep(0.3)
+        answers.append(result)
+
+    @worker.event_handler("on_pipeline_started")
+    async def on_pipeline_started(worker: PipelineWorker, frame: StartFrame) -> None:
+        await worker.queue_frame(UserImageRequestFrame(user_id="alice", result_callback=answered))
+
+    runner = WorkerRunner(handle_sigint=False)
+    await runner.add_workers(worker)
+    running = asyncio.create_task(bot_session.run(runner.run()))
+    receiver = participant_input._receiver
+    await until(lambda: receiver._catalog is not None and receiver._sampler("camera").requests())
+
+    # Act: the session's end starts the receiver's teardown, and the worker's cancel stops the input
+    await bot_session.close()
+    await within(asyncio.gather(running, return_exceptions=True))
+
+    # Assert
+    assert answers == [{"error": "alice left"}]
+    await alice.__aexit__(None, None, None)
+    await alice_session.close()
+
+
+class HeldCallback:
+    """An image request's `result_callback` that holds its answer until `finish` is set, recording
+    it, or "cancelled" when it was cancelled before."""
+
+    def __init__(self, outcomes: list):
+        self.outcomes = outcomes
+        self.delivering = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    async def __call__(self, result: dict) -> None:
+        self.delivering.set()
+        try:
+            await self.finish.wait()
+        except asyncio.CancelledError:
+            self.outcomes.append("cancelled")
+            raise
+        self.outcomes.append(result)
+
+
+async def test_an_end_frame_lets_the_timeout_answer_being_delivered_finish_before_the_stop_returns(monkeypatch):
+    # Arrange: a request for a camera alice's catalog has no track for timed out, and its callback
+    # holds the error it is given
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]), MoqWasmInputParams(video_in_enabled=True)
+    )
+    outcomes: list = []
+    held = HeldCallback(outcomes)
+    await within(start_alone(participant_input))
+    await within(participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=held)))
+    await within(held.delivering.wait())
+
+    # Act
+    stopping = asyncio.create_task(participant_input.stop(EndFrame()))
+    await asyncio.sleep(0.05)
+    stopped_while_delivering = stopping.done()
+    held.finish.set()
+    await within(stopping)
+
+    # Assert
+    assert not stopped_while_delivering
+    assert outcomes == [{"error": "alice has no camera track"}]
+    await within(participant_input.cleanup())
+    await session.close()
+
+
+async def test_a_release_retried_after_one_cancelled_while_answering_returns_once_every_request_was_answered():
+    # Arrange: two requests wait on alice's camera, which sends no picture; the first one's
+    # callback holds the release's error, and the release is cancelled meanwhile
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(video_in_enabled=True, video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}),
+    )
+    outcomes: list = []
+    held = HeldCallback(outcomes)
+
+    async def answered(result: dict) -> None:
+        outcomes.append(result)
+
+    await within(start_alone(participant_input))
+    await until(lambda: len(native.subscriptions) == 2)
+    for callback in (held, answered):
+        await within(participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=callback)))
+    releasing = asyncio.create_task(participant_input._receiver.release("camera"))
+    await within(held.delivering.wait())
+    releasing.cancel()
+    await asyncio.gather(releasing, return_exceptions=True)
+
+    # Act
+    retried = asyncio.create_task(participant_input._receiver.release("camera"))
+    await asyncio.sleep(0.05)
+    returned_while_answering = retried.done()
+    held.finish.set()
+    await within(retried)
+
+    # Assert
+    assert not returned_while_answering
+    assert outcomes == [{"error": "camera of alice released"}] * 2
+    await within(participant_input.cleanup())
+    await session.close()
+
+
+async def test_an_image_requests_error_callback_releasing_its_own_source_returns():
+    # Arrange: a request waits on alice's camera, which sends no picture; its callback releases
+    # the camera once it gets the error
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(video_in_enabled=True, video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}),
+    )
+    outcomes: list = []
+    released = asyncio.Event()
+
+    async def release_on_error(result: dict) -> None:
+        outcomes.append(result)
+        await participant_input._receiver.release("camera")
+        released.set()
+
+    await within(start_alone(participant_input))
+    await until(lambda: len(native.subscriptions) == 2)
+    request = UserImageRequestFrame(user_id="alice", result_callback=release_on_error)
+    await within(participant_input.request_image(request))
+
+    # Act: a release from outside answers the request
+    await within(participant_input._receiver.release("camera"))
+
+    # Assert
+    assert released.is_set()
+    assert outcomes == [{"error": "camera of alice released"}]
+    await within(participant_input.cleanup())
+    await session.close()
+
+
+async def test_two_timed_out_image_requests_whose_error_callbacks_release_their_source_both_return(monkeypatch):
+    # Arrange: two requests wait on alice's camera, which sends no picture; each one's callback
+    # releases the camera once both got their timeout error, so neither release answers the other
+    # request first
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(video_in_enabled=True, video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}),
+    )
+    answered: list[dict] = []
+    both_answered = asyncio.Event()
+    released: list[dict] = []
+
+    async def release_on_error(result: dict) -> None:
+        answered.append(result)
+        if len(answered) == 2:
+            both_answered.set()
+        await both_answered.wait()
+        await participant_input._receiver.release("camera")
+        released.append(result)
+
+    await within(start_alone(participant_input))
+    await until(lambda: len(native.subscriptions) == 2)
+
+    # Act
+    for _ in range(2):
+        await within(participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=release_on_error)))
+    await within(until(lambda: len(released) == 2))
+
+    # Assert
+    assert released == [{"error": "no picture of camera of alice came in time"}] * 2
+    await within(participant_input.stop(EndFrame()))
+    await within(participant_input.cleanup())
     await session.close()
 
 
@@ -1944,6 +2748,201 @@ async def test_an_image_request_is_answered_by_the_next_picture_of_a_source_rece
     await session.close()
 
 
+async def test_an_image_request_is_answered_by_the_newest_picture_and_not_by_the_older_ones_replayed_before_it():
+    # Arrange: the relay holds objects 0 to 2 of the current group, which the subscription replays
+    # for the decoder before the live object 3
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    frames = video_frames(4)
+    native.current_groups["video"] = [video_object(0, index, frames[index]) for index in range(3)]
+    native.tracks["video"] = [[video_object(0, 3, frames[3]), STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_sources={"camera": None}), sink)
+    request = UserImageRequestFrame(user_id="alice", text="what is there?")
+
+    # Act
+    await receiver.request_image(request)
+    running = asyncio.create_task(receiver.run())
+    await within(sink.received.wait())
+    await asyncio.sleep(0.2)
+
+    # Assert: the picture of object 2, the newest when the request was made, answered it
+    assert [(p.request, p.location.object_id) for p in sink.pictures] == [(request, 2)]
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_is_not_answered_by_a_delayed_group_older_than_the_pictures_seen_before_it():
+    # Arrange: a source passed on at every picture, whose group 3 arrives before group 2, delayed,
+    # and group 4
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    encoder = VideoEncoder("H264", *SIZE, 30)
+
+    def keyframe(value: int) -> bytes:
+        encoder.request_keyframe()
+        return b"".join(encoder.encode(picture(value), SIZE, "RGB"))
+
+    delayed = asyncio.Event()
+    native.tracks["video"] = [
+        [video_object(3, 0, keyframe(30)), delayed, video_object(2, 0, keyframe(20)), video_object(4, 0, keyframe(40)), STAY_OPEN]
+    ]
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(sink.pictures) == 1)
+    request = UserImageRequestFrame(user_id="alice", text="what is there?")
+
+    # Act
+    await receiver.request_image(request)
+    delayed.set()
+    await until(lambda: any(picture.request is request for picture in sink.pictures))
+
+    # Assert: the picture of group 4 answered the request, not the one of group 2
+    answering = next(picture for picture in sink.pictures if picture.request is request)
+    assert answering.location.group_id == 4
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_an_image_request_made_before_a_new_subscription_is_answered_by_its_pictures_from_group_0():
+    # Arrange: a source passed on at every picture, whose first subscription brings group 5 and
+    # ends, as when alice's page leaves; the page taking over starts its groups at 0 again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    first, second = (b"".join(VideoEncoder("H264", *SIZE, 30).encode(picture(value), SIZE, "RGB")) for value in (50, 0))
+    leaving = asyncio.Event()
+    native.tracks["video"] = [[video_object(5, 0, first), leaving], [video_object(0, 0, second), STAY_OPEN]]
+    sink = RecordingSink()
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+    running = asyncio.create_task(receiver.run())
+    await until(lambda: len(sink.pictures) == 1)
+    request = UserImageRequestFrame(user_id="alice", text="what is there?")
+
+    # Act
+    await receiver.request_image(request)
+    leaving.set()
+
+    # Assert
+    await until(lambda: any(picture.request is request for picture in sink.pictures))
+    answering = next(picture for picture in sink.pictures if picture.request is request)
+    assert answering.location.group_id == 0
+    running.cancel()
+    await within(asyncio.gather(running, return_exceptions=True))
+    await session.close()
+
+
+async def test_a_request_whose_picture_is_being_delivered_when_the_participant_leaves_gets_an_error():
+    # Arrange: the sink holds the picture answering the request
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[*video_frames(3), STAY_OPEN]]
+    sink = RecordingSink()
+    delivering = asyncio.Event()
+
+    async def push_picture(picture) -> bool:
+        delivering.set()
+        await asyncio.Event().wait()
+        return True
+
+    sink.push_picture = push_picture
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_sources={"camera": None}), sink)
+    request = UserImageRequestFrame(user_id="alice")
+    await receiver.request_image(request)
+    running = asyncio.create_task(receiver.run())
+    await within(delivering.wait())
+
+    # Act: alice leaves
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+
+    # Assert
+    assert sink.unanswered == [(request, "alice left")]
+    await session.close()
+
+
+async def test_a_request_whose_picture_a_paused_input_dropped_gets_an_error_after_a_while(monkeypatch):
+    # Arrange: a StopFrame paused the input before alice's camera sends its pictures
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.1)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    sending = asyncio.Event()
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[sending, *video_frames(3), STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(video_in_enabled=True, video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}),
+    )
+    await within(start_alone(participant_input))
+    await participant_input.pause(StopFrame())
+    results = []
+
+    async def result_callback(result) -> None:
+        results.append(result)
+
+    # Act
+    await participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=result_callback))
+    sending.set()
+    await asyncio.sleep(0.3)
+
+    # Assert
+    assert results == [{"error": "no picture of camera of alice came in time"}]
+    await within(participant_input.cleanup())
+    await session.close()
+
+
+async def test_a_request_whose_delivery_outlived_its_wait_and_whose_track_was_replaced_gets_an_error(monkeypatch):
+    # Arrange: the sink holds the picture answering the request past its wait; alice's second
+    # catalog renames her camera track, which sends no picture
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    renaming = asyncio.Event()
+    renamed = catalog_payload({"name": "camera2", "role": "video", "packaging": "loc", "codec": "avc1.42e01f", "bitrate": 1000000, "framerate": 30, "isLive": True})
+    native.tracks["catalog"] = [[VIDEO_CATALOG, renaming, renamed, STAY_OPEN]]
+    native.tracks["video"] = [[*video_frames(3), STAY_OPEN]]
+    native.tracks["camera2"] = [[STAY_OPEN]]
+    sink = RecordingSink()
+    delivering = asyncio.Event()
+
+    async def push_picture(picture) -> bool:
+        delivering.set()
+        await asyncio.Event().wait()
+        return True
+
+    sink.push_picture = push_picture
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_sources={"camera": None}), sink)
+    request = UserImageRequestFrame(user_id="alice")
+    await receiver.request_image(request)
+    running = asyncio.create_task(receiver.run())
+    await within(delivering.wait())
+    await asyncio.sleep(0.1)
+
+    # Act
+    renaming.set()
+    await asyncio.sleep(0.2)
+
+    # Assert
+    assert sink.unanswered == [(request, "no picture of camera of alice came in time")]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
 async def test_an_image_request_for_a_source_not_received_starts_receiving_that_track():
     # Arrange
     relay = FakeRelay()
@@ -1992,6 +2991,97 @@ async def test_a_request_for_someone_not_in_the_room_and_one_waiting_when_the_pa
     assert [error for _, error in sink.unanswered] == ["no participant carol", "bob left"]
     assert sink.unanswered[1][0] is waiting
     await room.stop("input")
+    await session.close()
+
+
+async def test_a_request_for_a_source_the_catalog_has_no_track_for_gets_an_error_after_a_while(monkeypatch):
+    # Arrange: alice's catalog has no video track
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[AUDIO_CATALOG, STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.01)
+    request = UserImageRequestFrame(user_id="alice", video_source="screen")
+
+    # Act
+    await receiver.request_image(request)
+    await asyncio.sleep(0.02)
+    waited = list(sink.unanswered)
+    await asyncio.sleep(0.1)
+
+    # Assert: alice is still in the room
+    assert waited == []
+    assert sink.unanswered == [(request, "alice has no screen track")]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+@pytest.mark.parametrize(
+    ("packaging", "codec"), [("cmaf", "avc1.42e01f"), ("loc", "xyz1")], ids=["not loc", "not decodable"]
+)
+async def test_a_named_video_track_the_transport_cannot_decode_is_not_subscribed_to(monkeypatch, packaging, codec):
+    # Arrange: alice's screen track is CMAF, or in a codec PyAV does not decode
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    screen = {"name": "screen", "role": "video", "packaging": packaging, "codec": codec, "bitrate": 1000000, "framerate": 30, "isLive": True}
+    native.tracks["catalog"] = [[catalog_payload(screen), STAY_OPEN]]
+    native.tracks["screen"] = [[STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.01)
+    request = UserImageRequestFrame(user_id="alice", video_source="screen")
+
+    # Act
+    await receiver.request_image(request)
+    await asyncio.sleep(0.1)
+
+    # Assert
+    assert ("subscribe", "screen") not in native.calls
+    assert sink.unanswered == [(request, "alice has no screen track")]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+@pytest.mark.parametrize(
+    ("catalogs", "error"),
+    [
+        ([], "alice has published no catalog"),
+        ([[VIDEO_CATALOG, STAY_OPEN]], "no picture of camera of alice came in time"),
+    ],
+    ids=["no catalog", "refused subscribe"],
+)
+async def test_a_request_no_picture_answers_gets_an_error_after_a_while(monkeypatch, catalogs, error):
+    # Arrange: alice publishes no catalog, or the relay refuses the SUBSCRIBE to her camera
+    monkeypatch.setattr(_participant, "IMAGE_REQUEST_TIMEOUT_SECONDS", 0.1)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = catalogs
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_in=True), sink)
+    running = asyncio.create_task(receiver.run())
+    request = UserImageRequestFrame(user_id="alice")
+
+    # Act
+    await receiver.request_image(request)
+    await asyncio.sleep(0.05)
+    waited = list(sink.unanswered)
+    await asyncio.sleep(0.2)
+
+    # Assert: alice is still in the room
+    assert waited == []
+    assert sink.unanswered == [(request, error)]
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
     await session.close()
 
 
@@ -2048,6 +3138,60 @@ async def test_a_captured_source_passes_pictures_until_it_is_released():
     running.cancel()
     await within(asyncio.gather(running, return_exceptions=True))
     await session.close()
+
+
+@pytest.mark.parametrize(
+    ("framerate", "on_request_only", "rate"),
+    [(15, False, 15), (None, False, float("inf")), (30, True, None), (0, False, None)],
+)
+async def test_capturing_a_participants_video_receives_it_at_the_framerate_pipecat_means(
+    monkeypatch, framerate, on_request_only, rate
+):
+    # Arrange: a framerate of 0 is pipecat's deprecated way to ask for request-only pictures
+    relay = FakeRelay()
+    session = await open_session(relay)
+    transport = MoqWasmTransport(session, MoqWasmParams(room=ROOM, video_in_enabled=True))
+    captured = []
+
+    async def capture(room, participant_id, source, rate):
+        captured.append((participant_id, source, rate))
+
+    monkeypatch.setattr(Room, "capture", capture)
+    deprecation._warned_sites.clear()
+
+    # Act
+    with warnings.catch_warnings(record=True) as warned:
+        warnings.simplefilter("always")
+        await transport.capture_participant_video("alice", framerate, on_request_only=on_request_only)
+
+    # Assert: the deprecation names the caller's line
+    assert captured == [("alice", "camera", rate)]
+    deprecated = [warning for warning in warned if issubclass(warning.category, DeprecationWarning)]
+    assert [warning.filename for warning in deprecated] == ([__file__] if framerate == 0 else [])
+    await session.close()
+
+
+def test_a_camera_captured_at_its_own_framerate_passes_on_as_many_jittery_pictures_as_pipecats_sampler(monkeypatch):
+    # Arrange: five seconds of a 29.97 fps camera whose pictures come up to 10 ms early or late,
+    # captured at 30 pictures a second
+    jitter = np.random.default_rng(31).uniform(-0.01, 0.01, 150)
+    arrivals = [100 + index / 29.97 + jitter[index] for index in range(150)]
+    sampler = _participant._Sampler(30)
+    clock = SimpleNamespace(now=0.0)
+    monkeypatch.setattr(video_in_sampler, "time", SimpleNamespace(time=lambda: clock.now))
+    pipecat_sampler = video_in_sampler._VideoInSampler(30)
+
+    # Act
+    passed = 0
+    pipecat_passed = 0
+    for index, arrival in enumerate(arrivals):
+        clock.now = arrival
+        passed += sampler.sample(arrival, (index // 30, index % 30))[0]
+        pipecat_passed += pipecat_sampler.sample()[0]
+
+    # Assert: pipecat's sampler drops at most a picture or two of them
+    assert pipecat_passed >= 148
+    assert passed >= pipecat_passed
 
 
 async def test_an_input_without_video_passes_image_requests_on_and_an_output_passes_on_messages_it_does_not_write():
@@ -3275,6 +4419,87 @@ async def test_a_request_waiting_on_a_track_that_does_not_decode_gets_its_failur
     assert [event[0] for event in sink.events].count("on_error") == 1
     running.cancel()
     await asyncio.gather(running, return_exceptions=True)
+    await session.close()
+
+
+async def raise_connection_error(result: dict) -> None:
+    raise ConnectionError("the bot's backend is gone")
+
+
+async def await_a_cancelled_future(result: dict) -> None:
+    """Raises CancelledError, as a callback awaiting what another task cancelled does."""
+    cancelled = asyncio.get_running_loop().create_future()
+    cancelled.cancel()
+    await cancelled
+
+
+@pytest.mark.parametrize("raising", [raise_connection_error, await_a_cancelled_future])
+async def test_a_raising_result_callback_leaves_the_other_requests_answered_and_the_failed_track_reported_and_retried(
+    monkeypatch, raising
+):
+    # Arrange: two requests wait on alice's camera, which sends H.264 without its parameter sets;
+    # the first one's callback raises
+    monkeypatch.setattr(_participant, "RETRY_DELAY_SECONDS", 0.05)
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[*undecodable_group(5), STAY_OPEN], [STAY_OPEN]]
+    participant_input = MoqWasmParticipantInput(
+        RemoteBroadcast(session, [*ROOM, "alice"]),
+        MoqWasmInputParams(video_in_enabled=True, video_in_sources={"camera": VideoInSourceParams(on_request_only=True)}),
+    )
+    errors: list[str] = []
+    answers: list[dict] = []
+
+    async def push_error(message: str, *args, **kwargs) -> None:
+        errors.append(message)
+
+    async def answered(result: dict) -> None:
+        answers.append(result)
+
+    monkeypatch.setattr(participant_input, "push_error", push_error)
+    for callback in (raising, answered):
+        await participant_input.request_image(UserImageRequestFrame(user_id="alice", result_callback=callback))
+
+    # Act
+    await within(start_alone(participant_input))
+    await until(lambda: len(native.subscriptions) == 3)
+
+    # Assert
+    assert answers == [{"error": "receiving video of alice failed"}]
+    assert errors == ["receiving video of alice failed"]
+    await within(participant_input.stop(EndFrame()))
+    await within(participant_input.cleanup())
+    await session.close()
+
+
+async def test_cancelling_the_answers_to_image_requests_stops_them_at_the_callback_being_awaited():
+    # Arrange: the first of two requests' callbacks waits
+    relay = FakeRelay()
+    session = await open_session(relay)
+    participant_input = MoqWasmParticipantInput(RemoteBroadcast(session, [*ROOM, "alice"]), MoqWasmInputParams())
+    called = asyncio.Event()
+    answers: list[dict] = []
+
+    async def wait(result: dict) -> None:
+        called.set()
+        await asyncio.Event().wait()
+
+    async def answered(result: dict) -> None:
+        answers.append(result)
+
+    requests = [UserImageRequestFrame(user_id="alice", result_callback=callback) for callback in (wait, answered)]
+    answering = asyncio.create_task(participant_input.answer_image_requests(requests, "alice left"))
+    await within(called.wait())
+
+    # Act
+    answering.cancel()
+    await asyncio.gather(answering, return_exceptions=True)
+
+    # Assert
+    assert answering.cancelled()
+    assert answers == []
     await session.close()
 
 
