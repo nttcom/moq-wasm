@@ -256,7 +256,6 @@ class _ReceivingInput(_OneRun, BaseInputTransport):
                     raise
                 logger.exception("the result_callback of an image request of %s failed", request.user_id)
 
-
     async def request_image(self, request: UserImageRequestFrame) -> None:
         raise NotImplementedError
 
