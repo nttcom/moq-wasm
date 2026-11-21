@@ -8,7 +8,7 @@ from moq_wasm import _native
 from moq_wasm._ended import copied
 from moq_wasm._errors import SessionEnded
 from moq_wasm._once import Once, wait_through_cancellation
-from moq_wasm._token import RefreshToken, TokenKeeper
+from moq_wasm._token import RefreshToken, TokenKeeper, read_claims
 
 logger = logging.getLogger("moq_wasm")
 
@@ -26,7 +26,8 @@ class SessionClosed(SessionEnded):
 class ConnectionLost(SessionEnded):
     """The relay connection ended, other than by `close()`, and the native session could not
     replace it: it stopped retrying after 60 s, or the relay closed it with a termination code other
-    than EXPIRED_AUTH_TOKEN. `close_info` is how the last connection closed. Raised by `Session.run`,
+    than EXPIRED_AUTH_TOKEN, or with EXPIRED_AUTH_TOKEN for a session connected without
+    `refresh_token`. `close_info` is how the last connection closed. Raised by `Session.run`,
     `Session.closed` and the requests made afterwards."""
 
     def __init__(self, message: str, close_info: _native.CloseInfo):
@@ -392,22 +393,20 @@ class Session:
             await self._end(error)
 
     async def _hand_over_token(self, token: str) -> None:
+        """Raises RuntimeError when the relay refuses the token, which the keeper retries. The
+        native session presents the token on its next connection all the same, until a later one
+        the relay accepts replaces it."""
         assert self._keeper is not None
-        try:
-            await self._native.refresh_token(token, app_id=self._keeper.app_id)
-        except RuntimeError as error:
-            # The relay ends the connection when its token expires, and the native session opens the
-            # next one with this token.
-            logger.warning("the relay refused the refreshed token: %s", error)
+        await self._native.refresh_token(token, app_id=self._keeper.app_id)
 
     async def _end(self, failure: BaseException | None) -> None:
         """Ends the session once, with `failure` or as closed, and waits until the session's own
         tasks finished, other than the one ending it, and the native session closed; a caller
         cancelled meanwhile leaves the close running for the next one to await. A task the shutdown
-        waits for, such as the token refresh that calls `close()` from its cleanup, returns at once
-        instead."""
+        waits for, such as a `refresh_token` call that calls `close()` from its cleanup, returns at
+        once instead."""
         current = asyncio.current_task()
-        if self._closing.started and current in self._joined:
+        if self._closing.started and self._waited_by_shutdown(current):
             return
         if not self._closing.started:
             if failure is None:
@@ -422,11 +421,19 @@ class Session:
                 task.cancel()
             for watch in self._watches:
                 watch._end()
-        await self._closing.run(self._shut_down)
+        await self._closing.run(lambda: self._shut_down(current))
 
-    async def _shut_down(self) -> None:
+    def _waited_by_shutdown(self, task: asyncio.Task | None) -> bool:
+        return task in self._joined or (self._keeper is not None and self._keeper.runs(task))
+
+    async def _shut_down(self, ending: asyncio.Task | None) -> None:
+        """Waits for the session's own tasks other than `ending`, the one that ended the session,
+        then closes the native session."""
         # A cancelled task may still run cleanup.
         await asyncio.gather(*self._joined, return_exceptions=True)
+        if self._keeper is not None:
+            # The calls of `refresh_token`, one abandoned at its deadline included, clean up too.
+            await self._keeper.stop(sparing=ending)
         await self._native.close()
 
 
@@ -443,12 +450,15 @@ async def _cancel_work(running: asyncio.Future) -> None:
 class _Connecting:
     """What `connect` returns: awaited, the open `Session`; used with `async with`, a session closed
     on exit, which re-raises what ended the session. Entering it while it is entered raises
-    RuntimeError without connecting, since one exit closes one session."""
+    RuntimeError without connecting, since one exit closes one session. Each session it opens
+    refreshes its own token, starting from the newest one the session opened before it holds."""
 
-    def __init__(self, dial: Dial, keeper: TokenKeeper | None, token: str | None):
+    def __init__(self, dial: Dial, token: str | None, refresh: RefreshToken | None = None):
         self._dial = dial
-        self._keeper = keeper
         self._token = token
+        self._refresh = refresh
+        # The keeper of the session opened last, whose token the next session starts from.
+        self._latest: TokenKeeper | None = None
         self._session: Session | None = None
         # From the start of `__aenter__` until its failure or the end of `__aexit__`.
         self._entered = False
@@ -457,8 +467,14 @@ class _Connecting:
         return self._start().__await__()
 
     async def _start(self) -> Session:
-        token = self._keeper.token if self._keeper is not None else self._token
-        return Session(await self._dial(token), self._keeper)
+        token = self._latest.token if self._latest is not None else self._token
+        # One keeper per session: two sessions sharing one would each take the token the other
+        # refreshed as not later than the current one, and end with TokenExpired.
+        keeper = TokenKeeper(token, self._refresh) if self._refresh is not None and token is not None else None
+        session = Session(await self._dial(token), keeper)
+        if keeper is not None:
+            self._latest = keeper
+        return session
 
     async def __aenter__(self) -> Session:
         if self._entered:
@@ -494,19 +510,32 @@ def connect(
     """Connects to a relay: `moqt://` over raw QUIC, `https://` over WebTransport, presenting
     `token` (a JWT) in CLIENT_SETUP. Use it with `async with`, or await it and call `close()`.
     A failure to connect raises RuntimeError, as does a relay that does not open the transport, or
-    answer CLIENT_SETUP once it is open, within 30 s.
+    answer CLIENT_SETUP once it is open, within 30 s. Without `refresh_token`, the session ends with
+    `ConnectionLost` once the relay closes it at the token's expiry.
 
     `refresh_token`, given with `token`, takes the current token and returns a later one of the
-    same app. The session calls it five minutes before the token's `exp`, retries every 30 s, and
-    ends with `TokenExpired` once the token expired. `versions` lists the drafts to offer, most
-    preferred first; without it draft-18, then draft-14, are offered."""
+    same app. The session calls it five minutes before the token's `exp`, or halfway through a
+    shorter lifetime. A call that raises, takes over 30 s or past the token's expiry together with
+    the relay's answer to its token (even one that caught its timeout and returned), or returns a
+    token of another app, one that does not expire later or one the relay refuses is retried with
+    the current token after 30 s, or half the time left, until the token expired; the session then
+    ends with `TokenExpired`. A call that ends cancelled while the session is not, as one awaiting a
+    shared future another task cancelled, is retried as well. A call is given up at its deadline,
+    however long its cleanup takes. `versions` lists the drafts to offer, most preferred first;
+    without it draft-18, then draft-14, are offered."""
     if refresh_token is not None and token is None:
         raise ValueError("refresh_token needs a token")
-    keeper = TokenKeeper(token, refresh_token) if refresh_token is not None and token is not None else None
+    if refresh_token is not None and token is not None:
+        # Raises ValueError for what is not a token before anything is dialed.
+        read_claims(token)
 
     async def dial(current_token: str | None) -> _native.Session:
         return await _native.connect(
-            url, verify_certificate=verify_certificate, token=current_token, versions=versions
+            url,
+            verify_certificate=verify_certificate,
+            token=current_token,
+            refreshes_token=refresh_token is not None,
+            versions=versions,
         )
 
-    return _Connecting(dial, keeper, token)
+    return _Connecting(dial, token, refresh_token)
