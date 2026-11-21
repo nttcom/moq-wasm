@@ -1,4 +1,5 @@
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -17,6 +18,8 @@ SIZE = (64, 48)
 FRAMERATE = 30
 # AAC-LC, 48 kHz, mono (ISO/IEC 14496-3 §1.6.2.1).
 AAC_LC_48K_MONO = bytes([0x11, 0x88])
+# The LOC Audio Level property (draft-ietf-moq-loc-04 §2.3.3.2).
+AUDIO_LEVEL_ID = 0x0C
 
 
 def picture(index: int) -> bytes:
@@ -240,7 +243,7 @@ async def test_a_subscriber_reads_a_rendition_in_another_codec_as_an_alternative
         await session.close()
 
 
-async def test_a_subscriber_gets_aac_audio_listed_with_its_codec(relay_url):
+async def test_a_subscriber_gets_aac_audio_listed_with_its_codec_and_loc_properties(relay_url):
     # Arrange
     namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
     publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
@@ -259,9 +262,13 @@ async def test_a_subscriber_gets_aac_audio_listed_with_its_codec(relay_url):
         audio = await within(subscriber.subscribe(namespace, catalog.select(role="audio").name))
         media.push_audio(b"aac frame 1", 21_333, level=30, voice_activity=True)
 
-        # Assert
+        # Assert: the frame comes with its LOC Timestamp, which the broadcast puts on the wall
+        # clock, and its Audio Level
         assert catalog.select(role="audio").codec == "mp4a.40.2"
-        assert (await within(anext(audio))).payload == b"aac frame 1"
+        received = await within(anext(audio))
+        assert received.payload == b"aac frame 1"
+        assert abs(received.timestamp_micros - time.time() * 1_000_000) < 60_000_000
+        assert (AUDIO_LEVEL_ID, 0x80 | 30) in received.extension_headers
         await catalogs.aclose()
     for session in (subscriber, publisher):
         await session.close()
