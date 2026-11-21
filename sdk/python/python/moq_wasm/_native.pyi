@@ -167,6 +167,8 @@ class NamespaceEvent:
 class NamespaceWatch(AsyncIterator[NamespaceEvent]):
     def __aiter__(self) -> NamespaceWatch: ...
     def __anext__(self) -> asyncio.Future[NamespaceEvent]: ...
+    def close(self) -> asyncio.Future[None]:
+        """UNSUBSCRIBE_NAMESPACE; a `__anext__` that waits stops the iteration."""
 
 class Location:
     @property
