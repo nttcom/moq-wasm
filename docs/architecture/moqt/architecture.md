@@ -494,7 +494,13 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
 - `connect(url)` returns `Connecting`, whose future performs the transport
   handshake and runs the SETUP exchange through `version::connect` (draft-14
   opens the bidirectional control stream, sends CLIENT_SETUP and awaits
-  SERVER_SETUP, version `0xff00000e`). `ClientConfig.authorization_token`, when
+  SERVER_SETUP, version `0xff00000e`). When SERVER_SETUP does not arrive
+  within 30 s of the exchange starting (`SERVER_SETUP_TIMEOUT`, as long as
+  quinn's idle timeout and the WebSocket dial timeout), the future closes the
+  connection with CONTROL_MESSAGE_TIMEOUT and fails, so a server that keeps
+  the transport alive but never answers does not hold `connect` forever. A
+  session following GOAWAY reconnects through the same exchange, within its
+  tighter 10 s `MIGRATION_TIMEOUT`. `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
   `USE_VALUE`, Token Type `0`, UTF-8 value). It is an
   `AuthorizationTokenSource`: a fixed string, or a provider that

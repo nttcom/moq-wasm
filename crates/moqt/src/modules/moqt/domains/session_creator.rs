@@ -28,6 +28,10 @@ const TRANSPORT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Nor does it end a connection whose peer never sends CLIENT_SETUP. The wait
 /// includes the client's token provider, which runs once the transport is open.
 const CLIENT_SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+/// Nor a client's wait for SERVER_SETUP from a server that answers keep-alives
+/// but not CLIENT_SETUP: 30 s, as long as quinn's default idle timeout and the
+/// WebSocket client's `DIAL_TIMEOUT`.
+const SERVER_SETUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
 #[error("peer closed the connection before SERVER_SETUP (code {code}: {reason})")]
@@ -338,14 +342,21 @@ impl<T: TransportProtocol> SessionCreator<T> {
             ),
             None => None,
         };
-        let (control, control_receiver) =
-            match version::connect(&transport_conn, &self.versions, token.as_deref(), target).await
-            {
-                Ok(established) => established,
-                Err(error) => {
-                    return Err(Self::explain_rejected_setup(&transport_conn, error).await);
-                }
-            };
+        let connecting =
+            version::connect(&transport_conn, &self.versions, token.as_deref(), target);
+        let (control, control_receiver) = match executor::timeout(SERVER_SETUP_TIMEOUT, connecting)
+            .await
+        {
+            Ok(Ok(established)) => established,
+            Ok(Err(error)) => {
+                return Err(Self::explain_rejected_setup(&transport_conn, error).await);
+            }
+            Err(()) => {
+                close_timed_out_setup(&transport_conn, &self.versions, "SERVER_SETUP timed out")
+                    .await?;
+                anyhow::bail!("the server sent no SERVER_SETUP within {SERVER_SETUP_TIMEOUT:?}")
+            }
+        };
         Ok((
             Connection::new(transport_conn, control, false, generation, event_sender),
             control_receiver,
@@ -433,9 +444,11 @@ mod tests {
             },
             test_support::{
                 DRAFTS, HANDSHAKE_TIMEOUT, TEST_VERSIONS, WEB_SOCKET_ONLY, capture_telemetry,
-                connected_sessions, native_client, native_client_with_config,
-                self_signed_server_config, slow_udp_path, spawn_connected_native_sessions,
-                spawn_native_server, spawn_native_server_handshake, udp_blocked_server, within,
+                client_with_config, connected_sessions, insecure_client_config, native_client,
+                native_client_with_config, self_signed_server_config, slow_udp_path,
+                spawn_connected_native_sessions, spawn_native_server,
+                spawn_native_server_handshake, spawn_native_server_handshake_offering,
+                udp_blocked_server, within,
             },
             transport::client_crypto::{client_crypto, client_endpoint, quic_client_config},
         },
@@ -948,5 +961,40 @@ mod tests {
             panic!("expected an application close, got {closed:?}");
         };
         assert_eq!(close.error_code, quinn::VarInt::from_u32(0x11));
+    }
+
+    #[tokio::test]
+    async fn a_server_that_sends_no_server_setup_fails_the_connect_after_the_deadline() {
+        for version in DRAFTS {
+            // Arrange: the server reads CLIENT_SETUP and never answers it
+            let (port, accept) =
+                spawn_native_server_handshake_offering("connect-silent-server", &[version]);
+            let url = format!("moqt://127.0.0.1:{port}");
+            let client = tokio::spawn(async move {
+                client_with_config(insecure_client_config(), version)
+                    .connect(&url)
+                    .await?
+                    .await
+            });
+            let _handshake = within(accept).await.unwrap();
+            tokio::time::pause();
+
+            // Act
+            let result =
+                tokio::time::timeout(super::SERVER_SETUP_TIMEOUT + HANDSHAKE_TIMEOUT, client)
+                    .await
+                    .expect("the client still waits for SERVER_SETUP")
+                    .unwrap();
+            tokio::time::resume();
+
+            // Assert
+            let Err(error) = result else {
+                panic!("a server without SERVER_SETUP was connected");
+            };
+            assert!(
+                format!("{error:#}").contains("no SERVER_SETUP"),
+                "{error:#}"
+            );
+        }
     }
 }
