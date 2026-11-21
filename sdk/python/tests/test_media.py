@@ -10,6 +10,7 @@ import weakref
 import pytest
 
 import moq_wasm
+from moq_wasm import codecs
 from moq_wasm.media import Catalog, CatalogTrack, EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
 from tests.fake_native import STAY_OPEN, FakeRelay, FakeWriter, called, open_session, until
@@ -1599,8 +1600,9 @@ async def test_follow_raises_the_cancellation_on_subscribed_raised_once_it_unsub
     await session.close()
 
 
-async def test_closing_a_follow_from_its_on_subscribed_callback_ends_it_once_it_unsubscribed():
-    # Arrange
+@pytest.mark.parametrize("iterator", ["follow", "follow_pictures"])
+async def test_closing_a_follow_from_its_on_subscribed_callback_ends_it_once_it_unsubscribed(iterator):
+    # Arrange: follow_pictures runs the callback in a read of the subscriptions its read awaits
     relay = FakeRelay()
     session = await open_session(relay)
     native = relay.sessions[0]
@@ -1612,7 +1614,10 @@ async def test_closing_a_follow_from_its_on_subscribed_callback_ends_it_once_it_
         assert following is not None
         await following.aclose()
 
-    following = remote.follow("camera", on_subscribed=on_subscribed)
+    if iterator == "follow":
+        following = remote.follow("camera", on_subscribed=on_subscribed)
+    else:
+        following = codecs.follow_pictures(remote, "camera", "avc1.42e01f", on_subscribed=on_subscribed)
 
     # Act / Assert
     with pytest.raises(StopAsyncIteration):
@@ -1642,7 +1647,8 @@ async def test_closing_subscriptions_from_its_on_subscribed_callback_ends_it_wit
     await session.close()
 
 
-async def test_a_task_the_on_subscribed_callback_starts_closes_the_follow_once_it_unsubscribed():
+@pytest.mark.parametrize("iterator", ["follow", "follow_pictures"])
+async def test_a_task_the_on_subscribed_callback_starts_closes_the_follow_once_it_unsubscribed(iterator):
     # Arrange: the callback starts a task closing the follow and returns
     relay = FakeRelay()
     session = await open_session(relay)
@@ -1658,7 +1664,10 @@ async def test_a_task_the_on_subscribed_callback_starts_closes_the_follow_once_i
     async def on_subscribed() -> None:
         closing.append(asyncio.ensure_future(close()))
 
-    following = remote.follow("camera", on_subscribed=on_subscribed)
+    if iterator == "follow":
+        following = remote.follow("camera", on_subscribed=on_subscribed)
+    else:
+        following = codecs.follow_pictures(remote, "camera", "avc1.42e01f", on_subscribed=on_subscribed)
 
     # Act
     with pytest.raises(StopAsyncIteration):

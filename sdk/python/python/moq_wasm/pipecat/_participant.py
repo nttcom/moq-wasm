@@ -8,7 +8,7 @@ from typing import Literal, Protocol
 from pipecat.frames.frames import UserImageRequestFrame
 
 from moq_wasm._native import Location
-from moq_wasm.codecs import DecodedPicture, OpusDecoder, VideoDecoder, decode_pictures
+from moq_wasm.codecs import DecodedPicture, OpusDecoder, VideoDecoder, follow_pictures
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 from moq_wasm.media._remote_broadcast import RESUBSCRIBE_DELAY_SECONDS
 
@@ -231,11 +231,9 @@ class ParticipantReceiver:
         """Decodes each subscription to the track afresh, as of a publisher that took over and
         starts its groups at 0 again."""
         sampler = self._sampler(source)
-        async with aclosing(self._remote.subscriptions(track.name)) as subscriptions:
-            async for objects in subscriptions:
-                async with aclosing(objects), aclosing(decode_pictures(objects, track.codec or "")) as pictures:
-                    async for decoded in pictures:
-                        await self._pass_picture(source, sampler, decoded)
+        async with aclosing(follow_pictures(self._remote, track.name, track.codec or "")) as pictures:
+            async for decoded in pictures:
+                await self._pass_picture(source, sampler, decoded)
 
     async def _pass_picture(self, source: str, sampler: "_Sampler", decoded: DecodedPicture) -> None:
         due, request = sampler.sample(decoded.decoded_at)
