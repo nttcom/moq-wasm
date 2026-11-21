@@ -347,13 +347,25 @@ class TrackWriter:
 class Announcement:
     """A namespace the session publishes until `close()`."""
 
-    def __init__(self, session: "Session", namespace: list[str]):
-        self.namespace = namespace
+    def __init__(self, session: "Session", namespace: list[str], *, owns: bool):
+        # Immutable, so a caller changing a list cannot redirect `close()`.
+        self._namespace = tuple(namespace)
         self._session = session
+        # Whether the withdrawal ends the session's ownership of the namespace, which a broadcast
+        # keeps instead until it was left.
+        self._owns = owns
+        self._closing: Once[None] = Once()
+
+    @property
+    def namespace(self) -> list[str]:
+        """A copy: changing it changes nothing the announcement does."""
+        return list(self._namespace)
 
     async def close(self) -> None:
-        """PUBLISH_NAMESPACE_DONE; the session stops publishing the namespace."""
-        await self._session._unannounce(self.namespace)
+        """PUBLISH_NAMESPACE_DONE; the session stops publishing the namespace. Does nothing once the
+        namespace was withdrawn, even when the session publishes it again since. Every call returns
+        once the PUBLISH_NAMESPACE_DONE was sent, even after one was cancelled."""
+        await self._closing.run(lambda: self._session._unannounce(self))
 
 
 class Session:
@@ -365,13 +377,17 @@ class Session:
     def __init__(self, native: _native.Session, keeper: TokenKeeper | None):
         self._native = native
         self._keeper = keeper
-        self._published: set[tuple[str, ...]] = set()
+        # The current announcement of each namespace the session publishes.
+        self._published: dict[tuple[str, ...], Announcement] = {}
         # The owner of each track the session publishes, so no other one of the session publishes
         # it, and closing one cannot end another's subscriptions.
         self._tracks: dict[tuple[tuple[str, ...], str], object] = {}
         # How the native origin keeps each track the session registered, as of its first
         # registration, for the session's life.
         self._registrations: dict[tuple[tuple[str, ...], str], _Registration] = {}
+        # The namespaces an announcement or a broadcast of the session owns, from its start until
+        # it finished withdrawing them, so no other one of the session publishes them meanwhile.
+        self._owned: set[tuple[str, ...]] = set()
         self._watches: set[NamespaceWatch] = set()
         # What `_end` calls with what ended the session: each ends a handle of the session.
         self._enders: set[Callable[[BaseException], None]] = set()
@@ -515,14 +531,32 @@ class Session:
         return watch
 
     async def announce(self, namespace: list[str]) -> Announcement:
-        """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it. Cancelled before it
-        returns, it withdraws the namespace once the relay answered, and a later announcement of the
-        namespace waits for that."""
+        """PUBLISH_NAMESPACE. Raises `RequestError` when the relay refuses it, and RuntimeError while
+        another announcement or broadcast of the session publishes the namespace, until it finished
+        withdrawing it. Cancelled before it returns, it withdraws the namespace once the relay
+        answered, and a later announcement of the namespace waits for that."""
         namespace = list(namespace)
-        return await self._announce(namespace, lambda native: native.announce(namespace))
+        self._raise_if_ended()
+        self._own(namespace)
+        try:
+            return await self._announce(namespace, lambda native: native.announce(namespace), owns=True)
+        except BaseException:
+            self._disown(namespace)
+            raise
+
+    def _own(self, namespace: list[str]) -> None:
+        """Raises RuntimeError while another announcement or broadcast of the session owns
+        `namespace`."""
+        key = tuple(namespace)
+        if key in self._owned:
+            raise RuntimeError(f"the session already publishes {namespace}")
+        self._owned.add(key)
+
+    def _disown(self, namespace: list[str]) -> None:
+        self._owned.discard(tuple(namespace))
 
     async def _announce(
-        self, namespace: list[str], request: Callable[[_native.Session], Awaitable[None]]
+        self, namespace: list[str], request: Callable[[_native.Session], Awaitable[None]], *, owns: bool
     ) -> Announcement:
         withdrawn = list(namespace)
         await self._acquire(
@@ -530,7 +564,7 @@ class Session:
             lambda: request(self._connected()),
             lambda _: self._native.unannounce(withdrawn),
         )
-        return self._announced(namespace)
+        return self._announced(namespace, owns=owns)
 
     async def _acquire(
         self, key: Hashable, request: Callable[[], Awaitable[T]], release: Callable[[T], Awaitable[None]]
@@ -713,23 +747,32 @@ class Session:
         self._registrations[key] = registration
         return registered
 
-    def _announced(self, namespace: list[str]) -> Announcement:
-        """Call once the relay accepted `namespace`."""
-        self._published.add(tuple(namespace))
-        return Announcement(self, namespace)
+    def _announced(self, namespace: list[str], *, owns: bool) -> Announcement:
+        announcement = Announcement(self, namespace, owns=owns)
+        self._published[tuple(namespace)] = announcement
+        return announcement
 
-    async def _unannounce(self, namespace: list[str]) -> None:
-        if tuple(namespace) not in self._published:
+    async def _unannounce(self, announcement: Announcement) -> None:
+        key = announcement._namespace
+        if self._published.get(key) is not announcement:
             return
-        self._published.discard(tuple(namespace))
-        if not self._done.done():
-            await self._native.unannounce(namespace)
+        del self._published[key]
+        try:
+            if not self._done.done():
+                await self._native.unannounce(announcement.namespace)
+        finally:
+            if announcement._owns:
+                self._disown(announcement.namespace)
 
     def _publishes(self, namespace: list[str]) -> bool:
-        """Whether the session publishes `namespace` or is still withdrawing it, as the relay may
-        forward the namespace before it answered the PUBLISH_NAMESPACE."""
+        """Whether the session publishes `namespace`, is publishing it or is still withdrawing it,
+        as the relay may forward the namespace before it answered the PUBLISH_NAMESPACE."""
         key = tuple(namespace)
-        return key in self._published or _namespace_key(namespace) in self._releases.values()
+        return (
+            key in self._owned
+            or key in self._published
+            or _namespace_key(namespace) in self._releases.values()
+        )
 
     async def run(self, work: Awaitable[T]) -> T:
         """Awaits `work`, cancelling it when the session ends and waiting for it to finish its
