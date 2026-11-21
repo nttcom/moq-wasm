@@ -49,9 +49,8 @@ impl CatalogTrack {
     /// would otherwise forward the SUBSCRIBE here. CMAF tracks wait for that
     /// SUBSCRIBE, so the uplink carries them only while someone watches them.
     ///
-    /// Sends do not overlap: `Origin::write_group` does not send a group
-    /// placed while another write on the track is in flight, and a snapshot
-    /// built earlier could otherwise be written last.
+    /// Sends do not overlap, so a snapshot built earlier cannot be written
+    /// last.
     pub(super) async fn send(&self, namespace_path: &str) -> Result<()> {
         let _sending = self.sending.lock().await;
         let catalog = {
