@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
 from moq_wasm import _native
+from moq_wasm._ended import copied
+from moq_wasm._errors import SessionEnded
 from moq_wasm._token import RefreshToken, TokenKeeper
 from moq_wasm._wait import wait
 
@@ -16,14 +18,16 @@ DEFAULT_PRIORITY = 128
 Dial = Callable[[str | None], Awaitable[_native.Session]]
 
 
-class SessionClosed(Exception):
-    """The session was closed with `close()` while `Session.run` waited."""
+class SessionClosed(SessionEnded):
+    """The session was closed with `close()`: raised by `Session.run` and by a request made
+    afterwards."""
 
 
-class ConnectionLost(Exception):
+class ConnectionLost(SessionEnded):
     """The relay connection ended, other than by `close()`, and the native session could not
     replace it: it stopped retrying after 60 s, or the relay closed it with a termination code other
-    than EXPIRED_AUTH_TOKEN. `close_info` is how the last connection closed."""
+    than EXPIRED_AUTH_TOKEN. `close_info` is how the last connection closed. Raised by `Session.run`,
+    `Session.closed` and the requests made afterwards."""
 
     def __init__(self, message: str, close_info: _native.CloseInfo):
         super().__init__(message)
@@ -345,9 +349,18 @@ class Session:
         await self._end(None)
 
     def _connected(self) -> _native.Session:
-        if self._done.done():
-            raise RuntimeError("the session closed")
+        """The native session; raises what ended the session once it ended, which is no
+        RuntimeError, so a loop that retries a refused request stops."""
+        self._raise_if_ended()
         return self._native
+
+    def _raise_if_ended(self) -> None:
+        if self._done.done():
+            raise copied(self._ended_with())
+
+    def _ended_with(self) -> BaseException:
+        """What ended the session, once it ended."""
+        return self._done.exception() or SessionClosed("the session was closed")
 
     async def _watch_connection(self) -> None:
         close_info = await self._native.closed()

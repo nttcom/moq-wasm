@@ -142,7 +142,7 @@ async def test_leaving_async_with_closes_the_connection_and_later_requests_fail(
 
     # Assert
     await within(relay.sessions[0].closed())
-    with pytest.raises(RuntimeError, match="the session closed"):
+    with pytest.raises(SessionClosed):
         await session.announce(NAMESPACE)
 
 
