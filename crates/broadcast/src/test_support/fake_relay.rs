@@ -279,15 +279,32 @@ impl FakeRelay {
         serde_json::from_slice(&newest.payload).unwrap()
     }
 
+    async fn track_receiver(&mut self, track_name: &str) -> DataReceiver {
+        loop {
+            let (name, receiver) = self.track_data.recv().await.unwrap();
+            if name == track_name {
+                return receiver;
+            }
+        }
+    }
+
+    pub(crate) async fn first_track_object(&mut self, track_name: &str) -> TrackObject {
+        tokio::time::timeout(TEST_TIMEOUT, async {
+            let receiver = self.track_receiver(track_name).await;
+            TrackReader::new(receiver)
+                .next_object()
+                .await
+                .unwrap()
+                .expect("the track must not end before its first object")
+        })
+        .await
+        .expect("an object of the track must arrive")
+    }
+
     /// The header of the first subgroup of the published track `track_name`.
     pub(crate) async fn first_subgroup_header(&mut self, track_name: &str) -> SubgroupStart {
         tokio::time::timeout(TEST_TIMEOUT, async {
-            let mut receiver = loop {
-                let (name, receiver) = self.track_data.recv().await.unwrap();
-                if name == track_name {
-                    break receiver;
-                }
-            };
+            let mut receiver = self.track_receiver(track_name).await;
             let TrackData::Subgroup(mut stream) = receiver.next().await.unwrap() else {
                 panic!("{track_name} must be sent on subgroup streams");
             };

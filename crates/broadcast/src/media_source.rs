@@ -309,11 +309,17 @@ fn demux(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::relay_connection::RelayConnection;
+    use moqt::Subscription;
 
-    fn source() -> MediaSource {
-        let broadcast = Broadcast::new(RelayConnection::new(None), vec!["ns".to_string()]);
+    use super::*;
+    use crate::{
+        broadcast::VIDEO_TRACK_NAME,
+        relay_connection::RelayConnection,
+        test_support::{FakeRelay, TEST_TIMEOUT},
+    };
+
+    fn source_on(connection: RelayConnection, on_demand: bool) -> MediaSource {
+        let broadcast = Broadcast::new(connection, vec!["live".to_string()]);
         MediaSource::new(
             broadcast,
             MediaSourceConfig {
@@ -323,9 +329,17 @@ mod tests {
                 video_bitrate: None,
                 video_framerate: None,
                 cmaf: false,
-                on_demand: true,
+                on_demand,
             },
         )
+    }
+
+    fn source() -> MediaSource {
+        source_on(RelayConnection::new(None), true)
+    }
+
+    fn vp8_keyframe() -> Bytes {
+        Bytes::from_static(&[0x00, 0x00, 0x00, 0x9d, 0x01, 0x2a, 64, 0, 48, 0])
     }
 
     #[tokio::test]
@@ -406,5 +420,115 @@ mod tests {
 
         // Assert: without a relay connection nothing is sent
         assert!(removed.is_ok(), "{removed:?}");
+    }
+
+    #[tokio::test]
+    async fn aac_accepts_mp4a_40_with_a_valid_audio_specific_config() {
+        // Arrange
+        let mut source = source();
+        let description = AudioSpecificConfig::new(2, 48_000, 1).to_bytes();
+
+        // Act
+        let result = source.configure_audio("mp4a.40.2", 48_000, 1, Some(&description));
+
+        // Assert
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[tokio::test]
+    async fn an_unsupported_audio_codec_with_an_audio_specific_config_is_invalid_media() {
+        // Arrange
+        let mut source = source();
+        let description = AudioSpecificConfig::new(2, 48_000, 1).to_bytes();
+
+        // Act
+        let result = source.configure_audio("aac", 48_000, 1, Some(&description));
+
+        // Assert
+        assert!(matches!(result, Err(MediaSourceError::InvalidMedia(_))));
+    }
+
+    #[tokio::test]
+    async fn push_audio_sends_the_audio_object_to_the_relay() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("media-source-audio");
+        let mut source = source_on(relay.connection(), false);
+        source.configure_audio("opus", 48_000, 1, None).unwrap();
+
+        // Act
+        source
+            .push_audio(Bytes::from_static(b"opus"), 0, None)
+            .unwrap();
+        let object = relay.first_track_object("audio").await;
+
+        // Assert
+        assert_eq!(object.payload.as_ref(), b"opus");
+    }
+
+    #[tokio::test]
+    async fn a_new_group_request_notifies_the_source_s_keyframe_requests() {
+        // Arrange
+        let mut relay = FakeRelay::spawn_draft18("media-source-new-group-request");
+        let mut source = source_on(relay.connection(), false);
+        let keyframe_requests = source.keyframe_requests();
+        source.configure_video("vp8").unwrap();
+        source.push_video(vp8_keyframe(), 0).unwrap();
+        let video = tokio::time::timeout(TEST_TIMEOUT, async {
+            loop {
+                let published = relay.published.recv().await.unwrap();
+                if matches!(&published, Subscription::PublisherInitiated(published) if published.track_name == VIDEO_TRACK_NAME)
+                {
+                    return published;
+                }
+            }
+        })
+        .await
+        .expect("the video must be published");
+        let relay_session = relay.session().await;
+
+        // Act
+        let sent = relay_session
+            .subscriber()
+            .request_new_group(&video, None)
+            .await
+            .unwrap();
+
+        // Assert
+        assert!(sent, "the video must be published with dynamic groups");
+        assert!(
+            tokio::time::timeout(TEST_TIMEOUT, keyframe_requests.notified())
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rendition_codec_the_broadcast_does_not_publish_is_invalid_media() {
+        // Arrange
+        let mut source = source();
+        let mut rendition = source.add_rendition("low", "low".to_string(), None, None);
+
+        // Act
+        let result = rendition.configure_video("h264");
+
+        // Assert
+        assert!(matches!(result, Err(MediaSourceError::InvalidMedia(_))));
+    }
+
+    #[tokio::test]
+    async fn a_rendition_sends_its_configured_video_to_the_relay() {
+        // Arrange
+        let mut relay = FakeRelay::spawn("media-source-rendition");
+        let mut source = source_on(relay.connection(), false);
+        let mut rendition = source.add_rendition("low", "low".to_string(), None, None);
+        let frame = vp8_keyframe();
+
+        // Act
+        rendition.configure_video("vp8").unwrap();
+        rendition.push_video(frame.clone(), 0).unwrap();
+        let object = relay.first_track_object("video_low").await;
+
+        // Assert
+        assert_eq!(object.payload, frame);
     }
 }
