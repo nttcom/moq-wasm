@@ -370,6 +370,9 @@ class Session:
         # The owner of each track the session publishes, so no other one of the session publishes
         # it, and closing one cannot end another's subscriptions.
         self._tracks: dict[tuple[tuple[str, ...], str], object] = {}
+        # How the native origin keeps each track the session registered, as of its first
+        # registration, for the session's life.
+        self._registrations: dict[tuple[tuple[str, ...], str], _Registration] = {}
         self._watches: set[NamespaceWatch] = set()
         # What `_end` calls with what ended the session: each ends a handle of the session.
         self._enders: set[Callable[[BaseException], None]] = set()
@@ -585,16 +588,17 @@ class Session:
         priority: int = DEFAULT_PRIORITY,
     ) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for
-        (`_native.Session.publish_track`). Register it before `announce`, since the relay may
-        forward a SUBSCRIBE at once; with `publish`, announce first. `priority` is the Publisher
-        Priority: among the session's tracks, a lower value is sent first. Raises what ended the
-        session once it ended, RuntimeError while another writer of the session publishes the track,
-        until its `close()` finished, ValueError when the track has an object and `datagram` is not
-        the delivery it sent it with, which it keeps, and for an invalid `retention_seconds`, which
-        registers nothing, and OverflowError for a `priority` outside 0-255. Cancelled before it
-        returns, it ends the track once registered, and keeps the track its own until then: a later
-        `publish_track` of the track waits for that, and another writer of the track is refused
-        meanwhile."""
+        (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
+        a SUBSCRIBE at once; with `publish`, announce first. `priority` is the Publisher Priority:
+        among the session's tracks, a lower value is sent first. Raises what ended the session once
+        it ended, RuntimeError while another writer of the session publishes the track, until its
+        `close()` finished, ValueError when `retention_seconds` is not the one the track was
+        registered with first in the session, which it keeps, when the track has an object and
+        `datagram` is not the delivery it sent it with, which it keeps, and for an invalid
+        `retention_seconds`, which registers nothing, and OverflowError for a `priority` outside
+        0-255. Cancelled before it returns, it ends the track once registered, and keeps the track
+        its own until then: a later `publish_track` of the track waits for that, and another writer
+        of the track is refused meanwhile."""
         self._raise_if_ended()
         await self._released(_published_track_key(tuple(namespace), name))
         self._raise_if_ended()
@@ -664,14 +668,7 @@ class Session:
             # Cancelled, it ends the track once registered, before another writer registers it.
             native = await self._acquire(
                 _published_track_key(writer._namespace, writer.name),
-                lambda: self._connected().publish_track(
-                    namespace,
-                    writer.name,
-                    retention_seconds=writer.retention_seconds,
-                    publish=writer.publish,
-                    datagram=writer.datagram,
-                    priority=writer.priority,
-                ),
+                lambda: self._publish_track(writer),
                 lambda _: self._native.end_track(namespace, writer.name),
             )
         except BaseException as error:
@@ -683,6 +680,39 @@ class Session:
         finally:
             writer._not_registering.set()
         await writer._bind(native)
+
+    async def _publish_track(self, writer: TrackWriter) -> _native.TrackWriter:
+        """`_native.Session.publish_track` for `writer`. Raises ValueError, before any native call,
+        when the writer asks for a retention other than the one the track was registered with first
+        in the session, which the native origin keeps; the native call raises ValueError for the
+        other delivery than the one the track sent its objects with. The registration is recorded
+        once the native origin registered the track: when it succeeded, and when only its PUBLISH
+        was refused, but not when the native call refused its arguments, as an invalid
+        `retention_seconds` or the other delivery, before registering anything."""
+        native = self._connected()
+        key = (writer._namespace, writer.name)
+        established = self._registrations.get(key)
+        if established is not None:
+            established.refuse_other_retention(writer)
+        registering = native.publish_track(
+            list(writer.namespace),
+            writer.name,
+            retention_seconds=writer.retention_seconds,
+            publish=writer.publish,
+            datagram=writer.datagram,
+            priority=writer.priority,
+        )
+        # The native origin takes the delivery of each registration, and keeps the retention of
+        # the first one.
+        registration = _Registration(writer.datagram, writer.retention_seconds)
+        try:
+            registered = await registering
+        except _native.RequestError:
+            # The relay refused the PUBLISH, which follows the track's registration.
+            self._registrations[key] = registration
+            raise
+        self._registrations[key] = registration
+        return registered
 
     def _announced(self, namespace: list[str]) -> Announcement:
         """Call once the relay accepted `namespace`."""
@@ -838,6 +868,23 @@ class Session:
             # The calls of `refresh_token`, one abandoned at its deadline included, clean up too.
             await self._keeper.stop(sparing=ending)
         await self._native.close()
+
+
+@dataclass(frozen=True)
+class _Registration:
+    """How the native origin keeps a track the session registered: with the delivery of its latest
+    registration and the retention of its first one, for the session's life."""
+
+    datagram: bool
+    retention_seconds: float
+
+    def refuse_other_retention(self, writer: TrackWriter) -> None:
+        """Raises ValueError when `writer` asks for another retention."""
+        if self.retention_seconds != writer.retention_seconds:
+            raise ValueError(
+                f"track {writer.name} of {writer.namespace} keeps its objects for "
+                f"{self.retention_seconds} s: register it again with retention_seconds={self.retention_seconds}"
+            )
 
 
 async def _cancel_work(running: asyncio.Future) -> None:
