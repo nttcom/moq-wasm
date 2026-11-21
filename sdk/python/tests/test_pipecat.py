@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import moq_wasm
-from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoEncoder, decode_pictures
+from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder, decode_pictures
 from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
@@ -126,6 +126,32 @@ def test_opus_encoded_speech_decodes_back_to_pcm():
     assert 0 < len(pcm) <= len(packets) * SAMPLE_RATE // 50 * 2
 
 
+def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
+    # Arrange: 200 ms of speech at 48 kHz
+    encoder = OpusEncoder()
+    packets = encoder.encode(tone(0.2, 48_000), 48_000)
+
+    # Act: 100 ms of silence at 16 kHz
+    packets += encoder.encode(bytes(2 * SAMPLE_RATE // 10), SAMPLE_RATE)
+
+    # Assert: 300 ms, less the samples short of a packet
+    assert len(packets) == 14
+
+
+@pytest.mark.parametrize("sample_rate", [0, -16_000, 16_000.0])
+def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder_goes_on(sample_rate):
+    # Arrange
+    encoder = OpusEncoder()
+    with pytest.raises(ValueError, match="sample rate"):
+        encoder.encode(tone(0.02), sample_rate)
+
+    # Act: 200 ms of speech at 16 kHz
+    packets = encoder.encode(tone(0.2), SAMPLE_RATE)
+
+    # Assert: nine 20 ms packets, the rest short of a packet; the refused PCM is taken as none
+    assert len(packets) == 9
+
+
 @pytest.mark.parametrize("codec", ["H264", "VP8"])
 def test_the_video_encoder_opens_with_a_keyframe_and_makes_one_on_request(codec):
     # Arrange
@@ -142,6 +168,87 @@ def test_the_video_encoder_opens_with_a_keyframe_and_makes_one_on_request(codec)
         return packet.startswith(b"\x00\x00\x00\x01\x67") if codec == "H264" else packet[0] & 1 == 0
 
     assert [is_keyframe(packet) for packet in (*first, *second, *requested)] == [True, False, True]
+
+
+@pytest.mark.parametrize(
+    ("color_format", "blue"),
+    [("RGB", b"\x00\x00\xff"), ("RGBA", b"\x00\x00\xff\xff"), ("BGR", b"\xff\x00\x00"), ("BGRA", b"\xff\x00\x00\xff")],
+)
+def test_the_video_encoder_reads_a_picture_in_each_color_format_it_takes(color_format, blue):
+    # Arrange
+    encoder = VideoEncoder("H264", *SIZE, 30)
+
+    # Act
+    packets = encoder.encode(blue * (SIZE[0] * SIZE[1]), SIZE, color_format)
+
+    # Assert: the picture decodes blue
+    decoder = VideoDecoder("avc1.42e01f")
+    decoded = [picture for packet in packets if (picture := decoder.decode(packet)) is not None]
+    red, green, blue_level = decoded[0].to_ndarray(format="rgb24").reshape(-1, 3).mean(axis=0)
+    assert blue_level > 200 and red < 60 and green < 60
+
+
+@pytest.mark.parametrize(
+    ("image", "color_format"),
+    [
+        (picture(0), "YUV"),
+        (picture(0)[:-1], "RGB"),
+        (picture(0), "RGBA"),
+        (picture(0) + b"\x00" * 3, "BGR"),
+        (memoryview(picture(0) * 2)[::2], "RGB"),
+        ("\x00" * len(picture(0)), "RGB"),
+    ],
+)
+def test_the_video_encoder_refuses_a_color_format_it_does_not_take_or_a_picture_of_another_length(image, color_format):
+    # Arrange
+    encoder = VideoEncoder("H264", *SIZE, 30)
+
+    # Act / Assert
+    with pytest.raises(ValueError):
+        encoder.encode(image, SIZE, color_format)
+
+
+def test_the_video_encoder_refuses_a_size_that_is_no_integers():
+    # Arrange
+    encoder = VideoEncoder("H264", *SIZE, 30)
+
+    # Act / Assert
+    with pytest.raises(ValueError, match="width and a height"):
+        encoder.encode(picture(0), (float(SIZE[0]), SIZE[1]), "RGB")
+
+
+@pytest.mark.parametrize("buffer", [bytearray, memoryview, lambda image: memoryview(image).cast("I")])
+def test_the_video_encoder_reads_a_picture_in_a_contiguous_buffer_other_than_bytes(buffer):
+    # Arrange
+    encoder = VideoEncoder("H264", *SIZE, 30)
+
+    # Act
+    packets = encoder.encode(buffer(picture(0)), SIZE, "RGB")
+
+    # Assert
+    assert packets[0].startswith(b"\x00\x00\x00\x01\x67")
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "framerate", "codec_string"),
+    [
+        (64, 48, 30, "avc1.42C00A"),
+        (1280, 720, 30, "avc1.42C01F"),
+        (1920, 1080, 30, "avc1.42C028"),
+        (1920, 1080, 60, "avc1.42C02A"),
+    ],
+)
+def test_the_h264_encoders_codec_string_names_the_profile_and_level_of_its_sps(width, height, framerate, codec_string):
+    # Arrange
+    encoder = VideoEncoder("H264", width, height, framerate)
+
+    # Act
+    keyframe = b"".join(encoder.encode(picture(0), SIZE, "RGB"))
+
+    # Assert: profile_idc, the constraint flags and level_idc follow the SPS's NAL unit header
+    sps = keyframe[keyframe.index(b"\x00\x00\x01\x67") + 4 :]
+    assert encoder.codec_string == codec_string
+    assert f"avc1.{sps[:3].hex().upper()}" == codec_string
 
 
 async def test_decoded_pictures_carry_the_location_of_their_object_and_are_thinned_out_by_the_interval():

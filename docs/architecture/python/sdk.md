@@ -407,7 +407,8 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   ends or its SUBSCRIBE fails, as when the publisher has not written it yet,
   until the participant leaves.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
-  `OutputImageRawFrame` with PyAV to `video_out_codec` (`"H264"` by default,
+  `OutputImageRawFrame` (`RGB`, `RGBA`, `BGR` or `BGRA`) with PyAV to
+  `video_out_codec` (`"H264"` by default,
   the codec the browser SDK publishes; `"VP8"` is royalty-free), at
   `video_out_width`, `video_out_height` and `video_out_framerate`, all
   fields of pipecat's `TransportParams`. Both are pushed into the transport's
@@ -495,6 +496,11 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   asyncio form of the browser SDK's `on_keyframe_request`. It and
   `demand_change()` raise RuntimeError once the broadcast was left or the
   session ended, so a loop awaiting them ends.
+- `configure_video` takes the codec of a codec string, its first element;
+  the catalog lists the codec string of the configuration the keyframes
+  carry, such as an H.264 SPS. `VideoEncoder.codec_string` names the same
+  profile and level, which the encoder picks as x264 does (the lowest that
+  takes its size and framerate) and writes into its SPS.
 - The source's methods are the browser SDK's `MediaSource` in snake_case,
   minus what WebCodecs does there:
 
