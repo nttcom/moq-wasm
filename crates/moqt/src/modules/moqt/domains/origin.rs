@@ -2845,6 +2845,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn write_outcome_returns_a_send_error_that_is_not_stop_sending() {
+        // Arrange
+        let key = track_key(NAMESPACE, TRACK);
+        let placement = Placement {
+            location: location(FIRST_GROUP_ID, 0),
+            starts_group: true,
+        };
+        let lost = Err::<bool, _>(TransportSendError::ConnectionLost {
+            reason: "lost".into(),
+        })
+        .context("send subgroup object");
+
+        // Act
+        let outcome = write_outcome(&key, placement, vec![lost]);
+
+        // Assert
+        assert!(matches!(
+            outcome
+                .as_ref()
+                .err()
+                .and_then(TransportSendError::in_chain),
+            Some(TransportSendError::ConnectionLost { .. })
+        ));
+    }
+
     #[tokio::test]
     async fn handle_serves_a_subscribe_to_a_track_it_has() {
         for version in DRAFTS {
