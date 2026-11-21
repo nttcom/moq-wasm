@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 from moq_wasm import _native
 from moq_wasm._once import Once, retrieve
+from moq_wasm._wait import wait
 
 if TYPE_CHECKING:
     from moq_wasm._session import Session
@@ -39,7 +40,7 @@ class _Reads(Generic[T]):
                 self._session._raise_if_ended()
                 self._pending = self._read()
             pending = self._pending
-            await asyncio.wait([pending, self._session._done], return_when=asyncio.FIRST_COMPLETED)
+            await wait([pending, self._session._done], return_when=asyncio.FIRST_COMPLETED)
             self._let_go()
             if self._session._done.done():
                 pending.cancel()

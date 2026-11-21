@@ -1,4 +1,6 @@
 import asyncio
+import gc
+import weakref
 
 import pytest
 
@@ -313,6 +315,27 @@ async def reader_after_one_object(subscriber: moq_wasm.Session, track: moq_wasm.
     await track.write(b"o0", new_group=True)
     await within(first)
     return objects
+
+
+async def test_a_task_that_read_an_object_is_not_kept_by_the_open_session_once_it_ended(relay_url):
+    # Arrange: a task read an object, and the subscriber's session stays open
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    reading = asyncio.create_task(read(objects))
+    await within(track.write(b"one", new_group=True))
+    await within(reading)
+    task = weakref.ref(reading)
+
+    # Act: once the step that took the task's result, whose handle holds the task, ended
+    del reading
+    await asyncio.sleep(0)
+    gc.collect()
+
+    # Assert
+    assert task() is None
+    await close_all(subscriber, publisher)
 
 
 async def test_closing_the_session_ends_a_waiting_read_with_session_closed(relay_url):
