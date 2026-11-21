@@ -9,6 +9,9 @@ const METADATA_TOKEN_URL: &str =
 const METADATA_IDENTITY_URL: &str =
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
 const REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(60);
+/// The metadata server is on the instance's own network; a request that takes
+/// this long is stuck.
+const METADATA_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The OAuth access token of the service account a Google Cloud workload runs
 /// as (Cloud Run, Compute Engine), read from the metadata server and kept until
@@ -48,6 +51,7 @@ impl MetadataToken {
         let response: TokenResponse = self
             .http
             .get(METADATA_TOKEN_URL)
+            .timeout(METADATA_TIMEOUT)
             .header("Metadata-Flavor", "Google")
             .send()
             .await?
@@ -75,6 +79,7 @@ pub async fn identity_token(http: &Client, audience: &str) -> anyhow::Result<Str
     )?;
     Ok(http
         .get(url)
+        .timeout(METADATA_TIMEOUT)
         .header("Metadata-Flavor", "Google")
         .send()
         .await?

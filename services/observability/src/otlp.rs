@@ -1,7 +1,11 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::{Context, bail};
 use serde_json::{Value, json};
+
+/// The collector acknowledges an export at once; one that takes this long is
+/// stuck.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
@@ -64,6 +68,7 @@ pub(crate) async fn post(
 ) -> anyhow::Result<()> {
     let response = http
         .post(endpoint)
+        .timeout(REQUEST_TIMEOUT)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
         .body(body)
         .send()
