@@ -259,12 +259,14 @@ could not choose reliability per subscription as it does with DELIVERY
 TIMEOUT.
 
 ### Recording and datasets
-The recorder's room archive (`format: "moq"`) already stores catalogs, LOC
-cameras and the event timelines a catalog lists, on one recording clock. It
-gains the event timelines of every broadcast in the room, so `state`,
-`control`, `episode` and each driver's `action` are archived
-next to the cameras. A robot room is recorded by starting the recorder bot
-in it, as for a meeting.
+The recorder's room archive (`format: "moq"`) stores catalogs, LOC cameras
+and the event timelines each catalog lists, on one recording clock. So every
+broadcast of the room lists its tracks in its catalog: the robot's `state`,
+`control` and `episode` (`Robot` offers them), each operator's `action` (the
+browser SDK's `createBroadcast` with `eventTimelines`) and the policy's
+`action`. The recorder records `<room>/bots/policy` as it records a
+participant, without counting it as one that keeps the room alive. A robot
+room is recorded by starting the recorder bot in it, as for a meeting.
 
 The exporter writes a LeRobot dataset (one episode per `episode` group:
 the observations at the dataset's fps, aligned by their timestamps, the action applied at each
