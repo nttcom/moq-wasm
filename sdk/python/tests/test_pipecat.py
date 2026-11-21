@@ -26,21 +26,39 @@ from moq_wasm.codecs import OpusDecoder, OpusEncoder, VideoDecoder, VideoEncoder
 from moq_wasm.media import RemoteBroadcast
 from moq_wasm.pipecat import MoqWasmInputParams, MoqWasmParams, MoqWasmParticipantInput, MoqWasmTrack, MoqWasmTransport
 from moq_wasm.pipecat import MoqWasmEventRecord, MoqWasmTrackMessage, MoqWasmTrackObject
+from moq_wasm.pipecat import _room
 from moq_wasm.pipecat._participant import ParticipantReceiver, ReceiveOptions
 from moq_wasm.pipecat._room import Room, RoomOptions
+from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
+from pipecat.clocks.system_clock import SystemClock
 from pipecat.frames.frames import (
+    CancelFrame,
+    EndFrame,
     ErrorFrame,
+    Frame,
+    StartFrame,
+    StopFrame,
+    InputTransportMessageFrame,
+    OutputAudioRawFrame,
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
+    TTSStoppedFrame,
     UserAudioRawFrame,
     UserImageRawFrame,
     UserImageRequestFrame,
 )
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker, ProcessorUnusablePolicy
 from pipecat.transports.base_transport import VideoInSourceParams
-from pipecat.processors.frame_processor import FrameDirection
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor, FrameProcessorSetup
+from pipecat.transports.base_input import BaseInputTransport
+from pipecat.transports.base_output import BaseOutputTransport
+from pipecat.utils.asyncio.task_manager import TaskManager
+from pipecat.workers.runner import WorkerRunner
 from pipecat.tests.utils import SleepFrame, run_test
 
-from tests.fake_native import STAY_OPEN, FakeRelay, FakeSubscription, open_session, until
+from tests.cancellation import cancel_as_it_resumes
+from tests.fake_native import STAY_OPEN, FakeRelay, FakeSubscription, open_session
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -52,6 +70,16 @@ SIZE = (64, 48)
 
 async def within(awaitable):
     return await asyncio.wait_for(awaitable, TIMEOUT_SECONDS)
+
+
+async def until(condition) -> None:
+    """Waits until `condition()` holds, for at most `TIMEOUT_SECONDS`."""
+
+    async def poll() -> None:
+        while not condition():
+            await asyncio.sleep(0.01)
+
+    await within(poll())
 
 
 def tone(seconds: float, sample_rate: int = SAMPLE_RATE) -> bytes:
@@ -152,32 +180,6 @@ def test_opus_encoded_speech_decodes_back_to_pcm():
     # Assert: the resampler keeps a few samples of the last packet, and the decoder drops Opus's pre-skip
     assert len(packets) == 4
     assert 0 < len(pcm) <= len(packets) * SAMPLE_RATE // 50 * 2
-
-
-def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
-    # Arrange: 200 ms of speech at 48 kHz
-    encoder = OpusEncoder()
-    packets = encoder.encode(tone(0.2, 48_000), 48_000)
-
-    # Act: 100 ms of silence at 16 kHz
-    packets += encoder.encode(bytes(2 * SAMPLE_RATE // 10), SAMPLE_RATE)
-
-    # Assert: 300 ms, less the samples short of a packet
-    assert len(packets) == 14
-
-
-@pytest.mark.parametrize("sample_rate", [0, -16_000, 16_000.0])
-def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder_goes_on(sample_rate):
-    # Arrange
-    encoder = OpusEncoder()
-    with pytest.raises(ValueError, match="sample rate"):
-        encoder.encode(tone(0.02), sample_rate)
-
-    # Act: 200 ms of speech at 16 kHz
-    packets = encoder.encode(tone(0.2), SAMPLE_RATE)
-
-    # Assert: nine 20 ms packets, the rest short of a packet; the refused PCM is taken as none
-    assert len(packets) == 9
 
 
 @pytest.mark.parametrize("codec", ["H264", "VP8"])
@@ -509,31 +511,6 @@ async def test_a_participants_audio_reaches_the_sink_with_its_participant_id():
     await session.close()
 
 
-async def test_a_refused_room_watch_reaches_on_error():
-    # Arrange
-    relay = FakeRelay()
-    session = await open_session(relay)
-    native = relay.sessions[0]
-
-    async def refuse(prefix: list[str]):
-        raise RuntimeError("NamespacePrefixOverlap")
-
-    native.watch_namespaces = refuse
-    sink = RecordingSink()
-    room = Room(session, room_options(audio_in=True), sink)
-
-    # Act
-    await room.start("input")
-    await within(sink.reported_error.wait())
-
-    # Assert
-    assert sink.events[0] == ("on_connected",)
-    name, message, error = sink.events[1]
-    assert (name, message, str(error)) == ("on_error", f"cannot watch {ROOM}", "NamespacePrefixOverlap")
-    await room.stop("input")
-    await session.close()
-
-
 async def test_a_participants_video_reaches_the_sink_as_pictures():
     # Arrange
     relay = FakeRelay()
@@ -556,6 +533,42 @@ async def test_a_participants_video_reaches_the_sink_as_pictures():
     assert (received.size, received.participant_id, received.video_source) == (SIZE, "alice", "camera")
     assert (received.location.group_id, received.location.object_id) == (0, 0)
     await room.stop("input")
+    await session.close()
+
+
+async def test_each_subscription_to_a_video_track_is_decoded_afresh():
+    # Arrange: the first subscription brings five groups with B-frames and ends, as when alice's
+    # page leaves; the page taking over restarts its groups at 0
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    groups = b_frame_groups(5, 6)
+    first = [(group_id, object_id, payload) for group_id, group in enumerate(groups) for object_id, (payload, _) in enumerate(group)]
+    second = [(0, object_id, payload) for object_id, (payload, _) in enumerate(groups[0])]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [first, [*second, STAY_OPEN]]
+    sink = RecordingSink()
+    by_subscription: dict[int, list] = {}
+
+    async def push_picture(picture) -> bool:
+        subscriptions = sum(1 for _, name in native.subscribed if name == "video")
+        by_subscription.setdefault(subscriptions, []).append(picture)
+        return True
+
+    sink.push_picture = push_picture
+    options = receive_options(video_sources={"camera": float("inf")})
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await within(until(lambda: len(by_subscription.get(2, [])) >= 4))
+
+    # Assert: the pictures the decoders held back came as the first subscription ended, and the
+    # second's group 0 was not taken as the first's
+    assert len(by_subscription[1]) == 30
+    assert {picture.location.group_id for picture in by_subscription[2]} == {0}
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
     await session.close()
 
 
@@ -652,6 +665,273 @@ async def test_the_bot_publishes_under_the_broadcast_it_names():
 
     # Assert
     assert ("media_announce", voice) in relay.sessions[0].calls
+    await session.close()
+
+
+async def test_the_second_processor_starting_the_room_waits_until_it_is_published():
+    # Arrange: the relay holds the PUBLISH_NAMESPACE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.announce_gate = asyncio.Event()
+    room = Room(session, room_options(data_out_tracks={"chat": 1.0}), RecordingSink())
+    first = asyncio.create_task(room.start("input"))
+    await asyncio.sleep(0.01)
+
+    # Act
+    second = asyncio.create_task(room.start("output"))
+    await asyncio.sleep(0.01)
+    waited = not second.done()
+    native.announce_gate.set()
+    await within(asyncio.gather(first, second))
+
+    # Assert
+    assert waited
+    await room.stop("input")
+    await room.stop("output")
+    await session.close()
+
+
+async def test_a_room_whose_only_starter_was_cancelled_does_not_open_after_it_stopped():
+    # Arrange: the relay holds the PUBLISH_NAMESPACE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.announce_gate = asyncio.Event()
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_in=True), sink)
+    starting = asyncio.create_task(room.start("input"))
+    await asyncio.sleep(0.01)
+
+    # Act: pipecat cancels the start, then stops the processor; the relay answers meanwhile
+    starting.cancel()
+    stopping = asyncio.create_task(room.stop("input"))
+    await asyncio.sleep(0.01)
+    native.announce_gate.set()
+    await within(asyncio.gather(starting, stopping, return_exceptions=True))
+    await asyncio.sleep(0.05)
+
+    # Assert: the namespace the relay accepted after the cancellation is withdrawn
+    assert ("on_connected",) not in sink.events
+    assert ("watch_namespaces", ROOM) not in native.calls
+    assert [call[0] for call in native.calls if call[0] in ("announce", "unannounce")] == ["announce", "unannounce"]
+    await session.close()
+
+
+async def test_a_room_whose_only_starter_was_cancelled_as_it_opened_closes():
+    # Arrange: the relay holds the PUBLISH_NAMESPACE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.announce_gate = asyncio.Event()
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_in=True), sink)
+    starting = asyncio.create_task(room.start("input"))
+    await asyncio.sleep(0.01)
+
+    # Act: pipecat cancels the start as the room finishes opening; nobody stops it after that
+    cancelled = cancel_as_it_resumes(starting)
+    native.announce_gate.set()
+    await within(cancelled)
+    await within(asyncio.gather(starting, return_exceptions=True))
+
+    # Assert
+    assert ("unannounce", [*ROOM, "bot"]) in native.calls
+    assert ("unsubscribe_namespace", ROOM) in native.calls
+    assert sink.events[-1] == ("on_disconnected",)
+    await session.close()
+
+
+async def test_a_room_started_again_while_its_stop_tears_it_down_opens_once_the_teardown_finished():
+    # Arrange: the relay holds the answer to the room watch's UNSUBSCRIBE_NAMESPACE back
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    room = Room(session, room_options(data_out_tracks={"chat": 1.0}), RecordingSink())
+    await within(room.start("output"))
+    native.watch_close_gate = asyncio.Event()
+    stopping = asyncio.create_task(room.stop("output"))
+    await asyncio.sleep(0.01)
+
+    # Act
+    restarting = asyncio.create_task(room.start("output"))
+    await asyncio.sleep(0.01)
+    started_during_teardown = restarting.done()
+    native.watch_close_gate.set()
+    await within(asyncio.gather(stopping, restarting))
+
+    # Assert: the old stop withdrew only its own broadcast, and the new one writes
+    assert not started_during_teardown
+    assert native.calls.count(("unannounce", [*ROOM, "bot"])) == 1
+    assert await room.write_message(MoqWasmTrackObject("chat", b"hello"))
+    await room.stop("output")
+    await session.close()
+
+
+async def test_a_room_whose_teardowns_fail_again_and_again_keeps_only_the_last_openings_encoders(monkeypatch):
+    # Arrange: the relay refuses to withdraw the room's broadcast, whose speech has an encoder
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+
+    async def refuse_unannounce(namespace: list[str]) -> None:
+        raise RuntimeError("withdrawal refused")
+
+    native.unannounce = refuse_unannounce
+    encoders: list[weakref.ref] = []
+
+    class TrackedEncoder(OpusEncoder):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            encoders.append(weakref.ref(self))
+
+    monkeypatch.setattr(_room, "OpusEncoder", TrackedEncoder)
+    room = Room(session, room_options(audio_out=True), RecordingSink())
+
+    # Act: the room opens and fails to close three times
+    for _ in range(3):
+        await within(room.start("output"))
+        with pytest.raises(RuntimeError, match="withdrawal refused"):
+            await within(room.stop("output"))
+    gc.collect()
+
+    # Assert: only the encoder of the opening whose teardown failed last, which a stop raises
+    assert len(encoders) == 3
+    assert sum(encoder() is not None for encoder in encoders) == 1
+    await session.close()
+
+
+async def test_a_room_whose_openings_and_rollbacks_fail_again_and_again_keeps_only_the_last_openings_encoders(
+    monkeypatch,
+):
+    # Arrange: the relay refuses the room watch, failing each opening, and the withdrawal of the
+    # broadcast, failing each opening's rollback
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.refuse_watch = True
+
+    async def refuse_unannounce(namespace: list[str]) -> None:
+        raise RuntimeError("withdrawal refused")
+
+    native.unannounce = refuse_unannounce
+    encoders: list[weakref.ref] = []
+
+    class TrackedEncoder(OpusEncoder):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            encoders.append(weakref.ref(self))
+
+    monkeypatch.setattr(_room, "OpusEncoder", TrackedEncoder)
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_out=True), sink)
+
+    # Act: the room fails to open, and to roll the opening back, three times; the application
+    # keeps none of the errors reported
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="withdrawal refused"):
+            await within(room.start("output"))
+    sink.events.clear()
+    gc.collect()
+
+    # Assert: only the encoder of the opening whose rollback failed last, which the room keeps
+    assert len(encoders) == 3
+    assert sum(encoder() is not None for encoder in encoders) == 1
+    await session.close()
+
+
+async def test_stopping_a_restart_that_waits_for_the_teardown_leaves_the_teardown_running():
+    # Arrange: the relay holds the answer to the room watch's UNSUBSCRIBE_NAMESPACE back while the
+    # room is started again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    room = Room(session, room_options(data_out_tracks={"chat": 1.0}), RecordingSink())
+    await within(room.start("output"))
+    native.watch_close_gate = asyncio.Event()
+    stopping = asyncio.create_task(room.stop("output"))
+    await asyncio.sleep(0.01)
+    restarting = asyncio.create_task(room.start("output"))
+    await asyncio.sleep(0.01)
+
+    # Act: the restart is stopped before the teardown finished, and the room is started once more
+    stopping_restart = asyncio.create_task(room.stop("output"))
+    await asyncio.sleep(0.01)
+    starting = asyncio.create_task(room.start("output"))
+    await asyncio.sleep(0.01)
+    started_during_teardown = starting.done()
+    native.watch_close_gate.set()
+    await within(asyncio.gather(stopping, restarting, stopping_restart, return_exceptions=True))
+    await within(starting)
+
+    # Assert: the teardown withdrew the broadcast before the room opened again
+    assert not started_during_teardown
+    assert native.calls.count(("unannounce", [*ROOM, "bot"])) == 1
+    assert await room.write_message(MoqWasmTrackObject("chat", b"hello"))
+    await room.stop("output")
+    await session.close()
+
+
+async def test_a_room_with_an_unsupported_video_codec_fails_its_start_with_the_configuration_error():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(video_out=True, video_out_codec="H266"), RecordingSink())
+
+    # Act / Assert
+    with pytest.raises(ValueError):
+        await within(room.start("output"))
+    await session.close()
+
+
+async def test_a_refused_room_watch_fails_both_processors_starts():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    relay.sessions[0].refuse_watch = True
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_in=True), sink)
+
+    # Act
+    results = await within(asyncio.gather(room.start("input"), room.start("output"), return_exceptions=True))
+
+    # Assert: the room is withdrawn and reported
+    assert [type(result) for result in results] == [RuntimeError, RuntimeError]
+    assert [event[0] for event in sink.events] == ["on_error"]
+    assert ("unannounce", [*ROOM, "bot"]) in relay.sessions[0].calls
+    await session.close()
+
+
+async def test_stopping_a_room_whose_start_failed_waits_until_it_withdrew_its_broadcast(relay_url):
+    # Arrange: the session watches the room, so the relay refuses the room's own watch once its
+    # broadcast was published, and the start is cancelled as the room withdraws that broadcast, as
+    # pipecat cancels a processor that reported an error
+    room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
+    session = await moq_wasm.connect(relay_url, verify_certificate=False)
+    watch = await within(session.watch_namespaces(room))
+    sink = RecordingSink()
+    failing = Room(session, room_options(room=room, audio_in=True, audio_out=True), sink)
+    starting = asyncio.create_task(failing.start("input"))
+
+    async def reported() -> None:
+        # Polled at every step: the withdrawal is under way from the step that reported the error.
+        while not sink.events:
+            await asyncio.sleep(0)
+
+    await within(reported())
+    starting.cancel()
+    await asyncio.gather(starting, return_exceptions=True)
+    # Sent before the fresh room's watch, which the relay would refuse as the room's.
+    unwatching = asyncio.ensure_future(watch.close())
+
+    # Act
+    await within(failing.stop("input"))
+
+    # Assert: a fresh room on the session publishes the same broadcast
+    fresh = Room(session, room_options(room=room, audio_in=True, audio_out=True), RecordingSink())
+    await within(fresh.start("input"))
+    await within(fresh.stop("input"))
+    await within(unwatching)
     await session.close()
 
 
@@ -961,6 +1241,50 @@ async def test_the_room_reports_when_no_participant_came_for_the_empty_timeout()
 
     # Assert
     assert ("on_room_empty",) in sink.events
+    await room.stop("input")
+    await session.close()
+
+
+async def test_a_room_receiving_nothing_reports_its_participants_and_when_it_is_empty_without_subscribing():
+    # Arrange: the bot only speaks
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_out=True, empty_timeout=0.1), sink)
+    await room.start("output")
+
+    # Act
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.05)
+    native.publish([*ROOM, "alice"], active=False)
+    await asyncio.sleep(0.3)
+
+    # Assert
+    assert [event for event in sink.events if event[0] != "on_connected"] == [
+        ("on_client_connected", "alice"),
+        ("on_client_disconnected", "alice"),
+        ("on_room_empty",),
+    ]
+    assert not [call for call in native.calls if call[0] in ("subscribe", "subscribe_current_group")]
+    await room.stop("output")
+    await session.close()
+
+
+async def test_the_room_does_not_report_empty_when_the_connection_is_lost():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    sink = RecordingSink()
+    room = Room(session, room_options(audio_in=True, empty_timeout=0.2), sink)
+    await room.start("input")
+
+    # Act
+    relay.sessions[0].drop()
+    await asyncio.sleep(0.4)
+
+    # Assert
+    assert ("on_room_empty",) not in sink.events
     await room.stop("input")
     await session.close()
 
@@ -1880,40 +2204,6 @@ async def test_a_request_waiting_on_a_track_that_does_not_decode_gets_its_failur
     # Assert
     assert sink.unanswered == [(request, "receiving video of alice failed")]
     assert [event[0] for event in sink.events].count("on_error") == 1
-async def test_each_subscription_to_a_video_track_is_decoded_afresh():
-    # Arrange: the first subscription brings five groups with B-frames and ends, as when alice's
-    # page leaves; the page taking over restarts its groups at 0
-    relay = FakeRelay()
-    session = await open_session(relay)
-    native = relay.sessions[0]
-    groups = b_frame_groups(5, 6)
-    first = [(group_id, object_id, payload) for group_id, group in enumerate(groups) for object_id, (payload, _) in enumerate(group)]
-    second = [(0, object_id, payload) for object_id, (payload, _) in enumerate(groups[0])]
-    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
-    native.tracks["video"] = [first, [*second, STAY_OPEN]]
-    sink = RecordingSink()
-    by_subscription: dict[int, list] = {}
-
-    async def push_picture(picture) -> bool:
-        subscriptions = sum(1 for _, name in native.subscribed if name == "video")
-        by_subscription.setdefault(subscriptions, []).append(picture)
-        return True
-
-    sink.push_picture = push_picture
-    options = receive_options(video_sources={"camera": float("inf")})
-    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), options, sink)
-
-    # Act
-    running = asyncio.create_task(receiver.run())
-    await within(until(lambda: len(by_subscription.get(2, [])) >= 4))
-
-    # Assert: the pictures the decoders held back came as the first subscription ended, and the
-    # second's group 0 was not taken as the first's
-    assert len(by_subscription[1]) == 30
-    assert {picture.location.group_id for picture in by_subscription[2]} == {0}
-    running.cancel()
-    await asyncio.gather(running, return_exceptions=True)
-    await session.close()
 
 
 async def test_pictures_of_groups_whose_objects_interleave_are_all_decoded():
@@ -1952,3 +2242,29 @@ async def test_the_pictures_a_group_holds_back_come_at_its_end_of_group():
     values = [round(d.picture.to_ndarray(format="rgb24").mean() / 10) * 10 for d in decoded]
     assert values == [index * 10 for index in range(6)]
     await pictures.aclose()
+
+
+def test_the_opus_encoder_takes_pcm_at_another_rate_than_the_call_before():
+    # Arrange: 200 ms of speech at 48 kHz
+    encoder = OpusEncoder()
+    packets = encoder.encode(tone(0.2, 48_000), 48_000)
+
+    # Act: 100 ms of silence at 16 kHz
+    packets += encoder.encode(bytes(2 * SAMPLE_RATE // 10), SAMPLE_RATE)
+
+    # Assert: 300 ms, less the samples short of a packet
+    assert len(packets) == 14
+
+
+@pytest.mark.parametrize("sample_rate", [0, -16_000, 16_000.0])
+def test_pcm_at_a_sample_rate_the_encoder_cannot_take_is_refused_and_the_encoder_goes_on(sample_rate):
+    # Arrange
+    encoder = OpusEncoder()
+    with pytest.raises(ValueError, match="sample rate"):
+        encoder.encode(tone(0.02), sample_rate)
+
+    # Act: 200 ms of speech at 16 kHz
+    packets = encoder.encode(tone(0.2), SAMPLE_RATE)
+
+    # Assert: nine 20 ms packets, the rest short of a packet; the refused PCM is taken as none
+    assert len(packets) == 9

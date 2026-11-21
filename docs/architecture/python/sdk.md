@@ -656,7 +656,18 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   of the transport dialing the relay. The input and the output processors
   share one room: the first `StartFrame` publishes the transport's broadcast
   and starts following the participants, and the last `EndFrame` or
-  `CancelFrame` withdraws it. `on_connected` and `on_disconnected` mark those
+  `CancelFrame` withdraws it.
+  Each opening of the room owns what it opened, and a room started
+  again while its teardown runs opens once that teardown finished; stopping
+  that start before it opened leaves the teardown running, and the next
+  start waits for it as well; a start
+  cancelled as the room opened, by its last processor, closes it. Both processors become ready only once the
+  relay accepted the broadcast and the room's SUBSCRIBE_NAMESPACE. A room
+  that cannot open fires `on_error` and withdraws what it opened, as a
+  broadcast the relay accepted before refusing the room's
+  SUBSCRIBE_NAMESPACE: that withdrawal is the room's teardown, which the
+  processors' `stop`, `cancel` and `cleanup` and the next start wait for,
+  also when pipecat cancelled the start during it. `on_connected` and `on_disconnected` mark those
   two moments; `on_track_subscribed` takes a `MoqWasmTrack` (participant id,
   track name, `audio` or `video`).
 - **Peers.** Every broadcast one level under `room` is a participant, its last
@@ -718,7 +729,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `MoqWasmEventRecord` appends a record to one of `event_timelines_out`;
   both are tracks of the transport's broadcast, each with the seconds it
   keeps for FETCH. Other messages, such as RTVI's, are logged and dropped.
-- **Room lifetime.** With `empty_timeout`, `on_room_empty` fires once no
+- **Room lifetime.** A transport follows its room even when it receives
+  nothing, as a bot that only speaks, so `on_client_connected`,
+  `on_client_disconnected` and `on_room_empty` fire; it subscribes to no
+  track of a participant then. With `empty_timeout`, `on_room_empty` fires once no
   participant has been in the room for that many seconds, and the transport
   stops following it. A participant's catalog is read again a second after it
   ends or its SUBSCRIBE fails, as when the publisher has not written it yet,

@@ -51,10 +51,6 @@ class ReceiveOptions:
     def receives_media(self) -> bool:
         return self.audio_in or self.video_in or bool(self.video_sources)
 
-    @property
-    def receives_anything(self) -> bool:
-        return self.receives_media or bool(self.data_tracks)
-
 
 @dataclass(frozen=True)
 class ReceivedPicture:
