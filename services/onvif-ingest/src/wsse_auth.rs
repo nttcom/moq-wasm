@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose, Engine as _};
-use rand::{rngs::SysRng, TryRng};
+use base64::{Engine as _, engine::general_purpose};
+use rand::{TryRng, rngs::SysRng};
 use sha1::{Digest, Sha1};
-use time::{macros::format_description, OffsetDateTime};
+use time::{OffsetDateTime, macros::format_description};
 
 const PASSWORD_DIGEST_TYPE: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest";
 const NONCE_ENCODING: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary";

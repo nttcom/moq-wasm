@@ -1,9 +1,9 @@
 use std::sync::mpsc::Sender;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use moqt::{
-    client::{FollowEvent, Session},
     ClientConfig,
+    client::{FollowEvent, Session},
 };
 use tokio::task::JoinHandle;
 
@@ -44,10 +44,10 @@ impl CommandSubscriber {
         let task = tokio::spawn(async move {
             let _session = session;
             while let Some(event) = follower.next().await {
-                if let FollowEvent::Object(object) = event {
-                    if let Err(err) = handle_command_payload(&object.payload, &command_sender) {
-                        tracing::warn!("command payload error: {err}");
-                    }
+                if let FollowEvent::Object(object) = event
+                    && let Err(err) = handle_command_payload(&object.payload, &command_sender)
+                {
+                    tracing::warn!("command payload error: {err}");
                 }
             }
             bail!("command session ended")

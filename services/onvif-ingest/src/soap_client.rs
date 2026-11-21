@@ -1,7 +1,7 @@
 use crate::app_config::Target;
 use crate::onvif_requests::OnvifRequest;
 use crate::wsse_auth;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use reqwest::Client;
 
 pub(crate) fn build(target: &Target) -> Result<Client> {

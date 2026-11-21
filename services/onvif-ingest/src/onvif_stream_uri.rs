@@ -1,5 +1,5 @@
 use crate::{onvif_client::OnvifClient, onvif_requests, ptz_config::find_text};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use roxmltree::Document;
 
 pub(crate) async fn fetch(onvif: &OnvifClient, profile_token: &str) -> Result<String> {
