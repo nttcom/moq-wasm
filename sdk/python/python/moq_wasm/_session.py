@@ -443,13 +443,16 @@ async def _cancel_work(running: asyncio.Future) -> None:
 
 class _Connecting:
     """What `connect` returns: awaited, the open `Session`; used with `async with`, a session closed
-    on exit, which re-raises what ended the session."""
+    on exit, which re-raises what ended the session. Entering it while it is entered raises
+    RuntimeError without connecting, since one exit closes one session."""
 
     def __init__(self, dial: Dial, keeper: TokenKeeper | None, token: str | None):
         self._dial = dial
         self._keeper = keeper
         self._token = token
         self._session: Session | None = None
+        # From the start of `__aenter__` until its failure or the end of `__aexit__`.
+        self._entered = False
 
     def __await__(self) -> Generator[Any, None, Session]:
         return self._start().__await__()
@@ -459,15 +462,26 @@ class _Connecting:
         return Session(await self._dial(token), self._keeper)
 
     async def __aenter__(self) -> Session:
-        self._session = await self._start()
+        if self._entered:
+            raise RuntimeError("the connection is already entered with async with")
+        self._entered = True
+        try:
+            self._session = await self._start()
+        except BaseException:
+            self._entered = False
+            raise
         return self._session
 
     async def __aexit__(self, *exc_info: object) -> None:
         assert self._session is not None
         session = self._session
-        await session.close()
-        if exc_info[0] is None and session._done.exception() is not None:
-            raise session._done.exception()
+        try:
+            await session.close()
+        finally:
+            self._session = None
+            self._entered = False
+        if exc_info[0] is None and (failure := session._done.exception()) is not None:
+            raise failure
 
 
 def connect(
