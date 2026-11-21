@@ -3,29 +3,21 @@ mod robot_task;
 #[cfg(test)]
 mod test_support;
 
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-    time::{SystemTime, UNIX_EPOCH},
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
 use anyhow::{Context, Result, ensure};
 use broadcast::Broadcast;
-use bytes::Bytes;
-use moqt::{
-    client,
-    publish::{GroupBoundary, OutgoingObject},
-};
-use serde::Serialize;
+use moqt::{client, publish::GroupBoundary};
 use serde_json::{Map, Value};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     arbiter::{ArbiterConfig, HoldReason},
-    record::{Record, State, encode_object},
-    tracks::TrackKind,
+    record::State,
+    tracks::{TrackKind, write_record},
 };
 use robot_task::{Request, RobotLoop, RobotTask};
 
@@ -171,30 +163,6 @@ impl Robot {
             .await
             .context("the robot's relay session has ended")?
     }
-}
-
-/// Sends `data` as one record of `kind` on `broadcast`, stamped now.
-async fn write_record<D: Serialize>(
-    broadcast: &Broadcast,
-    kind: TrackKind,
-    group: GroupBoundary,
-    data: D,
-) -> Result<()> {
-    let payload = encode_object(&Record { t: now_ms(), data })?;
-    broadcast
-        .send_object(
-            kind.name(),
-            OutgoingObject::plain(group, Bytes::from(payload)),
-        )
-        .await?;
-    Ok(())
-}
-
-/// The robot's wall clock in milliseconds since the Unix epoch.
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_millis() as u64)
 }
 
 #[cfg(test)]
