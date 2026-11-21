@@ -233,6 +233,12 @@ SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 origin keeps the delivery a track sent its objects with: registering it
 again with the other `datagram` switches a track that has no object yet and
 raises ValueError, from the native call, for one that has. A
+`subscribe*`, `watch_namespaces`, `publish_track` or `announce` cancelled
+before it returns, as by a timeout, keeps its native request running: once
+the relay accepts it, the session unsubscribes, ends the track (PUBLISH_DONE)
+or withdraws it, so nothing stays active without an owner, and a later
+watch of the prefix, writer of the track or announcement of the namespace
+waits for that. A
 `TrackWriter` has `write` and `write_group`, which return the group id an
 object went into when a subscriber took it, and `next_subscriber`; its
 objects carry no extension headers. A `Subscription` iterates its objects, or its subgroup streams
