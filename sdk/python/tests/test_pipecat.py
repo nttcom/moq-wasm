@@ -1445,7 +1445,7 @@ async def test_each_subscription_to_a_video_track_is_decoded_afresh():
 
     # Act
     running = asyncio.create_task(receiver.run())
-    await within(until(lambda: len(by_subscription.get(2, [])) >= 4))
+    await until(lambda: len(by_subscription.get(2, [])) >= 4)
 
     # Assert: the pictures the decoders held back came as the first subscription ended, and the
     # second's group 0 was not taken as the first's
