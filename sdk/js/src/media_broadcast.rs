@@ -11,10 +11,6 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::future_to_promise;
 
 use crate::{anyhow_error, js_error, log_sink::SessionScope};
-
-/// The Publisher Priority of a track the page sets none for, as in
-/// `Session.publishTrack`.
-const DEFAULT_PRIORITY: u8 = 128;
 use demand_task::DemandTask;
 use keyframe_request_task::KeyframeRequestTask;
 
@@ -85,10 +81,10 @@ impl MediaBroadcast {
     }
 
     /// Lists `name` in the catalog as a JSON event timeline
-    /// (draft-ietf-moq-msf-02 §8) whose records' `data` `event_type`
-    /// defines; write it with `Session.publishTrack`. Its subgroups carry
-    /// `priority`, 128 when absent. Offering a name again replaces its
-    /// entry. Fails once the relay session has ended.
+    /// (draft-ietf-moq-msf-02 §8) whose records' `data` is of `event_type`.
+    /// Write it with `Session.publishTrack` given the same `priority`, 128
+    /// when absent, since that call sets the track's priority again. Offering
+    /// a name again replaces its entry. Fails once the relay session has ended.
     #[wasm_bindgen(js_name = offerEventTimeline)]
     pub fn offer_event_timeline(
         &self,
@@ -104,7 +100,10 @@ impl MediaBroadcast {
         track.mime_type = Some("application/json".to_string());
         future_to_promise(self.scope.scoped(async move {
             broadcast
-                .offer_event_timeline(track, priority.unwrap_or(DEFAULT_PRIORITY))
+                .offer_event_timeline(
+                    track,
+                    priority.unwrap_or(moqt::client::PublishTrackOptions::default().priority),
+                )
                 .await
                 .map(|()| JsValue::UNDEFINED)
                 .map_err(anyhow_error)
