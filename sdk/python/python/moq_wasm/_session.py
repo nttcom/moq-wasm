@@ -7,6 +7,7 @@ from typing import Any, Literal, TypeVar
 from moq_wasm import _native
 from moq_wasm._ended import copied
 from moq_wasm._errors import SessionEnded
+from moq_wasm._once import Once, wait_through_cancellation
 from moq_wasm._token import RefreshToken, TokenKeeper
 from moq_wasm._wait import wait
 
@@ -167,6 +168,9 @@ class Session:
         self._published: set[tuple[str, ...]] = set()
         self._watches: list[NamespaceWatch] = []
         self._done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._closing: Once[None] = Once()
+        # The session's own tasks the shutdown waits for.
+        self._joined: list[asyncio.Task] = []
         self._tasks = [asyncio.create_task(self._watch_connection())]
         if keeper is not None:
             self._tasks.append(asyncio.create_task(self._keep_token_fresh(keeper)))
@@ -324,19 +328,34 @@ class Session:
         return tuple(namespace) in self._published
 
     async def run(self, work: Awaitable[T]) -> T:
-        """Awaits `work`, cancelling it when the session ends. Raises what ended the session, such as
-        `ConnectionLost` or `moq_wasm.TokenExpired`, or `SessionClosed` after `close()`."""
+        """Awaits `work`, cancelling it when the session ends and waiting for it to finish its
+        cleanup, such as a pipeline's. Raises what ended the session, such as `ConnectionLost` or
+        `moq_wasm.TokenExpired`, or `SessionClosed` after `close()`; called once the session ended,
+        it raises that without starting `work`, closing it when it is a coroutine, and cancelling
+        it, and waiting for its cleanup, when it is a task or a future already scheduled. Cancelled,
+        it cancels `work` and raises the cancellation once `work` finished, even when cancelled again
+        while `work` cleans up. The wait covers `work` itself, not what it started: a future that
+        finishes before its children, as `asyncio.gather`'s does once one of them ended cancelled,
+        leaves the others cleaning up, so run several workers in one coroutine that starts them in
+        an `asyncio.TaskGroup`, which waits for every one and raises their failures inside an
+        `ExceptionGroup`, which `except*` catches."""
+        if self._done.done():
+            if asyncio.iscoroutine(work):
+                work.close()
+            elif asyncio.isfuture(work):
+                await _cancel_work(work)
+            self._raise_if_ended()
         running = asyncio.ensure_future(work)
         try:
             await wait([running, self._done], return_when=asyncio.FIRST_COMPLETED)
             # A failure also ends the watches, so `work` may have returned because of it.
-            if self._done.done() and self._done.exception() is not None:
-                raise self._done.exception()
+            if self._done.done() and (failure := self._done.exception()) is not None:
+                raise failure
             if running.done():
                 return running.result()
             raise SessionClosed("the session was closed")
         finally:
-            running.cancel()
+            await _cancel_work(running)
 
     async def closed(self) -> None:
         """Waits until the session ends: `close()`, or a failure, which this raises."""
@@ -370,7 +389,8 @@ class Session:
         try:
             await keeper.keep_fresh(self._hand_over_token)
         except Exception as error:
-            asyncio.create_task(self._end(error))
+            # `_end` cancels the other tasks, not this one.
+            await self._end(error)
 
     async def _hand_over_token(self, token: str) -> None:
         assert self._keeper is not None
@@ -382,20 +402,43 @@ class Session:
             logger.warning("the relay refused the refreshed token: %s", error)
 
     async def _end(self, failure: BaseException | None) -> None:
-        if self._done.done():
+        """Ends the session once, with `failure` or as closed, and waits until the session's own
+        tasks finished, other than the one ending it, and the native session closed; a caller
+        cancelled meanwhile leaves the close running for the next one to await. A task the shutdown
+        waits for, such as the token refresh that calls `close()` from its cleanup, returns at once
+        instead."""
+        current = asyncio.current_task()
+        if self._closing.started and current in self._joined:
             return
-        if failure is None:
-            self._done.set_result(None)
-        else:
-            self._done.set_exception(failure)
-            # Retrieved by `closed()` or `run()`; a session nobody awaits does not warn.
-            self._done.exception()
-        for task in self._tasks:
-            if task is not asyncio.current_task():
+        if not self._closing.started:
+            if failure is None:
+                self._done.set_result(None)
+            else:
+                self._done.set_exception(failure)
+                # Retrieved by `closed()` or `run()`; a session nobody awaits does not warn.
+                self._done.exception()
+            others = [task for task in self._tasks if task is not current]
+            self._joined = others
+            for task in others:
                 task.cancel()
-        for watch in self._watches:
-            watch._end()
+            for watch in self._watches:
+                watch._end()
+        await self._closing.run(self._shut_down)
+
+    async def _shut_down(self) -> None:
+        # A cancelled task may still run cleanup.
+        await asyncio.gather(*self._joined, return_exceptions=True)
         await self._native.close()
+
+
+async def _cancel_work(running: asyncio.Future) -> None:
+    """Cancels `running`, the work of `Session.run`, unless it finished, and waits until it
+    finished its cleanup, even when cancelled meanwhile."""
+    if not running.done():
+        running.cancel()
+        await wait_through_cancellation([running])
+    if not running.cancelled() and (error := running.exception()) is not None:
+        logger.debug("the work run in the session failed while it was cancelled: %r", error)
 
 
 class _Connecting:
