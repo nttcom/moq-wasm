@@ -154,8 +154,9 @@ H264_LEVELS = [
 
 
 def _h264_level(width: int, height: int, framerate: int) -> int:
-    """Returns the lowest Table A-1 level whose limits (A.3.1) take this size and framerate, or the
-    highest when none does."""
+    """Returns the lowest level whose limits take this size and framerate (A.3.1): macroblocks per
+    frame <= MaxFS, each side <= sqrt(8 MaxFS), macroblocks per second <= MaxMBPS. Returns the
+    highest level when none does."""
     mb_width, mb_height = -(-width // 16), -(-height // 16)
     frame_size = mb_width * mb_height
     for level, max_mbps, max_fs in H264_LEVELS:
@@ -164,8 +165,30 @@ def _h264_level(width: int, height: int, framerate: int) -> int:
     return H264_LEVELS[-1][0]
 
 
+# VideoEncoder.encode's color formats -> (PyAV pixel format, bytes per pixel).
+COLOR_FORMATS = {"RGB": ("rgb24", 3), "RGBA": ("rgba", 4), "BGR": ("bgr24", 3), "BGRA": ("bgra", 4)}
+
+
+def _checked_picture(image: bytes, size: tuple[int, int], color_format: str) -> tuple[bytes, tuple[int, int]]:
+    if color_format not in COLOR_FORMATS:
+        raise ValueError(f"unsupported color format {color_format!r}: use one of {', '.join(COLOR_FORMATS)}")
+    try:
+        width, height = (operator.index(side) for side in size)
+    except (TypeError, ValueError):
+        raise ValueError(f"{size!r} is not a width and a height in pixels") from None
+    try:
+        view = memoryview(image)
+    except TypeError:
+        raise ValueError(f"a {type(image).__name__} is no picture: use bytes") from None
+    if not view.c_contiguous:
+        raise ValueError("a picture's buffer must be contiguous")
+    if width <= 0 or height <= 0 or view.nbytes != width * height * COLOR_FORMATS[color_format][1]:
+        raise ValueError(f"{view.nbytes} bytes are not {width}x{height} pixels in {color_format}")
+    return (image if isinstance(image, bytes) else view.tobytes()), (width, height)
+
+
 class VideoEncoder:
-    """Encodes RGB pictures into H.264 (Annex B, its parameter sets in every keyframe) or VP8. A
+    """Encodes RGB or BGR pictures into H.264 (Annex B, its parameter sets in every keyframe) or VP8. A
     keyframe comes every two seconds, and on `request_keyframe`. `codec_string` is the WebCodecs
     codec string; for H.264 it names Constrained Baseline at the level the SPS carries."""
 
@@ -203,11 +226,14 @@ class VideoEncoder:
         self._keyframe_requested = True
 
     def encode(self, image: bytes, size: tuple[int, int], color_format: str) -> list[bytes]:
-        """`image` is `size` pixels in `color_format` (`RGB` or `RGBA`), scaled to the encoder's."""
-        channels = 4 if color_format == "RGBA" else 3
+        """Returns the packets of `image`, `size` pixels in `color_format` (`RGB`, `RGBA`, `BGR` or
+        `BGRA`, 8 bits per channel), scaled to the encoder's size. Raises ValueError for another
+        format, a `size` that is not two integers, or an `image` that is not a contiguous buffer of
+        exactly that many bytes."""
+        image, (width, height) = _checked_picture(image, size, color_format)
+        pixel_format, channels = COLOR_FORMATS[color_format]
         picture = av.VideoFrame.from_ndarray(
-            np.frombuffer(image, np.uint8).reshape(size[1], size[0], channels),
-            format="rgba" if channels == 4 else "rgb24",
+            np.frombuffer(image, np.uint8).reshape(height, width, channels), format=pixel_format
         ).reformat(width=self._width, height=self._height, format="yuv420p")
         picture.pts = self._frames
         self._frames += 1

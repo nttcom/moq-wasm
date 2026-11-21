@@ -399,7 +399,8 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   ends or its SUBSCRIBE fails, as when the publisher has not written it yet,
   until the participant leaves.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
-  `OutputImageRawFrame` with PyAV to `video_out_codec` (`"H264"` by default,
+  `OutputImageRawFrame` (`RGB`, `RGBA`, `BGR` or `BGRA`) with PyAV to
+  `video_out_codec` (`"H264"` by default,
   the codec the browser SDK publishes; `"VP8"` is royalty-free), at
   `video_out_width`, `video_out_height` and `video_out_framerate`, all
   fields of pipecat's `TransportParams`. Both are pushed into the transport's
