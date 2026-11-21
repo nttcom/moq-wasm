@@ -1,6 +1,10 @@
 import asyncio
+import uuid
 
 import pytest
+
+import moq_wasm
+from moq_wasm.media import create_broadcast
 
 from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room, within
 
@@ -139,6 +143,22 @@ async def test_a_datagram_track_whose_retention_was_refused_is_sent_in_datagrams
     with pytest.raises(RuntimeError):
         await within(anext(objects.groups()))
     await close_all(subscriber, publisher)
+
+
+async def test_a_datagram_track_whose_publish_was_refused_keeps_its_datagrams(relay_url, temporary_app_token):
+    # Arrange: a temporary app may publish only under its own root, so the relay refuses the PUBLISH
+    session = await moq_wasm.connect(
+        relay_url, verify_certificate=False, token=temporary_app_token(f"temp-{uuid.uuid4().hex}")
+    )
+    namespace = [f"temp-{uuid.uuid4().hex}", "room", "bot"]
+    with pytest.raises(moq_wasm.RequestError):
+        await within(session.publish_track(namespace, TRACK, publish=True, datagram=True))
+
+    # Act / Assert: the native origin registered the track in datagrams before the PUBLISH, which a
+    # media broadcast would send its media in
+    with pytest.raises(ValueError, match=f"track {TRACK} of .* sends its objects in datagrams"):
+        create_broadcast(session, namespace).add_media_source(TRACK, label="bot")
+    await session.close()
 
 
 async def test_writes_report_the_group_each_object_went_into(relay_url):

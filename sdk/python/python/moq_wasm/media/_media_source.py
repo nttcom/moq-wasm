@@ -13,6 +13,11 @@ T = TypeVar("T")
 
 # The first element of the WebCodecs codec strings `broadcast` publishes as LOC.
 VIDEO_CODECS = {"avc1", "avc3", "hvc1", "hev1", "vp8", "vp09", "av01"}
+# The names `broadcast` gives the tracks of its default source, and its chat track
+# (crates/broadcast/src/broadcast.rs).
+DEFAULT_VIDEO = "video"
+DEFAULT_AUDIO = "audio"
+CHAT = "chat"
 
 
 class MediaSource:
@@ -41,11 +46,18 @@ class MediaSource:
         self._source: _native.MediaSource | None = None
         self._video_codec: str | None = None
         self._audio_config: tuple[str, int, int, bytes | None] | None = None
+        # The tracks the native media broadcast registered, or may have, for the configurations a
+        # later one replaced, as the CMAF sibling of an AAC audio replaced by Opus.
+        self._replaced_track_names: set[str] = set()
         self._renditions: list[Rendition] = []
         self._built = asyncio.Event()
-        # Ended once the broadcast was left; the session ending stops the source too.
+        # Ended once the broadcast was left or the session ended, which stop the source, or by
+        # what kept the broadcast from being published.
         self._ended = Ended()
         self._session_ended: asyncio.Future[None] | None = None
+        # Set by the broadcast the source is added to: claims the tracks of a rendition, raising
+        # RuntimeError while another track has the name of one of them.
+        self._claim_tracks: Callable[[list[str]], None] | None = None
 
     def configure_video(self, codec: str) -> None:
         """`codec` is a WebCodecs codec string: `avc1.*` (Annex B), `hvc1.*` (Annex B), `vp8`,
@@ -58,10 +70,14 @@ class MediaSource:
     def add_rendition(
         self, name: str, *, label: str, bitrate: int | None = None, framerate: int | None = None
     ) -> "Rendition":
-        """Another encoding of the video, in the track `<video>_<name>`
-        (`_native.MediaSource.add_rendition`): feed it frames of the same pictures, with a keyframe
-        on the same pictures as the video's. `bitrate` (bits per second) and `framerate` go into
-        the catalog."""
+        """Another encoding of the video, in the track `<video>_<name>`, and with `cmaf` its
+        `_cmaf` sibling (`_native.MediaSource.add_rendition`): feed it frames of the same pictures,
+        with a keyframe on the same pictures as the video's. `bitrate` (bits per second) and
+        `framerate` go into the catalog. Raises RuntimeError while another track of the broadcast,
+        or once it was entered of the session, has the name of one of its tracks, and ValueError
+        for a track the session registered in datagrams or with another retention than 60 s."""
+        if self._claim_tracks is not None:
+            self._claim_tracks(self._with_cmaf(f"{self.video}_{name}"))
         rendition = Rendition(name, {"label": label, "bitrate": bitrate, "framerate": framerate})
         self._renditions.append(rendition)
         if self._source is not None:
@@ -89,6 +105,7 @@ class MediaSource:
             _native.check_audio_specific_config(description)
         if self._source is not None:
             self._source.configure_audio(codec, sample_rate, channels, description=description)
+        self._replaced_track_names.update(self._registered_track_names())
         self._audio_config = (codec, sample_rate, channels, description)
 
     def push_audio(
@@ -156,6 +173,52 @@ class MediaSource:
             raise self._stopped_error()
         return answered.result()
 
+    def _track_names(self) -> list[str]:
+        """The tracks the media broadcast publishes for the source, its renditions aside."""
+        return [*self._with_cmaf(self.video), *self._with_cmaf(self.audio), f"{self.video}_timeline"]
+
+    def _implied_track_names(self) -> list[str]:
+        """The tracks the media broadcast lists in its catalog next to the source's own, ending
+        them once it no longer does (`build_catalog` in crates/broadcast/src/broadcast.rs): the chat
+        while it lists the default video or audio, and an audio placeholder, which an audio of that
+        name takes the place of, while it lists the default video."""
+        implied = [CHAT] if self.video == DEFAULT_VIDEO or self.audio == DEFAULT_AUDIO else []
+        if self.video == DEFAULT_VIDEO and self.audio != DEFAULT_AUDIO:
+            implied.append(DEFAULT_AUDIO)
+        return implied
+
+    def _registered_track_names(self) -> list[str]:
+        """The tracks the native media broadcast registered for the source, or may have: those its
+        catalog listed for a configuration that reached the native source, which it registers as
+        the catalog goes out or a subscriber takes one (`CatalogTrack::send` and `serve_subscribe`
+        under crates/broadcast/src/relay_connection): a configured video's or rendition's track and
+        CMAF sibling, a configured audio's track and an AAC one's CMAF sibling, the media timeline,
+        and the chat and the audio placeholder the default video lists, or the chat the default
+        audio does, for the configuration it has and each one it replaced since it was built. A
+        track named but never configured, as the video of an audio-only source, is not one."""
+        if not self._built.is_set():
+            return []
+        listed = list(self._replaced_track_names)
+        if self._video_codec is not None:
+            listed += self._with_cmaf(self.video)
+            if self.video == DEFAULT_VIDEO:
+                listed += [DEFAULT_AUDIO, CHAT]
+        if self._audio_config is not None:
+            aac = self._audio_config[0] != "opus"
+            listed += self._with_cmaf(self.audio) if aac else [self.audio]
+            if self.audio == DEFAULT_AUDIO:
+                listed.append(CHAT)
+        for rendition in self._renditions:
+            if rendition._video_codec is not None:
+                listed += self._with_cmaf(f"{self.video}_{rendition.name}")
+        if listed:
+            listed.append(f"{self.video}_timeline")
+        return listed
+
+    def _with_cmaf(self, track: str) -> list[str]:
+        """`track`, and its CMAF sibling when the source publishes them."""
+        return [track, f"{track}_cmaf"] if self._cmaf else [track]
+
     def _build(self, broadcast: _native.MediaBroadcast, session_ended: asyncio.Future[None]) -> None:
         source = broadcast.add_source(
             self.video,
@@ -180,12 +243,20 @@ class MediaSource:
     def _stopped_error(self) -> BaseException:
         return self._ended.error() if self._ended.ended else RuntimeError("the media source stopped publishing")
 
-    def _detach(self) -> None:
-        self._ended.end(RuntimeError("the media source stopped publishing"), failure=False)
+    def _detach(
+        self, error: Exception | None = None, *, failure: bool = False, raised: Callable[[], None] | None = None
+    ) -> None:
+        """Stops the source, which ends it with `error`, what kept its broadcast from being
+        published, unless it ended before. `raised` is called each time it is raised."""
+        self._ended.end(error or RuntimeError("the media source stopped publishing"), failure=failure, raised=raised)
         self._source = None
         for rendition in self._renditions:
             rendition._rendition = None
-        self._built.clear()
+
+    def _stop_with_session(self, _: BaseException) -> None:
+        """The session ended: the requests raise that the source stopped, and the pushes reach the
+        native source, which drops them."""
+        self._ended.end(RuntimeError("the media source stopped publishing"), failure=False)
 
 
 class Rendition:

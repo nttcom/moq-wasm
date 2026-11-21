@@ -193,7 +193,8 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   nothing the work owns outlives it. The wait covers the work itself, not
   what it started: `asyncio.gather`'s future finishes as soon as one child
   ended cancelled, while the others still clean up, as a broadcast that is
-  still withdrawing its namespace. Several workers therefore run in one
+  still withdrawing its namespace, which a reopen right after `run`
+  returned would find owned. Several workers therefore run in one
   coroutine that starts them in an `asyncio.TaskGroup`, which waits for
   every child's cleanup and raises a child's failure, as a refused
   request, inside an `ExceptionGroup`: a loop that connects again
@@ -240,16 +241,33 @@ the native origin could not apply it. The native origin also keeps the
 delivery a track sent its objects with: registering it again with the other
 `datagram` switches a track that has no object yet and raises ValueError,
 from the native call, for one that has. The session records the registration
-once the native origin registered the track: when it succeeded and when only
-its PUBLISH was refused; a registration the native
+once the native origin registered the track: when it succeeded, when only
+its PUBLISH was refused, and, on subgroup streams with the retention the
+media broadcast gives it (the newest object for the catalog, 60 s for the
+others), for each track a media broadcast registered, or may have, as a
+subscriber may take any track its catalog lists: the catalog and the tracks
+its sources' configurations listed, those a later configuration replaced
+included, as the CMAF sibling of an AAC audio reconfigured as Opus,
+recorded as the broadcast is left, before it releases them. A track a
+source names but never configures, as the video of an audio-only source,
+is not registered, so a later writer
+of that name chooses its delivery and retention; a registration the native
 call refuses for its arguments, as an invalid `retention_seconds` or the
-other delivery, records nothing. A
+other delivery, records nothing. A media broadcast refuses, with
+ValueError, a track the session last registered in datagrams or first with
+another retention than it gives the track: the native broadcast takes the
+track as the origin keeps it, without asking for a delivery, so it would
+send it in datagrams too, which its subscribers cannot read by group, or
+keep another span of its objects for late subscribers. It checks as it
+claims the track, in `add_media_source` or `add_rendition`, and again as
+it is entered, since a writer may register the track in between. A
 `subscribe*`, `watch_namespaces`, `publish_track` or `announce` cancelled
 before it returns, as by a timeout, keeps its native request running: once
 the relay accepts it, the session unsubscribes, ends the track (PUBLISH_DONE)
 or withdraws it, so nothing stays active without an owner, and a later
 watch of the prefix, writer of the track or announcement of the namespace
-waits for that. A
+waits for that; leaving a `LocalBroadcast` whose
+PUBLISH_NAMESPACE is unanswered waits for it the same way. A
 `TrackWriter` has `write` and `write_group`, which return the group id an
 object went into when a subscriber took it and are sent one at a time, in
 the order they were made; a send that started runs to its end even when
@@ -257,9 +275,11 @@ its caller is cancelled, as by a timeout, and the next write waits for it.
 A write after the session ended raises what ended it, also
 when the session ends while the write waits for the one before, and passes
 nothing to the native origin, which would cache it. A writer ends for good
-at the first of its `close()`, the session ending and the failure of its
-registration: it keeps that one outcome (`moq_wasm._ended.Ended`), which
-every method of the writer consults, so its writes raise what came first
+at the first of its `close()`, the session ending, the failure of its
+registration and the refusal of its broadcast's namespace, and a media
+source at the first of leaving its broadcast, the session ending and that
+refusal: each keeps that one outcome (`moq_wasm._ended.Ended`), which
+every method of the handle consults, so its writes raise what came first
 and its waits wake on it. Each raise is a copy of that outcome of the same
 type, message and attributes (a `RequestError`'s `code`, a
 `ConnectionLost`'s `close_info`), caused by it, as is what a request made
@@ -283,19 +303,34 @@ until that one's `close()` finished or its registration failed, so
 closing an old writer cannot end its replacement's subscriptions. A
 writer whose `publish_track` was cancelled keeps the track until the end
 of what the relay registered was sent: a later `publish_track` of the
-track waits for it, so that PUBLISH_DONE cannot end its replacement's
-subscriptions. Its
+track waits for it, and a broadcast or media source that would publish the
+track is refused meanwhile, so that PUBLISH_DONE cannot end their
+subscriptions. A track
+declared on a `LocalBroadcast` before it is entered stays the broadcast's
+own until entering it succeeds, which raises RuntimeError, and publishes
+nothing, while another writer of the session publishes one of them, so a
+broadcast that could not be entered leaves its tracks free. Until then
+the session holds the broadcast's tracks and media sources only weakly,
+ending those the app still holds when the session ends, so a broadcast
+that could not be entered is not kept alive by the session either. Its
 objects carry no extension headers. Leaving a
-`LocalBroadcast` closes its writers, so a handle kept past the broadcast
-cannot write into a later broadcast of the same namespace. A namespace has
-one owner in a session: `announce` raises RuntimeError while another
-announcement of the session publishes it, until that one finished
-withdrawing it (its `close()` finished). An
+`LocalBroadcast` closes its writers, each even when withdrawing the
+namespace fails, so a handle kept past the broadcast cannot write into a
+later broadcast of the same namespace; adding a track or a media source
+to a broadcast being left raises RuntimeError. A namespace has one owner
+in a session: `announce` or entering a `LocalBroadcast` raises
+RuntimeError while another announcement or broadcast of the session
+publishes it, until that one finished withdrawing it (its `close()` or
+leaving the broadcast finished), so leaving one broadcast cannot end the
+next one's subscriptions with PUBLISH_DONE. Leaving runs to its end even
+when the caller leaving is cancelled, and leaving again waits for it; a
+`LocalBroadcast` is entered once, and entering it again raises
+RuntimeError. An
 `Announcement` withdraws only the publication it made, and its `close()`
 sends the PUBLISH_NAMESPACE_DONE even when cancelled. The session, its
-announcements, writers and watches copy the namespace lists
-they are given, and the `namespace` of an announcement or a writer
-returns a new list each time, and a writer's `name` is
+announcements, writers, watches and broadcasts copy the namespace lists
+they are given, and the `namespace` of an announcement, a writer or a
+broadcast returns a new list each time, and a writer's `name` is
 read-only, so a caller changing a list or a name cannot make them withdraw
 or end another namespace or track. A `Subscription` iterates its objects,
 or its subgroup streams
@@ -433,11 +468,22 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   the `Announcement` that `Session.announce` returns). `publish_track`
   and `event_timeline` are synchronous so that a block can declare its
   tracks before anything yields; `published()` waits for the
-  PUBLISH_NAMESPACE. A track added later is registered on its own, and
-  what is written to it before that is dropped. `LocalBroadcast.publish_track` takes
-  `datagram` but not `publish`: the batch is registered before the
-  namespace is published, and a PUBLISH must follow the namespace. This
-  replaces the register-then-publish rule each bot comments.
+  PUBLISH_NAMESPACE. When it or the batch's registration fails, the
+  tracks still waiting for their registration, those added later and the
+  media sources' `keyframe_request()` and `demand_change()` raise the
+  failure at once, and every track of the broadcast, one registered before
+  the refusal included, raises it from its writes, as the relay takes
+  nothing of a namespace it refused; their `next_subscriber()` returns
+  False. Leaving a block that exited normally
+  raises the failure unless one of those, or `published()`, raised it to
+  the caller before, so a refused broadcast does not look as if it ran. A
+  track added later is registered on its own, and
+  what is written to it before that is dropped; once its registration
+  failed, its writes raise the failure. `LocalBroadcast.publish_track`
+  takes `datagram` and `priority` but not `publish`: the batch is
+  registered before the namespace is published, and a PUBLISH must follow
+  the namespace. This replaces the register-then-publish rule each bot
+  comments.
 - **`EventTimeline`** writes a draft-ietf-moq-msf-02 §8 event timeline as
   one group: it opens with an empty record list once the track is
   registered, and each record is one more object, so a late joiner's joining
@@ -649,7 +695,21 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   the session's event loop passes each event to these connections before the
   origin (architecture.md "One event loop per session"). The tracks a bot
   writes itself (`publish_track`, `event_timeline`) stay in that origin and
-  are answered as before; they are not listed in the catalog.
+  are answered as before; they are not listed in the catalog. The tracks
+  the media broadcast publishes (the catalog, each source's video, audio
+  and `<video>_timeline`, each rendition's `<video>_<name>`, with `cmaf`
+  their `_cmaf` siblings, and the tracks `broadcast::build_catalog` lists
+  next to them on its own: the `chat` while a source has the default
+  `video` or `audio`, and an `audio` placeholder while one has the default
+  `video`, both ended with PUBLISH_DONE once the catalog no longer lists
+  them, as when the default audio is removed) share the session's
+  one-owner-per-track rule with the writers; the sources share those two,
+  and a source's own `audio` takes the place of the placeholder, which
+  another source's track named `audio`, as its video, does not, in either
+  order: a writer, source or rendition named as one of
+  them raises RuntimeError, before anything is published, until the
+  broadcast was left, so a raw writer cannot reach the catalog's
+  subscribers or end their subscription.
 - A broadcast with a media source is published by the media broadcast's
   `announce` instead of `Session.announce`, so the namespace is published
   once. Leaving the block withdraws the namespace and closes the media
@@ -659,6 +719,14 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   then drops every writer of the broadcast, the last holders of its
   `RelayConnection`, whose catalog refresh would otherwise keep resending
   the old catalog into a later broadcast of the same namespace.
+- A media broadcast that fails while it is being built, after a source
+  built before may have published the namespace with its catalog, is
+  closed, then withdrawn (PUBLISH_NAMESPACE_DONE), and a later publication
+  of the namespace waits for that. A built source publishes on its own,
+  from its media configuration, and closing waits for that publication and
+  ends it: a withdrawal sent while it is under way would leave the
+  namespace published, or leave the source's PUBLISH unanswered by the
+  relay and the close waiting for it until the session ended.
 - `keyframe_request()` is awaited rather than registered as a callback, the
   asyncio form of the browser SDK's `on_keyframe_request`. It and
   `demand_change()` raise RuntimeError once the broadcast was left or the
