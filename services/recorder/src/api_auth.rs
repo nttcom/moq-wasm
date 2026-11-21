@@ -1,15 +1,10 @@
-use std::{
-    sync::LazyLock,
-    time::{Duration, SystemTime},
-};
+use std::time::SystemTime;
 
-use auth_token::{Access, ClaimError, ClaimPolicy, SignedToken};
+use auth_token::{Access, ClaimError, ClaimPolicy, SignedToken, VtsClient, VtsVerifyError};
 use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode, header::AUTHORIZATION};
 
 const DENIED: &str = "token does not authorize this room";
-
-static VTS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 #[derive(Debug)]
 pub(crate) struct AuthError {
@@ -21,7 +16,7 @@ pub(crate) struct AuthError {
 /// `namespace`.
 pub(crate) async fn authorize(
     headers: &HeaderMap,
-    vts: &str,
+    vts: &VtsClient,
     namespace: &str,
 ) -> Result<(), AuthError> {
     if headers.get(AUTHORIZATION).is_none() {
@@ -32,35 +27,14 @@ pub(crate) async fn authorize(
     }
     let token = bearer_token(headers)
         .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "invalid bearer token"))?;
-    let response = VTS_CLIENT
-        .post(vts)
-        .timeout(Duration::from_secs(3))
-        .json(&serde_json::json!({ "token": token }))
-        .send()
-        .await
-        .map_err(|_| {
-            rejected(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "token verification unavailable",
-            )
-        })?;
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(rejected(
-            StatusCode::UNAUTHORIZED,
-            "token verification rejected",
-        ));
-    }
-    if !response.status().is_success() {
-        return Err(rejected(
+    let verified = vts.verify(token).await.map_err(|error| match error {
+        VtsVerifyError::Unauthorized(_) => {
+            rejected(StatusCode::UNAUTHORIZED, "token verification rejected")
+        }
+        _ => rejected(
             StatusCode::SERVICE_UNAVAILABLE,
             "token verification unavailable",
-        ));
-    }
-    let verified: SignedToken = response.json().await.map_err(|_| {
-        rejected(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "invalid token verification response",
-        )
+        ),
     })?;
     check_claims(&verified, namespace, SystemTime::now())
 }
@@ -85,6 +59,8 @@ fn rejected(status: StatusCode, message: &'static str) -> AuthError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use serde_json::json;
 
@@ -92,30 +68,33 @@ mod tests {
     async fn every_room_requires_a_successful_vts_response() {
         // Arrange
         let server = http_server::testing::StubServer::run(StatusCode::UNAUTHORIZED, "{}").await;
-        let url = format!("{}/verify", server.url());
+        let vts = VtsClient::new(format!("{}/verify", server.url()));
         let closed_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let unreachable_url = format!("http://{}/verify", closed_listener.local_addr().unwrap());
+        let unreachable_vts = VtsClient::new(format!(
+            "http://{}/verify",
+            closed_listener.local_addr().unwrap()
+        ));
         drop(closed_listener);
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer invalid".parse().unwrap());
 
         // Act / Assert
         assert_eq!(
-            authorize(&HeaderMap::new(), &url, "anon/room")
+            authorize(&HeaderMap::new(), &vts, "anon/room")
                 .await
                 .unwrap_err()
                 .status,
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            authorize(&headers, &url, "APP/room")
+            authorize(&headers, &vts, "APP/room")
                 .await
                 .unwrap_err()
                 .status,
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(
-            authorize(&headers, &unreachable_url, "APP/room")
+            authorize(&headers, &unreachable_vts, "APP/room")
                 .await
                 .unwrap_err()
                 .status,

@@ -7,7 +7,7 @@ description = "Starts, stops and reports the bots of a room on behalf of an app'
 [dependencies]
 anyhow = { workspace = true }
 app-registry = { path = "../../crates/app-registry" }
-auth-token = { path = "../../crates/auth-token" }
+auth-token = { path = "../../crates/auth-token", features = ["vts-client"] }
 aws-lc-rs = { workspace = true }
 bytes = { workspace = true }
 http-server = { path = "../../crates/http-server" }

@@ -12,9 +12,18 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 clap = { workspace = true, features = ["derive"], optional = true }
+reqwest = { workspace = true, features = ["json", "rustls"], optional = true }
+telemetry-otlp = { path = "../telemetry-otlp", optional = true }
+tracing = { workspace = true, optional = true }
+
+[dev-dependencies]
+http-server = { path = "../http-server", features = ["testing"] }
+hyper = { workspace = true }
+tokio = { workspace = true, features = ["macros", "net", "rt"] }
 
 [features]
 cli = ["dep:clap"]
+vts-client = ["dep:reqwest", "dep:telemetry-otlp", "dep:tracing"]
 
 [[bin]]
 name = "auth-token"

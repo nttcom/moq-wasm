@@ -7,7 +7,8 @@ module boundaries, runtime flow, or invariants described here change.
 ## Scope
 `auth-token` is the client JWT: the one payload shape used across the workspace,
 its HS256 signing and verification, the checks a service applies to a token the
-VTS verified, and a CLI that signs one.
+VTS verified, the client that asks the VTS to verify one, and a CLI that signs
+one.
 
 | Module | Responsibility |
 | --- | --- |
@@ -15,6 +16,7 @@ VTS verified, and a CLI that signs one.
 | `temporary_app.rs` | `temporary_app_id`: the `appId` of an unexpired temporary app token, read without checking the signature, failing with a `TemporaryAppTokenError`. `temporary-apps` checks the signature first; `live-translate` leaves it to the relay. |
 | `jwt.rs` | Compact JWS: `sign_token` (HS256, header fixed to `{"alg":"HS256"}`), `decode_unverified_payload` (payload as a JSON object, no signature check) and `verify_signature`, which fails with a `SignatureError`. HMAC uses `aws-lc-rs`. |
 | `signed_token.rs` | `SignedToken`, the VTS `/verify` answer (`appId`, `isRelay`, `claims`). `check` applies a `ClaimPolicy` (default: client tokens live at most 24 hours, clocks may differ by 60 seconds) and requires `iat`, `exp` and well-formed namespace paths, failing with a `ClaimError`; `covers` tells whether the `publish`, `subscribe` or `bots` claim covers a full namespace, element by element. |
+| `vts_client.rs` | `VtsClient`, the caller of the VTS's `POST /verify`, built only with the `vts-client` feature: it sends a token with a 3 s timeout and the current W3C trace context, and answers `SignedToken` or a `VtsVerifyError` (`Unauthorized` with the VTS's reason, or `Unavailable`). It checks only the signature, as the VTS does. |
 | `bin/auth-token/` | The `auth-token` CLI, built only with the `cli` feature: `--app-id`, `--publish`, `--subscribe`, `--bots`, `--ttl` (`15s` / `30m` / `12h` / `365d`, parsed in `lifetime.rs`) and `--relay-id`, signed with the secret in `AUTH_TOKEN_SECRET`. |
 
 The payload claims:
@@ -32,11 +34,12 @@ Producers and consumers:
 - `services/vts` (`verify.rs`) reads the payload with `decode_unverified_payload` and checks
   it with `verify_signature`.
 - `services/console` (`apps.rs`) signs `Claims::issued` with `sign_token`; so does the CLI.
-- `services/relay` (`modules/auth/token_claims.rs`) and `services/recorder`
-  (`api_auth.rs`) deserialise a `SignedToken` from the VTS `/verify` response
-  and `check` it, the relay with the `ClaimPolicy` of its configuration; the
-  recorder also asks whether a claim `covers` the room. They hold no secret
-  and never sign or verify.
+- `services/relay` (`modules/auth/vts_token_verifier.rs`),
+  `services/recorder` (`api_auth.rs`), `services/bot-dispatcher`
+  (`launch_auth.rs`) and `services/observability` (`app_verifier.rs`) ask
+  `VtsClient` for the `SignedToken` and `check` it, each with its own
+  `ClaimPolicy` and authorization rules; the recorder also asks whether a claim
+  `covers` the room. They hold no secret and never sign or verify.
 
 ## Invariants
 
@@ -49,6 +52,9 @@ Producers and consumers:
   so the crate depends on neither `app-registry` nor its storage clients.
 - `clap` is an optional dependency behind `cli`; crates that use the library,
   the relay among them, never build it.
+- `reqwest` and `telemetry-otlp` are optional dependencies behind
+  `vts-client`, so the crates that only sign or check tokens (`vts`, `console`,
+  `temporary-apps`) build neither.
 - Unknown claims are ignored on read and never produced on write, so the VTS
   can pass the signed payload through unchanged while its readers read only
   the fields above.
