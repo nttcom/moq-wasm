@@ -33,7 +33,7 @@ impl CatalogReader {
         let Some(object) = self.reader.next_object().await? else {
             return Ok(None);
         };
-        serde_json::from_slice(&object.payload)
+        Catalog::parse(&object.payload)
             .map(Some)
             .context("catalog is not MSF JSON")
     }

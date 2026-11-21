@@ -35,6 +35,14 @@ pub fn inject_trace_context(span: &Span, headers: &mut HeaderMap) {
     }
 }
 
+/// The current span's trace context, to send with a request to another
+/// service; empty while OTLP is off.
+pub fn current_trace_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    inject_trace_context(&Span::current(), &mut headers);
+    headers
+}
+
 /// Makes `span` a child of the remote span whose context `headers` carry,
 /// read from `x-original-traceparent` when present, else from `traceparent`.
 /// Call it before `span` is first entered; a request without a valid one

@@ -116,6 +116,9 @@ difference between the actual and the estimated delay.
 ## Invariants
 
 - Exactly one task calls `Session::receive_event` of a session.
+- `RootTranslation` dials the relay with the native endpoint (`Endpoint<NATIVE>`),
+  so `--relay` may name a QUIC, a WebTransport (`https://`) or a WebSocket
+  (`wss://`) relay.
 - The translator never verifies a temporary app's token: the relay refuses
   the session of one it cannot verify, and the token is kept only in that
   session's configuration, never logged.

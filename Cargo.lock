@@ -218,9 +218,15 @@ dependencies = [
  "aws-lc-rs",
  "base64 0.23.1",
  "clap",
+ "http-server",
+ "hyper",
+ "reqwest",
  "serde",
  "serde_json",
+ "telemetry-otlp",
  "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3010,7 +3016,6 @@ dependencies = [
  "opentelemetry_sdk",
  "proptest",
  "redis",
- "reqwest",
  "serde",
  "serde_json",
  "telemetry",

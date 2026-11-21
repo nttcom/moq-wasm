@@ -257,16 +257,35 @@ pub(crate) fn recorded_object(group_id: u64, timestamp_us: u64) -> moqt::object:
     object
 }
 
+/// A `loc` track of `role` with the fields draft-ietf-moq-msf-02 §5.2.4.1 requires.
+fn loc_track(name: &str, role: msf::KnownTrackRole) -> msf::Track {
+    let mut track = msf::Track::new(name, msf::KnownPackaging::Loc, true);
+    track.role = Some(role.clone().into());
+    track.render_group = Some(1);
+    match role {
+        msf::KnownTrackRole::Video => {
+            track.codec = Some("avc1.42C01E".to_string());
+            track.bitrate = Some(1_000_000);
+            track.framerate = Some(30.0);
+        }
+        msf::KnownTrackRole::Audio => {
+            track.codec = Some("opus".to_string());
+            track.bitrate = Some(64_000);
+            track.sample_rate = Some(48_000);
+            track.channel_config = Some("mono".to_string());
+        }
+        _ => {}
+    }
+    track
+}
+
 /// A camera archive as `stored_recording` writes it: one catalog object
 /// listing `video` and `video_timeline`, and one video group per second from
 /// group 10, whose Timestamps count from 0 as a recording's do.
 pub(crate) async fn recorded_camera() -> StoredRecording {
     use msf::{Catalog, KnownPackaging, KnownTrackRole, Track};
 
-    let mut video = Track::new("video", KnownPackaging::Loc, true);
-    video.role = Some(KnownTrackRole::Video.into());
-    video.codec = Some("avc1.42C01E".to_string());
-    video.render_group = Some(1);
+    let mut video = loc_track("video", KnownTrackRole::Video);
     video.target_latency = Some(500);
     let mut timeline = Track::new("video_timeline", KnownPackaging::MediaTimeline, true);
     timeline.depends = Some(vec![msf::Dependency::RenderGroup(1)]);
@@ -299,12 +318,7 @@ pub(crate) async fn recorded_meeting(documents: Vec<serde_json::Value>) -> Store
         timeline.depends = Some(vec![msf::Dependency::RenderGroup(1)]);
         let listed = tracks
             .iter()
-            .map(|(name, role)| {
-                let mut track = Track::new(name, KnownPackaging::Loc, true);
-                track.role = Some(role.clone().into());
-                track.render_group = Some(1);
-                track
-            })
+            .map(|(name, role)| loc_track(name, role.clone()))
             .chain([timeline])
             .collect();
         let catalog = serde_json::to_vec(&Catalog::new(listed, 1)).unwrap();

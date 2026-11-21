@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use auth_token::{Access, ClaimPolicy, SignedToken};
+use auth_token::{Access, ClaimPolicy, SignedToken, VtsClient, VtsVerifyError};
 use http_server::bearer_token;
 use hyper::{HeaderMap, StatusCode};
 
@@ -9,7 +9,6 @@ const LAUNCH_TOKEN_POLICY: ClaimPolicy = ClaimPolicy {
     max_token_ttl: Duration::from_secs(5 * 60),
     clock_leeway: Duration::from_secs(60),
 };
-const VTS_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Rejection {
@@ -24,10 +23,7 @@ fn rejected(status: StatusCode, error: &'static str) -> Rejection {
 /// Verifies the launch token an app server sends as `Authorization: Bearer`
 /// through the VTS, which checks only its signature.
 pub(crate) enum LaunchAuth {
-    Vts {
-        client: reqwest::Client,
-        vts_url: String,
-    },
+    Vts(VtsClient),
     /// Accepts every request for the app the prefix starts with
     /// (`BOT_DISPATCHER_INSECURE_SKIP_AUTH`, a relay without authorization only).
     Insecure,
@@ -35,10 +31,7 @@ pub(crate) enum LaunchAuth {
 
 impl LaunchAuth {
     pub(crate) fn new(vts_url: String) -> Self {
-        Self::Vts {
-            client: reqwest::Client::new(),
-            vts_url,
-        }
+        Self::Vts(VtsClient::new(vts_url))
     }
 
     /// The app of the verified token, whose `bots` claim covers
@@ -48,7 +41,7 @@ impl LaunchAuth {
         headers: &HeaderMap,
         namespace_prefix: &str,
     ) -> Result<String, Rejection> {
-        let Self::Vts { client, vts_url } = self else {
+        let Self::Vts(vts) = self else {
             return Ok(namespace_prefix
                 .split('/')
                 .next()
@@ -57,23 +50,10 @@ impl LaunchAuth {
         };
         let token = bearer_token(headers)
             .ok_or_else(|| rejected(StatusCode::UNAUTHORIZED, "a bearer token is required"))?;
-        let response = client
-            .post(vts_url)
-            .timeout(VTS_TIMEOUT)
-            .json(&serde_json::json!({ "token": token }))
-            .send()
-            .await
-            .map_err(|_| rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(rejected(StatusCode::UNAUTHORIZED, "invalid_token"));
-        }
-        if !response.status().is_success() {
-            return Err(rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"));
-        }
-        let verified: SignedToken = response
-            .json()
-            .await
-            .map_err(|_| rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"))?;
+        let verified = vts.verify(token).await.map_err(|error| match error {
+            VtsVerifyError::Unauthorized(_) => rejected(StatusCode::UNAUTHORIZED, "invalid_token"),
+            _ => rejected(StatusCode::SERVICE_UNAVAILABLE, "vts_unavailable"),
+        })?;
         check(&verified, namespace_prefix, SystemTime::now())?;
         Ok(verified.app_id)
     }

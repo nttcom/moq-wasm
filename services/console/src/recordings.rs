@@ -39,6 +39,7 @@ impl RecorderClient {
         let response = self
             .http
             .get(self.url(&["apps", app_id, "recordings"]))
+            .headers(telemetry_otlp::current_trace_headers())
             .bearer_auth(token)
             .send()
             .await
@@ -62,6 +63,7 @@ impl RecorderClient {
         let response = self
             .http
             .get(url)
+            .headers(telemetry_otlp::current_trace_headers())
             .bearer_auth(token)
             .send()
             .await

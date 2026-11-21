@@ -1,7 +1,13 @@
+use std::time::Duration;
+
 use anyhow::{Context, bail};
 use serde::de::DeserializeOwned;
 
 use crate::config::ClickHouseConfig;
+
+/// A query over a day of snapshots finishes well within it; one that takes
+/// this long is stuck.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct ClickHouse {
@@ -55,7 +61,7 @@ impl ClickHouse {
         url.query_pairs_mut()
             .extend_pairs(params)
             .append_pair("output_format_json_quote_64bit_integers", "0");
-        let mut request = self.http.post(url).body(body);
+        let mut request = self.http.post(url).timeout(REQUEST_TIMEOUT).body(body);
         if let Some(user) = &self.config.user {
             request = request.basic_auth(user, self.config.password.as_ref());
         }

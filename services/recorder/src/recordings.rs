@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use auth_token::TEMPORARY_APP_ID_PREFIX;
+use auth_token::{TEMPORARY_APP_ID_PREFIX, VtsClient};
 use hyper::HeaderMap;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -59,6 +59,7 @@ pub(crate) struct Publication {
 pub(crate) struct Recordings {
     config: ServeArgs,
     store: RecordingStore,
+    vts: Option<VtsClient>,
     /// A cell is reserved under the lock and filled outside it, so opening
     /// one recording does not block requests for the others.
     replays: Mutex<HashMap<String, Arc<OnceCell<ReplayTask>>>>,
@@ -66,9 +67,20 @@ pub(crate) struct Recordings {
 
 impl Recordings {
     pub(crate) fn new(config: ServeArgs, store: RecordingStore) -> Self {
+        let vts = if config.insecure_skip_auth {
+            None
+        } else {
+            // clap requires `--auth-vts-url` unless `--insecure-skip-auth`.
+            let url = config
+                .auth_vts_url
+                .clone()
+                .expect("--auth-vts-url without --insecure-skip-auth");
+            Some(VtsClient::new(url))
+        };
         Self {
             config,
             store,
+            vts,
             replays: Mutex::new(HashMap::new()),
         }
     }
@@ -78,15 +90,9 @@ impl Recordings {
         headers: &HeaderMap,
         namespace: &str,
     ) -> Result<(), AuthError> {
-        if self.config.insecure_skip_auth {
+        let Some(vts) = &self.vts else {
             return Ok(());
-        }
-        // clap requires `--auth-vts-url` unless `--insecure-skip-auth`.
-        let vts = self
-            .config
-            .auth_vts_url
-            .as_deref()
-            .expect("--auth-vts-url without --insecure-skip-auth");
+        };
         api_auth::authorize(headers, vts, namespace).await
     }
 

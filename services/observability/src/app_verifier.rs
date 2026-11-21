@@ -1,15 +1,7 @@
-use std::{
-    collections::HashMap,
-    fmt,
-    sync::Mutex,
-    time::{Duration, SystemTime},
-};
+use std::{collections::HashMap, fmt, sync::Mutex, time::SystemTime};
 
-use auth_token::{ClaimPolicy, SignedToken};
-use reqwest::{StatusCode, header::HeaderMap};
-use serde_json::json;
+use auth_token::{ClaimPolicy, SignedToken, VtsClient, VtsVerifyError};
 
-const VERIFY_TIMEOUT: Duration = Duration::from_secs(3);
 /// Verified tokens kept; past it, the cache starts over.
 const MAX_CACHED_TOKENS: usize = 1024;
 
@@ -32,16 +24,14 @@ impl fmt::Display for VerifyError {
 /// claims as the relay does. A token that passed is answered from memory until
 /// it no longer passes, so a page polling every second asks the VTS once.
 pub struct AppVerifier {
-    http: reqwest::Client,
-    verify_url: String,
+    vts: VtsClient,
     verified: Mutex<HashMap<String, SignedToken>>,
 }
 
 impl AppVerifier {
     pub fn new(verify_url: String) -> anyhow::Result<Self> {
         Ok(Self {
-            http: reqwest::Client::builder().timeout(VERIFY_TIMEOUT).build()?,
-            verify_url,
+            vts: VtsClient::new(verify_url),
             verified: Mutex::new(HashMap::new()),
         })
     }
@@ -91,37 +81,14 @@ impl AppVerifier {
     }
 
     async fn request_verification(&self, token: &str) -> Result<SignedToken, VerifyError> {
-        let mut headers = HeaderMap::new();
-        telemetry_otlp::inject_trace_context(&tracing::Span::current(), &mut headers);
-        let response = self
-            .http
-            .post(&self.verify_url)
-            .headers(headers)
-            .body(json!({ "token": token }).to_string())
-            .send()
-            .await
-            .map_err(|error| VerifyError::Unavailable(error.into()))?;
-        let status = response.status();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| VerifyError::Unavailable(error.into()))?;
-        match status {
-            StatusCode::OK => {
-                let signed: SignedToken = serde_json::from_slice(&body)
-                    .map_err(|error| VerifyError::Unavailable(error.into()))?;
-                signed
-                    .check(ClaimPolicy::default(), SystemTime::now())
-                    .map_err(|error| VerifyError::Unauthorized(error.to_string()))?;
-                Ok(signed)
-            }
-            StatusCode::UNAUTHORIZED => Err(VerifyError::Unauthorized(
-                String::from_utf8_lossy(&body).into_owned(),
-            )),
-            status => Err(VerifyError::Unavailable(anyhow::anyhow!(
-                "unexpected VTS status {status}"
-            ))),
-        }
+        let signed = self.vts.verify(token).await.map_err(|error| match error {
+            VtsVerifyError::Unauthorized(reason) => VerifyError::Unauthorized(reason),
+            other => VerifyError::Unavailable(other.into()),
+        })?;
+        signed
+            .check(ClaimPolicy::default(), SystemTime::now())
+            .map_err(|error| VerifyError::Unauthorized(error.to_string()))?;
+        Ok(signed)
     }
 }
 

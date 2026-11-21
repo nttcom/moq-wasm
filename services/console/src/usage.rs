@@ -54,6 +54,7 @@ impl ObservabilityClient {
         let response = self
             .http
             .get(url)
+            .headers(telemetry_otlp::current_trace_headers())
             .bearer_auth(token)
             .send()
             .await

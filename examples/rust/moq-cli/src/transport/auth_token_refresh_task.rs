@@ -1,6 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use moqt::Session;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use super::auth_token_file::read_auth_token;
@@ -12,14 +13,15 @@ pub struct AuthTokenRefreshTask {
 }
 
 impl AuthTokenRefreshTask {
+    /// `current` is the token in force, which the session's
+    /// `AuthorizationTokenSource` sends on a connection opened after this one.
     pub fn run(
         session: Arc<Session>,
         token_file: PathBuf,
         app_id: String,
-        current_token: String,
+        current: Arc<Mutex<String>>,
     ) -> Self {
         let join_handle = tokio::spawn(async move {
-            let mut current_token = current_token;
             let mut interval = tokio::time::interval(POLL_INTERVAL);
             loop {
                 interval.tick().await;
@@ -30,7 +32,7 @@ impl AuthTokenRefreshTask {
                         continue;
                     }
                 };
-                if token == current_token {
+                if token == *current.lock().await {
                     continue;
                 }
                 match session
@@ -38,10 +40,12 @@ impl AuthTokenRefreshTask {
                     .refresh_authorization_token(app_id.clone(), &token)
                     .await
                 {
-                    Ok(_) => info!("authorization token refreshed"),
+                    Ok(_) => {
+                        info!("authorization token refreshed");
+                        *current.lock().await = token;
+                    }
                     Err(error) => warn!(%error, "authorization token refresh rejected"),
                 }
-                current_token = token;
             }
         });
         Self { join_handle }

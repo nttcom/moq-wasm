@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use moqt::{
-    ClientConfig, Endpoint, QUIC, RequestErrorCode, Session, SessionEvent,
+    ClientConfig, Endpoint, NATIVE, RequestErrorCode, Session, SessionEvent,
     namespace::NamespaceInterest, subscribe::SubscribeHandler,
 };
 use tokio::{
@@ -25,7 +25,7 @@ pub(crate) struct TranslationResources {
 
 /// The only reader of `Session::receive_event` on its session.
 pub(crate) struct RootTranslation {
-    _endpoint: Endpoint<QUIC>,
+    _endpoint: Endpoint<NATIVE>,
     session: Arc<Session>,
     namespaces: BroadcastNamespaces,
     resources: TranslationResources,
@@ -53,7 +53,7 @@ impl RootTranslation {
         namespaces: BroadcastNamespaces,
         resources: TranslationResources,
     ) -> Result<Self> {
-        let endpoint = Endpoint::<QUIC>::create_client(config)?;
+        let endpoint = Endpoint::<NATIVE>::create_client(config)?;
         let session = Arc::new(endpoint.connect(relay).await?.await?);
         tracing::info!(%relay, "connected to relay");
         session

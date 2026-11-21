@@ -2,11 +2,13 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use moqt::{
-    CertificateVerification, ClientConfig, Endpoint, NATIVE, Session, Subscription, TrackReader,
+    AuthorizationTokenSource, CertificateVerification, ClientConfig, Endpoint, NATIVE, Session,
+    Subscription, TrackReader,
     fetch::{FetchDataReceiver, FetchOption},
     object::{ContentExists, Location},
     subscribe::{FilterType, SubscribeOption},
 };
+use tokio::sync::Mutex;
 
 use crate::token_refresh_task::{TokenRefreshTask, TokenRenewal};
 
@@ -33,11 +35,20 @@ impl RelayConnection {
         verify_certificate: bool,
         authorization_token: Option<String>,
     ) -> Result<Self> {
+        Self::connect_with_source(url, verify_certificate, authorization_token.map(Into::into))
+            .await
+    }
+
+    async fn connect_with_source(
+        url: &str,
+        verify_certificate: bool,
+        authorization_token: Option<AuthorizationTokenSource>,
+    ) -> Result<Self> {
         let endpoint = Endpoint::<NATIVE>::create_client(&ClientConfig {
             certificate_verification: CertificateVerification::native_roots_or_disabled(
                 verify_certificate,
             ),
-            authorization_token: authorization_token.map(Into::into),
+            authorization_token,
             ..ClientConfig::default()
         })?;
         tracing::info!(relay = url, "connecting to relay");
@@ -59,15 +70,25 @@ impl RelayConnection {
         token: &ServiceToken,
     ) -> Result<Self> {
         let ServiceToken { token, renewal } = token.clone();
-        let mut connection = Self::connect(url, verify_certificate, token.clone()).await?;
-        if let (Some(renewal), Some(token)) = (renewal, token) {
-            connection._token_refresh = Some(TokenRefreshTask::run(
-                connection.session.clone(),
-                renewal,
-                namespace.split('/').next().unwrap_or_default().to_string(),
-                token,
-            ));
-        }
+        let Some(initial) = token else {
+            return Self::connect(url, verify_certificate, None).await;
+        };
+        let Some(renewal) = renewal else {
+            return Self::connect(url, verify_certificate, Some(initial)).await;
+        };
+        let current = Arc::new(Mutex::new(initial));
+        let mut connection = Self::connect_with_source(
+            url,
+            verify_certificate,
+            Some(AuthorizationTokenSource::shared(Arc::clone(&current))),
+        )
+        .await?;
+        connection._token_refresh = Some(TokenRefreshTask::run(
+            connection.session.clone(),
+            renewal,
+            namespace.split('/').next().unwrap_or_default().to_string(),
+            current,
+        ));
         Ok(connection)
     }
 

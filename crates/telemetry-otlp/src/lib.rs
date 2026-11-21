@@ -23,7 +23,8 @@ mod trace_context;
 
 pub use event_logger::EventLogger;
 pub use trace_context::{
-    continue_trace_from, continue_trace_from_traceparent, current_traceparent, inject_trace_context,
+    continue_trace_from, continue_trace_from_traceparent, current_trace_headers,
+    current_traceparent, inject_trace_context,
 };
 
 #[derive(Clone, Copy)]

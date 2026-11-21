@@ -6,7 +6,7 @@ description = "Fills ClickHouse tables from the relays' OTLP stats snapshots and
 
 [dependencies]
 anyhow = { workspace = true }
-auth-token = { path = "../../crates/auth-token" }
+auth-token = { path = "../../crates/auth-token", features = ["vts-client"] }
 http-body-util = { workspace = true }
 http-server = { path = "../../crates/http-server" }
 hyper = { workspace = true }

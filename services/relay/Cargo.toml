@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 moqt = { path = "../../crates/moqt", features = ["self-signed-cert"] }
-auth-token = { path = "../../crates/auth-token" }
+auth-token = { path = "../../crates/auth-token", features = ["vts-client"] }
 telemetry = { path = "../../crates/telemetry" }
 telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 tokio = { workspace = true, features = ["full", "tracing"] }
@@ -17,7 +17,6 @@ bytes = { workspace = true }
 opentelemetry = { workspace = true, features = ["trace", "metrics"] }
 tracing-opentelemetry = { workspace = true }
 redis = { version = "1.2.2", features = ["tokio-comp", "connection-manager"] }
-reqwest = { workspace = true, features = ["json", "rustls"] }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 

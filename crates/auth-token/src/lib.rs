@@ -1,6 +1,8 @@
 mod jwt;
 mod signed_token;
 mod temporary_app;
+#[cfg(feature = "vts-client")]
+mod vts_client;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -9,6 +11,8 @@ use serde::{Deserialize, Serialize};
 pub use jwt::{SignatureError, decode_unverified_payload, sign_token, verify_signature};
 pub use signed_token::{Access, ClaimError, ClaimPolicy, SignedToken};
 pub use temporary_app::{TemporaryAppTokenError, temporary_app_id};
+#[cfg(feature = "vts-client")]
+pub use vts_client::{VtsClient, VtsVerifyError};
 
 /// The `appId` prefix of a temporary app: an app that exists only as the
 /// tokens issued for it, all signed with one shared secret instead of a

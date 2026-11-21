@@ -1,10 +1,16 @@
-use std::{net::IpAddr, time::Instant};
+use std::{
+    net::IpAddr,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use hyper::{Method, StatusCode, body::Bytes};
 use serde_json::Value;
 
 use crate::rate_limit::RateLimit;
+
+/// A page waits for the answer; a request that takes this long is stuck.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Calls `bot-dispatcher` for the pages of temporary apps, as an app server calls it for
 /// its own pages (docs/architecture/bot-dispatcher/architecture.md "Temporary apps").
@@ -44,7 +50,12 @@ impl BotProxy {
         body: Option<Value>,
     ) -> Result<(StatusCode, Bytes)> {
         let url = format!("{}{path_and_query}", self.bot_dispatcher_url);
-        let mut request = self.client.request(method, &url).bearer_auth(launch_token);
+        let mut request = self
+            .client
+            .request(method, &url)
+            .timeout(REQUEST_TIMEOUT)
+            .headers(telemetry_otlp::current_trace_headers())
+            .bearer_auth(launch_token);
         if let Some(body) = body {
             request = request.json(&body);
         }

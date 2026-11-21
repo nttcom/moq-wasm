@@ -1,8 +1,12 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use google_cloud::MetadataToken;
 use serde_json::json;
+
+/// Starting an execution answers once the job is accepted; a request that
+/// takes this long is stuck.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Starts one job without waiting for it: as a child process locally, or as
 /// an execution of a Cloud Run Job whose container arguments are replaced by
@@ -53,6 +57,7 @@ impl JobLauncher {
                     .context("cannot get a token from the metadata server")?;
                 let response = client
                     .post(format!("https://run.googleapis.com/v2/{job}:run"))
+                    .timeout(REQUEST_TIMEOUT)
                     .bearer_auth(token)
                     .json(&json!({ "overrides": { "containerOverrides": [{ "args": args }] } }))
                     .send()

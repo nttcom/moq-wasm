@@ -1,10 +1,7 @@
 use std::sync::mpsc::Sender;
 
 use anyhow::{Context, Result, bail};
-use moqt::{
-    ClientConfig,
-    client::{FollowEvent, Session},
-};
+use moqt::client::{FollowEvent, Session};
 use tokio::task::JoinHandle;
 
 use crate::ptz_worker::Command;
@@ -14,24 +11,20 @@ pub(crate) struct CommandTrack {
     pub(crate) track: String,
 }
 
-/// Follows the viewers' command track on a session of its own, separate from
-/// the media broadcast, and forwards each command to the PTZ worker. Each
-/// viewer that announces the namespace or publishes the track takes over
-/// from the one before.
+/// Follows the viewers' command track on the session the media broadcast
+/// publishes on, and forwards each command to the PTZ worker. Each viewer
+/// that announces the namespace or publishes the track takes over from the
+/// one before.
 pub(crate) struct CommandSubscriber {
     task: JoinHandle<Result<()>>,
 }
 
 impl CommandSubscriber {
     pub(crate) async fn run(
-        url: &str,
-        client_config: &ClientConfig,
+        session: &Session,
         command_track: CommandTrack,
         command_sender: Sender<Command>,
     ) -> Result<Self> {
-        let session = Session::connect(url, client_config)
-            .await
-            .context("connect command session")?;
         let follower = session
             .follow_track(&command_track.namespace, &command_track.track)
             .await
@@ -42,7 +35,6 @@ impl CommandSubscriber {
             "following the command track"
         );
         let task = tokio::spawn(async move {
-            let _session = session;
             while let Some(event) = follower.next().await {
                 if let FollowEvent::Object(object) = event
                     && let Err(err) = handle_command_payload(&object.payload, &command_sender)

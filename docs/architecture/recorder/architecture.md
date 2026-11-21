@@ -45,7 +45,10 @@ both tracks into one init segment and one fragment stream.
    `Subscriber::subscribe_current_group`: the SUBSCRIBE and joining FETCH
    (offset 0) draft-ietf-moq-msf-02 §5 asks for, read through one
    `TrackReader` that yields the current group before the live objects, or
-   only the live objects when the publisher has sent none yet.
+   only the live objects when the publisher has sent none yet. Each object is
+   read with `msf::Catalog::parse`, which refuses a version this build does not
+   read, a delta update and a catalog the draft calls invalid (§5.1.1, §5.1.6,
+   §5.2).
    `track_selection::select_tracks` picks the LOC track named by
    `--video-track` and `--audio-track`. Without a name it takes the tracks
    of one source (see "Sources") by their catalog role and quality fields
@@ -652,8 +655,9 @@ the token as its AUTHORIZATION TOKEN (see the relay architecture document,
 "Token refresh"). The app id is the namespace's first element. moq-cli does
 the same; neither shares the code because draft-14 has no refresh message and
 the convention is the relay's. The TRACK_STATUS goes to the current connection, so it
-follows a migration; the session to the new relay is opened with the token
-the recorder started with.
+follows a migration; the session to the new relay is opened with the token in
+force then, because the connection's `AuthorizationTokenSource` reads the same
+cell the task updates before it refreshes the live session.
 
 ## Limits
 - `--from-cache` reaches only as far back as the relay's and the

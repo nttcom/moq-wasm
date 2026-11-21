@@ -55,8 +55,12 @@ async fn main() -> anyhow::Result<()> {
             object: "BOT_DISPATCHER_REGISTRY_OBJECT",
         })?
         .context("set BOT_DISPATCHER_REGISTRY_FILE or BOT_DISPATCHER_REGISTRY_BUCKET")?;
+        let registry = RegistryStore::new(registry)?;
+        // Fail at startup rather than on the first launch request.
+        let apps = registry.load().await?;
+        tracing::info!(apps = apps.len(), "registry loaded");
         let signer = BotTokenSigner::new(
-            RegistryStore::new(registry)?,
+            registry,
             non_empty_env("BOT_DISPATCHER_TEMPORARY_APP_SECRET"),
         );
         (

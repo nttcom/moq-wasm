@@ -22,8 +22,8 @@ use crate::{
     Args,
     catalog_reader::CatalogReader,
     recording::{Layout, RecordedFile, Recording, Uploader},
-    relay::{self, RelayConnection, Track},
-    token_refresh_task::{TokenRefreshTask, TokenRenewal, read_token_file},
+    relay::{self, RelayConnection, ServiceToken, Track},
+    token_refresh_task::{TokenRenewal, read_token_file},
     track_list::track_table,
     track_selection::{
         AudioChoice, Choice, Selection, SourceChoice, VideoChoice, keeps, select_audio,
@@ -37,25 +37,17 @@ pub(crate) async fn run(args: Args) -> Result<()> {
         Some(path) => Some(read_token_file(path).await?),
         None => args.auth_token.clone(),
     };
-    let connection = RelayConnection::connect(
+    let connection = RelayConnection::connect_service(
         &args.relay,
         !args.insecure_skip_tls_verify,
-        auth_token.clone(),
+        &args.namespace,
+        &ServiceToken {
+            token: auth_token,
+            renewal: args.auth_token_file.clone().map(TokenRenewal::File),
+        },
     )
     .await?;
     let session = &connection.session;
-    let token_refresh = args
-        .auth_token_file
-        .clone()
-        .zip(auth_token)
-        .map(|(path, token)| {
-            TokenRefreshTask::run(
-                session.clone(),
-                TokenRenewal::File(path),
-                app_id(&args.namespace).to_string(),
-                token,
-            )
-        });
     let result = if args.list_tracks {
         list_tracks(session, &args.namespace).await
     } else if args.archive {
@@ -63,7 +55,6 @@ pub(crate) async fn run(args: Args) -> Result<()> {
     } else {
         record_until_interrupted(session, &args).await
     };
-    drop(token_refresh);
     connection.close().await;
     result
 }
@@ -151,12 +142,6 @@ async fn record_until_interrupted(session: &Session, args: &Args) -> Result<()> 
         task.finish().await;
     }
     result.map(drop)
-}
-
-/// An app's namespaces start with its app id, which the relay's token
-/// refresh convention names as the TRACK_STATUS namespace.
-fn app_id(namespace: &str) -> &str {
-    namespace.split('/').next().unwrap_or(namespace)
 }
 
 async fn list_tracks(session: &Session, namespace: &str) -> Result<()> {

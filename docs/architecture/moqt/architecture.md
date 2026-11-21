@@ -497,11 +497,14 @@ Server flow: `Endpoint` → `Accepting` (a boxed `Future`) → `Handshake` → `
   SERVER_SETUP, version `0xff00000e`). `ClientConfig.authorization_token`, when
   set, is sent as a CLIENT_SETUP AUTHORIZATION TOKEN parameter (Alias Type
   `USE_VALUE`, Token Type `0`, UTF-8 value). It is an
-  `AuthorizationTokenSource`: a fixed string, or a provider that
+  `AuthorizationTokenSource`: a fixed string; a provider that
   `SessionCreator::set_up` calls before each CLIENT_SETUP, on the first
   connection and on every connection a session opens to follow GOAWAY, so a
-  client with short-lived tokens fetches a new one each time. A provider that
-  fails fails that connection. On success a `Session` is created.
+  client with short-lived tokens fetches a new one each time; or
+  `AuthorizationTokenSource::shared`, which sends the token a
+  `tokio::sync::Mutex<String>` holds, which the client replaces when it renews
+  the token. A provider that fails fails that connection. On success a
+  `Session` is created.
 - `refuse_new_connections()` makes every later connection attempt fail at
   the transport level (QUIC CONNECTION_REFUSED, HTTP 503 for WebTransport)
   while `accept()` keeps being polled; established sessions are unaffected.

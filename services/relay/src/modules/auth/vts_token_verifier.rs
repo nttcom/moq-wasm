@@ -1,10 +1,7 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
-use reqwest::{StatusCode, header::HeaderMap};
-use serde::{Deserialize, Serialize};
-
-use auth_token::{ClaimPolicy, SignedToken};
+use auth_token::{ClaimPolicy, VtsClient, VtsVerifyError};
 
 use crate::modules::auth::{
     token_claims::build_verified_token,
@@ -12,30 +9,15 @@ use crate::modules::auth::{
     verified_token::VerifiedToken,
 };
 
-const VERIFY_TIMEOUT: Duration = Duration::from_secs(3);
-
 pub(crate) struct VtsTokenVerifier {
-    client: reqwest::Client,
-    verify_url: String,
+    client: VtsClient,
     claim_policy: ClaimPolicy,
-}
-
-#[derive(Serialize)]
-struct VerifyRequest<'a> {
-    token: &'a str,
-}
-
-#[derive(Deserialize)]
-struct VerifyErrorResponse {
-    error: String,
 }
 
 impl VtsTokenVerifier {
     pub(crate) fn new(verify_url: String, claim_policy: ClaimPolicy) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder().timeout(VERIFY_TIMEOUT).build()?;
         Ok(Self {
-            client,
-            verify_url,
+            client: VtsClient::new(verify_url),
             claim_policy,
         })
     }
@@ -57,37 +39,16 @@ impl TokenVerifier for VtsTokenVerifier {
 
 impl VtsTokenVerifier {
     async fn request_verification(&self, token: &str) -> Result<VerifiedToken, VerifyError> {
-        let mut headers = HeaderMap::new();
-        telemetry_otlp::inject_trace_context(&tracing::Span::current(), &mut headers);
-        let response = self
+        let signed = self
             .client
-            .post(&self.verify_url)
-            .headers(headers)
-            .json(&VerifyRequest { token })
-            .send()
+            .verify(token)
             .await
-            .map_err(|error| VerifyError::Unavailable(error.into()))?;
-        match response.status() {
-            StatusCode::OK => {
-                let signed = response
-                    .json::<SignedToken>()
-                    .await
-                    .map_err(|error| VerifyError::Unavailable(error.into()))?;
-                build_verified_token(signed, self.claim_policy, SystemTime::now())
-                    .map_err(|reason| VerifyError::Unauthorized(reason.to_string()))
-            }
-            StatusCode::UNAUTHORIZED => {
-                let reason = response
-                    .json::<VerifyErrorResponse>()
-                    .await
-                    .map(|body| body.error)
-                    .unwrap_or_else(|_| "unauthorized".to_string());
-                Err(VerifyError::Unauthorized(reason))
-            }
-            status => Err(VerifyError::Unavailable(anyhow::anyhow!(
-                "unexpected VTS status {status}"
-            ))),
-        }
+            .map_err(|error| match error {
+                VtsVerifyError::Unauthorized(reason) => VerifyError::Unauthorized(reason),
+                other => VerifyError::Unavailable(other.into()),
+            })?;
+        build_verified_token(signed, self.claim_policy, SystemTime::now())
+            .map_err(|reason| VerifyError::Unauthorized(reason.to_string()))
     }
 }
 
