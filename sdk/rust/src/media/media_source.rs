@@ -91,7 +91,7 @@ impl MediaSource {
         data: impl Into<Bytes>,
         timestamp_micros: u64,
     ) -> Result<(), MediaSourceError> {
-        self.with(|source| source.push_video(data.into(), timestamp_micros))
+        self.with(|source| source.push_video(data.into(), timestamp_micros).map(drop))
     }
 
     /// `codec` is `opus`, or an AAC `mp4a.40.*` whose `description` is the
@@ -114,7 +114,11 @@ impl MediaSource {
         timestamp_micros: u64,
         level: Option<AudioLevel>,
     ) -> Result<(), MediaSourceError> {
-        self.with(|source| source.push_audio(data.into(), timestamp_micros, level))
+        self.with(|source| {
+            source
+                .push_audio(data.into(), timestamp_micros, level)
+                .map(drop)
+        })
     }
 
     /// Another encoding of the video in the track `<video>_<name>`: feed it

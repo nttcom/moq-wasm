@@ -28,16 +28,16 @@ const DROP_LOG_INTERVAL: u64 = 500;
 const BACKLOG_WARN_DEPTH: usize = 3 * SAMPLES_PER_SECOND;
 const BACKLOG_CLEARED_DEPTH: usize = BACKLOG_WARN_DEPTH / 2;
 
-/// What became of a pushed frame.
+/// What became of pushed media.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum PushOutcome {
     Queued,
     /// Dropped because the queue was full while the relay did not keep up,
-    /// or because it comes before the next keyframe that fits after such a
-    /// drop, so that no subscriber gets a group it cannot decode. The
-    /// source's keyframe requests are notified when the dropping starts and
-    /// for every dropped keyframe.
+    /// or, for a video frame, because it comes before the next keyframe that
+    /// fits after such a drop, so that no subscriber gets a group it cannot
+    /// decode. `SourceTracks::keyframe_requests`, when set, is notified when
+    /// the dropping starts and for every dropped keyframe.
     Dropped,
     /// The frame holds no picture, as an H.264 or H.265 access unit without
     /// a slice, so nothing was published; its parameter sets go with the
@@ -111,7 +111,7 @@ impl PublishQueue {
         )
     }
 
-    pub(crate) fn push(&mut self, event: MediaEvent) -> Result<()> {
+    pub(crate) fn push(&mut self, event: MediaEvent) -> Result<PushOutcome> {
         self.report_backlog();
         let has_room = self.event_sender.capacity() > CONFIG_HEADROOM;
         match &event {
@@ -120,14 +120,14 @@ impl PublishQueue {
             {
                 self.dropped.video += 1;
                 self.record_drop(sample.is_keyframe);
-                return Ok(());
+                return Ok(PushOutcome::Dropped);
             }
             MediaEvent::Audio(_) if !has_room => {
                 self.dropped.audio += 1;
                 self.record_drop(false);
-                return Ok(());
+                return Ok(PushOutcome::Dropped);
             }
-            MediaEvent::Streams(_) if !has_room => return Ok(()),
+            MediaEvent::Streams(_) if !has_room => return Ok(PushOutcome::Dropped),
             _ => {}
         }
         let resumes_video = self.awaiting_keyframe && matches!(&event, MediaEvent::Video(_));
@@ -136,7 +136,7 @@ impl PublishQueue {
                 if resumes_video {
                     self.resume();
                 }
-                Ok(())
+                Ok(PushOutcome::Queued)
             }
             Err(TrySendError::Full(_)) => {
                 bail!("publish queue full: the relay is not keeping up")
@@ -366,17 +366,38 @@ mod tests {
     }
 
     #[test]
+    fn reports_media_the_queue_takes_as_queued() {
+        // Arrange
+        let (mut queue, mut consumer) = PublishQueue::open(RelayConnection::new(None), None);
+
+        // Act
+        let outcomes =
+            [video(true), audio(), audio_config()].map(|event| queue.push(event).unwrap());
+
+        // Assert
+        assert_eq!(outcomes, [PushOutcome::Queued; 3]);
+        assert_eq!(queued(&mut consumer).len(), 3);
+    }
+
+    #[test]
     fn drops_samples_instead_of_waiting_while_the_queue_is_full() {
         // Arrange
         let (mut queue, mut consumer) = stalled_queue();
 
         // Act
-        let delta = queue.push(video(false));
-        let keyframe = queue.push(video(true));
-        let audio = queue.push(audio());
+        let delta = queue.push(video(false)).unwrap();
+        let keyframe = queue.push(video(true)).unwrap();
+        let audio = queue.push(audio()).unwrap();
 
         // Assert
-        assert!(delta.is_ok() && keyframe.is_ok() && audio.is_ok());
+        assert_eq!(
+            [delta, keyframe, audio],
+            [
+                PushOutcome::Dropped,
+                PushOutcome::Dropped,
+                PushOutcome::Dropped
+            ]
+        );
         assert_eq!(queued(&mut consumer).len(), SAMPLE_SLOTS);
     }
 
@@ -388,11 +409,19 @@ mod tests {
         free_slots(&mut consumer, 4);
 
         // Act
-        queue.push(video(false)).unwrap();
-        queue.push(video(true)).unwrap();
-        queue.push(video(false)).unwrap();
+        let delta = queue.push(video(false)).unwrap();
+        let keyframe = queue.push(video(true)).unwrap();
+        let next_delta = queue.push(video(false)).unwrap();
 
         // Assert
+        assert_eq!(
+            [delta, keyframe, next_delta],
+            [
+                PushOutcome::Dropped,
+                PushOutcome::Queued,
+                PushOutcome::Queued
+            ]
+        );
         let events = queued(&mut consumer);
         assert_eq!(events.len(), SAMPLE_SLOTS - 4 + 2);
         assert_eq!(events[events.len() - 2..], [video(true), video(false)]);
@@ -454,10 +483,12 @@ mod tests {
         let (mut stalled, mut stalled_consumer) = stalled_queue();
 
         // Act
-        open.push(streams()).unwrap();
-        stalled.push(streams()).unwrap();
+        let open_outcome = open.push(streams()).unwrap();
+        let stalled_outcome = stalled.push(streams()).unwrap();
 
         // Assert
+        assert_eq!(open_outcome, PushOutcome::Queued);
+        assert_eq!(stalled_outcome, PushOutcome::Dropped);
         assert_eq!(queued(&mut open_consumer), [streams()]);
         assert_eq!(queued(&mut stalled_consumer).len(), SAMPLE_SLOTS);
     }
