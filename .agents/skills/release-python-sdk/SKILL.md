@@ -13,11 +13,11 @@ The release flow itself is described in `docs/architecture/python/sdk.md` ("Pack
 2. List the PRs merged since then that change what the wheel is built from:
    `git log --format='%s' <tag>..origin/master -- sdk/python crates/moqt crates/broadcast crates/msf crates/mediapack crates/telemetry crates/telemetry-report`.
    Each squash-merged subject ends in `(#<number>)`.
-3. Read each PR's body with `gh pr view <number> --json title,body` and take its `## リリースノート（Python）` section.
+3. Read each PR's title and body (using the environment's PR read tool when available, otherwise `gh pr view <number> --json title,body`) and take its `## リリースノート（Python）` section.
 4. Show the user the PRs without that section whose entry is not already under `## Unreleased` in `sdk/python/CHANGELOG.md`, with their titles, and ask which of them a user of the Python SDK would notice. Write an entry for those the user names, following the `## リリースノート（Python）` rule of the `create-pull-request` skill.
 5. Pick the version: a minor bump (`0.x` → `0.(x+1).0`) when an entry starts with `Breaking:`, a patch bump otherwise. Tell the user which and why.
 6. On a branch `chore/python-release-<version>` from `origin/master`:
-   - Add `## <version>` under `# Changelog` in `sdk/python/CHANGELOG.md` with the entries, `Breaking:` ones first. Fold in any entries left under `## Unreleased` and remove that heading.
+   - Add `## <version>` under `# Changelog` in `sdk/python/CHANGELOG.md` with the entries, following `## Writing the Section` in `.agents/skills/release-sdk/SKILL.md` (read "page" as "application"). Fold in any entries left under `## Unreleased` and remove that heading.
    - Set `version` under `[project]` in `sdk/python/pyproject.toml`. maturin takes the wheel's version from there; the `version` in `sdk/python/Cargo.toml` is not read.
    - Run `uv lock` in every directory whose `uv.lock` names the package (`git grep -l 'name = "moq-wasm"' -- '*uv.lock'`), and check the diff only changes the `moq-wasm` version. The workflow's `uv sync --locked` fails on a stale `sdk/python/uv.lock`.
    - Check `node sdk/js/js/scripts/release-notes.mjs sdk/python/CHANGELOG.md <version>` prints the section.
