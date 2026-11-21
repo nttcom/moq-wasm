@@ -100,3 +100,19 @@ test('addSource rejects and releases the camera when the broadcast closes while 
   expect(environment.workers).toEqual([])
   expect(broadcast.source('camera')).toBeUndefined()
 })
+
+test('createBroadcast offers each event timeline it is given, in order', async () => {
+  // Act
+  await createBroadcast(environment.session, ['room'], {
+    eventTimelines: [
+      { name: 'action', eventType: 'io.example.action.v1', priority: 0 },
+      { name: 'notes', eventType: 'io.example.notes.v1' }
+    ]
+  })
+
+  // Assert
+  expect(environment.broadcast.eventTimelines).toEqual([
+    ['action', 'io.example.action.v1', 0],
+    ['notes', 'io.example.notes.v1', undefined]
+  ])
+})

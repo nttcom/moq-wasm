@@ -13,6 +13,7 @@ export {
 export { type VideoCodecName } from './internal/encoders/videoEncoderConfig'
 export {
   type LocalBroadcast,
+  type EventTimelineOffer,
   type LocalBroadcastOptions,
   type LocalSource,
   type LocalSourceListener,
