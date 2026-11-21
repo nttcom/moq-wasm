@@ -493,7 +493,8 @@ def connect(
 ) -> _Connecting:
     """Connects to a relay: `moqt://` over raw QUIC, `https://` over WebTransport, presenting
     `token` (a JWT) in CLIENT_SETUP. Use it with `async with`, or await it and call `close()`.
-    A failure to connect raises RuntimeError.
+    A failure to connect raises RuntimeError, as does a relay that does not open the transport, or
+    answer CLIENT_SETUP once it is open, within 30 s.
 
     `refresh_token`, given with `token`, takes the current token and returns a later one of the
     same app. The session calls it five minutes before the token's `exp`, retries every 30 s, and

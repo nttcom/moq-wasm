@@ -130,7 +130,12 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   replace its connection, the session ends with `ConnectionLost`, as the
   browser SDK's `MoqSession.closed` resolves. It does not dial again: a bot
   whose session ended ends its room, and the page that asked for the room
-  asks again. A failure to connect raises from `connect`.
+  asks again. A failure to connect raises from `connect`, as does a relay
+  that does not open the transport, or answer CLIENT_SETUP once it is open,
+  within 30 s: moqt's deadlines for a first connection (quinn's idle timeout
+  or the `wss://` dial's, then `SERVER_SETUP_TIMEOUT`), long enough for a
+  relay starting from zero behind a link with a round trip of over half a
+  second. The SDK adds no deadline of its own.
 - **Token refresh.** `refresh_token` is an async callable that takes the
   current token and returns a later one. The session reads `app_id` and
   `exp` from the token's claims, calls it five minutes before `exp`, retries
