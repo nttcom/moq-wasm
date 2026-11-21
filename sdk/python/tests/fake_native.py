@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 
 from moq_wasm._session import Session, _Connecting
-from moq_wasm._token import TokenKeeper
+from moq_wasm._token import RefreshToken
 
 STAY_OPEN = object()
 
@@ -246,5 +246,5 @@ class FakeRelay:
         return session
 
 
-async def open_session(relay: FakeRelay, keeper: TokenKeeper | None = None, token: str | None = None) -> Session:
-    return await _Connecting(relay.dial, keeper, token)
+async def open_session(relay: FakeRelay, token: str | None = None, refresh: RefreshToken | None = None) -> Session:
+    return await _Connecting(relay.dial, token, refresh)

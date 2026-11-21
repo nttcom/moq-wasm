@@ -166,9 +166,12 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
 - **Lifetime.** Leaving the `async with` block closes the session; awaiting
   `connect` instead leaves `close()` to the caller. Entering one `connect()`
   result again while it is entered raises RuntimeError before dialing, since
-  one exit closes one session. Closing cancels the session's own tasks, the
-  token refresh among them, and returns once they finished, a
-  `refresh_token` call's cleanup included, even one given up
+  one exit closes one session. Awaiting one result more than once opens a
+  session each time; each refreshes its own token, starting from the
+  newest one the session opened before it holds, so neither takes the
+  token the other refreshed as not later than its own. Closing cancels the
+  session's own tasks, the token refresh among them, and returns once they
+  finished, a `refresh_token` call's cleanup included, even one given up
   at its deadline (which is not cancelled again), and the native
   session closed. The refresh ends with the cancellation even when the
   call raises another error from its cleanup, or catches the cancellation
