@@ -3,6 +3,7 @@ use std::future::Future;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 
 use super::{OutgoingObject, Placement};
 use crate::{
@@ -20,6 +21,9 @@ use crate::{
 /// while it holds the lock it numbers objects under.
 pub(super) struct OutletSendTask {
     command_sender: mpsc::UnboundedSender<OutletCommand>,
+    /// Cancels without waiting for the queued commands: a subscriber that
+    /// unsubscribed may never read the stream a send waits on.
+    cancellation: CancellationToken,
     /// Not aborted on drop, unlike the origin's other tasks: aborting drops
     /// the writer in the middle of a send, which finishes its open group with
     /// a FIN. Once the command channel closes, the task resets the open group
@@ -43,8 +47,6 @@ enum OutletCommand {
     /// Leaves the open group because one of its objects is not sent, as in
     /// Forward State 0 (draft-18 §5.1).
     LeaveGroup,
-    /// Resets the open group with CANCELLED (draft-14 §10.4.3) and exits.
-    Cancel { done: oneshot::Sender<()> },
     /// Finishes the open group, sends PUBLISH_DONE (TRACK_ENDED) and exits.
     End { done: oneshot::Sender<Result<()>> },
 }
@@ -56,12 +58,20 @@ impl OutletSendTask {
         subscription: Subscription,
     ) -> Self {
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
+        let cancellation = CancellationToken::new();
         let join_handle = executor::spawn(
             "Origin Outlet Send",
-            serve(writer, publisher, subscription, command_receiver),
+            serve(
+                writer,
+                publisher,
+                subscription,
+                command_receiver,
+                cancellation.clone(),
+            ),
         );
         Self {
             command_sender,
+            cancellation,
             _join_handle: join_handle,
         }
     }
@@ -86,14 +96,11 @@ impl OutletSendTask {
         self.queue(OutletCommand::LeaveGroup);
     }
 
-    /// Resolves once the open group is reset; the task takes no command
-    /// after this one.
-    pub(super) fn cancel(&self) -> impl Future<Output = ()> + use<> {
-        let (done, cancelled) = oneshot::channel();
-        self.queue(OutletCommand::Cancel { done });
-        async move {
-            let _ = cancelled.await;
-        }
+    /// Stops the send in progress and drops the queued commands, whose
+    /// sends resolve to `false`; the task then resets the open group with
+    /// CANCELLED (draft-14 §10.4.3) and exits.
+    pub(super) fn cancel(&self) {
+        self.cancellation.cancel();
     }
 
     /// Resolves once PUBLISH_DONE is sent; the task takes no command after
@@ -114,22 +121,28 @@ async fn serve(
     publisher: Publisher,
     subscription: Subscription,
     mut command_receiver: mpsc::UnboundedReceiver<OutletCommand>,
+    cancellation: CancellationToken,
 ) {
-    while let Some(command) = command_receiver.recv().await {
+    // A send stopped part way leaves its group open on the writer, so the
+    // reset below covers it.
+    while let Some(command) = cancellation
+        .run_until_cancelled(command_receiver.recv())
+        .await
+        .flatten()
+    {
         match command {
             OutletCommand::Send {
                 placement,
                 payload,
                 reply,
             } => {
-                let _ = reply.send(send(&mut writer, placement, payload).await);
+                let send = send(&mut writer, placement, payload);
+                let Some(result) = cancellation.run_until_cancelled(send).await else {
+                    break;
+                };
+                let _ = reply.send(result);
             }
             OutletCommand::LeaveGroup => writer.abandon_group(),
-            OutletCommand::Cancel { done } => {
-                writer.cancel().await;
-                let _ = done.send(());
-                return;
-            }
             OutletCommand::End { done } => {
                 let _ = done.send(end(writer, &publisher, &subscription).await);
                 return;

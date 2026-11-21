@@ -761,10 +761,13 @@ forward from their own cache through the raw stream senders.
   does not start a group, the writer opens that group on a new stream starting
   at that object, so Largest Object takes the rest of the open group;
   `release(&handler)`
-  has the session's send task reset its open group with CANCELLED on
-  UNSUBSCRIBE, after the sends queued before it, rather than finishing it
-  (draft-14 §10.4.3), waits for that, and returns the
-  track so the caller can account it; `serve_fetch` answers a Standalone or
+  cancels the session's send task on UNSUBSCRIBE through a
+  `CancellationToken` and does not wait for it. The task stops the send in
+  progress and drops the queued sends, which count as not sent. It then
+  resets its open group with CANCELLED instead of finishing it (draft-14
+  §10.4.3). The cancellation skips the queue because a subscriber that
+  unsubscribed may never read the stream a send waits on. `release` returns
+  the track so the caller can account it; `serve_fetch` answers a Standalone or
   Joining FETCH from the cache on its own stream (`FetchServeTask`, one per
   request, aborted by `cancel_fetch` and when the `Origin` is dropped). Each
   accepted SUBSCRIBE keeps its `JoinPoint`: the Largest Location its
@@ -795,7 +798,7 @@ forward from their own cache through the raw stream senders.
   the outlet's `TrackWriter` opened. The send task ends its outlet after the
   sends queued before it, so a write dropped after numbering still precedes
   PUBLISH_DONE. `end_track` waits for every outlet. A send task exits once
-  it has reset or ended its outlet. Unlike the other tasks, it is not
+  it is cancelled or has ended its outlet. Unlike the other tasks, it is not
   aborted when its handle is dropped: a writer dropped mid-send finishes its
   open group with a FIN. When its command channel closes (the `Origin` is
   dropped), the task resets the open group itself and exits.

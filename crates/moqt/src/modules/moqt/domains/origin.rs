@@ -684,7 +684,9 @@ impl Origin {
     }
 
     /// Returns the released track's `(namespace, name)`; its numbering and
-    /// cache are kept.
+    /// cache are kept. The subscription's open group is reset in the
+    /// background without waiting for queued sends, which are dropped: the
+    /// subscriber may never read them.
     pub async fn release(&self, handler: &UnsubscribeHandler) -> Option<(String, String)> {
         let request = (
             session_key(&handler.session_context),
@@ -692,13 +694,12 @@ impl Origin {
         );
         let mut state = self.lock_state_knowing(request).await;
         let key = state.subscriptions.remove(&request)?.track;
-        let mut cancelled = None;
         if let Some(track) = state.tracks.get_mut(&key) {
             track.outlets.retain_mut(|outlet| {
                 if outlet.request != request {
                     return true;
                 }
-                cancelled = Some(outlet.send_task.cancel());
+                outlet.send_task.cancel();
                 if outlet.publication != Publication::Published {
                     return false;
                 }
@@ -706,10 +707,6 @@ impl Origin {
                 true
             });
             track.refresh_demand();
-        }
-        drop(state);
-        if let Some(cancelled) = cancelled {
-            cancelled.await;
         }
         Some(key)
     }
@@ -2484,6 +2481,66 @@ mod tests {
             assert_eq!(done.request_id(), accepted.request_id());
             assert_eq!(done.status_code(), PublishDoneCode::TrackEnded);
             assert_eq!(done.stream_count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unsubscribe_while_a_send_waits_for_the_subscriber_neither_hangs_nor_stalls_the_track()
+     {
+        for version in DRAFTS {
+            // Arrange: one subscriber holds its stream without reading it; another reads everything
+            let peers = origin_with_track("origin-release-stalled", RETENTION, version).await;
+            let origin = &peers.origin;
+            let stalled = subscribe(&peers, FilterType::NextGroupStart).await;
+            let mut stalled_streams = data_receiver(&peers.server, &stalled).await;
+            let (client, server) = connected_sessions("origin-release-reading", version).await;
+            let reading = Peers {
+                origin: origin.clone(),
+                client: Arc::new(client),
+                server,
+            };
+            let accepted = publish(&reading).await;
+            let mut reader = subscribed_track_reader(&reading.server, &accepted).await;
+            let mut in_flight = pin!(origin.write(
+                NAMESPACE,
+                TRACK,
+                OutgoingObject::plain(GroupBoundary::Next, large_payload())
+            ));
+            let (first_received, _held_stream) = within(async {
+                tokio::select! {
+                    _ = &mut in_flight => panic!("a write returned while a subscriber does not read"),
+                    received = async {
+                        tokio::join!(
+                            read_objects(&mut reader, 1),
+                            next_subgroup(&mut stalled_streams)
+                        )
+                    } => received,
+                }
+            })
+            .await;
+
+            // Act
+            let released = unsubscribe(&peers, &stalled).await;
+            let first = within(in_flight).await;
+            let (next, next_received) = within(async {
+                tokio::join!(
+                    origin.write(NAMESPACE, TRACK, plain(GroupBoundary::Within, b"b")),
+                    read_objects(&mut reader, 1)
+                )
+            })
+            .await;
+
+            // Assert
+            assert_eq!(released, Some((NAMESPACE.to_string(), TRACK.to_string())));
+            assert_eq!(first.unwrap(), sent(FIRST_GROUP_ID, 0, true));
+            assert_eq!(next.unwrap(), sent(FIRST_GROUP_ID, 1, false));
+            assert_eq!(
+                [first_received, next_received].concat(),
+                [
+                    (FIRST_GROUP_ID, 0, LARGER_THAN_A_STREAM_WINDOW),
+                    (FIRST_GROUP_ID, 1, 1)
+                ]
+            );
         }
     }
 
