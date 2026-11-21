@@ -12,9 +12,8 @@ pub struct PendingPublishNamespace {
     pub(super) request_id: RequestId,
     pub(super) track_namespace: String,
     pub(super) pending: PendingResponse,
-    /// `None` unless `announce` sent the request. A migration's own
-    /// PUBLISH_NAMESPACE must stay `None`: the migration holds the write lock
-    /// that `forget` would wait for.
+    /// `None` for a migration's own PUBLISH_NAMESPACE: the migration holds the
+    /// write lock that `forget` would wait for.
     pub(super) record: Option<PublishedNamespaceRecord>,
 }
 

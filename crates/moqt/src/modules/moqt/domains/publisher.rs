@@ -1,3 +1,4 @@
+use crate::modules::extensions::mutex::lock;
 use crate::modules::telemetry::current_trace_context;
 use std::sync::Arc;
 
@@ -90,8 +91,7 @@ impl Publisher {
             }
         };
         let request_id = logical_id(connection.generation, pending.request_id);
-        self.session
-            .record_published_namespace(request_id, namespace.clone());
+        lock(&self.session.published_namespaces).insert(request_id, namespace.clone());
         if let Some(carried) = &carried {
             carried.update(|carried| carried.published_namespaces.insert(request_id, namespace));
         }
@@ -105,7 +105,7 @@ impl Publisher {
     /// Withdraws a previous PUBLISH_NAMESPACE. Fire-and-forget: the spec
     /// defines no response message for PUBLISH_NAMESPACE_DONE.
     pub async fn publish_namespace_done(&self, namespace: String) -> anyhow::Result<()> {
-        self.session.withdraw_published_namespace(&namespace);
+        lock(&self.session.published_namespaces).retain(|_, published| *published != namespace);
         if let Some(carried) = self.session.read_carried().await {
             carried.update(|carried| {
                 carried
