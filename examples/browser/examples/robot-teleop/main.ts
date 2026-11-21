@@ -1,4 +1,5 @@
 import { MoqSession, type MoqSubscription, type TrackWriter } from 'moq-wasm'
+import { createBroadcast } from 'moq-wasm/media'
 import { connectOptions, withNamespaceRoot } from '../../utils/access'
 import { setUpRelayUrlControls } from '../../utils/relayPicker'
 import { element, getErrorMessage } from '../../utils/page'
@@ -14,6 +15,7 @@ const CONTROL_PRIORITY = 0
 const STATE_PRIORITY = 32
 const MAX_ACTION_AGE_MS = 300
 const RESUBSCRIBE_DELAY_MS = 1_000
+const ACTION_EVENT_TYPE = 'io.skyway.research.moqt.robotics.action.v1'
 
 const urlInput = element<HTMLInputElement>('url')
 const roomInput = element<HTMLInputElement>('room')
@@ -49,7 +51,10 @@ async function connect(): Promise<void> {
     const room = withNamespaceRoot(roomInput.value.trim().split('/'))
     const operator = `operators/${crypto.randomUUID().slice(0, 8)}`
     const namespace = [...room, ...operator.split('/')]
-    await session.announce(namespace)
+    // Listed in the catalog, so a room recording keeps the actions too.
+    await createBroadcast(session, namespace, {
+      eventTimelines: [{ name: 'action', eventType: ACTION_EVENT_TYPE, priority: ACTION_PRIORITY }]
+    })
     const writer = await session.publishTrack(namespace, 'action', {
       publish: true,
       priority: ACTION_PRIORITY,
