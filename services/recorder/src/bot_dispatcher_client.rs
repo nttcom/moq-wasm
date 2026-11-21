@@ -105,6 +105,7 @@ impl BotDispatcherClient {
             .http
             .post(&url)
             .timeout(REQUEST_TIMEOUT)
+            .headers(telemetry_otlp::current_trace_headers())
             .bearer_auth(bearer);
         if let Some(body) = body {
             request = request.json(&body);

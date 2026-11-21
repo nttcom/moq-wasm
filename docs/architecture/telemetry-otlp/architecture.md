@@ -62,10 +62,12 @@ The relay records the relay-wide values of its stats snapshot through its own
 ## Trace context
 
 A span's context crosses a process boundary as a W3C `traceparent`.
-`inject_trace_context` writes it into an `http::HeaderMap`, and
-`continue_trace_from` makes a server's span a child of the context a request
-carries. The relay injects it into its `POST /verify` call and the VTS
-continues it, so one trace covers both processes.
+`inject_trace_context` writes it into an `http::HeaderMap`,
+`current_trace_headers` returns it as the headers of a request to another
+service, and `continue_trace_from` makes a server's span a child of the context
+a request carries. Every service that calls another puts
+`current_trace_headers` on the request, and the caller's VTS verification goes
+through `auth_token::VtsClient`, so one trace covers both processes.
 
 Cloud Run's front end rewrites `traceparent` on the way to the VTS: it
 keeps the trace ID but makes the parent a span of its own that only Cloud
@@ -80,7 +82,7 @@ and `continue_trace_from_traceparent` continues one, for carriers other than
 HTTP headers: the relay gives `current_traceparent` to `moqt` as its trace
 context provider, so a request it forwards upstream carries it in
 TRACE_CONTEXT, and continues the TRACE_CONTEXT a client's request carries.
-All four are no-ops while OTLP is off, because the global propagator is then
+All of them are no-ops while OTLP is off, because the global propagator is then
 a no-op.
 
 ## Lifecycle

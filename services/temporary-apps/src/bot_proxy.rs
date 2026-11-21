@@ -54,6 +54,7 @@ impl BotProxy {
             .client
             .request(method, &url)
             .timeout(REQUEST_TIMEOUT)
+            .headers(telemetry_otlp::current_trace_headers())
             .bearer_auth(launch_token);
         if let Some(body) = body {
             request = request.json(&body);
