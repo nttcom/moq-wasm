@@ -412,13 +412,22 @@ async fn accept_setup(
     {
         return setup;
     }
-    let code = version::negotiated_version(transport_conn, accepted)?
+    close_timed_out_setup(transport_conn, accepted, "CLIENT_SETUP timed out").await?;
+    anyhow::bail!("the peer sent no CLIENT_SETUP within {CLIENT_SETUP_TIMEOUT:?}")
+}
+
+async fn close_timed_out_setup(
+    transport_conn: &BoxedConnection,
+    versions: &[Version],
+    reason: &str,
+) -> anyhow::Result<()> {
+    let code = version::negotiated_version(transport_conn, versions)?
         .termination_code(TerminationErrorCode::ControlMessageTimeout);
-    transport_conn.close(code, "CLIENT_SETUP timed out");
+    transport_conn.close(code, reason);
     // WebTransport sends the code only while the connection outlives the
     // close, as in `Handshake::reject`.
     let _closed = executor::timeout(CLOSE_REASON_TIMEOUT, transport_conn.closed()).await;
-    anyhow::bail!("the peer sent no CLIENT_SETUP within {CLIENT_SETUP_TIMEOUT:?}")
+    Ok(())
 }
 
 #[cfg(test)]
