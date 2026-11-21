@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from moq_wasm import Location
 from moq_wasm._session import Session, _Connecting
 from moq_wasm._token import RefreshToken
+from moq_wasm.media import CATALOG_TRACK_NAME
 
 STAY_OPEN = object()
 
@@ -274,11 +275,21 @@ class FakeNativeSession:
         # answer, which refuses it with `media_announce_failure` once that is set.
         self.media_announce_gate: asyncio.Event | None = None
         self.media_announce_failure: Exception | None = None
+        # While set and not released, SUBSCRIBE waits for the relay's answer.
+        self.subscribe_gate: asyncio.Event | None = None
+        # Whether SUBSCRIBE_NAMESPACE is refused.
+        self.refuse_watch = False
         # For each track name, the gate UNSUBSCRIBE waits on for the relay's answer until released.
         self.unsubscribe_gates: dict[str, asyncio.Event] = {}
         # While set and not released, closing a namespace watch waits for the relay's answer.
         self.watch_close_gate: asyncio.Event | None = None
+        # For each track name, the objects of the current group the relay holds, which a joining
+        # FETCH (`subscribe_current_group`) brings before those `tracks` lists.
+        self.current_groups: dict[str, list] = {}
         self.subscriptions: list[FakeSubscription] = []
+        # The namespace and name of each SUBSCRIBE to a track other than the catalog, which
+        # `RemoteBroadcast.catalogs` subscribes to.
+        self.subscribed: list[tuple[list[str], str]] = []
         self.media_broadcasts: list[FakeMediaBroadcast] = []
         self.calls: list[tuple] = []
         self.subscribe_options: list[dict] = []
@@ -309,22 +320,33 @@ class FakeNativeSession:
 
     async def watch_namespaces(self, prefix: list[str]):
         self.calls.append(("watch_namespaces", prefix))
+        if self.refuse_watch:
+            raise RuntimeError("NamespacePrefixUnknown")
         return FakeNamespaceWatch(self, prefix)
 
     async def subscribe(self, namespace: list[str], name: str, **options) -> FakeSubscription:
         self.calls.append(("subscribe", name))
         self.subscribe_options.append(options)
+        self.subscribed.append((namespace, name))
+        if self.subscribe_gate is not None:
+            await self.subscribe_gate.wait()
         return self._subscription(name)
 
     async def subscribe_current_group(self, namespace: list[str], name: str, **options) -> FakeSubscription:
         self.calls.append(("subscribe_current_group", name))
         self.subscribe_options.append(options)
-        return self._subscription(name)
+        if name != CATALOG_TRACK_NAME:
+            self.subscribed.append((namespace, name))
+        if self.subscribe_gate is not None:
+            await self.subscribe_gate.wait()
+        return self._subscription(name, self.current_groups.get(name, []))
 
-    def _subscription(self, name: str) -> FakeSubscription:
+    def _subscription(self, name: str, current_group: list | tuple = ()) -> FakeSubscription:
         if not self.tracks.get(name):
             raise RuntimeError("TrackDoesNotExist")
-        subscription = FakeSubscription(self.tracks[name].pop(0), self.unsubscribe_gates.get(name))
+        subscription = FakeSubscription(
+            [*current_group, *self.tracks[name].pop(0)], self.unsubscribe_gates.get(name), replayed=len(current_group)
+        )
         self.subscriptions.append(subscription)
         return subscription
 

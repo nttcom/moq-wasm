@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
@@ -103,9 +104,10 @@ class ParticipantReceiver:
                 await asyncio.Event().wait()
             while True:
                 try:
-                    async for catalog in self._remote.catalogs():
-                        self._catalog = catalog
-                        await self._pick_tracks(catalog)
+                    async with aclosing(self._remote.catalogs()) as catalogs:
+                        async for catalog in catalogs:
+                            self._catalog = catalog
+                            await self._pick_tracks(catalog)
                     logger.info("catalog of %s ended", self._remote.namespace)
                 except RuntimeError as error:
                     logger.info("catalog of %s ended: %s", self._remote.namespace, error)
@@ -219,41 +221,44 @@ class ParticipantReceiver:
     async def _receive_audio(self, track: CatalogTrack) -> None:
         sample_rate = self._sink.audio_in_sample_rate()
         decoder = OpusDecoder(sample_rate)
-        async for audio_object in self._remote.follow(track.name):
-            pcm = decoder.decode(audio_object.payload)
-            if pcm:
-                await self._sink.push_audio(pcm, sample_rate, self.participant_id)
+        async with aclosing(self._remote.follow(track.name)) as objects:
+            async for audio_object in objects:
+                pcm = decoder.decode(audio_object.payload)
+                if pcm:
+                    await self._sink.push_audio(pcm, sample_rate, self.participant_id)
 
     async def _receive_video(self, source: str, track: CatalogTrack) -> None:
         sampler = self._sampler(source)
-        async for decoded in decode_pictures(self._remote.follow(track.name), track.codec or ""):
-            due, request = sampler.sample(decoded.decoded_at)
-            if not due:
-                continue
-            picture = decoded.picture
-            try:
-                rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
-                size = (picture.width, picture.height)
-                await self._sink.push_picture(
-                    ReceivedPicture(self.participant_id, source, rgb, size, decoded.location, request)
-                )
-            except BaseException:
-                # The track is replaced or fails before the picture answered the request; the next
-                # picture of the source answers it instead.
-                if request is not None:
-                    sampler.return_request(request)
-                raise
+        async with aclosing(self._remote.follow(track.name)) as objects:
+            async for decoded in decode_pictures(objects, track.codec or ""):
+                due, request = sampler.sample(decoded.decoded_at)
+                if not due:
+                    continue
+                picture = decoded.picture
+                try:
+                    rgb = await asyncio.to_thread(lambda: picture.to_ndarray(format="rgb24").tobytes())
+                    size = (picture.width, picture.height)
+                    await self._sink.push_picture(
+                        ReceivedPicture(self.participant_id, source, rgb, size, decoded.location, request)
+                    )
+                except BaseException:
+                    # The track is replaced or fails before the picture answered the request; the
+                    # next picture of the source answers it instead.
+                    if request is not None:
+                        sampler.return_request(request)
+                    raise
 
     async def _receive_data(self, track_name: str) -> None:
         await self._sink.event("on_track_subscribed", MoqWasmTrack(self.participant_id, track_name, "data"))
         await self._report_failure(track_name, lambda: self._forward_data(track_name))
 
     async def _forward_data(self, track_name: str) -> None:
-        async for data_object in self._remote.follow(track_name, delivery_timeout=None):
-            location = Location(data_object.group_id, data_object.object_id)
-            await self._sink.push_message(
-                MoqWasmTrackMessage(self.participant_id, track_name, data_object.payload, location)
-            )
+        async with aclosing(self._remote.follow(track_name, delivery_timeout=None)) as objects:
+            async for data_object in objects:
+                location = Location(data_object.group_id, data_object.object_id)
+                await self._sink.push_message(
+                    MoqWasmTrackMessage(self.participant_id, track_name, data_object.payload, location)
+                )
 
     def _sampler(self, source: str) -> "_Sampler":
         if source not in self._samplers:
