@@ -473,10 +473,12 @@ impl Subscriber {
     )]
     /// Sends a Relative Joining FETCH for `subscription` (draft-14 §9.16.2):
     /// the range starts at object 0 of the group `joining_start` groups
-    /// before the subscription's Largest Location. On a connection after the one
-    /// the subscription was first sent on (the session followed a GOAWAY), the
-    /// same range goes as a Standalone FETCH instead; there, a subscription with
-    /// no Largest Location fails with INVALID_RANGE without sending a request.
+    /// before the subscription's Largest Location. The same range goes as a
+    /// Standalone FETCH instead for a subscription a PUBLISH started, which a
+    /// Joining FETCH cannot join, and on a connection after the one the
+    /// subscription was first sent on (the session followed a GOAWAY); there,
+    /// a subscription with no Largest Location fails with INVALID_RANGE
+    /// without sending a request.
     pub async fn fetch_relative_joining(
         &mut self,
         subscription: &Subscription,
@@ -489,7 +491,9 @@ impl Subscriber {
         let remainder = joining_remainder(subscription, joining_start, &option);
         // A later connection holds the subscription with a `resumed_filter`, never
         // Largest Object, so a Joining FETCH may not join it.
-        let fetch_params = if connection.generation == generation_of(subscription.request_id()) {
+        let joinable = matches!(subscription, Subscription::SubscriberInitiated(_))
+            && connection.generation == generation_of(subscription.request_id());
+        let fetch_params = if joinable {
             FetchParams::RelativeJoining {
                 joining_request_id,
                 joining_start,

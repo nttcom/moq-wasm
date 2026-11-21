@@ -432,9 +432,9 @@ impl Origin {
             let mut track_properties = TrackProperties::default();
             track_properties.set_dynamic_groups(track.new_group_requests.is_some());
             PublishOption {
+                content_exists: content_exists(track.numbering.largest()),
                 forward: track.demand.is_none(),
                 track_properties,
-                ..PublishOption::default()
             }
         };
         let publisher = session.publisher();
@@ -1593,6 +1593,71 @@ mod tests {
                 ]
             );
             assert_eq!(handle.end_location, location(FIRST_GROUP_ID + 1, 1));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_reports_the_largest_location_written_before_it() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-largest", RETENTION, version).await;
+            let origin = &peers.origin;
+            for (boundary, payload) in [(GroupBoundary::Next, b"a"), (GroupBoundary::Within, b"b")]
+            {
+                origin
+                    .write(NAMESPACE, TRACK, plain(boundary, payload))
+                    .await
+                    .unwrap();
+            }
+
+            // Act
+            let accepted = publish(&peers).await;
+
+            // Assert
+            assert_eq!(
+                accepted.content_exists(),
+                ContentExists::True {
+                    location: location(FIRST_GROUP_ID, 1)
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_current_group_of_a_published_track_is_fetched() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-fetch", RETENTION, version).await;
+            let origin = &peers.origin;
+            for (boundary, payload) in [(GroupBoundary::Next, b"a"), (GroupBoundary::Within, b"b")]
+            {
+                origin
+                    .write(NAMESPACE, TRACK, plain(boundary, payload))
+                    .await
+                    .unwrap();
+            }
+            let accepted = publish(&peers).await;
+
+            // Act
+            let (_, fetched) = joining_fetch(&peers, &accepted, 0).await.unwrap();
+
+            // Assert: a Joining FETCH cannot join a PUBLISH, so the group came
+            // through a Standalone FETCH
+            assert_eq!(ids(&fetched), [(FIRST_GROUP_ID, 0), (FIRST_GROUP_ID, 1)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_publish_of_an_unwritten_track_reports_no_content() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-empty", RETENTION, version).await;
+
+            // Act
+            let accepted = publish(&peers).await;
+
+            // Assert
+            assert_eq!(accepted.content_exists(), ContentExists::False);
         }
     }
 
