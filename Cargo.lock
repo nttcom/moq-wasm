@@ -1980,6 +1980,7 @@ dependencies = [
  "bytes",
  "mediapack",
  "moqt",
+ "msf",
  "serde_json",
  "tokio",
  "tracing",

@@ -85,6 +85,38 @@ broadcast.close().await?;
 # }
 ```
 
+## Follow broadcasts
+
+`media::watch_broadcasts` runs a handler for each broadcast published under
+a prefix, skipping this session's own, and aborts it when the broadcast is
+withdrawn. A `RemoteBroadcast` reads the MSF catalog, follows a track
+(subscribing again after it ends) and reads an event timeline from the
+records the relay keeps.
+
+```rust,no_run
+use moq_wasm::media::{self, EventTimelineOptions, FollowOptions, TrackQuery, WatchOptions};
+
+# async fn run(session: &moq_wasm::Session) -> anyhow::Result<()> {
+media::watch_broadcasts(session, &["anon", "room"], WatchOptions::default(), |remote| async move {
+    let mut catalogs = remote.catalogs().await?;
+    if let Some(catalog) = catalogs.next().await? {
+        let audio = catalog.select(&TrackQuery { role: Some("audio"), ..Default::default() });
+        println!("{:?} offers {:?}", remote.namespace(), audio.map(|track| &track.name));
+    }
+    let mut events = remote.event_timeline("events", EventTimelineOptions::default());
+    let mut status = remote.follow("status", FollowOptions::default());
+    loop {
+        tokio::select! {
+            record = events.next() => println!("event {record}"),
+            object = status.next() => println!("status {} bytes", object.payload.len()),
+        }
+    }
+})
+.await?;
+# Ok(())
+# }
+```
+
 ## Tokens and the end of a session
 
 A relay that verifies tokens takes a JWT in `ConnectOptions::token`. Give
