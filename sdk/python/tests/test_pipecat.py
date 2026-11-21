@@ -1567,6 +1567,76 @@ async def test_the_transport_encodes_and_lists_its_media_at_the_bitrates_and_fra
     await session.close()
 
 
+async def test_a_picture_whose_write_was_cancelled_is_encoded_alone_and_the_next_one_is_a_keyframe():
+    # Arrange: the second picture's encode holds its thread until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(video_out=True), RecordingSink())
+    await room.start("input")
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await room.write_picture(picture(0), SIZE, "RGB")
+    assert room._opened is not None
+    video = room._opened.video
+    assert video is not None
+    encode = video.encode
+    entered, gate, counting = threading.Event(), threading.Event(), threading.Lock()
+    encoding = most = 0
+
+    def gated(*args):
+        nonlocal encoding, most
+        with counting:
+            encoding += 1
+            most = max(most, encoding)
+        entered.set()
+        gate.wait(TIMEOUT_SECONDS)
+        try:
+            return encode(*args)
+        finally:
+            with counting:
+                encoding -= 1
+
+    video.encode = gated
+    cancelled = asyncio.create_task(room.write_picture(picture(10), SIZE, "RGB"))
+    await within(asyncio.to_thread(entered.wait))
+
+    # Act
+    cancelled.cancel()
+    following = asyncio.create_task(room.write_picture(picture(20), SIZE, "RGB"))
+    await asyncio.sleep(0.05)
+    gate.set()
+    await within(following)
+    await within(asyncio.gather(cancelled, return_exceptions=True))
+
+    # Assert: one encode at a time; the cancelled picture is not sent, and the next opens a group
+    keyframes = [call[1].startswith(b"\x00\x00\x00\x01\x67") for call in source.calls if call[0] == "push_video"]
+    assert most == 1
+    assert keyframes == [True, True]
+    await room.stop("input")
+    await session.close()
+
+
+async def test_a_picture_whose_write_was_cancelled_as_its_encode_finished_is_sent_before_the_next():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    room = Room(session, room_options(video_out=True), RecordingSink())
+    await room.start("input")
+    source = relay.sessions[0].media_broadcasts[0].sources[0]
+    await room.write_picture(picture(0), SIZE, "RGB")
+    writing = asyncio.create_task(room.write_picture(picture(10), SIZE, "RGB"))
+
+    # Act
+    await within(cancel_as_it_resumes(writing))
+    await asyncio.gather(writing, return_exceptions=True)
+    await room.write_picture(picture(20), SIZE, "RGB")
+
+    # Assert: the third picture refers to the second, which was sent
+    keyframes = [call[1].startswith(b"\x00\x00\x00\x01\x67") for call in source.calls if call[0] == "push_video"]
+    assert keyframes == [True, False, False]
+    await room.stop("input")
+    await session.close()
+
+
 async def test_the_room_ends_once_both_processors_stopped_it_however_often_each_did():
     # Arrange
     relay = FakeRelay()
