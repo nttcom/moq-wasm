@@ -178,6 +178,13 @@ arrives raise a plain `RuntimeError`. A
 of the last connection, and `transport_stats()` the bytes the session sent
 and received.
 
+A wait for an operation or an end that outlives it, as the session's end,
+goes through `moq_wasm._wait.wait` rather than `asyncio.wait`. On CPython
+3.14.0 to 3.14.6, `asyncio.wait` leaves the waiting task referenced from
+each future still pending when it returns or is cancelled, so a task that
+read and ended would stay, with the locals of its traceback, until the
+session ended; `_wait.wait` drops those references, as CPython 3.14.7 does.
+
 ### Logs and spans: `moq_wasm.init`
 
 ```python
