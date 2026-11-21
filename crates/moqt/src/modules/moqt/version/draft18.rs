@@ -2119,14 +2119,15 @@ mod tests {
     /// as long as the returned guard lives.
     fn requester_fin_read() -> (Arc<tokio::sync::Notify>, tracing::subscriber::DefaultGuard) {
         let fin_read = Arc::new(tokio::sync::Notify::new());
-        let logging =
-            telemetry_otlp::testing::set_default(tracing_subscriber::layer::SubscriberExt::with(
+        let logging = crate::modules::test_support::set_default_subscriber(
+            tracing_subscriber::layer::SubscriberExt::with(
                 tracing_subscriber::registry(),
                 LoggedMessage {
                     message: "FETCH requester finished its request stream",
                     seen: fin_read.clone(),
                 },
-            ));
+            ),
+        );
         (fin_read, logging)
     }
 

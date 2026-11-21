@@ -1352,12 +1352,25 @@ fn named(captured: &Mutex<Vec<Captured>>, name: &str) -> Vec<Captured> {
         .collect()
 }
 
+/// Keeps `tracing-core` out of its single-dispatcher mode so concurrent tests
+/// without a subscriber do not cache `never` for callsites a capturing test needs.
+static SECOND_DISPATCHER: std::sync::LazyLock<tracing::Dispatch> = std::sync::LazyLock::new(|| {
+    tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default())
+});
+
+pub(crate) fn set_default_subscriber(
+    subscriber: impl tracing::Subscriber + Send + Sync + 'static,
+) -> DefaultGuard {
+    std::sync::LazyLock::force(&SECOND_DISPATCHER);
+    tracing::subscriber::set_default(subscriber)
+}
+
 /// Installs a `CapturedTelemetry` as this thread's subscriber until the guard
 /// drops; on a current-thread runtime it captures the spawned tasks too.
 pub(crate) fn capture_telemetry() -> (CapturedTelemetry, DefaultGuard) {
     let telemetry = CapturedTelemetry::default();
     let subscriber = tracing_subscriber::registry().with(telemetry.clone());
-    (telemetry, telemetry_otlp::testing::set_default(subscriber))
+    (telemetry, set_default_subscriber(subscriber))
 }
 
 #[derive(Default)]
