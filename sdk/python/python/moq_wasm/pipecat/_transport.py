@@ -37,6 +37,7 @@ from pipecat.utils.deprecation import warn_deprecated
 
 from moq_wasm._once import Once
 from moq_wasm._session import Session
+from moq_wasm._wait import wait
 from moq_wasm.codecs import _checked_picture, _PcmResampler
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 from moq_wasm.pipecat._participant import (
@@ -1049,7 +1050,7 @@ class _MediaSender(BaseOutputTransport.MediaSender):
         expires is reported as a non-fatal `ErrorFrame`."""
         writes = [synced.writing for synced in self._synced if synced.writing is not None]
         if writes:
-            _, unwritten = await asyncio.wait(writes, timeout=LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS)
+            _, unwritten = await wait(writes, timeout=LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS)
             if unwritten:
                 await self._report_unwritten(
                     f"the synchronized pictures were not written in {LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS} s"
@@ -1072,7 +1073,7 @@ class _MediaSender(BaseOutputTransport.MediaSender):
                 ending = self._interrupting or self._video_task
                 if ending is None:
                     return
-                done, _ = await asyncio.wait(
+                done, _ = await wait(
                     [written, ending], timeout=deadline - loop.time(), return_when=asyncio.FIRST_COMPLETED
                 )
                 if not done:
@@ -1220,7 +1221,7 @@ class _LiveVideoQueue(asyncio.Queue):
             return
         done = asyncio.ensure_future(writing.done.wait())
         try:
-            await asyncio.wait([done, task], return_when=asyncio.FIRST_COMPLETED)
+            await wait([done, task], return_when=asyncio.FIRST_COMPLETED)
         finally:
             done.cancel()
 
