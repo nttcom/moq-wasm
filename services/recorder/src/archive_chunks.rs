@@ -4,11 +4,11 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use aws_lc_rs::digest::{self, SHA256};
 use bytes::Bytes;
 use mediapack::loc::{self, LocObject};
 use object_store::{ObjectStore, PutMode, PutPayload, path::Path};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::archive_receiver::Event;
 
@@ -236,29 +236,34 @@ async fn put_new(store: &Arc<dyn ObjectStore>, key: &Path, data: Vec<u8>) -> Res
 }
 
 pub(crate) fn digest(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
+    digest::digest(&SHA256, bytes)
+        .as_ref()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
 fn object_fingerprint(object: &moqt::object::Object) -> Result<[u8; 32]> {
-    let mut hash = Sha256::new();
+    let mut hash = digest::Context::new(&SHA256);
     match object.forwarding {
-        moqt::object::ForwardingPreference::Datagram => hash.update([0]),
+        moqt::object::ForwardingPreference::Datagram => hash.update(&[0]),
         moqt::object::ForwardingPreference::Subgroup { subgroup_id } => {
-            hash.update([1]);
-            hash.update(subgroup_id.to_be_bytes());
+            hash.update(&[1]);
+            hash.update(&subgroup_id.to_be_bytes());
         }
     }
-    hash.update([
+    hash.update(&[
         object.publisher_priority,
         object.status as u8,
         u8::from(object.ends_group),
     ]);
-    hash.update(object.extension_headers.encode()?);
+    hash.update(&object.extension_headers.encode()?);
     hash.update(&object.payload);
-    Ok(hash.finalize().into())
+    Ok(hash
+        .finish()
+        .as_ref()
+        .try_into()
+        .expect("SHA-256 digest is 32 bytes"))
 }
 
 #[cfg(test)]

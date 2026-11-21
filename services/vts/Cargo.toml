@@ -5,20 +5,19 @@ edition = "2024"
 description = "Verify Token Service: verifies MoQT client JWTs on behalf of the relay"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 app-registry = { path = "../../crates/app-registry" }
 auth-token = { path = "../../crates/auth-token" }
-http-body-util = "0.1.4"
 http-server = { path = "../../crates/http-server" }
-hyper = { version = "1.10.1", features = ["http1", "server"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1"
+hyper = { workspace = true, features = ["http1", "server"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 telemetry-otlp = { path = "../../crates/telemetry-otlp" }
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "signal"] }
-tracing = "0.1.44"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 app-registry = { path = "../../crates/app-registry", features = ["testing"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
+reqwest = { workspace = true, features = ["json"] }
 telemetry-otlp = { path = "../../crates/telemetry-otlp", features = ["testing"] }
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { workspace = true, default-features = true }

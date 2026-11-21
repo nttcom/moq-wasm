@@ -4,31 +4,31 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 auth-token = { path = "../../crates/auth-token" }
+aws-lc-rs = { workspace = true }
 google-cloud = { path = "../../crates/google-cloud" }
-base64 = "0.23.1"
-bytes = "1"
-clap = { version = "4.6.1", features = ["derive", "env"] }
-http-body-util = "0.1.4"
+base64 = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+http-body-util = { workspace = true }
 http-server = { path = "../../crates/http-server" }
-hyper = { version = "1.10.1", features = ["http1", "server"] }
-hyper-util = { version = "0.1.20", features = ["tokio"] }
+hyper = { workspace = true, features = ["http1", "server"] }
 job-launcher = { path = "../../crates/job-launcher" }
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
 msf = { path = "../../crates/msf" }
-object_store = { version = "0.14.2", default-features = false, features = ["fs", "gcp"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.9"
-tokio = { version = "1.52.3", features = ["full"] }
-tracing = "0.1"
+object_store = { workspace = true, features = ["fs", "gcp"] }
+reqwest = { workspace = true, features = ["json", "rustls"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
 transcode = { path = "../../crates/transcode" }
 telemetry-otlp = { path = "../../crates/telemetry-otlp" }
-url = "2.5.8"
+url = { workspace = true }
 
 [dev-dependencies]
+http-server = { path = "../../crates/http-server", features = ["testing"] }
 moqt = { path = "../../crates/moqt", features = ["self-signed-cert"] }
-proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+proptest = { workspace = true, features = ["std"] }

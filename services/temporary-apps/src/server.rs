@@ -5,17 +5,11 @@ use std::{
 };
 
 use auth_token::unix_now;
-use http_body_util::Full;
 use http_server::{
-    HttpServer, allow_any_origin, bearer_token, empty_response, error_response, json_response,
-    read_json,
+    HttpServer, JsonResponse, allow_any_origin, bearer_token, client_ip, empty_response,
+    error_response, healthz_response, json_response, raw_json_response, read_json,
 };
-use hyper::{
-    HeaderMap, Method, Request, Response, StatusCode,
-    body::{Bytes, Incoming},
-    header::{CONTENT_TYPE, HeaderValue},
-    http::request::Parts,
-};
+use hyper::{Method, Request, StatusCode, body::Incoming, http::request::Parts};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -61,8 +55,6 @@ impl TemporaryAppsServer {
     }
 }
 
-type JsonResponse = Response<Full<Bytes>>;
-
 #[derive(Deserialize)]
 struct RefreshRequest {
     token: String,
@@ -85,9 +77,9 @@ async fn handle(
     let response = async {
         match (&head.method, head.uri.path()) {
             (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),
-            (&Method::GET, "/healthz") => json_response(StatusCode::OK, &json!({ "status": "ok" })),
+            (&Method::GET, "/healthz") => healthz_response(),
             (&Method::POST, "/tokens") => {
-                let client = client_address(&head.headers, peer, state.trusted_proxy_hops);
+                let client = client_ip(&head.headers, peer.ip(), state.trusted_proxy_hops);
                 issue(&state, client)
             }
             (&Method::POST, "/tokens/refresh") => refresh(body, &state.issuer).await,
@@ -164,7 +156,7 @@ async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incomin
     };
     tracing::Span::current().record("app_id", app_id.as_str());
     let body = if head.method == Method::POST {
-        let client = client_address(&head.headers, peer, state.trusted_proxy_hops);
+        let client = client_ip(&head.headers, peer.ip(), state.trusted_proxy_hops);
         if !proxy.allow_launch(client, Instant::now()) {
             tracing::info!(%app_id, bot_type, error = "rate_limited", "bot request refused");
             return error_response(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
@@ -190,12 +182,7 @@ async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incomin
     {
         Ok((status, body)) => {
             tracing::info!(%app_id, bot_type, "bot request forwarded");
-            let mut response = Response::new(Full::new(body));
-            *response.status_mut() = status;
-            response
-                .headers_mut()
-                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            response
+            raw_json_response(status, body)
         }
         Err(error) => {
             tracing::warn!(%app_id, bot_type, error = format!("{error:#}"), "bot-dispatcher unreachable");
@@ -205,27 +192,6 @@ async fn bots(state: &ServerState, head: &Parts, peer: SocketAddr, body: Incomin
             )
         }
     }
-}
-
-/// `trusted_proxy_hops` proxies in front of the server append to
-/// `X-Forwarded-For`; the client address is the entry the outermost of them
-/// appended, or with `0` the connection's peer address.
-fn client_address(headers: &HeaderMap, peer: SocketAddr, trusted_proxy_hops: usize) -> IpAddr {
-    if trusted_proxy_hops == 0 {
-        return peer.ip();
-    }
-    let entries: Vec<&str> = headers
-        .get_all("x-forwarded-for")
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .collect();
-    entries
-        .len()
-        .checked_sub(trusted_proxy_hops)
-        .and_then(|index| entries[index].parse().ok())
-        .unwrap_or_else(|| peer.ip())
 }
 
 fn internal_error(error: &anyhow::Error) -> JsonResponse {

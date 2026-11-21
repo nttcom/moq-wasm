@@ -1,17 +1,18 @@
 use std::{collections::HashMap, net::IpAddr, sync::Arc};
 
 use anyhow::Context;
-use http_body_util::Full;
 use http_server::{
-    HttpServer, allow_any_origin, empty_response, error_response, json_response, query_params,
+    HttpServer, JsonResponse, allow_any_origin, empty_response, error_response, healthz_response,
+    json_response, query_params,
 };
 use hyper::{
-    Method, Request, Response, StatusCode,
-    body::{Bytes, Incoming},
+    Method, Request, StatusCode,
+    body::Incoming,
     header::{ACCESS_CONTROL_MAX_AGE, HeaderValue},
 };
 use serde_json::json;
 use tokio::net::TcpListener;
+use tracing::Instrument;
 
 use crate::{
     app_verifier::AppVerifier,
@@ -53,14 +54,17 @@ impl ApiServer {
     }
 }
 
-type JsonResponse = Response<Full<Bytes>>;
-
 async fn handle(request: Request<Incoming>, peer: IpAddr, state: Arc<ApiState>) -> JsonResponse {
-    allow_any_origin(
-        route(request, peer, &state).await,
-        "GET, POST",
-        "authorization",
-    )
+    let span = tracing::info_span!(
+        "observability.request",
+        "http.request.method" = %request.method(),
+        "url.path" = request.uri().path(),
+        "http.response.status_code" = tracing::field::Empty,
+    );
+    telemetry_otlp::continue_trace_from(&span, request.headers());
+    let response = route(request, peer, &state).instrument(span.clone()).await;
+    span.record("http.response.status_code", response.status().as_u16());
+    allow_any_origin(response, "GET, POST", "authorization")
 }
 
 async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> JsonResponse {
@@ -69,9 +73,7 @@ async fn route(request: Request<Incoming>, peer: IpAddr, state: &ApiState) -> Js
             return client_telemetry(request, peer, state).await;
         }
         (&Method::OPTIONS, _) => return preflight(),
-        (&Method::GET, "/healthz") => {
-            return json_response(StatusCode::OK, &json!({ "status": "ok" }));
-        }
+        (&Method::GET, "/healthz") => return healthz_response(),
         (&Method::GET, "/api/snapshots" | "/api/series" | "/api/namespaces" | "/api/usage") => {}
         _ => return error_response(StatusCode::NOT_FOUND, "not_found"),
     }

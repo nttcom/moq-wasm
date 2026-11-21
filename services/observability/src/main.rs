@@ -1,4 +1,4 @@
-use std::{future, sync::Arc};
+use std::sync::Arc;
 
 use observability::{
     api_server::{ApiServer, ApiState},
@@ -53,5 +53,7 @@ async fn main() -> anyhow::Result<()> {
         "observability started"
     );
 
-    future::pending().await
+    http_server::shutdown_signal().await?;
+    tracing::info!("observability shutting down");
+    Ok(())
 }

@@ -3,10 +3,7 @@ use std::time::Duration;
 use anyhow::Context;
 use telemetry_otlp::non_empty_env;
 use temporary_apps::{BotProxy, RateLimit, TemporaryApps, TemporaryAppsServer};
-use tokio::{
-    net::TcpListener,
-    signal::unix::{SignalKind, signal},
-};
+use tokio::net::TcpListener;
 
 /// New temporary apps one client address may get per window.
 const MAX_ISSUES_PER_WINDOW: u32 = 30;
@@ -61,13 +58,7 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!(port, "temporary-apps listening");
 
-    // As PID 1 in a container the process has no default SIGTERM action, so
-    // `docker stop` and Cloud Run would otherwise wait for their SIGKILL.
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result?,
-        _ = terminate.recv() => {}
-    }
+    http_server::shutdown_signal().await?;
     tracing::info!("temporary-apps shutting down");
     Ok(())
 }

@@ -1,6 +1,5 @@
 use std::{collections::HashMap, net::IpAddr, time::Duration};
 
-use hyper::HeaderMap;
 use tokio::time::Instant;
 
 /// Reports a client address may send in a burst.
@@ -70,37 +69,16 @@ impl RateLimiter {
     }
 }
 
-/// The browser's address. Behind the Google Cloud load balancer, `X-Forwarded-For`
-/// ends with `<client>, <load balancer>`, appended by the balancer, so the
-/// second-to-last entry is the client's even when the browser sent its own header.
-/// With no header, or fewer than two entries, the TCP peer is the client.
-pub(super) fn client_address(headers: &HeaderMap, peer: IpAddr) -> IpAddr {
-    let Some(forwarded) = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-    else {
-        return peer;
-    };
-    let entries: Vec<&str> = forwarded.split(',').map(str::trim).collect();
-    entries
-        .len()
-        .checked_sub(2)
-        .and_then(|index| entries[index].parse().ok())
-        .unwrap_or(peer)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{net::IpAddr, time::Duration};
 
-    use hyper::{HeaderMap, header::HeaderValue};
     use tokio::time;
 
-    use super::{BURST, RateLimiter, client_address};
+    use super::{BURST, RateLimiter};
 
     const CLIENT: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 7));
     const OTHER: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 8));
-    const LOAD_BALANCER: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 2));
 
     #[tokio::test(start_paused = true)]
     async fn an_address_past_its_burst_waits_for_the_refill() {
@@ -120,29 +98,5 @@ mod tests {
         // Assert
         assert!(limiter.allow(CLIENT));
         assert!(!limiter.allow(CLIENT));
-    }
-
-    #[test]
-    fn the_client_is_the_entry_before_the_load_balancer_s() {
-        // Arrange
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("198.51.100.1, 203.0.113.7, 10.0.0.2"),
-        );
-
-        // Act / Assert
-        assert_eq!(client_address(&headers, LOAD_BALANCER), CLIENT);
-    }
-
-    #[test]
-    fn without_a_forwarded_pair_the_peer_is_the_client() {
-        // Arrange
-        let mut single = HeaderMap::new();
-        single.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.1"));
-
-        // Act / Assert
-        assert_eq!(client_address(&HeaderMap::new(), CLIENT), CLIENT);
-        assert_eq!(client_address(&single, CLIENT), CLIENT);
     }
 }

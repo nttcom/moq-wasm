@@ -7,7 +7,7 @@ use std::{net::IpAddr, sync::Arc};
 use http_body_util::{BodyExt, LengthLimitError, Limited};
 use hyper::{HeaderMap, StatusCode, body::Incoming};
 
-use rate_limiter::{RateLimiter, client_address};
+use rate_limiter::RateLimiter;
 use report::parse_report;
 use telemetry::client_report::ClientReport;
 
@@ -96,7 +96,12 @@ impl ClientTelemetry {
         headers: &HeaderMap,
         body: Incoming,
     ) -> Result<(), Rejection> {
-        if !self.rate_limiter.allow(client_address(headers, peer)) {
+        // Behind the Google Cloud load balancer, X-Forwarded-For ends with
+        // `<client>, <load balancer>`, so the client is 2 entries from the end.
+        if !self
+            .rate_limiter
+            .allow(http_server::client_ip(headers, peer, 2))
+        {
             return Err(Rejection::RateLimited);
         }
         let body = match Limited::new(body, MAX_BODY_BYTES).collect().await {

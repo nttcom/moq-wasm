@@ -3,10 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
 use telemetry_otlp::non_empty_env;
-use tokio::{
-    net::TcpListener,
-    signal::unix::{SignalKind, signal},
-};
+use tokio::net::TcpListener;
 use vts::{Registry, Secrets, VtsServer};
 
 #[tokio::main]
@@ -37,13 +34,7 @@ async fn main() -> anyhow::Result<()> {
     );
     tracing::info!(port, "vts listening");
 
-    // As PID 1 in a container the process has no default SIGTERM action, so
-    // `docker stop` and Cloud Run would otherwise wait for their SIGKILL.
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result?,
-        _ = terminate.recv() => {}
-    }
+    http_server::shutdown_signal().await?;
     tracing::info!("vts shutting down");
     Ok(())
 }
