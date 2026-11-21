@@ -806,11 +806,14 @@ forward from their own cache through the raw stream senders.
   stream of the subscription, and its Stream Count is the number of streams
   the outlet's `TrackWriter` opened. The send task ends its outlet after the
   sends queued before it, so a write dropped after numbering still precedes
-  PUBLISH_DONE. `end_track` waits for every outlet. A send task exits once
-  it is cancelled or has ended its outlet. Unlike the other tasks, it is not
-  aborted when its handle is dropped: a writer dropped mid-send finishes its
-  open group with a FIN. When its command channel closes (the `Origin` is
-  dropped), the task resets the open group itself and exits.
+  PUBLISH_DONE. `end_track` waits for every outlet; an outlet whose
+  subscriber's connection is already lost counts as ended, since
+  `Publisher::publish_done` takes the lost connection as having ended the
+  subscription. A send task exits once it is cancelled or has ended its
+  outlet. Unlike the other tasks, it is not aborted when its handle is
+  dropped: a writer dropped mid-send finishes its open group with a FIN. When
+  its command channel closes (the `Origin` is dropped), the task resets the
+  open group itself and exits.
 - `accept_new_group_requests(namespace, name, requested)` gives a track
   dynamic groups (draft-18 §12.6): its PUBLISH and SUBSCRIBE_OK carry
   DYNAMIC_GROUPS, and the `Notify` is notified when a SUBSCRIBE or a

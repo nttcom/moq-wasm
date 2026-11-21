@@ -1050,8 +1050,8 @@ impl ControlChannel {
     }
 
     /// `notify` for a message that ends a request (UNSUBSCRIBE,
-    /// UNSUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE_DONE): a lost connection has
-    /// already ended it, so `ConnectionLost` returns `Ok`.
+    /// UNSUBSCRIBE_NAMESPACE, PUBLISH_NAMESPACE_DONE, PUBLISH_DONE): a lost
+    /// connection has already ended it, so `ConnectionLost` returns `Ok`.
     pub(crate) async fn notify_end(
         &self,
         notification: Notification,
