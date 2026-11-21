@@ -97,13 +97,22 @@ jobs:
         # A fixed basetemp so the relay, VTS and Redis logs can be uploaded.
         run: uv run pytest --basetemp="$RUNNER_TEMP/pytest"
 
+      # The extras' lower bounds are what a user may install, so the SDK is also checked on them.
+      - name: Type-check and run binding tests on the lowest supported dependencies
+        working-directory: sdk/python
+        run: |
+          uv venv -p 3.11 "$RUNNER_TEMP/lowest"
+          uv pip install -p "$RUNNER_TEMP/lowest" --resolution lowest-direct ".[pipecat]" "pytest>=8" "pytest-asyncio>=0.24"
+          uv run pyright --pythonpath "$RUNNER_TEMP/lowest/bin/python"
+          "$RUNNER_TEMP/lowest/bin/python" -m pytest -p no:cacheprovider --basetemp="$RUNNER_TEMP/pytest-lowest"
+
       - name: Upload binding test logs
         if: failure()
         # actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a = v7.0.1
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: python-binding-logs
-          path: ${{ runner.temp }}/pytest/**/*.log
+          path: ${{ runner.temp }}/pytest*/**/*.log
           if-no-files-found: ignore
 
       - name: Run transcriber unit tests
