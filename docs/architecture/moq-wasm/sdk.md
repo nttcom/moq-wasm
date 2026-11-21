@@ -345,9 +345,11 @@ break the API, as theirs may. crates.io stays out for the reasons
   browser and Python references.
 - `crates/moqt/README.md` points applications to this crate and keeps its
   own example for code that needs `moqt`'s lower layers.
-- An example under `examples/rust/` publishes an H.264 file as a broadcast
-  with a status track and follows a command track an operator page
-  publishes, the shape of `onvif-ingest`'s `CommandSubscriber`.
+- `examples/rust/moq-broadcast` uses only this crate: `publish` sends an
+  H.264 file as a broadcast with an event timeline, which the browser's
+  live-viewer plays, and `watch` follows the broadcasts under a prefix,
+  their catalog, events and video. It stays domain-neutral; a robot's
+  tracks belong to `robotics`.
 
 ## Migration
 One step per PR, each stacked on the one before.
@@ -366,7 +368,7 @@ One step per PR, each stacked on the one before.
    `LocalBroadcast`, `EventTimeline`, `MediaSource`.
 5. **feat(moq-wasm): follow broadcasts.** `watch_broadcasts`,
    `RemoteBroadcast` (with `event_timeline`), `Catalog`.
-6. **docs(examples): a robot-shaped Rust example.**
+6. **docs(examples): a Rust example.** `examples/rust/moq-broadcast`.
 7. **ci: release.** `rust-sdk-release.yml`, the `release-rust-sdk` skill,
    `CHANGELOG.md`, the Rust reference on GitHub Pages. Then
    `rust-sdk-v0.1.0`.

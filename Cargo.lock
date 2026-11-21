@@ -1952,6 +1952,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "moq-broadcast"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "moq-wasm",
+ "proptest",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "moq-cli"
 version = "0.1.0"
 dependencies = [
