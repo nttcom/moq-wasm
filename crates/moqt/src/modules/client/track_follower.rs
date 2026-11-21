@@ -297,12 +297,14 @@ impl PublisherHandover {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bytes::Bytes;
     use tokio::sync::Notify;
 
     use super::*;
     use crate::{
-        client::{PublishTrackOptions, Session as ClientSession},
+        client::{PublishTrackOptions, Session as ClientSession, TrackWriter},
         modules::test_support::{connected_client_sessions, within},
         object::ExtensionHeaders,
     };
@@ -350,6 +352,35 @@ mod tests {
             self.0.notify_one();
             None
         }
+    }
+
+    struct RecordSubscribes(mpsc::UnboundedSender<String>);
+
+    #[async_trait]
+    impl EventHandler for RecordSubscribes {
+        async fn handle(&self, event: SessionEvent) -> Option<SessionEvent> {
+            if let SessionEvent::Subscribe(handler) = &event {
+                let _ = self.0.send(handler.track_namespace.clone());
+            }
+            Some(event)
+        }
+    }
+
+    fn record_subscribes(publisher: &ClientSession) -> mpsc::UnboundedReceiver<String> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        publisher.add_handler(Arc::new(RecordSubscribes(sender)));
+        receiver
+    }
+
+    async fn write(writer: &TrackWriter, payload: &'static [u8], new_group: bool) {
+        writer
+            .write(
+                Bytes::from_static(payload),
+                new_group,
+                ExtensionHeaders::default(),
+            )
+            .await
+            .unwrap();
     }
 
     fn payload(event: Option<FollowEvent>) -> Option<Bytes> {
@@ -498,5 +529,119 @@ mod tests {
 
         // Act / Assert
         assert!(!handover.followed_publisher_left());
+    }
+
+    #[tokio::test]
+    async fn publishes_for_other_tracks_or_namespaces_are_not_taken() {
+        // Arrange
+        let (_session, follower, publisher) = follower_and_publisher("follow-other-publish").await;
+        let publish = PublishTrackOptions {
+            publish: true,
+            ..PublishTrackOptions::default()
+        };
+
+        // Act
+        let other_track = within(publisher.publish_track(NAMESPACE, "other", publish)).await;
+        let other_namespace =
+            within(publisher.publish_track(&["room", "other"], TRACK, publish)).await;
+        let target = within(publisher.publish_track(NAMESPACE, TRACK, publish))
+            .await
+            .unwrap();
+        write(&target, b"keys", true).await;
+        let event = within(follower.next()).await;
+
+        // Assert: non-matching PUBLISHes are rejected instead of accepted by the follower
+        assert!(other_track.is_err());
+        assert!(other_namespace.is_err());
+        assert_eq!(payload(event), Some(Bytes::from_static(b"keys")));
+    }
+
+    #[tokio::test]
+    async fn unmatching_announcements_do_not_subscribe() {
+        // Arrange
+        let (_session, follower, publisher) =
+            follower_and_publisher("follow-unmatching-announce").await;
+        let mut subscribes = record_subscribes(&publisher);
+        let announcement = within(publisher.announce(NAMESPACE)).await.unwrap();
+        let initial_subscribe = within(subscribes.recv()).await.unwrap();
+
+        // Act
+        within(announcement.close()).await.unwrap();
+        let _child = within(publisher.announce(&["room", "viewer", "child"]))
+            .await
+            .unwrap();
+        write_when_subscribed(&publisher, b"keys").await;
+        let event = within(follower.next()).await;
+        let final_subscribe = within(subscribes.recv()).await.unwrap();
+
+        // Assert
+        assert_eq!(payload(event), Some(Bytes::from_static(b"keys")));
+        assert_eq!(
+            [initial_subscribe, final_subscribe],
+            [NAMESPACE.join("/"), NAMESPACE.join("/")]
+        );
+        assert!(subscribes.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn an_announcement_while_following_takes_over_only_after_the_followed_publisher_leaves() {
+        // Arrange
+        let (_session, follower, publisher) = follower_and_publisher("follow-handover").await;
+        let mut subscribes = record_subscribes(&publisher);
+        let writer = publisher
+            .publish_track(NAMESPACE, TRACK, PublishTrackOptions::default())
+            .await
+            .unwrap();
+        let _first = within(publisher.announce(NAMESPACE)).await.unwrap();
+        assert!(within(writer.next_subscriber()).await);
+        within(subscribes.recv()).await.unwrap();
+        write(&writer, b"first", true).await;
+        assert_eq!(
+            payload(within(follower.next()).await),
+            Some(Bytes::from_static(b"first"))
+        );
+
+        // Act
+        let _second = within(publisher.announce(NAMESPACE)).await.unwrap();
+        let early_subscribe =
+            tokio::time::timeout(Duration::from_millis(200), subscribes.recv()).await;
+        within(publisher.origin().end_track(&NAMESPACE.join("/"), TRACK))
+            .await
+            .unwrap();
+        let left = within(follower.next()).await;
+        let handover_subscribe = within(subscribes.recv()).await;
+        assert!(within(writer.next_subscriber()).await);
+        write(&writer, b"second", true).await;
+        let next_object = within(follower.next()).await;
+
+        // Assert
+        assert!(early_subscribe.is_err());
+        assert_eq!(left, Some(FollowEvent::PublisherLeft));
+        assert_eq!(handover_subscribe, Some(NAMESPACE.join("/")));
+        assert_eq!(payload(next_object), Some(Bytes::from_static(b"second")));
+    }
+
+    #[tokio::test]
+    async fn an_announced_track_is_subscribed_from_the_next_group() {
+        // Arrange
+        let (_session, follower, publisher) = follower_and_publisher("follow-next-group").await;
+        let writer = publisher
+            .publish_track(NAMESPACE, TRACK, PublishTrackOptions::default())
+            .await
+            .unwrap();
+        write(&writer, b"group-0-object-0", true).await;
+
+        // Act
+        let _announcement = within(publisher.announce(NAMESPACE)).await.unwrap();
+        assert!(within(writer.next_subscriber()).await);
+        write(&writer, b"group-0-object-1", false).await;
+        write(&writer, b"group-1-object-0", true).await;
+        let event = within(follower.next()).await;
+
+        // Assert
+        assert_eq!(
+            payload(event),
+            Some(Bytes::from_static(b"group-1-object-0"))
+        );
     }
 }
