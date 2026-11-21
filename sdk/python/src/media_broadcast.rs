@@ -270,6 +270,7 @@ impl Rendition {
                 .lock()
                 .unwrap()
                 .push_video(Bytes::from(data), timestamp_micros)
+                .map(drop)
                 .map_err(py_error)
         })
     }

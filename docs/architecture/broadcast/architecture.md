@@ -199,9 +199,20 @@ goes through a `loc::Demuxer`, as if it had been received as a LOC object, so
 an H.264 or H.265 keyframe sets the track's configuration from its parameter
 sets. Each `MediaRendition` writes its `RenditionTrack` on a task of its own,
 which `remove_track` reaches through the same channel, so a removal follows
-the frames sent before it. The bindings keep only their callbacks and their
-error types: `MediaSourceError` tells media the caller got wrong
-(`InvalidMedia`) from a source that stopped publishing.
+the frames sent before it. That channel holds 300 commands, ten seconds of
+30 fps video, so a relay that stops taking a rendition's objects does not
+grow the page's or process's memory without bound. Frames leave 4 slots free
+for configurations, which are never dropped since the frames after one
+cannot be decoded without it. A frame that finds no room is dropped
+(`PushOutcome::Dropped`), and so is every frame after it up to a keyframe
+that finds room, as in the `BroadcastWriter` queue; the source's keyframe
+requests are notified when the dropping starts and again for every dropped
+keyframe. A configuration that finds even the free slots taken is held, the
+latest replacing an earlier one, and queued just before that keyframe. A
+frame from which the demuxer reads no picture, such as an H.264 access unit
+without a slice, is `PushOutcome::NoPicture`. The bindings keep only their
+callbacks and their error types: `MediaSourceError` tells media the caller got
+wrong (`InvalidMedia`) from a source that stopped publishing.
 
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or

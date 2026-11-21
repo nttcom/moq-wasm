@@ -198,6 +198,8 @@ impl Rendition {
         timestamp_micros: u64,
     ) -> Result<(), MediaSourceError> {
         self.end.check()?;
-        self.rendition.push_video(data.into(), timestamp_micros)
+        self.rendition
+            .push_video(data.into(), timestamp_micros)
+            .map(drop)
     }
 }
