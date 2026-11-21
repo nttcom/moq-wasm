@@ -1,19 +1,15 @@
 use anyhow::{Context, bail};
+use google_cloud::IapVerifier;
 use hyper::HeaderMap;
 use reqwest::Url;
 
-use crate::iap::IapVerifier;
+pub use google_cloud::IapCaller as Caller;
 
 pub(crate) const IAP_ASSERTION_HEADER: &str = "x-goog-iap-jwt-assertion";
 
 pub enum Identity {
     Iap(Box<IapVerifier>),
     Development { sub: String },
-}
-
-pub struct Caller {
-    pub sub: String,
-    pub email: Option<String>,
 }
 
 pub struct IdentitySettings {
@@ -61,7 +57,8 @@ impl Identity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{AUDIENCE, NOW};
+
+    const AUDIENCE: &str = "/projects/123/locations/region/services/console";
 
     fn settings(
         iap_audience: Option<&str>,
@@ -104,7 +101,7 @@ mod tests {
 
         // Act / Assert
         assert_eq!(
-            identity.caller(&HeaderMap::new(), NOW).await.unwrap().sub,
+            identity.caller(&HeaderMap::new(), 0).await.unwrap().sub,
             "dev"
         );
     }
@@ -115,6 +112,6 @@ mod tests {
         let identity = Identity::new(settings(Some(AUDIENCE), None, true), keys_url()).unwrap();
 
         // Act / Assert
-        assert!(identity.caller(&HeaderMap::new(), NOW).await.is_err());
+        assert!(identity.caller(&HeaderMap::new(), 0).await.is_err());
     }
 }

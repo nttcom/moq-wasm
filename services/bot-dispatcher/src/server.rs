@@ -3,15 +3,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use http_body_util::Full;
 use http_server::{
-    HttpServer, bearer_token, empty_response, error_response, json_response, query_params,
-    read_json,
+    HttpServer, JsonResponse, bearer_token, empty_response, error_response, healthz_response,
+    json_response, query_params, read_json,
 };
-use hyper::{
-    HeaderMap, Method, Request, Response, StatusCode,
-    body::{Bytes, Incoming},
-};
+use hyper::{HeaderMap, Method, Request, StatusCode, body::Incoming};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -22,8 +18,6 @@ use crate::{
     launch_auth::{LaunchAuth, Rejection},
     store::BotRecord,
 };
-
-type JsonResponse = Response<Full<Bytes>>;
 
 pub(crate) struct BotDispatcherServer {
     _http: HttpServer,
@@ -65,9 +59,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ServerState>) -> JsonResp
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let response = async {
         match (&head.method, segments.as_slice()) {
-            (&Method::GET, ["healthz"]) => {
-                json_response(StatusCode::OK, &json!({ "status": "ok" }))
-            }
+            (&Method::GET, ["healthz"]) => healthz_response(),
             (&Method::POST, ["bots", bot_type]) => {
                 start(&state, &head.headers, bot_type, body).await
             }

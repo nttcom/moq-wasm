@@ -1,6 +1,5 @@
 mod bot_types;
 mod bots;
-mod id_token;
 mod launch_auth;
 mod server;
 mod signer;
@@ -12,21 +11,13 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
-use google_cloud::MetadataToken;
+use google_cloud::{GOOGLE_CERTS_URL, IdTokenVerifier, MetadataToken};
 use telemetry_otlp::non_empty_env;
-use tokio::{
-    net::TcpListener,
-    signal::unix::{SignalKind, signal},
-};
+use tokio::net::TcpListener;
 
 use crate::{
-    bot_types::BotTypes,
-    bots::Bots,
-    id_token::{GOOGLE_CERTS_URL, IdTokenVerifier},
-    launch_auth::LaunchAuth,
-    server::BotDispatcherServer,
-    signer::BotTokenSigner,
-    store::BotStore,
+    bot_types::BotTypes, bots::Bots, launch_auth::LaunchAuth, server::BotDispatcherServer,
+    signer::BotTokenSigner, store::BotStore,
 };
 
 #[tokio::main]
@@ -73,31 +64,31 @@ async fn main() -> anyhow::Result<()> {
             LaunchAuth::new(required("BOT_DISPATCHER_VTS_URL")?),
         )
     };
-    let id_tokens = non_empty_env("BOT_DISPATCHER_JOB_SERVICE_ACCOUNT").map(|service_accounts| {
-        IdTokenVerifier::new(
-            non_empty_env("BOT_DISPATCHER_GOOGLE_CERTS_URL")
-                .unwrap_or_else(|| GOOGLE_CERTS_URL.to_owned()),
-            public_url.clone(),
-            service_accounts
-                .split(',')
-                .map(str::trim)
-                .filter(|account| !account.is_empty())
-                .map(str::to_owned)
-                .collect(),
-        )
-    });
+    let id_tokens = non_empty_env("BOT_DISPATCHER_JOB_SERVICE_ACCOUNT")
+        .map(|service_accounts| -> anyhow::Result<IdTokenVerifier> {
+            let certs_url = non_empty_env("BOT_DISPATCHER_GOOGLE_CERTS_URL")
+                .unwrap_or_else(|| GOOGLE_CERTS_URL.to_owned())
+                .parse()
+                .context("BOT_DISPATCHER_GOOGLE_CERTS_URL must be a URL")?;
+            IdTokenVerifier::new(
+                certs_url,
+                public_url.clone(),
+                service_accounts
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|account| !account.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            )
+        })
+        .transpose()?;
     let bots = Bots::new(types, store, signer, id_tokens, public_url);
 
     let listener = TcpListener::bind(("0.0.0.0", port)).await?;
     let _server = BotDispatcherServer::run(listener, bots, launch_auth);
     tracing::info!(port, "bot-dispatcher listening");
 
-    // As PID 1 in a container the process has no default SIGTERM action.
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        result = tokio::signal::ctrl_c() => result?,
-        _ = terminate.recv() => {}
-    }
+    http_server::shutdown_signal().await?;
     tracing::info!("bot-dispatcher shutting down");
     Ok(())
 }

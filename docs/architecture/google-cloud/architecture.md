@@ -8,8 +8,9 @@ file is ever read: the identity is the workload's own.
 | --- | --- |
 | `metadata_token.rs` | `MetadataToken`: the OAuth access token of the service account a Google Cloud workload (Cloud Run, Compute Engine) runs as, read from the metadata server's `instance/service-accounts/default/token` and cached until a minute before it expires. A caller sends it as `Authorization: Bearer` to a Google API. Outside Google Cloud there is no metadata server and the call fails, so a service that also runs locally pairs it with another source, such as a token passed in the environment. `identity_token` reads the service account's Google ID token for an audience from `instance/service-accounts/default/identity`, which a caller sends to a service that verifies who it is (a recorder job to `bot-dispatcher`). |
 | `cloud_storage.rs` | `CloudStorageBucket`: the Cloud Storage JSON API requests that need an object's generation: download with its generation, upload with `ifGenerationMatch`. `Endpoint` picks Cloud Storage, whose requests carry the `MetadataToken`, or an emulator (`STORAGE_EMULATOR_HOST`), whose requests carry no token. |
-| `testing.rs` | `FakeCloudStorage`, which serves those requests from memory on `http-server`'s `HttpServer`, and `SilentServer`, which never answers; behind the `testing` feature. |
+| `jwt.rs` | `IapVerifier` (ES256 IAP assertions) and `IdTokenVerifier` (RS256 Google ID tokens), sharing a 5-second timeout, 60-second refresh-throttled JWKS cache. |
+| `testing.rs` | `FakeCloudStorage`, which serves those requests from memory on `http-server`'s `HttpServer`, `SilentServer`, which never answers, and `TestIapKey` for signing test IAP assertions; behind the `testing` feature. |
 
-Used by `app-registry` (the registry object), `recorder` (its ID token for
-`bot-dispatcher`), `job-launcher` and `bot-dispatcher` (starting Cloud Run Jobs) and
+Used by `app-registry` (the registry object), `console` (IAP assertion verification), `recorder` (its ID token for
+`bot-dispatcher`), `job-launcher` and `bot-dispatcher` (starting Cloud Run Jobs and verifying bot ID tokens) and
 `live-translate` (the Agent Platform).

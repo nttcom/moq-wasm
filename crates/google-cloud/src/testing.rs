@@ -4,6 +4,11 @@ use std::{
     time::Duration,
 };
 
+use aws_lc_rs::{
+    rand::SystemRandom,
+    signature::{ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, KeyPair},
+};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http_body_util::{BodyExt, Full};
 use http_server::HttpServer;
 use hyper::{
@@ -11,6 +16,7 @@ use hyper::{
     body::{Bytes, Incoming},
 };
 use reqwest::Url;
+use serde_json::{Value, json};
 use tokio::{net::TcpListener, task::JoinHandle};
 
 use crate::cloud_storage::{CloudStorageBucket, Endpoint};
@@ -187,6 +193,57 @@ async fn handle(
 fn percent_decode(segment: &str) -> String {
     let url = Url::parse(&format!("http://fake/?name={segment}")).unwrap();
     url.query_pairs().next().unwrap().1.into_owned()
+}
+
+pub struct TestIapKey {
+    kid: String,
+    pair: EcdsaKeyPair,
+}
+
+impl TestIapKey {
+    pub fn new(kid: &str) -> Self {
+        let pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new())
+                .unwrap();
+        let pair =
+            EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref()).unwrap();
+        Self {
+            kid: kid.into(),
+            pair,
+        }
+    }
+
+    pub fn jwk(&self) -> Value {
+        let point = self.pair.public_key().as_ref();
+        json!({
+            "kid": self.kid,
+            "kty": "EC",
+            "crv": "P-256",
+            "alg": "ES256",
+            "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+            "y": URL_SAFE_NO_PAD.encode(&point[33..65]),
+        })
+    }
+
+    pub fn sign(&self, claims: &Value) -> String {
+        self.sign_with_header(&json!({ "alg": "ES256", "kid": self.kid }), claims)
+    }
+
+    pub fn sign_with_header(&self, header: &Value, claims: &Value) -> String {
+        let signing_input = format!(
+            "{}.{}",
+            URL_SAFE_NO_PAD.encode(header.to_string()),
+            URL_SAFE_NO_PAD.encode(claims.to_string())
+        );
+        let signature = self
+            .pair
+            .sign(&SystemRandom::new(), signing_input.as_bytes())
+            .unwrap();
+        format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signature.as_ref())
+        )
+    }
 }
 
 fn respond(status: StatusCode, body: Vec<u8>) -> Response<Full<Bytes>> {

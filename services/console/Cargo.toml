@@ -5,21 +5,23 @@ edition = "2024"
 description = "Internal MoQ console: identifies an employee through IAP and serves their app from the app registry"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 app-registry = { path = "../../crates/app-registry" }
 auth-token = { path = "../../crates/auth-token" }
-base64 = "0.23.1"
-http-body-util = "0.1.4"
+base64 = { workspace = true }
+google-cloud = { path = "../../crates/google-cloud" }
+http-body-util = { workspace = true }
 http-server = { path = "../../crates/http-server" }
-hyper = { version = "1.10.1", features = ["http1", "server"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
-aws-lc-rs = "1.18.2"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "fs"] }
-tracing = "0.1.44"
+hyper = { workspace = true, features = ["http1", "server"] }
+reqwest = { workspace = true, features = ["rustls", "json"] }
+aws-lc-rs = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "fs"] }
+tracing = { workspace = true }
 telemetry-otlp = { path = "../../crates/telemetry-otlp" }
 
 [dev-dependencies]
 app-registry = { path = "../../crates/app-registry", features = ["testing"] }
 google-cloud = { path = "../../crates/google-cloud", features = ["testing"] }
+http-server = { path = "../../crates/http-server", features = ["testing"] }
