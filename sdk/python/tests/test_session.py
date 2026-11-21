@@ -187,6 +187,49 @@ async def test_a_run_of_workers_in_a_task_group_returns_its_timeout_once_their_b
     await session.close()
 
 
+async def test_the_readme_service_loop_connects_again_after_failing_token_requests_and_workers(relay_url):
+    # Arrange: the README's "Keep a service connected" loop, whose token endpoint first fails, then
+    # stalls, whose next session has a worker time out, and the one after it a worker subscribe to a
+    # track nobody publishes
+    attempts = 0
+
+    async def fetch_token() -> None:
+        if attempts == 1:
+            raise OSError("token endpoint unreachable")
+        if attempts == 2:
+            await asyncio.Event().wait()
+
+    async def follow(session: moq_wasm.Session) -> None:
+        if attempts == 3:
+            await asyncio.wait_for(asyncio.Event().wait(), 0)
+        if attempts == 4:
+            await within(session.subscribe([*room(), "alice"], TRACK))
+
+    async def serve(session: moq_wasm.Session) -> None:
+        async with asyncio.TaskGroup() as workers:
+            workers.create_task(follow(session))
+            workers.create_task(asyncio.sleep(0))
+
+    async def main() -> None:
+        nonlocal attempts
+        while True:
+            try:
+                attempts += 1
+                token = await asyncio.wait_for(fetch_token(), 0.1)
+                async with moq_wasm.connect(relay_url, token=token, verify_certificate=False) as session:
+                    await session.run(serve(session))
+                return
+            except* Exception:
+                pass
+            await asyncio.sleep(0)
+
+    # Act
+    await within(main())
+
+    # Assert: each failure, bare or inside an ExceptionGroup, reached the next attempt
+    assert attempts == 5
+
+
 async def test_close_resolves_closed_and_fails_later_calls(relay_url):
     # Arrange
     namespace = [*room(), "alice"]

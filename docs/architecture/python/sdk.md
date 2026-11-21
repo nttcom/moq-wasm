@@ -198,7 +198,8 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   coroutine that starts them in an `asyncio.TaskGroup`, which waits for
   every child's cleanup and raises a child's failure, as a refused
   request, inside an `ExceptionGroup`: a loop that connects again
-  catches every `Exception` with `except*`.
+  catches every `Exception` with `except*`, a token request's
+  `TimeoutError` among them (the README's "Keep a service connected").
   The three subclass `SessionEnded`, which is no
   `RuntimeError`: a request made after the session ended raises what ended
   it, so the loops that retry a refused request (`RemoteBroadcast.follow`)
