@@ -33,8 +33,46 @@ FINISHED_GROUPS_KEPT = 16
 # refuse before it takes the track as undecodable.
 MAX_REFUSED_OBJECTS = 3
 
-# A video codec string's first element, as the catalog writes it, to the PyAV decoder.
-VIDEO_DECODERS = {"avc1": "h264", "avc3": "h264", "hvc1": "hevc", "hev1": "hevc", "vp8": "vp8", "vp09": "vp9", "av01": "av1"}
+# A video codec string's first element, as the catalog writes it, to the PyAV decoders that decode
+# it in software, the preferred first. FFmpeg's own AV1 decoder (`av1`) is left out: it decodes only
+# through a hardware accelerator, which PyAV does not set up, and refuses every packet otherwise.
+VIDEO_DECODERS = {
+    "avc1": ("h264",),
+    "avc3": ("h264",),
+    "hvc1": ("hevc",),
+    "hev1": ("hevc",),
+    "vp8": ("vp8", "libvpx"),
+    "vp09": ("vp9", "libvpx-vp9"),
+    "av01": ("libdav1d", "libaom-av1"),
+}
+# The decoders that decode on one thread. dav1d's worker threads release a packet's payload and
+# its opaque value, the object's Location, as they finish a frame, which takes the GIL; freeing the
+# decoder holds the GIL and waits for those threads, so the process deadlocks. The other decoders
+# may keep a packet's payload or opaque value past the call that decodes it, as FFmpeg's VP9 does,
+# but release it on the thread that calls them, which holds the GIL already: FFmpeg's own ones
+# thread by slice, which PyAV defaults to, and libvpx and libaom decode synchronously. So their
+# threads stay, and dav1d alone decodes slower.
+THREADLESS_DECODERS = ("libdav1d",)
+
+
+def _decoder_name(codec: str) -> str | None:
+    """The PyAV decoder `VideoDecoder` takes for `codec`, a WebCodecs codec string: the first of its
+    `VIDEO_DECODERS` this PyAV build has, or None when it has none of them."""
+    family = codec.split(".")[0]
+    # Only the families `VIDEO_DECODERS` lists are looked up, and remembered, so the codec strings
+    # of catalogs, unsupported ones included, do not pile up.
+    return _family_decoder_name(family) if family in VIDEO_DECODERS else None
+
+
+@functools.cache
+def _family_decoder_name(family: str) -> str | None:
+    for name in VIDEO_DECODERS[family]:
+        try:
+            av.Codec(name, "r")
+        except ValueError:
+            continue
+        return name
+    return None
 
 
 class OpusDecoder:
@@ -105,10 +143,12 @@ class VideoDecoder:
     its object."""
 
     def __init__(self, codec: str):
-        name = VIDEO_DECODERS.get(codec.split(".")[0])
+        name = _decoder_name(codec)
         if name is None:
             raise ValueError(f"no decoder for video codec {codec}")
         self._decoder = cast(av.VideoCodecContext, av.CodecContext.create(name, "r"))
+        if name in THREADLESS_DECODERS:
+            self._decoder.thread_count = 1
         # Each packet carries the Location of its object through the decoder to the pictures it
         # makes, so a packet that makes none, as an invisible VP8 frame, leaves nothing behind.
         self._decoder.copy_opaque = True

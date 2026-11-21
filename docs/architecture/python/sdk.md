@@ -745,7 +745,20 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   Daily and LiveKit SDKs natively, `SmallWebRTCTransport` through aiortc and
   PyAV). `MoqWasmTransport` does it with PyAV through `moq_wasm.codecs`,
   which a bot running its own pipeline (one per participant, or with the
-  location of each picture) uses too. `decode_pictures` turns the
+  location of each picture) uses too. A video codec is decoded by the first
+  of its software decoders the PyAV build has, AV1 (the browser's default
+  screenshare codec) by dav1d or else libaom; FFmpeg's own AV1 decoder is
+  not used, since it decodes only through a hardware accelerator, so a
+  track no decoder of the build takes is not picked. dav1d decodes on one
+  thread: its worker threads release a packet's payload and its opaque
+  value (the object's Location), which takes the GIL, while freeing the
+  decoder holds the GIL and waits for them, so a decoder dropped mid-group
+  deadlocked the process. A 1080p AV1 track therefore decodes at one core's
+  speed, which an AV1 camera at a high framerate may outrun. The other
+  decoders (FFmpeg's slice threads, libvpx, libaom) keep their threads:
+  some of them, as FFmpeg's VP9, keep a packet's payload or opaque value
+  past the decode call too, but release it on the thread that calls them,
+  which holds the GIL already. `decode_pictures` turns the
   objects of one subscription to a video track into pictures with the
   `Location` of each, a decoder for each group and at most one every
   `interval` seconds. It returns a `Following`, read as the remote
