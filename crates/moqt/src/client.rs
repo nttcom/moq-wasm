@@ -17,3 +17,4 @@ pub use crate::modules::client::session::{
 pub use crate::modules::client::subscription::{Group, PublishDone, ReceivedObject, Subscription};
 pub use crate::modules::client::track_follower::{FollowEvent, TrackFollower};
 pub use crate::modules::client::track_writer::TrackWriter;
+pub use crate::modules::moqt::domains::origin::PublishTrackError;

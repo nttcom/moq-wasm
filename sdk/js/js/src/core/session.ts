@@ -45,7 +45,8 @@ export type PublishTrackOptions = {
   /// subgroup streams: a lost object is not resent and never holds back the
   /// next one. An object larger than the path's datagram size (about 1 KB is
   /// safe) is dropped. A subscriber reads the track with the async iterator,
-  /// not `groups()`.
+  /// not `groups()`. A track registered again keeps its objects, so once it
+  /// has one, `publishTrack` with the other `datagram` rejects.
   datagram?: boolean
   /// The Publisher Priority (draft-14 §7.1), 0 to 255, 128 by default: among
   /// the session's tracks, a lower value is sent first.

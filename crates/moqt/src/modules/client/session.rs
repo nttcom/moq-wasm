@@ -379,8 +379,10 @@ impl Session {
 
     /// Registers a track to publish, whose group ids start at the wall-clock
     /// time in µs, so a later run of the same publisher does not reuse a
-    /// location the relay still caches. Fails when the PUBLISH fails, and,
-    /// with `datagram`, for a track already written to on streams.
+    /// location the relay still caches. A track registered again keeps its
+    /// objects, so once it has one, registering it with the other `datagram`
+    /// fails with `PublishTrackError::OtherDelivery` and changes nothing.
+    /// Also fails when the PUBLISH fails.
     pub async fn publish_track(
         &self,
         namespace: &[impl AsRef<str>],
@@ -398,11 +400,11 @@ impl Session {
             )
             .await;
         origin
+            .set_delivery(&namespace, track, options.datagram)
+            .await?;
+        origin
             .set_publisher_priority(&namespace, track, options.priority)
             .await?;
-        if options.datagram {
-            origin.send_in_datagrams(&namespace, track).await?;
-        }
         if options.publish {
             origin.publish(&self.session, &namespace, track).await?;
         }
@@ -439,18 +441,55 @@ mod tests {
     use super::*;
     use crate::{
         RequestErrorCode, TerminationErrorCode,
+        client::PublishTrackError,
         modules::{
             client::subscription::ReceivedObject,
             test_support::{
-                TEST_VERSIONS, connected_client_sessions, insecure_client_config,
-                object_with_extensions, spawn_native_server, within,
+                TEST_VERSIONS, connected_client_sessions, data_receiver, insecure_client_config,
+                next_datagram, next_subgroup, object_with_extensions, spawn_native_server, within,
             },
         },
         namespace::NamespaceEvent,
-        object::ExtensionHeaders,
+        object::{DataReceiver, ExtensionHeaders, ForwardingPreference, Subgroup},
     };
 
     const NAMESPACE: &[&str] = &["room", "alice"];
+
+    const DATAGRAM: PublishTrackOptions = PublishTrackOptions {
+        retention: Retention::For(DEFAULT_RETENTION),
+        publish: false,
+        datagram: true,
+        priority: DEFAULT_PRIORITY,
+    };
+
+    /// Subscribes below `client::Session`, so the test sees how each object
+    /// arrives.
+    async fn data_of(client: &Session, track: &str) -> DataReceiver {
+        let session = client.moqt_session();
+        let option = SubscribeOption {
+            filter_type: FilterType::NextGroupStart,
+            ..SubscribeOption::default()
+        };
+        let subscription = within(session.subscriber().subscribe(
+            join_namespace(NAMESPACE),
+            track.to_string(),
+            option,
+        ))
+        .await
+        .unwrap();
+        data_receiver(session, &subscription).await
+    }
+
+    async fn write_new_group(writer: &TrackWriter, payload: &'static [u8]) {
+        writer
+            .write(
+                Bytes::from_static(payload),
+                true,
+                ExtensionHeaders::default(),
+            )
+            .await
+            .unwrap();
+    }
 
     fn assert_send_sync<T: Send + Sync>(_: &T) {}
 
@@ -481,6 +520,106 @@ mod tests {
         let done = subscription.done();
         drop(subscription);
         assert_send(done);
+    }
+
+    #[tokio::test]
+    async fn a_datagram_track_published_again_after_it_ended_still_sends_datagrams() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-datagram-again").await;
+        let writer = server
+            .publish_track(NAMESPACE, "cursor", DATAGRAM)
+            .await
+            .unwrap();
+        write_new_group(&writer, b"a").await;
+        within(
+            server
+                .origin()
+                .end_track(&join_namespace(NAMESPACE), "cursor"),
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let writer = server
+            .publish_track(NAMESPACE, "cursor", DATAGRAM)
+            .await
+            .unwrap();
+        let mut receiver = data_of(&client, "cursor").await;
+        write_new_group(&writer, b"b").await;
+        let object = within(next_datagram(&mut receiver)).await;
+
+        // Assert
+        assert_eq!(object.forwarding, ForwardingPreference::Datagram);
+        assert_eq!(object.payload, Bytes::from_static(b"b"));
+    }
+
+    #[tokio::test]
+    async fn a_datagram_track_published_again_on_streams_is_refused() {
+        // Arrange
+        let (_client, server) = connected_client_sessions("client-datagram-to-streams").await;
+        let writer = server
+            .publish_track(NAMESPACE, "cursor", DATAGRAM)
+            .await
+            .unwrap();
+        write_new_group(&writer, b"a").await;
+        within(
+            server
+                .origin()
+                .end_track(&join_namespace(NAMESPACE), "cursor"),
+        )
+        .await
+        .unwrap();
+
+        // Act
+        let refused = server
+            .publish_track(NAMESPACE, "cursor", PublishTrackOptions::default())
+            .await;
+
+        // Assert
+        let Err(error) = refused else {
+            panic!("expected the registration to be refused");
+        };
+        assert!(
+            matches!(
+                error.downcast_ref::<PublishTrackError>(),
+                Some(PublishTrackError::OtherDelivery { datagram: true, .. })
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_registration_leaves_the_publisher_priority_unchanged() {
+        // Arrange
+        let (client, server) = connected_client_sessions("client-refused-priority").await;
+        let writer = server
+            .publish_track(NAMESPACE, "chat", PublishTrackOptions::default())
+            .await
+            .unwrap();
+        write_new_group(&writer, b"a").await;
+
+        // Act
+        let refused = server
+            .publish_track(
+                NAMESPACE,
+                "chat",
+                PublishTrackOptions {
+                    priority: 7,
+                    ..DATAGRAM
+                },
+            )
+            .await;
+        let mut receiver = data_of(&client, "chat").await;
+        write_new_group(&writer, b"b").await;
+        let mut stream = within(next_subgroup(&mut receiver)).await;
+        let header = within(stream.receive()).await.unwrap();
+
+        // Assert
+        assert!(refused.is_err());
+        let Some(Subgroup::Header(header)) = header else {
+            panic!("expected a subgroup header, got {header:?}");
+        };
+        assert_eq!(header.publisher_priority, DEFAULT_PRIORITY);
     }
 
     #[tokio::test]

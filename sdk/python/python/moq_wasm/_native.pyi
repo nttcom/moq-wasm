@@ -104,9 +104,9 @@ class Session:
         object in its own datagram: a lost one is not resent, one larger than the path's datagram
         size (about 1 KB is safe) is dropped, and a subscriber reads it by object, not with
         `groups()`. `priority` is the Publisher Priority: among the session's tracks, a lower value
-        is sent first. Raises RuntimeError when the relay refuses the PUBLISH or, with `datagram`,
-        when the track was already written to on streams; OverflowError for a `priority` outside
-        0-255."""
+        is sent first. Raises RuntimeError when the relay refuses the PUBLISH, or when the track
+        already has an object and `datagram` differs from its earlier registration; OverflowError
+        for a `priority` outside 0-255."""
     async def refresh_token(self, token: str, *, app_id: str) -> None:
         """Hands the relay `token`, a later token of the same app, before the current one expires
         (a TRACK_STATUS for `[app_id]` that carries it); the session presents it on the connections it

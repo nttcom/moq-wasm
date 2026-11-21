@@ -161,6 +161,18 @@ struct OriginTrack {
     publisher_priority: u8,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum PublishTrackError {
+    /// The track sent objects with the other Object Forwarding Preference (draft-14 §10).
+    #[error("track {namespace}/{track} sends its objects {}", if *datagram { "in datagrams" } else { "on subgroup streams" })]
+    OtherDelivery {
+        namespace: String,
+        track: String,
+        datagram: bool,
+    },
+}
+
 /// Whether a subscription to a track published on demand is in Forward State
 /// 1, as `Origin::publish_on_demand` reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -324,19 +336,29 @@ impl Origin {
     }
 
     /// Sends every object of the track in its own datagram (Object Forwarding
-    /// Preference Datagram, draft-14 §10.3) instead of on subgroup streams; a
-    /// track has one forwarding preference (§10), so call this before the
-    /// first write. Fails for a track that is not registered or already has
-    /// an object. A FETCH is still answered on a stream (§9.16).
-    pub(crate) async fn send_in_datagrams(&self, namespace: &str, track_name: &str) -> Result<()> {
+    /// Preference Datagram, draft-14 §10.3) when `datagrams`, and on subgroup
+    /// streams otherwise. A track has one forwarding preference (§10), so once
+    /// the track has an object, asking for the other one fails with
+    /// `PublishTrackError::OtherDelivery`. Also fails for a track that is not
+    /// registered. A FETCH is answered on a stream either way (§9.16).
+    pub(crate) async fn set_delivery(
+        &self,
+        namespace: &str,
+        track_name: &str,
+        datagrams: bool,
+    ) -> Result<()> {
         let key = track_key(namespace, track_name);
         let mut state = self.state.lock().await;
         let track = state.track_mut(&key)?;
-        anyhow::ensure!(
-            track.numbering.largest().is_none(),
-            "track {namespace}/{track_name} already sent objects on subgroup streams"
-        );
-        track.datagrams = true;
+        if track.datagrams != datagrams && track.numbering.largest().is_some() {
+            return Err(PublishTrackError::OtherDelivery {
+                namespace: namespace.to_string(),
+                track: track_name.to_string(),
+                datagram: track.datagrams,
+            }
+            .into());
+        }
+        track.datagrams = datagrams;
         Ok(())
     }
 
@@ -1836,7 +1858,7 @@ mod tests {
             let peers = origin_with_track("origin-datagrams", RETENTION, version).await;
             peers
                 .origin
-                .send_in_datagrams(NAMESPACE, TRACK)
+                .set_delivery(NAMESPACE, TRACK, true)
                 .await
                 .unwrap();
             let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
@@ -1890,7 +1912,7 @@ mod tests {
                 if datagrams {
                     peers
                         .origin
-                        .send_in_datagrams(NAMESPACE, TRACK)
+                        .set_delivery(NAMESPACE, TRACK, true)
                         .await
                         .unwrap();
                 }
@@ -1923,7 +1945,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_track_that_sent_an_object_cannot_switch_to_datagrams() {
+    async fn an_ended_datagram_track_asked_for_datagrams_again_still_sends_datagrams() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-datagrams-again", RETENTION, version).await;
+            peers
+                .origin
+                .set_delivery(NAMESPACE, TRACK, true)
+                .await
+                .unwrap();
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            peers.origin.end_track(NAMESPACE, TRACK).await.unwrap();
+            peers
+                .origin
+                .ensure_track(NAMESPACE, TRACK, FIRST_GROUP_ID, RETENTION)
+                .await;
+
+            // Act
+            let again = peers.origin.set_delivery(NAMESPACE, TRACK, true).await;
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let mut receiver = data_receiver(&peers.server, &subscription).await;
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"b"))
+                .await
+                .unwrap();
+            let object = within(next_datagram(&mut receiver)).await;
+
+            // Assert
+            again.unwrap();
+            assert_eq!(object.forwarding, ForwardingPreference::Datagram);
+            assert_eq!(object.payload, Bytes::from_static(b"b"));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_datagram_track_that_sent_an_object_cannot_switch_to_streams() {
+        // Arrange
+        let peers = origin_with_track("origin-stream-switch", RETENTION, Version::Draft14).await;
+        peers
+            .origin
+            .set_delivery(NAMESPACE, TRACK, true)
+            .await
+            .unwrap();
+        peers
+            .origin
+            .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+            .await
+            .unwrap();
+
+        // Act
+        let switched = peers.origin.set_delivery(NAMESPACE, TRACK, false).await;
+
+        // Assert: draft-14 §10 gives a track one forwarding preference
+        let error = switched.unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<PublishTrackError>(),
+                Some(PublishTrackError::OtherDelivery { datagram: true, .. })
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stream_track_that_sent_an_object_cannot_switch_to_datagrams() {
         // Arrange
         let peers = origin_with_track("origin-datagram-switch", RETENTION, Version::Draft14).await;
         peers
@@ -1933,10 +2023,52 @@ mod tests {
             .unwrap();
 
         // Act
-        let switched = peers.origin.send_in_datagrams(NAMESPACE, TRACK).await;
+        let switched = peers.origin.set_delivery(NAMESPACE, TRACK, true).await;
 
         // Assert: draft-14 §10 gives a track one forwarding preference
-        assert!(switched.is_err());
+        let error = switched.unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<PublishTrackError>(),
+                Some(PublishTrackError::OtherDelivery {
+                    datagram: false,
+                    ..
+                })
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_track_without_an_object_switches_its_delivery() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-delivery-switch", RETENTION, version).await;
+            peers
+                .origin
+                .set_delivery(NAMESPACE, TRACK, true)
+                .await
+                .unwrap();
+
+            // Act
+            let switched = peers.origin.set_delivery(NAMESPACE, TRACK, false).await;
+            let subscription = subscribe(&peers, FilterType::NextGroupStart).await;
+            let mut receiver = data_receiver(&peers.server, &subscription).await;
+            peers
+                .origin
+                .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                .await
+                .unwrap();
+            let mut stream = within(next_subgroup(&mut receiver)).await;
+            let header = within(stream.receive()).await.unwrap();
+
+            // Assert
+            switched.unwrap();
+            assert!(
+                matches!(header, Some(Subgroup::Header(_))),
+                "{version:?}: {header:?}"
+            );
+        }
     }
 
     #[tokio::test]
