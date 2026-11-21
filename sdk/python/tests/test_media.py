@@ -897,11 +897,16 @@ async def test_watch_broadcasts_returns_once_the_room_stays_empty():
     await session.close()
 
 
-async def test_catalogs_skips_a_catalog_that_does_not_parse_and_unsubscribes_at_the_end():
+@pytest.mark.parametrize(
+    "bad_catalog",
+    [b"not json", b'{"version":"draft-02","tracks":null}', b'{"version":"draft-02"}'],
+    ids=["not json", "null tracks", "no tracks"],
+)
+async def test_catalogs_skips_a_catalog_that_does_not_parse_and_unsubscribes_at_the_end(bad_catalog):
     # Arrange
     relay = FakeRelay()
     session = await open_session(relay)
-    relay.sessions[0].tracks["catalog"] = [[b"not json", catalog_payload({"name": "audio", "packaging": "loc", "isLive": True})]]
+    relay.sessions[0].tracks["catalog"] = [[bad_catalog, catalog_payload({"name": "audio", "packaging": "loc", "isLive": True})]]
 
     # Act
     catalogs = [catalog async for catalog in RemoteBroadcast(session, [*ROOM, "alice"]).catalogs()]
