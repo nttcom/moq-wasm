@@ -479,8 +479,17 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
   comments.
 - **`EventTimeline`** writes a draft-ietf-moq-msf-02 §8 event timeline as
   one group: it opens with an empty record list once the track is
-  registered, and each record is one more object, so a late joiner's joining
-  FETCH brings those the track still keeps. It replaces the two copies.
+  registered, at once on the writer `Session.publish_track` returned
+  registered already, so a joiner finds the opening before the first
+  record, and each record is one more object, so a late joiner's joining
+  FETCH brings those the track still keeps. `append` waits until the track
+  is registered and the opening empty list was written, so a record appended
+  as the timeline is added to a published broadcast is not dropped, and
+  raises what failed either. An opening that fails, or is cancelled by
+  leaving the broadcast while it is sent, closes the track, so nothing is
+  appended without it; the broadcast keeps the track until that close
+  finished, so leaving it waits for the close and the session may publish
+  the track again once it was left. It replaces the two copies.
 - **`watch_broadcasts(session, prefix, handler, *, filter=None,
   empty_timeout=None)`** runs `handler` as a task for each broadcast
   published under `prefix` that `filter` accepts, cancels it when the
