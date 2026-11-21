@@ -119,6 +119,7 @@ impl MediaSource {
                 .lock()
                 .unwrap()
                 .push_video(Bytes::from(data), timestamp_micros)
+                .map(drop)
                 .map_err(py_error)
         })
     }
@@ -206,6 +207,7 @@ impl MediaSource {
                 .lock()
                 .unwrap()
                 .push_audio(Bytes::from(data), timestamp_micros, level)
+                .map(drop)
                 .map_err(py_error)
         })
     }

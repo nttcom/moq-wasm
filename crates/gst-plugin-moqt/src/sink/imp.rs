@@ -380,7 +380,7 @@ impl MoqtSink {
         let started = started
             .as_mut()
             .context("audio caps received before the sink started")?;
-        started.writer.push(event)
+        started.writer.push(event).map(drop)
     }
 
     fn stream_error(&self, err: anyhow::Error) -> gst::FlowError {

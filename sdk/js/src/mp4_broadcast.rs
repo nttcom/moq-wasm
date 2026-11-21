@@ -132,5 +132,5 @@ impl Mp4Broadcast {
 }
 
 fn push(writer: &mut BroadcastWriter, event: MediaEvent) -> Result<(), JsValue> {
-    writer.push(event).map_err(anyhow_error)
+    writer.push(event).map(drop).map_err(anyhow_error)
 }

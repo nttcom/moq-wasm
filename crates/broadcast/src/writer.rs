@@ -6,7 +6,7 @@ use moqt::executor::{self, JoinHandle};
 
 use crate::{
     broadcast::{Broadcast, SourceTracks},
-    publish_queue::{PublishQueue, QueueConsumer, Queued},
+    publish_queue::{PublishQueue, PushOutcome, QueueConsumer, Queued},
     track_publisher::{SharedTiming, TrackPublisher},
 };
 
@@ -38,7 +38,11 @@ impl BroadcastWriter {
         }
     }
 
-    pub fn push(&mut self, event: MediaEvent) -> Result<()> {
+    /// Queues `event` for the publish task without waiting for the relay,
+    /// or drops it as `PushOutcome::Dropped` says. Fails once the publish
+    /// task stopped, and when codec configurations fill even the slots kept
+    /// free for them.
+    pub fn push(&mut self, event: MediaEvent) -> Result<PushOutcome> {
         // Take the capture origin here: the publish task reaches the first sample
         // only after connecting to the relay, which would stamp every sample into
         // the future.

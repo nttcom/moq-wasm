@@ -22,7 +22,9 @@ the live-ingest stats panel reads its transport statistics and stream ledger.
 `Broadcast` binds that connection to one namespace: it announces the
 namespace, holds the catalog metadata and sends the objects of its tracks.
 `BroadcastWriter` turns `mediapack::MediaEvent`s into those objects behind a
-queue that never blocks the media source. A `RenditionTrack` writes one
+queue that never blocks the media source; `BroadcastWriter::push` returns
+`PushOutcome::Dropped` for what that queue drops while the relay does not
+keep up (see "Group alignment"). A `RenditionTrack` writes one
 rendition of a writer's source video into a track of its own; `live-ingest`
 adds its transcoded renditions this way. A writer writes into `video` and
 `audio` by default; `onvif-ingest` runs one writer per camera profile in one
@@ -197,22 +199,23 @@ media in: one `BroadcastWriter` behind `configure_video`, `push_video`,
 `configure_audio`, `push_audio`, renditions and `remove_track`. Each frame
 goes through a `loc::Demuxer`, as if it had been received as a LOC object, so
 an H.264 or H.265 keyframe sets the track's configuration from its parameter
-sets. Each `MediaRendition` writes its `RenditionTrack` on a task of its own,
-which `remove_track` reaches through the same channel, so a removal follows
-the frames sent before it. That channel holds 300 commands, ten seconds of
-30 fps video, so a relay that stops taking a rendition's objects does not
-grow the page's or process's memory without bound. Frames leave 4 slots free
-for configurations, which are never dropped since the frames after one
-cannot be decoded without it. A frame that finds no room is dropped
-(`PushOutcome::Dropped`), and so is every frame after it up to a keyframe
-that finds room, as in the `BroadcastWriter` queue; the source's keyframe
-requests are notified when the dropping starts and again for every dropped
-keyframe. A configuration that finds even the free slots taken is held, the
-latest replacing an earlier one, and queued just before that keyframe. A
-frame from which the demuxer reads no picture, such as an H.264 access unit
-without a slice, is `PushOutcome::NoPicture`. The bindings keep only their
-callbacks and their error types: `MediaSourceError` tells media the caller got
-wrong (`InvalidMedia`) from a source that stopped publishing.
+sets. `push_video` and `push_audio` pass on the writer's `PushOutcome`; the
+`push_video` of the source and of a rendition returns `PushOutcome::NoPicture`
+for a frame from which the demuxer reads no picture, such as an H.264 access
+unit without a slice. Each `MediaRendition` writes its `RenditionTrack` on a
+task of its own, which `remove_track` reaches through the same channel, so a
+removal follows the frames sent before it. That channel holds 300 commands, ten
+seconds of 30 fps video, so a relay that stops taking a rendition's objects does
+not grow the page's or process's memory without bound. Frames leave 4 slots free
+for configurations, which are never dropped since the frames after one cannot be
+decoded without it. A frame that finds no room is dropped
+(`PushOutcome::Dropped`), and so is every frame after it up to a keyframe that
+finds room, as in the `BroadcastWriter` queue; the source's keyframe requests
+are notified when the dropping starts and again for every dropped keyframe. A
+configuration that finds even the free slots taken is held, the latest replacing
+an earlier one, and queued just before that keyframe. The bindings keep only
+their callbacks and their error types: `MediaSourceError` tells media the caller
+got wrong (`InvalidMedia`) from a source that stopped publishing.
 
 ## Relay switchover
 A relay that is shutting down sends GOAWAY with the URI of another relay, or

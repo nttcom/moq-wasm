@@ -117,11 +117,9 @@ impl MediaSource {
         &mut self,
         data: Bytes,
         timestamp_micros: u64,
-    ) -> Result<(), MediaSourceError> {
-        for event in demux(self.video.as_mut(), data, timestamp_micros)? {
-            self.push(event)?;
-        }
-        Ok(())
+    ) -> Result<PushOutcome, MediaSourceError> {
+        let events = demux(self.video.as_mut(), data, timestamp_micros)?;
+        push_frame(events, |event| self.push(event))
     }
 
     /// `codec` is `opus`, or an AAC `mp4a.40.*` whose `description` is the
@@ -155,7 +153,7 @@ impl MediaSource {
                 )));
             }
         };
-        self.push(MediaEvent::AudioConfig(config))
+        self.push(MediaEvent::AudioConfig(config)).map(drop)
     }
 
     /// One encoded audio frame, after `configure_audio`. `level` is its
@@ -165,7 +163,7 @@ impl MediaSource {
         data: Bytes,
         timestamp_micros: u64,
         level: Option<AudioLevel>,
-    ) -> Result<(), MediaSourceError> {
+    ) -> Result<PushOutcome, MediaSourceError> {
         self.push(MediaEvent::Audio(AudioSample {
             data,
             pts: Timestamp::from_micros(timestamp_micros),
@@ -246,7 +244,7 @@ impl MediaSource {
         self.demand_receiver.take()
     }
 
-    fn push(&mut self, event: MediaEvent) -> Result<(), MediaSourceError> {
+    fn push(&mut self, event: MediaEvent) -> Result<PushOutcome, MediaSourceError> {
         self.writer.push(event).map_err(MediaSourceError::Stopped)
     }
 }
@@ -275,16 +273,28 @@ impl MediaRendition {
         data: Bytes,
         timestamp_micros: u64,
     ) -> Result<PushOutcome, MediaSourceError> {
-        let mut outcome = PushOutcome::NoPicture;
-        for event in demux(self.video.as_mut(), data, timestamp_micros)? {
-            let is_frame = matches!(event, MediaEvent::Video(_));
-            let pushed = self.task.push(event).map_err(MediaSourceError::Stopped)?;
-            if is_frame {
-                outcome = pushed;
-            }
-        }
-        Ok(outcome)
+        let events = demux(self.video.as_mut(), data, timestamp_micros)?;
+        push_frame(events, |event| {
+            self.task.push(event).map_err(MediaSourceError::Stopped)
+        })
     }
+}
+
+/// The outcome of the frame's video sample, or `NoPicture` when the demuxer
+/// read none; the configurations demuxed with it are not reported.
+fn push_frame(
+    events: Vec<MediaEvent>,
+    mut push: impl FnMut(MediaEvent) -> Result<PushOutcome, MediaSourceError>,
+) -> Result<PushOutcome, MediaSourceError> {
+    let mut outcome = PushOutcome::NoPicture;
+    for event in events {
+        let is_frame = matches!(event, MediaEvent::Video(_));
+        let pushed = push(event)?;
+        if is_frame {
+            outcome = pushed;
+        }
+    }
+    Ok(outcome)
 }
 
 /// Waits for room in the rendition's queue rather than dropping the removal,
@@ -475,13 +485,52 @@ mod tests {
         source.configure_audio("opus", 48_000, 1, None).unwrap();
 
         // Act
-        source
+        let outcome = source
             .push_audio(Bytes::from_static(b"opus"), 0, None)
             .unwrap();
         let object = relay.first_track_object("audio").await;
 
         // Assert
+        assert_eq!(outcome, PushOutcome::Queued);
         assert_eq!(object.payload.as_ref(), b"opus");
+    }
+
+    #[tokio::test]
+    async fn push_video_reports_the_frames_the_full_publish_queue_drops() {
+        // Arrange: without an await the publish task never takes a frame, as while the relay stalls
+        let mut source = source();
+        source.configure_video("vp8").unwrap();
+
+        // Act
+        let outcomes: Vec<_> = (0..3_000)
+            .map(|frame| source.push_video(vp8_keyframe(), frame * 33_333).unwrap())
+            .collect();
+
+        // Assert
+        let queued = outcomes
+            .iter()
+            .take_while(|outcome| **outcome == PushOutcome::Queued)
+            .count();
+        assert!(queued > 0 && queued < outcomes.len(), "{queued}");
+        assert!(
+            outcomes[queued..]
+                .iter()
+                .all(|outcome| *outcome == PushOutcome::Dropped)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_frame_without_a_slice_has_no_picture() {
+        // Arrange
+        let mut source = source();
+        source.configure_video("avc1.42001f").unwrap();
+        let access_unit_delimiter = Bytes::from_static(&[0, 0, 0, 1, 0x09, 0xf0]);
+
+        // Act
+        let outcome = source.push_video(access_unit_delimiter, 0);
+
+        // Assert
+        assert_eq!(outcome.unwrap(), PushOutcome::NoPicture);
     }
 
     #[tokio::test]

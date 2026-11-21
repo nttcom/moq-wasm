@@ -268,6 +268,7 @@ impl MediaSource {
     pub fn push_video(&mut self, data: Vec<u8>, timestamp_micros: f64) -> Result<(), JsValue> {
         self.source
             .push_video(Bytes::from(data), timestamp_micros as u64)
+            .map(drop)
             .map_err(source_error)
     }
 
@@ -303,6 +304,7 @@ impl MediaSource {
         });
         self.source
             .push_audio(Bytes::from(data), timestamp_micros as u64, level)
+            .map(drop)
             .map_err(source_error)
     }
 }
