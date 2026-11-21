@@ -22,7 +22,8 @@ export type EventTimelineOffer = {
   name: string
   /// Defines the structure of the records' `data` (§5.2.6), such as `io.example.events.v1`.
   eventType: string
-  /// The track's Publisher Priority, 0 to 255, 128 by default; pass the same to `publishTrack`.
+  /// The track's Publisher Priority (draft-14 §7.1), 0 to 255, 128 by default.
+  /// `publishTrack` sets it again, 128 when omitted, so pass it the same.
   priority?: number
 }
 
