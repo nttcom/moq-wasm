@@ -31,6 +31,10 @@ use crate::{
 /// The meeting transcriber's namespace elements after the room.
 pub(crate) const TRANSCRIBER_MEMBER: &str = "bots/transcriber";
 
+/// A robot room's policy bot's namespace elements after the room
+/// (docs/architecture/robotics/architecture.md).
+pub(crate) const POLICY_MEMBER: &str = "bots/policy";
+
 /// The track the meeting transcriber publishes, without a catalog to name it.
 pub(crate) const TRANSCRIPT_TRACK_NAME: &str = "transcript";
 
@@ -231,6 +235,25 @@ async fn follow_members(
                             namespace,
                             output_dir,
                             Arc::clone(target),
+                            member_stop.clone(),
+                            Arc::clone(status),
+                        ));
+                    }
+                    continue;
+                }
+                if namespace == format!("{namespace_prefix}/{POLICY_MEMBER}")
+                    && archive_target.is_some()
+                {
+                    // The policy's actions are the room's data, but the bot
+                    // keeps no otherwise empty room alive.
+                    if event_sources.insert(namespace.clone()) {
+                        tracing::info!(%namespace, "recording the policy bot");
+                        members.spawn(record_member(
+                            Arc::clone(session),
+                            namespace,
+                            output_dir,
+                            Arc::clone(options),
+                            archive_target.clone(),
                             member_stop.clone(),
                             Arc::clone(status),
                         ));
