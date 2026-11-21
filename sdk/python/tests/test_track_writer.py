@@ -101,6 +101,46 @@ async def test_a_closed_track_registered_again_with_the_other_delivery_is_refuse
     await publisher.close()
 
 
+async def test_a_closed_track_registered_again_with_another_retention_is_refused_before_any_write(relay_url):
+    # Arrange: a track kept for 60 s that wrote an object, then was closed
+    namespace = [*room(), "alice"]
+    publisher = await connect(relay_url)
+    track = await within(publisher.publish_track(namespace, TRACK, retention_seconds=60))
+    await within(publisher.announce(namespace))
+    await within(track.write(b"o1", new_group=True))
+    await within(track.close())
+
+    # Act / Assert: the native origin keeps the retention of the first registration
+    with pytest.raises(ValueError, match="register it again with retention_seconds=60"):
+        await within(publisher.publish_track(namespace, TRACK, retention_seconds=0))
+
+    # Assert: the refusal left the track free for its own retention
+    reopened = await within(publisher.publish_track(namespace, TRACK, retention_seconds=60))
+    assert reopened.retention_seconds == 60
+    await publisher.close()
+
+
+async def test_a_datagram_track_whose_retention_was_refused_is_sent_in_datagrams_once_registered(relay_url):
+    # Arrange: a datagram registration refused for its retention before it registered anything
+    namespace = [*room(), "alice"]
+    publisher = await connect(relay_url)
+    with pytest.raises(ValueError, match="invalid retention_seconds"):
+        await within(publisher.publish_track(namespace, TRACK, datagram=True, retention_seconds=-1))
+
+    # Act
+    track = await within(publisher.publish_track(namespace, TRACK, datagram=True))
+    await within(publisher.announce(namespace))
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    await within(track.write(b"d1", new_group=True))
+
+    # Assert: the track reports datagrams and sends them, which have no subgroup stream to read
+    assert track.datagram
+    with pytest.raises(RuntimeError):
+        await within(anext(objects.groups()))
+    await close_all(subscriber, publisher)
+
+
 async def test_writes_report_the_group_each_object_went_into(relay_url):
     # Arrange
     namespace = [*room(), "alice"]

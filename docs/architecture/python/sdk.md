@@ -232,10 +232,18 @@ SDK's `MoqSession` in snake_case: `subscribe` (with `filter`, `forward`,
 `Location`s), `track_status`, `watch_namespaces`, `publish_track` (with
 `retention_seconds`, `publish`, `datagram` and `priority`, the Publisher
 Priority, 128 by default: among the session's tracks, a lower value is sent
-first) and `announce`. The native origin keeps the
+first) and `announce`. The native origin keeps a track, with the retention
+of its first registration in the session, for the session's life:
+`publish_track` of a closed track with that `retention_seconds` continues
+it, and one with another raises ValueError before any native call, since
+the native origin could not apply it. The native origin also keeps the
 delivery a track sent its objects with: registering it again with the other
 `datagram` switches a track that has no object yet and raises ValueError,
-from the native call, for one that has. A
+from the native call, for one that has. The session records the registration
+once the native origin registered the track: when it succeeded and when only
+its PUBLISH was refused; a registration the native
+call refuses for its arguments, as an invalid `retention_seconds` or the
+other delivery, records nothing. A
 `subscribe*`, `watch_namespaces`, `publish_track` or `announce` cancelled
 before it returns, as by a timeout, keeps its native request running: once
 the relay accepts it, the session unsubscribes, ends the track (PUBLISH_DONE)
