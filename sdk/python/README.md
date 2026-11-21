@@ -12,6 +12,13 @@ python -m pip install "moq-wasm==0.0.1" \
   --find-links https://github.com/nttcom/moq-wasm/releases/expanded_assets/python-sdk-v0.0.1
 ```
 
+This README describes the SDK on `master`. 0.0.1 runs "Send and receive a
+message", but the sections after it use what the next release adds:
+`moq_wasm.SessionEnded`, `MoqWasmParticipantInput`, and the transport's
+`empty_timeout` and `on_room_empty`. Until that release, build the package
+from a checkout of this repository, with a Rust toolchain:
+`python -m pip install "./sdk/python[pipecat]"`.
+
 ## Send and receive a message
 
 Save this as `hello.py`. It uses the public demo relay and picks a fresh
@@ -108,6 +115,75 @@ async def main():
 through a shorter lifetime) and retried until the token expires; `connect`
 reads `app_id` and `exp` from the token without verifying it, and refuses a
 refreshed token of another app.
+
+## A pipecat voice bot
+
+With `moq-wasm[pipecat]`, `MoqWasmTransport` joins a room: every broadcast
+one level under `room` is a participant, and the bot publishes its own
+broadcast `[*room, participant_id]`, which browser pages play with the
+JavaScript SDK.
+
+```python
+import moq_wasm
+from moq_wasm.pipecat import MoqWasmParams, MoqWasmTransport
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineWorker, ProcessorUnusablePolicy
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair, LLMUserAggregatorParams
+from pipecat.workers.runner import WorkerRunner
+
+
+def make_services():
+    ...  # new stt, llm and tts pipecat services
+
+
+async def talk(session: moq_wasm.Session, room: list[str]) -> None:
+    stt, llm, tts = make_services()
+    transport = MoqWasmTransport(
+        session,
+        MoqWasmParams(
+            room=room,
+            participant_id="bot",
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            empty_timeout=30,
+        ),
+    )
+    runner = WorkerRunner(handle_sigint=False)
+
+    @transport.event_handler("on_room_empty")
+    async def on_room_empty(transport):
+        await runner.cancel()
+
+    # The user aggregator turns the STT's transcriptions into the LLM's context, which an LLM
+    # service answers; transcriptions alone it ignores.
+    context = LLMContextAggregatorPair(
+        LLMContext(), user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer())
+    )
+    pipeline = Pipeline(
+        [transport.input(), stt, context.user(), llm, tts, transport.output(), context.assistant()]
+    )
+    worker = PipelineWorker(
+        pipeline,
+        # `on_room_empty` ends the bot; pipecat's idle timeout would end it after 5 quiet minutes.
+        idle_timeout_secs=None,
+        # A room the relay refuses leaves the transport's processors unusable; pipecat's
+        # default policy would keep the pipeline running without it.
+        processor_unusable_policy=ProcessorUnusablePolicy.CANCEL,
+    )
+    await runner.add_workers(worker)
+    await runner.run()
+```
+
+`make_services` builds the pipecat services of your choice on every call, as a
+session that ends cancels them with the pipeline, and `SileroVADAnalyzer`
+needs `pipecat-ai[silero]`. Run it as the `serve` above:
+`session.run(talk(session, [app_id, "my-room"]))`, where `app_id` is your
+token's app (`anon` without a token). Participants' audio arrives as
+`UserAudioRawFrame` with the participant id as `user_id`; mix several
+speakers into one STT only if it can tell them apart, or run a pipeline per
+participant with `MoqWasmParticipantInput`.
 
 ## Media and bots
 
