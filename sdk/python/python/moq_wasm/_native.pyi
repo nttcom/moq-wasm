@@ -304,16 +304,23 @@ class MediaSource:
     def configure_video(self, codec: str) -> None:
         """`codec` is a WebCodecs codec string (`avc1.*`, `hvc1.*`, `vp8`, `vp09.*`, `av01.*`);
         H.264 and H.265 frames are Annex B. Raises ValueError for another codec."""
-    def push_video(self, data: bytes, timestamp_micros: int) -> None:
-        """One encoded frame; a keyframe opens a group. Raises RuntimeError before
-        `configure_video`."""
+    def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        """One encoded frame; a keyframe opens a group. Returns whether it was queued: False for a
+        frame the publish queue dropped while the relay does not keep up (up to the next keyframe
+        that fits, and `keyframe_request` asks for one), and for a frame without a picture, as an
+        H.264 access unit without NAL units or without a slice, which is not published; the
+        parameter sets of one without a slice go to the keyframes after it. Raises RuntimeError
+        before `configure_video`, and once publishing stopped, as when the session ended."""
     def add_rendition(
         self, name: str, *, label: str, bitrate: int | None = None, framerate: int | None = None
     ) -> Rendition:
         """Another encoding of the video in the track `<video>_<name>`, in the group ids of the
-        video's keyframes on the same pictures (draft-ietf-moq-cmsf-01 §3.2). It joins the video's
-        switching set (one catalog `altGroup`), so a rendition in another codec is an alternative
-        to the video. `bitrate` (bits per second) and `framerate` go into the catalog."""
+        video's keyframes on the same pictures (draft-ietf-moq-cmsf-01 §3.2). Ten seconds of frames
+        wait for a slow relay; past that, frames are dropped up to the next keyframe that fits, a
+        new configuration waits to go out with it, and `keyframe_request` asks for one. It joins the
+        video's switching set (one catalog `altGroup`), so a rendition in another codec is an
+        alternative to the video. `bitrate` (bits per second) and `framerate` go into the
+        catalog."""
     def configure_audio(
         self, codec: str, sample_rate: int, channels: int, *, description: bytes | None = None
     ) -> None:
@@ -321,9 +328,11 @@ class MediaSource:
         ValueError for another codec, an AAC without `description` or a malformed one."""
     def push_audio(
         self, data: bytes, timestamp_micros: int, *, level: int | None = None, voice_activity: bool = False
-    ) -> None:
+    ) -> bool:
         """One encoded audio frame. `level` is its RFC 6464 level in -dBov (0 to 127), written with
-        `voice_activity` as its LOC Audio Level property."""
+        `voice_activity` as its LOC Audio Level property. Returns whether it was queued: False for a
+        frame the publish queue dropped while the relay does not keep up. Raises RuntimeError once
+        publishing stopped, as when the session ended."""
     def remove_track(self, kind: str) -> asyncio.Future[None]:
         """Ends the source's video or audio track (`kind` is `"video"` or `"audio"`) with
         PUBLISH_DONE and sends the catalog without it; removing the video removes its renditions
@@ -351,7 +360,9 @@ class Demand:
 class Rendition:
     def configure_video(self, codec: str) -> None:
         """As `MediaSource.configure_video`; it may differ from the video's codec."""
-    def push_video(self, data: bytes, timestamp_micros: int) -> None:
-        """An encoded frame of the same picture as a video frame, at that frame's timestamp. Raises
-        RuntimeError before `configure_video`, and once an earlier frame stopped the rendition, as
-        when the session ended."""
+    def push_video(self, data: bytes, timestamp_micros: int) -> bool:
+        """An encoded frame of the same picture as a video frame, at that frame's timestamp. Returns
+        False when the rendition's queue, full while the relay does not keep up, dropped the frame,
+        and for a frame without a picture, as `MediaSource.push_video`. Raises RuntimeError before
+        `configure_video`, once an earlier frame stopped the rendition, as when the session
+        ended."""

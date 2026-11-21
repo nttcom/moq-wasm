@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use broadcast::{
-    Broadcast, DemandChanges, MediaRendition, MediaSourceConfig, MediaSourceError, TrackKind,
+    Broadcast, DemandChanges, MediaRendition, MediaSourceConfig, MediaSourceError, PushOutcome,
+    TrackKind,
 };
 use bytes::Bytes;
 use mediapack::{AudioLevel, aac::AudioSpecificConfig};
@@ -117,15 +118,20 @@ impl MediaSource {
 
     /// One encoded frame; call `configure_video` first. A keyframe opens a
     /// group and sets the track's configuration (for H.264 and H.265, its
-    /// parameter sets). `timestamp_micros` must not run backwards.
-    fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<()> {
+    /// parameter sets). `timestamp_micros` must not run backwards. Returns
+    /// whether the frame was queued: false for one the publish queue
+    /// dropped while the relay does not keep up, and for one without a
+    /// picture, as an H.264 access unit without a slice, which is not
+    /// published; the parameter sets of one without a slice still go to the
+    /// keyframes after it.
+    fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<bool> {
         self.scope.run(|| {
-            self.source
-                .lock()
-                .unwrap()
-                .push_video(Bytes::from(data), timestamp_micros)
-                .map(drop)
-                .map_err(py_error)
+            queued(
+                self.source
+                    .lock()
+                    .unwrap()
+                    .push_video(Bytes::from(data), timestamp_micros),
+            )
         })
     }
 
@@ -194,7 +200,9 @@ impl MediaSource {
     }
 
     /// `level` is the frame's RFC 6464 level in -dBov (0 to 127), written
-    /// with `voice_activity` as its LOC Audio Level property.
+    /// with `voice_activity` as its LOC Audio Level property. Returns whether
+    /// the frame was queued: false for one the publish queue dropped while
+    /// the relay does not keep up.
     #[pyo3(signature = (data, timestamp_micros, *, level = None, voice_activity = false))]
     fn push_audio(
         &self,
@@ -202,18 +210,17 @@ impl MediaSource {
         timestamp_micros: u64,
         level: Option<u8>,
         voice_activity: bool,
-    ) -> PyResult<()> {
+    ) -> PyResult<bool> {
         let level = level.map(|level| AudioLevel {
             level,
             voice_activity,
         });
         self.scope.run(|| {
-            self.source
-                .lock()
-                .unwrap()
-                .push_audio(Bytes::from(data), timestamp_micros, level)
-                .map(drop)
-                .map_err(py_error)
+            queued(self.source.lock().unwrap().push_audio(
+                Bytes::from(data),
+                timestamp_micros,
+                level,
+            ))
         })
     }
 
@@ -271,15 +278,18 @@ impl Rendition {
     }
 
     /// An encoded frame of the same picture as a video frame, at that
-    /// frame's timestamp. Fails once an earlier frame stopped the rendition.
-    fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<()> {
+    /// frame's timestamp. Returns false when the rendition's queue, full
+    /// while the relay does not keep up, dropped the frame, and for a frame
+    /// without a picture, as `MediaSource.push_video`. Fails once an earlier
+    /// frame stopped the rendition.
+    fn push_video(&self, data: Vec<u8>, timestamp_micros: u64) -> PyResult<bool> {
         self.scope.run(|| {
-            self.rendition
-                .lock()
-                .unwrap()
-                .push_video(Bytes::from(data), timestamp_micros)
-                .map(drop)
-                .map_err(py_error)
+            queued(
+                self.rendition
+                    .lock()
+                    .unwrap()
+                    .push_video(Bytes::from(data), timestamp_micros),
+            )
         })
     }
 }
@@ -291,6 +301,11 @@ pub fn check_audio_specific_config(description: &[u8]) -> PyResult<()> {
     AudioSpecificConfig::parse(description)
         .map(drop)
         .map_err(|error| PyValueError::new_err(error.to_string()))
+}
+
+/// Whether a push was queued: false for a frame dropped or without a picture.
+fn queued(outcome: Result<PushOutcome, MediaSourceError>) -> PyResult<bool> {
+    Ok(matches!(outcome.map_err(py_error)?, PushOutcome::Queued))
 }
 
 fn py_error(error: MediaSourceError) -> PyErr {
