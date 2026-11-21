@@ -1,8 +1,10 @@
 import asyncio
+import contextlib
 import gc
 import json
 import math
 import uuid
+import warnings
 import weakref
 
 import pytest
@@ -10,8 +12,8 @@ import pytest
 import moq_wasm
 from moq_wasm.media import Catalog, CatalogTrack, EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
-from tests.fake_native import FakeRelay, FakeWriter, called, open_session, until
-from tests.relay_sessions import close_all, connect, room
+from tests.fake_native import STAY_OPEN, FakeRelay, FakeWriter, called, open_session, until
+from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -1113,6 +1115,49 @@ async def test_catalogs_skips_a_catalog_that_does_not_parse_and_unsubscribes_at_
     await session.close()
 
 
+async def test_catalogs_skips_a_catalog_of_a_group_older_than_the_one_yielded_before():
+    # Arrange: group 41's catalog arrives after group 42's
+    relay = FakeRelay()
+    session = await open_session(relay)
+    relay.sessions[0].tracks["catalog"] = [
+        [
+            (42, catalog_payload({"name": "video-new", "packaging": "loc", "isLive": True})),
+            (41, catalog_payload({"name": "video-retired", "packaging": "loc", "isLive": True})),
+            (43, catalog_payload({"name": "video-newest", "packaging": "loc", "isLive": True})),
+        ]
+    ]
+
+    # Act
+    catalogs = [catalog async for catalog in RemoteBroadcast(session, [*ROOM, "alice"]).catalogs()]
+
+    # Assert: an update before the latest group's first object is ignored (draft-ietf-moq-msf-02 §5)
+    assert [catalog.tracks[0].name for catalog in catalogs] == ["video-new", "video-newest"]
+    await session.close()
+
+
+async def test_catalogs_read_again_skips_a_catalog_older_than_the_one_an_earlier_read_yielded():
+    # Arrange: the relay replays group 41's catalog to the second subscription
+    relay = FakeRelay()
+    session = await open_session(relay)
+    relay.sessions[0].tracks["catalog"] = [
+        [(42, catalog_payload({"name": "video-new", "packaging": "loc", "isLive": True}))],
+        [
+            (41, catalog_payload({"name": "video-retired", "packaging": "loc", "isLive": True})),
+            (43, catalog_payload({"name": "video-newest", "packaging": "loc", "isLive": True})),
+        ],
+    ]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    first = [catalog async for catalog in remote.catalogs()]
+
+    # Act
+    second = [catalog async for catalog in remote.catalogs()]
+
+    # Assert
+    assert [catalog.tracks[0].name for catalog in first] == ["video-new"]
+    assert [catalog.tracks[0].name for catalog in second] == ["video-newest"]
+    await session.close()
+
+
 async def test_follow_subscribes_again_after_the_track_ends_and_after_a_refused_subscribe():
     # Arrange: the second SUBSCRIBE is refused once, then a third succeeds
     relay = FakeRelay()
@@ -1206,6 +1251,467 @@ async def test_event_timeline_sends_its_priority_and_no_delivery_timeout_unless_
     await session.close()
 
 
+@pytest.mark.parametrize("iterator", ["follow", "catalogs", "subscriptions"])
+async def test_a_read_that_timed_out_leaves_the_iteration_to_the_next_read(iterator):
+    # Arrange: the track's object is held back until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    gate = asyncio.Event()
+    payload = catalog_payload({"name": "audio", "packaging": "loc", "isLive": True})
+    native.tracks["catalog"] = [[gate, payload, STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    if iterator == "follow":
+        following = remote.follow("catalog")
+    elif iterator == "catalogs":
+        following = remote.catalogs()
+    else:
+        following = remote.subscriptions("catalog")
+        following = await within(anext(following))
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(following), 0.05)
+
+    # Act
+    gate.set()
+    received = await within(anext(following))
+
+    # Assert
+    if iterator == "catalogs":
+        assert received.tracks[0].name == "audio"
+    else:
+        assert received.payload == payload
+    await following.aclose()
+    await session.close()
+
+
+async def test_closing_a_follow_while_a_read_is_in_flight_unsubscribes_and_ends_its_reads():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[STAY_OPEN]]
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat")
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(following), 0.05)
+
+    # Act
+    await within(following.aclose())
+
+    # Assert
+    assert native.subscriptions[0].closed
+    with pytest.raises(StopAsyncIteration):
+        await within(anext(following))
+    await session.close()
+
+
+@pytest.mark.parametrize("iterator", ["follow", "catalogs"])
+async def test_closing_a_follow_whose_subscribe_is_unanswered_ends_once_the_accepted_track_was_unsubscribed(
+    iterator,
+):
+    # Arrange: the relay holds the answer to the SUBSCRIBE back until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[STAY_OPEN]]
+    gate = native.subscribe_gate = asyncio.Event()
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    following = remote.follow("catalog") if iterator == "follow" else remote.catalogs()
+    reading = asyncio.ensure_future(anext(following))
+    await within(until(lambda: native.calls))
+
+    # Act
+    closing = asyncio.ensure_future(following.aclose())
+    await asyncio.sleep(0.05)
+    closed_early = closing.done()
+    gate.set()
+    await within(closing)
+
+    # Assert
+    assert not closed_early
+    assert native.subscriptions[0].closed
+    with pytest.raises(StopAsyncIteration):
+        await within(reading)
+    await session.close()
+
+
+async def test_a_follow_dropped_while_a_read_is_in_flight_unsubscribes():
+    # Arrange: a read timed out, so its read is in flight as the follow is dropped
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[STAY_OPEN]]
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat")
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(anext(following), 0.05)
+
+    # Act
+    del following
+    gc.collect()
+
+    # Assert
+    await within(until(lambda: native.subscriptions[0].closed))
+    await session.close()
+
+
+async def test_a_follow_collected_on_another_thread_unsubscribes_on_its_loop():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN]]
+    held = [RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat")]
+    await within(anext(held[0]))
+
+    def drop() -> None:
+        held.clear()
+        gc.collect()
+
+    # Act: its last reference goes away on another thread, which collects it
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        await asyncio.to_thread(drop)
+
+    # Assert
+    await within(until(lambda: native.subscriptions[0].closed))
+    assert [str(warning.message) for warning in caught] == []
+    await session.close()
+
+
+async def test_a_subscription_dropped_unread_with_its_subscriptions_unsubscribes():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[STAY_OPEN]]
+    subscriptions = RemoteBroadcast(session, [*ROOM, "alice"]).subscriptions("chat")
+    objects = await within(anext(subscriptions))
+
+    # Act
+    del objects, subscriptions
+    gc.collect()
+
+    # Assert
+    await within(until(lambda: native.subscriptions[0].closed))
+    await session.close()
+
+
+def follow_holding_itself(remote: RemoteBroadcast, name: str):
+    """`remote.follow(name)` with an `on_subscribed` callback that holds the follow."""
+    held = {}
+
+    async def on_subscribed() -> None:
+        assert held["following"] is not None
+
+    held["following"] = remote.follow(name, on_subscribed=on_subscribed)
+    return held["following"]
+
+
+async def test_a_follow_whose_callback_holds_it_unsubscribes_once_dropped():
+    # Arrange: the callback reaches the follow through what it captures
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN]]
+    following = follow_holding_itself(RemoteBroadcast(session, [*ROOM, "alice"]), "chat")
+    await within(anext(following))
+
+    # Act
+    del following
+    gc.collect()
+
+    # Assert
+    await within(until(lambda: native.subscriptions[0].closed))
+    await session.close()
+
+
+async def test_a_read_of_subscriptions_that_timed_out_leaves_the_unsubscribe_of_the_one_before_to_the_next_read():
+    # Arrange: the relay holds the UNSUBSCRIBE of the first subscription back until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[STAY_OPEN], [b"two", STAY_OPEN]]
+    gate = native.unsubscribe_gates["chat"] = asyncio.Event()
+    subscriptions = RemoteBroadcast(session, [*ROOM, "alice"]).subscriptions("chat")
+    await within(anext(subscriptions))
+
+    # Act
+    reading = asyncio.ensure_future(asyncio.wait_for(anext(subscriptions), 0.05))
+    await asyncio.wait([reading], timeout=0.5)
+    timed_out_in_time = reading.done()
+    gate.set()
+    with pytest.raises(TimeoutError):
+        await within(reading)
+    second = await within(anext(subscriptions))
+
+    # Assert
+    assert timed_out_in_time
+    assert native.subscriptions[0].closed
+    assert (await within(anext(second))).payload == b"two"
+    await subscriptions.aclose()
+    await session.close()
+
+
+async def test_a_read_of_follow_that_timed_out_as_the_ended_track_is_unsubscribed_leaves_that_to_the_next_read():
+    # Arrange: the first subscription ends after its object; the relay holds its UNSUBSCRIBE back
+    # until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one"], [b"two", STAY_OPEN]]
+    gate = native.unsubscribe_gates["chat"] = asyncio.Event()
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat")
+    await within(anext(following))
+
+    # Act
+    reading = asyncio.ensure_future(asyncio.wait_for(anext(following), 0.05))
+    await asyncio.wait([reading], timeout=0.5)
+    timed_out_in_time = reading.done()
+    gate.set()
+    with pytest.raises(TimeoutError):
+        await within(reading)
+    received = await within(anext(following))
+
+    # Assert
+    assert timed_out_in_time
+    assert received.payload == b"two"
+    await following.aclose()
+    await session.close()
+
+
+async def test_a_second_read_of_subscriptions_while_one_waits_is_refused_and_the_first_gets_the_next_one():
+    # Arrange: the first read waits for the UNSUBSCRIBE of the subscription yielded before
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN], [b"two", STAY_OPEN]]
+    gate = native.unsubscribe_gates["chat"] = asyncio.Event()
+    subscriptions = RemoteBroadcast(session, [*ROOM, "alice"]).subscriptions("chat")
+    await within(anext(subscriptions))
+    advancing = asyncio.ensure_future(anext(subscriptions))
+    await asyncio.sleep(0.01)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="already being read"):
+        await within(anext(subscriptions))
+    gate.set()
+    second = await within(advancing)
+    assert (await within(anext(second))).payload == b"two"
+    assert len(native.subscriptions) == 2
+    await subscriptions.aclose()
+    await session.close()
+
+
+async def test_follow_raises_what_on_subscribed_raised_once_it_unsubscribed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN]]
+
+    async def on_subscribed() -> None:
+        raise RuntimeError("the callback failed")
+
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat", on_subscribed=on_subscribed)
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="the callback failed"):
+        await within(anext(following))
+    assert native.subscriptions[0].closed
+    assert native.calls.count(("subscribe", "chat")) == 1
+    await session.close()
+
+
+@pytest.mark.parametrize("iterator", ["follow", "subscriptions"])
+async def test_a_read_that_timed_out_while_a_failed_on_subscribed_unsubscribes_leaves_its_error_to_the_next_read(iterator):
+    # Arrange: the callback fails; the relay answers the UNSUBSCRIBE of the subscription 250 ms
+    # later, after the read timed out; the relay would accept a second SUBSCRIBE
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN], [b"two", STAY_OPEN]]
+    gate = native.unsubscribe_gates["chat"] = asyncio.Event()
+    calls = 0
+
+    async def on_subscribed() -> None:
+        nonlocal calls
+        calls += 1
+        raise ValueError("the callback failed")
+
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    following = getattr(remote, iterator)("chat", on_subscribed=on_subscribed)
+    asyncio.get_running_loop().call_later(0.25, gate.set)
+    with pytest.raises(TimeoutError):
+        await within(asyncio.wait_for(anext(following), 0.025))
+
+    # Act
+    with pytest.raises(ValueError, match="the callback failed"):
+        await within(anext(following))
+
+    # Assert
+    assert calls == 1
+    assert native.calls.count(("subscribe", "chat")) == 1
+    assert native.subscriptions[0].closed
+    await session.close()
+
+
+async def test_follow_raises_the_cancellation_on_subscribed_raised_once_it_unsubscribed():
+    # Arrange: the callback awaits a future someone else cancelled
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN]]
+
+    async def on_subscribed() -> None:
+        cancelled = asyncio.get_running_loop().create_future()
+        cancelled.cancel()
+        await cancelled
+
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat", on_subscribed=on_subscribed)
+
+    # Act / Assert: the reader is not cancelled, so the cancellation is the callback's, not an end
+    with pytest.raises(asyncio.CancelledError):
+        await within(anext(following))
+    assert native.subscriptions[0].closed
+    await session.close()
+
+
+async def test_closing_a_follow_from_its_on_subscribed_callback_ends_it_once_it_unsubscribed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["camera"] = [[STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    following = None
+
+    async def on_subscribed() -> None:
+        assert following is not None
+        await following.aclose()
+
+    following = remote.follow("camera", on_subscribed=on_subscribed)
+
+    # Act / Assert
+    with pytest.raises(StopAsyncIteration):
+        await within(anext(following))
+    assert native.subscriptions[0].closed
+    await session.close()
+
+
+async def test_closing_subscriptions_from_its_on_subscribed_callback_ends_it_without_a_subscription():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[STAY_OPEN]]
+    subscriptions = None
+
+    async def on_subscribed() -> None:
+        assert subscriptions is not None
+        await subscriptions.aclose()
+
+    subscriptions = RemoteBroadcast(session, [*ROOM, "alice"]).subscriptions("chat", on_subscribed=on_subscribed)
+
+    # Act / Assert
+    with pytest.raises(StopAsyncIteration):
+        await within(anext(subscriptions))
+    assert native.subscriptions[0].closed
+    await session.close()
+
+
+async def test_a_task_the_on_subscribed_callback_starts_closes_the_follow_once_it_unsubscribed():
+    # Arrange: the callback starts a task closing the follow and returns
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["camera"] = [[STAY_OPEN]]
+    remote = RemoteBroadcast(session, [*ROOM, "alice"])
+    closing: list[asyncio.Future[bool]] = []
+
+    async def close() -> bool:
+        await following.aclose()
+        return native.subscriptions[0].closed
+
+    async def on_subscribed() -> None:
+        closing.append(asyncio.ensure_future(close()))
+
+    following = remote.follow("camera", on_subscribed=on_subscribed)
+
+    # Act
+    with pytest.raises(StopAsyncIteration):
+        await within(anext(following))
+
+    # Assert: the close returned once the UNSUBSCRIBE was sent
+    assert await within(closing[0])
+    await session.close()
+
+
+async def test_a_reader_of_follow_cancelled_again_while_it_unsubscribes_ends_once_the_unsubscribe_was_sent():
+    # Arrange: the relay holds the UNSUBSCRIBE back until the gate opens
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["chat"] = [[b"one", STAY_OPEN]]
+    gate = native.unsubscribe_gates["chat"] = asyncio.Event()
+    received = asyncio.Event()
+
+    async def read() -> None:
+        async with contextlib.aclosing(RemoteBroadcast(session, BOT).follow("chat")) as objects:
+            async for _ in objects:
+                received.set()
+
+    reading = asyncio.create_task(read())
+    await within(received.wait())
+    reading.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    # Act: cancelled again while it unsubscribes, as a replaced track's reader is
+    reading.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    finished_early = reading.done()
+    gate.set()
+
+    # Assert
+    with pytest.raises(asyncio.CancelledError):
+        await within(reading)
+    assert not finished_early
+    assert native.subscriptions[0].closed
+    await session.close()
+
+
+async def test_follow_stops_with_session_closed_once_the_session_was_closed():
+    # Arrange: the track is refused, so follow waits to subscribe again
+    relay = FakeRelay()
+    session = await open_session(relay)
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat")
+    next_object = asyncio.create_task(anext(following))
+    await asyncio.sleep(0.01)
+
+    # Act
+    await session.close()
+
+    # Assert
+    with pytest.raises(moq_wasm.SessionClosed):
+        await within(next_object)
+
+
+async def test_follow_stops_with_connection_lost_once_the_connection_was_lost():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    following = RemoteBroadcast(session, [*ROOM, "alice"]).follow("chat")
+    next_object = asyncio.create_task(anext(following))
+    await asyncio.sleep(0.01)
+
+    # Act
+    relay.sessions[0].drop()
+
+    # Assert
+    with pytest.raises(moq_wasm.ConnectionLost):
+        await within(next_object)
+
+
 async def test_a_watcher_reads_the_catalog_of_a_broadcast_through_a_relay(relay_url):
     # Arrange
     room = ["anon", f"room-{uuid.uuid4().hex[:8]}"]
@@ -1255,6 +1761,29 @@ async def test_leaving_a_broadcast_ends_its_subscribers_through_a_relay(relay_ur
     assert [track_object async for track_object in subscription] == []
     for session in (subscriber, publisher):
         await session.close()
+
+
+async def test_the_objects_of_a_subscription_kept_past_its_subscriptions_go_on_through_a_relay(relay_url):
+    # Arrange: the reader keeps the objects of the first subscription and drops what yielded them
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    subscriptions = RemoteBroadcast(subscriber, namespace).subscriptions(TRACK)
+    objects = await within(anext(subscriptions))
+    await track.write(b"first", new_group=True)
+    await within(anext(objects))
+
+    # Act
+    del subscriptions
+    gc.collect()
+    await asyncio.sleep(0.2)
+    await track.write(b"second")
+    received = await within(anext(objects))
+
+    # Assert
+    assert received.payload == b"second"
+    await objects.aclose()
+    await close_all(subscriber, publisher)
 
 
 class Pipeline:

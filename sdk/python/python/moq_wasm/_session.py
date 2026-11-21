@@ -618,6 +618,11 @@ class Session:
         if releasing := self._releasing(key):
             await asyncio.wait(releasing)
 
+    def _unsubscribing(self, namespace: list[str], name: str) -> set[asyncio.Task]:
+        """The tasks unsubscribing what the cancelled subscriptions to the track acquired, once the
+        relay answered them."""
+        return self._releasing(_subscription_key(namespace, name))
+
     def _releasing(self, key: Hashable) -> set[asyncio.Task]:
         """The tasks releasing what the cancelled requests of `key` acquired."""
         return {task for task, released in self._releases.items() if released == key}

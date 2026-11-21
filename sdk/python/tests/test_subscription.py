@@ -1,9 +1,13 @@
 import asyncio
+import contextlib
+import gc
+import weakref
 
 import pytest
 
 import moq_wasm
-from moq_wasm._subscription import _cancel
+from moq_wasm._subscription import _cancel, _Reads
+from moq_wasm.media import RemoteBroadcast
 from tests.cancellation import cancel_as_it_resumes, read
 from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room, within
 
@@ -222,6 +226,24 @@ async def test_a_joining_subscription_refuses_groups_and_stays_readable_by_objec
     await close_all(late, *reversed(sessions))
 
 
+async def test_subscriptions_from_the_group_start_begin_at_the_current_groups_first_object(relay_url):
+    # Arrange: the relay holds a group of two objects
+    namespace = [*room(), "alice"]
+    sessions, _, group_id = await subscribed_track(relay_url, namespace)
+    late = await connect(relay_url)
+    remote = RemoteBroadcast(late, namespace)
+
+    # Act
+    async with contextlib.aclosing(remote.subscriptions(TRACK, from_group_start=True)) as subscriptions:
+        objects = await within(anext(subscriptions))
+        async with contextlib.aclosing(objects):
+            first = await within(anext(objects))
+
+    # Assert
+    assert (first.group_id, first.object_id, first.payload) == (group_id, 0, b"o0")
+    await close_all(late, *reversed(sessions))
+
+
 async def test_an_object_a_cancelled_read_took_goes_to_the_next_read(relay_url):
     # Arrange
     namespace = [*room(), "alice"]
@@ -306,21 +328,32 @@ async def test_an_object_a_cancelled_read_of_a_fetch_took_goes_to_the_next_read(
     await close_all(late, *reversed(sessions))
 
 
-async def reader_after_one_object(subscriber: moq_wasm.Session, track: moq_wasm.TrackWriter, namespace):
-    """A subscription to the track that read one object."""
-    objects = await within(subscriber.subscribe(namespace, TRACK))
-    first = asyncio.ensure_future(anext(objects))
+async def reader_after_one_object(subscriber: moq_wasm.Session, track: moq_wasm.TrackWriter, namespace, follow: bool):
+    """A reader of the track, a subscription or a `RemoteBroadcast.follow()`, that read one object."""
+    if follow:
+        subscribed = asyncio.Event()
+
+        async def on_subscribed() -> None:
+            subscribed.set()
+
+        objects = RemoteBroadcast(subscriber, namespace).follow(TRACK, on_subscribed=on_subscribed)
+        first = asyncio.ensure_future(anext(objects))
+        await within(subscribed.wait())
+    else:
+        objects = await within(subscriber.subscribe(namespace, TRACK))
+        first = asyncio.ensure_future(anext(objects))
     await track.write(b"o0", new_group=True)
     await within(first)
     return objects
 
 
-async def test_closing_the_session_ends_a_waiting_read_with_session_closed(relay_url):
+@pytest.mark.parametrize("follow", [False, True], ids=["subscription", "follow"])
+async def test_closing_the_session_ends_a_waiting_read_with_session_closed(relay_url, follow):
     # Arrange: the reader waits for its next object
     namespace = [*room(), "alice"]
     publisher, track = await publisher_with_track(relay_url, namespace)
     subscriber = await connect(relay_url)
-    objects = await reader_after_one_object(subscriber, track, namespace)
+    objects = await reader_after_one_object(subscriber, track, namespace, follow)
     waiting = asyncio.ensure_future(anext(objects))
     await asyncio.sleep(0.1)
 
@@ -371,3 +404,40 @@ async def test_the_session_closing_lets_go_of_an_object_a_timed_out_read_left(re
     # Assert: no read is needed for the subscription to drop the object
     assert objects._objects._pending is None
     await publisher.close()
+
+
+async def test_closed_followers_with_cancelled_reads_are_not_kept_by_their_live_session(relay_url):
+    # Arrange: followers whose read was cancelled, and an object that reached the read each left
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    existing = weakref.WeakSet(o for o in gc.get_objects() if isinstance(o, _Reads))
+    broadcast = RemoteBroadcast(subscriber, namespace)
+    followers = []
+    for _ in range(16):
+        subscribed = asyncio.Event()
+
+        async def on_subscribed(subscribed=subscribed) -> None:
+            subscribed.set()
+
+        followers.append(broadcast.follow(TRACK, on_subscribed=on_subscribed))
+        reading = asyncio.ensure_future(anext(followers[-1]))
+        await within(subscribed.wait())
+        reading.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reading
+    await track.write(b"o0", new_group=True)
+    await asyncio.sleep(NOTHING_ARRIVES_SECONDS)
+
+    # Act
+    while followers:
+        await within(followers.pop().aclose())
+    gc.collect()
+    # The finalizers hand what each follower owned to the loop, which lets go of it.
+    await asyncio.sleep(0)
+    gc.collect()
+    retained = len([o for o in gc.get_objects() if isinstance(o, _Reads) and o not in existing])
+    await close_all(subscriber, publisher)
+
+    # Assert: the session, while it was open, held none of their reads
+    assert retained == 0

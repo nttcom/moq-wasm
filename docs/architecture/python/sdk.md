@@ -211,7 +211,7 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   read left for the next one, and drops the item it took as it ends, also
   when no read follows, so no read returns an object once the session
   ended and none is kept. The session holds such an iterator only weakly:
-  one dropped while the session goes on is
+  one dropped while the session goes on, as a closed follower's, is
   collected, and the native read it left is cancelled with it:
 
 ```python
@@ -440,18 +440,38 @@ SDK's `init({ logLevel, onLog, onSpan })`:
 ### Media: `moq_wasm.media`
 
 ```python
+import asyncio
+
+import moq_wasm
 from moq_wasm.media import RemoteBroadcast, create_broadcast, watch_broadcasts
 
 async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot:
     transcript = bot.event_timeline("transcript", retention_seconds=3600)
     status = bot.publish_track("status", retention_seconds=3600)
 
-    async def on_broadcast(remote: RemoteBroadcast) -> None:
-        async for catalog in remote.catalogs():
-            audio = catalog.select(role="audio", packaging="loc", codec="opus", prefer="lowest_bitrate")
-            ...
+    async def read_audio(remote: RemoteBroadcast) -> None:
+        while True:
+            try:
+                async for catalog in remote.catalogs():
+                    audio = catalog.select(role="audio", packaging="loc", codec="opus", prefer="lowest_bitrate")
+                    ...
+            except moq_wasm.RequestError as error:
+                # A broadcast that only chats has no catalog until it adds audio, and a relay slow
+                # to answer times the request out; ask again.
+                retried = (moq_wasm.RequestErrorCode.TRACK_DOES_NOT_EXIST, moq_wasm.RequestErrorCode.TIMEOUT)
+                if error.code not in retried:
+                    raise
+            await asyncio.sleep(2)
+
+    async def read_chat(remote: RemoteBroadcast) -> None:
         async for obj in remote.follow("chat"):
             ...
+
+    async def on_broadcast(remote: RemoteBroadcast) -> None:
+        # Each reader runs until the broadcast is withdrawn, so they run side by side.
+        async with asyncio.TaskGroup() as readers:
+            readers.create_task(read_audio(remote))
+            readers.create_task(read_chat(remote))
 
     await watch_broadcasts(session, [root, room], on_broadcast, empty_timeout=30)
 ```
@@ -509,10 +529,41 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
 - **`RemoteBroadcast`** is one published namespace:
   - `catalogs()` yields a `Catalog` each time the publisher changes it,
     starting from the one the relay holds (a joining FETCH), and skips a
-    catalog that does not parse, logging it.
+    catalog that does not parse, logging it, and one of a group older than
+    the catalog it yielded before, which supersedes it
+    (draft-ietf-moq-msf-02 §5), since groups may arrive out of order. The
+    newest group is kept per `RemoteBroadcast`, across calls, so reading
+    the catalogs again after a retry never rolls back to an older catalog a
+    lagging relay replays; a namespace published anew gets a new
+    `RemoteBroadcast` from `watch_broadcasts`.
   - `follow(name)` yields the track's objects, and subscribes again a second
-    after the track ends or its SUBSCRIBE fails; the handler's cancellation
-    ends it.
+    after the track ends or its SUBSCRIBE fails, until it is closed. Its
+    SUBSCRIBE carries a DELIVERY TIMEOUT of 2 s by default, as the browser
+    SDK's LivePlayer does, so on a congested link the relay drops what would
+    arrive late instead of a bot reading live media falling further and
+    further behind; `delivery_timeout=None` sends none, for a track whose
+    every object matters, such as chat, which the pipecat transport passes
+    for its data tracks. It
+    awaits `on_subscribed` after each SUBSCRIBE the relay accepted; what
+    that raises is no failure of the track, so it unsubscribes and raises it
+    instead of subscribing again, a CancelledError of the callback's own
+    included, which a reader that was not cancelled gets as it is rather
+    than as the end of the iteration. It goes the way the iteration's other
+    failures go: the read closes the iteration, which unsubscribes, then
+    raises it, and a read cancelled during that close, as by a timeout,
+    leaves the close and the error to the next read, which neither awaits
+    the callback again nor subscribes. `subscriptions(name)` follows the
+    track the same way but yields
+    the objects of each subscription as an iterator of its own, which ends
+    with it, for a reader whose state does not carry over to the next
+    subscription, whose groups may start at 0 again, as a video decoder's.
+    Each iterator it yields owns its subscription: closing or dropping it
+    unsubscribes, taking the next one or closing `subscriptions()` closes
+    it, and one a reader keeps after dropping `subscriptions()` stays
+    subscribed: `subscriptions()` collected leaves it open.
+    With `from_group_start=True`, each subscription is a
+    `subscribe_current_group`, whose joining FETCH brings the current
+    group from its first object, for a reader that cannot start midway.
   - `event_timeline(name)` yields the records of a draft-ietf-moq-msf-02 §8
     event timeline track, starting with those of the group the relay holds
     (a joining FETCH), and subscribes again as `follow` does without
@@ -520,6 +571,42 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
     `delivery_timeout`; unlike `follow`, which drops what would arrive more
     than 2 s late as a player does, it has no timeout by default, since a
     chat or an episode track needs every record.
+  - `catalogs()`, `follow()`, `subscriptions()` and the objects of each
+    subscription return a `Following`: an async iterator that keeps its
+    state in attributes, a phase such as "subscribing", "reading" or
+    "waiting to subscribe again", and advances in the reader's own task,
+    awaiting its sources directly, with no task of its own per read. A
+    read cancelled, as by `asyncio.wait_for(anext(following), timeout)`,
+    leaves the state for the next read to go on where it stopped instead
+    of ending the iteration, which an async generator the cancellation
+    reached would: what the SDK awaits outlives the cancellation, a
+    `Subscription`'s read keeping its native read and a SUBSCRIBE in
+    flight staying an owned task whose answer the next read takes. The
+    read taking the next subscription closes the one yielded before in the
+    same resumable step: cancelled meanwhile, it leaves the UNSUBSCRIBE
+    going and returns at once, and the next read waits for it. A read
+    while another waits raises RuntimeError before it awaits anything, so
+    two reads never interleave. `aclose()` unsubscribes, so a reader reads
+    them in `contextlib.aclosing` to have the UNSUBSCRIBE done by the time
+    it ends, as the pipecat transport does before it subscribes to a
+    track's replacement; the iteration ending or raising unsubscribes too,
+    before the read raises, and a read cancelled meanwhile leaves the
+    UNSUBSCRIBE going for the next read to wait for.
+    Closing while the SUBSCRIBE awaits the relay's answer waits for the
+    answer and the UNSUBSCRIBE of a track the relay accepted, which the
+    session sends for a cancelled SUBSCRIBE. Closing waits for the
+    UNSUBSCRIBE even when the reader is cancelled again meanwhile, then
+    ends cancelled. Called from another task while a read waits, `aclose()`
+    cancels that read, which takes the cancellation back and raises
+    StopAsyncIteration. Called from within the read, as from an
+    `on_subscribed` callback, it cannot wait for the read it runs in: it
+    records the close and returns at once, and the read finishes the close
+    before it returns, raising StopAsyncIteration instead of what it read.
+    A read tells the two apart by its task, so a task the callback starts
+    is another task, whose `aclose()` waits for the UNSUBSCRIBE. One dropped
+    without `aclose()` unsubscribes once it is garbage collected: its
+    finalizer holds only the SUBSCRIBE in flight and the subscription, so
+    a callback that holds the iteration does not keep it alive.
 - **`Catalog`** is a typed draft-ietf-moq-msf-02 catalog (`tracks` of
   `CatalogTrack` with `name`, `namespace`, `role`, `packaging`, `codec`,
   `bitrate`, `width`, `height`, `framerate`, `samplerate`, and every field in
