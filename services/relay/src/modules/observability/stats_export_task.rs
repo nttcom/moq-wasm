@@ -1,10 +1,12 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use telemetry::relay_stats;
-use telemetry_otlp::{EventLogger, ProcessGauges};
+use telemetry_otlp::EventLogger;
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 
-use crate::modules::observability::{process_memory, stats_collector::StatsCollector};
+use crate::modules::observability::{
+    process_gauges::ProcessGauges, process_memory, stats_collector::StatsCollector,
+};
 
 const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(1);
 

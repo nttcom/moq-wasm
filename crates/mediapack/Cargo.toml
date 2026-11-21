@@ -8,12 +8,12 @@ moqt = ["dep:moqt"]
 serde = ["dep:serde", "bytes/serde"]
 
 [dependencies]
-anyhow = "1"
-base64 = "0.23"
-bytes = "1"
+anyhow = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
 moqt = { path = "../moqt", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
-serde_json = "1"
-proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+serde_json = { workspace = true }
+proptest = { workspace = true, features = ["std"] }

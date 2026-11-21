@@ -15,13 +15,19 @@ reads JSON bodies, bearer tokens and query strings, and builds responses.
 | Item | Responsibility |
 | --- | --- |
 | `HttpServer::run(listener, handler)` | Spawns the accept loop and owns its `JoinHandle`. Each connection runs hyper HTTP/1 on its own task and calls `handler(request, peer)` for every request. |
+| `JsonResponse` | `Response<Full<Bytes>>` alias for JSON services. |
 | `json_response(status, body)` | `body` serialized as JSON with `Content-Type: application/json`. |
+| `raw_json_response(status, body)` | Pre-serialized JSON bytes with `Content-Type: application/json`. |
+| `healthz_response()` | `200 {"status":"ok"}` through `json_response`. |
 | `error_response(status, error)` | `{"error": error}` through `json_response`. |
 | `empty_response(status)` | `status` with an empty body and no headers. |
 | `allow_any_origin(response, methods, headers)` | `response` with `Access-Control-Allow-Origin: *` and the given allowed methods and request headers, for the services whose pages are served from any origin (`temporary-apps`, `live-translate`, `observability`). |
 | `bearer_token(headers)` | The token of `Authorization: Bearer <token>`, or `None` without one or with an empty token. |
+| `client_ip(headers, peer, trusted_proxy_hops)` | Extracts the client IP from `X-Forwarded-For` across all header lines `trusted_proxy_hops` from the end, falling back to `peer`. |
+| `shutdown_signal()` | Waits for `SIGINT` or (on Unix) `SIGTERM`, so containerized services exit cleanly and flush telemetry. |
 | `query_params(query)` | The decoded pairs of a URI's query as a map; of a name given twice, the last value. |
 | `read_json(body)` | The body parsed as JSON, or `None` when it is longer than `MAX_JSON_BODY_BYTES` (16 KiB), fails to read or does not parse. The service picks its own error response. |
+| `testing::StubServer` | Loopback test HTTP server recording received requests; behind the `testing` feature. |
 
 ## Runtime flow
 

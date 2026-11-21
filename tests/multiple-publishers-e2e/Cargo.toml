@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 moqt = { path = "../../crates/moqt" }
-tokio = { version = "1.52.3", features = ["full", "tracing"] }
-tracing = "0.1.44"
-anyhow = { version = "1.0.102", features = ["backtrace"] }
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tokio = { workspace = true, features = ["full", "tracing"] }
+tracing = { workspace = true }
+anyhow = { workspace = true, features = ["backtrace"] }
+tracing-subscriber = { workspace = true, default-features = true, features = ["env-filter"] }

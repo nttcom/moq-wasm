@@ -10,6 +10,40 @@ members = [
 ]
 exclude = ['tests/browser-e2e']
 
+[workspace.dependencies]
+anyhow = "1.0.102"
+async-trait = "0.1.89"
+aws-lc-rs = "1.18.2"
+base64 = "0.23.1"
+bytes = "1.11.1"
+clap = "4.6.1"
+futures = "0.3.32"
+futures-util = "0.3.32"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+http = "1.5.0"
+http-body-util = "0.1.4"
+hyper = "1.10.1"
+hyper-util = "0.1.20"
+object_store = { version = "0.14.2", default-features = false }
+opentelemetry = "0.33.1"
+opentelemetry_sdk = "0.33.1"
+opentelemetry-otlp = "0.33.1"
+opentelemetry-appender-tracing = "0.33.1"
+proptest = { version = "1.12.0", default-features = false }
+reqwest = { version = "0.13.4", default-features = false }
+rustls = { version = "0.23.45", default-features = false }
+rustls-native-certs = "0.8.4"
+serde = "1.0.228"
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+tokio = "1.52.3"
+tokio-tungstenite = { version = "0.30.0", default-features = false }
+tracing = "0.1.44"
+tracing-opentelemetry = "0.34.0"
+tracing-subscriber = { version = "0.3.23", default-features = false }
+url = "2.5.8"
+
 # Full debuginfo for every dependency dominates target/ size.
 # For lldb variable inspection, build with CARGO_PROFILE_DEV_DEBUG=true.
 [profile.dev]

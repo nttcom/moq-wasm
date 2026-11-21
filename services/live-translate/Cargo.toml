@@ -4,30 +4,30 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 auth-token = { path = "../../crates/auth-token" }
-base64 = "0.22.1"
-bytes = "1"
-clap = { version = "4.6.1", features = ["derive", "env"] }
-futures-util = "0.3.32"
+base64 = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true, features = ["derive", "env"] }
+futures-util = { workspace = true }
 google-cloud = { path = "../../crates/google-cloud" }
-gstreamer = "0.25"
-gstreamer-app = "0.25"
-http-body-util = "0.1.4"
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
+http-body-util = { workspace = true }
 http-server = { path = "../../crates/http-server" }
-hyper = { version = "1.10.1", features = ["http1", "server"] }
+hyper = { workspace = true, features = ["http1", "server"] }
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
 msf = { path = "../../crates/msf" }
-reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json"] }
-rustls = { version = "0.23.45", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
-rustls-native-certs = "0.8.4"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1.52.3", features = ["full"] }
-tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { workspace = true, features = ["rustls", "json"] }
+rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-native-certs = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-native-roots"] }
+telemetry-otlp = { path = "../../crates/telemetry-otlp" }
+tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.52.3", features = ["full", "test-util"] }
+tokio = { workspace = true, features = ["full", "test-util"] }

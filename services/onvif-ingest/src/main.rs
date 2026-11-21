@@ -16,7 +16,7 @@ use crate::{
     arrival_clamp::ArrivalClamp,
     command_subscriber::{CommandSubscriber, CommandTrack},
 };
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
 use clap::Parser;
 use mediapack::MediaEvent;
@@ -256,16 +256,16 @@ async fn play_rtsp(
     let mut clamp = ArrivalClamp::default();
     while let Some(mut event) = event_receiver.recv().await {
         clamp.apply(&mut event, wall_clock_micros());
-        if let (Some(path), MediaEvent::Video(sample)) = (&*dump_keyframe, &event) {
-            if sample.is_keyframe {
-                std::fs::write(path, &sample.data)
-                    .with_context(|| format!("write keyframe payload to {}", path.display()))?;
-                tracing::info!(
-                    "RTSP keyframe payload dumped for ffprobe: {}",
-                    path.display()
-                );
-                *dump_keyframe = None;
-            }
+        if let (Some(path), MediaEvent::Video(sample)) = (&*dump_keyframe, &event)
+            && sample.is_keyframe
+        {
+            std::fs::write(path, &sample.data)
+                .with_context(|| format!("write keyframe payload to {}", path.display()))?;
+            tracing::info!(
+                "RTSP keyframe payload dumped for ffprobe: {}",
+                path.display()
+            );
+            *dump_keyframe = None;
         }
         writer.push(event)?;
     }

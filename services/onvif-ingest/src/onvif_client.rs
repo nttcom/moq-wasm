@@ -4,7 +4,7 @@ use crate::{
     onvif_requests::{self, OnvifRequest},
     onvif_services, ptz_config, soap_client,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::Client;
 
 pub(crate) struct OnvifClient {

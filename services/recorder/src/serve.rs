@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tokio::{
-    net::TcpListener,
-    signal::unix::{SignalKind, signal},
-};
+use tokio::net::TcpListener;
 
 use crate::{ServeArgs, api_server::ApiServer, recordings::Recordings, store::RecordingStore};
 
@@ -20,12 +17,7 @@ pub(crate) async fn serve(mut args: ServeArgs) -> Result<()> {
         .with_context(|| format!("cannot listen on {listen}"))?;
     let server = ApiServer::run(listener, recordings, allowed_origins);
     tracing::info!(listen = %listen, "recording API listening");
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    tokio::select! {
-        _ = interrupt.recv() => {}
-        _ = terminate.recv() => {}
-    }
+    http_server::shutdown_signal().await?;
     tracing::info!("shutting down");
     drop(server);
     Ok(())

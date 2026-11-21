@@ -14,7 +14,6 @@ use hyper::{
     body::{Body, Frame, Incoming},
     header::{CACHE_CONTROL, CONTENT_TYPE, HeaderValue},
 };
-use serde_json::json;
 use tokio::{net::TcpListener, time::Interval};
 use tracing::Instrument;
 
@@ -55,9 +54,10 @@ async fn handle(request: Request<Incoming>, state: Arc<SessionServerState>) -> S
         "url.path" = head.uri.path(),
         "http.response.status_code" = tracing::field::Empty,
     );
+    telemetry_otlp::continue_trace_from(&span, &head.headers);
     let response = async {
         match (&head.method, head.uri.path()) {
-            (&Method::GET, "/healthz") => json_response(StatusCode::OK, json!({ "status": "ok" })),
+            (&Method::GET, "/healthz") => http_server::healthz_response().map(BodyExt::boxed),
             (&Method::GET, "/events") => events(),
             (&Method::POST, "/sessions") => start_session(&state, &head.headers).await,
             (&Method::OPTIONS, "/sessions") => empty_response(StatusCode::NO_CONTENT),
@@ -124,10 +124,6 @@ impl Body for Heartbeat {
         ready!(self.ticks.poll_tick(cx));
         Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(b": alive\n\n")))))
     }
-}
-
-fn json_response(status: StatusCode, body: serde_json::Value) -> ServerResponse {
-    http_server::json_response(status, &body).map(BodyExt::boxed)
 }
 
 fn error_response(status: StatusCode, error: &str) -> ServerResponse {

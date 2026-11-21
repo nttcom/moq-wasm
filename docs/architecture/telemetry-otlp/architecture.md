@@ -7,9 +7,7 @@ intent, module boundaries, runtime flow, or invariants described here change.
 ## Scope
 One `init` that installs the global `tracing` subscriber for a binary of the
 workspace, so every binary writes the same readable log and exports the same
-OTLP traces and logs. What to put in a span stays with each crate. The
-records the observability server reads (the relay snapshot) live in
-`telemetry`, which this crate depends on for `ProcessGauges`.
+OTLP traces and logs. What to put in a span or metric stays with each crate.
 
 ## Outputs
 
@@ -58,7 +56,7 @@ field, which would store it twice.
 instruments the OTLP metric exporter sends every
 `OTEL_METRIC_EXPORT_INTERVAL` ms, 10 s by default rather than the
 OpenTelemetry 60 s, so a HyperDX chart of the last hour has enough points.
-The relay records the relay-wide values of its stats snapshot through
+The relay records the relay-wide values of its stats snapshot through its own
 `ProcessGauges` (see the observability architecture).
 
 ## Trace context
@@ -100,8 +98,8 @@ While only one dispatcher exists, `tracing-core` caches a callsite's interest
 from the default of the thread that registers it first, so a concurrent test
 without a subscriber would cache `never` for a callsite the capturing test
 needs. `set_default` first keeps a second, idle dispatcher alive, so interest
-is combined over all dispatchers. `moqt` takes `telemetry-otlp` only as a
-dev-dependency; `telemetry-otlp` does not depend on `moqt`.
+is combined over all dispatchers. `moqt` keeps its own small copy in
+`test_support` so `cargo test -p moqt` does not build OpenTelemetry.
 
 ## Dependencies
 

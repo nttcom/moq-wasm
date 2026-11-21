@@ -324,10 +324,8 @@ dependencies = [
  "app-registry",
  "auth-token",
  "aws-lc-rs",
- "base64 0.23.1",
  "bytes",
  "google-cloud",
- "http-body-util",
  "http-server",
  "hyper",
  "job-launcher",
@@ -1122,11 +1120,14 @@ name = "google-cloud"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-lc-rs",
+ "base64 0.23.1",
  "http-body-util",
  "http-server",
  "hyper",
  "reqwest",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -1804,7 +1805,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auth-token",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "clap",
  "futures-util",
@@ -1822,10 +1823,10 @@ dependencies = [
  "rustls-native-certs",
  "serde",
  "serde_json",
+ "telemetry-otlp",
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2014,7 +2015,6 @@ dependencies = [
  "rcgen",
  "rustls",
  "rustls-native-certs",
- "telemetry-otlp",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
@@ -2886,6 +2886,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auth-token",
+ "aws-lc-rs",
  "base64 0.23.1",
  "bytes",
  "clap",
@@ -2893,7 +2894,6 @@ dependencies = [
  "http-body-util",
  "http-server",
  "hyper",
- "hyper-util",
  "job-launcher",
  "mediapack",
  "moqt",
@@ -2903,7 +2903,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
  "telemetry-otlp",
  "tokio",
  "tracing",
@@ -3665,7 +3664,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rustls",
- "telemetry",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -3688,7 +3686,6 @@ dependencies = [
  "anyhow",
  "auth-token",
  "aws-lc-rs",
- "http-body-util",
  "http-server",
  "hyper",
  "reqwest",
@@ -4210,7 +4207,6 @@ dependencies = [
  "anyhow",
  "app-registry",
  "auth-token",
- "http-body-util",
  "http-server",
  "hyper",
  "reqwest",

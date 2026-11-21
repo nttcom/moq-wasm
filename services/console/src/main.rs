@@ -1,4 +1,4 @@
-use std::{future, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Context;
 use app_registry::{Location, LocationVariables, RegistryStore};
@@ -52,5 +52,7 @@ async fn main() -> anyhow::Result<()> {
     let _server = ConsoleServer::run(listener, Arc::new(state));
     tracing::info!(port, "console listening");
 
-    future::pending().await
+    http_server::shutdown_signal().await?;
+    tracing::info!("console shutting down");
+    Ok(())
 }

@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1"
-gstreamer = "0.25"
-gstreamer-app = "0.25"
+anyhow = { workspace = true }
+gstreamer = { workspace = true }
+gstreamer-app = { workspace = true }
 mediapack = { path = "../mediapack" }
-tokio = { version = "1", features = ["sync"] }
+tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-bytes = "1"
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+bytes = { workspace = true }

@@ -1,5 +1,9 @@
 use std::{
-    collections::HashMap, convert::Infallible, error::Error, future::Future, net::SocketAddr,
+    collections::HashMap,
+    convert::Infallible,
+    error::Error,
+    future::Future,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
 };
 
@@ -18,6 +22,11 @@ use hyper_util::rt::TokioIo;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle};
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
+pub type JsonResponse = Response<Full<Bytes>>;
 
 /// Accepts connections on a listener and serves each over HTTP/1 on its own
 /// task. Dropping it stops accepting; connections already open run to their end.
@@ -71,9 +80,13 @@ impl Drop for HttpServer {
 }
 
 /// A body that does not serialize is sent as `null`.
-pub fn json_response(status: StatusCode, body: &impl Serialize) -> Response<Full<Bytes>> {
+pub fn json_response(status: StatusCode, body: &impl Serialize) -> JsonResponse {
     let body = serde_json::to_vec(body).unwrap_or_else(|_| b"null".to_vec());
-    let mut response = Response::new(Full::from(body));
+    raw_json_response(status, Bytes::from(body))
+}
+
+pub fn raw_json_response(status: StatusCode, body: Bytes) -> JsonResponse {
+    let mut response = Response::new(Full::new(body));
     *response.status_mut() = status;
     response
         .headers_mut()
@@ -81,15 +94,63 @@ pub fn json_response(status: StatusCode, body: &impl Serialize) -> Response<Full
     response
 }
 
+/// `200 {"status":"ok"}` as JSON.
+pub fn healthz_response() -> JsonResponse {
+    json_response(StatusCode::OK, &json!({ "status": "ok" }))
+}
+
 /// `{"error": error}` as JSON.
-pub fn error_response(status: StatusCode, error: &str) -> Response<Full<Bytes>> {
+pub fn error_response(status: StatusCode, error: &str) -> JsonResponse {
     json_response(status, &json!({ "error": error }))
 }
 
-pub fn empty_response(status: StatusCode) -> Response<Full<Bytes>> {
+pub fn empty_response(status: StatusCode) -> JsonResponse {
     let mut response = Response::new(Full::default());
     *response.status_mut() = status;
     response
+}
+
+/// Waits for `SIGINT` (Ctrl-C) or, on Unix, `SIGTERM`. As PID 1 in a container
+/// the process has no default `SIGTERM` action, so `docker stop` and Cloud Run
+/// would otherwise wait for `SIGKILL` and drop buffered telemetry.
+pub async fn shutdown_signal() -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result?,
+            _ = terminate.recv() => {}
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
+}
+
+/// `trusted_proxy_hops` proxies in front of the server append to
+/// `X-Forwarded-For`; the client address is the entry `trusted_proxy_hops` from
+/// the end across all `X-Forwarded-For` header lines, or `peer` when
+/// `trusted_proxy_hops == 0`, there are too few entries, or the entry is not an
+/// IP address.
+pub fn client_ip(headers: &HeaderMap, peer: IpAddr, trusted_proxy_hops: usize) -> IpAddr {
+    if trusted_proxy_hops == 0 {
+        return peer;
+    }
+    let entries: Vec<&str> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .collect();
+    entries
+        .len()
+        .checked_sub(trusted_proxy_hops)
+        .and_then(|index| entries[index].parse().ok())
+        .unwrap_or(peer)
 }
 
 /// `methods` and `headers` are comma-separated lists; panics if either is not
@@ -324,5 +385,38 @@ mod tests {
 
         // Assert
         assert_eq!(body_of(response).await, "null");
+    }
+
+    #[tokio::test]
+    async fn healthz_and_raw_json_responses_set_status_and_content_type() {
+        // Act
+        let healthz = healthz_response();
+        let raw = raw_json_response(StatusCode::ACCEPTED, Bytes::from_static(br#"{"n":1}"#));
+
+        // Assert
+        assert_eq!(healthz.status(), StatusCode::OK);
+        assert_eq!(healthz.headers()[CONTENT_TYPE], "application/json");
+        assert_eq!(body_of(healthz).await, r#"{"status":"ok"}"#);
+        assert_eq!(raw.status(), StatusCode::ACCEPTED);
+        assert_eq!(raw.headers()[CONTENT_TYPE], "application/json");
+        assert_eq!(body_of(raw).await, r#"{"n":1}"#);
+    }
+
+    #[test]
+    fn client_ip_reads_across_multiple_forwarded_header_lines() {
+        // Arrange
+        let peer: IpAddr = "10.0.0.2".parse().unwrap();
+        let client: IpAddr = "203.0.113.7".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.append("x-forwarded-for", HeaderValue::from_static("198.51.100.1"));
+        headers.append(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.7, 10.0.0.2"),
+        );
+
+        // Act / Assert
+        assert_eq!(client_ip(&headers, peer, 0), peer);
+        assert_eq!(client_ip(&headers, peer, 2), client);
+        assert_eq!(client_ip(&headers, peer, 4), peer);
     }
 }

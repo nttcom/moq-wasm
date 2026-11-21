@@ -10,8 +10,9 @@ use hyper::{
         CONTENT_TYPE, HeaderValue, ORIGIN, VARY,
     },
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::net::TcpListener;
+use tracing::Instrument;
 
 use crate::{
     recordings::{Publication, PublishRejection, Recordings},
@@ -63,6 +64,19 @@ impl ApiServer {
 type ApiResponse = Response<Either<Full<Bytes>, ReplayStream>>;
 
 async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse {
+    let span = tracing::info_span!(
+        "recorder.request",
+        "http.request.method" = %request.method(),
+        "url.path" = request.uri().path(),
+        "http.response.status_code" = tracing::field::Empty,
+    );
+    telemetry_otlp::continue_trace_from(&span, request.headers());
+    let response = route(request, &state).instrument(span.clone()).await;
+    span.record("http.response.status_code", response.status().as_u16());
+    response
+}
+
+async fn route(request: Request<Incoming>, state: &ApiState) -> ApiResponse {
     let origin = allowed_origin(request.headers(), &state.allowed_origins);
     let method = request.method().clone();
     let path = request.uri().path().to_string();
@@ -71,7 +85,7 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
     let foreign_page = request.headers().contains_key(ORIGIN) && origin.is_none();
     let headers = request.headers().clone();
     if method != Method::OPTIONS {
-        let namespace = match authorized_namespace(&method, &segments, &query, &state).await {
+        let namespace = match authorized_namespace(&method, &segments, &query, state).await {
             Ok(namespace) => namespace,
             Err(Refusal::Status(status, message)) => {
                 return with_cors(error_response(status, message), origin);
@@ -88,8 +102,10 @@ async fn handle(request: Request<Incoming>, state: Arc<ApiState>) -> ApiResponse
         (&Method::POST, _) if foreign_page => {
             error_response(StatusCode::FORBIDDEN, "origin not allowed")
         }
-        (&Method::OPTIONS, _) => empty_response(StatusCode::NO_CONTENT),
-        (&Method::GET, ["healthz"]) => json_response(StatusCode::OK, &json!({ "status": "ok" })),
+        (&Method::OPTIONS, _) => {
+            http_server::empty_response(StatusCode::NO_CONTENT).map(Either::Left)
+        }
+        (&Method::GET, ["healthz"]) => http_server::healthz_response().map(Either::Left),
         (&Method::GET, ["recordings"]) => match state
             .recordings
             .list(query.get("namespace_prefix").map_or("", String::as_str))
@@ -230,10 +246,6 @@ fn replay_response(publication: Publication) -> ApiResponse {
 
 fn json_response(status: StatusCode, body: &Value) -> ApiResponse {
     http_server::json_response(status, body).map(Either::Left)
-}
-
-fn empty_response(status: StatusCode) -> ApiResponse {
-    http_server::empty_response(status).map(Either::Left)
 }
 
 fn error_response(status: StatusCode, message: &str) -> ApiResponse {

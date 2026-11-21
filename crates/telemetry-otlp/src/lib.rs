@@ -17,13 +17,11 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
 mod event_logger;
-mod process_gauges;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod trace_context;
 
 pub use event_logger::EventLogger;
-pub use process_gauges::ProcessGauges;
 pub use trace_context::{
     continue_trace_from, continue_trace_from_traceparent, current_traceparent, inject_trace_context,
 };

@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
-use http_body_util::Full;
-use http_server::{HttpServer, error_response, json_response, read_json};
-use hyper::{
-    Method, Request, Response, StatusCode,
-    body::{Bytes, Incoming},
+use http_server::{
+    HttpServer, JsonResponse, error_response, healthz_response, json_response, read_json,
 };
+use hyper::{Method, Request, StatusCode, body::Incoming};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -33,8 +31,6 @@ impl VtsServer {
     }
 }
 
-type JsonResponse = Response<Full<Bytes>>;
-
 #[derive(Deserialize)]
 struct VerifyRequest {
     token: String,
@@ -54,7 +50,7 @@ async fn handle(request: Request<Incoming>, secrets: Arc<Secrets>) -> JsonRespon
     telemetry_otlp::continue_trace_from(&span, &head.headers);
     let response = async {
         match (head.method, head.uri.path()) {
-            (Method::GET, "/healthz") => json_response(StatusCode::OK, &json!({ "status": "ok" })),
+            (Method::GET, "/healthz") => healthz_response(),
             (Method::POST, "/verify") => verify(body, &secrets).await,
             _ => error_response(StatusCode::NOT_FOUND, "not_found"),
         }

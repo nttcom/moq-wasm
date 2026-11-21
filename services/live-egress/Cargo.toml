@@ -4,11 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = { workspace = true }
 broadcast = { path = "../../crates/broadcast" }
-clap = { version = "4.6.1", features = ["derive", "env"] }
+clap = { workspace = true, features = ["derive", "env"] }
 mediapack = { path = "../../crates/mediapack", features = ["moqt"] }
 moqt = { path = "../../crates/moqt" }
-tokio = { version = "1.52.3", features = ["full"] }
-tracing = "0.1"
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
 telemetry-otlp = { path = "../../crates/telemetry-otlp" }

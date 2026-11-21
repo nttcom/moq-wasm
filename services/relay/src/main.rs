@@ -4,7 +4,7 @@ use std::{
 };
 
 use moqt::server::write_self_signed_cert;
-use telemetry_otlp::ProcessGauges;
+use relay::ProcessGauges;
 use tokio::signal::unix::{SignalKind, signal};
 
 const CERT_DIR: &str = "keys";

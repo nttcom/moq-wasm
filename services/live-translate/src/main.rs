@@ -17,14 +17,13 @@ mod translated_catalog;
 mod translation_engine;
 mod translation_policy;
 
-use std::{future::pending, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use google_cloud::MetadataToken;
 use moqt::{CertificateVerification, ClientConfig};
 use tokio::{net::TcpListener, sync::Semaphore};
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
 
 use crate::{
     broadcast_namespace::BroadcastNamespaces,
@@ -123,13 +122,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::INFO.into())
-                .from_env_lossy(),
-        )
-        .init();
+    let _telemetry = telemetry_otlp::init(telemetry_otlp::TelemetryConfig {
+        service_name: "live-translate",
+        service_version: env!("CARGO_PKG_VERSION"),
+        default_directives: &["live_translate=info"],
+        log_output: telemetry_otlp::LogOutput::Stdout,
+        ..Default::default()
+    })?;
     let args = Args::parse();
     let engine = translation_engine(&args)?;
     let always_on = args
@@ -174,17 +173,24 @@ async fn main() -> Result<()> {
             bail!("nothing to translate: set PORT to serve temporary apps, or pass --public-root");
         }
         tracing::info!("waiting for temporary apps");
-        return pending().await;
+        http_server::shutdown_signal().await?;
+        tracing::info!("live-translate shutting down");
+        return Ok(());
     }
     let config = ClientConfig {
         certificate_verification: CertificateVerification::native_roots_or_disabled(!args.insecure),
         ..ClientConfig::default()
     };
     let namespaces = BroadcastNamespaces::new(BroadcastNamespaces::PUBLIC_ROOT.to_string());
-    RootTranslation::connect(&args.relay, &config, namespaces, resources)
-        .await?
-        .route_events(None)
-        .await
+    let mut root = RootTranslation::connect(&args.relay, &config, namespaces, resources).await?;
+    tokio::select! {
+        result = root.route_events(None) => result,
+        signal = http_server::shutdown_signal() => {
+            signal?;
+            tracing::info!("live-translate shutting down");
+            Ok(())
+        }
+    }
 }
 
 fn translation_engine(args: &Args) -> Result<TranslationEngine> {

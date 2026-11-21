@@ -91,24 +91,11 @@ mod tests {
     #[tokio::test]
     async fn every_room_requires_a_successful_vts_response() {
         // Arrange
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/verify", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let service =
-                hyper::service::service_fn(|_: hyper::Request<hyper::body::Incoming>| async {
-                    let mut response = hyper::Response::new(http_body_util::Full::new(
-                        bytes::Bytes::from_static(b"{}"),
-                    ));
-                    *response.status_mut() = StatusCode::UNAUTHORIZED;
-                    Ok::<_, std::convert::Infallible>(response)
-                });
-            hyper::server::conn::http1::Builder::new()
-                .keep_alive(false)
-                .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-                .await
-                .unwrap();
-        });
+        let server = http_server::testing::StubServer::run(StatusCode::UNAUTHORIZED, "{}").await;
+        let url = format!("{}/verify", server.url());
+        let closed_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let unreachable_url = format!("http://{}/verify", closed_listener.local_addr().unwrap());
+        drop(closed_listener);
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, "Bearer invalid".parse().unwrap());
 
@@ -127,9 +114,8 @@ mod tests {
                 .status,
             StatusCode::UNAUTHORIZED
         );
-        server.await.unwrap();
         assert_eq!(
-            authorize(&headers, &url, "APP/room")
+            authorize(&headers, &unreachable_url, "APP/room")
                 .await
                 .unwrap_err()
                 .status,

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use gstreamer as gst;
 use gstreamer::prelude::*;
@@ -115,8 +115,8 @@ fn branch_description(encoding: &str) -> &'static str {
 fn appsink_callbacks(
     event_sender: TokioSender<MediaEvent>,
     mut to_events: impl FnMut(&gst::Sample, &[u8], MediaTiming) -> Result<Vec<MediaEvent>>
-        + Send
-        + 'static,
+    + Send
+    + 'static,
 ) -> AppSinkCallbacks {
     AppSinkCallbacks::builder()
         .new_sample(move |sink| {

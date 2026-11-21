@@ -3,10 +3,13 @@ use std::{path::PathBuf, sync::Arc};
 use app_registry::{App, RegistryStore};
 use auth_token::unix_now;
 use http_body_util::Full;
-use http_server::{HttpServer, empty_response, error_response, json_response, query_params};
+use http_server::{
+    HttpServer, JsonResponse, empty_response, error_response, json_response, query_params,
+    raw_json_response,
+};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
-    body::{Bytes, Incoming},
+    body::Incoming,
     header::{
         CACHE_CONTROL, CONTENT_SECURITY_POLICY, CONTENT_TYPE, HOST, HeaderValue, LOCATION, ORIGIN,
         X_CONTENT_TYPE_OPTIONS,
@@ -16,6 +19,7 @@ use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
+use tracing::Instrument;
 
 use crate::{
     apps::{self, Creation, TokenScope},
@@ -88,8 +92,6 @@ impl ConsoleServer {
     }
 }
 
-type JsonResponse = Response<Full<Bytes>>;
-
 /// The status and error code of a refused request.
 struct Refusal(StatusCode, &'static str);
 
@@ -101,19 +103,31 @@ impl Refusal {
 
 async fn handle(request: Request<Incoming>, state: Arc<ConsoleState>) -> JsonResponse {
     let (head, body) = request.into_parts();
-    let mut response = if head.method != Method::GET && !is_same_origin_request(&head.headers) {
-        error_response(StatusCode::FORBIDDEN, "forbidden")
-    } else {
-        route(
-            head.method.clone(),
-            head.uri.path(),
-            head.uri.query(),
-            &head.headers,
-            body,
-            &state,
-        )
-        .await
-    };
+    let span = tracing::info_span!(
+        "console.request",
+        "http.request.method" = %head.method,
+        "url.path" = head.uri.path(),
+        "http.response.status_code" = tracing::field::Empty,
+    );
+    telemetry_otlp::continue_trace_from(&span, &head.headers);
+    let mut response = async {
+        if head.method != Method::GET && !is_same_origin_request(&head.headers) {
+            error_response(StatusCode::FORBIDDEN, "forbidden")
+        } else {
+            route(
+                head.method.clone(),
+                head.uri.path(),
+                head.uri.query(),
+                &head.headers,
+                body,
+                &state,
+            )
+            .await
+        }
+    }
+    .instrument(span.clone())
+    .await;
+    span.record("http.response.status_code", response.status().as_u16());
     let headers = response.headers_mut();
     headers.insert(
         CONTENT_SECURITY_POLICY,
@@ -294,7 +308,7 @@ async fn app_usage(
     ))?;
     let token = app_read_token(&caller, app_id, state).await?;
     match observability.usage(&token, query).await {
-        Ok(UsageAnswer::Usage(body)) => Ok(passed_on_json(body)),
+        Ok(UsageAnswer::Usage(body)) => Ok(raw_json_response(StatusCode::OK, body)),
         Ok(UsageAnswer::InvalidRange) => Err(Refusal(StatusCode::BAD_REQUEST, "invalid_range")),
         Err(error) => {
             tracing::warn!(app_id, error = format!("{error:#}"), "usage not read");
@@ -315,7 +329,7 @@ async fn app_recordings(
     let recorder = state.recorder.as_ref().ok_or(RECORDER_UNAVAILABLE)?;
     let token = app_read_token(&caller, app_id, state).await?;
     match recorder.recordings(&token, app_id).await {
-        Ok(body) => Ok(passed_on_json(body)),
+        Ok(body) => Ok(raw_json_response(StatusCode::OK, body)),
         Err(error) => {
             tracing::warn!(app_id, error = format!("{error:#}"), "recordings not read");
             Err(RECORDER_UNAVAILABLE)
@@ -378,14 +392,6 @@ async fn app_read_token(
         .map_err(registry_unavailable)?
         .ok_or(Refusal(StatusCode::NOT_FOUND, "no_app"))?;
     Ok(issued.token)
-}
-
-fn passed_on_json(body: Bytes) -> JsonResponse {
-    let mut response = Response::new(Full::new(body));
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    response
 }
 
 async fn authenticate(headers: &HeaderMap, state: &ConsoleState) -> Result<Caller, Refusal> {
@@ -466,13 +472,17 @@ fn registry_unavailable(error: anyhow::Error) -> Refusal {
 #[cfg(test)]
 mod tests {
     use app_registry::testing::TemporaryRegistryFile;
+    use google_cloud::testing::TestIapKey;
+    use http_server::{
+        bearer_token,
+        testing::{RecordedRequest, StubServer},
+    };
     use reqwest::Url;
 
     use super::*;
-    use crate::{
-        identity::{IAP_ASSERTION_HEADER, IdentitySettings},
-        test_support::{AUDIENCE, FakeHttpServer, FakeIapKeys, TestIapKey, iap_claims},
-    };
+    use crate::identity::{IAP_ASSERTION_HEADER, IdentitySettings};
+
+    const AUDIENCE: &str = "/projects/123/locations/region/services/console";
 
     const RELAY_URL: &str = "https://relay.example.com";
 
@@ -1025,20 +1035,27 @@ mod tests {
     async fn me_returns_the_email_of_a_valid_iap_assertion() {
         // Arrange
         let key = TestIapKey::new("key-1");
-        let keys = FakeIapKeys::run(&[&key]).await;
+        let keys =
+            StubServer::run(StatusCode::OK, json!({ "keys": [key.jwk()] }).to_string()).await;
         let identity = Identity::new(
             IdentitySettings {
                 iap_audience: Some(AUDIENCE.into()),
                 development_sub: None,
                 on_cloud_run: true,
             },
-            keys.url(),
+            Url::parse(&format!("{}/keys", keys.url())).unwrap(),
         )
         .unwrap();
         let console = start_console(identity).await;
-        let mut claims = iap_claims("accounts.google.com:1");
-        claims["iat"] = json!(unix_now());
-        claims["exp"] = json!(unix_now() + 600);
+        let now = unix_now();
+        let claims = json!({
+            "iss": "https://cloud.google.com/iap",
+            "aud": AUDIENCE,
+            "sub": "accounts.google.com:1",
+            "email": "someone@example.com",
+            "iat": now,
+            "exp": now + 600,
+        });
 
         // Act
         let response = get_me(&console, Some(&key.sign(&claims))).await;
@@ -1087,7 +1104,7 @@ mod tests {
     #[tokio::test]
     async fn an_apps_usage_is_read_with_a_token_for_the_whole_app() {
         // Arrange
-        let observability = FakeHttpServer::run(StatusCode::OK, r#"{"relays":[]}"#).await;
+        let observability = StubServer::run(StatusCode::OK, r#"{"relays":[]}"#).await;
         let console = start_console_with(
             development("accounts.google.com:1"),
             None,
@@ -1110,9 +1127,8 @@ mod tests {
         assert_eq!(response.text().await.unwrap(), r#"{"relays":[]}"#);
         let requests = observability.requests();
         assert_eq!(requests.len(), 1);
-        let (uri, authorization) = &requests[0];
-        assert_eq!(uri, "/api/usage?from=1&to=2&points=30");
-        let claims = bearer_claims(authorization);
+        assert_eq!(requests[0].uri, "/api/usage?from=1&to=2&points=30");
+        let claims = bearer_claims(&requests[0]);
         assert_eq!(claims["appId"], "app-1");
         assert_eq!(claims["subscribe"], "");
         assert!(claims.get("publish").is_none());
@@ -1125,7 +1141,7 @@ mod tests {
     #[tokio::test]
     async fn another_employees_app_has_no_usage_to_read() {
         // Arrange
-        let observability = FakeHttpServer::run(StatusCode::OK, "{}").await;
+        let observability = StubServer::run(StatusCode::OK, "{}").await;
         let console = start_console_with(
             development("accounts.google.com:1"),
             None,
@@ -1152,7 +1168,7 @@ mod tests {
     async fn a_usage_range_the_observability_server_refuses_is_invalid() {
         // Arrange
         let observability =
-            FakeHttpServer::run(StatusCode::BAD_REQUEST, r#"{"error":"too long"}"#).await;
+            StubServer::run(StatusCode::BAD_REQUEST, r#"{"error":"too long"}"#).await;
         let console = start_console_with(
             development("accounts.google.com:1"),
             None,
@@ -1196,7 +1212,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
-    async fn start_console_with_recorder(recorder: &FakeHttpServer) -> TestConsole {
+    async fn start_console_with_recorder(recorder: &StubServer) -> TestConsole {
         start_console_with(
             development("accounts.google.com:1"),
             None,
@@ -1206,12 +1222,8 @@ mod tests {
         .await
     }
 
-    fn bearer_claims(authorization: &Option<String>) -> serde_json::Map<String, Value> {
-        let token = authorization
-            .as_deref()
-            .unwrap()
-            .strip_prefix("Bearer ")
-            .unwrap();
+    fn bearer_claims(request: &RecordedRequest) -> serde_json::Map<String, Value> {
+        let token = bearer_token(&request.headers).unwrap();
         auth_token::verify_signature(token, "s").unwrap();
         auth_token::decode_unverified_payload(token).unwrap()
     }
@@ -1219,7 +1231,7 @@ mod tests {
     #[tokio::test]
     async fn an_apps_recordings_are_read_with_a_token_for_the_whole_app() {
         // Arrange
-        let recorder = FakeHttpServer::run(StatusCode::OK, r#"{"recordings":[]}"#).await;
+        let recorder = StubServer::run(StatusCode::OK, r#"{"recordings":[]}"#).await;
         let console = start_console_with_recorder(&recorder).await;
 
         // Act
@@ -1236,8 +1248,8 @@ mod tests {
         assert_eq!(response.text().await.unwrap(), r#"{"recordings":[]}"#);
         let requests = recorder.requests();
         assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].0, "/apps/app-1/recordings");
-        let claims = bearer_claims(&requests[0].1);
+        assert_eq!(requests[0].uri, "/apps/app-1/recordings");
+        let claims = bearer_claims(&requests[0]);
         assert_eq!(claims["appId"], "app-1");
         assert_eq!(claims["subscribe"], "");
         assert!(claims.get("publish").is_none());
@@ -1247,8 +1259,7 @@ mod tests {
     async fn a_recording_file_redirects_to_the_url_the_recorder_signed() {
         // Arrange
         let signed = "https://storage.googleapis.com/bucket/app-1/1/a.mp4?X-Goog-Signature=00";
-        let recorder =
-            FakeHttpServer::run(StatusCode::OK, &json!({ "url": signed }).to_string()).await;
+        let recorder = StubServer::run(StatusCode::OK, json!({ "url": signed }).to_string()).await;
         let console = start_console_with_recorder(&recorder).await;
 
         // Act
@@ -1265,16 +1276,16 @@ mod tests {
         assert_eq!(response.headers()[LOCATION], signed);
         let requests = recorder.requests();
         assert_eq!(
-            requests[0].0,
+            requests[0].uri,
             "/recordings/1700000000000-000001/file?name=app-1%2Froom%2Fa.mp4"
         );
-        assert_eq!(bearer_claims(&requests[0].1)["appId"], "app-1");
+        assert_eq!(bearer_claims(&requests[0])["appId"], "app-1");
     }
 
     #[tokio::test]
     async fn a_file_the_recorder_refuses_for_the_app_is_not_found() {
         // Arrange: the recording belongs to another app, outside the token's claim
-        let recorder = FakeHttpServer::run(StatusCode::FORBIDDEN, "{}").await;
+        let recorder = StubServer::run(StatusCode::FORBIDDEN, "{}").await;
         let console = start_console_with_recorder(&recorder).await;
 
         // Act
@@ -1294,7 +1305,7 @@ mod tests {
     #[tokio::test]
     async fn another_employees_app_has_no_recordings_to_read() {
         // Arrange
-        let recorder = FakeHttpServer::run(StatusCode::OK, "{}").await;
+        let recorder = StubServer::run(StatusCode::OK, "{}").await;
         let console = start_console_with_recorder(&recorder).await;
 
         // Act

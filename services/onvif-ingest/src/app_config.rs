@@ -1,5 +1,5 @@
 use crate::MoqtArgs;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::time::Duration;
 
 const ONVIF_PORT: u16 = 2020;

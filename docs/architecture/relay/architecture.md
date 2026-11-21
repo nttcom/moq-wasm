@@ -1537,7 +1537,7 @@ no list of relays and no session to each.
 - `StatsExportTask` runs only with OTLP on. Once per second it collects a
   snapshot, emits it through `telemetry_otlp::EventLogger` (`EventName`
   `relay.stats.snapshot`, the JSON in its `snapshot` attribute) and records
-  its `process` values through `telemetry_otlp::ProcessGauges`
+  its `process` values through `ProcessGauges`
   ("Relay gauges" in the observability architecture). It reads the
   same locks as the control plane, so a stuck runtime or lock stops the
   records and the relay leaves the live view.

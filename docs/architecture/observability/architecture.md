@@ -337,7 +337,7 @@ between sessions, tracks and subscriptions; querying the snapshot JSON in
 
 The page reads the tables above, but HyperDX dashboards and alerts read
 `otel_metrics_*`. So the relay also records each snapshot's `process` values
-as OTLP gauges (`telemetry_otlp::ProcessGauges`), exported every 10 s
+as OTLP gauges (`relay::ProcessGauges`), exported every 10 s
 with resource `service.name=relay` and `relay.id`:
 
 | Metric | Unit | `process` field |

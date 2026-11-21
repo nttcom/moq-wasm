@@ -9,12 +9,12 @@ pub(crate) async fn discover_endpoints(onvif: &OnvifClient) -> ServiceEndpoints 
         Ok(body) => parse_services(&body),
         _ => (None, None),
     };
-    if media.is_none() || ptz.is_none() {
-        if let Ok(body) = onvif.send_device(&onvif_requests::get_capabilities()).await {
-            let (caps_media, caps_ptz) = parse_capabilities(&body);
-            media = media.or(caps_media);
-            ptz = ptz.or(caps_ptz);
-        }
+    if (media.is_none() || ptz.is_none())
+        && let Ok(body) = onvif.send_device(&onvif_requests::get_capabilities()).await
+    {
+        let (caps_media, caps_ptz) = parse_capabilities(&body);
+        media = media.or(caps_media);
+        ptz = ptz.or(caps_ptz);
     }
     let fallback = onvif.device_endpoint().to_string();
     ServiceEndpoints {

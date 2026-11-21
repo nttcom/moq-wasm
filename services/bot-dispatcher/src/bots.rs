@@ -4,12 +4,12 @@ use aws_lc_rs::{
     digest::{SHA256, digest},
     rand::{SecureRandom, SystemRandom},
 };
+use google_cloud::IdTokenVerifier;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
     bot_types::BotTypes,
-    id_token::IdTokenVerifier,
     signer::BotTokenSigner,
     store::{BotRecord, BotState, BotStore},
 };

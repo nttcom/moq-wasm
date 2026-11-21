@@ -1,5 +1,4 @@
 use opentelemetry::metrics::{Gauge, Meter};
-
 use telemetry::relay_stats::ProcessStats;
 
 /// The relay-wide values of a snapshot as OTLP gauges, so HyperDX can chart
@@ -55,9 +54,9 @@ mod tests {
         InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
         data::{AggregatedMetrics, MetricData},
     };
+    use telemetry::relay_stats::ProcessStats;
 
     use super::ProcessGauges;
-    use telemetry::relay_stats::ProcessStats;
 
     fn last_value(exporter: &InMemoryMetricExporter, name: &str) -> Option<u64> {
         let exported = exporter.get_finished_metrics().unwrap();
