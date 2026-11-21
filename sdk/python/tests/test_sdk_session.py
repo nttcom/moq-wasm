@@ -245,11 +245,11 @@ async def test_a_refreshed_token_the_relay_refuses_is_refreshed_again_from_the_a
     native.refresh_token = refuse_once
 
     # Act
-    await eventually(lambda: native.refreshed == [refused, accepted])
+    await eventually(lambda: keeper.token == accepted)
 
     # Assert: asked again with the token the relay accepted, before it expired
+    assert native.refreshed == [refused, accepted]
     assert asked_with == [first, first]
-    assert keeper.token == accepted
     assert not session._done.done()
     await session.close()
 
