@@ -1985,6 +1985,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moq-robot-policy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "moq-wasm",
+ "serde_json",
+ "tokio",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "moq-robot-sim"
 version = "0.1.0"
 dependencies = [

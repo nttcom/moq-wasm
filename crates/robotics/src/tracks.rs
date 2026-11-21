@@ -1,4 +1,13 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use anyhow::Result;
+use broadcast::Broadcast;
+use bytes::Bytes;
+use moqt::publish::{GroupBoundary, OutgoingObject};
 use msf::{KnownPackaging, Track, TrackRole};
+use serde::Serialize;
+
+use crate::record::{Record, encode_object};
 
 /// The event timeline tracks of a robot room
 /// (`docs/architecture/robotics/architecture.md`, Tracks). The robot's
@@ -58,6 +67,30 @@ impl TrackKind {
             Self::Action => "Action",
         }
     }
+}
+
+/// Sends `data` as one record of `kind` on `broadcast`, stamped now.
+pub(crate) async fn write_record<D: Serialize>(
+    broadcast: &Broadcast,
+    kind: TrackKind,
+    group: GroupBoundary,
+    data: D,
+) -> Result<()> {
+    let payload = encode_object(&Record { t: now_ms(), data })?;
+    broadcast
+        .send_object(
+            kind.name(),
+            OutgoingObject::plain(group, Bytes::from(payload)),
+        )
+        .await?;
+    Ok(())
+}
+
+/// This host's wall clock in milliseconds since the Unix epoch.
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
 }
 
 #[cfg(test)]

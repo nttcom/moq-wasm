@@ -20,7 +20,8 @@ use crate::{
     tracks::TrackKind,
 };
 
-use super::{Command, Robot, now_ms};
+use super::{Command, Robot};
+use crate::tracks::now_ms;
 
 pub(super) const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
