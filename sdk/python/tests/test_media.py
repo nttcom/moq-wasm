@@ -10,7 +10,8 @@ import pytest
 import moq_wasm
 from moq_wasm.media import Catalog, CatalogTrack, EventTimeline, RemoteBroadcast, create_broadcast, watch_broadcasts
 
-from tests.fake_native import FakeRelay, FakeWriter, open_session, until
+from tests.fake_native import FakeRelay, FakeWriter, called, open_session, until
+from tests.relay_sessions import close_all, connect, room
 
 pytestmark = pytest.mark.usefixtures("no_resubscribe_delay")
 
@@ -882,6 +883,128 @@ async def test_watch_broadcasts_runs_a_handler_per_broadcast_until_it_is_withdra
     # Assert
     assert (started, cancelled) == ([[*ROOM, "alice"]], [[*ROOM, "alice"]])
     watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+    await session.close()
+
+
+async def test_watch_broadcasts_skips_a_namespace_this_session_is_still_publishing():
+    # Arrange: the relay forwards the broadcast's namespace before it answered its PUBLISH_NAMESPACE
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.announce_gate = asyncio.Event()
+    handled: list[list[str]] = []
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        handled.append(broadcast.namespace)
+
+    watching = asyncio.create_task(watch_broadcasts(session, ROOM, handler))
+    bot = create_broadcast(session, BOT)
+    await bot.__aenter__()
+    await within(called(native, ("announce", BOT)))
+
+    # Act
+    native.publish(BOT)
+    native.publish([*ROOM, "alice"])
+    while not handled:
+        await within(asyncio.sleep(0.01))
+
+    # Assert
+    assert handled == [[*ROOM, "alice"]]
+    watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+    native.announce_gate.set()
+    await bot.__aexit__(None, None, None)
+    await session.close()
+
+
+async def test_a_republished_broadcasts_handler_starts_after_the_previous_one_finished():
+    # Arrange: the handler's teardown takes a while
+    relay = FakeRelay()
+    session = await open_session(relay)
+    steps: list[str] = []
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        steps.append("start")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0.02)
+            steps.append("end")
+
+    watching = asyncio.create_task(watch_broadcasts(session, ROOM, handler))
+    native = relay.sessions[0]
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.01)
+
+    # Act: alice leaves and comes back at once
+    native.publish([*ROOM, "alice"], active=False)
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.1)
+
+    # Assert
+    assert steps == ["start", "end", "start"]
+    watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+    await session.close()
+
+
+async def test_a_handlers_teardown_survives_its_successor_leaving_and_the_watch_waits_for_it():
+    # Arrange: alice leaves while her handler is set up, and her next handler waits for its teardown
+    relay = FakeRelay()
+    session = await open_session(relay)
+    steps: list[str] = []
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        steps.append("start")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0.05)
+            steps.append("end")
+
+    watching = asyncio.create_task(watch_broadcasts(session, ROOM, handler))
+    native = relay.sessions[0]
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.01)
+    native.publish([*ROOM, "alice"], active=False)
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.01)
+
+    # Act: alice leaves again before her first handler finished, and the watch is cancelled
+    native.publish([*ROOM, "alice"], active=False)
+    await asyncio.sleep(0.01)
+    watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+
+    # Assert: the first handler's teardown ran to its end before the watch returned
+    assert steps == ["start", "end"]
+    await session.close()
+
+
+async def test_a_cancelled_watch_returns_once_its_handlers_finished():
+    # Arrange: the handler's teardown takes a while
+    relay = FakeRelay()
+    session = await open_session(relay)
+    steps: list[str] = []
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(0.05)
+            steps.append("end")
+
+    watching = asyncio.create_task(watch_broadcasts(session, ROOM, handler))
+    relay.sessions[0].publish([*ROOM, "alice"])
+    await asyncio.sleep(0.01)
+
+    # Act
+    watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+
+    # Assert
+    assert steps == ["end"]
     await session.close()
 
 
@@ -896,6 +1019,79 @@ async def test_watch_broadcasts_returns_once_the_room_stays_empty():
     # Act / Assert
     await within(watch_broadcasts(session, ROOM, handler, empty_timeout=0.05))
     await session.close()
+
+
+async def test_watch_broadcasts_waits_the_empty_timeout_again_after_the_last_broadcast_left():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        await asyncio.Event().wait()
+
+    watching = asyncio.create_task(watch_broadcasts(session, ROOM, handler, empty_timeout=0.2))
+    native = relay.sessions[0]
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.3)
+
+    # Act
+    native.publish([*ROOM, "alice"], active=False)
+    await asyncio.sleep(0.1)
+
+    # Assert: still watching 0.1 s after alice left, and done after 0.2 s
+    assert not watching.done()
+    await within(watching)
+    await session.close()
+
+
+async def test_a_withdrawal_ends_the_handler_the_filter_admitted_after_the_filter_changed():
+    # Arrange: an allowlist admits alice, then drops her from the list
+    relay = FakeRelay()
+    session = await open_session(relay)
+    allowed = {"alice"}
+    cancelled: list[list[str]] = []
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.append(broadcast.namespace)
+            raise
+
+    watching = asyncio.create_task(
+        watch_broadcasts(session, ROOM, handler, filter=lambda namespace: namespace[-1] in allowed, empty_timeout=0.05)
+    )
+    native = relay.sessions[0]
+    native.publish([*ROOM, "alice"])
+    await asyncio.sleep(0.1)
+    allowed.clear()
+
+    # Act
+    native.publish([*ROOM, "alice"], active=False)
+
+    # Assert: alice's handler ends and the watch returns once the room stayed empty
+    await within(watching)
+    assert cancelled == [[*ROOM, "alice"]]
+    await session.close()
+
+
+async def test_watch_broadcasts_raises_connection_lost_once_the_connection_was_lost():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+
+    async def handler(broadcast: RemoteBroadcast) -> None:
+        await asyncio.Event().wait()
+
+    watching = asyncio.create_task(watch_broadcasts(session, ROOM, handler, empty_timeout=60))
+    await asyncio.sleep(0.01)
+
+    # Act
+    relay.sessions[0].drop()
+
+    # Assert
+    with pytest.raises(moq_wasm.ConnectionLost):
+        await within(watching)
 
 
 @pytest.mark.parametrize(
@@ -1031,6 +1227,7 @@ async def test_a_watcher_reads_the_catalog_of_a_broadcast_through_a_relay(relay_
         watching = asyncio.create_task(watch_broadcasts(watcher, room, read_catalog))
         received = await within(first_catalog)
         watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
 
     # Assert
     assert [track.name for track in received.tracks] == ["audio"]
@@ -1059,6 +1256,90 @@ async def test_leaving_a_broadcast_ends_its_subscribers_through_a_relay(relay_ur
     assert [track_object async for track_object in subscription] == []
     for session in (subscriber, publisher):
         await session.close()
+
+
+class Pipeline:
+    """What a handler of `watch_broadcasts` holds while it runs, as a participant's receiver."""
+
+
+class PipelineHandler:
+    """A `watch_broadcasts` handler that holds a `Pipeline` of its own until it is cancelled and
+    tore down, which takes a while, and the weak references to every pipeline it built."""
+
+    TEARDOWN_SECONDS = 0.2
+
+    def __init__(self):
+        self.pipelines: list[weakref.ref] = []
+        self.ended = 0
+
+    async def __call__(self, broadcast: RemoteBroadcast) -> None:
+        pipeline = Pipeline()
+        self.pipelines.append(weakref.ref(pipeline))
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(self.TEARDOWN_SECONDS)
+            self.ended += 1
+
+    def alive(self) -> int:
+        gc.collect()
+        return sum(pipeline() is not None for pipeline in self.pipelines)
+
+
+async def publish_again_and_again(publisher: moq_wasm.Session, namespace: list[str], handler: PipelineHandler, times: int):
+    """Publishes `namespace` `times` times, each publication withdrawn and published anew at once,
+    while the watch's handler of the one before tears down; returns the last broadcast, entered,
+    once its handler started."""
+    broadcast = None
+    for publication in range(times):
+        if broadcast is not None:
+            await broadcast.__aexit__(None, None, None)
+        broadcast = create_broadcast(publisher, namespace)
+        await broadcast.__aenter__()
+        await broadcast.published()
+        await within(until(lambda: len(handler.pipelines) == publication + 1))
+    return broadcast
+
+
+async def test_a_watch_keeps_no_handler_of_an_earlier_publication_through_a_relay(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher = await connect(relay_url)
+    watcher = await connect(relay_url)
+    handler = PipelineHandler()
+    watching = asyncio.create_task(watch_broadcasts(watcher, namespace[:-1], handler))
+
+    # Act: alice withdraws her broadcast and publishes it again at once, three times
+    alice = await publish_again_and_again(publisher, namespace, handler, 4)
+
+    # Assert: only the running handler's pipeline is kept
+    assert handler.alive() == 1
+    await alice.__aexit__(None, None, None)
+    watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+    await close_all(watcher, publisher)
+
+
+async def test_a_watch_of_a_room_left_empty_keeps_no_handler_through_a_relay(relay_url):
+    # Arrange: alice withdraws her broadcast and publishes it again at once, twice
+    namespace = [*room(), "alice"]
+    publisher = await connect(relay_url)
+    watcher = await connect(relay_url)
+    handler = PipelineHandler()
+    watching = asyncio.create_task(watch_broadcasts(watcher, namespace[:-1], handler))
+    alice = await publish_again_and_again(publisher, namespace, handler, 3)
+
+    # Act: she withdraws it, and the room stays empty
+    await alice.__aexit__(None, None, None)
+    await within(until(lambda: handler.ended == 3))
+    # The handler's last step ended it; the watch forgets it once its done callbacks ran.
+    await asyncio.sleep(0.05)
+
+    # Assert
+    assert handler.alive() == 0
+    watching.cancel()
+    await asyncio.gather(watching, return_exceptions=True)
+    await close_all(watcher, publisher)
 
 
 async def test_next_subscriber_is_false_once_the_session_ends_before_the_track_is_registered():

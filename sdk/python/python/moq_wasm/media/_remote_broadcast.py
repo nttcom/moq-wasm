@@ -2,9 +2,11 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from functools import partial
 
 from moq_wasm._native import Object
-from moq_wasm._session import Session
+from moq_wasm._once import wait_through_cancellation
+from moq_wasm._session import NamespaceWatch, Session
 from moq_wasm.media._catalog import CATALOG_TRACK_NAME, Catalog
 from moq_wasm.media._event_timeline import EventRecord
 
@@ -120,14 +122,33 @@ async def watch_broadcasts(
     empty_timeout: float | None = None,
 ) -> None:
     """Runs `handler` as a task for each namespace published under `prefix` that `filter` accepts,
-    those published before the call included, except the ones this session publishes. The task is
-    cancelled when the namespace is withdrawn, and started anew when it is published again. A
-    handler's exception is logged. Runs until cancelled or the session closes; with
-    `empty_timeout`, returns once no broadcast has been published for that many seconds, from the
-    start or since the last one was withdrawn. Raises RuntimeError when the relay refuses the
-    SUBSCRIBE_NAMESPACE."""
+    those published before the call included, except the ones this session publishes, from the
+    start of their PUBLISH_NAMESPACE until they were withdrawn. `filter` is asked when a namespace
+    is published, so a handler it admitted ends when its namespace is withdrawn even if `filter`
+    would refuse the namespace by then. The task is cancelled when the namespace is withdrawn, and
+    started anew when it is published again, once the cancelled one finished. Before returning, it
+    cancels the handlers still running and waits until every handler finished. A handler's
+    exception is logged. Runs until cancelled or the session ends, raising what ended it
+    (`moq_wasm.SessionEnded`); with `empty_timeout`, returns once no broadcast has been published
+    for that many seconds, from the start or since the last one was withdrawn. Raises RuntimeError
+    when the relay refuses the SUBSCRIBE_NAMESPACE."""
     watch = await session.watch_namespaces(prefix)
+    await follow_watch(session, watch, handler, filter=filter, empty_timeout=empty_timeout)
+
+
+async def follow_watch(
+    session: Session,
+    watch: NamespaceWatch,
+    handler: Callable[[RemoteBroadcast], Awaitable[None]],
+    *,
+    filter: Callable[[list[str]], bool] | None = None,
+    empty_timeout: float | None = None,
+) -> None:
+    """`watch_broadcasts` on a watch the caller already has, so it knows the relay accepted the
+    SUBSCRIBE_NAMESPACE before the broadcasts are followed. Closes the watch at the end."""
     running: dict[tuple[str, ...], asyncio.Task] = {}
+    # The handlers of withdrawn namespaces that are still finishing.
+    leaving: dict[tuple[str, ...], asyncio.Task] = {}
     loop = asyncio.get_running_loop()
     empty_until = None if empty_timeout is None else loop.time() + empty_timeout
     try:
@@ -135,24 +156,68 @@ async def watch_broadcasts(
             try:
                 async with asyncio.timeout_at(None if running else empty_until):
                     event = await anext(watch)
-            except (TimeoutError, StopAsyncIteration):
+            except TimeoutError:
                 return
-            if session._publishes(event.namespace) or (filter is not None and not filter(event.namespace)):
-                continue
+            except StopAsyncIteration:
+                session._raise_if_ended()
+                return
             key = tuple(event.namespace)
-            if key in running:
-                running.pop(key).cancel()
             if event.active:
-                running[key] = asyncio.create_task(_run(handler, RemoteBroadcast(session, event.namespace)))
-            elif not running and empty_timeout is not None:
-                empty_until = loop.time() + empty_timeout
+                if session._publishes(event.namespace) or (filter is not None and not filter(event.namespace)):
+                    continue
+                previous = running.pop(key, None)
+                if previous is not None:
+                    previous.cancel()
+                else:
+                    # Already cancelled; cancelling it again would cut its teardown short.
+                    previous = leaving.pop(key, None)
+                broadcast = RemoteBroadcast(session, event.namespace)
+                running[key] = asyncio.create_task(_run(handler, broadcast, previous))
+                # A cancelled handler's traceback keeps its locals, as its pipeline: kept here
+                # until the next event, they would outlive it.
+                previous = None
+            else:
+                # A withdrawal retires the handler its publication started, whether or not `filter`
+                # would still accept the namespace.
+                previous = running.pop(key, None)
+                if previous is None:
+                    continue
+                previous.cancel()
+                if not previous.done():
+                    leaving[key] = previous
+                    previous.add_done_callback(partial(_forget, leaving, key))
+                previous = None
+                if not running and empty_timeout is not None:
+                    empty_until = loop.time() + empty_timeout
     finally:
         for task in running.values():
             task.cancel()
-        await watch.close()
+        try:
+            # A handler waiting for the one before it finishes after it, so that one is waited for
+            # too.
+            await wait_through_cancellation([*running.values(), *leaving.values()])
+        finally:
+            await watch.close()
 
 
-async def _run(handler: Callable[[RemoteBroadcast], Awaitable[None]], broadcast: RemoteBroadcast) -> None:
+def _forget(tasks: dict[tuple[str, ...], asyncio.Task], key: tuple[str, ...], task: asyncio.Task) -> None:
+    if tasks.get(key) is task:
+        del tasks[key]
+
+
+async def _run(
+    handler: Callable[[RemoteBroadcast], Awaitable[None]],
+    broadcast: RemoteBroadcast,
+    previous: asyncio.Task | None,
+) -> None:
+    """Runs `handler` once the handler of the namespace's previous publication finished, so that
+    one's teardown comes before this one starts. Cancelled before that, it ends without running
+    `handler`, but only once the previous handler finished, whose teardown its cancellation does not
+    interrupt."""
+    if previous is not None:
+        await wait_through_cancellation([previous])
+        # Its traceback keeps its handler's locals, and the handler it waited for in turn.
+        previous = None
     try:
         await handler(broadcast)
     except Exception:

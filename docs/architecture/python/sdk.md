@@ -202,8 +202,8 @@ async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh
   The three subclass `SessionEnded`, which is no
   `RuntimeError`: a request made after the session ended raises what ended
   it, so the loops that retry a refused request (`RemoteBroadcast.follow`)
-  end with it. A read of a `Subscription`, of its groups or of a `Fetch`
-  raises it too, a read already waiting included,
+  and `watch_broadcasts` end with it. A read of a `Subscription`, of its
+  groups or of a `Fetch` raises it too, a read already waiting included,
   whose native read it cancels: the native iterator would wait until the
   native session gave its connection up, so a reader outside `run`, such
   as `follow()` or `catalogs()`, would outlive
@@ -502,11 +502,17 @@ async with create_broadcast(session, [root, room, "bots", "transcriber"]) as bot
 - **`watch_broadcasts(session, prefix, handler, *, filter=None,
   empty_timeout=None)`** runs `handler` as a task for each broadcast
   published under `prefix` that `filter` accepts, cancels it when the
-  broadcast is withdrawn, and runs it again when the broadcast is published
-  anew, as `watchBroadcasts` does in the browser. A handler's exception is
-  logged. With `empty_timeout`, it returns once no broadcast has been
+  broadcast is withdrawn (`filter` is asked only when a broadcast is
+  published, so a handler it admitted ends with its broadcast even if
+  `filter` refuses the namespace by then), and runs it again when the broadcast is published
+  anew, as `watchBroadcasts` does in the browser, once the cancelled handler
+  finished; cancelling the new handler before that does not interrupt the
+  old one's teardown. A handler's exception is logged. Before it returns or
+  ends cancelled, it cancels the handlers still running and waits until
+  every handler finished. With `empty_timeout`, it returns once no broadcast has been
   published for that long. Like `watchBroadcasts`, it skips the broadcasts
-  this session publishes.
+  this session publishes, from the start of their PUBLISH_NAMESPACE, which
+  the relay may forward before answering it, until they were withdrawn.
 - **`RemoteBroadcast`** is one published namespace:
   - `catalogs()` yields a `Catalog` each time the publisher changes it,
     starting from the one the relay holds (a joining FETCH), and skips a
