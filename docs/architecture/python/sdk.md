@@ -893,7 +893,8 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   pipeline. The input that receives video answers image requests and keeps
   them, and an input without video passes them upstream. pipecat's output
   passes every transport message on, so the other output writes the ones for
-  its tracks; an urgent one it does not write is passed on as well. The
+  its tracks; an urgent one it does not write is passed on as well, the
+  way it came, so one sent upstream reaches the outputs before it. The
   output publishes pipecat's default destination only: a frame for
   another `transport_destination`, audio, a picture or a message, urgent
   or not, goes on as it came, and the output neither resamples nor writes
@@ -911,7 +912,29 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   object on one of `data_out_tracks`, and one carrying a
   `MoqWasmEventRecord` appends a record to one of `event_timelines_out`;
   both are tracks of the transport's broadcast, each with the seconds it
-  keeps for FETCH. Other messages, such as RTVI's, are logged and dropped.
+  keeps for FETCH. pipecat calls `send_message` for a message without a
+  presentation timestamp (`pts`) once the audio queued before it was
+  written, and passes one with it on from its media sender's clock once it
+  is due, without calling it; it drops either when a `StopFrame` replaces
+  the sender or an interruption comes first. Writing each where pipecat
+  reaches it would reorder them: a timed object would be written before
+  the untimed one that opens its group, or a timed `final` before an
+  untimed `draft`. So the output writes every message, timed or not, as
+  the frame reaches it, in frame order, and its media sender does not call
+  `send_message` for it again: the writes of data tracks and event
+  timelines are paced neither with the audio nor with their `pts`, which
+  only times when pipecat passes the frame on, and a flush probe or a
+  `StopFrame` after one finds it written, as does an interruption that
+  drops the frame afterwards.
+  One for another `transport_destination`, which the output has no sender
+  for, is passed on unwritten. `send_message`, pipecat's public call,
+  writes the message of the frame it is given at once, as when the frame
+  reaches the output, and nothing for a frame for another
+  `transport_destination`. A message the transport does not write, such as
+  RTVI's, is not dropped: it goes on along pipecat's path, a message frame
+  behind the audio queued or once its `pts` is due, and an urgent one at
+  once in the direction it came, to the next processor, such as another
+  transport's output.
 - **Room lifetime.** A transport follows its room even when it receives
   nothing, as a bot that only speaks, so `on_client_connected`,
   `on_client_disconnected` and `on_room_empty` fire; it subscribes to no
@@ -1008,7 +1031,8 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   pipecat's media sender writes the audio and the transport messages in one
   task and the pictures in another, and a write that raises would end that
   task for good, silencing the bot. So a write that fails, as a picture in a
-  color format the encoder does not take, is pushed upstream as a
+  color format the encoder does not take, a `MoqWasmEventRecord` JSON cannot
+  carry or a track write the relay refuses, is pushed upstream as a
   non-fatal `ErrorFrame` and the frames after it are written, as is a
   resize the output's sender makes that fails. pipecat's
   video sender cycles a `SpriteFrame`'s pictures and resizes a picture to
