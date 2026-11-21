@@ -309,7 +309,9 @@ impl Session {
     }
 
     /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
-    /// `prefix`.
+    /// `prefix`. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one whose
+    /// prefix overlaps another `watch_namespaces`, `watch_tracks` or
+    /// `follow_track` of this session is (NAMESPACE_PREFIX_OVERLAP).
     pub async fn watch_namespaces(
         &self,
         prefix: &[impl AsRef<str>],
@@ -333,9 +335,9 @@ impl Session {
     /// SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespaces under
     /// `prefix` and their tracks: the watch reports each namespace and hands
     /// over each PUBLISH under it, which nothing else on the session then
-    /// sees. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one
-    /// overlapping a prefix this session already watches is
-    /// (NAMESPACE_PREFIX_OVERLAP).
+    /// sees. Fails when the SUBSCRIBE_NAMESPACE is rejected, as one whose
+    /// prefix overlaps another `watch_namespaces`, `watch_tracks` or
+    /// `follow_track` of this session is (NAMESPACE_PREFIX_OVERLAP).
     pub async fn watch_tracks(
         &self,
         prefix: &[impl AsRef<str>],
@@ -361,7 +363,10 @@ impl Session {
     /// Follows `track` in `namespace` as peers publish it one after another,
     /// through a SUBSCRIBE_NAMESPACE (draft-14 §9.28) for the namespace and
     /// its tracks; see `TrackFollower`. Fails when the SUBSCRIBE_NAMESPACE
-    /// is rejected.
+    /// is rejected, as one whose namespace overlaps another
+    /// `watch_namespaces`, `watch_tracks` or `follow_track` of this session
+    /// is (NAMESPACE_PREFIX_OVERLAP): one session follows one track per
+    /// namespace.
     pub async fn follow_track(
         &self,
         namespace: &[impl AsRef<str>],
