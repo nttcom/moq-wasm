@@ -225,13 +225,21 @@ SDK's `init({ logLevel, onLog, onSpan })`:
   session) goes without a token.
 - **`telemetry`** is the browser's `TelemetryOptions` minus the player
   stats, and turns span recording on as `on_span` does: `ClientTelemetry`
-  keeps the newest 100 logs and 100 spans per token and posts them every
+  keeps the newest 100 logs and 100 spans per token, for 64 tokens at most
+  (a record of another token drops the records of the token queued first,
+  and the next flush logs how many it dropped), and posts them every
   10 s to the observability server's `/api/client-telemetry` with
   `service: "python"`, a `clientId` per process and the `page`. At exit
   the sink thread drains the queue (at most 1.5 s), then one last report
   goes out with a 2 s request timeout (at most 3 s). A token the server
-  answered 401 to is left out of later reports. It posts with `urllib` on
-  a thread of its own, so the module gains no HTTP client.
+  answered 401 to is left out of later reports; the newest 64 such tokens
+  are remembered, each by its SHA-256 digest, so the process keeps no
+  credential of a session that ended. Each field, after `redact`, is
+  queued as a JSON round trip, so a list changed later does not change
+  what is sent. A field JSON cannot hold (a NaN or an infinity anywhere, a
+  key such as a tuple) is sent as its `str`, since Python's `json` writes
+  a bare `NaN` and the server rejects the whole report. It posts with
+  `urllib` on a thread of its own, so the module gains no HTTP client.
 - **`report_log`** hands the app's own log to `on_log` and `telemetry`, not
   to `logging`, as the browser's `reportLog` keeps it off the console.
 - The subscriber is process-wide, so only the first `init` takes effect, as

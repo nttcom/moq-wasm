@@ -8,7 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 
 import moq_wasm
-from moq_wasm import _telemetry
+from moq_wasm import _log, _telemetry
+from tests.failing_logging import failing_handler
 from tests.relay_sessions import TRACK, connect, room, within
 
 WAIT_SECONDS = 5
@@ -176,3 +177,40 @@ async def test_the_records_of_a_session_with_a_token_go_to_telemetry_under_it(re
     assert (report["token"], report["service"], report["page"]) == (token, "python", "pytest")
     assert LOGS.wait_for(lambda record: record["fields"].get("track_name") == track_name)["token"] == token
     await session.close()
+
+
+def log_record(target: str, message: str) -> tuple[str, str, None]:
+    """A native log record as `_native.wait_log_records` returns it."""
+    record = {"timeMs": 0, "level": "warn", "target": target, "message": message, "fields": {}}
+    return ("log", json.dumps(record), None)
+
+
+def test_a_failing_logging_handler_does_not_stop_the_records_that_follow():
+    # Arrange: a handler that raises for every native record
+    collected = Collected()
+    sink = _log._Sink("info", [collected], [])
+
+    # Act
+    with failing_handler("moq_wasm.native.failing"):
+        sink.deliver([log_record("failing", "first"), log_record("failing", "second")])
+
+    # Assert: each record still reaches the callbacks
+    assert collected.wait_for(lambda record: record["message"] == "second")
+    assert collected.wait_for(lambda record: record["message"] == "first")
+
+
+def test_a_failing_callback_whose_diagnosis_fails_too_does_not_stop_the_records_that_follow():
+    # Arrange: the callback raises, and so does the handler that would report it
+    def failing_callback(record: dict, token: str | None) -> None:
+        raise RuntimeError("callback failed")
+
+    collected = Collected()
+    sink = _log._Sink("info", [failing_callback, collected], [])
+
+    # Act
+    with failing_handler("moq_wasm"):
+        sink.deliver([log_record("callback", "first"), log_record("callback", "second")])
+
+    # Assert: each record still reaches the callback after the failing one
+    assert collected.wait_for(lambda record: record["message"] == "first")
+    assert collected.wait_for(lambda record: record["message"] == "second")
