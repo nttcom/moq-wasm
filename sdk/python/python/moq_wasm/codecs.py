@@ -164,6 +164,11 @@ class _PcmResampler:
         self.reset()
         return pcm
 
+    @property
+    def held_samples(self) -> int:
+        """The output samples of the stream so far that the resampler holds back."""
+        return max(round(self._samples_in) - self._samples_out, 0)
+
     def reset(self) -> None:
         """Drops what the resampler holds; the next call starts a new stream."""
         self._resampler = None
@@ -255,6 +260,12 @@ class OpusEncoder:
         packets = self._encode_fifo()
         packets.extend(bytes(packet) for packet in self._encoder.encode(None))
         return packets
+
+    @property
+    def held_micros(self) -> float:
+        """Microseconds of the PCM taken that no packet returned yet carries: the samples short of
+        a packet and those the resampler holds back."""
+        return (self._fifo.samples + self._resampler.held_samples) * 1_000_000 / OPUS_SAMPLE_RATE
 
     def _write(self, pcm: bytes) -> None:
         """Writes 48 kHz PCM of the encoder's channels into the FIFO."""

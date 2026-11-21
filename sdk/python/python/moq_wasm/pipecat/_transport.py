@@ -2,11 +2,15 @@ import asyncio
 import copy
 import logging
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from typing import TypeVar
 
+from PIL import Image
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.frames.frames import (
+    AssistantImageRawFrame,
     CancelFrame,
+    DataFrame,
     EndFrame,
     Frame,
     InputTransportMessageFrame,
@@ -16,6 +20,7 @@ from pipecat.frames.frames import (
     OutputTransportMessageFrame,
     OutputTransportMessageUrgentFrame,
     OutputTransportReadyFrame,
+    PipelineFlushFrame,
     SpriteFrame,
     StartFrame,
     StopFrame,
@@ -32,7 +37,7 @@ from pipecat.utils.deprecation import warn_deprecated
 
 from moq_wasm._once import Once
 from moq_wasm._session import Session
-from moq_wasm.codecs import _PcmResampler
+from moq_wasm.codecs import _checked_picture, _PcmResampler
 from moq_wasm.media import Catalog, CatalogTrack, RemoteBroadcast
 from moq_wasm.pipecat._participant import (
     CAMERA_SOURCE,
@@ -45,6 +50,16 @@ from moq_wasm.pipecat._participant import (
 from moq_wasm.pipecat._room import Room, RoomOptions
 
 DEFAULT_VIDEO_OUT_CODEC = "H264"
+# Seconds an output ending gracefully waits for the still it was given last to be written.
+STILL_WRITE_TIMEOUT_SECONDS = 1.0
+# Seconds of pictures at `video_out_framerate` a live output queues at most: the oldest are dropped
+# past them, as when pictures come faster than the framerate. An output holds as many synchronized
+# pictures not yet written at most, and drops those that come past them.
+LIVE_VIDEO_QUEUE_SECONDS = 2.0
+# Seconds an output ending gracefully waits for its live sender to write the pictures queued, and
+# for the synchronized pictures released to be written: two seconds of them at its framerate, and a
+# second to spare.
+LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS = LIVE_VIDEO_QUEUE_SECONDS + 1.0
 
 logger = logging.getLogger("moq_wasm")
 
@@ -562,9 +577,15 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
             await super().push_frame(frame, direction)
             return
         audio_in = self._audio_in if self._params.audio_out_enabled else None
-        # Before pipecat drains its queue: the chunk being written stops at its next packet.
+        # Before pipecat's processor and media sender handle the interruption, which waits for an
+        # uninterruptible picture being written: the chunk being written stops at its next packet,
+        # and the interruptible chunks queued after it are dropped at once, so none is written
+        # meanwhile.
         if isinstance(frame, InterruptionFrame):
             self._room.interrupt_audio()
+            sender = self._media_senders.get(None)
+            if isinstance(sender, _MediaSender):
+                sender.drop_interruptible_audio()
             if audio_in is not None:
                 audio_in.interrupt()
         # pipecat's media sender cuts the audio of consecutive frames into chunks, each labelled
@@ -581,13 +602,54 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
         # The end of the speech, which makes pipecat write its last chunk. pipecat queues that
         # chunk, short of `audio_out_10ms_chunks`, only at a TTSStoppedFrame, and the output's
         # `stop` does at an EndFrame; the senders a StopFrame leaves are replaced at the next
-        # StartFrame, which would drop it.
+        # StartFrame, which would drop it, and the pipeline flush probe of
+        # `PipelineWorker.flush_pipeline` tells that all the frames before it were handled, which
+        # that chunk would belie.
         elif (
             direction == FrameDirection.DOWNSTREAM
             and audio_in is not None
-            and isinstance(frame, (TTSStoppedFrame, EndFrame, StopFrame))
+            and isinstance(frame, (TTSStoppedFrame, EndFrame, StopFrame, PipelineFlushFrame))
         ):
-            await self._queue_end_of_speech(audio_in, direction, last_chunk=isinstance(frame, StopFrame))
+            await self._queue_end_of_speech(
+                audio_in, direction, last_chunk=isinstance(frame, (StopFrame, PipelineFlushFrame))
+            )
+        # pipecat's video sender cycles a sprite's pictures and resizes each picture before
+        # `write_video_frame`, and an empty sprite or a picture it cannot resize would end its task
+        # for good: each picture is queued as the encoder reads it, and a frame the encoder would
+        # refuse or pipecat could not show is dropped here.
+        elif (
+            direction == FrameDirection.DOWNSTREAM
+            and self._params.video_out_enabled
+            and isinstance(frame, (OutputImageRawFrame, SpriteFrame))
+        ):
+            try:
+                frame = self._normalized_pictures(frame)
+            except ValueError as error:
+                await FrameProcessor.process_frame(self, frame, direction)
+                await self.push_error(f"cannot write a picture: {error}", error)
+                return
+            # pipecat shows a sprite, and a picture synchronized with the audio once the audio
+            # queued before it was written, by making them the pictures its video sender cycles,
+            # which a live sender does not read: a sprite's pictures go to the live queue one after
+            # the other, each as interruptible as the sprite, an assistant image among them too,
+            # which stays out of the assistant's context, as pipecat passes on no picture of a
+            # sprite. A synchronized picture goes behind the chunks queued as a `_SyncedPicture`
+            # noting the speech before it that the resampler and pipecat's last chunk hold, which is
+            # queued only after it; once pipecat's sender reached it, `write_transport_frame` has it
+            # written at the timestamp where that speech ends.
+            sender = self._media_senders.get(frame.transport_destination)
+            if isinstance(sender, _MediaSender) and isinstance(frame, OutputImageRawFrame) and frame.sync_with_audio:
+                await FrameProcessor.process_frame(self, frame, direction)
+                pending = audio_in.held_micros() + sender.held_audio_micros() if audio_in is not None else 0.0
+                await sender.handle_synced_picture(_SyncedPicture.of(frame, pending))
+                return
+            if self._params.video_out_is_live and isinstance(sender, _MediaSender) and isinstance(frame, SpriteFrame):
+                await FrameProcessor.process_frame(self, frame, direction)
+                pictures = [
+                    _copied(picture, sync_with_audio=False, interruptible=frame.interruptible) for picture in frame.images
+                ]
+                await sender.queue_live_pictures(pictures)
+                return
         await super().process_frame(frame, direction)
 
     async def _queue_end_of_speech(self, audio_in: "_AudioNormalizer", direction: FrameDirection, *, last_chunk: bool):
@@ -625,12 +687,56 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
             return
         await super()._handle_frame(frame)
 
+    def _normalized_pictures(self, frame: OutputImageRawFrame | SpriteFrame) -> OutputImageRawFrame | SpriteFrame:
+        """A copy of `frame` whose pictures carry their image as bytes, their color format, RGB for
+        one without, and their size as two integers. Raises ValueError for a sprite without
+        pictures, and for a picture the encoder would refuse or pipecat's video sender could not
+        resize to the output's size."""
+        if isinstance(frame, OutputImageRawFrame):
+            return self._normalized_picture(frame)
+        if not frame.images:
+            raise ValueError("a sprite without pictures")
+        return _copied(frame, images=[self._normalized_picture(picture) for picture in frame.images])
+
+    def _normalized_picture(self, picture: OutputImageRawFrame) -> OutputImageRawFrame:
+        color_format = picture.format or "RGB"
+        image, size = _checked_picture(picture.image, picture.size, color_format)
+        output_size = (self._params.video_out_width, self._params.video_out_height)
+        # The media sender resizes with Pillow, as pipecat's does, which reads no BGR.
+        if color_format in ("BGR", "BGRA") and size != output_size:
+            raise ValueError(f"pipecat cannot resize a {color_format} picture to {output_size[0]}x{output_size[1]}")
+        return _copied(picture, image=image, format=color_format, size=size)
+
+    async def write_transport_frame(self, frame: Frame):
+        # pipecat's audio task reached a synchronized picture: the chunks queued before it were
+        # written, so the speech before it ends after the packets written, what the Opus encoder
+        # holds and what the output held short of a chunk as the picture came. It is written from
+        # now, at that timestamp, so it neither waits for speech after it nor stalls the pictures
+        # after it, and off the audio task, whose speech its encode would hold up. The audio task
+        # waits for an assistant image, so it is passed on before the frames after it.
+        sender = self._media_senders.get(frame.transport_destination)
+        if isinstance(frame, _SyncedPicture) and isinstance(sender, _MediaSender):
+            writing = sender.write_synced_picture(frame, self._room.speech_end_micros(frame.pending_micros))
+            if isinstance(frame.picture, AssistantImageRawFrame):
+                await asyncio.wait([writing])
+
     async def push_frame(self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM):
-        # pipecat's media sender pushes a TTSStoppedFrame or a StopFrame on once it wrote the speech
-        # queued ahead of it: the utterance's last packet is written then, before an interruption
-        # could drop it.
-        if isinstance(frame, (TTSStoppedFrame, StopFrame)) and direction == FrameDirection.DOWNSTREAM:
+        # The audio task passes a picture it reached on, as pipecat does: the draw or the write of
+        # a picture queued behind the audio passes the picture on instead, once written.
+        if isinstance(frame, (_SyncedPicture, _AssistantImage)):
+            return
+        sender = self._media_senders.get(frame.transport_destination)
+        # pipecat's media sender pushes a TTSStoppedFrame, a StopFrame or a pipeline flush probe on
+        # once it wrote the speech queued ahead of it: the utterance's last packet is written then,
+        # before an interruption could drop it. The senders a StopFrame leaves are replaced at the
+        # next StartFrame, which would drop the pictures given to them and not yet written, and a
+        # flush probe tells that the frames before it were handled: the pictures given before it,
+        # as it found them on reaching the output, are written first, as at an EndFrame.
+        downstream = direction == FrameDirection.DOWNSTREAM
+        if isinstance(frame, (TTSStoppedFrame, StopFrame, PipelineFlushFrame)) and downstream:
             await self._finish_speech()
+        if isinstance(frame, (StopFrame, PipelineFlushFrame)) and downstream and isinstance(sender, _MediaSender):
+            await sender.write_given_pictures(frame)
         await super().push_frame(frame, direction)
 
     # pipecat's media sender writes the audio and the messages in one task and the pictures in
@@ -649,8 +755,13 @@ class MoqWasmOutputTransport(_OneRun, BaseOutputTransport):
             return False
 
     async def write_video_frame(self, frame: OutputImageRawFrame) -> bool:
+        return await self._write_picture(frame, None)
+
+    async def _write_picture(self, frame: OutputImageRawFrame, timestamp_micros: int | None) -> bool:
         try:
-            return await self._room.write_picture(frame.image, frame.size, frame.format or "RGB")
+            return await self._room.write_picture(
+                frame.image, frame.size, frame.format or "RGB", timestamp_micros=timestamp_micros
+            )
         except Exception as error:
             await self._report_write_failure(f"cannot write a picture: {error}", error)
             return False
@@ -676,6 +787,30 @@ class _MediaSender(BaseOutputTransport.MediaSender):
     def __init__(self, transport: "MoqWasmOutputTransport", **kwargs):
         super().__init__(transport, **kwargs)
         self._output = transport
+        # The pictures a sender that is not live was given last to show, a picture or a sprite's;
+        # None before it was given any.
+        self._still: list[OutputImageRawFrame] | None = None
+        # Whether the picture the output wrote last is one of the still's, so that a flush or the
+        # end finds the still shown, not an assistant image drawn over it.
+        self._still_written = False
+        # How many pictures, sprites, assistant images and synchronized pictures the sender was
+        # given, which numbers each in the order it was given, and the number of the still shown.
+        self._given_stills = 0
+        self._shown_still = 0
+        # The synchronized pictures given and not yet written, oldest first: those pipecat's audio
+        # task has not reached, and those it released, being written each after the one before it.
+        self._synced: list[_SyncedPicture] = []
+        self._synced_bound = _video_queue_bound(self._params)
+        # Whether a synchronized picture was dropped since all those given were last written.
+        self._synced_dropping = False
+        # For each StopFrame or flush probe queued behind the audio, by id, the events of the live
+        # pictures given before it, as `_given_live_pictures` gives them, and the number of
+        # pictures given before it, past which a still is not the probe's to draw.
+        self._live_before: dict[int, list[asyncio.Event]] = {}
+        self._given_before: dict[int, int] = {}
+        # Resolved once the interruption being handled created the video task again; None outside
+        # one.
+        self._interrupting: asyncio.Future[None] | None = None
 
     def _clear_audio_buffer(self):
         # pipecat clears the audio short of a chunk as a sender starts, holding none, and as the bot
@@ -684,10 +819,446 @@ class _MediaSender(BaseOutputTransport.MediaSender):
         # An interruption drops the interruptible part of it itself (`handle_interruptions`).
         pass
 
+    def _create_video_task(self):
+        created = self._video_task is None
+        # pipecat gives the task it creates again at an interruption a new queue: the live queue is
+        # kept instead, so a picture queued while the interruption replaced the task is not lost.
+        queue = getattr(self, "_video_queue", None)
+        super()._create_video_task()
+        # The live video queue tells which picture is being written; the task reads it only once it
+        # runs, after this.
+        if created and self._video_task is not None and self._params.video_out_is_live:
+            if isinstance(queue, _LiveVideoQueue):
+                queue.abandon_writing()
+                self._video_queue = queue
+            else:
+                self._video_queue = _LiveVideoQueue(_video_queue_bound(self._params))
+
+    async def handle_image_frame(self, frame: OutputImageRawFrame | SpriteFrame):
+        # pipecat shows an assistant image here and queues it behind the audio as well
+        # (`handle_sync_frame`), where its audio task passes it on to the assistant's context: the
+        # image is drawn there only, so it is shown if and only if it is passed on, once, and an
+        # interruption drops it from both.
+        if isinstance(frame, AssistantImageRawFrame):
+            return
+        self._shown_still = self._next_still()
+        await super().handle_image_frame(frame)
+        await self._report_dropping()
+
+    async def queue_live_pictures(self, pictures: list[OutputImageRawFrame]) -> None:
+        """Queues `pictures` on a live sender's queue one after the other, as pipecat queues a live
+        picture, an assistant image as any other picture."""
+        for picture in pictures:
+            await self._video_queue.put(picture)
+        await self._report_dropping()
+
+    async def _report_dropping(self) -> None:
+        """Reports with a non-fatal `ErrorFrame` that the live queue began dropping pictures."""
+        queue = getattr(self, "_video_queue", None)
+        if isinstance(queue, _LiveVideoQueue) and queue.began_dropping():
+            error = RuntimeError(f"more than {queue.bound} pictures queued")
+            await self._transport.push_error(
+                f"dropping the oldest pictures: they come faster than {self._params.video_out_framerate} a second",
+                error,
+            )
+
+    def drop_interruptible_audio(self) -> None:
+        """Drops the interruptible audio queued, as pipecat's `handle_interruptions` does, and the
+        interruptible synchronized pictures queued with it; those being written are written."""
+        self._audio_queue.reset()
+        self._synced = [synced for synced in self._synced if synced.writing is not None or not synced.interruptible]
+
+    async def handle_synced_picture(self, synced: "_SyncedPicture") -> None:
+        """Queues `synced` behind the audio queued, to be written once pipecat's audio task reached
+        it. Past `LIVE_VIDEO_QUEUE_SECONDS` of synchronized pictures not yet written, as when their
+        encodes are slower than the framerate or speech far ahead of the clock carries them, it is
+        dropped instead, reported once with a non-fatal `ErrorFrame` until all were written."""
+        if not self._synced:
+            self._synced_dropping = False
+        if len(self._synced) >= self._synced_bound:
+            if not self._synced_dropping:
+                self._synced_dropping = True
+                error = RuntimeError(f"more than {self._synced_bound} synchronized pictures wait to be written")
+                await self._transport.push_error(f"dropping the synchronized pictures past them: {error}", error)
+            return
+        synced.sequence = self._next_still()
+        self._synced.append(synced)
+        await self.handle_sync_frame(synced)
+
+    def write_synced_picture(self, synced: "_SyncedPicture", timestamp_micros: int | None) -> asyncio.Task:
+        """Writes `synced`, which pipecat's audio task reached, at `timestamp_micros`, in a task of
+        its own once the synchronized picture released before it was written; returns that task."""
+        synced.writing = asyncio.create_task(self._write_synced(synced, timestamp_micros, self._released_write()))
+        return synced.writing
+
+    def _released_write(self) -> asyncio.Task | None:
+        """The write of the synchronized picture pipecat's audio task released last, while it
+        lasts."""
+        return next((other.writing for other in reversed(self._synced) if other.writing is not None), None)
+
+    async def _write_synced(
+        self, synced: "_SyncedPicture", timestamp_micros: int | None, previous: asyncio.Task | None
+    ) -> None:
+        # An output that is not live then shows the picture as its still, as pipecat does, and the
+        # picture goes on downstream, as pipecat's audio task passes it on.
+        try:
+            if previous is not None:
+                await asyncio.wait([previous])
+            written = await self._output._write_picture(synced.picture, timestamp_micros)
+        finally:
+            self._synced = [other for other in self._synced if other is not synced]
+        if written:
+            self._still_written = False
+            await self._show_still(synced.picture, synced.sequence)
+            await self._transport.push_frame(synced.picture)
+
+    async def cleanup(self):
+        writes = [synced.writing for synced in self._synced if synced.writing is not None]
+        self._synced.clear()
+        try:
+            for write in writes:
+                write.cancel()
+            await asyncio.gather(*writes, return_exceptions=True)
+        finally:
+            await super().cleanup()
+
+    async def handle_interruptions(self, _: InterruptionFrame):
+        # pipecat cancels the picture being written and creates the video task again, on the same
+        # live queue (`_create_video_task`): the interruptible pictures queued are dropped, and an
+        # uninterruptible one being written is written first.
+        interrupting = self._interrupting = asyncio.get_running_loop().create_future()
+        try:
+            queue = self._video_queue if self._video_task is not None else None
+            if isinstance(queue, _LiveVideoQueue):
+                queue.drop_interruptible()
+                await queue.written(uninterruptible_only=True, task=self._video_task)
+            await super().handle_interruptions(_)
+        finally:
+            interrupting.set_result(None)
+            if self._interrupting is interrupting:
+                self._interrupting = None
+
+    async def _set_video_image(self, image: OutputImageRawFrame):
+        await super()._set_video_image(image)
+        self._still, self._still_written = [image], False
+
+    async def _set_video_images(self, images: list[OutputImageRawFrame]):
+        await super()._set_video_images(images)
+        self._still, self._still_written = images, False
+
+    def _next_still(self) -> int:
+        """The number of the picture given now, in the order of those the sender was given."""
+        self._given_stills += 1
+        return self._given_stills
+
+    async def _show_still(self, image: OutputImageRawFrame, sequence: int):
+        """Makes `image`, the `sequence`th picture given, which the output wrote already, the still
+        a sender that is not live shows from its next frame on; an assistant image only when the
+        still shown was given before it, as pipecat showed it as it was given."""
+        if self._params.video_out_is_live:
+            return
+        if isinstance(image, AssistantImageRawFrame) and sequence < self._shown_still:
+            return
+        self._shown_still = sequence
+        await self._set_video_image(image)
+        self._still_written = True
+
+    async def _draw_image(self, frame: OutputImageRawFrame):
+        await self._draw(frame)
+
+    async def _handle_frame(self, frame: Frame):
+        # pipecat's audio task reached an assistant image, the audio queued before it written.
+        if isinstance(frame, _AssistantImage):
+            await self._draw_assistant_image(frame)
+            return
+        await super()._handle_frame(frame)
+
+    async def _draw_assistant_image(self, queued: "_AssistantImage") -> None:
+        """Writes the image `queued`, after the synchronized picture released before it, outside the
+        live queue, and passes it on once written; a sender that is not live then shows it as its
+        still, unless it shows one given after it already. A sender without video passes it on."""
+        image = queued.picture
+        if self._params.video_out_enabled:
+            previous = self._released_write()
+            if previous is not None:
+                await asyncio.wait([previous])
+            if not await self._draw(image):
+                return
+            await self._show_still(image, queued.sequence)
+        await self._transport.push_frame(image)
+
+    async def _draw(self, frame: OutputImageRawFrame) -> bool:
+        """Writes `frame` as pipecat's `_draw_image` does, resized to the output's size in the
+        sender's executor, and returns whether the output wrote it, which pipecat's does not tell. A
+        resize that fails is pushed upstream as a non-fatal `ErrorFrame`, as a failed write is, so
+        the audio or video task drawing the frame goes on."""
+        size = (self._params.video_out_width, self._params.video_out_height)
+        resized = frame
+        if frame.size != size:
+            try:
+                resized = await self._transport.get_event_loop().run_in_executor(self._executor, _resized, frame, size)
+            except Exception as error:
+                await self._transport.push_error(f"cannot write a picture: {error}", error)
+                return False
+        written = await self._output.write_video_frame(resized)
+        # A still the output failed to write counts as written, so that it is not tried again at
+        # each flush; any other picture written leaves the still to be written again.
+        if self._still is not None and any(frame is picture for picture in self._still):
+            self._still_written = True
+        elif written:
+            self._still_written = False
+        return written
+
+    def held_audio_micros(self) -> float:
+        """Microseconds of audio held short of a chunk, which is queued once the audio after it
+        completes the chunk."""
+        return self._buffered_audio_bytes * 1_000_000 / (2 * self._params.audio_out_channels * self._sample_rate)
+
     async def _audio_task_handler(self):
         await super()._audio_task_handler()
-        # The speech's last packet, which the encoder holds.
+        # The speech's last packet, which the encoder holds, before the pictures are written.
         await self._output._finish_speech()
+        # The audio task returns only at an EndFrame, after which pipecat cancels the video task.
+        await self.write_given_pictures()
+
+    async def handle_sync_frame(self, frame: Frame):
+        # A StopFrame or a flush probe stands for the frames before it: the still it finds is drawn
+        # now, unless it was written last, before a picture given after the probe replaces it, and
+        # the live pictures it finds queued, and the still, are those the output writes before
+        # passing it on.
+        if isinstance(frame, (StopFrame, PipelineFlushFrame)):
+            await self._write_given_still()
+            self._live_before[frame.id] = self._given_live_pictures()
+            self._given_before[frame.id] = self._given_stills
+        # An assistant image goes behind the audio numbered, and leaves the sender once drawn or
+        # dropped.
+        elif isinstance(frame, AssistantImageRawFrame):
+            frame = _AssistantImage.of(frame, self._next_still())
+        await super().handle_sync_frame(frame)
+
+    async def write_given_pictures(self, frame: Frame | None = None) -> None:
+        """Writes the pictures the sender was given before `frame`, a StopFrame or a flush probe,
+        or else, at the end, all it was given, and has not written: the synchronized pictures
+        pipecat's audio task released, within `LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS`, then those of a
+        live sender's queue, within as long, even once an interruption created its video task
+        again, and the still a sender that is not live was given last, which its video task writes
+        only at its next frame, drawn at once, within `STILL_WRITE_TIMEOUT_SECONDS`, unless it is
+        the picture the output wrote last or was given after `frame`: an assistant image the audio
+        task drew over it since `handle_sync_frame` drew the still `frame` found leaves it to be
+        drawn again, and a still given after `frame` is left to the video task. A deadline that
+        expires is reported as a non-fatal `ErrorFrame`."""
+        writes = [synced.writing for synced in self._synced if synced.writing is not None]
+        if writes:
+            _, unwritten = await asyncio.wait(writes, timeout=LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS)
+            if unwritten:
+                await self._report_unwritten(
+                    f"the synchronized pictures were not written in {LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS} s"
+                )
+        given_before = self._given_before.pop(frame.id, None) if frame is not None else None
+        await self._write_given_still(given_before)
+        live = self._live_before.pop(frame.id, None) if frame is not None else None
+        if live is None:
+            live = self._given_live_pictures()
+        if not live:
+            return
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS
+        written = asyncio.ensure_future(asyncio.gather(*(picture.wait() for picture in live)))
+        try:
+            while True:
+                # An interruption ends the video task and creates it again, and the new one writes
+                # the uninterruptible pictures queued: the wait goes on until a video task ends for
+                # good.
+                ending = self._interrupting or self._video_task
+                if ending is None:
+                    return
+                done, _ = await asyncio.wait(
+                    [written, ending], timeout=deadline - loop.time(), return_when=asyncio.FIRST_COMPLETED
+                )
+                if not done:
+                    break
+                if written in done or (ending is self._video_task and self._interrupting is None):
+                    return
+        finally:
+            written.cancel()
+            # A cancelled gather ends with a CancelledError as its exception, which the loop reports
+            # as never retrieved unless it is.
+            written.add_done_callback(lambda gathered: gathered.cancelled() or gathered.exception())
+        await self._report_unwritten(f"the pictures queued were not written in {LIVE_VIDEO_DRAIN_TIMEOUT_SECONDS} s")
+
+    def _given_live_pictures(self) -> list[asyncio.Event]:
+        """The events of the pictures a live sender's queue holds and is writing, set once each was
+        written or dropped."""
+        queue = getattr(self, "_video_queue", None)
+        return queue.unfinished() if isinstance(queue, _LiveVideoQueue) else []
+
+    async def _write_given_still(self, given_before: int | None = None) -> None:
+        """Draws the still a sender that is not live was given last at once, unless it is the
+        picture the output wrote last or one of those given past the first `given_before`, within
+        `STILL_WRITE_TIMEOUT_SECONDS`."""
+        still = self._still
+        if self._video_task is None or still is None or self._still_written:
+            return
+        if given_before is not None and self._shown_still > given_before:
+            return
+        try:
+            await asyncio.wait_for(self._draw_image(still[0]), STILL_WRITE_TIMEOUT_SECONDS)
+        except TimeoutError:
+            await self._report_unwritten(f"the last still was not written in {STILL_WRITE_TIMEOUT_SECONDS} s")
+
+    async def _report_unwritten(self, message: str) -> None:
+        await self._transport.push_error(f"cannot write the pictures given: {message}", TimeoutError(message))
+
+
+def _video_queue_bound(params: TransportParams) -> int:
+    """The pictures `LIVE_VIDEO_QUEUE_SECONDS` hold at the output's framerate."""
+    return max(1, round(LIVE_VIDEO_QUEUE_SECONDS * params.video_out_framerate))
+
+
+@dataclass(eq=False)
+class _QueuedPicture:
+    """A picture of a live video queue, with the event set once it was written or dropped."""
+
+    picture: OutputImageRawFrame
+    done: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+class _LiveVideoQueue(asyncio.Queue):
+    """The queue of a live video sender, which follows each picture put until it was written or
+    dropped, and knows the picture its task took and has not yet marked done, the one being
+    written. It holds `bound` pictures at most: a picture put past them drops the oldest
+    interruptible one queued, or the oldest one when all are uninterruptible."""
+
+    def __init__(self, bound: int):
+        super().__init__()
+        self.bound = bound
+        self._writing: _QueuedPicture | None = None
+        # The pictures put and neither written nor dropped, in the order they were put.
+        self._unfinished: list[_QueuedPicture] = []
+        # Whether a picture was dropped since the queue was last empty, and whether that was
+        # reported by `began_dropping`.
+        self._dropping = False
+        self._dropping_reported = False
+
+    def put_nowait(self, item: OutputImageRawFrame) -> None:
+        if self.qsize() >= self.bound:
+            queued = self._take_queued()
+            dropped = next((entry for entry in queued if entry.picture.interruptible), queued[0])
+            self._finish(dropped)
+            for entry in queued:
+                if entry is not dropped:
+                    super().put_nowait(entry)
+            self._dropping = True
+        entry = _QueuedPicture(item)
+        self._unfinished.append(entry)
+        super().put_nowait(entry)
+
+    def unfinished(self) -> list[asyncio.Event]:
+        """The events of the pictures queued and being written, set once each was written or
+        dropped."""
+        return [entry.done for entry in self._unfinished]
+
+    def _finish(self, entry: _QueuedPicture) -> None:
+        entry.done.set()
+        self._unfinished.remove(entry)
+
+    def began_dropping(self) -> bool:
+        """Whether the queue began dropping pictures since it was last empty; True once for each
+        time it did."""
+        if not self._dropping or self._dropping_reported:
+            return False
+        self._dropping_reported = True
+        return True
+
+    async def get(self) -> OutputImageRawFrame:
+        entry = await super().get()
+        self._writing = entry
+        if self.empty():
+            self._dropping = self._dropping_reported = False
+        return entry.picture
+
+    def task_done(self) -> None:
+        super().task_done()
+        writing, self._writing = self._writing, None
+        if writing is not None:
+            self._finish(writing)
+
+    def drop_interruptible(self) -> None:
+        """Drops the interruptible pictures queued, leaving the one being written."""
+        for entry in self._take_queued():
+            if entry.picture.interruptible:
+                self._finish(entry)
+            else:
+                super().put_nowait(entry)
+
+    def abandon_writing(self) -> None:
+        """Marks the picture being written done, as one whose task was cancelled, which never
+        marks it: an interruptible one is dropped, an uninterruptible one queued again, first."""
+        writing, self._writing = self._writing, None
+        if writing is None:
+            return
+        super().task_done()
+        if writing.picture.interruptible:
+            self._finish(writing)
+            return
+        for entry in [writing, *self._take_queued()]:
+            super().put_nowait(entry)
+
+    def _take_queued(self) -> list[_QueuedPicture]:
+        """Takes out the pictures queued, leaving the one being written."""
+        taken = []
+        while not self.empty():
+            taken.append(self.get_nowait())
+            super().task_done()
+        return taken
+
+    async def written(self, *, uninterruptible_only: bool, task: asyncio.Task | None) -> None:
+        """Returns once the picture being written, uninterruptible with `uninterruptible_only`, was
+        written, or `task` ended."""
+        writing = self._writing
+        if writing is None or (uninterruptible_only and writing.picture.interruptible) or task is None:
+            return
+        done = asyncio.ensure_future(writing.done.wait())
+        try:
+            await asyncio.wait([done, task], return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            done.cancel()
+
+
+@dataclass
+class _SyncedPicture(DataFrame):
+    """A picture synchronized with the audio, queued behind the audio before it, with the
+    microseconds of that audio the output held short of the audio queue as it came,
+    `pending_micros`; `writing` once pipecat's audio task released it."""
+
+    picture: OutputImageRawFrame
+    pending_micros: float
+    writing: asyncio.Task | None = None
+    # The number of the picture in the order its sender was given pictures to show.
+    sequence: int = 0
+
+    @classmethod
+    def of(cls, picture: OutputImageRawFrame, pending_micros: float) -> "_SyncedPicture":
+        synced = cls(picture=picture, pending_micros=pending_micros)
+        synced.interruptible = picture.interruptible
+        synced.transport_destination = picture.transport_destination
+        return synced
+
+
+@dataclass
+class _AssistantImage(DataFrame):
+    """An assistant image queued behind the audio before it, the `sequence`th picture its sender was
+    given to show."""
+
+    picture: AssistantImageRawFrame
+    sequence: int
+
+    @classmethod
+    def of(cls, picture: AssistantImageRawFrame, sequence: int) -> "_AssistantImage":
+        queued = cls(picture=picture, sequence=sequence)
+        queued.interruptible = picture.interruptible
+        queued.transport_destination = picture.transport_destination
+        return queued
 
 
 class _AudioNormalizer:
@@ -724,6 +1295,10 @@ class _AudioNormalizer:
             raise
         return self._frame(last, audio) if audio else None
 
+    def held_micros(self) -> float:
+        """Microseconds of the speech the resampler holds back."""
+        return self._resampler.held_samples * 1_000_000 / self._sample_rate
+
     def interrupt(self) -> None:
         if self._last is not None and self._last.interruptible:
             self._resampler.reset()
@@ -737,6 +1312,12 @@ class _AudioNormalizer:
             num_channels=self._num_channels,
             num_frames=len(audio) // (self._num_channels * 2),
         )
+
+
+def _resized(frame: OutputImageRawFrame, size: tuple[int, int]) -> OutputImageRawFrame:
+    """`frame` resized to `size` with Pillow, as pipecat's media sender resizes it."""
+    image = Image.frombytes(frame.format or "RGB", frame.size, frame.image).resize(size)
+    return OutputImageRawFrame(image.tobytes(), image.size, image.mode)
 
 
 def _copied(frame: FrameT, **changes: object) -> FrameT:
@@ -797,7 +1378,9 @@ class MoqWasmTransport(BaseTransport):
     does not end the run: pipecat keeps the stopped processors running, in the room, and the next
     pipeline's `StartFrame` resumes them, the output's media senders replaced by new ones; the
     output writes all the speech queued before the `StopFrame`, its last chunk and packet padded
-    with silence, as at an `EndFrame`."""
+    with silence, as at an `EndFrame`. The probe of `PipelineWorker.flush_pipeline` passes the
+    output only once it wrote the speech and the pictures given before it the same way: the still
+    and the live pictures it found on reaching the output, not those given after it."""
 
     def __init__(
         self,

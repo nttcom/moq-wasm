@@ -928,7 +928,9 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   ends or its SUBSCRIBE fails, as when the publisher has not written it yet,
   until the participant leaves.
 - **Audio and video out.** `OutputAudioRawFrame` is encoded to Opus and
-  `OutputImageRawFrame` (`RGB`, `RGBA`, `BGR` or `BGRA`) with PyAV to
+  `OutputImageRawFrame` (`RGB`, `RGBA`, `BGR` or `BGRA`, in bytes or another
+  contiguous buffer, whose length in bytes `VideoEncoder.encode` checks
+  against its size) with PyAV to
   `video_out_codec` (`"H264"` by default,
   the codec the browser SDK publishes; `"VP8"` is royalty-free), at
   `video_out_width`, `video_out_height` and `video_out_framerate`, the Opus
@@ -966,7 +968,10 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   pipeline. `write_audio_frame` waits while the speech written so far runs
   more than 100 ms ahead of the clock, as `MOQTransport` paces its own, so
   an interruption stops speech the browser has not yet received. The
-  interruption stops the chunk being written at its next packet. It drops
+  interruption stops the chunk being written at its next packet and drops
+  the interruptible chunks queued as it reaches the output, before pipecat's
+  sender waits for an uninterruptible picture being written (below), so no
+  interruptible speech is written meanwhile. It drops
   what the Opus encoder holds of interruptible speech, short of a packet,
   and keeps what it holds of uninterruptible speech, which is written whole:
   when interruptible speech follows it, what the encoder holds of it is
@@ -990,12 +995,139 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   `EndFrame` on, so the pipeline ends. A `StopFrame` writes the rest of the
   speech the same way, what the resampler holds, pipecat's last chunk and
   the encoder's last packet, once pipecat wrote the audio queued ahead of
-  it: the media senders the next `StartFrame` replaces would drop it.
+  it: the media senders the next `StartFrame` replaces would drop it. It
+  writes the pictures given before it then as well, as an `EndFrame` does
+  (below), before it goes on. So does the probe of
+  `PipelineWorker.flush_pipeline` (`PipelineFlushFrame`), each time it
+  passes the output downstream, since the flush tells that every frame
+  before it was handled: the speech it cuts short ends padded with silence,
+  and the speech after it starts a fresh encoder. Pictures keep coming
+  while the probe waits behind the speech, so it waits for those given
+  before it only, as it found them on reaching the output: the still of
+  an output that is not live is drawn then, unless it was the picture
+  written last, before a still given after the probe can replace it, and
+  again as the probe goes on when an assistant image was drawn over it
+  meanwhile, unless a still given after the probe replaced it by then,
+  which the video task draws at its next frame instead of the probe
+  waiting for its encode, and the live pictures then queued
+  or being written are those written, or dropped, before it goes on,
+  whatever a producer queues after it.
   pipecat's media sender writes the audio and the transport messages in one
   task and the pictures in another, and a write that raises would end that
   task for good, silencing the bot. So a write that fails, as a picture in a
   color format the encoder does not take, is pushed upstream as a
-  non-fatal `ErrorFrame` and the frames after it are written. Publishing the
+  non-fatal `ErrorFrame` and the frames after it are written, as is a
+  resize the output's sender makes that fails. pipecat's
+  video sender cycles a `SpriteFrame`'s pictures and resizes a picture to
+  the output's size with Pillow before `write_video_frame`, and a sprite
+  without pictures or a picture it cannot resize, as one shorter than its
+  size, in BGR, with an empty color format or a size that is no integers,
+  would end that task the same way. So each `OutputImageRawFrame` and
+  `SpriteFrame` is copied as it reaches the output, before pipecat queues
+  it, with each picture's image as bytes, its color format, RGB for one
+  without, and its size as two integers, which is what pipecat and the
+  encoder both read; a picture in a strided buffer, which would pass a
+  length check and fail Pillow, or in no buffer at all, a
+  sprite without pictures, or one with a picture the encoder would refuse
+  or Pillow cannot resize, is dropped and reported the same way. pipecat
+  shows a `SpriteFrame`, and a picture with `sync_with_audio` once the
+  audio queued before it was written, by making them the pictures its video
+  sender cycles, which the sender of a `video_out_is_live` output does not
+  read. Such an output queues a sprite's pictures on its live sender's queue one
+  after the other, each as interruptible as the sprite, an assistant image
+  among them as any picture, outside the assistant's context. pipecat
+  releases a synchronized picture from its audio
+  queue once the chunks queued before it were written, but the speech
+  before it that the output's resampler, pipecat's last chunk, short of
+  `audio_out_10ms_chunks`, and the Opus encoder hold back is written only
+  with the speech after it. Ending the speech at each picture, padding the
+  last chunk and packet with silence, would stretch continuous speech by up
+  to a chunk and a packet a picture, and holding the picture until that
+  speech is written would freeze the video while the speech pauses. So the
+  speech goes on in one encoder, and a synchronized picture, live or not,
+  goes behind the chunks queued in a frame of its own noting how much
+  speech the resampler and the last chunk held ahead of it; once pipecat's
+  sender released that frame, the output writes the picture at once, at
+  the timestamp where the speech before it ends on the audio clock: after
+  the last packet written, the speech the encoder holds and the speech
+  noted. It writes it off pipecat's audio task, whose speech the encode
+  would hold up, in a task of its own that starts once the picture released
+  before it was written; an `EndFrame`, a `StopFrame` or a flush probe waits at most three
+  seconds for those writes, as for the live queue (below), and a
+  `CancelFrame` drops them. The synchronized pictures given and not yet
+  written, those waiting behind the speech queued and those being written,
+  are held to two seconds of them at `video_out_framerate`, as the live
+  queue is: past them, as when the encodes are slower than the framerate or
+  speech generated far ahead of the clock carries many, a new one is
+  dropped as it comes, reported once with a non-fatal `ErrorFrame` until
+  all those given were written. A picture after speech that pauses is so presented where the
+  speech would end had it gone on. Each picture carries its own timestamp,
+  moved 1 µs after the previous picture's when it would run backwards, and
+  is passed on downstream only once written; an output that is not live
+  then shows it as its still, as pipecat does. pipecat shows an
+  `AssistantImageRawFrame` as any picture and also queues it behind the
+  audio, where its audio task passes it on, to the assistant's context,
+  once the audio queued before it was written, also when its picture was
+  dropped or could not be written; an interruption drops it from that
+  queue, not from the screen, and its audio task selects it as the still
+  again, over a picture given after it. A context frame after it, as an
+  `LLMMessagesUpdateFrame` that resets the context or the
+  `LLMFullResponseEndFrame` of its response, must not overtake it, and it
+  must reach the context once, and only when shown. So the output with
+  video out keeps that one path only: the image goes behind the audio
+  queued, and once pipecat's audio task reaches it, after the synchronized
+  picture released before it was written, the output draws it there,
+  outside the live queue and its bound, and the task passes it on in its
+  place only once written. An output that is not live then shows it as its
+  still, unless it showed a picture or a sprite given after it already,
+  which it leaves shown; an assistant image given after it and not yet
+  drawn does not keep it from being shown, so an interruption that drops
+  that one leaves this one shown, as it leaves it in the context. The
+  sender numbers each picture, sprite and assistant image it is given in
+  the order they came, and the image queued carries its number, compared
+  at its draw with the number of the still shown: the output keeps no
+  image besides the one queued, so an image drawn, passed on or dropped by
+  an interruption is held no longer, and an output without video passes
+  the image on behind the audio without keeping it. An interruption that
+  comes first drops an interruptible
+  image from both the screen and the context; one drawn already went on.
+  pipecat's audio task, which the draw holds up for an encode of
+  milliseconds, passes the frames after it on after it, while the frames
+  with a `pts`, which pipecat's clock passes on, keep their own timing
+  with respect to it, as in pipecat. A synchronized one is written where
+  the speech before it ends, as any synchronized picture, and pipecat's
+  audio task waits for that write before the frames after it; an output
+  that is not live then shows it as its still by the same rule, unless the
+  still it shows was given after it, which a synchronized picture that is
+  no assistant image replaces as in pipecat. The output
+  never passes on the image again as it draws its still again, nor the
+  assistant images of a sprite, which pipecat does not pass on either. An
+  interruption drops the
+  interruptible pictures pipecat has not released yet, as it drops the
+  speech. At an `EndFrame`, pipecat cancels the live sender's video
+  task once its audio and clock tasks are done, which would drop the
+  pictures still queued: the output writes them first, waiting at most
+  three seconds, the two seconds of pictures its queue holds at most and
+  one to spare. The sender of an output that is not live writes the
+  picture or sprite it was given only at its next frame, up to a second
+  away at a framerate of 1, which that cancellation would also drop: the
+  output draws it at once, unless it is the picture the output wrote
+  last, and waits at most a second for the write, so an assistant image
+  drawn over a still given after it is not the last picture shown. A wait
+  that runs out is reported as a
+  non-fatal `ErrorFrame`. An interruption makes pipecat replace the live
+  sender's queue of pictures and cancel the picture being written. The
+  output keeps the queue for the new video task instead, so a picture
+  queued while pipecat replaces the task is not lost: it drops the
+  interruptible pictures queued, lets an uninterruptible picture being
+  written finish first, and queues again, first, an uninterruptible one the
+  cancelled task had taken but not written; a wait for the pictures queued
+  goes on with the new task. pipecat's live queue has no
+  bound, so pictures that come faster than `video_out_framerate` would
+  grow it for good: the output queues two seconds of pictures at most, and
+  a picture past them drops the oldest interruptible one queued, or the
+  oldest one when all are uninterruptible, reported once with a non-fatal
+  `ErrorFrame` until the queue was empty again. Publishing the
   media source fails for good, so the write that finds it failed reports it
   once and the audio and pictures after it are dropped; `write_audio_frame`
   and `write_video_frame` return False for each frame not written in full,
