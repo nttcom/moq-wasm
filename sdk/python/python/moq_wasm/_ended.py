@@ -1,6 +1,8 @@
 import asyncio
 from collections.abc import Callable
 
+from moq_wasm._wait import wait
+
 
 class Ended:
     """How a handle, such as a track writer or a media source, ended for good, which every method of
@@ -55,7 +57,7 @@ class Ended:
         return nor the caller's cancellation cancels `awaited`."""
         ended = asyncio.ensure_future(self._event.wait())
         try:
-            await asyncio.wait([awaited, ended], return_when=asyncio.FIRST_COMPLETED)
+            await wait([awaited, ended], return_when=asyncio.FIRST_COMPLETED)
         finally:
             ended.cancel()
 
