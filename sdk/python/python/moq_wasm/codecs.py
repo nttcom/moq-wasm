@@ -129,19 +129,57 @@ async def decode_pictures(
         yield DecodedPicture(picture, Location(video_object.group_id, video_object.object_id), decoded_at)
 
 
+# ITU-T H.264 Table A-1: level_idc, MaxMBPS (macroblocks/s), MaxFS (macroblocks/frame). Level 1b is omitted.
+H264_LEVELS = [
+    (10, 1485, 99),
+    (11, 3000, 396),
+    (12, 6000, 396),
+    (13, 11880, 396),
+    (20, 11880, 396),
+    (21, 19800, 792),
+    (22, 20250, 1620),
+    (30, 40500, 1620),
+    (31, 108000, 3600),
+    (32, 216000, 5120),
+    (40, 245760, 8192),
+    (41, 245760, 8192),
+    (42, 522240, 8704),
+    (50, 589824, 22080),
+    (51, 983040, 36864),
+    (52, 2073600, 36864),
+    (60, 4177920, 139264),
+    (61, 8355840, 139264),
+    (62, 16711680, 139264),
+]
+
+
+def _h264_level(width: int, height: int, framerate: int) -> int:
+    """Returns the lowest Table A-1 level whose limits (A.3.1) take this size and framerate, or the
+    highest when none does."""
+    mb_width, mb_height = -(-width // 16), -(-height // 16)
+    frame_size = mb_width * mb_height
+    for level, max_mbps, max_fs in H264_LEVELS:
+        if frame_size <= max_fs and max(mb_width, mb_height) ** 2 <= 8 * max_fs and frame_size * framerate <= max_mbps:
+            return level
+    return H264_LEVELS[-1][0]
+
+
 class VideoEncoder:
     """Encodes RGB pictures into H.264 (Annex B, its parameter sets in every keyframe) or VP8. A
-    keyframe comes every two seconds, and on `request_keyframe`."""
+    keyframe comes every two seconds, and on `request_keyframe`. `codec_string` is the WebCodecs
+    codec string; for H.264 it names Constrained Baseline at the level the SPS carries."""
 
     def __init__(self, codec: str, width: int, height: int, framerate: int):
         if codec == "H264":
-            self.codec_string = "avc1.42e01f"
+            level = _h264_level(width, height, framerate)
+            # x264's baseline sets constraint_set0_flag and constraint_set1_flag: Constrained Baseline.
+            self.codec_string = f"avc1.42C0{level:02X}"
             self._encoder = av.CodecContext.create("libx264", "w")
             self._encoder.options = {
                 "preset": "ultrafast",
                 "tune": "zerolatency",
                 "profile": "baseline",
-                "x264-params": f"repeat-headers=1:keyint={2 * framerate}:scenecut=0",
+                "x264-params": f"repeat-headers=1:keyint={2 * framerate}:scenecut=0:level={level}",
             }
         elif codec == "VP8":
             self.codec_string = "vp8"

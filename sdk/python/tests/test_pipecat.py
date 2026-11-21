@@ -170,6 +170,28 @@ def test_the_video_encoder_opens_with_a_keyframe_and_makes_one_on_request(codec)
     assert [is_keyframe(packet) for packet in (*first, *second, *requested)] == [True, False, True]
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "framerate", "codec_string"),
+    [
+        (64, 48, 30, "avc1.42C00A"),
+        (1280, 720, 30, "avc1.42C01F"),
+        (1920, 1080, 30, "avc1.42C028"),
+        (1920, 1080, 60, "avc1.42C02A"),
+    ],
+)
+def test_the_h264_encoders_codec_string_names_the_profile_and_level_of_its_sps(width, height, framerate, codec_string):
+    # Arrange
+    encoder = VideoEncoder("H264", width, height, framerate)
+
+    # Act
+    keyframe = b"".join(encoder.encode(picture(0), SIZE, "RGB"))
+
+    # Assert: profile_idc, the constraint flags and level_idc follow the SPS's NAL unit header
+    sps = keyframe[keyframe.index(b"\x00\x00\x01\x67") + 4 :]
+    assert encoder.codec_string == codec_string
+    assert f"avc1.{sps[:3].hex().upper()}" == codec_string
+
+
 async def test_decoded_pictures_carry_the_location_of_their_object_and_are_thinned_out_by_the_interval():
     # Arrange: two groups of three pictures; the second group is joined at its second object
     encoder = VideoEncoder("H264", *SIZE, 30)

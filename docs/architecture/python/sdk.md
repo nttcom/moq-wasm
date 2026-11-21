@@ -487,6 +487,11 @@ async with create_broadcast(session, [*room, "bot"]) as bot:
   asyncio form of the browser SDK's `on_keyframe_request`. It and
   `demand_change()` raise RuntimeError once the broadcast was left or the
   session ended, so a loop awaiting them ends.
+- `configure_video` takes the codec of a codec string, its first element;
+  the catalog lists the codec string of the configuration the keyframes
+  carry, such as an H.264 SPS. `VideoEncoder.codec_string` names the same
+  profile and level, which the encoder picks as x264 does (the lowest that
+  takes its size and framerate) and writes into its SPS.
 - The source's methods are the browser SDK's `MediaSource` in snake_case,
   minus what WebCodecs does there:
 
