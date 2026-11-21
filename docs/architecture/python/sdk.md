@@ -110,7 +110,8 @@ pipelines.
 ```python
 import moq_wasm
 
-async with moq_wasm.connect(url, token=jwt, refresh_token=temporary_apps.refresh) as session:
+# `dispatcher` is moq-bot-job's `BotDispatcher`: its `refresh` returns a later JWT.
+async with moq_wasm.connect(url, token=await dispatcher.token(), refresh_token=dispatcher.refresh) as session:
     ...
 ```
 
