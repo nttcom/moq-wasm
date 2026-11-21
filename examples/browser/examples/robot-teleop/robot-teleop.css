@@ -1,0 +1,12 @@
+.pad {
+  width: min(100%, 400px);
+  aspect-ratio: 1;
+  border: 1px solid var(--border, #ccc);
+  border-radius: 8px;
+}
+
+.robot-stats {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+}
