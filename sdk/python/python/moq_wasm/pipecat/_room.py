@@ -81,6 +81,8 @@ class Room:
         # The teardown of the last opening, which the next opening waits for.
         self._closing: asyncio.Task[None] | None = None
         self._receivers: dict[str, ParticipantReceiver] = {}
+        # Whether the participants' audio is received, from `start_audio` until the room closes.
+        self._audio_streaming = False
 
     async def start(self, user: object) -> None:
         """Called by the input and the output processors; the first one starts the room, once the
@@ -123,6 +125,7 @@ class Room:
                 # The rollback is the room's teardown, which a stop and the next opening wait for.
                 self._closing = rollback
                 self._opening = None
+                self._audio_streaming = False
             if self._opened is opened:
                 self._opened = None
             await wait_through_cancellation([rollback])
@@ -146,6 +149,7 @@ class Room:
         """Starts the teardown of the current opening, which no processor uses any more."""
         opening, self._opening = self._opening, None
         self._opened = None
+        self._audio_streaming = False
         if opening is not None:
             self._closing = asyncio.create_task(self._close(opening, self._closing))
 
@@ -206,6 +210,14 @@ class Room:
             await self._sink.event("on_error", f"cannot follow the room {options.room}", error)
             raise
         opened.tasks.append(asyncio.create_task(self._follow_participants(watch)))
+
+    async def start_audio(self) -> None:
+        """Receives the audio of the participants in the room and of those joining later, when the
+        options receive audio. Until then, and again once the room closed, no audio track is
+        subscribed to."""
+        self._audio_streaming = True
+        for receiver in list(self._receivers.values()):
+            await receiver.start_audio()
 
     async def write_audio(self, pcm: bytes, sample_rate: int) -> None:
         """Encodes `pcm` and waits while the speech written so far runs more than
@@ -284,7 +296,7 @@ class Room:
 
     async def _follow(self, remote: RemoteBroadcast) -> None:
         participant_id = remote.namespace[-1]
-        receiver = ParticipantReceiver(remote, self._options.receive, self._sink)
+        receiver = ParticipantReceiver(remote, self._options.receive, self._sink, stream_audio=self._audio_streaming)
         self._receivers[participant_id] = receiver
         await self._sink.event("on_client_connected", participant_id)
         try:
