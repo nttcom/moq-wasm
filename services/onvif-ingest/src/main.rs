@@ -17,10 +17,10 @@ use crate::{
     command_subscriber::{CommandSubscriber, CommandTrack},
 };
 use anyhow::{Context, Result, anyhow, bail};
-use broadcast::{Broadcast, BroadcastWriter, MoqtTarget, RelayConnection, SourceTracks};
+use broadcast::{Broadcast, BroadcastWriter, RelayConnection, SourceTracks};
 use clap::Parser;
 use mediapack::MediaEvent;
-use moqt::{CertificateVerification, ClientConfig};
+use moqt::{CertificateVerification, ClientConfig, client::Session};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::{
@@ -144,9 +144,11 @@ async fn main() -> Result<()> {
         authorization_token: args.auth_token.clone().map(Into::into),
         ..ClientConfig::default()
     };
+    let session = Session::connect(&args.moqt_url, &client_config)
+        .await
+        .context("connect to relay")?;
     let mut commands = CommandSubscriber::run(
-        &args.moqt_url,
-        &client_config,
+        &session,
         CommandTrack {
             namespace: subscribe_namespace.clone(),
             track: args.command_track.clone(),
@@ -154,11 +156,7 @@ async fn main() -> Result<()> {
         command_sender,
     )
     .await?;
-    let connection = RelayConnection::new(Some(MoqtTarget {
-        url: args.moqt_url.clone(),
-        auth_token: args.auth_token.clone(),
-        verify_certificate: !args.insecure_skip_tls_verify,
-    }));
+    let connection = RelayConnection::with_client_session(&session);
     let broadcast = Broadcast::new(connection.clone(), publish_namespace);
 
     let result = tokio::select! {
