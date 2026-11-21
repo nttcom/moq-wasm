@@ -354,11 +354,12 @@ async def test_leaving_a_refused_broadcast_whose_refusal_was_never_raised_raises
     session = await open_session(relay)
     refuse_announce(relay)
 
-    # Act / Assert: the block exits normally, so leaving it reports the refusal
+    # Act / Assert: the block exits normally once the relay refused the namespace, so leaving it
+    # reports the refusal
     with pytest.raises(RuntimeError, match="PUBLISH_NAMESPACE refused"):
         async with create_broadcast(session, BOT) as bot:
             bot.publish_track("status")
-            await asyncio.sleep(0.01)
+            await within(until(lambda: bot._failure is not None))
     await session.close()
 
 
