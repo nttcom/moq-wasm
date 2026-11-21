@@ -704,6 +704,24 @@ async def test_every_close_waits_until_the_native_session_closed_even_after_one_
     assert native._closed.done()
 
 
+async def test_a_second_read_of_a_watch_while_one_waits_is_refused_and_the_first_gets_the_event():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    watch = await session.watch_namespaces(NAMESPACE[:-1])
+    first = asyncio.ensure_future(anext(watch))
+    await asyncio.sleep(0)
+
+    # Act
+    with pytest.raises(RuntimeError, match="already"):
+        await within(anext(watch))
+    relay.sessions[0].publish(NAMESPACE)
+
+    # Assert
+    assert (await within(first)).namespace == NAMESPACE
+    await session.close()
+
+
 async def test_a_second_read_of_a_subscription_while_one_waits_is_refused_and_the_first_gets_the_object():
     # Arrange
     relay = FakeRelay()
