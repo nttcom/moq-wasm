@@ -80,6 +80,27 @@ async def test_a_closed_datagram_track_registered_again_in_datagrams_delivers_it
     await close_all(subscriber, publisher)
 
 
+@pytest.mark.parametrize("first", [True, False])
+async def test_a_closed_track_registered_again_with_the_other_delivery_is_refused_before_any_write(relay_url, first):
+    # Arrange: a track that wrote an object in one delivery, then was closed
+    namespace = [*room(), "alice"]
+    publisher = await connect(relay_url)
+    track = await within(publisher.publish_track(namespace, TRACK, datagram=first))
+    await within(publisher.announce(namespace))
+    await within(track.write(b"o1", new_group=True))
+    await within(track.close())
+
+    # Act / Assert: the native origin keeps the delivery of a track that has an object
+    delivery = "in datagrams" if first else "on subgroup streams"
+    with pytest.raises(ValueError, match=f"sends its objects {delivery}"):
+        await within(publisher.publish_track(namespace, TRACK, datagram=not first))
+
+    # Assert: the refusal left the track free for its own delivery
+    reopened = await within(publisher.publish_track(namespace, TRACK, datagram=first))
+    assert reopened.datagram == first
+    await publisher.close()
+
+
 async def test_writes_report_the_group_each_object_went_into(relay_url):
     # Arrange
     namespace = [*room(), "alice"]

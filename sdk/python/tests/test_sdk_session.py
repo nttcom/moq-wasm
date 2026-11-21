@@ -867,6 +867,41 @@ async def test_every_close_of_a_track_writer_waits_for_its_end_even_after_one_wa
     await session.close()
 
 
+async def test_a_track_has_one_writer_until_it_was_closed():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    first = await session.publish_track(NAMESPACE, "status")
+
+    # Act / Assert: closing the old writer again leaves its replacement's subscriptions alone
+    with pytest.raises(RuntimeError, match="already publishes"):
+        await session.publish_track(NAMESPACE, "status")
+    await first.close()
+    second = await session.publish_track(NAMESPACE, "status")
+    await first.close()
+    assert native.ended == [(NAMESPACE, "status")]
+    assert await second.write(b"v1") is None
+    await session.close()
+
+
+async def test_a_refused_publish_track_leaves_nothing_waiting_for_the_session_to_end():
+    # Arrange
+    relay = FakeRelay()
+    session = await open_session(relay)
+    await session.publish_track(NAMESPACE, "status")
+    observers = len(session._enders)
+
+    # Act
+    for _ in range(24):
+        with pytest.raises(RuntimeError, match="already publishes"):
+            await session.publish_track(NAMESPACE, "status")
+
+    # Assert
+    assert len(session._enders) == observers
+    await session.close()
+
+
 async def test_publishing_a_track_once_the_session_was_closed_raises_session_closed():
     # Arrange: the writer of the track is still open
     relay = FakeRelay()

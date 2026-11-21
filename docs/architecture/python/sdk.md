@@ -268,7 +268,15 @@ writes raise RuntimeError at once, a write waiting behind a stalled send
 included; every call returns once the PUBLISH_DONE was sent,
 even after one was cancelled. It is final: a registration and a send under
 way are waited for and its track ended, `registered()` raises and
-`next_subscriber()` returns False, a waiting one included. Its
+`next_subscriber()` returns False, a waiting one included. A track has one
+writer in a session: `publish_track`, the broadcast's included, raises
+RuntimeError while another writer of the session publishes the track,
+until that one's `close()` finished or its registration failed, so
+closing an old writer cannot end its replacement's subscriptions. A
+writer whose `publish_track` was cancelled keeps the track until the end
+of what the relay registered was sent: a later `publish_track` of the
+track waits for it, so that PUBLISH_DONE cannot end its replacement's
+subscriptions. Its
 objects carry no extension headers. Leaving a
 `LocalBroadcast` closes its writers, so a handle kept past the broadcast
 cannot write into a later broadcast of the same namespace. The session, its
