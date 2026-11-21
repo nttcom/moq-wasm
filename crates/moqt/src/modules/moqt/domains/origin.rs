@@ -2187,6 +2187,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_write_whose_only_send_fails_other_than_by_stop_sending_is_an_error() {
+        for version in DRAFTS {
+            // Arrange: the only subscriber closes its session
+            let peers = origin_with_track("origin-send-failure", RETENTION, version).await;
+            let origin = &peers.origin;
+            let _accepted = publish(&peers).await;
+            peers.server.close().await;
+
+            // Act: writes go on until the closed connection fails a send
+            let result = within(async {
+                loop {
+                    let result = origin
+                        .write(NAMESPACE, TRACK, plain(GroupBoundary::Next, b"a"))
+                        .await;
+                    if !matches!(result, Ok(WriteOutcome::Sent(_))) {
+                        return result;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+
+            // Assert
+            assert!(result.is_err(), "{result:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn fetch_is_served_from_the_cache_in_the_requested_group_order() {
         for version in DRAFTS {
             // Arrange
