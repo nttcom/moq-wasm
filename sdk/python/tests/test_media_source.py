@@ -304,6 +304,35 @@ async def test_a_subscriber_gets_aac_audio_listed_with_its_codec_and_loc_propert
         await session.close()
 
 
+async def test_demand_changes_a_producer_has_not_read_are_kept_as_each_tracks_latest(relay_url):
+    # Arrange: the audio track is published, and nobody reads its demand changes
+    namespace = ["anon", f"room-{uuid.uuid4().hex[:8]}", "bot"]
+    publisher = await moq_wasm.connect(relay_url, verify_certificate=False)
+    subscriber = await moq_wasm.connect(relay_url, verify_certificate=False)
+    async with create_broadcast(publisher, namespace) as bot:
+        media = bot.add_media_source(label="bot")
+        media.configure_audio("opus", 48000, 1)
+        await bot.published()
+        media.push_audio(b"opus frame", 0)
+        await asyncio.sleep(0.2)
+
+        # Act: a subscriber comes and goes, and comes again
+        for _ in range(2):
+            audio = await within(subscriber.subscribe(namespace, "audio"))
+            await audio.close()
+            await asyncio.sleep(0.2)
+        await within(subscriber.subscribe(namespace, "audio"))
+        await asyncio.sleep(0.2)
+
+        # Assert: one unread change, the latest
+        first = await within(media.demand_change())
+        assert (first.track_name, first.wanted) == ("audio", True)
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(media.demand_change(), 0.3)
+    for session in (subscriber, publisher):
+        await session.close()
+
+
 async def wanted(media: MediaSource, track_name: str) -> None:
     """Returns once `media` was told a subscriber wants `track_name`: a source published on demand
     sends nothing of a track before, so a frame pushed earlier never reaches that subscriber."""
