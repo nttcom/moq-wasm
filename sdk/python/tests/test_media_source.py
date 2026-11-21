@@ -49,6 +49,7 @@ async def test_a_broadcast_with_media_publishes_its_namespace_through_the_media_
         ("publish_track", "status"),
         ("media_announce", BOT),
         ("unannounce", BOT),
+        ("end_track", "status"),
         ("media_close", BOT),
     ]
     assert native.media_broadcasts[0].sources[0].calls == [("configure_audio", "opus", 48000, 1), ("push_audio", b"frame")]

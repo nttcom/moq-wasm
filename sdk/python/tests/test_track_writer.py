@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from tests.relay_sessions import TRACK, close_all, connect, publisher_with_track, room, within
 
 
@@ -53,6 +55,31 @@ async def test_a_datagram_track_delivers_its_objects(relay_url):
     await close_all(subscriber, publisher)
 
 
+async def test_a_closed_datagram_track_registered_again_in_datagrams_delivers_its_objects(relay_url):
+    # Arrange: a datagram track that sent an object to a subscriber, then was closed
+    namespace = [*room(), "alice"]
+    publisher = await connect(relay_url)
+    track = await within(publisher.publish_track(namespace, TRACK, datagram=True))
+    await within(publisher.announce(namespace))
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    await within(track.write(b"d1", new_group=True))
+    await within(objects.__anext__())
+    await within(track.close())
+    await within(objects.close())
+
+    # Act
+    reopened = await within(publisher.publish_track(namespace, TRACK, datagram=True))
+    later = await within(subscriber.subscribe(namespace, TRACK))
+    await within(reopened.write(b"d2", new_group=True))
+    received = await within(later.__anext__())
+
+    # Assert
+    assert reopened.datagram
+    assert (received.payload, received.subgroup_id) == (b"d2", 0)
+    await close_all(subscriber, publisher)
+
+
 async def test_writes_report_the_group_each_object_went_into(relay_url):
     # Arrange
     namespace = [*room(), "alice"]
@@ -91,4 +118,42 @@ async def test_next_subscriber_resolves_when_a_subscribe_is_answered(relay_url):
 
     # Assert
     assert subscribed is True
+    await close_all(subscriber, publisher)
+
+
+async def test_concurrent_writes_each_reach_the_subscriber_in_the_order_they_were_made(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    payloads = [f"group {index}".encode() for index in range(32)]
+
+    # Act
+    groups = await within(asyncio.gather(*(track.write_group(payload) for payload in payloads)))
+    received = [await within(objects.__anext__()) for _ in payloads]
+
+    # Assert: objects of different groups may arrive in either order (draft-14 §2.3.1)
+    assert groups == list(range(groups[0], groups[0] + len(payloads)))
+    assert sorted((obj.group_id, obj.payload) for obj in received) == list(zip(groups, payloads))
+    await close_all(subscriber, publisher)
+
+
+async def test_a_write_whose_caller_timed_out_mid_send_leaves_later_writes_to_the_subscriber(relay_url):
+    # Arrange
+    namespace = [*room(), "alice"]
+    publisher, track = await publisher_with_track(relay_url, namespace)
+    subscriber = await connect(relay_url)
+    objects = await within(subscriber.subscribe(namespace, TRACK))
+    large = bytes(16 * 1024 * 1024)
+
+    # Act: the timeout cancels the write once its native send started
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(track.write_group(large), 0.001)
+    later = await within(track.write_group(b"later"))
+
+    # Assert
+    received = [await within(objects.__anext__()) for _ in range(2)]
+    assert later is not None
+    assert sorted(obj.payload for obj in received) == sorted([large, b"later"])
     await close_all(subscriber, publisher)

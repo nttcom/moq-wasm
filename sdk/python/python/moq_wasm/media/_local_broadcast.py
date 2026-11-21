@@ -17,6 +17,8 @@ class LocalBroadcast:
         self.namespace = namespace
         self._session = session
         self._pending: list[TrackWriter] = []
+        # Every writer the broadcast made, which leaving closes.
+        self._writers: list[TrackWriter] = []
         # False once the batch registered before the PUBLISH_NAMESPACE is complete.
         self._batching = True
         self._publishing: asyncio.Task[Announcement] | None = None
@@ -39,6 +41,7 @@ class LocalBroadcast:
         writer = self._session._track_writer(
             self.namespace, name, retention_seconds, publish=False, datagram=datagram, priority=priority
         )
+        self._writers.append(writer)
         if self._batching:
             self._pending.append(writer)
         else:
@@ -118,6 +121,10 @@ class LocalBroadcast:
             elif self._publishing.exception() is None:
                 await self._publishing.result().close()
         finally:
+            # Ends the subscriptions the relay still forwards, and the handles, so a writer kept past
+            # the broadcast cannot write into a later broadcast of the same namespace.
+            for writer in self._writers:
+                await writer.close()
             for source in self._media_sources:
                 source._detach()
             if self._media_broadcast is not None:
