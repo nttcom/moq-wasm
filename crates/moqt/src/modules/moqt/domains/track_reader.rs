@@ -108,8 +108,8 @@ impl TrackReader {
         }
     }
 
-    /// Sends a Joining FETCH of the group the subscription's Largest Object
-    /// is in and yields its objects before the live ones: the track's data
+    /// Fetches the group the subscription's Largest Object is in
+    /// (`Subscriber::fetch_relative_joining`) and yields its objects before the live ones: the track's data
     /// is read only after the FETCH ends. A subscription without a Largest
     /// Object has no group to fetch, so its live objects are read at once.
     pub(crate) fn fetching_current_group(

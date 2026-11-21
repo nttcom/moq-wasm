@@ -1624,6 +1624,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_current_group_of_a_published_track_is_fetched() {
+        for version in DRAFTS {
+            // Arrange
+            let peers = origin_with_track("origin-publish-fetch", RETENTION, version).await;
+            let origin = &peers.origin;
+            for (boundary, payload) in [(GroupBoundary::Next, b"a"), (GroupBoundary::Within, b"b")]
+            {
+                origin
+                    .write(NAMESPACE, TRACK, plain(boundary, payload))
+                    .await
+                    .unwrap();
+            }
+            let accepted = publish(&peers).await;
+
+            // Act
+            let (_, fetched) = joining_fetch(&peers, &accepted, 0).await.unwrap();
+
+            // Assert: a Joining FETCH cannot join a PUBLISH, so the group came
+            // through a Standalone FETCH
+            assert_eq!(ids(&fetched), [(FIRST_GROUP_ID, 0), (FIRST_GROUP_ID, 1)]);
+        }
+    }
+
+    #[tokio::test]
     async fn a_publish_of_an_unwritten_track_reports_no_content() {
         for version in DRAFTS {
             // Arrange
