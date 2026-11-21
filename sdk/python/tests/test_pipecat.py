@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import av
 import numpy as np
+from av.error import FFmpegError
 import pytest
 
 import moq_wasm
@@ -1113,6 +1114,69 @@ def invisible_vp8_frames(count: int) -> list[bytes]:
     return [frames[0], *(bytes([frame[0] & ~0x10]) + frame[1:] for frame in frames[1:])]
 
 
+def undecodable_group(count: int) -> list[bytes]:
+    """Annex B H.264 pictures without their parameter sets, which the decoder refuses."""
+    encoder = VideoEncoder("H264", *SIZE, 30)
+    return [
+        without_parameter_sets(b"".join(encoder.encode(picture(value * 10), SIZE, "RGB"))) for value in range(count)
+    ]
+
+
+def without_parameter_sets(annex_b: bytes) -> bytes:
+    """An H.264 access unit's NAL units other than its SPS and PPS, each after a 4-byte start code."""
+    return b"".join(b"\x00\x00\x00\x01" + unit for unit in nal_units(annex_b) if unit[0] & 0x1F not in (7, 8))
+
+
+@pytest.mark.parametrize("count", [5, 2], ids=["refused in a row", "ended without a picture"])
+async def test_a_group_joined_at_its_keyframe_that_does_not_decode_fails_the_track(count):
+    # Arrange: the group ends with its End of Group
+    payloads = undecodable_group(count)
+
+    async def objects():
+        for object_id, payload in enumerate(payloads):
+            yield video_object(0, object_id, payload)
+        yield video_object(0, count, b"", status=END_OF_GROUP)
+
+    # Act / Assert
+    with pytest.raises(FFmpegError):
+        _ = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+
+async def test_a_group_joined_midway_that_does_not_decode_is_skipped():
+    # Arrange: the objects from the second on
+    payloads = undecodable_group(5)
+
+    async def objects():
+        for object_id, payload in list(enumerate(payloads))[1:]:
+            yield video_object(0, object_id, payload)
+        yield video_object(0, len(payloads), b"", status=END_OF_GROUP)
+
+    # Act
+    decoded = [d async for d in decode_pictures(objects(), "avc1.42e01f")]
+
+    # Assert
+    assert decoded == []
+
+
+async def test_a_request_waiting_on_a_track_that_does_not_decode_gets_its_failure():
+    # Arrange: alice's camera sends H.264 without its parameter sets
+    relay = FakeRelay()
+    session = await open_session(relay)
+    native = relay.sessions[0]
+    native.tracks["catalog"] = [[VIDEO_CATALOG, STAY_OPEN]]
+    native.tracks["video"] = [[*undecodable_group(5), STAY_OPEN]]
+    sink = RecordingSink()
+    receiver = ParticipantReceiver(RemoteBroadcast(session, [*ROOM, "alice"]), receive_options(video_sources={"camera": None}), sink)
+    request = UserImageRequestFrame(user_id="alice")
+    await receiver.request_image(request)
+
+    # Act
+    running = asyncio.create_task(receiver.run())
+    await asyncio.sleep(0.2)
+
+    # Assert
+    assert sink.unanswered == [(request, "receiving video of alice failed")]
+    assert [event[0] for event in sink.events].count("on_error") == 1
 async def test_each_subscription_to_a_video_track_is_decoded_afresh():
     # Arrange: the first subscription brings five groups with B-frames and ends, as when alice's
     # page leaves; the page taking over restarts its groups at 0

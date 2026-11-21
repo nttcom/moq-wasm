@@ -767,7 +767,11 @@ pipeline = Pipeline([transport.input(), stt, llm, tts, transport.output()])
   four newer groups opened, or when the objects end. A followed track's
   object iteration skips status objects, so there the held-back pictures
   of a group come only once it is evicted or the transport's subscription
-  ends.
+  ends. A group joined at its keyframe
+  that does not decode, its decoder refusing three of its objects in a row
+  or the group ending without a picture after a refusal, raises the
+  decoder's error, so the transport fails the track instead of waiting on
+  a broken stream; a group joined midway decodes to nothing.
 - **Left out.** `MOQTransport`'s serve mode (the bot accepts sessions
   without a relay; the bindings have no server side) and its RTVI
   transcript stream.
