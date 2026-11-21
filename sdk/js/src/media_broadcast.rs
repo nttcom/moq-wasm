@@ -80,6 +80,36 @@ impl MediaBroadcast {
         }))
     }
 
+    /// Lists `name` in the catalog as a JSON event timeline
+    /// (draft-ietf-moq-msf-02 §8) whose records' `data` is of `event_type`.
+    /// Write it with `Session.publishTrack` given the same `priority`, 128
+    /// when absent, since that call sets the track's priority again. Offering
+    /// a name again replaces its entry. Fails once the relay session has ended.
+    #[wasm_bindgen(js_name = offerEventTimeline)]
+    pub fn offer_event_timeline(
+        &self,
+        name: String,
+        event_type: String,
+        priority: Option<u8>,
+    ) -> Promise {
+        let broadcast = self.broadcast.clone();
+        let mut track = msf::Track::new(&name, msf::KnownPackaging::EventTimeline, true);
+        track.namespace = Some(broadcast.namespace().join("/"));
+        track.role = Some(msf::TrackRole::Other(name));
+        track.event_type = Some(event_type);
+        track.mime_type = Some("application/json".to_string());
+        future_to_promise(self.scope.scoped(async move {
+            broadcast
+                .offer_event_timeline(
+                    track,
+                    priority.unwrap_or(moqt::client::PublishTrackOptions::default().priority),
+                )
+                .await
+                .map(|()| JsValue::UNDEFINED)
+                .map_err(anyhow_error)
+        }))
+    }
+
     /// Only a source on the tracks `video` and `audio` brings the chat. Every
     /// source brings its media timeline, `<video>_timeline`. Its video forms
     /// a switching set of its own with its renditions. The audio is labelled

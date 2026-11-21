@@ -17,9 +17,21 @@ import type { SourcePublicationStats } from './internal/encoders/publishStats'
 
 const TARGET = 'moq-wasm::media::local_broadcast'
 
+/// A JSON event timeline (draft-ietf-moq-msf-02 §8) the catalog lists.
+export type EventTimelineOffer = {
+  name: string
+  /// Defines the structure of the records' `data` (§5.2.6), such as `io.example.events.v1`.
+  eventType: string
+  /// The track's Publisher Priority (draft-14 §7.1), 0 to 255, 128 by default.
+  /// `publishTrack` sets it again, 128 when omitted, so pass it the same.
+  priority?: number
+}
+
 export type LocalBroadcastOptions = {
   /// Lists the `chat` track in the catalog; write it with `session.publishTrack`.
   offerChat?: boolean
+  /// Lists these event timelines in the catalog; write each with `session.publishTrack`.
+  eventTimelines?: EventTimelineOffer[]
   /// Receives the encoders' failures. Skips a failure whose `String()` equals
   /// the previous one, such as the "media publishing stopped" every chunk
   /// fails with after publishing stops.
@@ -112,6 +124,9 @@ export async function createBroadcast(
   noteOwnBroadcast(session, namespace)
   if (options.offerChat) {
     await broadcast.offerChat()
+  }
+  for (const timeline of options.eventTimelines ?? []) {
+    await broadcast.offerEventTimeline(timeline.name, timeline.eventType, timeline.priority)
   }
   return new Broadcast(session, namespace, broadcast, reporter(session, options.onError))
 }
