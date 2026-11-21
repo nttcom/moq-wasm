@@ -50,7 +50,7 @@ def test_parse_reads_the_track_fields_and_refuses_another_version():
         Catalog.parse(b'{"version":"draft-03","tracks":[]}')
 
 
-async def test_a_broadcast_registers_its_tracks_before_it_publishes_and_withdraws_on_exit():
+async def test_a_broadcast_registers_its_tracks_before_it_publishes_and_withdraws_them_on_exit():
     # Arrange
     relay = FakeRelay()
     session = await open_session(relay)
@@ -67,6 +67,8 @@ async def test_a_broadcast_registers_its_tracks_before_it_publishes_and_withdraw
         ("publish_track", "transcript"),
         ("announce", BOT),
         ("unannounce", BOT),
+        ("end_track", "status"),
+        ("end_track", "transcript"),
     ]
     await session.close()
 

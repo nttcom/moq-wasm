@@ -1,12 +1,13 @@
 import asyncio
 import logging
 import weakref
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Generator, Hashable
 from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
 from moq_wasm import _native
-from moq_wasm._ended import copied
+from moq_wasm._ended import Ended, copied
 from moq_wasm._errors import SessionEnded
 from moq_wasm._once import Once, retrieve, wait_through_cancellation
 from moq_wasm._subscription import Fetch, Subscription
@@ -111,11 +112,20 @@ class NamespaceWatch(AsyncIterator[NamespaceEvent]):
 
 
 class TrackWriter:
-    """A track the session publishes. What is written before the track is registered, or after the
-    session ended, is dropped. Objects carry no extension headers (LOC properties)."""
+    """A track the session publishes. What is written before the track is registered is dropped.
+    The writer ends for good at the first of its `close()`, the session ending, the failure of
+    its registration and the failure or cancellation of the opening written once it is
+    registered, as an event timeline's, which closes it: from then on, writing raises what ended
+    it (RuntimeError after `close()`), at once and before any native call, so nothing reaches
+    the native origin's cache any more, a write waiting for its turn included. Writes are sent
+    one at a time, in the order they were made; a send that started runs to its end even when
+    its caller is cancelled, as by a timeout, and the next write waits for it. `close()` is
+    final: it waits for a registration and a send under way and ends its track. Objects carry no
+    extension headers (LOC properties)."""
 
     def __init__(
         self,
+        session: "Session",
         namespace: list[str],
         name: str,
         retention_seconds: float,
@@ -123,56 +133,211 @@ class TrackWriter:
         publish: bool = False,
         datagram: bool = False,
         priority: int = DEFAULT_PRIORITY,
-        session_ended: asyncio.Future[None] | None = None,
     ):
-        self.namespace = namespace
-        self.name = name
+        # Immutable, so a caller changing a list or the name cannot redirect `close()`.
+        self._namespace = tuple(namespace)
+        self._name = name
         self.retention_seconds = retention_seconds
         self.publish = publish
         self.datagram = datagram
         self.priority = priority
-        self._session_ended = session_ended
+        self._session = session
         self._writer: _native.TrackWriter | None = None
-        # Set once the track is registered, or will not be.
-        self._settled = asyncio.Event()
+        # Set once the track is registered.
+        self._registered = asyncio.Event()
+        self._ended = Ended()
+        # Set by `close()`, after which the writer registers its track no more.
+        self._closed = False
+        self._ending: Once[None] = Once()
+        # The native `next_subscriber` no caller took the answer of yet, as one whose caller was
+        # cancelled: the next caller takes it, so no subscriber is missed.
+        self._subscriber: asyncio.Future[bool] | None = None
+        self._awaiting_subscriber = False
+        # Clear while the track is being registered, so `close()` ends it once registered.
+        self._not_registering = asyncio.Event()
+        self._not_registering.set()
+        # The opening written ahead of every other write once the track is registered.
         self._on_bound: Callable[[], Awaitable[None]] | None = None
+        # The turns of the writes, in the order they came: the first one's holds it, through its
+        # native send, and the others wait for theirs.
+        self._turns: deque[asyncio.Future[None]] = deque()
+        # The latest native send, which runs to its end even when its caller is cancelled.
+        self._sent: asyncio.Future[int | None] | None = None
+
+    @property
+    def namespace(self) -> list[str]:
+        """A copy: changing it changes nothing the writer does."""
+        return list(self._namespace)
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     async def write(self, payload: bytes, *, new_group: bool = False) -> int | None:
-        """`_native.TrackWriter.write`; None for an object dropped before the track is
-        registered."""
-        if self._writer is None:
-            return None
-        return await self._writer.write(payload, new_group=new_group)
+        """`_native.TrackWriter.write` once the writes made before were sent; None for an object
+        dropped before the track is registered. Raises what ended the writer once it ended, even
+        when it ends while the write waits."""
+        return await self._send(lambda writer: writer.write(payload, new_group=new_group))
 
     async def write_group(self, payload: bytes) -> int | None:
-        """`_native.TrackWriter.write_group`; None for an object dropped before the track is
-        registered."""
-        if self._writer is None:
-            return None
-        return await self._writer.write_group(payload)
+        """`_native.TrackWriter.write_group` once the writes made before were sent; raises and
+        drops as `write`."""
+        return await self._send(lambda writer: writer.write_group(payload))
+
+    async def _send(self, send: Callable[[_native.TrackWriter], Awaitable[int | None]]) -> int | None:
+        # Checked before waiting, so a write after `close()` does not wait behind a stalled send.
+        self._raise_if_ended()
+        turn = await self._take_turn()
+        try:
+            if self._sent is not None:
+                # The native send a cancelled caller left.
+                await self._ended.until(self._sent)
+            # Checked again, as the writer may have ended meanwhile.
+            self._raise_if_ended()
+            if (writer := self._writer) is None:
+                return None
+            self._sent = asyncio.ensure_future(send(writer))
+            # Its failure goes to the caller, and to nobody once the caller was cancelled.
+            self._sent.add_done_callback(retrieve)
+            return await asyncio.shield(self._sent)
+        finally:
+            self._leave_turn(turn)
+
+    async def _take_turn(self) -> asyncio.Future[None]:
+        """Waits for the write's turn, which comes in the order the writes came, at once when no
+        other write has it. Raises what ended the writer instead once it ended, so a write queued
+        behind a stalled send does not wait for it."""
+        turn = asyncio.get_running_loop().create_future()
+        if not self._turns:
+            turn.set_result(None)
+        self._turns.append(turn)
+        if turn.done():
+            return turn
+        try:
+            await self._ended.until(turn)
+            self._raise_if_ended()
+        except BaseException:
+            self._leave_turn(turn)
+            raise
+        return turn
+
+    def _leave_turn(self, turn: asyncio.Future[None]) -> None:
+        """Gives `turn` up, passing it on to the next write when it was this write's."""
+        given = self._turns[0] is turn
+        self._turns.remove(turn)
+        if given and self._turns:
+            self._turns[0].set_result(None)
+
+    async def _sent_before(self) -> None:
+        if self._sent is not None:
+            await asyncio.wait([self._sent])
 
     async def next_subscriber(self) -> bool:
-        """`_native.TrackWriter.next_subscriber`; False when the session ends before the track is
-        registered."""
-        settled = asyncio.ensure_future(self._settled.wait())
-        ended = [] if self._session_ended is None else [self._session_ended]
+        """`_native.TrackWriter.next_subscriber`; False once the writer ended, as by `close()`,
+        leaving its broadcast or the session ending, and for a track that will not be registered,
+        a waiting call included. One caller at a time: a call while another waits raises
+        RuntimeError, and a subscriber that came as its caller was cancelled goes to the next
+        call."""
+        if self._awaiting_subscriber:
+            raise RuntimeError(f"next_subscriber of track {self.name} is already awaited")
+        self._awaiting_subscriber = True
         try:
-            await wait([settled, *ended], return_when=asyncio.FIRST_COMPLETED)
+            return await self._take_subscriber()
         finally:
-            settled.cancel()
-        if self._writer is None:
+            self._awaiting_subscriber = False
+
+    async def _take_subscriber(self) -> bool:
+        await self._registered_or_ended()
+        if self._ended.ended or self._writer is None:
             return False
-        return await self._writer.next_subscriber()
+        if self._subscriber is None:
+            self._subscriber = asyncio.ensure_future(self._writer.next_subscriber())
+            self._subscriber.add_done_callback(retrieve)
+        subscribed = self._subscriber
+        await self._ended.until(subscribed)
+        if self._ended.ended or subscribed.cancelled():
+            return False
+        self._subscriber = None
+        return subscribed.result()
+
+    async def registered(self) -> None:
+        """Waits until the track is registered. Raises what ended the writer once it ended, as
+        what failed the registration does, such as a `RequestError` for a refused PUBLISH, or a
+        RuntimeError for a track that will not be registered, as one of a broadcast left first."""
+        await self._registered_or_ended()
+        self._raise_if_ended()
+
+    async def _registered_or_ended(self) -> None:
+        registered = asyncio.ensure_future(self._registered.wait())
+        try:
+            await self._ended.until(registered)
+        finally:
+            registered.cancel()
+
+    async def close(self) -> None:
+        """Ends the subscriptions to the track with PUBLISH_DONE and stops writing to it. The
+        session keeps the track's numbering and cache, so a later `publish_track` of the same track
+        continues them. Writing raises at once; every call returns once the PUBLISH_DONE was sent,
+        even after one was cancelled."""
+        await self._close(RuntimeError(f"track {self.name} of {self.namespace} was closed"))
+
+    def _close(self, error: BaseException) -> asyncio.Future[None]:
+        """Ends the writer with `error`, unless it ended before, and starts closing it; the close
+        runs to its end even when the caller awaiting it is cancelled."""
+        self._closed = True
+        self._end_with(error)
+        return self._ending.start(self._end)
+
+    async def _end(self) -> None:
+        await self._not_registering.wait()
+        # The send under way goes out before the track ends; the writes waiting after it raise, so
+        # none starts another.
+        await self._sent_before()
+        if self._writer is not None and not self._session._done.done():
+            await self._session._native.end_track(list(self._namespace), self._name)
+
+    def _raise_if_ended(self) -> None:
+        if self._ended.ended:
+            raise self._ended.error()
 
     async def _bind(self, writer: _native.TrackWriter) -> None:
         self._writer = writer
-        self._settled.set()
+        if self._closed:
+            # Closed while it was being registered: `close()` ends the track now.
+            return
+        self._registered.set()
         if self._on_bound is not None:
-            await self._on_bound()
+            await self._open(self._on_bound)
 
-    def _abandon(self) -> None:
-        """The track will not be registered."""
-        self._settled.set()
+    async def _open(self, opening: Callable[[], Awaitable[None]]) -> None:
+        try:
+            await opening()
+        except BaseException as error:
+            # The opening failed or was cancelled, as by leaving the broadcast: the track is closed,
+            # so nothing is written to it without its opening, ended with the failure for its writes
+            # to raise.
+            closed = RuntimeError(f"track {self.name} of {self.namespace} was closed")
+            self._close(error if isinstance(error, Exception) else closed)
+            raise
+
+    def _end_with_session(self) -> None:
+        """Ends the writer once the session ends, or at once when it ended, the session holding it
+        until then."""
+        self._session._on_end(self._end_with)
+
+    def _end_with(self, error: BaseException, *, raised: Callable[[], None] | None = None) -> None:
+        """Ends the writer with `error`, unless it ended before; `raised` is called each time a
+        write or a wait raises it. Stops waiting for the next subscriber."""
+        self._ended.end(error, raised=raised)
+        self._session._forget_end(self._end_with)
+        if self._subscriber is not None:
+            self._subscriber.cancel()
+            self._subscriber = None
+
+    def _abandon(self, failure: Exception | None = None) -> None:
+        """The track will not be registered, because of `failure` if given, which ends the
+        writer."""
+        self._end_with(failure or RuntimeError(f"track {self.name} of {self.namespace} was not registered"))
 
 
 class Announcement:
@@ -198,6 +363,8 @@ class Session:
         self._keeper = keeper
         self._published: set[tuple[str, ...]] = set()
         self._watches: set[NamespaceWatch] = set()
+        # What `_end` calls with what ended the session: each ends a handle of the session.
+        self._enders: set[Callable[[BaseException], None]] = set()
         # What `_end` calls with each handle the session holds only weakly, as the reads of a
         # subscription, and with what ended the session: kept only while something else holds the
         # handle, so a subscription nobody reads any more is not kept alive.
@@ -410,9 +577,14 @@ class Session:
         priority: int = DEFAULT_PRIORITY,
     ) -> TrackWriter:
         """Registers a track that the session answers SUBSCRIBE and FETCH for
-        (`_native.Session.publish_track`). Register it before `announce`, since the relay may forward
-        a SUBSCRIBE at once; with `publish`, announce first. Cancelled before it returns, it ends the
-        track once registered, and a later `publish_track` of the track waits for that."""
+        (`_native.Session.publish_track`). Register it before `announce`, since the relay may
+        forward a SUBSCRIBE at once; with `publish`, announce first. `priority` is the Publisher
+        Priority: among the session's tracks, a lower value is sent first. Raises what ended the
+        session once it ended, ValueError when the track has an object and `datagram` is not the
+        delivery it sent it with, which it keeps, and for an invalid `retention_seconds`, which
+        registers nothing, and OverflowError for a `priority` outside 0-255. Cancelled before it
+        returns, it ends the track once registered, and a later `publish_track` of the track waits
+        for that."""
         self._raise_if_ended()
         await self._released(_published_track_key(tuple(namespace), name))
         self._raise_if_ended()
@@ -432,22 +604,22 @@ class Session:
         datagram: bool,
         priority: int,
     ) -> TrackWriter:
-        return TrackWriter(
-            namespace,
-            name,
-            retention_seconds,
-            publish=publish,
-            datagram=datagram,
-            priority=priority,
-            session_ended=self._done,
+        writer = TrackWriter(
+            self, namespace, name, retention_seconds, publish=publish, datagram=datagram, priority=priority
         )
+        writer._end_with_session()
+        return writer
 
     async def _register(self, writer: TrackWriter) -> None:
+        if writer._closed:
+            # Closed before its registration, which it no longer wants.
+            return
+        writer._not_registering.clear()
         namespace = list(writer.namespace)
         try:
             # Cancelled, it ends the track once registered, before another writer registers it.
             native = await self._acquire(
-                _published_track_key(tuple(namespace), writer.name),
+                _published_track_key(writer._namespace, writer.name),
                 lambda: self._connected().publish_track(
                     namespace,
                     writer.name,
@@ -458,9 +630,13 @@ class Session:
                 ),
                 lambda _: self._native.end_track(namespace, writer.name),
             )
-        except BaseException:
-            writer._abandon()
+        except BaseException as error:
+            # A cancellation is the cancelled caller's, not the track's: the writer's other callers
+            # raise that it was not registered.
+            writer._abandon(error if isinstance(error, Exception) else None)
             raise
+        finally:
+            writer._not_registering.set()
         await writer._bind(native)
 
     def _announced(self, namespace: list[str]) -> Announcement:
@@ -535,6 +711,16 @@ class Session:
         """What ended the session, once it ended."""
         return self._done.exception() or SessionClosed("the session was closed")
 
+    def _on_end(self, ender: Callable[[BaseException], None]) -> None:
+        """Calls `ender` with what ended the session once it ends, or at once when it ended."""
+        if self._done.done():
+            ender(self._ended_with())
+        else:
+            self._enders.add(ender)
+
+    def _forget_end(self, ender: Callable[[BaseException], None]) -> None:
+        self._enders.discard(ender)
+
     def _on_end_while_held(self, handle: H, ender: Callable[[H, BaseException], None]) -> None:
         """Calls `ender(handle, ...)` with what ended the session once it ends, or at once when it
         ended, unless nothing but the session holds `handle` by then."""
@@ -587,6 +773,9 @@ class Session:
             for watch in self._watches:
                 watch._end()
             ended_with = self._ended_with()
+            for ender in list(self._enders):
+                ender(ended_with)
+            self._enders.clear()
             for handle, held_ender in list(self._held_enders.items()):
                 held_ender(handle, ended_with)
             self._held_enders.clear()
