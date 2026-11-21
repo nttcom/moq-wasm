@@ -9,6 +9,7 @@ export const MEDIA_CMAF_PUBLISHER_PATH = '/moq-wasm/examples/media-cmaf/publishe
 export const MEDIA_CMAF_SUBSCRIBER_PATH = '/moq-wasm/examples/media-cmaf/subscriber/index.html'
 export const MEETING_INDEX_PATH = '/moq-wasm/examples/meeting/index.html'
 export const MESSAGE_INDEX_PATH = '/moq-wasm/examples/message/index.html'
+export const ROBOT_TELEOP_INDEX_PATH = '/moq-wasm/examples/robot-teleop/index.html'
 export const DATAGRAM_INDEX_PATH = '/moq-wasm/examples/datagram/index.html'
 export const WHITEBOARD_INDEX_PATH = '/moq-wasm/examples/whiteboard/index.html'
 export const PHONE_INDEX_PATH = '/moq-wasm/examples/phone/index.html'
