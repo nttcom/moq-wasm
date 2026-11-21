@@ -307,6 +307,25 @@ impl Session {
         })
     }
 
+    /// Ends every subscription to a track `publish_track` registered with
+    /// PUBLISH_DONE (draft-ietf-moq-transport-14 §9.12); the track keeps its
+    /// numbering and cache, so registering it again continues them.
+    fn end_track<'py>(
+        &self,
+        py: Python<'py>,
+        namespace: Vec<String>,
+        name: String,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let session = self.session.clone();
+        self.scope.future_into_py(py, async move {
+            session
+                .origin()
+                .end_track(&namespace.join("/"), &name)
+                .await?;
+            Ok(())
+        })
+    }
+
     /// Registers a track with the session's origin. Its group ids start at
     /// the wall-clock time in µs, so a later run of the same publisher does
     /// not reuse a location the relay still caches.
