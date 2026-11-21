@@ -120,7 +120,9 @@ def temporary_app_id() -> str:
 async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await _native.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    session = await _native.connect(
+        relay_url, verify_certificate=False, token=temporary_app_token(app_id), refreshes_token=True
+    )
 
     # Act
     await within(session.refresh_token(temporary_app_token(app_id), app_id=app_id))
@@ -128,6 +130,28 @@ async def test_a_refreshed_token_keeps_the_session_working_under_its_app(relay_u
     # Assert: a request after the refresh is still authorized under the app's root
     await within(session.announce([app_id, "room", "alice"]))
     await session.close()
+
+
+# draft-14's and draft-18's EXPIRED_AUTH_TOKEN termination code.
+EXPIRED_AUTH_TOKEN = 0x18
+
+
+async def test_a_token_that_expires_without_refresh_token_ends_the_session_at_its_expiry(
+    relay_url, temporary_app_token
+):
+    # Arrange
+    app_id = temporary_app_id()
+    session = await moq_wasm.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id, ttl="2s"))
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    # Act
+    with pytest.raises(moq_wasm.ConnectionLost) as lost:
+        await within(session.run(asyncio.Event().wait()))
+
+    # Assert: the relay closed the session at the expiry, and the session did not present the token again
+    assert lost.value.close_info.code == EXPIRED_AUTH_TOKEN
+    assert loop.time() - started < 2 + 3
 
 
 @asynccontextmanager
@@ -211,11 +235,24 @@ async def test_a_wss_relay_that_answers_after_12_s_connects_within_the_connect_d
 async def test_a_token_of_another_app_is_refused_as_a_refresh(relay_url, temporary_app_token):
     # Arrange
     app_id = temporary_app_id()
-    session = await _native.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+    session = await _native.connect(
+        relay_url, verify_certificate=False, token=temporary_app_token(app_id), refreshes_token=True
+    )
 
     # Act / Assert
     with pytest.raises(RuntimeError):
         await within(session.refresh_token(temporary_app_token(temporary_app_id()), app_id=app_id))
+    await session.close()
+
+
+async def test_a_session_connected_without_refreshes_token_cannot_refresh_its_token(relay_url, temporary_app_token):
+    # Arrange
+    app_id = temporary_app_id()
+    session = await _native.connect(relay_url, verify_certificate=False, token=temporary_app_token(app_id))
+
+    # Act / Assert
+    with pytest.raises(RuntimeError, match="without refreshes_token"):
+        session.refresh_token(temporary_app_token(app_id), app_id=app_id)
     await session.close()
 
 

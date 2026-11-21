@@ -92,8 +92,8 @@ def no_resubscribe_delay(monkeypatch):
 
 @pytest.fixture
 def temporary_app_token(relay_auth):
-    """Signs a token of the `temp-` app it is given, which the VTS accepts."""
-    return lambda app_id: signed_token(app_id, TEMPORARY_APP_SECRET)
+    """Signs a token of the `temp-` app it is given, which the VTS accepts, valid for `ttl`."""
+    return lambda app_id, ttl="1h": signed_token(app_id, TEMPORARY_APP_SECRET, ttl)
 
 
 @dataclass

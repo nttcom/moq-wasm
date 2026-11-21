@@ -26,7 +26,8 @@ class SessionClosed(SessionEnded):
 class ConnectionLost(SessionEnded):
     """The relay connection ended, other than by `close()`, and the native session could not
     replace it: it stopped retrying after 60 s, or the relay closed it with a termination code other
-    than EXPIRED_AUTH_TOKEN. `close_info` is how the last connection closed. Raised by `Session.run`,
+    than EXPIRED_AUTH_TOKEN, or with EXPIRED_AUTH_TOKEN for a session connected without
+    `refresh_token`. `close_info` is how the last connection closed. Raised by `Session.run`,
     `Session.closed` and the requests made afterwards."""
 
     def __init__(self, message: str, close_info: _native.CloseInfo):
@@ -509,7 +510,8 @@ def connect(
     """Connects to a relay: `moqt://` over raw QUIC, `https://` over WebTransport, presenting
     `token` (a JWT) in CLIENT_SETUP. Use it with `async with`, or await it and call `close()`.
     A failure to connect raises RuntimeError, as does a relay that does not open the transport, or
-    answer CLIENT_SETUP once it is open, within 30 s.
+    answer CLIENT_SETUP once it is open, within 30 s. Without `refresh_token`, the session ends with
+    `ConnectionLost` once the relay closes it at the token's expiry.
 
     `refresh_token`, given with `token`, takes the current token and returns a later one of the
     same app. The session calls it five minutes before the token's `exp`, or halfway through a
@@ -529,7 +531,11 @@ def connect(
 
     async def dial(current_token: str | None) -> _native.Session:
         return await _native.connect(
-            url, verify_certificate=verify_certificate, token=current_token, versions=versions
+            url,
+            verify_certificate=verify_certificate,
+            token=current_token,
+            refreshes_token=refresh_token is not None,
+            versions=versions,
         )
 
     return _Connecting(dial, token, refresh_token)
